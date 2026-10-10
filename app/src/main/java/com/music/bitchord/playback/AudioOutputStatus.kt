@@ -607,8 +607,8 @@ object AudioOutputStatus {
         AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
         AudioFormat.ENCODING_PCM_24BIT_PACKED -> "24-bit PCM"
         AudioFormat.ENCODING_PCM_32BIT -> "32-bit PCM"
-        AudioFormat.ENCODING_PCM_16BIT -> if (snapshot.floatFallback) "16-bit fallback" else "16-bit PCM"
-        null -> if (snapshot.floatFallback) "16-bit fallback" else snapshot.requestedPcmMode.label
+        AudioFormat.ENCODING_PCM_16BIT -> if (snapshot.floatFallback) "16비트 대체" else "16-bit PCM"
+        null -> if (snapshot.floatFallback) "16비트 대체" else snapshot.requestedPcmMode.label
         else -> "PCM (${snapshot.actualEncoding})"
     }
 }

@@ -19,6 +19,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -81,7 +82,9 @@ object LyricsTranslation {
     // repaired path after the app is updated.
     private const val CACHE_VERSION = 3
     private const val CACHE_DIRECTORY = "lyrics_translation_v3"
-    private const val MAX_CACHE_BYTES = 2L * 1024L * 1024L
+    // Room for roughly two thousand songs: every Gemini answer kept here is a
+    // request (and a few seconds) the next play of that song does not spend.
+    private const val MAX_CACHE_BYTES = 8L * 1024L * 1024L
     private const val MAX_BATCH_CHARS = 3_500
     private const val MAX_PARALLEL_REQUESTS = 2
     // Input Tools changes ASCII digits to the destination script, so match the
@@ -127,6 +130,13 @@ object LyricsTranslation {
     /** The Gemini API key from Google AI Studio, set by the app's settings. Never committed. */
     @Volatile
     var geminiApiKey: String = ""
+        set(value) {
+            field = value
+            geminiKeyRejected.value = false
+        }
+
+    /** True once Gemini refused the current key, so Settings can say why. */
+    val geminiKeyRejected = MutableStateFlow(false)
 
     private const val GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 
@@ -137,14 +147,39 @@ object LyricsTranslation {
 
     private val geminiClient by lazy {
         Http.client.newBuilder()
-            .callTimeout(90, TimeUnit.SECONDS)
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
+            // A whole song comes back in a few seconds; past this the network is
+            // the problem, and Google Translate answering now beats waiting on.
+            .callTimeout(40, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(40, TimeUnit.SECONDS)
             .build()
     }
 
+    /** A key Gemini refused (400/401/403). Not retried until the key changes. */
+    @Volatile
+    private var rejectedGeminiKey: String? = null
+
+    /** After every model reported its quota used up, Gemini rests until then. */
+    @Volatile
+    private var geminiCooldownUntil = 0L
+    private const val GEMINI_COOLDOWN_MS = 5L * 60L * 1000L
+
+    /**
+     * The key as Gemini will receive it: only the characters an API key can
+     * hold. A pasted key often carries a space or an invisible character, and
+     * OkHttp throws rather than send a header containing one.
+     */
+    private fun cleanGeminiKey(): String =
+        geminiApiKey.filter { it in '!'..'~' }
+
     private val geminiReady: Boolean
-        get() = geminiEnabled && geminiApiKey.isNotBlank()
+        get() {
+            if (!geminiEnabled) return false
+            val key = cleanGeminiKey()
+            return key.isNotEmpty() &&
+                key != rejectedGeminiKey &&
+                System.currentTimeMillis() >= geminiCooldownUntil
+        }
 
     @Serializable
     private data class CachedTranslation(
@@ -188,7 +223,15 @@ object LyricsTranslation {
         val slots = flatten(lines)
         if (slots.isEmpty()) return Result.Unavailable
         if (geminiReady) {
-            translateWithGemini(trackId, lines, slots, target)?.let { return it }
+            val viaGemini = try {
+                translateWithGemini(trackId, lines, slots, target)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Whatever went wrong, the lyric sheet must not: fall through.
+                null
+            }
+            viaGemini?.let { return it }
             // Anything short of a complete, line-for-line answer falls through
             // to Google Translate, so the button never stops working.
         }
@@ -397,8 +440,8 @@ object LyricsTranslation {
     }
 
     private suspend fun requestGemini(slots: List<TextSlot>, target: String): BatchAnswer? {
-        val key = geminiApiKey.trim()
-        if (key.isBlank()) return null
+        val key = cleanGeminiKey()
+        if (key.isEmpty()) return null
         val input = buildJsonObject {
             put("target_language", target)
             put("line_count", slots.size)
@@ -452,6 +495,7 @@ object LyricsTranslation {
             }
         }.toString()
 
+        var quotaRefusals = 0
         for (model in GEMINI_MODELS) {
             val request = Request.Builder()
                 .url(GEMINI_ENDPOINT.format(model))
@@ -473,12 +517,25 @@ object LyricsTranslation {
                     // A malformed answer from one model is worth one more try
                     // on the other before giving up on Gemini for this song.
                 }
-                // Unknown model, exhausted quota or a transient server error:
-                // the next model has its own quota and may well answer.
-                code == 404 || code == 429 || code >= 500 -> Unit
-                // 400/401/403: a bad or restricted key fails the same everywhere.
+                // Exhausted quota: the next model has its own and may answer.
+                code == 429 -> quotaRefusals++
+                // Unknown model or a transient server error: try the next one.
+                code == 404 || code >= 500 -> Unit
+                // A bad or restricted key fails the same everywhere, so stop
+                // asking with it rather than delay every translation.
+                code == 401 || code == 403 ||
+                    (code == 400 && text.contains("API_KEY", ignoreCase = true)) -> {
+                    rejectedGeminiKey = key
+                    geminiKeyRejected.value = true
+                    return null
+                }
+                // Any other 400 is about the request; another model may accept it.
+                code == 400 -> Unit
                 else -> return null
             }
+        }
+        if (quotaRefusals == GEMINI_MODELS.size) {
+            geminiCooldownUntil = System.currentTimeMillis() + GEMINI_COOLDOWN_MS
         }
         return null
     }

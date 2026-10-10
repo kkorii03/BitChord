@@ -65,8 +65,16 @@ object AppUpdateChecker {
     @Volatile
     private var downloadCancelled = false
 
+    /*
+     * This fork is signed with its own key, so an APK from the upstream
+     * releases can never install over it: offering one would only end in
+     * Android's "app not installed". New builds come from the fork instead.
+     */
+    private const val CHECK_UPSTREAM_RELEASES = false
+
     suspend fun check() = withContext(Dispatchers.IO) {
         runCatching {
+            if (!CHECK_UPSTREAM_RELEASES) return@runCatching
             val request = Request.Builder().url(LATEST_RELEASE_URL).build()
             val body = Http.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) null else response.body?.string()

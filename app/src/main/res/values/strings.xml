@@ -1128,6 +1128,7 @@
     <string name="gemini_translation">AI lyric translation (Gemini)</string>
     <string name="gemini_translation_subtitle_ready">Gemini reads the whole song and translates it naturally. Falls back to Google Translate if it fails.</string>
     <string name="gemini_translation_subtitle_missing">Tap to add a Gemini API key</string>
+    <string name="gemini_translation_subtitle_rejected">Gemini refused this key, so Google Translate is being used. Tap to check the key.</string>
     <string name="gemini_api_key">Gemini API key</string>
     <string name="gemini_api_key_description">Create a free key at aistudio.google.com/apikey and paste it here. It stays on this device and is sent only to Google. Leave it empty to use Google Translate.</string>
     <string name="korean">Korean</string>

@@ -1037,4 +1037,5 @@
     <string name="gemini_api_key">Gemini API 키</string>
     <string name="gemini_api_key_description">aistudio.google.com/apikey 에서 무료 키를 만든 후 여기에 붙여 넣으십시오. 키는 이 기기에만 저장되며 Google로만 전송됩니다. 비워 두면 Google 번역을 사용합니다.</string>
     <string name="korean">한국어</string>
+    <string name="gemini_translation_subtitle_rejected">Gemini가 이 키를 거부하여 Google 번역을 사용 중입니다. 탭하여 키를 확인하십시오.</string>
 </resources>

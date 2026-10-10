@@ -211,6 +211,8 @@ fun SettingsScreen(
     val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val geminiTranslation by AppSettings.geminiTranslation.collectAsStateWithLifecycle()
     val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
+    val geminiKeyRejected by com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyRejected
+        .collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -1000,8 +1002,11 @@ fun SettingsScreen(
                         icon = Icons.Rounded.AutoAwesome,
                         title = geminiTranslationTitle,
                         subtitle = stringResource(
-                            if (geminiApiKey.isBlank()) R.string.gemini_translation_subtitle_missing
-                            else R.string.gemini_translation_subtitle_ready,
+                            when {
+                                geminiApiKey.isBlank() -> R.string.gemini_translation_subtitle_missing
+                                geminiKeyRejected -> R.string.gemini_translation_subtitle_rejected
+                                else -> R.string.gemini_translation_subtitle_ready
+                            },
                         ),
                         trailing = {
                             Switch(
@@ -1431,7 +1436,7 @@ fun SettingsScreen(
                 }
                 append("  ")
                 withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx", linkStyles)) {
-                    append("Developer")
+                    append("개발자")
                 }
                 append("  ")
                 withLink(LinkAnnotation.Url("https://discord.gg/pDdKfrdHY6", linkStyles)) {
@@ -1439,7 +1444,7 @@ fun SettingsScreen(
                 }
                 append("  ")
                 withLink(LinkAnnotation.Url("https://bitchord.kushagrasingh.in/", linkStyles)) {
-                    append("Website")
+                    append("웹사이트")
                 }
                 append("\n~YouTube Music & Listen Together Backend")
             },

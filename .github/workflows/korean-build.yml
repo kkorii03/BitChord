@@ -51,12 +51,12 @@ jobs:
       - name: Build
         run: |
           chmod +x gradlew
-          ./gradlew assembleProdRelease --stacktrace
+          ./gradlew assembleProdRelease -Pbitchord.arm64Only=true --stacktrace
 
       - name: Collect APK
         id: apk
         run: |
-          APK=$(ls app/build/outputs/apk/prod/release/*arm64-v8a*.apk | head -1)
+          APK=$(ls app/build/outputs/apk/prod/release/*.apk | head -1)
           mkdir -p out
           cp "$APK" out/BitChord-ko-arm64.apk
           ls -la out

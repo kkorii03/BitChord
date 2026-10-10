@@ -69,6 +69,14 @@ val listenTogetherServer: String = (
  */
 val betaSuffix = ""
 
+/*
+ * A personal build for one phone (this fork's CI) needs one ABI, not three plus
+ * a universal APK: `-Pbitchord.arm64Only=true` compiles the native code once
+ * and ships a single arm64-v8a APK. ndk.abiFilters and ABI splits cannot be
+ * combined, so the splits are switched off in that mode.
+ */
+val arm64Only = providers.gradleProperty("bitchord.arm64Only").orNull == "true"
+
 android {
     namespace = "com.music.bitchord"
     // InnerTubeX's AAR requires compiling against 37; targetSdk (runtime behaviour) stays 36.
@@ -85,6 +93,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        if (arm64Only) {
+            ndk { abiFilters += "arm64-v8a" }
+        }
+
         // Last.fm credentials are supplied locally and never committed.
         buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "LASTFM_SECRET", "\"${lastfmSecret.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
@@ -97,7 +109,7 @@ android {
 
     splits {
         abi {
-            isEnable = true
+            isEnable = !arm64Only
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86_64")
             isUniversalApk = true
