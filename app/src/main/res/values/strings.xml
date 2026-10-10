@@ -1158,4 +1158,6 @@
     <string name="lock_screen_lyrics_next">Next</string>
     <string name="lock_screen_lyrics_play">Play</string>
     <string name="lock_screen_lyrics_pause">Pause</string>
+    <string name="auto_translate_lyrics">Translate lyrics automatically</string>
+    <string name="auto_translate_lyrics_subtitle">Lyrics show their translation without tapping the translate button. Tap it to see the original.</string>
 </resources>

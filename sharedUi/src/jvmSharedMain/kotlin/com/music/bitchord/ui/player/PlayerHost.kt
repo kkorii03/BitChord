@@ -126,6 +126,7 @@ interface PlayerHost {
 
 private val NoCast = MutableStateFlow(CastUi())
 private val NoSongMeaning = MutableStateFlow(false)
+private val NoAutoTranslate = MutableStateFlow(false)
 
 /** What the output drawer needs to know about casting to draw its row. */
 data class CastUi(
@@ -179,6 +180,8 @@ interface PlayerSettingsSource {
     val spotifyCanvasAutoHide: StateFlow<Boolean>
     val syncedLyrics: StateFlow<Boolean>
     val translationLanguage: StateFlow<String>
+    /** Translate every song's lyrics without the button being pressed. */
+    val autoTranslateLyrics: StateFlow<Boolean> get() = NoAutoTranslate
     val versionAlignmentInProgress: StateFlow<Boolean>
 
     fun setLastPlayerScreen(value: LastPlayerScreen)

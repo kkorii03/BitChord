@@ -128,6 +128,9 @@ object LyricsRepository {
         return found
     }
 
+    /** How long word-synced sources may keep a line-synced answer waiting. */
+    private const val SYLLABLE_GRACE_MS = 5_000L
+
     private val recent = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 8
     }
@@ -200,16 +203,36 @@ object LyricsRepository {
 
         try {
             var lineSynced: Result? = null
+            // Once a line-synced answer is in hand, the word-synced sources
+            // still running get this long to beat it, so holding out for the
+            // sweep never leaves the lyrics waiting on the slowest server.
+            var deadline = Long.MAX_VALUE
             for ((source, job) in racing) {
                 // If we already found a line-synced or better result, skip Genius completely
                 if (lineSynced != null && source == LyricsSource.GENIUS) continue
 
-                val found = runCatching { job.await() }.getOrNull() ?: continue
+                val found = (
+                    if (deadline == Long.MAX_VALUE) {
+                        runCatching { job.await() }.getOrNull()
+                    } else {
+                        val remaining = deadline - System.currentTimeMillis()
+                        if (remaining <= 0L) break
+                        // Wrapped so a source that answered "nothing" can be
+                        // told apart from one that ran out of time.
+                        (withTimeoutOrNull(remaining) { listOf(runCatching { job.await() }.getOrNull()) } ?: break)
+                            .first()
+                    }
+                    ) ?: continue
                 if (found.lines.any { it.isWordSynced }) return@coroutineScope found
                 if (!prioritizeSyllableSync && found.lines.any { it.timeMs > 0 }) {
                     return@coroutineScope found
                 }
-                if (lineSynced == null) lineSynced = found
+                if (lineSynced == null) {
+                    lineSynced = found
+                    if (found.lines.any { it.timeMs > 0 }) {
+                        deadline = System.currentTimeMillis() + SYLLABLE_GRACE_MS
+                    }
+                }
             }
             lineSynced
         } finally {

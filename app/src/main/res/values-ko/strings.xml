@@ -1062,4 +1062,6 @@
     <string name="lock_screen_lyrics_next">다음 곡</string>
     <string name="lock_screen_lyrics_play">재생</string>
     <string name="lock_screen_lyrics_pause">일시정지</string>
+    <string name="auto_translate_lyrics">가사 자동 번역</string>
+    <string name="auto_translate_lyrics_subtitle">번역 버튼을 누르지 않아도 가사 아래에 번역이 표시됩니다. 원문만 보려면 번역 버튼을 누르십시오.</string>
 </resources>

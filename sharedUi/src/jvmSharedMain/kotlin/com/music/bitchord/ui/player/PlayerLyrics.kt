@@ -2782,6 +2782,44 @@ internal fun rememberLyricsTranslation(
         LyricsDisplayMode.Original -> null
     }
     val translationScope = rememberCoroutineScope()
+    // Asks for the translation. [silent] is the automatic request a new
+    // song's lyrics make when auto-translate is on: no haptic for a tap
+    // nobody made, and no notice when it can't be had — the button still can.
+    val requestTranslation: (Boolean) -> Unit = requestTranslation@{ silent ->
+        val source = lyrics.orEmpty()
+        if (source.isEmpty()) return@requestTranslation
+        if (!silent) haptics.play(Haptic.Tap)
+        translationState = LyricsTranslationUiState.Loading
+        romanizationJob?.cancel()
+        if (romanizationState is LyricsTranslationUiState.Loading) {
+            romanizationState = LyricsTranslationUiState.Idle
+        }
+        translationJob?.cancel()
+        translationJob = translationScope.launch {
+            when (
+                val result = PlayerPlatform.host.translateLyrics(
+                    trackId = trackId,
+                    lines = source,
+                    targetLanguageTag = translationLanguage,
+                )
+            ) {
+                is LyricsTranslationResult.Translated -> {
+                    translationState = LyricsTranslationUiState.Ready(result.lines, result.byGemini)
+                    lyricsDisplayMode = LyricsDisplayMode.Translated
+                    translationTransition++
+                    if (!silent) haptics.play(Haptic.ToggleOn)
+                }
+                is LyricsTranslationResult.SameLanguage -> {
+                    translationState = LyricsTranslationUiState.SameLanguage
+                    if (!silent) PlayerPlatform.host.showMessage(alreadyInLanguageMessage)
+                }
+                LyricsTranslationResult.Unavailable -> {
+                    translationState = LyricsTranslationUiState.Idle
+                    if (!silent) PlayerPlatform.host.showMessage(translationUnavailableMessage)
+                }
+            }
+        }
+    }
     val toggleTranslation: () -> Unit = toggleTranslation@{
         when (val state = translationState) {
             is LyricsTranslationUiState.Ready -> {
@@ -2798,41 +2836,21 @@ internal fun rememberLyricsTranslation(
                 haptics.play(Haptic.Tap)
                 PlayerPlatform.host.showMessage(alreadyInLanguageMessage)
             }
-            LyricsTranslationUiState.Idle -> {
-                val source = lyrics.orEmpty()
-                if (source.isEmpty()) return@toggleTranslation
-                haptics.play(Haptic.Tap)
-                translationState = LyricsTranslationUiState.Loading
-                romanizationJob?.cancel()
-                if (romanizationState is LyricsTranslationUiState.Loading) {
-                    romanizationState = LyricsTranslationUiState.Idle
-                }
-                translationJob?.cancel()
-                translationJob = translationScope.launch {
-                    when (
-                        val result = PlayerPlatform.host.translateLyrics(
-                            trackId = trackId,
-                            lines = source,
-                            targetLanguageTag = translationLanguage,
-                        )
-                    ) {
-                        is LyricsTranslationResult.Translated -> {
-                            translationState = LyricsTranslationUiState.Ready(result.lines, result.byGemini)
-                            lyricsDisplayMode = LyricsDisplayMode.Translated
-                            translationTransition++
-                            haptics.play(Haptic.ToggleOn)
-                        }
-                        is LyricsTranslationResult.SameLanguage -> {
-                            translationState = LyricsTranslationUiState.SameLanguage
-                            PlayerPlatform.host.showMessage(alreadyInLanguageMessage)
-                        }
-                        LyricsTranslationResult.Unavailable -> {
-                            translationState = LyricsTranslationUiState.Idle
-                            PlayerPlatform.host.showMessage(translationUnavailableMessage)
-                        }
-                    }
-                }
-            }
+            LyricsTranslationUiState.Idle -> requestTranslation(false)
+        }
+    }
+    // Auto-translate: each new lyric sheet asks for its translation once, as
+    // if the button had been pressed. Keyed on the sheet, so turning the
+    // translation off by hand is left alone for the rest of the song.
+    val autoTranslate by PlayerSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
+    LaunchedEffect(trackId, translationLanguage, lyrics, autoTranslate) {
+        if (
+            autoTranslate &&
+            !lyrics.isNullOrEmpty() &&
+            translationState is LyricsTranslationUiState.Idle &&
+            lyricsDisplayMode == LyricsDisplayMode.Original
+        ) {
+            requestTranslation(true)
         }
     }
     val toggleRomanization: () -> Unit = toggleRomanization@{

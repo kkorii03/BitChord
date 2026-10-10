@@ -213,6 +213,7 @@ fun SettingsScreen(
     val geminiTranslation by AppSettings.geminiTranslation.collectAsStateWithLifecycle()
     val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
     val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
+    val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     // Read again whenever the page comes back, which is how a grant made in
@@ -1050,6 +1051,25 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { showGeminiKeyDialog = true },
+                    )
+                }
+                val autoTranslateTitle = stringResource(R.string.auto_translate_lyrics)
+                row(autoTranslateTitle, "lyrics", "translate", "auto") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Translate,
+                        title = autoTranslateTitle,
+                        subtitle = stringResource(R.string.auto_translate_lyrics_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = autoTranslateLyrics,
+                                onCheckedChange = { AppSettings.setAutoTranslateLyrics(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setAutoTranslateLyrics(!autoTranslateLyrics) },
                     )
                 }
                 val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)

@@ -505,7 +505,7 @@ object AppSettings {
      * which is why it defaults off rather than being how [LyricsRepository]
      * always behaved.
      */
-    val prioritizeSyllableSync = MutableStateFlow(false)
+    val prioritizeSyllableSync = MutableStateFlow(true)
 
     /** User-issued credential required by api.paxsenix.org. */
     val paxSenixApiKey = MutableStateFlow("")
@@ -521,6 +521,9 @@ object AppSettings {
 
     /** Translate a song's lyrics as it is downloaded, and keep that for offline. */
     val keepDownloadTranslation = MutableStateFlow(true)
+
+    /** Show every song's lyrics translated without tapping the translate button. */
+    val autoTranslateLyrics = MutableStateFlow(false)
 
     /** Download a song as soon as it is liked. See [LikedAutoDownload]. */
     val autoDownloadLiked = MutableStateFlow(true)
@@ -880,7 +883,17 @@ object AppSettings {
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
-        prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, false)
+        // This fork wants the word-by-word sweep wherever any source has one,
+        // so the switch starts on — and is turned on once for an install that
+        // had saved it off before the fork changed the default.
+        if (!prefs.getBoolean(KEY_SYLLABLE_DEFAULT_MIGRATED, false)) {
+            prefs.edit()
+                .putBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, true)
+                .putBoolean(KEY_SYLLABLE_DEFAULT_MIGRATED, true)
+                .apply()
+        }
+        prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, true)
+        autoTranslateLyrics.value = prefs.getBoolean(KEY_AUTO_TRANSLATE_LYRICS, false)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
@@ -1411,6 +1424,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, value).apply()
     }
 
+    fun setAutoTranslateLyrics(value: Boolean) {
+        autoTranslateLyrics.value = value
+        prefs.edit().putBoolean(KEY_AUTO_TRANSLATE_LYRICS, value).apply()
+    }
+
     fun setAutoDownloadLiked(value: Boolean) {
         autoDownloadLiked.value = value
         prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD_LIKED, value).apply()
@@ -1436,7 +1454,7 @@ object AppSettings {
     fun resetLyricsSourceSettings() {
         setLyricsSources(LyricsSource.offered.toSet())
         setLyricsSourceOrder(LyricsSource.offered)
-        setPrioritizeSyllableSync(false)
+        setPrioritizeSyllableSync(true)
     }
 
     fun setAnimatedCanvas(value: Boolean) {
@@ -2047,6 +2065,8 @@ object AppSettings {
     private const val KEY_PREFETCH_TRANSLATION = "prefetch_translation"
     private const val KEY_KEEP_DOWNLOAD_TRANSLATION = "keep_download_translation"
     private const val KEY_AUTO_DOWNLOAD_LIKED = "auto_download_liked"
+    private const val KEY_AUTO_TRANSLATE_LYRICS = "auto_translate_lyrics"
+    private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
     private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
