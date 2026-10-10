@@ -14,20 +14,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,9 +34,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,34 +44,26 @@ import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,26 +72,31 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.music.bitchord.R
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
-import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
-import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.player.StandaloneLyricsPanel
+import com.music.bitchord.ui.player.ThinSlider
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The lyrics, large, over the lock screen: the time, the song's lines with the
- * one being sung lit and its translation under it, and the transport — on the
- * blurred cover. Shown by [LockScreenLyrics] while something is loaded.
+ * The lyrics, large, over the lock screen: the time, the player's own lyric
+ * sheet — words filling in as they are sung, the translation under each line —
+ * and the transport, on the blurred cover. Shown by [LockScreenLyrics] while
+ * something is loaded.
  *
  * Never a way past the lock: swiping up asks the system to unlock (PIN,
  * fingerprint, face as usual) and back simply reveals the real lock screen.
@@ -191,17 +183,12 @@ class LockScreenLyricsActivity : ComponentActivity() {
     }
 }
 
-private data class ShownLine(val index: Int, val line: LyricLine)
-
 @Composable
 private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
-    val density = LocalDensity.current
     val controller = rememberMediaController()
     val state = rememberPlayerState(controller)
     val song = state.song
-    val foreground = rememberIsForeground()
-    val offsetMs by AppSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
     val entry by NowPlayingLyrics.current.collectAsStateWithLifecycle()
 
     // Nothing loaded any more — the queue was cleared, the service stopped.
@@ -212,24 +199,8 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
         }
     }
 
-    // Read often while playing, so the lit line keeps up with the singer; only
-    // while this screen is actually in front.
-    var positionMs by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(controller, state.isPlaying, foreground, song?.videoId) {
-        val player = controller ?: return@LaunchedEffect
-        positionMs = player.currentPosition.coerceAtLeast(0L)
-        while (foreground && state.isPlaying) {
-            delay(120)
-            positionMs = player.currentPosition.coerceAtLeast(0L)
-        }
-    }
-
     val lines = entry?.takeIf { it.videoId == song?.videoId }?.lines.orEmpty()
-    val shown = remember(lines) {
-        lines.mapIndexedNotNull { index, line ->
-            ShownLine(index, line).takeIf { line.text.isNotBlank() }
-        }
-    }
+    val hasWords = remember(lines) { lines.any { it.text.isNotBlank() } }
 
     // The translation, small under each line — the same one the player shows,
     // usually already made ahead of time and answered from the cache.
@@ -249,20 +220,13 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
             ?.takeIf { it.size == lines.size }
     }
 
-    // Paused, the player's own reading follows every seek; playing, the poll
-    // above is the fresher of the two. Read through a lambda and a derived
-    // state, so a tick redraws the scrubber and, only when the line changes,
-    // the lyrics — not the whole screen.
-    val isPlaying = state.isPlaying
-    val playhead: () -> Long = { if (isPlaying) positionMs else state.position.positionMs }
-    // Plain lyrics carry no timings: nothing is lit and nothing scrolls.
-    val synced = remember(shown) { shown.any { it.line.timeMs > 0L } }
-    val current by remember(shown, offsetMs, isPlaying, synced) {
-        derivedStateOf {
-            if (!synced) return@derivedStateOf -1
-            val lyricMs = playhead() - offsetMs
-            shown.indexOfLast { it.line.timeMs <= lyricMs }
-        }
+    // Swiping up lifts the whole screen with the finger, the way the system
+    // lock screen does; far enough, and the system is asked to unlock.
+    val scope = rememberCoroutineScope()
+    val lift = remember { Animatable(0f) }
+    val artwork = song?.thumbnailUrl
+    val backdropRequest = remember(artwork) {
+        ImageRequest.Builder(context).data(artwork.artworkAt(BACKDROP_ART_PX)).crossfade(600).build()
     }
 
     Box(
@@ -270,26 +234,35 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
             .fillMaxSize()
             .background(Color(0xFF101010))
             .pointerInput(Unit) {
-                var travelled = 0f
+                val threshold = 120.dp.toPx()
                 detectVerticalDragGestures(
-                    onDragStart = { travelled = 0f },
                     onDragEnd = {
-                        if (travelled < -with(density) { 120.dp.toPx() }) onUnlock()
-                        travelled = 0f
+                        val unlocking = lift.value < -threshold
+                        if (unlocking) onUnlock()
+                        scope.launch {
+                            lift.animateTo(0f, spring(dampingRatio = Spring.DampingRatioLowBouncy))
+                        }
                     },
-                    onDragCancel = { travelled = 0f },
-                ) { _, delta -> travelled += delta }
+                    onDragCancel = { scope.launch { lift.animateTo(0f) } },
+                ) { change, delta ->
+                    change.consume()
+                    scope.launch { lift.snapTo((lift.value + delta).coerceIn(-size.height.toFloat(), 0f)) }
+                }
             },
     ) {
-        // The cover, blurred out to a wash of its colours.
-        if (!song?.thumbnailUrl.isNullOrBlank()) {
+        // The cover, blurred out to a wash of its colours; crossfades to the
+        // next one as the track changes.
+        if (!artwork.isNullOrBlank()) {
             AsyncImage(
-                model = song?.thumbnailUrl,
+                model = backdropRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { scaleX = 1.3f; scaleY = 1.3f }
+                    .graphicsLayer {
+                        scaleX = 1.3f
+                        scaleY = 1.3f
+                    }
                     .then(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(70.dp) else Modifier),
             )
         }
@@ -306,62 +279,62 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer {
+                    translationY = lift.value
+                    alpha = (1f + lift.value / (size.height * 0.6f)).coerceIn(0f, 1f)
+                }
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 24.dp),
+                .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(28.dp))
             Clock()
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
             ) {
-                if (shown.isEmpty()) {
+                if (song != null && hasWords) {
+                    StandaloneLyricsPanel(
+                        lines = lines,
+                        subLines = translated,
+                        trackKey = song.videoId,
+                        position = state.position,
+                        isPlaying = state.isPlaying,
+                        onSeek = { controller?.seekTo(it) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else if (song != null) {
+                    // No lyrics: the cover itself, large.
                     Column(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 48.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text(
-                            text = song?.title.orEmpty(),
-                            color = Color.White,
-                            fontSize = 26.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = song?.artist.orEmpty(),
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontSize = 17.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        AsyncImage(
+                            model = artwork.artworkAt(COVER_ART_PX),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.White.copy(alpha = 0.08f)),
                         )
                     }
-                } else {
-                    LyricsColumn(
-                        shown = shown,
-                        translated = translated,
-                        current = current,
-                        synced = synced,
-                        onSeek = { line ->
-                            controller?.seekTo((line.timeMs + offsetMs).coerceAtLeast(0L))
-                        },
-                    )
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             NowPlayingCard(
                 title = song?.title.orEmpty(),
                 artist = song?.artist.orEmpty(),
-                artworkUrl = song?.thumbnailUrl,
+                artworkUrl = artwork,
                 isPlaying = state.isPlaying,
-                position = playhead,
+                position = { state.position.positionMs },
                 durationMs = state.durationMs,
                 onSeek = { controller?.seekTo(it) },
                 onPrevious = { controller?.seekToPrevious() },
@@ -372,10 +345,11 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                     }
                 },
                 onNext = { controller?.seekToNext() },
+                modifier = Modifier.padding(horizontal = 20.dp),
             )
             Row(
                 modifier = Modifier
-                    .padding(top = 14.dp, bottom = 10.dp)
+                    .padding(top = 12.dp, bottom = 10.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onUnlock)
                     .padding(horizontal = 14.dp, vertical = 6.dp),
@@ -397,6 +371,9 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
         }
     }
 }
+
+private const val BACKDROP_ART_PX = 360
+private const val COVER_ART_PX = 720
 
 @Composable
 private fun Clock() {
@@ -428,105 +405,6 @@ private fun Clock() {
 }
 
 @Composable
-private fun LyricsColumn(
-    shown: List<ShownLine>,
-    translated: List<LyricLine>?,
-    current: Int,
-    synced: Boolean,
-    onSeek: (LyricLine) -> Unit,
-) {
-    val listState = rememberLazyListState()
-    val dragged by listState.interactionSource.collectIsDraggedAsState()
-    // A line the reader scrolled to stays put for a few seconds before the
-    // list goes back to following the song.
-    var heldUntil by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(dragged) {
-        if (dragged) heldUntil = Long.MAX_VALUE
-        else if (heldUntil == Long.MAX_VALUE) heldUntil = System.currentTimeMillis() + 4_000L
-    }
-    var tick by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(heldUntil) {
-        if (heldUntil != Long.MAX_VALUE && heldUntil > System.currentTimeMillis()) {
-            delay(heldUntil - System.currentTimeMillis())
-            tick += 1f
-        }
-    }
-    LaunchedEffect(current, tick, shown) {
-        if (!synced || System.currentTimeMillis() < heldUntil) return@LaunchedEffect
-        val target = current.coerceAtLeast(0)
-        if (target < shown.size) listState.animateScrollToItem(target)
-    }
-
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val top = maxHeight * 0.32f
-        val bottom = maxHeight * 0.6f
-        LazyColumn(
-            state = listState,
-            contentPadding = PaddingValues(top = top, bottom = bottom),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .drawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.14f to Color.Black,
-                            0.82f to Color.Black,
-                            1f to Color.Transparent,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                },
-        ) {
-            itemsIndexed(shown, key = { _, item -> item.index }) { position, item ->
-                val lit = position == current
-                val alpha by animateFloatAsState(
-                    targetValue = when {
-                        !synced -> 0.9f
-                        lit -> 1f
-                        else -> 0.38f
-                    },
-                    animationSpec = tween(260),
-                    label = "lockLyricAlpha",
-                )
-                val sub = translated?.getOrNull(item.index)?.text
-                    ?.takeIf { it.isNotBlank() && it != item.line.text }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer { this.alpha = alpha }
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            enabled = synced,
-                        ) { onSeek(item.line) },
-                ) {
-                    Text(
-                        text = item.line.text,
-                        color = Color.White,
-                        fontSize = 27.sp,
-                        lineHeight = 34.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (sub != null) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = sub,
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 16.sp,
-                            lineHeight = 21.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun NowPlayingCard(
     title: String,
     artist: String,
@@ -538,12 +416,13 @@ private fun NowPlayingCard(
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var dragging by remember { mutableStateOf<Float?>(null) }
-    val positionMs = position()
-    val fraction = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val fraction = if (durationMs > 0L) (position().toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val shown = dragging ?: fraction
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
             .background(Color.White.copy(alpha = 0.12f))
@@ -578,30 +457,29 @@ private fun NowPlayingCard(
                 )
             }
         }
-        Slider(
-            value = dragging ?: fraction,
-            onValueChange = { dragging = it },
+        // The player's own scrubber: a thin line that thickens under the finger.
+        ThinSlider(
+            value = shown,
+            onValueChange = { if (durationMs > 0L) dragging = it },
             onValueChangeFinished = {
                 dragging?.let { onSeek((it * durationMs).toLong()) }
                 dragging = null
             },
-            enabled = durationMs > 0L,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White,
-                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-            ),
-            modifier = Modifier.padding(top = 6.dp),
+            idleHeight = 4.dp,
+            activeHeight = 9.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp, bottom = 6.dp),
         )
         Row(Modifier.fillMaxWidth()) {
             Text(
-                text = formatTime(((dragging ?: fraction) * durationMs).toLong()),
+                text = formatTime((shown * durationMs).toLong()),
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 12.sp,
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = formatTime(durationMs),
+                text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 12.sp,
             )
