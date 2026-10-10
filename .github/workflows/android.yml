@@ -1,8 +1,7 @@
 name: Android Release APK
 
 on:
-  push:
-    branches: [main]
+  # Disabled in this fork; run by hand if needed.
   workflow_dispatch:
 
 jobs:

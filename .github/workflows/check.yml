@@ -1,9 +1,8 @@
 name: Check
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Disabled in this fork; run by hand if needed.
+  workflow_dispatch:
 
 concurrency:
   group: check-${{ github.workflow }}-${{ github.ref }}

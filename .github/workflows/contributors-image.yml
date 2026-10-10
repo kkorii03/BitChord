@@ -4,11 +4,8 @@ name: Contributors Image
 # `contributors` branch because main only takes pull requests, so a bot
 # commit there is rejected.
 on:
+  # Disabled in this fork; run by hand if needed.
   workflow_dispatch:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '0 3 * * *'
 
 permissions:
   contents: write

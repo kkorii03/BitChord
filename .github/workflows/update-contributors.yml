@@ -1,9 +1,8 @@
 name: Update Contributors
 
 on:
+  # Disabled in this fork; run by hand if needed.
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * 0'
 
 permissions:
   contents: write

@@ -1,0 +1,79 @@
+name: Korean build (arm64)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: korean-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Signing setup
+        env:
+          KO_KEYSTORE_BASE64: ${{ secrets.KO_KEYSTORE_BASE64 }}
+          KO_KEYSTORE_PASSWORD: ${{ secrets.KO_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KO_KEYSTORE_BASE64" ]; then
+            echo "$KO_KEYSTORE_BASE64" | base64 -d > bitchord-ko.p12
+          elif [ -f .github/signing/bitchord-ko.p12 ]; then
+            cp .github/signing/bitchord-ko.p12 bitchord-ko.p12
+          fi
+          if [ -f bitchord-ko.p12 ] && [ -n "$KO_KEYSTORE_PASSWORD" ]; then
+            {
+              echo "storeFile=bitchord-ko.p12"
+              echo "storePassword=$KO_KEYSTORE_PASSWORD"
+              echo "keyAlias=bitchordko"
+              echo "keyPassword=$KO_KEYSTORE_PASSWORD"
+            } > keystore.properties
+            echo "Signing with the Korean-patch key."
+          else
+            echo "::warning::No signing key configured; the APK will be unsigned."
+          fi
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleProdRelease --stacktrace
+
+      - name: Collect APK
+        id: apk
+        run: |
+          APK=$(ls app/build/outputs/apk/prod/release/*arm64-v8a*.apk | head -1)
+          mkdir -p out
+          cp "$APK" out/BitChord-ko-arm64.apk
+          ls -la out
+          echo "tag=ko-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitChord-ko-arm64
+          path: out/BitChord-ko-arm64.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.apk.outputs.tag }}" out/BitChord-ko-arm64.apk \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "BitChord 한국어 + Gemini 번역 (빌드 ${{ github.run_number }})" \
+            --notes "휴대폰에서 BitChord-ko-arm64.apk 를 눌러 받은 뒤 설치하십시오."

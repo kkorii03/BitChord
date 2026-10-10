@@ -1,9 +1,7 @@
 name: Deploy backend
 
 on:
-  push:
-    branches: [main]
-    paths: ['backend/**', '.github/workflows/deploy-backend.yml']
+  # Disabled in this fork; run by hand if needed.
   workflow_dispatch:
 
 concurrency:

@@ -1,8 +1,8 @@
 name: Close issue on /close
 
 on:
-  issue_comment:
-    types: [created]
+  # Disabled in this fork; run by hand if needed.
+  workflow_dispatch:
 
 permissions:
   issues: write
