@@ -43,14 +43,9 @@ data class CanvasArtwork(
      * for most of a session.
      */
     fun matches(wantTitle: String, wantArtist: String, wantAlbum: String?): Boolean {
-        val titleOk = title == null || wantTitle.isBlank() ||
-            title.normalizeForMatch() == wantTitle.normalizeForMatch()
+        val titleOk = title == null || wantTitle.isBlank() || titlesMatch(title, wantTitle)
 
-        val titleArtists = splitArtists(wantArtist)
-        val ourArtists = splitArtists(artist.orEmpty())
-        val artistOk = artist == null || wantArtist.isBlank() ||
-            (titleArtists.isNotEmpty() && ourArtists.isNotEmpty() &&
-                titleArtists.all { want -> ourArtists.any { it == want } })
+        val artistOk = artist == null || wantArtist.isBlank() || creditsMatch(wantArtist, artist)
 
         val albumOk = album.isNullOrBlank() || wantAlbum.isNullOrBlank() ||
             album.normalizeForMatch() == wantAlbum.normalizeForMatch()
@@ -68,9 +63,69 @@ fun String.normalizeForMatch(): String =
     Normalizer.normalize(this, Normalizer.Form.NFD)
         .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
         .lowercase(Locale.ROOT)
-        .replace(Regex("[^a-z0-9\\s]"), " ")
+        // Letters and digits of every script survive: Hangul, kana and CJK
+        // used to fold to nothing here, which made every Korean or Japanese
+        // credit look blank and so never match at all.
+        .replace(Regex("[^\\p{L}\\p{N}\\p{M}\\s]"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
+
+/**
+ * Whether two titles name the same song. Exact once normalised, or the same
+ * once a featured-artist tag or a remaster note is taken off either side —
+ * "Song (feat. X)" on YouTube is "Song" on Apple, and "Song - 2011 Remaster"
+ * is the same recording's artwork.
+ */
+fun titlesMatch(got: String, want: String): Boolean {
+    val a = got.normalizeForMatch()
+    val b = want.normalizeForMatch()
+    if (a.isEmpty() || b.isEmpty()) return got.trim().equals(want.trim(), ignoreCase = true)
+    if (a == b) return true
+    val coreA = got.coreTitle()
+    val coreB = want.coreTitle()
+    return coreA.isNotEmpty() && coreA == coreB
+}
+
+private fun String.coreTitle(): String =
+    replace(FEATURE_TAG, " ").replace(REMASTER_NOTE, " ").normalizeForMatch()
+
+private val FEATURE_TAG = Regex(
+    """[(\[]\s*(?:feat\.?|ft\.?|featuring|with|prod\.?)\s[^)\]]*[)\]]""",
+    RegexOption.IGNORE_CASE,
+)
+private val REMASTER_NOTE = Regex(
+    """\s[-–]\s[^-–]*remaster[^-–]*$|[(\[][^)\]]*remaster[^)\]]*[)\]]""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * Whether two credit lines name the same act. Every artist on [want] found on
+ * [got] is a match as before; so now is the lead of either side found on the
+ * other, because services list collaborators differently — YouTube's
+ * "K/DA, (G)I-DLE, Wolftyla" is Apple's "K/DA". A name with an alias in
+ * brackets, "아이유 (IU)", answers to either half.
+ */
+fun creditsMatch(want: String, got: String): Boolean {
+    val wanted = creditNames(want)
+    val credited = creditNames(got)
+    if (wanted.isEmpty() || credited.isEmpty()) return false
+    fun same(a: Set<String>, b: Set<String>) = a.any { it in b }
+    if (wanted.all { w -> credited.any { same(w, it) } }) return true
+    return credited.any { same(wanted.first(), it) } || wanted.any { same(credited.first(), it) }
+}
+
+/** Each credited artist as the set of names it answers to. */
+private fun creditNames(raw: String): List<Set<String>> =
+    raw.split(ARTIST_SEPARATORS).mapNotNull { part ->
+        val full = part.normalizeForMatch()
+        if (full.isBlank()) return@mapNotNull null
+        val outside = part.replace(BRACKETED, " ").normalizeForMatch()
+        val inside = BRACKETED.findAll(part).map { it.value.normalizeForMatch() }.toList()
+        // Short fragments — the "G" of "(G)I-DLE" — are not names of their own.
+        (listOf(full) + (listOf(outside) + inside).filter { it.length >= 2 }).toSet()
+    }
+
+private val BRACKETED = Regex("""\([^)]*\)""")
 
 /**
  * One credit string into its individual artists. Every service picks its own

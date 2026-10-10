@@ -277,11 +277,8 @@ object SpotifyCanvas {
     }
 
     private fun isMatch(gotName: String, gotArtists: List<String>, wantName: String, wantArtist: String): Boolean {
-        if (gotName.normalizeForMatch() != wantName.normalizeForMatch()) return false
-        val wanted = splitArtists(wantArtist)
-        val credited = gotArtists.map { it.normalizeForMatch() }.filter { it.isNotBlank() }
-        if (wanted.isEmpty() || credited.isEmpty()) return false
-        return wanted.all { want -> credited.any { it == want } }
+        if (!titlesMatch(gotName, wantName)) return false
+        return creditsMatch(wantArtist, gotArtists.joinToString(", "))
     }
 
     // ---- Pathfinder: the `canvas` GraphQL query ------------------------

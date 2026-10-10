@@ -89,7 +89,7 @@ object CanvasRepository {
         val key = cacheKey("song|${song.videoId}", spotifyFirst)
 
         return resolve(key, album != null) {
-            if (spotifyFirst) {
+            val forTrack = if (spotifyFirst) {
                 firstHit(
                     { SpotifyCanvas.search(title, artist, album) },
                     { AppleMusicCanvas.search(title, artist, album) },
@@ -103,6 +103,16 @@ object CanvasRepository {
                     { CommunityCanvas.search(title, artist, album) },
                     { SpotifyCanvas.search(title, artist, album) },
                 ) { it.matches(title, artist, album) }
+            }
+            forTrack ?: album?.cleaned()?.takeIf { it.isNotBlank() }?.let { release ->
+                // No clip for the track itself: the album's motion artwork,
+                // which is what Apple Music plays behind every track of a
+                // release that has one. Its title is the album's, so it is
+                // dropped — the track's own title is checked by the caller.
+                firstHit(
+                    { AppleMusicCanvas.searchAlbum(release, artist) },
+                    { TidalCanvas.searchAlbum(release, artist) },
+                ) { it.matches(release, artist, release) }?.copy(title = null)
             }
         }
     }

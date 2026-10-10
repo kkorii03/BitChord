@@ -191,10 +191,7 @@ object AppleMusicCanvas {
 
         if (isCompilation(hitName) || isCompilation(hitAlbum)) return null
 
-        val wanted = splitArtists(artist)
-        val credited = splitArtists(hitArtist)
-        if (wanted.isEmpty() || credited.isEmpty()) return null
-        if (!wanted.all { want -> credited.any { it == want } }) return null
+        if (!creditsMatch(artist, hitArtist)) return null
 
         var score = 10
 
@@ -202,6 +199,8 @@ object AppleMusicCanvas {
         val hitTitle = hitName.normalizeForMatch()
         score += when {
             hitTitle == wantTitle -> 15
+            // The same song once a "(feat. …)" or remaster note is set aside.
+            titlesMatch(hitName, title) -> 13
             hitTitle.contains(wantTitle) || wantTitle.contains(hitTitle) -> 7
             // Same artist, different song. Apple returns these freely and
             // they are exactly the mismatch that has to be kept out.
