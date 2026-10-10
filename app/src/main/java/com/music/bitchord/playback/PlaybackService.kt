@@ -1774,7 +1774,7 @@ class PlaybackService : MediaLibraryService() {
             },
         )
             .setSessionCommand(favoriteCommand)
-            .setDisplayName("Favorite")
+            .setDisplayName("좋아요")
             .build()
         val shuffleEnabled = QueueShuffle.enabled.value
         val shuffle = CommandButton.Builder(
@@ -1785,7 +1785,7 @@ class PlaybackService : MediaLibraryService() {
             },
         )
             .setSessionCommand(shuffleCommand)
-            .setDisplayName(if (shuffleEnabled) "Shuffle off" else "Shuffle on")
+            .setDisplayName(if (shuffleEnabled) "임의 재생 끔" else "임의 재생 켬")
             .build()
         return listOf(favorite, shuffle)
     }
@@ -3646,7 +3646,7 @@ class PlaybackService : MediaLibraryService() {
         var depth = 0
         while (cause != null && depth++ < PERMANENT_CAUSE_DEPTH) {
             if (cause is StreamResolver.PermanentlyUnplayableException) {
-                return cause.message ?: "This track cannot be played"
+                return cause.message ?: "이 트랙은 재생할 수 없습니다"
             }
             cause = cause.cause?.takeIf { it !== cause }
         }
@@ -4949,7 +4949,7 @@ class PlaybackService : MediaLibraryService() {
     private fun currentSourceName(mediaId: String?, mediaItem: MediaItem?): String? {
         val id = mediaId ?: return null
         if (isLocalPlayback(id, mediaItem)) {
-            return "Local Storage"
+            return "로컬 저장소"
         }
 
         // 1. Forced upgrade stream on active playback URI
@@ -5785,7 +5785,7 @@ class PlaybackService : MediaLibraryService() {
             sampleRateHz = sampleRate,
             channelCount = channels,
             routeKind = routeKind,
-            deviceName = activeDevice?.productName?.toString()?.ifBlank { null } ?: "System default",
+            deviceName = activeDevice?.productName?.toString()?.ifBlank { null } ?: "시스템 기본값",
             advertisedEncodings = advertisedEncodings,
             advertisedSampleRates = advertisedSampleRates,
             requestedMode = AppSettings.outputPcmMode.value,

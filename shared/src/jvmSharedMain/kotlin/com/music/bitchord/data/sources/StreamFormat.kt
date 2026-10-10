@@ -43,7 +43,7 @@ data class StreamFormat(
             bitDepth?.let { "$it-bit" },
             sampleRateHz?.let { "${"%.1f".format(Locale.ROOT, it / 1000f).removeSuffix(".0")} kHz" },
             kbps?.takeIf { isLossless != true }?.let { "$it kbps" },
-        ).joinToString(" · ").ifEmpty { "Unknown format" }
+        ).joinToString(" · ").ifEmpty { "알 수 없는 포맷" }
 
     private companion object {
         val LOSSLESS_CODECS = setOf("flac", "alac", "wav", "aiff", "ape", "wv", "dsf", "dff")

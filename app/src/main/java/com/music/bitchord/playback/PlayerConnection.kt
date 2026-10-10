@@ -347,7 +347,7 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
                 refreshCurrentQueueItem = events.contains(Player.EVENT_MEDIA_METADATA_CHANGED),
             )
             override fun onPlayerErrorChanged(error: androidx.media3.common.PlaybackException?) {
-                sync(error?.let { "Playback failed: ${it.errorCodeName}" })
+                sync(error?.let { "재생 실패: ${it.errorCodeName}" })
             }
         }
         player.addListener(listener)

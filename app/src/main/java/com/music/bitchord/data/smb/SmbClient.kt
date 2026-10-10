@@ -35,7 +35,7 @@ object SmbClient {
         password: String,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            require(SmbConfig.isConfigured(host, share)) { "Enter a server and a share" }
+            require(SmbConfig.isConfigured(host, share)) { "서버와 공유 이름을 입력하십시오" }
             SmbAuth.update(host, share, basePath, username, password)
             SmbConnection.withShare { diskShare ->
                 diskShare.list(smbPath(SmbAuth.basePath))
@@ -45,7 +45,7 @@ object SmbClient {
 
     suspend fun listLibrary(maxFiles: Int = 10_000): Result<Listing> = withContext(Dispatchers.IO) {
         runCatching {
-            require(SmbAuth.isConfigured()) { "SMB is not configured" }
+            require(SmbAuth.isConfigured()) { "SMB가 설정되지 않았습니다" }
             val audio = ArrayList<Entry>()
             val images = ArrayList<Entry>()
             SmbConnection.withShare { diskShare ->
@@ -113,7 +113,7 @@ object SmbClient {
                 val read = file.read(chunk, offset, 0, chunk.size)
                 if (read <= 0) break
                 offset += read
-                if (offset > maxBytes) throw SmbConnection.SmbException("File too large for a cover")
+                if (offset > maxBytes) throw SmbConnection.SmbException("아트워크로 사용하기에는 파일이 너무 큽니다")
                 out.write(chunk, 0, read)
             }
             return out.toByteArray()

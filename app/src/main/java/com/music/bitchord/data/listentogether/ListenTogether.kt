@@ -763,8 +763,8 @@ object ListenTogether {
     }
 
     private suspend fun doCreateOnServer(serverBase: String, nickname: String, maxMembers: Int): String {
-        val who = identity(nickname) ?: throw PartyException("not_signed_in", "Sign in to listen together.")
-        if (serverBase.isBlank()) throw PartyException("no_server", "Set the party server address first.")
+        val who = identity(nickname) ?: throw PartyException("not_signed_in", "함께 듣기를 하려면 로그인하십시오.")
+        if (serverBase.isBlank()) throw PartyException("no_server", "먼저 파티 서버 주소를 설정하십시오.")
         val membership = post(
             "$serverBase/api/parties",
             JoinRequest(
@@ -818,11 +818,11 @@ object ListenTogether {
     }
 
     private suspend fun doJoinOnServer(serverBase: String, code: String, nickname: String): String {
-        val who = identity(nickname) ?: throw PartyException("not_signed_in", "Sign in to listen together.")
-        if (serverBase.isBlank()) throw PartyException("no_server", "Set the party server address first.")
+        val who = identity(nickname) ?: throw PartyException("not_signed_in", "함께 듣기를 하려면 로그인하십시오.")
+        if (serverBase.isBlank()) throw PartyException("no_server", "먼저 파티 서버 주소를 설정하십시오.")
         val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
         if (cleaned.length != CODE_LENGTH) {
-            throw PartyException("bad_code", "A party code is six letters or digits.")
+            throw PartyException("bad_code", "파티 코드는 영문자 또는 숫자 6자리입니다.")
         }
         refuseIfRecentlyKicked(cleaned)
         val membership = post(
@@ -884,40 +884,40 @@ object ListenTogether {
         withContext(Dispatchers.IO) {
             val who = identity(nickname)
                 ?: return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Sign in to listen together.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "함께 듣기를 하려면 로그인하십시오.")
                 } else {
-                    SwitchPartyResult.TargetFailedNoParty("Sign in to listen together.")
+                    SwitchPartyResult.TargetFailedNoParty("함께 듣기를 하려면 로그인하십시오.")
                 }
 
             val normTarget = when (val res = parseAndNormalizeServerUrl(targetCustomServer)) {
                 is ServerUrlValidationResult.Valid -> res.normalizedUrl
                 is ServerUrlValidationResult.Invalid -> return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Target server address is invalid.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "대상 서버 주소가 잘못되었습니다.")
                 } else {
-                    SwitchPartyResult.TargetFailedNoParty("Target server address is invalid.")
+                    SwitchPartyResult.TargetFailedNoParty("대상 서버 주소가 잘못되었습니다.")
                 }
             }
 
             val targetBase = resolveHttpBase(normTarget)
             if (targetBase.isBlank()) {
                 return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Target server address is invalid or missing.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "대상 서버 주소가 잘못되었거나 없습니다.")
                 } else {
-                    SwitchPartyResult.TargetFailedNoParty("Target server address is invalid or missing.")
+                    SwitchPartyResult.TargetFailedNoParty("대상 서버 주소가 잘못되었거나 없습니다.")
                 }
             }
 
             val cleanedTargetCode = targetCode.filter { it.isLetterOrDigit() }.uppercase()
             if (cleanedTargetCode.length != CODE_LENGTH) {
                 return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "A party code is six letters or digits.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "파티 코드는 영문자 또는 숫자 6자리입니다.")
                 } else {
-                    SwitchPartyResult.TargetFailedNoParty("A party code is six letters or digits.")
+                    SwitchPartyResult.TargetFailedNoParty("파티 코드는 영문자 또는 숫자 6자리입니다.")
                 }
             }
 
             if (recentKicks().containsKey(cleanedTargetCode)) {
-                val refusal = "Couldn’t let you in — you’ve recently been kicked out of this party."
+                val refusal = "참여할 수 없습니다 — 최근에 이 파티에서 내보내졌습니다."
                 return@withContext if (_state.value.inParty) {
                     SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), refusal)
                 } else {
@@ -1485,7 +1485,7 @@ object ListenTogether {
         if (recentKicks().containsKey(code)) {
             throw PartyException(
                 "recently_kicked",
-                "Couldn’t let you in — you’ve recently been kicked out of this party.",
+                "참여할 수 없습니다 — 최근에 이 파티에서 내보내졌습니다.",
             )
         }
     }
@@ -1530,12 +1530,12 @@ object ListenTogether {
     suspend fun previewParty(code: String, server: String? = null): Result<PartyPreview> {
         val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
         if (cleaned.length != CODE_LENGTH) {
-            return Result.failure(PartyException("bad_code", "A party code is six letters or digits."))
+            return Result.failure(PartyException("bad_code", "파티 코드는 영문자 또는 숫자 6자리입니다."))
         }
         return runCatching {
             refuseIfRecentlyKicked(cleaned)
             val base = resolveHttpBase(server ?: effectiveIdleServerBase())
-            if (base.isBlank()) throw PartyException("no_server", "Set the party server address first.")
+            if (base.isBlank()) throw PartyException("no_server", "먼저 파티 서버 주소를 설정하십시오.")
             val response = http.get("$base/api/parties/$cleaned/preview")
             if (!response.status.isSuccess()) {
                 val problem = response.toPartyException()
@@ -1579,7 +1579,7 @@ object ListenTogether {
             message = parsed?.message?.takeIf { it.isNotBlank() }
                 // 422 is the server rejecting an identity, which here can only
                 // mean the account layer handed over something blank.
-                ?: if (status.value == 422) "This account can't be used to jam."
+                ?: if (status.value == 422) "이 계정으로는 함께 듣기를 할 수 없습니다."
                 else "The party server said ${status.value}.",
             statusCode = status.value,
         )
@@ -1645,7 +1645,7 @@ object ListenTogether {
     /** What a redacted address reads as. Not a hostname, so it cannot be resolved back. */
     private const val SERVER_PLACEHOLDER = "<party server>"
 
-    private const val UNREACHABLE = "Couldn’t reach the party server."
+    private const val UNREACHABLE = "파티 서버에 연결할 수 없습니다."
 
     private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
     private const val KEY_CODE = "party_code"

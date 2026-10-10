@@ -70,10 +70,10 @@ enum class SourceKind(
      * anything the app fell back to.
      */
     ADDON(
-        label = "Addon",
-        detail = "An addon server you host or were given a link to. Searched and streamed over " +
-            "plain HTTP — no code is downloaded or run.",
-        labels = listOf("FLAC", "Lossless", "Hi-Res"),
+        label = "애드온",
+        detail = "직접 운영하거나 링크로 받은 애드온 서버입니다. 일반 HTTP로 검색 및 " +
+            "스트리밍하며, 코드를 다운로드하거나 실행하지 않습니다.",
+        labels = listOf("FLAC", "무손실", "Hi-Res"),
         needsServer = true,
         canServeLossless = true,
         // Literal, not [USER_ADDED]: an enum entry is constructed before
@@ -90,9 +90,9 @@ enum class SourceKind(
      * one — same protocol as [MODULE], served by the same [ModuleSource].
      */
     CUSTOM_MODULE(
-        label = "Custom module",
-        detail = "Your own compatible module index. Tried before the built-in one.",
-        labels = listOf("FLAC", "Lossless", "Hi-Res", "Plugins"),
+        label = "사용자 지정 모듈",
+        detail = "직접 지정한 호환 모듈 인덱스입니다. 기본 제공 인덱스보다 먼저 시도됩니다.",
+        labels = listOf("FLAC", "무손실", "Hi-Res", "플러그인"),
         needsServer = true,
         canServeLossless = true,
         // Literal, not [USER_ADDED]: an enum entry is constructed before
@@ -118,10 +118,10 @@ enum class SourceKind(
      * which loses an entry whose kind it cannot resolve.
      */
     MODULE(
-        label = "Module source",
-        detail = "A URL to a compatible module index. Modules are JS plugins that " +
-            "can search and stream from services like Tidal, Qobuz, Apple Music and more.",
-        labels = listOf("FLAC", "Lossless", "Hi-Res", "Plugins"),
+        label = "모듈 소스",
+        detail = "호환 모듈 인덱스의 URL입니다. 모듈은 Tidal, Qobuz, Apple Music 등에서 " +
+            "검색 및 스트리밍할 수 있는 JS 플러그인입니다.",
+        labels = listOf("FLAC", "무손실", "Hi-Res", "플러그인"),
         needsServer = true,
         canServeLossless = true,
         rank = 1,
@@ -129,8 +129,8 @@ enum class SourceKind(
 
     JIOSAAVN(
         label = "JioSaavn",
-        detail = "Optional JioSaavn streams up to 320kbps AAC/MP4. Catalogue matching can select the wrong song.",
-        labels = listOf("High Quality", "320kbps"),
+        detail = "최대 320kbps AAC/MP4로 스트리밍하는 선택형 소스입니다. 카탈로그 매칭 시 다른 노래가 선택될 수 있습니다.",
+        labels = listOf("고품질", "320kbps"),
         needsServer = false,
         canServeLossless = false,
         worthPrefetching = true,
@@ -145,9 +145,9 @@ enum class SourceKind(
      */
     YOUTUBE(
         label = "YouTube Music",
-        detail = "The full catalogue, at Opus up to about 171 kbps. Lossy — there is no " +
-            "lossless rendition to ask for.",
-        labels = listOf("Lossy", "Full catalogue", "Radio"),
+        detail = "Opus 최대 약 171kbps의 전체 카탈로그입니다. 손실 압축이며, " +
+            "무손실 버전은 제공되지 않습니다.",
+        labels = listOf("손실 압축", "전체 카탈로그", "라디오"),
         needsServer = false,
         canServeLossless = false,
         rank = 3,

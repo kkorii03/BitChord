@@ -52,7 +52,7 @@ object WebDavClient {
         withContext(Dispatchers.IO) {
             runCatching {
                 val target = WebDavConfig.normalizeUrl(url)
-                require(WebDavConfig.isConfigured(target)) { "Enter a http(s) server URL" }
+                require(WebDavConfig.isConfigured(target)) { "http(s) 서버 URL을 입력하십시오" }
                 val request = propfindRequest(target, depth = "0", username, password)
                 Http.client.newCall(request).execute().use { response ->
                     if (response.code !in 200..299 && response.code != 207) {
@@ -79,7 +79,7 @@ object WebDavClient {
     ): Result<Listing> = withContext(Dispatchers.IO) {
         runCatching {
             val root = WebDavConfig.normalizeUrl(baseUrl)
-            require(WebDavConfig.isConfigured(root)) { "WebDAV is not configured" }
+            require(WebDavConfig.isConfigured(root)) { "WebDAV가 설정되지 않았습니다" }
             val foundAudio = LinkedHashMap<String, Entry>()
             val foundImages = LinkedHashMap<String, Entry>()
             val dirs = ArrayDeque<String>()

@@ -85,7 +85,7 @@ class AddonClient(rawBaseUrl: String) {
     ) {
         fetch<AddonManifest>(manifestUrl(baseUrl)).mapCatching { manifest ->
             if (manifest.id.isBlank()) {
-                throw AddonException("That URL answered, but not with an addon manifest")
+                throw AddonException("URL이 응답했지만 애드온 매니페스트가 아닙니다")
             }
             if (!manifest.isPlayable) {
                 val declared = manifest.resources.joinToString(", ")
@@ -95,7 +95,7 @@ class AddonClient(rawBaseUrl: String) {
         }.recoverCatching { failure ->
             // A manifest 404 is not "no such track", it is "no addon here" —
             // the one place the miss/fault distinction below has to be undone.
-            if (failure is AddonNotFound) throw AddonException("No manifest at that URL")
+            if (failure is AddonNotFound) throw AddonException("이 URL에 매니페스트가 없습니다")
             throw failure
         }
     }
@@ -276,7 +276,7 @@ class AddonClient(rawBaseUrl: String) {
     /** `{base}/{segments…}?{params}`, with every part properly encoded. */
     private fun endpoint(segments: List<String>, params: Map<String, String>): String {
         val base = baseUrl.toHttpUrlOrNull()
-            ?: throw AddonException("That is not a usable address")
+            ?: throw AddonException("사용할 수 없는 주소입니다")
         val builder = base.newBuilder()
         segments.forEach(builder::addPathSegment)
         params.forEach { (key, value) -> builder.addQueryParameter(key, value) }
@@ -334,7 +334,7 @@ class AddonClient(rawBaseUrl: String) {
                     // sends people to re-paste a URL that was always correct.
                     response.code >= 500 -> throw AddonUnavailable("HTTP ${response.code}")
                     response.code != 429 -> throw AddonException("HTTP ${response.code}")
-                    attempt >= MAX_RETRIES -> throw AddonUnavailable("This addon is rate limiting BitChord")
+                    attempt >= MAX_RETRIES -> throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
                     else -> retryAfterMs(response.header("Retry-After"), attempt)
                 }
             }
@@ -521,4 +521,4 @@ class AddonException(message: String) : Exception(message)
 class AddonUnavailable(message: String) : Exception(message)
 
 /** The addon answered, and does not have what was asked for. A miss, not a fault. */
-class AddonNotFound : Exception("Not held by this addon")
+class AddonNotFound : Exception("이 애드온에 없음")

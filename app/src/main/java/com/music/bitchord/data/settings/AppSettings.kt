@@ -84,12 +84,12 @@ enum class DownloadQuality(
     /** Whether a source's bit-exact file is worth keeping, or a transcode will do. */
     val keepsLossless: Boolean,
 ) {
-    STANDARD(128, "Standard", "~128 kbps Opus · fits more on the device", "~4 MB", false),
-    HIGH(Int.MAX_VALUE, "High", "Best audio on offer; source quality first", "~8 MB", false),
+    STANDARD(128, "고효율", "~128kbps Opus · 더 많은 노래 저장 가능", "~4 MB", false),
+    HIGH(Int.MAX_VALUE, "고품질", "제공되는 최상의 오디오, 원본 품질 우선", "~8 MB", false),
     LOSSLESS(
         Int.MAX_VALUE,
-        "Lossless",
-        "Bit-exact if a source has it, best Opus if not",
+        "무손실",
+        "소스에서 제공하면 비트 퍼펙트, 아니면 최상의 Opus",
         "~35 MB",
         true,
     ),
@@ -510,6 +510,12 @@ object AppSettings {
     /** User-issued credential required by api.paxsenix.org. */
     val paxSenixApiKey = MutableStateFlow("")
 
+    /** Translate lyrics with Gemini instead of Google Translate. See [LyricsTranslation.geminiEnabled]. */
+    val geminiTranslation = MutableStateFlow(false)
+
+    /** The user's own Gemini API key from Google AI Studio. Stays on this device. */
+    val geminiApiKey = MutableStateFlow("")
+
     /**
      * Disk budget for cached audio. [AudioCache][com.music.bitchord.playback.AudioCache] evicts past it.
      * [UNLIMITED_CACHE_LIMIT_BYTES] means no ceiling of the app's own.
@@ -859,6 +865,10 @@ object AppSettings {
         prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, false)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
+        geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, "").orEmpty()
+        geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, false)
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -1361,6 +1371,19 @@ object AppSettings {
         paxSenixApiKey.value = normalized
         prefs.edit().putString(KEY_PAXSENIX_API_KEY, normalized).apply()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(normalized)
+    }
+
+    fun setGeminiTranslation(value: Boolean) {
+        geminiTranslation.value = value
+        prefs.edit().putBoolean(KEY_GEMINI_TRANSLATION, value).apply()
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = value
+    }
+
+    fun setGeminiApiKey(value: String) {
+        val normalized = value.trim()
+        geminiApiKey.value = normalized
+        prefs.edit().putString(KEY_GEMINI_API_KEY, normalized).apply()
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = normalized
     }
 
     /**
@@ -1877,6 +1900,7 @@ object AppSettings {
         KEY_LISTENBRAINZ_TOKEN,
         KEY_SPOTIFY_SPDC_TOKEN,
         KEY_PAXSENIX_API_KEY,
+        KEY_GEMINI_API_KEY,
     )
 
     /**
@@ -1976,6 +2000,8 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
+    private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+    private const val KEY_GEMINI_TRANSLATION = "gemini_translation"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_SHOW_CACHE_FOLDER = "show_cache_folder"

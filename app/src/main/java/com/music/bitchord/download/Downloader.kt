@@ -70,7 +70,7 @@ object Downloader {
         onProgress: (written: Long, total: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         var url = stream.url
-        val total = contentLength(url) ?: error("Track unavailable: no length to fetch")
+        val total = contentLength(url) ?: error("트랙 사용 불가: 길이 정보 없음")
 
         var position = 0L
         var reresolved = false
@@ -105,7 +105,7 @@ object Downloader {
                 // one stream into the middle of another produces a file that is
                 // the right length and unplayable, so a length that has moved
                 // is a failure rather than something to work around.
-                if (contentLength(url) != total) error("The stream changed mid-download — try again")
+                if (contentLength(url) != total) error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
                 continue
             }
 

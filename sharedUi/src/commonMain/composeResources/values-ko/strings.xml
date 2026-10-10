@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="analysis_complete">분석 완료</string>
+    <string name="analysis_in_progress">분석 중…</string>
+    <string name="analysis_refining">분석 완료, 다듬는 중…</string>
+    <string name="audio_output">오디오 출력</string>
+    <string name="audio_output_playing">여기에서 재생 중</string>
+    <string name="audio_pipeline">오디오 파이프라인</string>
+    <string name="automix_analysis_status">자동 믹스 · 현재 노래: %1$s · 다음 노래: %2$s</string>
+    <string name="automix_not_supported_video">비디오 노래에서는 자동 믹스를 지원하지 않습니다.</string>
+    <string name="automix_stopped_in_party">자동 믹스: 함께 듣기 중에는 중단됨</string>
+    <string name="autoplay">자동 재생</string>
+    <string name="autoplay_empty_description">비슷한 음악이 계속 재생됩니다.</string>
+    <string name="autoplay_off">자동 재생 끔</string>
+    <string name="autoplay_on">자동 재생 켬</string>
+    <string name="autoplay_queue_description">다음에 재생하도록 선택된 비슷한 음악</string>
+    <string name="bit_depth">%1$d비트</string>
+    <string name="cancel">취소</string>
+    <string name="cast">전송</string>
+    <string name="cast_casting">전송 중</string>
+    <string name="cast_connecting">연결 중…</string>
+    <string name="cast_row_subtitle">Chromecast 및 Google Cast 스피커</string>
+    <string name="channel_count">%1$dch</string>
+    <string name="choose_lyrics_provider">가사 제공처 선택</string>
+    <string name="clear">지우기</string>
+    <string name="close_lyrics">가사 닫기</string>
+    <string name="data_saver">데이터 절약</string>
+    <string name="decrease_lyrics_offset">가사 싱크 앞당기기</string>
+    <string name="downgraded_from">↓ %1$s에서 낮춤</string>
+    <string name="drag_to_reorder">드래그하여 순서 변경</string>
+    <string name="failed">실패</string>
+    <string name="hi_res_lossless">고해상도 무손실</string>
+    <string name="high_quality">고품질</string>
+    <string name="high_quality_upgrading">고품질, 업그레이드 중</string>
+    <string name="increase_lyrics_offset">가사 싱크 늦추기</string>
+    <string name="instrumental">연주곡</string>
+    <string name="like">좋아요</string>
+    <string name="listen_together">함께 듣기</string>
+    <string name="listen_together_away">자리 비움 — 자리는 유지됨</string>
+    <string name="listen_together_host">호스트</string>
+    <string name="listen_together_in_party">파티 참여 중 · %1$s</string>
+    <string name="listen_together_jam">%1$s님의 잼</string>
+    <string name="listen_together_jam_unnamed">함께 듣는 중</string>
+    <string name="listen_together_manage">관리</string>
+    <string name="listen_together_open">함께 듣기</string>
+    <string name="listen_together_open_count">함께 듣는 중 · %1$d명</string>
+    <string name="listen_together_you">나</string>
+    <string name="mixing">믹싱 중</string>
+    <string name="lossless">무손실</string>
+    <string name="lyrics_already_in_language">이미 %1$s 가사입니다.</string>
+    <string name="lyrics_already_romanized">이미 라틴 문자로 된 가사입니다.</string>
+    <string name="lyrics_by">가사 제공: %1$s</string>
+    <string-array name="lyrics_intro_lines">
+        <item>비트가 시작됩니다</item>
+        <item>노래가 시작됩니다</item>
+        <item>준비 중</item>
+        <item>분위기를 만드는 중</item>
+        <item>베이스 먼저, 가사는 잠시 후</item>
+        <item>잠시만요</item>
+        <item>점점 고조됩니다</item>
+        <item>지금은 그루브만</item>
+        <item>곧 훅이 나옵니다</item>
+        <item>잠시 숨 고르기</item>
+        <item>보컬이 들어갑니다</item>
+        <item>첫 음이 울립니다</item>
+    </string-array>
+    <string-array name="lyrics_loading_lines">
+        <item>가사를 가져오는 중</item>
+        <item>가사를 찾는 중</item>
+        <item>구절을 불러오는 중</item>
+        <item>가사를 불러오는 중</item>
+        <item>가사지를 확인하는 중</item>
+        <item>노래책을 살펴보는 중</item>
+        <item>가사를 정리하는 중</item>
+        <item>가사가 곧 표시됩니다</item>
+        <item>기록을 확인하는 중</item>
+        <item>알맞은 가사를 찾는 중</item>
+        <item>가사를 모으는 중</item>
+        <item>가사를 거의 찾았습니다</item>
+    </string-array>
+    <string name="lyrics_not_available">가사 없음</string>
+    <string name="lyrics_offset">가사 싱크 조절</string>
+    <string name="lyrics_offset_description">양수 값이면 가사가 더 늦게 표시됩니다.</string>
+    <string name="lyrics_offset_reset">재설정</string>
+    <string name="lyrics_provider_current">현재 제공처</string>
+    <string name="lyrics_provider_fetching">가사 가져오는 중…</string>
+    <string name="lyrics_provider_found">가사 찾음 · 탭하여 사용</string>
+    <string name="lyrics_provider_not_fetched">탭하여 가져오기</string>
+    <string name="lyrics_provider_not_found">가사를 찾을 수 없음</string>
+    <string name="lyrics_romanization_unavailable">이 가사는 로마자 발음 표기를 사용할 수 없습니다.</string>
+    <string name="lyrics_romanized">로마자 발음</string>
+    <string name="lyrics_saved_with_download">다운로드와 함께 저장된 가사</string>
+    <string name="lyrics_share_pick_limit">카드가 가득 찼습니다.</string>
+    <string name="lyrics_translated_to">%1$s(으)로 번역됨</string>
+    <string name="lyrics_translation_unavailable">지금은 번역을 사용할 수 없습니다.</string>
+    <string name="medium_quality">중간 품질</string>
+    <string name="mono">모노</string>
+    <string name="more">더 보기</string>
+    <string name="next_from">다음 재생: %1$s</string>
+    <string name="next_in_queue">다음 재생</string>
+    <string name="no_lyrics_for_track">이 트랙에는 가사가 없습니다.</string>
+    <string name="no_lyrics_found">가사를 찾을 수 없습니다.</string>
+    <string name="now_playing">지금 재생 중</string>
+    <string name="open_lyrics">가사</string>
+    <string name="pause">일시 정지</string>
+    <string name="play">재생</string>
+    <string name="played_by">%1$s님이 재생함</string>
+    <string name="playing_from">%1$s에서 재생 중</string>
+    <string name="playing_radio">%1$s 스테이션 재생 중</string>
+    <string name="queue">다음 재생</string>
+    <string name="remove_from_liked">좋아요 표시한 음악에서 제거</string>
+    <string name="remove_from_queue">다음 재생에서 제거</string>
+    <string name="repeat_all">전체 반복</string>
+    <string name="repeat_off">반복 끔</string>
+    <string name="repeat_one">한 곡 반복</string>
+    <string name="romanize_lyrics">로마자로 표시</string>
+    <string name="romanizing_lyrics">로마자로 변환 중…</string>
+    <string name="show_original_lyrics">원문 가사 보기</string>
+    <string name="shuffle_off">임의 재생 끔</string>
+    <string name="shuffle_on">임의 재생 켬</string>
+    <string name="stereo">스테레오</string>
+    <string name="translate_lyrics">가사 번역</string>
+    <string name="translating_lyrics_to">%1$s(으)로 번역 중…</string>
+    <string name="up_next">다음 재생</string>
+    <string name="upgrading_quality">품질 업그레이드 중</string>
+    <string name="waiting">대기 중</string>
+    <string name="widget_next">다음</string>
+    <string name="widget_previous">이전</string>
+    <string name="wired_headphones">유선 헤드폰</string>
+    <string name="usb_audio">USB 오디오</string>
+    <string name="hdmi_output">HDMI</string>
+    <string name="personal_phone">%1$s의 휴대폰</string>
+    <string name="this_phone">이 휴대폰</string>
+    <string name="albums">앨범</string>
+    <string name="artists">아티스트</string>
+    <string name="card_plays_format">%1$s회 재생</string>
+    <string name="card_songs_format">%1$s곡</string>
+    <string name="card_views_format">조회수 %1$s회</string>
+    <string name="clear_search">검색 지우기</string>
+    <string name="downloaded">다운로드됨</string>
+    <string name="explore">둘러보기</string>
+    <string name="library">보관함</string>
+    <string name="library_sign_in_description">좋아요 표시한 노래, 재생목록 및 YouTube Music 기록을 보려면 Google 계정에 로그인하십시오.</string>
+    <string name="new_playlist">새로운 재생목록</string>
+    <string name="on_device">이 기기</string>
+    <string name="personalized_recommendations">나를 위한 맞춤 추천 받기</string>
+    <string name="pinned">고정됨</string>
+    <string name="play_next">다음에 재생</string>
+    <string name="playlist">재생목록</string>
+    <string name="playlist_action">재생목록</string>
+    <string name="playlists">재생목록</string>
+    <string name="recent_search_edit">‘%1$s’ 편집</string>
+    <string name="recent_search_remove">최근 검색에서 ‘%1$s’ 제거</string>
+    <string name="recent_searches">최근 검색</string>
+    <string name="replay_subtitle">나의 인기곡, 아티스트, 앨범 및 장르</string>
+    <string name="retry">다시 시도</string>
+    <string name="saved_to_youtube_music">YouTube Music에 저장됨</string>
+    <string name="search">검색</string>
+    <string name="search_empty">YouTube Music에서 수백만 곡의 노래를 검색하십시오.</string>
+    <string name="search_hint">아티스트, 노래, 가사 등</string>
+    <string name="search_library_empty">로컬 음악 폴더의 노래를 검색하십시오.</string>
+    <string name="search_library_hint">노래, 아티스트 및 앨범</string>
+    <string name="search_library_no_results">로컬 음악에서 ‘%1$s’에 대한 결과 없음</string>
+    <string name="selected">선택됨</string>
+    <string name="share">공유</string>
+    <string name="shelf_artists_on_the_rise">떠오르는 아티스트</string>
+    <string name="shelf_chart">차트</string>
+    <string name="shelf_charts">차트</string>
+    <string name="shelf_concerts">콘서트</string>
+    <string name="shelf_featured_playlists_for_you">추천 재생목록</string>
+    <string name="shelf_for_you">나를 위한 추천</string>
+    <string name="shelf_forgotten_favorites">잊고 있던 애청곡</string>
+    <string name="shelf_from_the_community">커뮤니티 추천</string>
+    <string name="shelf_from_your_library">보관함에서</string>
+    <string name="shelf_hits_today">오늘의 히트곡</string>
+    <string name="shelf_listen_again">다시 듣기</string>
+    <string name="shelf_mixed_for_you">나를 위한 믹스</string>
+    <string name="shelf_new_releases">최신 발매</string>
+    <string name="shelf_quick_picks">빠른 선곡</string>
+    <string name="shelf_recents">최근 재생한 항목</string>
+    <string name="shelf_recommended_music_videos">추천 뮤직비디오</string>
+    <string name="shelf_shorts">Shorts</string>
+    <string name="shelf_similar_to">%1$s와(과) 비슷한 음악</string>
+    <string name="shelf_single">싱글</string>
+    <string name="shelf_song_item">노래</string>
+    <string name="shelf_top_music_videos">인기 뮤직비디오</string>
+    <string name="shelf_top_tunes_right_now">지금 인기 있는 노래</string>
+    <string name="shelf_trending">인기 급상승</string>
+    <string name="shelf_trending_community_playlists">인기 커뮤니티 재생목록</string>
+    <string name="shelf_youtube_charts">YouTube 차트</string>
+    <string name="show_all">모두 보기</string>
+    <string name="sign_in">로그인</string>
+    <string name="sign_in_youtube_music">YouTube Music에 로그인</string>
+    <string name="subscriptions">구독</string>
+    <string name="switch_to_grid_view">격자 보기로 전환</string>
+    <string name="switch_to_list_view">목록 보기로 전환</string>
+    <string name="your_replay">나의 Replay</string>
+    <string name="your_listening_experience">나의 청취 기록</string>
+    <string name="default_replay_holder">BitChord 청취자</string>
+    <string name="member_since">가입일</string>
+    <string name="import_spotify">Spotify에서 가져오기</string>
+    <string name="import_spotify_subtitle">재생목록 링크 사용</string>
+</resources>

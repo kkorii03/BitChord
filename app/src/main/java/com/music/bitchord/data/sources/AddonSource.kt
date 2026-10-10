@@ -107,7 +107,7 @@ class AddonSource(
      */
     override suspend fun health(): SourceHealth = withContext(Dispatchers.IO) {
         if (config.baseUrl.isBlank()) {
-            return@withContext SourceHealth.Rejected("An addon URL is required")
+            return@withContext SourceHealth.Rejected("애드온 URL이 필요합니다")
         }
         if (shutOut("a health check")) {
             return@withContext SourceHealth.Rejected(NEEDS_LOSSLESS_OUTPUT)
@@ -131,9 +131,9 @@ class AddonSource(
                 // kinds of working this is.
                 if (client.probeSearch().isSuccess) {
                     TrackLog.d(TAG, "${config.displayName}: no manifest, but search answers")
-                    return@fold SourceHealth.Ok("No manifest · search works")
+                    return@fold SourceHealth.Ok("매니페스트 없음 · 검색은 가능")
                 }
-                val reason = failure.message ?: "Could not reach the addon"
+                val reason = failure.message ?: "애드온에 연결할 수 없습니다"
                 if (failure is AddonException) {
                     SourceHealth.Rejected(reason)
                 } else {
@@ -410,7 +410,7 @@ class AddonSource(
 
         /** What a gated addon's health says, for the editor's Test line. The sources list draws its own. */
         const val NEEDS_LOSSLESS_OUTPUT =
-            "This addon only works with a lossless output — use a lossless supported device"
+            "이 애드온은 무손실 출력에서만 작동합니다 — 무손실 지원 기기를 사용하십시오"
 
         /** How many search rows to remember. A long queue's worth, several times over. */
         const val MAX_ROWS = 256

@@ -266,7 +266,7 @@ object DownloadStore {
     fun begin(context: Context, name: String, mimeType: String): Pending {
         if (!AppSettings.exportDownloads.value) {
             val target = privateFile(context, name)
-            val folder = target.parentFile ?: error("No download folder")
+            val folder = target.parentFile ?: error("다운로드 폴더 없음")
             if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
             val part = File(folder, ".$name.part")
             part.delete()
@@ -296,7 +296,7 @@ object DownloadStore {
         }
 
         val target = legacyFile(name)
-        val folder = target.parentFile ?: error("No Music folder on this device")
+        val folder = target.parentFile ?: error("이 기기에 음악 폴더가 없습니다")
         if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
         val part = File(folder, "$name.part")
         part.delete()

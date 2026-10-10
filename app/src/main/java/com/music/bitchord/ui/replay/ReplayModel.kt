@@ -178,7 +178,7 @@ fun ReplaySummary.storyHeadline(context: Context, page: ReplayStoryPage): List<H
         context.getString(R.string.replay_summary_start) to false,
         " " to false,
         label to true,
-        " in music." to false,
+        " 음악 기록" to false,
     )
 }
 
@@ -189,7 +189,7 @@ fun ReplayPeriod.localizedChip(context: Context): String = when (this) {
 }
 
 fun ReplaySummary.localizedLabel(context: Context): String = when (period) {
-    ReplayPeriod.THIS_MONTH -> DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
+    ReplayPeriod.THIS_MONTH -> DateTimeFormatter.ofPattern("yyyy년 M월", Locale.getDefault())
         .format(LocalDate.now())
         .replaceFirstChar { it.titlecase(Locale.getDefault()) }
     ReplayPeriod.THIS_YEAR -> LocalDate.now().year.toString()
@@ -288,7 +288,7 @@ fun formatHour(context: Context, hour: Int): String = when (hour) {
 /** `2026-08-14` as "14 August". */
 fun formatDay(context: Context, iso: String): String = runCatching {
     LocalDate.parse(iso).format(
-        DateTimeFormatter.ofPattern("d MMMM", context.resources.configuration.locales[0]),
+        DateTimeFormatter.ofPattern("M월 d일", context.resources.configuration.locales[0]),
     )
 }.getOrDefault(iso)
 

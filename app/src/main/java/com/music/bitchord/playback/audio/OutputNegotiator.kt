@@ -33,10 +33,10 @@ enum class TransportType(val label: String) {
 enum class FallbackReason(val label: String) {
     NONE("None"),
     UNSUPPORTED_FORMAT("Unsupported source format"),
-    ROUTE_LIMITATION("Route limitation (device profile)"),
-    OS_LIMITATION("OS limitation (system audio policy)"),
-    DIRECT_USB_UNAVAILABLE("Direct USB unavailable"),
-    DECODER_LIMITATION("Decoder limitation"),
+    ROUTE_LIMITATION("경로 제한 (기기 프로필)"),
+    OS_LIMITATION("OS 제한 (시스템 오디오 정책)"),
+    DIRECT_USB_UNAVAILABLE("Direct USB 사용 불가"),
+    DECODER_LIMITATION("디코더 제한"),
 }
 
 data class SourceDescriptor(
@@ -208,7 +208,7 @@ object OutputNegotiator {
                 FallbackReason.NONE
             }
             val fallbackDetail = if (fallbackReason != FallbackReason.NONE) {
-                "Speaker output capped at 16-bit PCM to prevent OEM mixer distortion"
+                "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트 PCM으로 제한"
             } else {
                 null
             }
@@ -289,9 +289,9 @@ object OutputNegotiator {
             }
             val fallbackDetail = when {
                 requestedMode == OutputPcmMode.FLOAT_32 ->
-                    "Route does not expose direct Float32 or 24-bit PCM (using direct 16-bit PCM)"
+                    "경로가 Direct Float32/24비트 PCM을 지원하지 않음 (Direct 16비트 PCM 사용)"
                 isSourceHighRes ->
-                    "Route does not expose direct 24-bit PCM (using direct 16-bit PCM)"
+                    "경로가 Direct 24비트 PCM을 지원하지 않음 (Direct 16비트 PCM 사용)"
                 else -> null
             }
             return OutputDescriptor(
@@ -356,7 +356,7 @@ object OutputNegotiator {
                     FallbackReason.ROUTE_LIMITATION
                 }
                 val d = directUsbProbe?.diagnosticReason
-                    ?: "USB device advertises 16-bit PCM only"
+                    ?: "USB 기기가 16비트 PCM만 지원"
                 Pair(r, d)
             }
             routeKind == AudioRouting.Kind.BLUETOOTH -> {

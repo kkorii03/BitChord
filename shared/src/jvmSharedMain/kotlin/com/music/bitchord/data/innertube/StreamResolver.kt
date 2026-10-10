@@ -662,8 +662,8 @@ object StreamResolver {
 
             // A rung above the ceiling beats no download at all; extraction does the same.
             found?.let { return@withContext it }
-            if (offered) error("Couldn't reach a downloadable copy just now — try again")
-            error("No downloadable audio for this track")
+            if (offered) error("지금은 다운로드 가능한 사본에 연결할 수 없습니다 — 다시 시도하십시오")
+            error("이 트랙에는 다운로드 가능한 오디오가 없습니다")
         }
 
     // ---- Format selection ---------------------------------------------------
@@ -924,7 +924,7 @@ object StreamResolver {
                 failure = e
             }
         }
-        throw failure ?: IllegalStateException("Track unavailable: no audio streams")
+        throw failure ?: IllegalStateException("트랙 사용 불가: 오디오 스트림 없음")
     }
 
     /**
@@ -942,21 +942,21 @@ object StreamResolver {
      * different thing to be told than `ERROR_CODE_IO_UNSPECIFIED`.
      */
     private fun permanentReason(e: Throwable): String? = when (e) {
-        is PermanentlyUnplayableException -> e.message ?: "This track cannot be played"
+        is PermanentlyUnplayableException -> e.message ?: "이 트랙은 재생할 수 없습니다"
         // The whole reason this function exists — see [newPipeStream].
         is AgeRestrictedContentException ->
             if (Innertube.cookie == null) {
-                "This track is age-restricted. Sign in to YouTube to play it."
+                "연령 제한 트랙입니다. 재생하려면 YouTube에 로그인하십시오."
             } else {
-                "YouTube will not serve this age-restricted track to this app."
+                "YouTube가 이 앱에 연령 제한 트랙을 제공하지 않습니다."
             }
-        is GeographicRestrictionException -> "This track isn't available in your country"
-        is UnsupportedContentInCountryException -> "This track isn't available in your country"
-        is PaidContentException -> "This track is paid content"
-        is YoutubeMusicPremiumContentException -> "This track needs YouTube Music Premium"
-        is PrivateContentException -> "This track is private"
-        is AccountTerminatedException -> "The channel behind this track was terminated"
-        is SoundCloudGoPlusContentException -> "This track needs SoundCloud Go+"
+        is GeographicRestrictionException -> "이 국가에서는 이용할 수 없는 트랙입니다"
+        is UnsupportedContentInCountryException -> "이 국가에서는 이용할 수 없는 트랙입니다"
+        is PaidContentException -> "유료 콘텐츠 트랙입니다"
+        is YoutubeMusicPremiumContentException -> "YouTube Music Premium이 필요한 트랙입니다"
+        is PrivateContentException -> "비공개 트랙입니다"
+        is AccountTerminatedException -> "이 트랙의 채널이 해지되었습니다"
+        is SoundCloudGoPlusContentException -> "SoundCloud Go+가 필요한 트랙입니다"
         // ExoPlayer and the coroutine machinery both wrap freely, and the
         // classification has to survive being wrapped or it never fires: the
         // failure that reaches [resolveUncached] arrives as whatever the last
@@ -1010,7 +1010,7 @@ object StreamResolver {
                         it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
                 }
             val stream = select(candidates.map { it.averageBitrate to it })
-                ?: error("Track unavailable: no audio streams")
+                ?: error("트랙 사용 불가: 오디오 스트림 없음")
             TrackLog.d(
                 TAG,
                 "NewPipe picked ${stream.format?.name} @ ${stream.averageBitrate}kbps " +

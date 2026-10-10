@@ -79,7 +79,7 @@ object SourceFormats {
         val url = rawUrl.trim().trimEnd('/')
         if (url.toHttpUrlOrNull() == null) {
             return@withContext Result.success(
-                DetectedFormat.Unsupported("That is not a web address BitChord can open"),
+                DetectedFormat.Unsupported("BitChord가 열 수 있는 웹 주소가 아닙니다"),
             )
         }
 
@@ -118,7 +118,7 @@ object SourceFormats {
         // Report what was actually found over the transport error from a URL
         // the user never typed.
         firstUnsupported?.let { return@withContext Result.success(it) }
-        Result.failure(lastFailure ?: AddonUnavailable("Nothing answered at that address"))
+        Result.failure(lastFailure ?: AddonUnavailable("이 주소에서 응답이 없습니다"))
     }
 
     /**
@@ -131,11 +131,11 @@ object SourceFormats {
      */
     fun detect(body: String, url: String = ""): DetectedFormat {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-            ?: return DetectedFormat.Unsupported("That address did not return JSON")
+            ?: return DetectedFormat.Unsupported("이 주소는 JSON을 반환하지 않았습니다")
 
         val obj = root as? JsonObject
             ?: return DetectedFormat.Unsupported(
-                "That JSON is a list, and every format BitChord reads is an object",
+                "이 JSON은 배열입니다. BitChord는 객체 형식만 읽을 수 있습니다",
             )
 
         // 1. A module index: JS plugins filed under "category:*" keys. First
@@ -145,7 +145,7 @@ object SourceFormats {
                 com.music.bitchord.data.sources.module.ModuleIndex.parseModules(json, body)
             }.getOrDefault(emptyList())
             return if (modules.isEmpty()) {
-                DetectedFormat.Unsupported("That module index listed no modules")
+                DetectedFormat.Unsupported("모듈 인덱스에 모듈이 없습니다")
             } else {
                 DetectedFormat.ModuleIndex(modules.size, url)
             }
@@ -160,7 +160,7 @@ object SourceFormats {
         if (looksLikeManifest) {
             val manifest = runCatching { json.decodeFromJsonElement(AddonManifest.serializer(), obj) }
                 .getOrNull()
-                ?: return DetectedFormat.Unsupported("That looks like an addon manifest, but it could not be read")
+                ?: return DetectedFormat.Unsupported("애드온 매니페스트처럼 보이지만 읽을 수 없습니다")
 
             // The one thing genuinely required. Everything this app does with
             // an addon starts by asking it for a track by name, so an addon

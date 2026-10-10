@@ -158,7 +158,7 @@ object SpotifyLibrary {
 
     private suspend fun authHeaders(): Map<String, String> {
         val token = SpotifyToken.accessToken()
-            ?: throw IllegalStateException("Spotify sign-in expired")
+            ?: throw IllegalStateException("Spotify 로그인이 만료되었습니다")
         return buildMap {
             put("Authorization", "Bearer $token")
             put("Accept", "application/json")

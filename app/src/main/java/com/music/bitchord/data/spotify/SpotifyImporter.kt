@@ -97,7 +97,7 @@ object SpotifyImporter {
             // Extract <script id="__NEXT_DATA__" type="application/json">...</script>
             val scriptRegex = Regex("""<script id="__NEXT_DATA__" type="application/json">(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
             val match = scriptRegex.find(html)
-                ?: error("Could not parse Spotify playlist metadata. Make sure the playlist is public.")
+                ?: error("Spotify 재생목록 정보를 읽을 수 없습니다. 공개 재생목록인지 확인하십시오.")
 
             val jsonString = match.groupValues[1]
             val root = json.parseToJsonElement(jsonString).jsonObject
@@ -112,7 +112,7 @@ object SpotifyImporter {
 
             val playlistTitle = stateData["name"]?.jsonPrimitive?.content
                 ?: stateData["title"]?.jsonPrimitive?.content
-                ?: "Imported Spotify Playlist"
+                ?: "가져온 Spotify 재생목록"
 
             val trackListJson = stateData["trackList"]?.jsonArray
                 ?: stateData["tracks"]?.jsonArray
@@ -135,7 +135,7 @@ object SpotifyImporter {
             }
 
             if (tracks.isEmpty()) {
-                error("No tracks found in public Spotify playlist.")
+                error("공개 Spotify 재생목록에서 트랙을 찾지 못했습니다.")
             }
 
             // The embed page stops at its first 100 tracks. The web player's

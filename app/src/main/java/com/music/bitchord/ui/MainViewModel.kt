@@ -2503,7 +2503,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
                     val songs = Downloads.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks")
+                    if (songs.isEmpty()) UiState.Error("다운로드한 트랙 없음")
                     else UiState.Success(songs)
                 }
                 browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
@@ -2702,7 +2702,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 browseId == "local:downloads" -> {
                     val songs = Downloads.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks")
+                    if (songs.isEmpty()) UiState.Error("다운로드한 트랙 없음")
                     else UiState.Success(songs)
                 }
                 browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
@@ -2873,7 +2873,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 browseId == "local:downloads" -> runCatching {
                     Downloads.getDownloadedSongs(context)
-                        .ifEmpty { error("No downloaded tracks") }
+                        .ifEmpty { error("다운로드한 트랙 없음") }
                 }
                 browseId == CACHE_FOLDER_BROWSE_ID -> runCatching {
                     AudioCache.cachedSongs().map { it.song }

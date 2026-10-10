@@ -52,7 +52,7 @@ object SmbConnection {
         invalidate()
         val host = SmbAuth.host
         val shareName = SmbAuth.share
-        require(host.isNotBlank() && shareName.isNotBlank()) { "SMB is not configured" }
+        require(host.isNotBlank() && shareName.isNotBlank()) { "SMB가 설정되지 않았습니다" }
         val config = SmbConfig.builder()
             .withTimeout(20, TimeUnit.SECONDS)
             .withReadTimeout(30, TimeUnit.SECONDS)

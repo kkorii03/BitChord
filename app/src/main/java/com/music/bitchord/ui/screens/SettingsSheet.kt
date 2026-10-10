@@ -209,6 +209,8 @@ fun SettingsScreen(
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
+    val geminiTranslation by AppSettings.geminiTranslation.collectAsStateWithLifecycle()
+    val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -340,6 +342,7 @@ fun SettingsScreen(
         }
     }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
+    var showGeminiKeyDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
 
@@ -991,6 +994,31 @@ fun SettingsScreen(
                         onClick = onTranslationLanguage,
                     )
                 }
+                val geminiTranslationTitle = stringResource(R.string.gemini_translation)
+                row(geminiTranslationTitle, "lyrics", "translate", "gemini", "ai") {
+                    SettingsRow(
+                        icon = Icons.Rounded.AutoAwesome,
+                        title = geminiTranslationTitle,
+                        subtitle = stringResource(
+                            if (geminiApiKey.isBlank()) R.string.gemini_translation_subtitle_missing
+                            else R.string.gemini_translation_subtitle_ready,
+                        ),
+                        trailing = {
+                            Switch(
+                                checked = geminiTranslation && geminiApiKey.isNotBlank(),
+                                onCheckedChange = { on ->
+                                    if (on && geminiApiKey.isBlank()) showGeminiKeyDialog = true
+                                    else AppSettings.setGeminiTranslation(on)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { showGeminiKeyDialog = true },
+                    )
+                }
             }
         }
 
@@ -1611,6 +1639,50 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showListenBrainzTokenDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showGeminiKeyDialog) {
+        var keyInput by remember { mutableStateOf(geminiApiKey) }
+        AlertDialog(
+            onDismissRequest = { showGeminiKeyDialog = false },
+            title = { Text(stringResource(R.string.gemini_api_key)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.gemini_api_key_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                    OutlinedTextField(
+                        value = keyInput,
+                        onValueChange = { keyInput = it },
+                        label = { Text(stringResource(R.string.gemini_api_key)) },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val key = keyInput.trim()
+                    AppSettings.setGeminiApiKey(key)
+                    AppSettings.setGeminiTranslation(key.isNotBlank())
+                    showGeminiKeyDialog = false
+                }) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGeminiKeyDialog = false }) {
                     Text(stringResource(R.string.cancel))
                 }
             },

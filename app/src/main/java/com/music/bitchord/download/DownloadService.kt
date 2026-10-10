@@ -199,12 +199,12 @@ class DownloadService : Service() {
         val song = current
         val title = when {
             runningStates.size > 1 -> "Downloading ${runningStates.size} songs"
-            else -> song?.title ?: "Downloading"
+            else -> song?.title ?: "다운로드 중"
         }
         val text = when {
             runningStates.size > 1 && waiting > 0 -> "$waiting more queued"
             runningStates.size > 1 -> song?.title.orEmpty()
-            song == null -> "Starting"
+            song == null -> "시작하는 중"
             waiting > 0 -> "${song.artist} · $waiting more queued"
             else -> song.artist
         }
@@ -241,7 +241,7 @@ class DownloadService : Service() {
                 // or a heads-up every time a track finishes.
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Songs being saved to your Music folder"
+                description = "음악 폴더에 저장 중인 노래"
                 setShowBadge(false)
             },
         )

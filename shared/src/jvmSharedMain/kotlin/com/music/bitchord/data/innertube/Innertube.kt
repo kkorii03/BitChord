@@ -847,7 +847,7 @@ object Innertube {
     // reads the library is the one allowed to edit it.
 
     /** A write attempted without a session; the caller has a sign-in prompt to show. */
-    class NotSignedInException : IllegalStateException("Sign in to YouTube Music to do that")
+    class NotSignedInException : IllegalStateException("이 작업을 하려면 YouTube Music에 로그인하십시오")
 
     private fun requireSession() {
         if (cookie == null) throw NotSignedInException()

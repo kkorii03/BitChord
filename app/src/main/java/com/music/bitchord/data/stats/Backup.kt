@@ -91,12 +91,12 @@ object Backup {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
                 ?.use { it.readBytes().decodeToString() }
-                ?: error("Couldn't open that file")
+                ?: error("파일을 열 수 없습니다")
             val file = runCatching { json.decodeFromString(BackupFile.serializer(), text) }
-                .getOrElse { error("That doesn't look like a BitChord backup") }
-            require(file.app == APP_TAG) { "That backup is from another app" }
+                .getOrElse { error("BitChord 백업 파일이 아닙니다") }
+            require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
             require(file.version <= SCHEMA_VERSION) {
-                "That backup was written by a newer version of BitChord"
+                "더 최신 버전의 BitChord에서 만든 백업입니다"
             }
 
             ListeningStats.importAll(file.listening)

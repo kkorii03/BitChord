@@ -205,7 +205,7 @@ object Downloads {
             // looking accepted forever.
             Log.w(TAG, "could not start the download service: ${it.message}")
             synchronized(lock) { pending.remove(id) }
-            fail(id, "Downloads can't start right now")
+            fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
     }
 
@@ -939,7 +939,7 @@ object Downloads {
             clear(id)
             return
         }
-        val route = plan.route ?: error("Nothing to download")
+        val route = plan.route ?: error("다운로드할 항목이 없습니다")
 
         var pending: DownloadStore.Pending? = null
         var lyrics: Deferred<LyricsTag.Embeddable?>? = null
@@ -1253,7 +1253,7 @@ object Downloads {
     private fun Exception.friendly(): String = when {
         (this is IllegalStateException || this is IllegalArgumentException) &&
             !message.isNullOrBlank() -> message!!
-        else -> "Download failed — check your connection"
+        else -> "다운로드 실패 — 연결 상태를 확인하십시오"
     }
 
     /**
@@ -1315,7 +1315,7 @@ object Downloads {
      * looking for a network problem that isn't there. Shared with the callers
      * that show it as a toast so the two cannot drift apart.
      */
-    internal const val WIFI_ONLY_REFUSAL = "Downloads are set to Wi-Fi only"
+    internal const val WIFI_ONLY_REFUSAL = "다운로드가 Wi-Fi 전용으로 설정되어 있습니다"
 
     /** Dropped when the sheet is reopened; a failure is worth showing once. */
     fun dismissFailure(videoId: String) {

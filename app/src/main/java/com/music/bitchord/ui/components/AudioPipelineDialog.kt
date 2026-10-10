@@ -113,12 +113,12 @@ private fun bitExactVerdict(
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
-    dsd -> "No — DSD converted to PCM"
-    loudnessActive -> "No — loudness normalization"
-    eqActive -> "No — equalizer"
-    spatialActive -> "No — spatial audio"
+    dsd -> "아니요 — DSD를 PCM으로 변환"
+    loudnessActive -> "아니요 — 사운드 보정"
+    eqActive -> "아니요 — EQ"
+    spatialActive -> "아니요 — 공간 음향"
     outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
-    else -> "No — ${outputExactDetail ?: "converted downstream"}"
+    else -> "아니요 — ${outputExactDetail ?: "하위 단계에서 변환됨"}"
 }
 
 /**
@@ -335,8 +335,8 @@ fun AudioPipelineDialog(
             val qualityText = when {
                 dsdRateHz != null -> "DSD to PCM, full band below the cutoff"
                 inRate == null || outRate == null -> "—"
-                isPassthrough -> "Passthrough"
-                else -> "Resampled"
+                isPassthrough -> "패스스루"
+                else -> "리샘플링됨"
             }
 
             PipelineRule()
@@ -433,7 +433,7 @@ fun AudioPipelineDialog(
             }
 
             // 5. Output Device Stage
-            val deviceName = outputStatus.deviceName.ifBlank { "System default" }
+            val deviceName = outputStatus.deviceName.ifBlank { "시스템 기본값" }
             val audioTrackEncoding = when (outputStatus.actualEncoding) {
                 AudioFormat.ENCODING_PCM_FLOAT -> "Float32"
                 AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM24"
@@ -465,24 +465,24 @@ fun AudioPipelineDialog(
 
                 val directStatusText = when {
                     outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
-                        "Active (Direct Userspace USB)"
+                        "활성 (Direct 유저스페이스 USB)"
                     outputStatus.directPlaybackActual ->
-                        "Active (Direct AudioTrack, Bypasses Mixer)"
+                        "활성 (Direct AudioTrack, 믹서 우회)"
                     outputStatus.directPlaybackRejected ->
                         "Rejected"
                     outputStatus.directPlaybackSupported ->
-                        "Supported (Framework Mixed)"
+                        "지원됨 (프레임워크 믹스)"
                     else ->
-                        "Not Supported (Mixed Path)"
+                        "지원 안 됨 (믹스 경로)"
                 }
                 PipelineRow("Direct", directStatusText)
                 PipelineRow("AudioTrack", audioTrackText)
 
                 val mixerText = when {
                     outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
-                        "Direct (Bypasses System Mixer)"
+                        "Direct (시스템 믹서 우회)"
                     outputStatus.directPlaybackActual ->
-                        "Direct path active; endpoint format not independently verified"
+                        "Direct 경로 활성, 출력단 포맷은 별도로 확인되지 않음"
                     outputStatus.systemMixerRateHz != null -> {
                         val hal = outputStatus.halFormat
                         val mixerRate = outputStatus.systemMixerRateHz?.let(::rateText)
@@ -499,21 +499,21 @@ fun AudioPipelineDialog(
                 }
 
                 outputStatus.usbEndpointFormat?.let {
-                    PipelineRow("USB Device Capability", formatUsbCapability(it))
-                    PipelineNote("Reported by Android for the connected USB device. This describes device capabilities and may differ from the active playback format.")
+                    PipelineRow("USB 기기 성능", formatUsbCapability(it))
+                    PipelineNote("연결된 USB 기기에 대해 Android가 보고한 정보입니다. 기기 성능을 나타내며 실제 재생 포맷과 다를 수 있습니다.")
                 }
 
                 if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
                     val bt = outputStatus.bluetoothTelemetry
                     outputStatus.bluetoothProfile?.let { PipelineRow("Bluetooth", it) }
                     if (bt != null && bt.isConnected) {
-                        PipelineRow("Codec", if (bt.hasNamedCodec) bt.codecName else "System Managed")
+                        PipelineRow("Codec", if (bt.hasNamedCodec) bt.codecName else "시스템 관리")
                         bt.bitDepth?.let { PipelineRow("Codec Bits", "$it-bit") }
                         bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", rateText(it)) }
                         PipelineRow("Codec Bitrate", bt.bitrateLabel)
                         bt.mode?.let { PipelineRow("Codec Mode", it) }
                     } else {
-                        PipelineRow("Codec", "System Managed")
+                        PipelineRow("Codec", "시스템 관리")
                     }
                 }
 

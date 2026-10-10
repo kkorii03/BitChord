@@ -39,7 +39,7 @@ object AudioOutputStatus {
     data class Snapshot(
         val sink: String = "AudioTrack",
         val requestedPcmMode: OutputPcmMode = OutputPcmMode.PCM_16,
-        val deviceName: String = "System default",
+        val deviceName: String = "시스템 기본값",
         /**
          * The [AudioDeviceInfo.getId] of whatever [deviceName] names — the exact
          * device the player resolved and is rendering to, not a second guess at
@@ -140,7 +140,8 @@ object AudioOutputStatus {
                 decoderName == other.decoderName &&
                 bufferSize == other.bufferSize &&
                 decoderOutputEncoding == other.decoderOutputEncoding &&
-                dspFormat == other.dspFormat &&
+                dspFormat == other.dspFormat &&
+
                 dspAvailable == other.dspAvailable &&
                 directUsbProbe == other.directUsbProbe &&
                 directSupport == other.directSupport &&
@@ -181,7 +182,8 @@ object AudioOutputStatus {
             result = 31 * result + (decoderName?.hashCode() ?: 0)
             result = 31 * result + (bufferSize ?: 0)
             result = 31 * result + (decoderOutputEncoding?.hashCode() ?: 0)
-            result = 31 * result + dspFormat.hashCode()
+            result = 31 * result + dspFormat.hashCode()
+
             result = 31 * result + dspAvailable.hashCode()
             result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
@@ -252,7 +254,7 @@ object AudioOutputStatus {
             AudioDeviceInfo.TYPE_BLE_SPEAKER,
             AudioDeviceInfo.TYPE_BLE_BROADCAST,
             -> "LE Audio"
-            AudioDeviceInfo.TYPE_HEARING_AID -> "Hearing Aid"
+            AudioDeviceInfo.TYPE_HEARING_AID -> "보청기"
             else -> null
         }
 
@@ -268,11 +270,11 @@ object AudioOutputStatus {
         val (reason, detail) = when {
             isDirectUsbViable -> Pair(FallbackReason.NONE, null)
             computedRouteKind == AudioRouting.Kind.PHONE && fallback ->
-                Pair(FallbackReason.ROUTE_LIMITATION, "Speaker output capped at 16-bit to avoid OEM mixer distortion")
+                Pair(FallbackReason.ROUTE_LIMITATION, "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트로 제한")
             computedRouteKind == AudioRouting.Kind.USB && fallback ->
                 Pair(
                     if (directUsbProbe?.isViable == false) FallbackReason.DIRECT_USB_UNAVAILABLE else FallbackReason.ROUTE_LIMITATION,
-                    directUsbProbe?.diagnosticReason ?: "USB route does not advertise Float32 output",
+                    directUsbProbe?.diagnosticReason ?: "USB 경로가 Float32 출력을 지원하지 않음",
                 )
             computedRouteKind == AudioRouting.Kind.BLUETOOTH && fallback -> {
                 val btCode = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
@@ -286,7 +288,7 @@ object AudioOutputStatus {
 
         val baseSnapshot = current.value.copy(
             requestedPcmMode = requestedPcmMode,
-            deviceName = device?.productName?.toString()?.ifBlank { null } ?: "System default",
+            deviceName = device?.productName?.toString()?.ifBlank { null } ?: "시스템 기본값",
             activeDeviceId = device?.id,
             sampleRatesHz = device?.sampleRates ?: IntArray(0),
             encodings = device?.encodings ?: IntArray(0),

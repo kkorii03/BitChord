@@ -23,13 +23,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 
@@ -105,6 +114,38 @@ object LyricsTranslation {
             .build()
     }
 
+    /**
+     * Translate with Google's Gemini instead of Google Translate. Gemini reads
+     * the whole song at once, so it keeps one voice and speech level across
+     * every line and renders lyrics rather than word-for-word text. Set from
+     * the app's settings; when off, or when the key is blank, or when Gemini
+     * fails for any reason, translation quietly uses Google Translate.
+     */
+    @Volatile
+    var geminiEnabled: Boolean = false
+
+    /** The user's own Gemini API key from Google AI Studio. Never bundled. */
+    @Volatile
+    var geminiApiKey: String = ""
+
+    private const val GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
+
+    // Tried in order: when a model is unknown to the key's project or its free
+    // quota is used up, the next one usually still answers.
+    private val GEMINI_MODELS = listOf("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+    private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+    private val geminiClient by lazy {
+        Http.client.newBuilder()
+            .callTimeout(90, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val geminiReady: Boolean
+        get() = geminiEnabled && geminiApiKey.isNotBlank()
+
     @Serializable
     private data class CachedTranslation(
         val version: Int = CACHE_VERSION,
@@ -146,6 +187,11 @@ object LyricsTranslation {
 
         val slots = flatten(lines)
         if (slots.isEmpty()) return Result.Unavailable
+        if (geminiReady) {
+            translateWithGemini(trackId, lines, slots, target)?.let { return it }
+            // Anything short of a complete, line-for-line answer falls through
+            // to Google Translate, so the button never stops working.
+        }
         val cacheKey = cacheKey(trackId, target, slots)
         val cached = memory.get(cacheKey) ?: readCache(cacheKey)?.also {
             memory.put(cacheKey, it)
@@ -284,6 +330,195 @@ object LyricsTranslation {
             sourceLanguage = source,
             fromCache = false,
         )
+    }
+
+    /**
+     * Gemini's answer for the whole song, cached separately from Google's so
+     * switching engines never shows the other engine's text. Null whenever the
+     * answer can't be used as-is, which sends the caller back to Google.
+     */
+    private suspend fun translateWithGemini(
+        trackId: String,
+        lines: List<LyricLine>,
+        slots: List<TextSlot>,
+        target: String,
+    ): Result? {
+        val cacheKey = cacheKey("gemini\u0000$trackId", target, slots)
+        val cached = memory.get(cacheKey) ?: readCache(cacheKey)?.also { memory.put(cacheKey, it) }
+        val answer = if (cached != null && cached.version == CACHE_VERSION && cached.texts.size == slots.size) {
+            cached
+        } else {
+            val fresh = requestGemini(slots, target) ?: return null
+            if (fresh.translations.size != slots.size) return null
+            CachedTranslation(
+                sourceLanguage = fresh.sourceLanguage,
+                targetLanguage = target,
+                texts = fresh.translations,
+            ).also {
+                memory.put(cacheKey, it)
+                writeCache(cacheKey, it)
+            }
+        }
+        return if (sameLanguage(answer.sourceLanguage, target)) {
+            Result.SameLanguage(answer.sourceLanguage)
+        } else {
+            Result.Translated(
+                lines = rebuild(lines, slots, answer.texts),
+                sourceLanguage = answer.sourceLanguage,
+                fromCache = answer === cached,
+            )
+        }
+    }
+
+    private fun geminiInstruction(target: String, count: Int): String {
+        val locale = Locale.forLanguageTag(target.replace('_', '-'))
+        val languageName = locale.getDisplayName(Locale.ENGLISH).ifBlank { target }
+        val korean = canonicalLanguage(target) == "ko"
+        return buildString {
+            appendLine("You are a professional lyric translator localising song lyrics for a music app.")
+            appendLine("Translate every input line into $languageName ($target).")
+            appendLine()
+            appendLine("Rules:")
+            appendLine("1. Return exactly $count translations in \"translations\", one per input line, in the same order. Never merge, split, skip, reorder or add lines.")
+            appendLine("2. Read the whole song first. Keep one consistent narrator voice, speech level and tone across all lines.")
+            if (korean) {
+                appendLine("   For Korean, pick either casual speech (반말) or polite speech (존댓말) to suit the song and use it for every line. Never mix them. Most songs read naturally in 반말.")
+                appendLine("   Write natural modern Korean as on an official Korean lyric sheet, not translationese. Avoid stiff words such as '당신' unless the song truly calls for it.")
+            }
+            appendLine("3. Translate meaning and feeling, not word for word. Keep metaphors, idioms and wordplay meaningful in the target language. Keep each line roughly as short as the original.")
+            appendLine("4. Keep names of people, places, brands and titles as they are. Lines that are only vocal sounds (oh, yeah, la la, na na) may be kept as they are.")
+            appendLine("5. Items with role \"section\" are labels such as Verse, Chorus or Bridge. Translate them as short labels.")
+            appendLine("6. Items with role \"backing\" are background vocals. Translate them like the other lines.")
+            appendLine("7. Output only the translated text. No quotes around lines, no notes, no romanisation, no explanations.")
+            appendLine("8. Set \"source_language\" to the ISO 639-1 code of the song's main original language.")
+        }
+    }
+
+    private suspend fun requestGemini(slots: List<TextSlot>, target: String): BatchAnswer? {
+        val key = geminiApiKey.trim()
+        if (key.isBlank()) return null
+        val input = buildJsonObject {
+            put("target_language", target)
+            put("line_count", slots.size)
+            putJsonArray("lines") {
+                slots.forEachIndexed { index, slot ->
+                    add(buildJsonObject {
+                        put("i", index)
+                        put(
+                            "role",
+                            when {
+                                slot.sectionHeader -> "section"
+                                slot.background -> "backing"
+                                else -> "lyric"
+                            },
+                        )
+                        put("text", slot.text)
+                    })
+                }
+            }
+        }
+        val body = buildJsonObject {
+            putJsonObject("systemInstruction") {
+                putJsonArray("parts") {
+                    add(buildJsonObject { put("text", geminiInstruction(target, slots.size)) })
+                }
+            }
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") {
+                        add(buildJsonObject { put("text", input.toString()) })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("responseMimeType", "application/json")
+                putJsonObject("responseSchema") {
+                    put("type", "OBJECT")
+                    putJsonObject("properties") {
+                        putJsonObject("source_language") { put("type", "STRING") }
+                        putJsonObject("translations") {
+                            put("type", "ARRAY")
+                            putJsonObject("items") { put("type", "STRING") }
+                        }
+                    }
+                    putJsonArray("required") {
+                        add("source_language")
+                        add("translations")
+                    }
+                }
+            }
+        }.toString()
+
+        for (model in GEMINI_MODELS) {
+            val request = Request.Builder()
+                .url(GEMINI_ENDPOINT.format(model))
+                .header("x-goog-api-key", key)
+                .header("Accept", "application/json")
+                .post(body.toRequestBody(JSON_MEDIA))
+                .build()
+            val (code, text) = try {
+                geminiClient.newCall(request).awaitResponse()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: IOException) {
+                return null
+            }
+            when {
+                code in 200..299 -> {
+                    val parsed = parseGemini(text, slots.size)
+                    if (parsed != null) return parsed
+                    // A malformed answer from one model is worth one more try
+                    // on the other before giving up on Gemini for this song.
+                }
+                // Unknown model, exhausted quota or a transient server error:
+                // the next model has its own quota and may well answer.
+                code == 404 || code == 429 || code >= 500 -> Unit
+                // 400/401/403: a bad or restricted key fails the same everywhere.
+                else -> return null
+            }
+        }
+        return null
+    }
+
+    private fun parseGemini(response: String, expected: Int): BatchAnswer? = runCatching {
+        val root = json.parseToJsonElement(response).jsonObject
+        val parts = root["candidates"]!!.jsonArray[0].jsonObject["content"]!!
+            .jsonObject["parts"]!!.jsonArray
+        val text = parts
+            .map { it.jsonObject }
+            .filter { it["thought"]?.jsonPrimitive?.booleanOrNull != true }
+            .joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
+            .trim()
+            .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        val answer = json.parseToJsonElement(text).jsonObject
+        val translations = answer["translations"]!!.jsonArray.map {
+            it.jsonPrimitive.contentOrNull.orEmpty().trim()
+        }
+        if (translations.size != expected || translations.all { it.isBlank() }) return@runCatching null
+        val source = answer["source_language"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+        BatchAnswer(
+            translations = translations,
+            sourceLanguage = source.ifBlank { "und" },
+            sourceWeight = text.length,
+        )
+    }.getOrNull()
+
+    /** Status code and body, for callers that branch on the code. */
+    private suspend fun Call.awaitResponse(): Pair<Int, String> = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val body = it.body?.string().orEmpty()
+                    if (continuation.isActive) continuation.resume(it.code to body)
+                }
+            }
+        })
     }
 
     private fun flatten(lines: List<LyricLine>): List<TextSlot> = buildList {

@@ -36,7 +36,7 @@ data class BluetoothTelemetry(
     val codecName: String = "Unknown",
     val sampleRateHz: Int? = null,
     val bitDepth: Int? = null,
-    val bitrateLabel: String = "Not exposed by Android",
+    val bitrateLabel: String = "Android에서 제공하지 않음",
     val mode: String? = null,
     val isAuthoritative: Boolean = false,
     val lastUpdatedMs: Long = 0L,
@@ -46,7 +46,7 @@ data class BluetoothTelemetry(
 
     /**
      * Whether [codecName] names a codec Android actually reported. False for every
-     * placeholder ("System Managed", "Unknown"), so callers never render a stand-in
+     * placeholder ("시스템 관리", "Unknown"), so callers never render a stand-in
      * string as if it were a negotiated codec.
      */
     val hasNamedCodec: Boolean
@@ -62,7 +62,7 @@ data class BluetoothTelemetry(
         if (sampleRateHz != null) append(" / $sampleRateHz Hz")
         if (mode != null && mode.isNotBlank()) {
             append(" ($mode)")
-        } else if (bitrateLabel != "Not exposed by Android" && bitrateLabel.isNotBlank()) {
+        } else if (bitrateLabel != "Android에서 제공하지 않음" && bitrateLabel.isNotBlank()) {
             append(" @ $bitrateLabel")
         }
     }
@@ -214,14 +214,14 @@ class BluetoothAudioTracker(private val context: Context) {
                 it.isSink && it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
             }
             if (btDevice != null) {
-                val name = btDevice.productName?.toString()?.trim().takeIf { !it.isNullOrBlank() } ?: "Bluetooth Device"
+                val name = btDevice.productName?.toString()?.trim().takeIf { !it.isNullOrBlank() } ?: "Bluetooth 기기"
                 val current = _telemetry.value
                 if (!current.isConnected) {
                     _telemetry.value = BluetoothTelemetry(
                         isConnected = true,
                         deviceName = name,
-                        codecName = "System Managed",
-                        bitrateLabel = "Not exposed by Android",
+                        codecName = "시스템 관리",
+                        bitrateLabel = "Android에서 제공하지 않음",
                         isAuthoritative = false,
                         lastUpdatedMs = SystemClock.elapsedRealtime(),
                     )
@@ -243,9 +243,9 @@ class BluetoothAudioTracker(private val context: Context) {
 
             val deviceName = try {
                 @SuppressLint("MissingPermission")
-                activeDevice.name ?: activeDevice.alias ?: "Bluetooth Device"
+                activeDevice.name ?: activeDevice.alias ?: "Bluetooth 기기"
             } catch (_: Throwable) {
-                "Bluetooth Device"
+                "Bluetooth 기기"
             }
 
             // Query codec status via A2DP profile proxy
@@ -267,8 +267,8 @@ class BluetoothAudioTracker(private val context: Context) {
             _telemetry.value = BluetoothTelemetry(
                 isConnected = true,
                 deviceName = deviceName,
-                codecName = "System Managed",
-                bitrateLabel = "Not exposed by Android",
+                codecName = "시스템 관리",
+                bitrateLabel = "Android에서 제공하지 않음",
                 isAuthoritative = false,
                 lastUpdatedMs = SystemClock.elapsedRealtime(),
             )
@@ -287,16 +287,16 @@ class BluetoothAudioTracker(private val context: Context) {
             }
             try {
                 @SuppressLint("MissingPermission")
-                device?.name ?: device?.alias ?: _telemetry.value.deviceName ?: "Bluetooth Device"
+                device?.name ?: device?.alias ?: _telemetry.value.deviceName ?: "Bluetooth 기기"
             } catch (_: Throwable) {
-                _telemetry.value.deviceName ?: "Bluetooth Device"
+                _telemetry.value.deviceName ?: "Bluetooth 기기"
             }
         } else {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
             val btDevice = audioManager?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)?.firstOrNull {
                 it.isSink && it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
             }
-            btDevice?.productName?.toString()?.trim() ?: _telemetry.value.deviceName ?: "Bluetooth Device"
+            btDevice?.productName?.toString()?.trim() ?: _telemetry.value.deviceName ?: "Bluetooth 기기"
         }
 
         val codecStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -370,7 +370,7 @@ class BluetoothAudioTracker(private val context: Context) {
             codecName = codecName,
             sampleRateHz = sampleRateHz,
             bitDepth = bitDepth,
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             mode = mode,
             isAuthoritative = true,
             lastUpdatedMs = SystemClock.elapsedRealtime(),
@@ -428,7 +428,7 @@ class BluetoothAudioTracker(private val context: Context) {
             codecName = codecName,
             sampleRateHz = sampleRateHz,
             bitDepth = bitDepth,
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             mode = mode,
             isAuthoritative = true,
             lastUpdatedMs = SystemClock.elapsedRealtime(),
@@ -502,10 +502,10 @@ class BluetoothAudioTracker(private val context: Context) {
         /**
          * Parses LDAC bitrate information.
          * Nominal mode and realtime bitrate are kept strictly separated:
-         * realtime bitrate is never guessed or faked and remains "Not exposed by Android".
+         * realtime bitrate is never guessed or faked and remains "Android에서 제공하지 않음".
          */
         fun parseLdacBitrate(param1: Long): Pair<String, String?> {
-            return Pair("Not exposed by Android", parseLdacQualityMode(param1))
+            return Pair("Android에서 제공하지 않음", parseLdacQualityMode(param1))
         }
     }
 }
