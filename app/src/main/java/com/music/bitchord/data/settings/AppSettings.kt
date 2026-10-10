@@ -516,6 +516,9 @@ object AppSettings {
     /** The user's own Gemini API key from Google AI Studio. Stays on this device. */
     val geminiApiKey = MutableStateFlow("")
 
+    /** See [init]: a key supplied with this build, used while none is saved. */
+    private var bundledGeminiApiKey = ""
+
     /**
      * Disk budget for cached audio. [AudioCache][com.music.bitchord.playback.AudioCache] evicts past it.
      * [UNLIMITED_CACHE_LIMIT_BYTES] means no ceiling of the app's own.
@@ -755,6 +758,9 @@ object AppSettings {
      */
     fun init(context: Context, authStore: AuthStore) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+        // A Gemini key can be baked into a personal build's resources after it is
+        // built (never committed). It is only a default: a key typed in Settings wins.
+        bundledGeminiApiKey = context.getString(com.music.bitchord.R.string.default_gemini_api_key).trim()
         this.authStore = authStore
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()
@@ -865,8 +871,8 @@ object AppSettings {
         prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, false)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
-        geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, "").orEmpty()
-        geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, false)
+        geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
+        geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))

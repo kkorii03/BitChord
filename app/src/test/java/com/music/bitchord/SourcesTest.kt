@@ -85,7 +85,7 @@ class SourcesTest {
         val lossy = StreamFormat(codec = "mp3", kbps = 320, sampleRateHz = 44_100)
         assertEquals("MP3 · 44.1 kHz · 320 kbps", lossy.summary)
 
-        assertEquals("Unknown format", StreamFormat().summary)
+        assertEquals("알 수 없는 포맷", StreamFormat().summary)
     }
 
     @Test

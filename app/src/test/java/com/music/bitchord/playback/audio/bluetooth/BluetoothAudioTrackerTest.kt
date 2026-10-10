@@ -67,23 +67,23 @@ class BluetoothAudioTrackerTest {
     @Test
     fun ldacQualityModeIsTruthfullySeparatedFromRealtimeBitrate() {
         val (bitrate1000, mode1000) = BluetoothAudioTracker.parseLdacBitrate(1000L)
-        assertEquals("Not exposed by Android", bitrate1000)
+        assertEquals("Android에서 제공하지 않음", bitrate1000)
         assertEquals("High Quality (990 kbps nominal)", mode1000)
 
         val (bitrate1001, mode1001) = BluetoothAudioTracker.parseLdacBitrate(1001L)
-        assertEquals("Not exposed by Android", bitrate1001)
+        assertEquals("Android에서 제공하지 않음", bitrate1001)
         assertEquals("Standard (660 kbps nominal)", mode1001)
 
         val (bitrate1002, mode1002) = BluetoothAudioTracker.parseLdacBitrate(1002L)
-        assertEquals("Not exposed by Android", bitrate1002)
+        assertEquals("Android에서 제공하지 않음", bitrate1002)
         assertEquals("Connection Priority (330 kbps nominal)", mode1002)
 
         val (bitrate1003, mode1003) = BluetoothAudioTracker.parseLdacBitrate(1003L)
-        assertEquals("Not exposed by Android", bitrate1003)
+        assertEquals("Android에서 제공하지 않음", bitrate1003)
         assertEquals("Adaptive Bitrate (ABR)", mode1003)
 
         val (bitrateUnknown, modeUnknown) = BluetoothAudioTracker.parseLdacBitrate(0L)
-        assertEquals("Not exposed by Android", bitrateUnknown)
+        assertEquals("Android에서 제공하지 않음", bitrateUnknown)
         assertNull(modeUnknown)
     }
 
@@ -99,7 +99,7 @@ class BluetoothAudioTrackerTest {
             codecName = "LDAC",
             sampleRateHz = sampleRateHz,
             bitDepth = bitDepth,
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             mode = mode,
             isAuthoritative = true,
         )
@@ -109,7 +109,7 @@ class BluetoothAudioTrackerTest {
         assertEquals("LDAC", telemetry.codecName)
         assertEquals(96000, telemetry.sampleRateHz)
         assertEquals(32, telemetry.bitDepth)
-        assertEquals("Not exposed by Android", telemetry.bitrateLabel)
+        assertEquals("Android에서 제공하지 않음", telemetry.bitrateLabel)
         assertEquals("High Quality (990 kbps nominal)", telemetry.mode)
         assertTrue(telemetry.isHighRes)
         assertTrue(telemetry.isAuthoritative)
@@ -123,7 +123,7 @@ class BluetoothAudioTrackerTest {
             codecName = BluetoothAudioTracker.mapCodecType(BluetoothAudioTracker.SOURCE_CODEC_TYPE_AAC),
             sampleRateHz = BluetoothAudioTracker.mapSampleRate(2), // 48000 Hz
             bitDepth = BluetoothAudioTracker.mapBitDepth(1), // 16-bit
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             mode = null,
             isAuthoritative = true,
         )
@@ -132,7 +132,7 @@ class BluetoothAudioTrackerTest {
         assertEquals("AAC", telemetry.codecName)
         assertEquals(48000, telemetry.sampleRateHz)
         assertEquals(16, telemetry.bitDepth)
-        assertEquals("Not exposed by Android", telemetry.bitrateLabel)
+        assertEquals("Android에서 제공하지 않음", telemetry.bitrateLabel)
         assertNull(telemetry.mode)
         assertFalse(telemetry.isHighRes)
     }
@@ -145,7 +145,7 @@ class BluetoothAudioTrackerTest {
         assertEquals("Unknown", defaultTelemetry.codecName)
         assertNull(defaultTelemetry.sampleRateHz)
         assertNull(defaultTelemetry.bitDepth)
-        assertEquals("Not exposed by Android", defaultTelemetry.bitrateLabel)
+        assertEquals("Android에서 제공하지 않음", defaultTelemetry.bitrateLabel)
         assertNull(defaultTelemetry.mode)
         assertFalse(defaultTelemetry.isAuthoritative)
         assertEquals("Disconnected", defaultTelemetry.formattedSummary())
@@ -156,15 +156,15 @@ class BluetoothAudioTrackerTest {
         val nonAuthoritativeTelemetry = BluetoothTelemetry(
             isConnected = true,
             deviceName = "realme Buds Air 5 Pro",
-            codecName = "System Managed",
+            codecName = "시스템 관리",
             sampleRateHz = 96000,
             bitDepth = 32,
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             isAuthoritative = false,
         )
 
         assertTrue(nonAuthoritativeTelemetry.isConnected)
-        assertEquals("System Managed", nonAuthoritativeTelemetry.codecName)
+        assertEquals("시스템 관리", nonAuthoritativeTelemetry.codecName)
         assertEquals("System Managed / 32-bit / 96000 Hz", nonAuthoritativeTelemetry.formattedSummary())
     }
 
@@ -176,7 +176,7 @@ class BluetoothAudioTrackerTest {
             codecName = "LDAC",
             sampleRateHz = 96000,
             bitDepth = 32,
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             mode = "High Quality (990 kbps nominal)",
             isAuthoritative = true,
         )
@@ -196,15 +196,15 @@ class BluetoothAudioTrackerTest {
         val nonAuthoritativeHiRes = BluetoothTelemetry(
             isConnected = true,
             deviceName = "Generic Hi-Res Earbuds",
-            codecName = "System Managed",
+            codecName = "시스템 관리",
             sampleRateHz = 96000,
             bitDepth = 32,
-            bitrateLabel = "Not exposed by Android",
+            bitrateLabel = "Android에서 제공하지 않음",
             isAuthoritative = false,
         )
 
-        assertEquals("System Managed", nonAuthoritativeHiRes.codecName)
+        assertEquals("시스템 관리", nonAuthoritativeHiRes.codecName)
         assertFalse(nonAuthoritativeHiRes.codecName.contains("LDAC", ignoreCase = true))
-        assertEquals("Not exposed by Android", nonAuthoritativeHiRes.bitrateLabel)
+        assertEquals("Android에서 제공하지 않음", nonAuthoritativeHiRes.bitrateLabel)
     }
 }

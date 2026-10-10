@@ -285,10 +285,10 @@ class AudioPipelineTest {
         val outRate = 48000
         val isPassthrough = inRate == outRate
         val type = if (isPassthrough) "None" else "Resampler"
-        val quality = if (isPassthrough) "Passthrough" else "Resampled"
+        val quality = if (isPassthrough) "패스스루" else "리샘플링됨"
 
         assertEquals("None", type)
-        assertEquals("Passthrough", quality)
+        assertEquals("패스스루", quality)
     }
 
     @Test
@@ -297,9 +297,9 @@ class AudioPipelineTest {
         val outRate = 48000
         val isPassthrough = inRate == outRate
         val type = if (isPassthrough) "None" else "Resampler"
-        val quality = if (isPassthrough) "Passthrough" else "Resampled"
+        val quality = if (isPassthrough) "패스스루" else "리샘플링됨"
 
         assertEquals("Resampler", type)
-        assertEquals("Resampled", quality)
+        assertEquals("리샘플링됨", quality)
     }
 }

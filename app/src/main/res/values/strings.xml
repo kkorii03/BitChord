@@ -1131,4 +1131,6 @@
     <string name="gemini_api_key">Gemini API key</string>
     <string name="gemini_api_key_description">Create a free key at aistudio.google.com/apikey and paste it here. It stays on this device and is sent only to Google. Leave it empty to use Google Translate.</string>
     <string name="korean">Korean</string>
+    <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
+    <string name="default_gemini_api_key" translatable="false"></string>
 </resources>

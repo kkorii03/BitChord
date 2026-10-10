@@ -124,7 +124,7 @@ object LyricsTranslation {
     @Volatile
     var geminiEnabled: Boolean = false
 
-    /** The user's own Gemini API key from Google AI Studio. Never bundled. */
+    /** The Gemini API key from Google AI Studio, set by the app's settings. Never committed. */
     @Volatile
     var geminiApiKey: String = ""
 
@@ -353,7 +353,9 @@ object LyricsTranslation {
             CachedTranslation(
                 sourceLanguage = fresh.sourceLanguage,
                 targetLanguage = target,
-                texts = fresh.translations,
+                // A line left empty (often a bare "oh" or "yeah") keeps the
+                // original rather than showing a blank translation under it.
+                texts = fresh.translations.mapIndexed { index, text -> text.ifBlank { slots[index].text } },
             ).also {
                 memory.put(cacheKey, it)
                 writeCache(cacheKey, it)

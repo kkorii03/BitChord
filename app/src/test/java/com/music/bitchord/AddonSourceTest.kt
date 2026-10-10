@@ -159,7 +159,7 @@ class AddonSourceTest {
         val health = source().health()
 
         assertTrue("expected Ok, got $health", health is SourceHealth.Ok)
-        assertEquals("No manifest · search works", (health as SourceHealth.Ok).detail)
+        assertEquals("매니페스트 없음 · 검색은 가능", (health as SourceHealth.Ok).detail)
     }
 
     @Test

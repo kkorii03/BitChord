@@ -108,7 +108,7 @@ class DownloadSessionTest {
     @Test
     fun `a failure is something to be told about, not something to hide`() {
         DownloadSession.queued(song("a"))
-        DownloadSession.failed("a", "Download failed — check your connection")
+        DownloadSession.failed("a", "다운로드 실패 — 연결 상태를 확인하십시오")
 
         val state = DownloadSession.state.value
         assertTrue(state.visible)

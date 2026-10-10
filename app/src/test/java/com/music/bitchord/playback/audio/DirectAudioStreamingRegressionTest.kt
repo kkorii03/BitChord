@@ -107,7 +107,7 @@ class DirectAudioStreamingRegressionTest {
         assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
         assertNull(result.output.systemMixerRateHz)
         assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
-        assertEquals("Route does not expose direct Float32 or 24-bit PCM (using direct 16-bit PCM)", result.output.fallbackDetail)
+        assertEquals("경로가 Direct Float32/24비트 PCM을 지원하지 않음 (Direct 16비트 PCM 사용)", result.output.fallbackDetail)
         assertEquals("Float32", result.dsp.format)
     }
 

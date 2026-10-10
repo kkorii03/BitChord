@@ -174,8 +174,8 @@ class AudioPipelineTelemetryTest {
         }
         val qualityText = when {
             inRate == null || outRate == null -> "—"
-            isPassthrough -> "Passthrough"
-            else -> "Resampled"
+            isPassthrough -> "패스스루"
+            else -> "리샘플링됨"
         }
 
         assertFalse(isPassthrough)
@@ -196,13 +196,13 @@ class AudioPipelineTelemetryTest {
         }
         val qualityText = when {
             inRate == null || outRate == null -> "—"
-            isPassthrough -> "Passthrough"
-            else -> "Resampled"
+            isPassthrough -> "패스스루"
+            else -> "리샘플링됨"
         }
 
         assertTrue(isPassthrough)
         assertEquals("None", resamplerType)
-        assertEquals("Passthrough", qualityText)
+        assertEquals("패스스루", qualityText)
     }
 
     @Test
@@ -218,13 +218,13 @@ class AudioPipelineTelemetryTest {
         }
         val qualityText = when {
             inRate == null || outRate == null -> "—"
-            isPassthrough -> "Passthrough"
-            else -> "Resampled"
+            isPassthrough -> "패스스루"
+            else -> "리샘플링됨"
         }
 
         assertFalse(isPassthrough)
         assertEquals("Resampler", resamplerType)
-        assertEquals("Resampled", qualityText)
+        assertEquals("리샘플링됨", qualityText)
     }
 
     // ── 3. AudioTrack Stage Truthfulness ──────────────────────────────────
