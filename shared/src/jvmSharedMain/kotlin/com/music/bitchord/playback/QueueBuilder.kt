@@ -1,6 +1,8 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
+import kotlin.math.abs
 import java.util.Locale
 
 /**
@@ -84,7 +86,39 @@ object QueueBuilder {
         // against "Shilpa Rao, Arijit Singh, & Pritam" is one song, twice.
         val left = artistSet(a.artist)
         val right = artistSet(b.artist)
-        return left.isEmpty() || right.isEmpty() || left.any { it in right }
+        if (left.isEmpty() || right.isEmpty() || left.any { it in right }) return true
+        // The same act billed in two scripts: YouTube credits a Korean-region
+        // upload to "에이제이알" and the catalogue track to "AJR", so no name
+        // is shared even though it is one song. Taken as the same recording
+        // only when the scripts really do differ and the lengths, where both
+        // are known, agree — a same-titled song by someone else is neither.
+        if (!creditedInDifferentScripts(a.artist, b.artist)) return false
+        val lengthA = a.durationMillis()
+        val lengthB = b.durationMillis()
+        return lengthA <= 0L || lengthB <= 0L || abs(lengthA - lengthB) <= SAME_LENGTH_SLACK_MS
+    }
+
+    /** Lengths this close are one recording's audio and video cuts. */
+    private const val SAME_LENGTH_SLACK_MS = 6_000L
+
+    /**
+     * One credit in Latin letters only and the other with none at all —
+     * Hangul, kana or Han instead.
+     */
+    private fun creditedInDifferentScripts(a: String, b: String): Boolean {
+        val aLatin = hasLatin(a)
+        val bLatin = hasLatin(b)
+        val aOther = hasNonLatinLetters(a)
+        val bOther = hasNonLatinLetters(b)
+        return (aLatin && !aOther && bOther && !bLatin) || (bLatin && !bOther && aOther && !aLatin)
+    }
+
+    private fun hasLatin(text: String): Boolean = text.codePoints().anyMatch {
+        Character.isLetter(it) && Character.UnicodeScript.of(it) == Character.UnicodeScript.LATIN
+    }
+
+    private fun hasNonLatinLetters(text: String): Boolean = text.codePoints().anyMatch {
+        Character.isLetter(it) && Character.UnicodeScript.of(it) != Character.UnicodeScript.LATIN
     }
 
     /**

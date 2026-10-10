@@ -90,6 +90,26 @@ class QueueBuilderTest {
     }
 
     @Test
+    fun `one act billed in two scripts is one song`() {
+        assertTrue(
+            QueueBuilder.isSameRecording(
+                song("aaa", "My Play", "AJR").copy(durationText = "3:10"),
+                song("bbb", "My Play", "에이제이알").copy(durationText = "3:12"),
+            ),
+        )
+    }
+
+    @Test
+    fun `two scripts with clearly different lengths stay apart`() {
+        assertFalse(
+            QueueBuilder.isSameRecording(
+                song("aaa", "Love", "Keyshia Cole").copy(durationText = "4:15"),
+                song("bbb", "Love", "아이유").copy(durationText = "3:02"),
+            ),
+        )
+    }
+
+    @Test
     fun `topic channels and casing do not affect the credit`() {
         assertEquals(setOf("arijit singh"), QueueBuilder.artistSet("Arijit Singh - Topic"))
         assertEquals(
