@@ -187,7 +187,7 @@ object CoverTitles {
         val split = splitTopLevelDash(head) ?: if (looseDash) splitTopLevelDash(head, unspaced = true) else null
         val (artist, song) = if (split != null) split else (null to head)
         val title = cleanTitle(song) ?: return null
-        return Cover(title = title, originalArtist = artist?.let(::cleanName), singer = singer)
+        return Cover(title = title, originalArtist = artist?.let { cleanName(it) }, singer = singer)
     }
 
     private fun readB(raw: String): Cover? {

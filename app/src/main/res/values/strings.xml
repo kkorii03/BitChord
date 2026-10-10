@@ -1172,4 +1172,7 @@
     <string name="cover_channel_unset">Unmark cover channel</string>
     <string name="cover_channel_set_done">Songs from this channel will show as covers from the next time they are queued</string>
     <string name="cover_channel_unset_done">No longer treated as a cover channel</string>
+    <string name="upstream_channel_name">Original BitChord releases</string>
+    <string name="upstream_new_version">Original BitChord %1$s is out</string>
+    <string name="upstream_new_version_detail">Merge it into the fork to get the new features</string>
 </resources>

@@ -41,6 +41,8 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -334,6 +336,9 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
             }
 
             Spacer(Modifier.height(8.dp))
+            val likeOverrides by com.music.bitchord.data.LikeState.overrides.collectAsStateWithLifecycle()
+            val liked = song?.videoId?.let { likeOverrides[it] } == com.music.bitchord.data.model.LikeStatus.LIKE
+            val signedIn = com.music.bitchord.data.innertube.Innertube.cookie != null
             NowPlayingCard(
                 title = song?.title.orEmpty(),
                 artist = song?.artist.orEmpty(),
@@ -350,6 +355,24 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                     }
                 },
                 onNext = { controller?.seekToNext() },
+                // The notification's own heart, through the same session
+                // command: the like reaches YouTube, and liked-song downloads
+                // follow from there as they do from anywhere else.
+                liked = liked,
+                onToggleLike = if (signedIn && song != null) {
+                    {
+                        controller?.sendCustomCommand(
+                            androidx.media3.session.SessionCommand(
+                                com.music.bitchord.playback.ACTION_TOGGLE_FAVORITE,
+                                Bundle.EMPTY,
+                            ),
+                            Bundle.EMPTY,
+                        )
+                        Unit
+                    }
+                } else {
+                    null
+                },
                 modifier = Modifier.padding(horizontal = 20.dp),
             )
             Row(
@@ -421,6 +444,9 @@ private fun NowPlayingCard(
     onPrevious: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    liked: Boolean,
+    /** Null hides the heart — signed out, or nothing playing. */
+    onToggleLike: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     var dragging by remember { mutableStateOf<Float?>(null) }
@@ -460,6 +486,22 @@ private fun NowPlayingCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (onToggleLike != null) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onToggleLike),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        contentDescription = stringResource(if (liked) R.string.remove_from_liked else R.string.like),
+                        tint = if (liked) Color(0xFFFF4D66) else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
             }
         }
         // The player's own scrubber: a thin line that thickens under the finger.

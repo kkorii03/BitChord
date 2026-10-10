@@ -295,6 +295,27 @@ private fun Song.canStartStation(): Boolean =
 class PlaybackService : MediaLibraryService() {
 
     private var mediaSession: MediaLibrarySession? = null
+
+    /**
+     * Picks a paused song back up when headphones connect — only while this
+     * service is alive with something loaded, never in a call, and only once
+     * the sound is actually routed to them. See [HeadphoneResume].
+     */
+    private val headphoneResume: HeadphoneResume by lazy {
+        HeadphoneResume(this) resume@{
+            if (!AppSettings.resumeOnHeadphones.value) return@resume
+            val sessionPlayer = mediaSession?.player ?: return@resume
+            if (sessionPlayer.currentMediaItem == null || sessionPlayer.isPlaying) return@resume
+            if (sessionPlayer.playbackState == Player.STATE_ENDED) return@resume
+            val audioManager = getSystemService(android.media.AudioManager::class.java)
+            val mode = audioManager?.mode ?: android.media.AudioManager.MODE_NORMAL
+            if (mode != android.media.AudioManager.MODE_NORMAL) return@resume
+            if (!headphoneResume.onHeadphones()) return@resume
+            TrackLog.d("BitChord", "headphones connected: resuming", about = sessionPlayer.currentMediaItem?.mediaId)
+            if (sessionPlayer.playbackState == Player.STATE_IDLE) sessionPlayer.prepare()
+            sessionPlayer.play()
+        }
+    }
     private val searchResults = ConcurrentHashMap<String, List<Song>>()
     private val searchBrowseResults = ConcurrentHashMap<String, List<BrowseItem>>()
     private val songCache = ConcurrentHashMap<String, Song>()
@@ -1236,6 +1257,7 @@ class PlaybackService : MediaLibraryService() {
         localBitrateCache.clear()
         QualityUpgrade.forgetLastSession()
         com.music.bitchord.lockscreen.LockScreenLyrics.attach(this) { player?.currentMediaItem != null }
+        headphoneResume.attach()
 
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
@@ -6507,6 +6529,7 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         com.music.bitchord.lockscreen.LockScreenLyrics.detach(this)
+        headphoneResume.detach()
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.

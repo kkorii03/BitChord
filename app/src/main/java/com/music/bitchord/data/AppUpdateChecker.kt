@@ -72,6 +72,75 @@ object AppUpdateChecker {
      */
     private const val CHECK_UPSTREAM_RELEASES = false
 
+    /**
+     * The fork's stand-in for the update prompt: when the original project
+     * releases a version newer than this build, one plain notification says
+     * so — a merge into the fork is what it takes, so there is nothing here to
+     * install. Once per version: the version told about is remembered.
+     */
+    suspend fun noticeUpstream(context: Context) = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url(LATEST_RELEASE_URL)
+                .header("Accept", "application/vnd.github+json")
+                .build()
+            val body = Http.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) null else response.body?.string()
+            } ?: return@runCatching
+            val release = json.parseToJsonElement(body) as? JsonObject ?: return@runCatching
+            if (release["draft"]?.jsonPrimitive?.contentOrNull == "true") return@runCatching
+            if (release["prerelease"]?.jsonPrimitive?.contentOrNull == "true") return@runCatching
+            val latest = release["tag_name"]?.jsonPrimitive?.contentOrNull?.trim()?.removePrefix("v")
+                ?: return@runCatching
+            if (!isNewer(latest, BuildConfig.VERSION_NAME)) return@runCatching
+            val prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+            if (prefs.getString(KEY_UPSTREAM_NOTIFIED, null) == latest) return@runCatching
+            val url = release["html_url"]?.jsonPrimitive?.contentOrNull
+            if (postUpstreamNotice(context, latest, url)) {
+                prefs.edit().putString(KEY_UPSTREAM_NOTIFIED, latest).apply()
+            }
+        }
+    }
+
+    /** Whether the notification went up; a refused permission tries again next launch. */
+    private fun postUpstreamNotice(context: Context, version: String, url: String?): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        val manager = context.getSystemService(android.app.NotificationManager::class.java) ?: return false
+        manager.createNotificationChannel(
+            android.app.NotificationChannel(
+                UPSTREAM_CHANNEL_ID,
+                context.getString(com.music.bitchord.R.string.upstream_channel_name),
+                android.app.NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
+        val open = url?.let {
+            android.app.PendingIntent.getActivity(
+                context,
+                0,
+                Intent(Intent.ACTION_VIEW, Uri.parse(it)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        }
+        val text = context.getString(com.music.bitchord.R.string.upstream_new_version, version)
+        val notification = androidx.core.app.NotificationCompat.Builder(context, UPSTREAM_CHANNEL_ID)
+            .setSmallIcon(com.music.bitchord.R.drawable.ic_notification_logo)
+            .setContentTitle(text)
+            .setContentText(context.getString(com.music.bitchord.R.string.upstream_new_version_detail))
+            .setAutoCancel(true)
+            .apply { open?.let { setContentIntent(it) } }
+            .build()
+        return runCatching { manager.notify(UPSTREAM_NOTIFICATION_ID, notification) }.isSuccess
+    }
+
+    private const val KEY_UPSTREAM_NOTIFIED = "ko_upstream_notified_version"
+    private const val UPSTREAM_CHANNEL_ID = "upstream_releases"
+    private const val UPSTREAM_NOTIFICATION_ID = 0x8177
+
     suspend fun check() = withContext(Dispatchers.IO) {
         runCatching {
             if (!CHECK_UPSTREAM_RELEASES) return@runCatching

@@ -1471,6 +1471,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // downloaded it — see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())
             AppUpdateChecker.check()
+            AppUpdateChecker.noticeUpstream(getApplication())
         }
     }
 
