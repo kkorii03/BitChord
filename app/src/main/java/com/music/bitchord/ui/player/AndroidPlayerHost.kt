@@ -133,7 +133,10 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         targetLanguageTag: String,
     ): LyricsTranslationResult =
         when (val result = LyricsTranslation.translate(trackId, lines, targetLanguageTag)) {
-            is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(result.lines)
+            is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(
+                lines = result.lines,
+                byGemini = result.engine == LyricsTranslation.Engine.GEMINI,
+            )
             is LyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
             LyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
         }
@@ -148,6 +151,25 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
             LyricsTranslation.RomanizationResult.AlreadyRomanized -> LyricsRomanizationResult.AlreadyRomanized
             LyricsTranslation.RomanizationResult.Unavailable -> LyricsRomanizationResult.Unavailable
         }
+
+    override val songMeaningAvailable: StateFlow<Boolean> by lazy {
+        combine(AppSettings.geminiApiKey, LyricsTranslation.geminiKeyRejected) { key, rejected ->
+            key.isNotBlank() && !rejected
+        }.stateIn(scope, SharingStarted.Eagerly, AppSettings.geminiApiKey.value.isNotBlank())
+    }
+
+    override suspend fun songMeaning(
+        song: Song,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): LyricsTranslation.MeaningResult =
+        LyricsTranslation.explain(
+            trackId = song.videoId,
+            title = song.title,
+            artist = song.artist,
+            lines = lines,
+            targetLanguageTag = targetLanguageTag,
+        )
 
     override fun showMessage(message: String) {
         main.post { Toast.makeText(app, message, Toast.LENGTH_SHORT).show() }

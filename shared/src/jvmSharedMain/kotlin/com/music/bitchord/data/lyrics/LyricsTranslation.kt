@@ -53,11 +53,15 @@ import java.io.IOException
  * it and the feature can never grow without limit.
  */
 object LyricsTranslation {
+    /** Which service wrote a translation, so the player can name it. */
+    enum class Engine { GEMINI, GOOGLE }
+
     sealed interface Result {
         data class Translated(
             val lines: List<LyricLine>,
             val sourceLanguage: String,
             val fromCache: Boolean,
+            val engine: Engine = Engine.GOOGLE,
         ) : Result
 
         data class SameLanguage(val language: String) : Result
@@ -89,6 +93,16 @@ object LyricsTranslation {
     private const val MAX_PARALLEL_REQUESTS = 2
     // Input Tools changes ASCII digits to the destination script, so match the
     // private-use wrapper rather than assuming the counter remains ASCII.
+    // Translations of downloaded songs, kept out of reach of the cache trim and
+    // of Android clearing the cache, so the translate button works offline.
+    private const val KEPT_DIRECTORY = "lyrics_translation_kept"
+    private const val KEPT_NAMESPACE = "kept"
+    private const val MAX_KEPT_BYTES = 32L * 1024L * 1024L
+    private const val MEANING_DIRECTORY = "song_meaning_v1"
+    private const val MAX_MEANING_BYTES = 4L * 1024L * 1024L
+    private const val MAX_MEANING_LYRIC_CHARS = 6_000
+    private const val ENGINE_GEMINI = "gemini"
+    private const val ENGINE_GOOGLE = "google"
     private val markerRegex = Regex("\\uE000[^\\uE001]*\\uE001")
     private val json = Json { ignoreUnknownKeys = true }
     private val diskMutex = Mutex()
@@ -110,6 +124,14 @@ object LyricsTranslation {
      */
     @Volatile
     var cacheDir: File? = null
+
+    /**
+     * Where answers worth keeping for good live — the phone's files directory.
+     * Holds the translations saved with downloads and the song explanations.
+     * Null falls back to [cacheDir] for explanations and keeps nothing else.
+     */
+    @Volatile
+    var keepDir: File? = null
     private val client by lazy {
         Http.client.newBuilder()
             .callTimeout(12, TimeUnit.SECONDS)
@@ -187,6 +209,8 @@ object LyricsTranslation {
         val sourceLanguage: String,
         val targetLanguage: String,
         val texts: List<String>,
+        /** [ENGINE_GEMINI] or [ENGINE_GOOGLE]; entries from before this existed are Google's. */
+        val engine: String = ENGINE_GOOGLE,
     )
 
     private data class TextSlot(
@@ -211,6 +235,12 @@ object LyricsTranslation {
         trackId: String,
         lines: List<LyricLine>,
         targetLanguageTag: String,
+        /**
+         * Also keep the answer where neither the cache trim nor Android
+         * clearing the cache reaches it — for a song that has been downloaded,
+         * so its translation is there offline too.
+         */
+        keep: Boolean = false,
     ): Result {
         // Sent as given rather than reduced to a base language: zh-CN and
         // zh-TW are the same language in two scripts, and canonicalising either
@@ -222,9 +252,44 @@ object LyricsTranslation {
 
         val slots = flatten(lines)
         if (slots.isEmpty()) return Result.Unavailable
+        // Lyrics written in Hangul asked into Korean are already Korean: no
+        // request, no quota, and the answer is the same one Gemini would give.
+        alreadyInTargetScript(slots, target)?.let { return Result.SameLanguage(it) }
+
+        // Kept with a download, keyed by the words alone: the file can be played
+        // under either of the two ids its record answers to.
+        val keptKey = cacheKey(KEPT_NAMESPACE, target, slots)
+        val kept = readEntry(keepDir, KEPT_DIRECTORY, keptKey)?.takeIf { it.texts.size == slots.size }
+        val entry = when {
+            kept != null && (kept.engine == ENGINE_GEMINI || !geminiReady) -> kept
+            // Anything short of a complete, line-for-line answer from either
+            // engine falls back to whatever was kept, so the button never
+            // stops working offline.
+            else -> resolve(trackId, slots, target) ?: kept
+        } ?: return Result.Unavailable
+        if (keep && entry !== kept) writeEntry(keepDir, KEPT_DIRECTORY, keptKey, entry, MAX_KEPT_BYTES)
+
+        return if (sameLanguage(entry.sourceLanguage, target)) {
+            Result.SameLanguage(entry.sourceLanguage)
+        } else {
+            Result.Translated(
+                lines = rebuild(lines, slots, entry.texts),
+                sourceLanguage = entry.sourceLanguage,
+                fromCache = entry === kept,
+                engine = if (entry.engine == ENGINE_GEMINI) Engine.GEMINI else Engine.GOOGLE,
+            )
+        }
+    }
+
+    /** Gemini where it is set up and answers in full, Google Translate otherwise. */
+    private suspend fun resolve(
+        trackId: String,
+        slots: List<TextSlot>,
+        target: String,
+    ): CachedTranslation? {
         if (geminiReady) {
             val viaGemini = try {
-                translateWithGemini(trackId, lines, slots, target)
+                geminiEntry(trackId, slots, target)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -232,23 +297,27 @@ object LyricsTranslation {
                 null
             }
             viaGemini?.let { return it }
-            // Anything short of a complete, line-for-line answer falls through
-            // to Google Translate, so the button never stops working.
         }
+        return try {
+            googleEntry(trackId, slots, target)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun googleEntry(
+        trackId: String,
+        slots: List<TextSlot>,
+        target: String,
+    ): CachedTranslation? {
         val cacheKey = cacheKey(trackId, target, slots)
         val cached = memory.get(cacheKey) ?: readCache(cacheKey)?.also {
             memory.put(cacheKey, it)
         }
         if (cached != null && cached.version == CACHE_VERSION && cached.texts.size == slots.size) {
-            return if (sameLanguage(cached.sourceLanguage, target)) {
-                Result.SameLanguage(cached.sourceLanguage)
-            } else {
-                Result.Translated(
-                    lines = rebuild(lines, slots, cached.texts),
-                    sourceLanguage = cached.sourceLanguage,
-                    fromCache = true,
-                )
-            }
+            return cached
         }
 
         val batches = batches(slots)
@@ -259,17 +328,17 @@ object LyricsTranslation {
                 group.map { batch -> async { requestBatch(batch, target) } }.awaitAll()
             }
         }
-        if (answers.any { it == null }) return Result.Unavailable
+        if (answers.any { it == null }) return null
         val complete = answers.filterNotNull()
         val source = complete
             .groupBy { canonicalLanguage(it.sourceLanguage) }
             .maxByOrNull { (_, values) -> values.sumOf { it.sourceWeight } }
             ?.key
             .orEmpty()
-        if (source.isBlank()) return Result.Unavailable
+        if (source.isBlank()) return null
 
         var translated = complete.flatMap { it.translations }
-        if (translated.size != slots.size) return Result.Unavailable
+        if (translated.size != slots.size) return null
 
         // Google's ordinary auto-detection understands many Latin-script
         // Hindi/Urdu/Punjabi lyrics, but its NMT occasionally returns whole
@@ -297,19 +366,11 @@ object LyricsTranslation {
             sourceLanguage = source,
             targetLanguage = target,
             texts = translated,
+            engine = ENGINE_GOOGLE,
         )
         memory.put(cacheKey, entry)
         writeCache(cacheKey, entry)
-
-        return if (sameLanguage(source, target)) {
-            Result.SameLanguage(source)
-        } else {
-            Result.Translated(
-                lines = rebuild(lines, slots, translated),
-                sourceLanguage = source,
-                fromCache = false,
-            )
-        }
+        return entry
     }
 
     suspend fun romanize(
@@ -380,38 +441,29 @@ object LyricsTranslation {
      * switching engines never shows the other engine's text. Null whenever the
      * answer can't be used as-is, which sends the caller back to Google.
      */
-    private suspend fun translateWithGemini(
+    private suspend fun geminiEntry(
         trackId: String,
-        lines: List<LyricLine>,
         slots: List<TextSlot>,
         target: String,
-    ): Result? {
+    ): CachedTranslation? {
         val cacheKey = cacheKey("gemini\u0000$trackId", target, slots)
         val cached = memory.get(cacheKey) ?: readCache(cacheKey)?.also { memory.put(cacheKey, it) }
-        val answer = if (cached != null && cached.version == CACHE_VERSION && cached.texts.size == slots.size) {
-            cached
-        } else {
-            val fresh = requestGemini(slots, target) ?: return null
-            if (fresh.translations.size != slots.size) return null
-            CachedTranslation(
-                sourceLanguage = fresh.sourceLanguage,
-                targetLanguage = target,
-                // A line left empty (often a bare "oh" or "yeah") keeps the
-                // original rather than showing a blank translation under it.
-                texts = fresh.translations.mapIndexed { index, text -> text.ifBlank { slots[index].text } },
-            ).also {
-                memory.put(cacheKey, it)
-                writeCache(cacheKey, it)
-            }
+        if (cached != null && cached.version == CACHE_VERSION && cached.texts.size == slots.size) {
+            // Entries written before engines were recorded carry the default.
+            return cached.copy(engine = ENGINE_GEMINI)
         }
-        return if (sameLanguage(answer.sourceLanguage, target)) {
-            Result.SameLanguage(answer.sourceLanguage)
-        } else {
-            Result.Translated(
-                lines = rebuild(lines, slots, answer.texts),
-                sourceLanguage = answer.sourceLanguage,
-                fromCache = answer === cached,
-            )
+        val fresh = requestGemini(slots, target) ?: return null
+        if (fresh.translations.size != slots.size) return null
+        return CachedTranslation(
+            sourceLanguage = fresh.sourceLanguage,
+            targetLanguage = target,
+            // A line left empty (often a bare "oh" or "yeah") keeps the
+            // original rather than showing a blank translation under it.
+            texts = fresh.translations.mapIndexed { index, text -> text.ifBlank { slots[index].text } },
+            engine = ENGINE_GEMINI,
+        ).also {
+            memory.put(cacheKey, it)
+            writeCache(cacheKey, it)
         }
     }
 
@@ -495,6 +547,17 @@ object LyricsTranslation {
             }
         }.toString()
 
+        return askGemini(body) { parseGemini(it, slots.size) }
+    }
+
+    /**
+     * Posts [body] to each Gemini model in turn until one answers with
+     * something [parse] accepts. Null when none does, for whatever reason.
+     */
+    private suspend fun <T : Any> askGemini(body: String, parse: (String) -> T?): T? {
+        val key = cleanGeminiKey()
+        if (key.isEmpty() || key == rejectedGeminiKey) return null
+        if (System.currentTimeMillis() < geminiCooldownUntil) return null
         var quotaRefusals = 0
         for (model in GEMINI_MODELS) {
             val request = Request.Builder()
@@ -512,7 +575,7 @@ object LyricsTranslation {
             }
             when {
                 code in 200..299 -> {
-                    val parsed = parseGemini(text, slots.size)
+                    val parsed = parse(text)
                     if (parsed != null) return parsed
                     // A malformed answer from one model is worth one more try
                     // on the other before giving up on Gemini for this song.
@@ -540,16 +603,21 @@ object LyricsTranslation {
         return null
     }
 
-    private fun parseGemini(response: String, expected: Int): BatchAnswer? = runCatching {
+    /** The model's own text out of a generateContent response, thoughts and fences removed. */
+    private fun geminiText(response: String): String {
         val root = json.parseToJsonElement(response).jsonObject
         val parts = root["candidates"]!!.jsonArray[0].jsonObject["content"]!!
             .jsonObject["parts"]!!.jsonArray
-        val text = parts
+        return parts
             .map { it.jsonObject }
             .filter { it["thought"]?.jsonPrimitive?.booleanOrNull != true }
             .joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
             .trim()
             .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+    }
+
+    private fun parseGemini(response: String, expected: Int): BatchAnswer? = runCatching {
+        val text = geminiText(response)
         val answer = json.parseToJsonElement(text).jsonObject
         val translations = answer["translations"]!!.jsonArray.map {
             it.jsonPrimitive.contentOrNull.orEmpty().trim()
@@ -863,50 +931,263 @@ object LyricsTranslation {
     }
 
     private suspend fun readCache(key: String): CachedTranslation? =
+        readEntry(cacheDir, CACHE_DIRECTORY, key)
+
+    private suspend fun writeCache(key: String, value: CachedTranslation) =
+        writeEntry(cacheDir, CACHE_DIRECTORY, key, value, MAX_CACHE_BYTES)
+
+    private suspend fun readEntry(root: File?, directory: String, key: String): CachedTranslation? =
+        readStored(root, directory, key)?.let { text ->
+            runCatching { json.decodeFromString<CachedTranslation>(text) }.getOrNull()
+        }?.takeIf { it.version == CACHE_VERSION }
+
+    private suspend fun writeEntry(
+        root: File?,
+        directory: String,
+        key: String,
+        value: CachedTranslation,
+        maxBytes: Long,
+    ) = writeStored(root, directory, key, json.encodeToString(value), maxBytes)
+
+    private suspend fun readStored(root: File?, directoryName: String, key: String): String? =
         withContext(Dispatchers.IO) {
             diskMutex.withLock {
-                val root = cacheDir ?: return@withLock null
-                val file = File(File(root, CACHE_DIRECTORY), "$key.json.gz")
+                val base = root ?: return@withLock null
+                val file = File(File(base, directoryName), "$key.json.gz")
                 if (!file.isFile) return@withLock null
                 runCatching {
-                    val value = GZIPInputStream(FileInputStream(file)).bufferedReader().use {
-                        json.decodeFromString<CachedTranslation>(it.readText())
-                    }
+                    val value = GZIPInputStream(FileInputStream(file)).bufferedReader().use { it.readText() }
                     file.setLastModified(System.currentTimeMillis())
-                    value.takeIf { it.version == CACHE_VERSION }
+                    value
                 }.getOrNull()
             }
         }
 
-    private suspend fun writeCache(key: String, value: CachedTranslation) =
-        withContext(Dispatchers.IO) {
-            diskMutex.withLock {
-                val root = cacheDir ?: return@withLock
-                val directory = File(root, CACHE_DIRECTORY)
-                if (!directory.exists() && !directory.mkdirs()) return@withLock
-                val destination = File(directory, "$key.json.gz")
-                val temporary = File(directory, "$key.tmp")
-                runCatching {
-                    GZIPOutputStream(FileOutputStream(temporary)).bufferedWriter().use {
-                        it.write(json.encodeToString(value))
-                    }
-                    if (!temporary.renameTo(destination)) {
-                        temporary.copyTo(destination, overwrite = true)
-                        temporary.delete()
-                    }
-                    trimCache(directory)
-                }.onFailure { temporary.delete() }
-            }
+    private suspend fun writeStored(
+        root: File?,
+        directoryName: String,
+        key: String,
+        text: String,
+        maxBytes: Long,
+    ) = withContext(Dispatchers.IO) {
+        diskMutex.withLock {
+            val base = root ?: return@withLock
+            val directory = File(base, directoryName)
+            if (!directory.exists() && !directory.mkdirs()) return@withLock
+            val destination = File(directory, "$key.json.gz")
+            val temporary = File(directory, "$key.tmp")
+            runCatching {
+                GZIPOutputStream(FileOutputStream(temporary)).bufferedWriter().use {
+                    it.write(text)
+                }
+                if (!temporary.renameTo(destination)) {
+                    temporary.copyTo(destination, overwrite = true)
+                    temporary.delete()
+                }
+                trimCache(directory, maxBytes)
+            }.onFailure { temporary.delete() }
         }
+    }
 
-    private fun trimCache(directory: File) {
+    private fun trimCache(directory: File, maxBytes: Long) {
         val files = directory.listFiles { file -> file.extension == "gz" }
             ?.sortedByDescending(File::lastModified)
             .orEmpty()
         var kept = 0L
         files.forEach { file ->
             kept += file.length()
-            if (kept > MAX_CACHE_BYTES) file.delete()
+            if (kept > maxBytes) file.delete()
         }
     }
+
+    /**
+     * The language [slots] are already written in, when the script alone says
+     * so and it is the one asked for. Only Korean: Hangul is Korean's alone,
+     * which no other target's script can claim.
+     */
+    private fun alreadyInTargetScript(slots: List<TextSlot>, target: String): String? {
+        if (canonicalLanguage(target) != "ko") return null
+        var hangul = 0
+        var other = 0
+        slots.forEach { slot ->
+            slot.text.codePoints().forEach { codePoint ->
+                if (Character.isLetter(codePoint)) {
+                    if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HANGUL) hangul++
+                    else other++
+                }
+            }
+        }
+        return "ko".takeIf { hangul > 0 && hangul >= other * 4 }
+    }
+
+    // ---- What a song means ---------------------------------------------------
+
+    @Serializable
+    data class SongMeaning(
+        /** One line on what the song is about. */
+        val summary: String,
+        /** A few short paragraphs, separated by blank lines. */
+        val meaning: String,
+        val highlights: List<MeaningHighlight> = emptyList(),
+    )
+
+    /** One line of the song quoted, and what it says. */
+    @Serializable
+    data class MeaningHighlight(val line: String, val note: String)
+
+    sealed interface MeaningResult {
+        data class Ready(val meaning: SongMeaning) : MeaningResult
+        /** No Gemini key is set, or Gemini refused the one that is. */
+        data object NoKey : MeaningResult
+        data object Unavailable : MeaningResult
+    }
+
+    /** True while a Gemini key is set that Gemini has not refused. */
+    val geminiKeyUsable: Boolean
+        get() {
+            val key = cleanGeminiKey()
+            return key.isNotEmpty() && key != rejectedGeminiKey
+        }
+
+    private val meanings = object {
+        private val entries = object : LinkedHashMap<String, SongMeaning>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, SongMeaning>) = size > 8
+        }
+
+        @Synchronized fun get(key: String): SongMeaning? = entries[key]
+
+        @Synchronized fun put(key: String, value: SongMeaning) {
+            entries[key] = value
+        }
+    }
+
+    /**
+     * Gemini's explanation of the song — what it is about, its images and
+     * slang, a few lines worth a note — written in [targetLanguageTag].
+     * Asked once per song and language, then kept for good.
+     */
+    suspend fun explain(
+        trackId: String,
+        title: String,
+        artist: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): MeaningResult {
+        val target = targetLanguageTag.trim().ifBlank { "en" }
+        val key = cacheKey("meaning\u0000$trackId", target, emptyList())
+        val root = keepDir ?: cacheDir
+        meanings.get(key)?.let { return MeaningResult.Ready(it) }
+        readStored(root, MEANING_DIRECTORY, key)
+            ?.let { text -> runCatching { json.decodeFromString<SongMeaning>(text) }.getOrNull() }
+            ?.let {
+                meanings.put(key, it)
+                return MeaningResult.Ready(it)
+            }
+        if (!geminiKeyUsable) return MeaningResult.NoKey
+
+        val lyricText = lines
+            .map { it.text.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+            .take(MAX_MEANING_LYRIC_CHARS)
+        if (lyricText.isBlank()) return MeaningResult.Unavailable
+
+        val input = buildJsonObject {
+            put("title", title)
+            put("artist", artist)
+            put("lyrics", lyricText)
+        }
+        val body = buildJsonObject {
+            putJsonObject("systemInstruction") {
+                putJsonArray("parts") {
+                    add(buildJsonObject { put("text", meaningInstruction(target)) })
+                }
+            }
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") {
+                        add(buildJsonObject { put("text", input.toString()) })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("responseMimeType", "application/json")
+                putJsonObject("responseSchema") {
+                    put("type", "OBJECT")
+                    putJsonObject("properties") {
+                        putJsonObject("summary") { put("type", "STRING") }
+                        putJsonObject("meaning") { put("type", "STRING") }
+                        putJsonObject("highlights") {
+                            put("type", "ARRAY")
+                            putJsonObject("items") {
+                                put("type", "OBJECT")
+                                putJsonObject("properties") {
+                                    putJsonObject("line") { put("type", "STRING") }
+                                    putJsonObject("note") { put("type", "STRING") }
+                                }
+                                putJsonArray("required") {
+                                    add("line")
+                                    add("note")
+                                }
+                            }
+                        }
+                    }
+                    putJsonArray("required") {
+                        add("summary")
+                        add("meaning")
+                        add("highlights")
+                    }
+                }
+            }
+        }.toString()
+
+        val answer = try {
+            askGemini(body) { parseMeaning(it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        if (answer == null) {
+            return if (geminiKeyUsable) MeaningResult.Unavailable else MeaningResult.NoKey
+        }
+        meanings.put(key, answer)
+        writeStored(root, MEANING_DIRECTORY, key, json.encodeToString(answer), MAX_MEANING_BYTES)
+        return MeaningResult.Ready(answer)
+    }
+
+    private fun meaningInstruction(target: String): String {
+        val locale = Locale.forLanguageTag(target.replace('_', '-'))
+        val languageName = locale.getDisplayName(Locale.ENGLISH).ifBlank { target }
+        val korean = canonicalLanguage(target) == "ko"
+        return buildString {
+            appendLine("You write short, insightful song explanations for a music app, like the notes on a lyric site.")
+            appendLine("Write everything in $languageName ($target).")
+            if (korean) {
+                appendLine("Use natural, friendly modern Korean in 해요체. Never use '당신'. Avoid translationese.")
+            }
+            appendLine()
+            appendLine("Return JSON with:")
+            appendLine("- \"summary\": one sentence saying what the song is about${if (korean) " (under 60 Korean characters)" else ""}.")
+            appendLine("- \"meaning\": two or three short paragraphs separated by one blank line. First the story and the feeling of the song, then its key images, metaphors and slang and what they mean.")
+            appendLine("- \"highlights\": up to four items. Each has \"line\", copied exactly from the lyrics given, and \"note\", one or two sentences on what that line means.")
+            appendLine()
+            appendLine("Base everything on the lyrics given. Mention background about the artist or the song only if you are certain it is true. Never invent facts, chart records, interviews or quotes.")
+            appendLine("Plain text only: no markdown, no bullet characters, no emojis.")
+        }
+    }
+
+    private fun parseMeaning(response: String): SongMeaning? = runCatching {
+        val parsed = json.decodeFromString<SongMeaning>(geminiText(response))
+        val cleaned = parsed.copy(
+            summary = parsed.summary.trim(),
+            meaning = parsed.meaning.trim(),
+            highlights = parsed.highlights
+                .map { MeaningHighlight(it.line.trim(), it.note.trim()) }
+                .filter { it.line.isNotEmpty() && it.note.isNotEmpty() }
+                .take(4),
+        )
+        cleaned.takeIf { it.summary.isNotEmpty() && it.meaning.isNotEmpty() }
+    }.getOrNull()
 }

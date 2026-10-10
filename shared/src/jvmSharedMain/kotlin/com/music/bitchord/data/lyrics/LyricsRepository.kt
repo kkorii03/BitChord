@@ -103,6 +103,48 @@ object LyricsRepository {
         onSourceResult: ((LyricsSource, Result?) -> Unit)? = null,
         /** Lets callers turn a cancelled race loser back into "not fetched". */
         onSourceCancelled: ((LyricsSource) -> Unit)? = null,
+    ): Result? {
+        // The last few answers, so the next track's lyrics looked up ahead of
+        // time (see LyricsPrefetch) are the very lines the player then shows —
+        // the same text is what lets the translation fetched with them be found.
+        val memoKey = buildString {
+            append(videoId).append('\u0000').append(prioritizeSyllableSync)
+            append('\u0000').append(isrc.orEmpty())
+            order.forEach { append('\u0000').append(it.name) }
+            append('\u0001')
+            sources.map { it.name }.sorted().forEach { append('\u0000').append(it) }
+        }
+        synchronized(recent) { recent[memoKey] }?.let { hit ->
+            onSourceResult?.invoke(hit.source, hit)
+            return hit
+        }
+        val found = lookUp(
+            videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+            onSourceStarted, onSourceResult, onSourceCancelled,
+        )
+        // Only an answer matched against a known length is worth reusing: one
+        // made without it may be a looser match than the player would make.
+        if (found != null && durationMs > 0L) synchronized(recent) { recent[memoKey] = found }
+        return found
+    }
+
+    private val recent = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 8
+    }
+
+    private suspend fun lookUp(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        sources: Set<LyricsSource>,
+        order: List<LyricsSource>,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        onSourceStarted: ((LyricsSource) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceCancelled: ((LyricsSource) -> Unit)?,
     ): Result? = coroutineScope {
         val sequence = (order + LyricsSource.offered)
             .distinct()

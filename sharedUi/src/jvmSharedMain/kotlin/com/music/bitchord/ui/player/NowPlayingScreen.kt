@@ -763,6 +763,8 @@ fun NowPlayingScreen(
     var showCast by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(false) }
     var showLyricsProviders by remember { mutableStateOf(false) }
+    var showSongMeaning by remember { mutableStateOf(false) }
+    val songMeaningAvailable by PlayerPlatform.host.songMeaningAvailable.collectAsStateWithLifecycle()
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
     val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
     // Listening in a party whose host has taken the controls: the transport
@@ -1526,6 +1528,15 @@ fun NowPlayingScreen(
                 onDismiss = { showLyricsProviders = false },
             )
         }
+        if (showSongMeaning) {
+            SongMeaningSheet(
+                hazeState = playerHaze,
+                song = song,
+                lines = lyrics.orEmpty(),
+                targetLanguage = lyricsTranslation.targetLanguage,
+                onDismiss = { showSongMeaning = false },
+            )
+        }
         if (showAudioPipeline) {
             AudioPipelineDialog(
                 hazeState = playerHaze,
@@ -1966,6 +1977,13 @@ fun NowPlayingScreen(
                                 showingTranslation = lyricsTranslation.showingTranslation,
                                 enabled = !lyrics.isNullOrEmpty(),
                                 onClick = lyricsTranslation.toggleTranslation,
+                            )
+                        },
+                        showMeaningToggle = songMeaningAvailable,
+                        meaningToggle = {
+                            SongMeaningButton(
+                                enabled = !lyrics.isNullOrEmpty(),
+                                onClick = { showSongMeaning = true },
                             )
                         },
                     ) { panelModifier ->
@@ -3346,11 +3364,19 @@ fun NowPlayingScreen(
                                 onClick = lyricsTranslation.toggleRomanization,
                             )
                         }
-                        Box(
+                        Row(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .graphicsLayer { alpha = translateFade },
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            if (songMeaningAvailable) {
+                                SongMeaningButton(
+                                    enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                    onClick = { showSongMeaning = true },
+                                )
+                                Spacer(Modifier.width(10.dp))
+                            }
                             TranslationToggleButton(
                                 state = lyricsTranslation.translationState,
                                 showingTranslation = lyricsTranslation.showingTranslation,

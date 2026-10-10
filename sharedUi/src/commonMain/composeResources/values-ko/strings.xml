@@ -91,7 +91,7 @@
     <string name="lyrics_romanized">로마자 발음</string>
     <string name="lyrics_saved_with_download">다운로드와 함께 저장된 가사</string>
     <string name="lyrics_share_pick_limit">카드가 가득 찼습니다.</string>
-    <string name="lyrics_translated_to">%1$s(으)로 번역됨</string>
+    <string name="lyrics_translated_to">%1$s 번역</string>
     <string name="lyrics_translation_unavailable">지금은 번역을 사용할 수 없습니다.</string>
     <string name="medium_quality">중간 품질</string>
     <string name="mono">모노</string>
@@ -120,7 +120,7 @@
     <string name="shuffle_on">임의 재생 켬</string>
     <string name="stereo">스테레오</string>
     <string name="translate_lyrics">가사 번역</string>
-    <string name="translating_lyrics_to">%1$s(으)로 번역 중…</string>
+    <string name="translating_lyrics_to">%1$s 번역 중…</string>
     <string name="up_next">다음 재생</string>
     <string name="upgrading_quality">품질 업그레이드 중</string>
     <string name="waiting">대기 중</string>
@@ -200,4 +200,12 @@
     <string name="member_since">가입일</string>
     <string name="import_spotify">Spotify에서 가져오기</string>
     <string name="import_spotify_subtitle">재생목록 링크 사용</string>
+    <string name="lyrics_translated_gemini">%1$s 번역 · Gemini</string>
+    <string name="song_meaning">이 노래 해석</string>
+    <string name="song_meaning_loading">가사를 읽는 중…</string>
+    <string name="song_meaning_unavailable">지금은 해석을 불러올 수 없습니다.</string>
+    <string name="song_meaning_no_key">설정에서 Gemini API 키를 입력하면 사용할 수 있습니다.</string>
+    <string name="song_meaning_highlights">주목할 가사</string>
+    <string name="song_meaning_retry">다시 시도</string>
+    <string name="song_meaning_footer">Gemini가 가사를 바탕으로 작성한 해석입니다. 틀릴 수 있습니다.</string>
 </resources>

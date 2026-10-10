@@ -269,6 +269,9 @@ private const val ALIGNMENT_HEAD_TIMEOUT_MS = 20_000L
  */
 private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 
+/** How long a song plays before the one after it has its lyrics translated. */
+private const val TRANSLATION_AHEAD_DELAY_MS = 12_000L
+
 private fun Song.canStartStation(): Boolean =
     videoId.isNotBlank() &&
         !videoId.startsWith("content://") &&
@@ -785,6 +788,7 @@ class PlaybackService : MediaLibraryService() {
     private val sessionSongHistory = mutableListOf<Song>()
 
     private var serviceLyricsJob: Job? = null
+    private var translationAheadJob: Job? = null
     private var serviceLyrics: List<LyricLine>? = null
     private var lastPublishedSubtitle: String? = null
     private var lyricsTickerJob: Job? = null
@@ -6581,7 +6585,28 @@ class PlaybackService : MediaLibraryService() {
         super.onDestroy()
     }
 
+    /**
+     * Hands the next song in the queue to [TranslationAhead] once this one has
+     * settled in. Read late rather than now: autoplay fills the queue a moment
+     * after a transition, and a song added to play next counts too.
+     */
+    private fun scheduleTranslationAhead() {
+        translationAheadJob?.cancel()
+        translationAheadJob = scope.launch(Dispatchers.Main) {
+            delay(TRANSLATION_AHEAD_DELAY_MS)
+            TranslationAhead.nextTrack(this@PlaybackService, upcomingSong())
+        }
+    }
+
+    private fun upcomingSong(): Song? {
+        val exoPlayer = player ?: return null
+        val index = exoPlayer.nextMediaItemIndex
+        if (index == C.INDEX_UNSET || index !in 0 until exoPlayer.mediaItemCount) return null
+        return runCatching { exoPlayer.getMediaItemAt(index).toSong() }.getOrNull()
+    }
+
     private fun loadLyricsForCurrentTrack() {
+        scheduleTranslationAhead()
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
             serviceLyrics = null
             stopLyricsTicker()

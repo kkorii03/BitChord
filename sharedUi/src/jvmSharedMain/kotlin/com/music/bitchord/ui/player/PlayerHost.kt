@@ -8,6 +8,7 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.LastPlayerScreen
@@ -82,6 +83,19 @@ interface PlayerHost {
         targetLanguageTag: String,
     ): LyricsRomanizationResult
 
+    /**
+     * Whether "what this song means" can be offered: a Gemini key is set and
+     * Gemini has not refused it. False hides the button.
+     */
+    val songMeaningAvailable: StateFlow<Boolean> get() = NoSongMeaning
+
+    /** Gemini's explanation of [song], in [targetLanguageTag]. */
+    suspend fun songMeaning(
+        song: Song,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): LyricsTranslation.MeaningResult = LyricsTranslation.MeaningResult.Unavailable
+
     /** A short, non-blocking notice — a Toast on the phone. */
     fun showMessage(message: String)
 
@@ -111,6 +125,7 @@ interface PlayerHost {
 }
 
 private val NoCast = MutableStateFlow(CastUi())
+private val NoSongMeaning = MutableStateFlow(false)
 
 /** What the output drawer needs to know about casting to draw its row. */
 data class CastUi(
@@ -217,7 +232,11 @@ data class PartyUi(
 )
 
 sealed interface LyricsTranslationResult {
-    data class Translated(val lines: List<LyricLine>) : LyricsTranslationResult
+    data class Translated(
+        val lines: List<LyricLine>,
+        /** Gemini wrote it, rather than Google Translate; the status line says so. */
+        val byGemini: Boolean = false,
+    ) : LyricsTranslationResult
     data class SameLanguage(val language: String) : LyricsTranslationResult
     data object Unavailable : LyricsTranslationResult
 }

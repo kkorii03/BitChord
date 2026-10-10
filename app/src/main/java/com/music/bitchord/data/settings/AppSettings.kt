@@ -516,6 +516,12 @@ object AppSettings {
     /** The user's own Gemini API key from Google AI Studio. Stays on this device. */
     val geminiApiKey = MutableStateFlow("")
 
+    /** Translate the next song's lyrics while this one plays. See [TranslationAhead]. */
+    val prefetchTranslation = MutableStateFlow(true)
+
+    /** Translate a song's lyrics as it is downloaded, and keep that for offline. */
+    val keepDownloadTranslation = MutableStateFlow(true)
+
     /** See [init]: a key supplied with this build, used while none is saved. */
     private var bundledGeminiApiKey = ""
 
@@ -875,6 +881,8 @@ object AppSettings {
         geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
+        prefetchTranslation.value = prefs.getBoolean(KEY_PREFETCH_TRANSLATION, true)
+        keepDownloadTranslation.value = prefs.getBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, true)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -1383,6 +1391,16 @@ object AppSettings {
         geminiTranslation.value = value
         prefs.edit().putBoolean(KEY_GEMINI_TRANSLATION, value).apply()
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = value
+    }
+
+    fun setPrefetchTranslation(value: Boolean) {
+        prefetchTranslation.value = value
+        prefs.edit().putBoolean(KEY_PREFETCH_TRANSLATION, value).apply()
+    }
+
+    fun setKeepDownloadTranslation(value: Boolean) {
+        keepDownloadTranslation.value = value
+        prefs.edit().putBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, value).apply()
     }
 
     fun setGeminiApiKey(value: String) {
@@ -2008,6 +2026,8 @@ object AppSettings {
     private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
     private const val KEY_GEMINI_API_KEY = "gemini_api_key"
     private const val KEY_GEMINI_TRANSLATION = "gemini_translation"
+    private const val KEY_PREFETCH_TRANSLATION = "prefetch_translation"
+    private const val KEY_KEEP_DOWNLOAD_TRANSLATION = "keep_download_translation"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_SHOW_CACHE_FOLDER = "show_cache_folder"

@@ -68,6 +68,8 @@ fun LyricsSidePanel(
     // The provider drawer frosts this column, not the page beside it.
     val haze = remember { HazeState() }
     var showLyricsProviders by remember { mutableStateOf(false) }
+    var showSongMeaning by remember { mutableStateOf(false) }
+    val songMeaningAvailable by PlayerPlatform.host.songMeaningAvailable.collectAsStateWithLifecycle()
 
     Box(modifier) {
         Box(Modifier.fillMaxSize().hazeSource(haze)) {
@@ -94,6 +96,13 @@ fun LyricsSidePanel(
                         showingTranslation = lyricsTranslation.showingTranslation,
                         enabled = !lyrics.isNullOrEmpty(),
                         onClick = lyricsTranslation.toggleTranslation,
+                    )
+                },
+                showMeaningToggle = songMeaningAvailable,
+                meaningToggle = {
+                    SongMeaningButton(
+                        enabled = !lyrics.isNullOrEmpty(),
+                        onClick = { showSongMeaning = true },
                     )
                 },
             ) { panelModifier ->
@@ -129,6 +138,15 @@ fun LyricsSidePanel(
                 states = lyricsProviderStates,
                 onSelect = onSelectLyricsProvider,
                 onDismiss = { showLyricsProviders = false },
+            )
+        }
+        if (showSongMeaning) {
+            SongMeaningSheet(
+                hazeState = haze,
+                song = song,
+                lines = lyrics.orEmpty(),
+                targetLanguage = lyricsTranslation.targetLanguage,
+                onDismiss = { showSongMeaning = false },
             )
         }
     }

@@ -502,6 +502,9 @@ internal fun LandscapeLyricsPane(
     romanizationToggle: @Composable () -> Unit,
     translationToggle: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    /** Whether "what this song means" sits beside the translate toggle. */
+    showMeaningToggle: Boolean = false,
+    meaningToggle: @Composable () -> Unit = {},
     panel: @Composable (Modifier) -> Unit,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -542,6 +545,8 @@ internal fun LandscapeLyricsPane(
             // Fixed slots either side whether or not the toggles are drawn, so
             // the status line stays centred as lyrics arrive.
             Box(Modifier.size(34.dp)) { if (hasLyrics) romanizationToggle() }
+            // Matches the meaning slot on the right, so the status stays centred.
+            if (showMeaningToggle) Spacer(Modifier.width(42.dp))
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -552,6 +557,10 @@ internal fun LandscapeLyricsPane(
                     status = status,
                     onStatusClick = onStatusClick,
                 )
+            }
+            if (showMeaningToggle) {
+                Box(Modifier.size(34.dp)) { if (hasLyrics) meaningToggle() }
+                Spacer(Modifier.width(8.dp))
             }
             Box(Modifier.size(34.dp)) { if (hasLyrics) translationToggle() }
         }

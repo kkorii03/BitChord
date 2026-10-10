@@ -200,4 +200,12 @@
     <string name="member_since">Member since</string>
     <string name="import_spotify">Import Spotify</string>
     <string name="import_spotify_subtitle">From a playlist link</string>
+    <string name="lyrics_translated_gemini">%1$s translation · Gemini</string>
+    <string name="song_meaning">What this song means</string>
+    <string name="song_meaning_loading">Reading the song…</string>
+    <string name="song_meaning_unavailable">Couldn’t explain this song right now</string>
+    <string name="song_meaning_no_key">Add a Gemini API key in Settings to use this</string>
+    <string name="song_meaning_highlights">Lines to note</string>
+    <string name="song_meaning_retry">Try again</string>
+    <string name="song_meaning_footer">Written by Gemini from the lyrics. It can be wrong.</string>
 </resources>

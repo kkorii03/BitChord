@@ -1134,4 +1134,8 @@
     <string name="korean">Korean</string>
     <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
     <string name="default_gemini_api_key" translatable="false"></string>
+    <string name="prefetch_translation">Translate the next song ahead</string>
+    <string name="prefetch_translation_subtitle">While a song plays, the next one’s lyrics are translated so the translate button answers at once</string>
+    <string name="keep_download_translation">Save translations with downloads</string>
+    <string name="keep_download_translation_subtitle">Downloaded songs show their translated lyrics offline too</string>
 </resources>

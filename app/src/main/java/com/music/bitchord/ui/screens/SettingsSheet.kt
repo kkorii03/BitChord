@@ -211,6 +211,8 @@ fun SettingsScreen(
     val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val geminiTranslation by AppSettings.geminiTranslation.collectAsStateWithLifecycle()
     val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
+    val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
+    val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val geminiKeyRejected by com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyRejected
         .collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -1022,6 +1024,44 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { showGeminiKeyDialog = true },
+                    )
+                }
+                val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)
+                row(prefetchTranslationTitle, "lyrics", "translate", "next", "prefetch") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Cached,
+                        title = prefetchTranslationTitle,
+                        subtitle = stringResource(R.string.prefetch_translation_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = prefetchTranslation,
+                                onCheckedChange = { AppSettings.setPrefetchTranslation(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setPrefetchTranslation(!prefetchTranslation) },
+                    )
+                }
+                val keepDownloadTranslationTitle = stringResource(R.string.keep_download_translation)
+                row(keepDownloadTranslationTitle, "lyrics", "translate", "download", "offline") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Download,
+                        title = keepDownloadTranslationTitle,
+                        subtitle = stringResource(R.string.keep_download_translation_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = keepDownloadTranslation,
+                                onCheckedChange = { AppSettings.setKeepDownloadTranslation(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setKeepDownloadTranslation(!keepDownloadTranslation) },
                     )
                 }
             }
