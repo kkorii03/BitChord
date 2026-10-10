@@ -55,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -249,10 +250,20 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
     }
 
     // Paused, the player's own reading follows every seek; playing, the poll
-    // above is the fresher of the two.
-    val playheadMs = if (state.isPlaying) positionMs else state.position.positionMs
-    val lyricMs = playheadMs - offsetMs
-    val current = shown.indexOfLast { it.line.timeMs <= lyricMs }
+    // above is the fresher of the two. Read through a lambda and a derived
+    // state, so a tick redraws the scrubber and, only when the line changes,
+    // the lyrics — not the whole screen.
+    val isPlaying = state.isPlaying
+    val playhead: () -> Long = { if (isPlaying) positionMs else state.position.positionMs }
+    // Plain lyrics carry no timings: nothing is lit and nothing scrolls.
+    val synced = remember(shown) { shown.any { it.line.timeMs > 0L } }
+    val current by remember(shown, offsetMs, isPlaying, synced) {
+        derivedStateOf {
+            if (!synced) return@derivedStateOf -1
+            val lyricMs = playhead() - offsetMs
+            shown.indexOfLast { it.line.timeMs <= lyricMs }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -336,6 +347,7 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                         shown = shown,
                         translated = translated,
                         current = current,
+                        synced = synced,
                         onSeek = { line ->
                             controller?.seekTo((line.timeMs + offsetMs).coerceAtLeast(0L))
                         },
@@ -349,7 +361,7 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                 artist = song?.artist.orEmpty(),
                 artworkUrl = song?.thumbnailUrl,
                 isPlaying = state.isPlaying,
-                positionMs = playheadMs,
+                position = playhead,
                 durationMs = state.durationMs,
                 onSeek = { controller?.seekTo(it) },
                 onPrevious = { controller?.seekToPrevious() },
@@ -420,6 +432,7 @@ private fun LyricsColumn(
     shown: List<ShownLine>,
     translated: List<LyricLine>?,
     current: Int,
+    synced: Boolean,
     onSeek: (LyricLine) -> Unit,
 ) {
     val listState = rememberLazyListState()
@@ -439,7 +452,7 @@ private fun LyricsColumn(
         }
     }
     LaunchedEffect(current, tick, shown) {
-        if (System.currentTimeMillis() < heldUntil) return@LaunchedEffect
+        if (!synced || System.currentTimeMillis() < heldUntil) return@LaunchedEffect
         val target = current.coerceAtLeast(0)
         if (target < shown.size) listState.animateScrollToItem(target)
     }
@@ -470,7 +483,11 @@ private fun LyricsColumn(
             itemsIndexed(shown, key = { _, item -> item.index }) { position, item ->
                 val lit = position == current
                 val alpha by animateFloatAsState(
-                    targetValue = if (lit) 1f else 0.38f,
+                    targetValue = when {
+                        !synced -> 0.9f
+                        lit -> 1f
+                        else -> 0.38f
+                    },
                     animationSpec = tween(260),
                     label = "lockLyricAlpha",
                 )
@@ -483,6 +500,7 @@ private fun LyricsColumn(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
+                            enabled = synced,
                         ) { onSeek(item.line) },
                 ) {
                     Text(
@@ -514,7 +532,7 @@ private fun NowPlayingCard(
     artist: String,
     artworkUrl: String?,
     isPlaying: Boolean,
-    positionMs: Long,
+    position: () -> Long,
     durationMs: Long,
     onSeek: (Long) -> Unit,
     onPrevious: () -> Unit,
@@ -522,6 +540,7 @@ private fun NowPlayingCard(
     onNext: () -> Unit,
 ) {
     var dragging by remember { mutableStateOf<Float?>(null) }
+    val positionMs = position()
     val fraction = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     Column(
         modifier = Modifier

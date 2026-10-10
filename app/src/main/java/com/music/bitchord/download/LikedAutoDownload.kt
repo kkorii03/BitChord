@@ -69,7 +69,7 @@ internal object LikedAutoDownload {
             park(videoId)
             return
         }
-        scope.launch { download(videoId, known) }
+        scope.launch { download(videoId, known, parkOnFailure = true) }
     }
 
     /** A like taken back: no longer worth downloading later. */
@@ -84,7 +84,12 @@ internal object LikedAutoDownload {
         return state is DownloadState.Queued || state is DownloadState.Running
     }
 
-    private suspend fun download(videoId: String, known: Song?) {
+    /**
+     * [parkOnFailure]: keep the id for the next connection when its details
+     * can't be had now. Off when draining, so an id that never resolves (a
+     * removed track) is dropped rather than retried for ever.
+     */
+    private suspend fun download(videoId: String, known: Song?, parkOnFailure: Boolean) {
         if (alreadyHandled(videoId)) {
             unpark(videoId)
             return
@@ -99,8 +104,7 @@ internal object LikedAutoDownload {
                 null
             }
         if (song == null) {
-            // Try again the next time the connection comes back.
-            park(videoId)
+            if (parkOnFailure) park(videoId) else unpark(videoId)
             return
         }
         withContext(Dispatchers.Main) { Downloads.enqueue(app, song) }
@@ -110,7 +114,7 @@ internal object LikedAutoDownload {
     private suspend fun drain() = drainLock.withLock {
         for (videoId in parked()) {
             if (!AppSettings.autoDownloadLiked.value || !allowedNow()) return@withLock
-            download(videoId, null)
+            download(videoId, null, parkOnFailure = false)
         }
     }
 
