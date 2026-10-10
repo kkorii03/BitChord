@@ -640,7 +640,8 @@ object InnertubeParser {
             }
         // On the "All" tab the first segment is the row type ("Song", "Video"),
         // not the artist — skip those so the subtitle reads like a credit.
-        val rowType = parts.firstOrNull { it.lowercase(Locale.ROOT) in TYPE_WORDS }?.lowercase(Locale.ROOT)
+        val rowType = parts.firstOrNull { it.lowercase(Locale.ROOT) in TYPE_WORDS }
+            ?.let { TYPE_WORDS[it.lowercase(Locale.ROOT)] }
         // A track row on an album lists its play count where a search row
         // lists the artist, so a segment that reads as a tally is no credit.
         val artist = parts.firstOrNull {
@@ -705,7 +706,7 @@ object InnertubeParser {
         val parts = subtitle.split(" • ").filter { it.isNotBlank() }
         val duration = parts.lastOrNull()?.takeIf { it.matches(DURATION) }
         val rowType = parts.firstOrNull { it.lowercase(Locale.ROOT) in TYPE_WORDS }
-            ?.lowercase(Locale.ROOT)
+            ?.let { TYPE_WORDS[it.lowercase(Locale.ROOT)] }
         val credits = creditsOf(subtitleRuns)
         val creditedArtists = artistNamesFromRuns(subtitleRuns)
         val artist = parts.firstOrNull {
@@ -1134,7 +1135,7 @@ object InnertubeParser {
                 albumName = credits.albumName,
                 // A catalogue track is credited "Artist • Album • Year"; the
                 // matching music video is "Artist • 417M views • 2.4M likes".
-                isVideo = byline.any { it.contains("views", ignoreCase = true) },
+                isVideo = byline.any { it.contains("views", ignoreCase = true) || it.contains("조회수") },
                 isExplicit = renderer.hasExplicitBadge(),
             )
         }
@@ -1408,7 +1409,7 @@ object InnertubeParser {
     fun artistFromSubtitle(subtitle: String): String {
         val parts = subtitle.split(" • ").map(String::trim).filter { it.isNotBlank() }
         return parts.firstOrNull {
-            it.lowercase() !in TYPE_WORDS && !it.matches(TALLY) && !it.matches(DURATION)
+            it.lowercase(Locale.ROOT) !in TYPE_WORDS && !it.matches(TALLY) && !it.matches(DURATION)
         } ?: subtitle
     }
 
@@ -1440,20 +1441,38 @@ object InnertubeParser {
      */
     private val TALLY = Regex(
         """[\d.,]+\s*[KMB]?\s+(plays|views|likes|songs|tracks|subscribers|""" +
-            """hours?|minutes?|seconds?)\b.*""",
+            """hours?|minutes?|seconds?)\b.*""" +
+            // The same counts as YouTube writes them for a Korean-language
+            // app: "재생 1.2만회", "조회수 300회", "12곡", "1시간 4분".
+            """|(?:재생|조회수|좋아요|구독자)\s*[\d.,]+\s*[천만억]?\s*(?:회|명|개)?.*""" +
+            """|[\d.,]+\s*[천만억]?\s*(?:회|곡|시간|분|초|명)(?:\s.*)?""",
         RegexOption.IGNORE_CASE,
     )
     /** Header words that mark a page as a release, whose rows share its credit. */
-    private val RELEASE_WORDS = setOf("album", "single", "ep")
+    private val RELEASE_WORDS = setOf("album", "single", "ep", "앨범", "싱글", "シングル", "アルバム")
     private val HEADER_RENDERERS = listOf(
         "musicResponsiveHeaderRenderer",
         "musicDetailHeaderRenderer",
     )
     /** Header lines that name the artist, in either header shape. */
     private val HEADER_CREDIT_LINES = listOf("straplineTextOne", "subtitle")
-    private val TYPE_WORDS = setOf(
-        "song", "video", "album", "single", "ep", "artist",
-        "playlist", "podcast", "episode",
+    /**
+     * The row-type word a subtitle can open with, in English and in the
+     * languages this fork's users run the app in, to the English word the
+     * rest of the parser reasons with. With the app set to Korean, YouTube
+     * writes "노래 • My Chemical Romance", and "노래" ("song") was taken for
+     * the artist.
+     */
+    private val TYPE_WORDS = mapOf(
+        "song" to "song", "video" to "video", "album" to "album", "single" to "single",
+        "ep" to "ep", "artist" to "artist", "playlist" to "playlist", "podcast" to "podcast",
+        "episode" to "episode",
+        "노래" to "song", "동영상" to "video", "뮤직비디오" to "video", "앨범" to "album",
+        "싱글" to "single", "아티스트" to "artist", "재생목록" to "playlist", "팟캐스트" to "podcast",
+        "에피소드" to "episode", "프로필" to "artist",
+        "曲" to "song", "動画" to "video", "アルバム" to "album", "シングル" to "single",
+        "アーティスト" to "artist", "プレイリスト" to "playlist", "ポッドキャスト" to "podcast",
+        "エピソード" to "episode",
     )
     /**
      * Flags a browse card as video content: "50 videos" in a subtitle

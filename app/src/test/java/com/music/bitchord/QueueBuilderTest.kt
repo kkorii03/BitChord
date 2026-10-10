@@ -110,6 +110,25 @@ class QueueBuilderTest {
     }
 
     @Test
+    fun `a live take of a queued song is left out of the station`() {
+        val extra = QueueBuilder.extend(
+            existing = listOf(song("aaa", "Helena", "My Chemical Romance")),
+            candidates = listOf(
+                song("bbb", "Helena (Live for BBC Radio 1)", "My Chemical Romance(마이 케미컬 로맨스)"),
+                song("ccc", "Heaven Help Us", "My Chemical Romance"),
+            ),
+            limit = 10,
+        )
+        assertEquals(listOf("ccc"), extra.map { it.videoId })
+    }
+
+    @Test
+    fun `a bracketed alias answers to either name`() {
+        assertTrue("my chemical romance" in QueueBuilder.artistSet("My Chemical Romance(마이 케미컬 로맨스)"))
+        assertTrue("마이 케미컬 로맨스" in QueueBuilder.artistSet("My Chemical Romance(마이 케미컬 로맨스)"))
+    }
+
+    @Test
     fun `topic channels and casing do not affect the credit`() {
         assertEquals(setOf("arijit singh"), QueueBuilder.artistSet("Arijit Singh - Topic"))
         assertEquals(

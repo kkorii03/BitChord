@@ -52,7 +52,7 @@ object QueueBuilder {
 
         for (candidate in ordered) {
             if (out.size >= limit) break
-            if (taken.any { isSameRecording(it, candidate) }) continue
+            if (taken.any { isSameRecording(it, candidate) || isVersionOf(it, candidate) }) continue
 
             val artists = artistSet(candidate.artist)
             val key = artists.minOrNull()
@@ -98,6 +98,27 @@ object QueueBuilder {
         return lengthA <= 0L || lengthB <= 0L || abs(lengthA - lengthB) <= SAME_LENGTH_SLACK_MS
     }
 
+    /**
+     * Whether [b] is another take of [a]'s song by the same act — a live
+     * recording, an acoustic or remastered cut, a remix. Different recordings,
+     * so [isSameRecording] keeps them apart; but a station that follows
+     * "Helena" with "Helena (Live for BBC Radio 1)" is playing the same song
+     * twice, so the station leaves them out.
+     */
+    fun isVersionOf(a: Song, b: Song): Boolean {
+        val base = baseTitle(a.title)
+        if (base.isEmpty() || base != baseTitle(b.title)) return false
+        val left = artistSet(a.artist)
+        val right = artistSet(b.artist)
+        return left.isNotEmpty() && right.isNotEmpty() && left.any { it in right }
+    }
+
+    /** The title with every bracketed note and any " - …" tail taken off. */
+    private fun baseTitle(raw: String): String =
+        normalisedTitle(raw.replace(BRACKETED_NOTE, " ").substringBefore(" - "))
+
+    private val BRACKETED_NOTE = Regex("""\([^)]*\)|\[[^]]*]""")
+
     /** Lengths this close are one recording's audio and video cuts. */
     private const val SAME_LENGTH_SLACK_MS = 6_000L
 
@@ -137,9 +158,21 @@ object QueueBuilder {
     fun artistSet(raw: String): Set<String> = raw.lowercase(Locale.ROOT)
         .replace(TOPIC, " ")
         .split(",", "&", "·", "•", ";", " feat", " ft.", " ft ", " x ", " with ")
-        .map { it.replace(PUNCTUATION, " ").replace(SPACES, " ").trim() }
+        .flatMap { part ->
+            // "My Chemical Romance(마이 케미컬 로맨스)" answers to either half as
+            // well as to the whole, so it meets the plain "My Chemical Romance".
+            val whole = part.clean()
+            val aliases = (listOf(part.replace(ALIAS, " ")) + ALIAS.findAll(part).map { it.value })
+                .map { it.clean() }
+                .filter { it.length >= 2 && it != whole }
+            listOf(whole) + aliases
+        }
         .filter { it.isNotEmpty() }
         .toSet()
+
+    private fun String.clean(): String = replace(PUNCTUATION, " ").replace(SPACES, " ").trim()
+
+    private val ALIAS = Regex("""\([^)]*\)""")
 
     private val NOISE = Regex(
         """\((?:official|lyric|lyrics|lyrical|audio|video|visuali[sz]er|full song|hd|4k)[^)]*\)""" +
