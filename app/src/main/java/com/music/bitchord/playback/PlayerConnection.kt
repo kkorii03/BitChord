@@ -204,6 +204,10 @@ fun Song.toSongBundle(): Bundle = bundleOf(
     "playbackSourceType" to playbackSourceType?.name,
     "playbackSourceId" to playbackSourceId,
     "isExplicit" to (isExplicit ?: false),
+    "originalTitle" to originalTitle,
+    "originalArtist" to originalArtist,
+    "coverSinger" to coverSinger,
+    "coverOriginalArtist" to coverOriginalArtist,
     // `bundleOf` has no overload for a list of strings, so the two halves of
     // the credits go in afterwards.
 ).apply {
@@ -234,6 +238,11 @@ fun songFromBundle(b: Bundle): Song = Song(
     playbackSourceType = b.getString("playbackSourceType")?.let { runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull() },
     playbackSourceId = b.getString("playbackSourceId"),
     isExplicit = if (b.containsKey("isExplicit")) b.getBoolean("isExplicit") else null,
+).copy(
+    originalTitle = b.getString("originalTitle"),
+    originalArtist = b.getString("originalArtist"),
+    coverSinger = b.getString("coverSinger"),
+    coverOriginalArtist = b.getString("coverOriginalArtist"),
 )
 
 /** Flushes the current radio queue to disk before reporting that it started. */

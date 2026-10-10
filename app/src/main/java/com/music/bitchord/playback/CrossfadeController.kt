@@ -285,6 +285,17 @@ class CrossfadeController(
     private var smartFadeActive = false
 
     /**
+     * A plain fade Automix ran for a pair it never plans (a video on either
+     * side) while the slider is at zero: "still on" means Automix is, not the
+     * slider — which would read as switched off and end the fade at once.
+     */
+    private var automixFallbackFade = false
+
+    /** Whether the setting that armed the current fade is still on. */
+    private fun fadeSettingOn(): Boolean =
+        if (smartFadeActive || automixFallbackFade) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
+
+    /**
      * Where the incoming track is cued when the lap hands the queue over, in
      * its own timeline ms. Standard fades always leave this at 0 — a plain
      * track change starts from the top — and only a Automix plan sets it
@@ -838,7 +849,8 @@ class CrossfadeController(
             AppSettings.smartMixInProgress.value = false
         }
 
-        val fade = if (automixVideoPair && configuredFadeMs() <= 0L) {
+        val fallbackLength = automixVideoPair && configuredFadeMs() <= 0L
+        val fade = if (fallbackLength) {
             minOf((DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong(), duration / 3).coerceAtLeast(0L)
         } else {
             if (configuredFadeMs() <= 0L) return
@@ -863,7 +875,7 @@ class CrossfadeController(
         // [holdAtEnd].
         if (remaining > fade + ARM_LEAD_MS && remaining > armBeforeReadAheadMs()) return
 
-        begin(fade, endMs = duration, smart = false)
+        begin(fade, endMs = duration, smart = false, automixFallback = fallbackLength)
     }
 
     /**
@@ -1187,6 +1199,7 @@ class CrossfadeController(
         outgoingRate: Double = 1.0,
         beatMs: Long = 0L,
         renderStyle: Render = Render(),
+        automixFallback: Boolean = false,
     ): Boolean {
         val out = active()
         val into = standby()
@@ -1200,6 +1213,7 @@ class CrossfadeController(
         fadeMs = fade
         fadeEndMs = endMs
         smartFadeActive = smart
+        automixFallbackFade = automixFallback && !smart
         incomingCueTimeMs = cueTimeMs.coerceAtLeast(0L)
         incomingPlaybackRate = playbackRate
         outgoingPlaybackRate = outgoingRate
@@ -1562,11 +1576,7 @@ class CrossfadeController(
         // setting that actually started it — a Automix normally runs with
         // [configuredFadeMs] at zero, and reading that as "turned off" would
         // end every Automix on its first tick.
-        val settingSwitchedOff = if (smartFadeActive) {
-            !AppSettings.smartFadeEnabled.value
-        } else {
-            configuredFadeMs() <= 0L
-        }
+        val settingSwitchedOff = !fadeSettingOn()
         // An echo out rings past the end of the blend, carried by the outgoing
         // player's own silenced audio, so that player is kept until its tail
         // has been heard out.
@@ -1829,8 +1839,7 @@ class CrossfadeController(
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
     private fun stillWorthFading(): Boolean {
-        val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
-        return stillOn && (outgoing ?: active()).hasNextMediaItem()
+        return fadeSettingOn() && (outgoing ?: active()).hasNextMediaItem()
     }
 
     /**

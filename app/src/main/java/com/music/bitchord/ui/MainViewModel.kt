@@ -1467,6 +1467,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .collect { reloadRemoteDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID) }
         }
         viewModelScope.launch {
+            // Moods and charts are the country's; a new one means a new page.
+            AppSettings.contentCountry.drop(1).collect {
+                if (_explore.value !is UiState.Loading) loadExplore()
+            }
+        }
+        viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
             // downloaded it — see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())
@@ -1622,7 +1628,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         _chartCountries.value = null
-        viewModelScope.launch {
+        // Held like the charts' load, so a slow category answering after the
+        // listener has moved on cannot paint over the page now open.
+        chartsJob = viewModelScope.launch {
             _moodGenreShelves.value = YtMusicRepository.moodGenreShelves(item.browseId, item.params).fold(
                 onSuccess = { shelves ->
                     if (shelves.isEmpty()) UiState.Error(text(R.string.nothing_to_explore))

@@ -1466,7 +1466,9 @@ object AppSettings {
     fun setContentCountry(value: String) {
         val code = value.trim().uppercase(java.util.Locale.ROOT).takeIf { it.length == 2 } ?: return
         contentCountry.value = code
-        prefs.edit().putString(KEY_CONTENT_COUNTRY, code).apply()
+        // The charts follow along: a new content country is a new "here".
+        chartsCountry.value = code
+        prefs.edit().putString(KEY_CONTENT_COUNTRY, code).putString(KEY_CHARTS_COUNTRY, code).apply()
     }
 
     fun setChartsCountry(value: String) {

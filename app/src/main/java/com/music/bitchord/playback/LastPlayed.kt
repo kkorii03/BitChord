@@ -148,6 +148,12 @@ object LastPlayed {
         val source: String? = null,
         val sourceType: String? = null,
         val sourceId: String? = null,
+        // A cover shown as its song (see CoverTitles), kept whole across a restart.
+        val channelId: String? = null,
+        val originalTitle: String? = null,
+        val originalArtist: String? = null,
+        val coverSinger: String? = null,
+        val coverOriginalArtist: String? = null,
     ) {
         fun toSong(): Song {
             val resolvedTier = when (tier) {
@@ -175,6 +181,11 @@ object LastPlayed {
                 playbackSourceId = sourceId,
                 localUri = local,
                 localPath = path,
+                artistId = channelId,
+                originalTitle = originalTitle,
+                originalArtist = originalArtist,
+                coverSinger = coverSinger,
+                coverOriginalArtist = coverOriginalArtist,
             )
         }
 
@@ -197,6 +208,11 @@ object LastPlayed {
                 source = song.playbackSource,
                 sourceType = song.playbackSourceType?.name,
                 sourceId = song.playbackSourceId,
+                channelId = song.artistId,
+                originalTitle = song.originalTitle,
+                originalArtist = song.originalArtist,
+                coverSinger = song.coverSinger,
+                coverOriginalArtist = song.coverOriginalArtist,
             )
         }
     }

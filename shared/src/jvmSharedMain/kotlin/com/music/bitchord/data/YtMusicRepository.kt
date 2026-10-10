@@ -405,7 +405,7 @@ object YtMusicRepository {
         if (!song.isVideo) return song
         // A cover's "audio version" is the song it covers — someone else's
         // recording. A cover plays as itself.
-        if (song.originalTitle != null || CoverTitles.read(song) != null) return song
+        if (CoverTitles.isCover(song)) return song
         audioVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {

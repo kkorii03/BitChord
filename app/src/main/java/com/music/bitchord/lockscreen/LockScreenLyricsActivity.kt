@@ -237,9 +237,14 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
             .background(Color(0xFF101010))
             .pointerInput(Unit) {
                 val threshold = 120.dp.toPx()
+                // Summed here rather than read back off [lift]: several moves
+                // can land in one frame, before any snap has run, and each one
+                // reading the same stale value lost the finger's distance.
+                var offset = 0f
                 detectVerticalDragGestures(
+                    onDragStart = { offset = lift.value },
                     onDragEnd = {
-                        val unlocking = lift.value < -threshold
+                        val unlocking = offset < -threshold
                         if (unlocking) onUnlock()
                         scope.launch {
                             lift.animateTo(0f, spring(dampingRatio = Spring.DampingRatioLowBouncy))
@@ -248,7 +253,9 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                     onDragCancel = { scope.launch { lift.animateTo(0f) } },
                 ) { change, delta ->
                     change.consume()
-                    scope.launch { lift.snapTo((lift.value + delta).coerceIn(-size.height.toFloat(), 0f)) }
+                    offset = (offset + delta).coerceIn(-size.height.toFloat(), 0f)
+                    val target = offset
+                    scope.launch { lift.snapTo(target) }
                 }
             },
     ) {

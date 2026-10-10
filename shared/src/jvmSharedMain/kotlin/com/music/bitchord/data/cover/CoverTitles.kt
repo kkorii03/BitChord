@@ -45,7 +45,7 @@ object CoverTitles {
     private const val SEPARATOR = " · "
 
     /** "cover by", "Covered By", "covey by", "coverby", "커버 by" — then the singer. */
-    private val COVER_BY = Regex("""(?i)(?:cover(?:ed)?|covey|커버)\s*by\s*[:：]?\s*""")
+    private val COVER_BY = Regex("""(?i)(?<![a-z])(?:cover(?:ed)?|covey|커버)\s*by\s*[:：]?\s*""")
 
     /**
      * A bare "cover" / "커버" tag with no name after it: in brackets, or the
@@ -115,6 +115,19 @@ object CoverTitles {
      * queue row already shown as its song ([applyTo]).
      */
     fun lyricsQuery(song: Song): LyricsQuery {
+        // Shown as a cover but with the upload's own title lost (a queue saved
+        // before covers were kept whole): the byline still names both people.
+        if (song.originalTitle == null && song.isVideo && song.artist.endsWith(" $COVER_WORD")) {
+            val byline = song.artist.removeSuffix(" $COVER_WORD")
+            val original = byline.substringBeforeLast(SEPARATOR, "").trim()
+            val singer = byline.substringAfterLast(SEPARATOR).trim()
+            return LyricsQuery(
+                title = song.title,
+                artist = original.ifEmpty { singer },
+                alternatives = listOfNotNull((song.title to singer).takeIf { original.isNotEmpty() }),
+                isVideo = true,
+            )
+        }
         val upload = if (song.originalTitle != null) {
             song.copy(
                 title = song.originalTitle ?: song.title,
@@ -147,6 +160,15 @@ object CoverTitles {
             coverOriginalArtist = cover.originalArtist,
         )
     }
+
+    /**
+     * Whether [song] is a cover, as the upload or as already shown — including
+     * a row whose cover fields were lost on the way through a saved queue and
+     * that only its "… 커버" byline still gives away.
+     */
+    fun isCover(song: Song): Boolean =
+        song.originalTitle != null || song.coverSinger != null ||
+            (song.isVideo && song.artist.endsWith(" $COVER_WORD")) || read(song) != null
 
     /**
      * Who to credit a play to: the singer of a cover, the artist of anything
