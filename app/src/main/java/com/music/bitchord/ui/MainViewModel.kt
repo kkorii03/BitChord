@@ -145,6 +145,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _moodGenreShelves = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
     val moodGenreShelves: StateFlow<UiState<List<HomeShelf>>> = _moodGenreShelves.asStateFlow()
 
+    /**
+     * The charts page's country choice while the charts are open: the code
+     * shown and the codes offered. Null on every other category.
+     */
+    private val _chartCountries = MutableStateFlow<Pair<String?, List<String>>?>(null)
+    val chartCountries: StateFlow<Pair<String?, List<String>>?> = _chartCountries.asStateFlow()
+    private var chartsJob: Job? = null
+
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
@@ -1548,7 +1556,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (sections.isEmpty()) {
                     UiState.Error(text(R.string.nothing_to_explore))
                 } else {
-                    UiState.Success(sections)
+                    // Charts lead the grid: a card of their own, opened like any
+                    // category but with a country picker (see [openMoodGenre]).
+                    val charts = MoodGenre(
+                        title = text(R.string.charts),
+                        browseId = Innertube.CHARTS_BROWSE_ID,
+                        params = null,
+                        stripeColor = 0xFFE8304CL,
+                    )
+                    UiState.Success(listOf(MoodGenreSection(text(R.string.charts), listOf(charts))) + sections)
                 }
             },
             onFailure = { UiState.Error(it.friendly()) },
@@ -1590,6 +1606,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun openMoodGenre(item: MoodGenre) {
         _selectedMoodGenre.value = item
         _moodGenreShelves.value = UiState.Loading
+        chartsJob?.cancel()
+        if (item.browseId == Innertube.CHARTS_BROWSE_ID) {
+            loadCharts(AppSettings.chartsCountry.value)
+            return
+        }
+        _chartCountries.value = null
         viewModelScope.launch {
             _moodGenreShelves.value = YtMusicRepository.moodGenreShelves(item.browseId, item.params).fold(
                 onSuccess = { shelves ->
@@ -1604,7 +1626,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun closeMoodGenre(): Boolean {
         if (_selectedMoodGenre.value == null) return false
         _selectedMoodGenre.value = null
+        chartsJob?.cancel()
+        _chartCountries.value = null
         return true
+    }
+
+    /** Shows the charts for [country] (a code the page offered) and remembers the pick. */
+    fun selectChartsCountry(country: String) {
+        if (_selectedMoodGenre.value?.browseId != Innertube.CHARTS_BROWSE_ID) return
+        AppSettings.setChartsCountry(country)
+        _moodGenreShelves.value = UiState.Loading
+        loadCharts(country)
+    }
+
+    private fun loadCharts(country: String?) {
+        chartsJob?.cancel()
+        chartsJob = viewModelScope.launch {
+            val result = YtMusicRepository.charts(country)
+            result.getOrNull()?.let { page ->
+                // Keep a picked country selected while the page leaves it unsaid.
+                _chartCountries.value = (page.country ?: country) to page.countries
+            }
+            _moodGenreShelves.value = result.fold(
+                onSuccess = { page ->
+                    if (page.shelves.isEmpty()) UiState.Error(text(R.string.nothing_to_explore))
+                    else UiState.Success(page.shelves)
+                },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+        }
     }
 
     /** Tapping a tab should leave any pushed page behind. */

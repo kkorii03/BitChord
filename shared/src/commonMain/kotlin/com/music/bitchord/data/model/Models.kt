@@ -415,6 +415,14 @@ data class HomeFeed(
 )
 
 /** One server-defined group of the buttons shown on Explore. */
+/** YouTube Music's charts for one country, and the countries it offers. */
+data class ChartsPage(
+    /** The country shown, as the page's own code ("KR", "ZZ" for global); null when unsaid. */
+    val country: String?,
+    val countries: List<String>,
+    val shelves: List<HomeShelf>,
+)
+
 data class MoodGenreSection(
     val title: String,
     val items: List<MoodGenre>,

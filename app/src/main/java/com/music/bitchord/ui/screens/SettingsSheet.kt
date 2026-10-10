@@ -54,6 +54,8 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -216,6 +218,8 @@ fun SettingsScreen(
     val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
+    val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
+    val resumeOnHeadphones by AppSettings.resumeOnHeadphones.collectAsStateWithLifecycle()
     // Read again whenever the page comes back, which is how a grant made in
     // the system's own screen shows up here.
     val settingsForeground = com.music.bitchord.ui.rememberIsForeground()
@@ -365,6 +369,7 @@ fun SettingsScreen(
     }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showGeminiKeyDialog by remember { mutableStateOf(false) }
+    var showContentCountryDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
 
@@ -570,6 +575,25 @@ fun SettingsScreen(
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.playback)) {
+            val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
+            row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
+                SettingsRow(
+                    icon = Icons.Rounded.Headphones,
+                    title = resumeOnHeadphonesTitle,
+                    subtitle = stringResource(R.string.resume_on_headphones_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = resumeOnHeadphones,
+                            onCheckedChange = { AppSettings.setResumeOnHeadphones(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setResumeOnHeadphones(!resumeOnHeadphones) },
+                )
+            }
             val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
             row(preferMusicOnlyTitle, "video", "audio", "music video") {
                 SettingsRow(
@@ -1492,6 +1516,16 @@ fun SettingsScreen(
                     onClick = onAppLanguage,
                 )
             }
+            val contentCountryTitle = stringResource(R.string.content_country)
+            row(contentCountryTitle, "country", "region", "chart", "gl", "국가", "지역") {
+                SettingsRow(
+                    icon = Icons.Rounded.Public,
+                    title = contentCountryTitle,
+                    subtitle = countryDisplayName(contentCountry),
+                    trailing = { Chevron() },
+                    onClick = { showContentCountryDialog = true },
+                )
+            }
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
@@ -1769,6 +1803,17 @@ fun SettingsScreen(
                     Text(stringResource(R.string.cancel))
                 }
             },
+        )
+    }
+
+    if (showContentCountryDialog) {
+        ContentCountryDialog(
+            selected = contentCountry,
+            onSelect = { code ->
+                AppSettings.setContentCountry(code)
+                showContentCountryDialog = false
+            },
+            onDismiss = { showContentCountryDialog = false },
         )
     }
 

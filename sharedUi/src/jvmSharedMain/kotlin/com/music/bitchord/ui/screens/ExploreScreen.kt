@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -302,6 +303,8 @@ fun MoodGenrePlaylistsScreen(
     onRetry: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    /** Drawn under the title, above the shelves — the charts' country picker. */
+    header: @Composable () -> Unit = {},
 ) {
     LazyColumn(
         state = listState,
@@ -318,12 +321,15 @@ fun MoodGenrePlaylistsScreen(
                 modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
             )
         }
+        item(key = "header") { header() }
         when (state) {
             UiState.Loading -> feedSkeleton()
             is UiState.Error -> item {
                 MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
             }
-            is UiState.Success -> items(state.data, key = { it.title }) { shelf ->
+            // Indexed: two shelves may share a heading (charts do), and a
+            // repeated key would take the whole list down.
+            is UiState.Success -> itemsIndexed(state.data, key = { index, shelf -> "$index:${shelf.title}" }) { _, shelf ->
                 Shelf(shelf = shelf, onItemClick = onItemClick)
             }
         }

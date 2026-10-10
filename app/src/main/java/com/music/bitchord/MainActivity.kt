@@ -708,6 +708,7 @@ private fun BitChordApp(
     val exploreState by viewModel.explore.collectAsStateWithLifecycle()
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
     val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
+    val chartCountries by viewModel.chartCountries.collectAsStateWithLifecycle()
     val libraryState by viewModel.library.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
@@ -3049,6 +3050,15 @@ private fun BitChordApp(
                                 },
                                 onRetry = { viewModel.openMoodGenre(category) },
                                 contentPadding = listPadding,
+                                header = {
+                                    chartCountries?.let { (shown, countries) ->
+                                        com.music.bitchord.ui.screens.ChartCountryChips(
+                                            selected = shown,
+                                            countries = countries,
+                                            onSelect = viewModel::selectChartsCountry,
+                                        )
+                                    }
+                                },
                             )
                         } ?: ExploreScreen(
                             state = exploreState,

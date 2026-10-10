@@ -1064,4 +1064,10 @@
     <string name="lock_screen_lyrics_pause">일시정지</string>
     <string name="auto_translate_lyrics">가사 자동 번역</string>
     <string name="auto_translate_lyrics_subtitle">번역 버튼을 누르지 않아도 가사 아래에 번역이 표시됩니다. 원문만 보려면 번역 버튼을 누르십시오.</string>
+    <string name="content_country">콘텐츠 국가</string>
+    <string name="content_country_description">차트, 분위기, 최신 음악을 이 국가 기준으로 받아옵니다. 계정 위치는 바뀌지 않습니다.</string>
+    <string name="resume_on_headphones">이어폰 연결 시 이어서 재생</string>
+    <string name="resume_on_headphones_subtitle">블루투스나 유선 이어폰을 연결하면 멈춰 있던 곡을 다시 재생합니다</string>
+    <string name="charts">차트</string>
+    <string name="charts_global">전 세계</string>
 </resources>

@@ -531,6 +531,24 @@ object AppSettings {
     /** Show the full-screen lyrics over the lock screen. See [LockScreenLyrics]. */
     val lockScreenLyrics = MutableStateFlow(false)
 
+    /**
+     * The country YouTube Music answers for — charts, moods, new releases.
+     * Sent as each request's `gl`; the account's own location is untouched.
+     */
+    val contentCountry = MutableStateFlow(DEFAULT_CONTENT_COUNTRY)
+
+    /** The country last picked on the charts page. */
+    val chartsCountry = MutableStateFlow(DEFAULT_CONTENT_COUNTRY)
+
+    /**
+     * Channels whose uploads are read as covers even without a date tag in
+     * the title — see [com.music.bitchord.data.cover.CoverTitles]. Channel ids.
+     */
+    val coverChannels = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Pick a paused song back up when headphones connect. */
+    val resumeOnHeadphones = MutableStateFlow(true)
+
     /** See [init]: a key supplied with this build, used while none is saved. */
     private var bundledGeminiApiKey = ""
 
@@ -904,6 +922,12 @@ object AppSettings {
         keepDownloadTranslation.value = prefs.getBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, true)
         autoDownloadLiked.value = prefs.getBoolean(KEY_AUTO_DOWNLOAD_LIKED, true)
         lockScreenLyrics.value = prefs.getBoolean(KEY_LOCK_SCREEN_LYRICS, false)
+        contentCountry.value = prefs.getString(KEY_CONTENT_COUNTRY, null)?.takeIf { it.length == 2 }
+            ?: DEFAULT_CONTENT_COUNTRY
+        chartsCountry.value = prefs.getString(KEY_CHARTS_COUNTRY, null)?.takeIf { it.isNotBlank() }
+            ?: contentCountry.value
+        coverChannels.value = prefs.getStringSet(KEY_COVER_CHANNELS, null)?.toSet().orEmpty()
+        resumeOnHeadphones.value = prefs.getBoolean(KEY_RESUME_ON_HEADPHONES, true)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -1437,6 +1461,31 @@ object AppSettings {
     fun setLockScreenLyrics(value: Boolean) {
         lockScreenLyrics.value = value
         prefs.edit().putBoolean(KEY_LOCK_SCREEN_LYRICS, value).apply()
+    }
+
+    fun setContentCountry(value: String) {
+        val code = value.trim().uppercase(java.util.Locale.ROOT).takeIf { it.length == 2 } ?: return
+        contentCountry.value = code
+        prefs.edit().putString(KEY_CONTENT_COUNTRY, code).apply()
+    }
+
+    fun setChartsCountry(value: String) {
+        val code = value.trim().takeIf { it.isNotEmpty() } ?: return
+        chartsCountry.value = code
+        prefs.edit().putString(KEY_CHARTS_COUNTRY, code).apply()
+    }
+
+    fun setCoverChannel(channelId: String, cover: Boolean) {
+        if (channelId.isBlank()) return
+        val next = if (cover) coverChannels.value + channelId else coverChannels.value - channelId
+        if (next == coverChannels.value) return
+        coverChannels.value = next
+        prefs.edit().putStringSet(KEY_COVER_CHANNELS, next).apply()
+    }
+
+    fun setResumeOnHeadphones(value: Boolean) {
+        resumeOnHeadphones.value = value
+        prefs.edit().putBoolean(KEY_RESUME_ON_HEADPHONES, value).apply()
     }
 
     fun setGeminiApiKey(value: String) {
@@ -2068,6 +2117,11 @@ object AppSettings {
     private const val KEY_AUTO_TRANSLATE_LYRICS = "auto_translate_lyrics"
     private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
     private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
+    private const val KEY_CONTENT_COUNTRY = "ko_content_country"
+    private const val KEY_CHARTS_COUNTRY = "ko_charts_country"
+    private const val KEY_COVER_CHANNELS = "ko_cover_channels"
+    private const val KEY_RESUME_ON_HEADPHONES = "ko_resume_on_headphones"
+    const val DEFAULT_CONTENT_COUNTRY = "KR"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_SHOW_CACHE_FOLDER = "show_cache_folder"

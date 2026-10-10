@@ -205,6 +205,22 @@ object InnertubeParser {
     }
 
     /**
+     * The country codes the charts page offers, and the one it is showing.
+     *
+     * The choices ride in the page's framework mutations as boolean form
+     * choices whose opaque token is the code itself ("KR", "US", "ZZ" for
+     * global); the one shown is the choice marked selected.
+     */
+    fun parseChartCountries(response: JsonObject): Pair<String?, List<String>> {
+        val choices = response.o("frameworkUpdates").o("entityBatchUpdate").a("mutations").orEmpty()
+            .mapNotNull { it.o("payload").o("musicFormBooleanChoice") }
+        val codes = choices.mapNotNull { it.s("opaqueToken")?.takeIf(String::isNotBlank) }.distinct()
+        val selected = choices.firstOrNull { (it["selected"] as? JsonPrimitive)?.contentOrNull == "true" }
+            ?.s("opaqueToken")
+        return selected to codes
+    }
+
+    /**
      * The Moods & genres browse page is a set of navigation-button grids, not
      * a normal carousel. Keep the browse params on every button: they select
      * the playlist shelves that belong to that exact mood or genre.

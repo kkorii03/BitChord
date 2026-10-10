@@ -65,6 +65,20 @@ object Innertube {
     @Volatile
     var appLanguage: () -> String? = { null }
 
+    /**
+     * The country whose catalogue, charts and moods YouTube Music answers
+     * with — the `gl` of every signed request. Only the request's: the
+     * account's own location (and so its Premium plan) is never touched.
+     * Two letters, upper case; anything else falls back to "US".
+     */
+    @Volatile
+    var contentCountry: () -> String? = { null }
+
+    val currentCountry: String
+        get() = contentCountry()?.trim()?.uppercase(Locale.ROOT)
+            ?.takeIf { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            ?: "US"
+
     val currentLanguage: String
         get() {
             val raw = appLanguage()?.ifEmpty { null }
@@ -533,6 +547,20 @@ object Innertube {
             put("browseId", browseId)
             params?.let { put("params", it) }
         }
+
+    /**
+     * YouTube Music's charts page for [country] — a code from the page's own
+     * country list, or null for the request's content country.
+     */
+    suspend fun charts(country: String?): JsonObject =
+        postMusic("browse") {
+            put("browseId", CHARTS_BROWSE_ID)
+            if (!country.isNullOrBlank()) {
+                putJsonObject("formData") { putJsonArray("selectedValues") { add(country) } }
+            }
+        }
+
+    const val CHARTS_BROWSE_ID = "FEmusic_charts"
 
     /**
      * The next page of a paged browse response — playlists and library feeds
@@ -1137,7 +1165,7 @@ object Innertube {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", clientVersion)
                                 put("hl", currentLanguage)
-                                put("gl", "US")
+                                put("gl", currentCountry)
                                 visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {

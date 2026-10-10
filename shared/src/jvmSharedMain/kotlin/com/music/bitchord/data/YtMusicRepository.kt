@@ -3,8 +3,10 @@ package com.music.bitchord.data
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
+import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
+import com.music.bitchord.data.model.ChartsPage
 import com.music.bitchord.data.model.isExactArtistMatch
 import com.music.bitchord.data.model.normalizedArtistName
 import com.music.bitchord.data.model.ArtistPage
@@ -258,7 +260,21 @@ object YtMusicRepository {
 
     /** The server-defined mood and genre categories used by Explore. */
     suspend fun moodAndGenres(): Result<List<MoodGenreSection>> = call("moods-and-genres") {
-        InnertubeParser.parseMoodAndGenres(Innertube.browse("FEmusic_moods_and_genres"))
+        MoodLabels.tidy(
+            InnertubeParser.parseMoodAndGenres(Innertube.browse("FEmusic_moods_and_genres")),
+            Innertube.currentLanguage,
+        )
+    }
+
+    /** The charts page for [country] (a code the page offered), or the content country's. */
+    suspend fun charts(country: String?): Result<ChartsPage> = call("charts:${country.orEmpty()}") {
+        val response = Innertube.charts(country)
+        val (shown, countries) = InnertubeParser.parseChartCountries(response)
+        ChartsPage(
+            country = shown ?: country,
+            countries = countries,
+            shelves = InnertubeParser.parseHome(response),
+        )
     }
 
     /**

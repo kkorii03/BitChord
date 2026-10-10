@@ -1160,4 +1160,10 @@
     <string name="lock_screen_lyrics_pause">Pause</string>
     <string name="auto_translate_lyrics">Translate lyrics automatically</string>
     <string name="auto_translate_lyrics_subtitle">Lyrics show their translation without tapping the translate button. Tap it to see the original.</string>
+    <string name="content_country">Content country</string>
+    <string name="content_country_description">Charts, moods and new releases come from this country. Your account\'s own location is not changed.</string>
+    <string name="resume_on_headphones">Resume when headphones connect</string>
+    <string name="resume_on_headphones_subtitle">Plays the paused song again when Bluetooth or wired headphones connect</string>
+    <string name="charts">Charts</string>
+    <string name="charts_global">Global</string>
 </resources>
