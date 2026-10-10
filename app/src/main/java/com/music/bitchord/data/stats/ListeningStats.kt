@@ -169,7 +169,9 @@ object ListeningStats {
             // whoever its page opens, and crediting a feature the same as a
             // headline act puts a guest verse on a chart of what someone
             // listens to.
-            primaryArtist(song.artist)?.let { name ->
+            // A cover counts for the person singing it, not the channel that
+            // posted it nor the artist whose song it is — see CoverTitles.
+            primaryArtist(com.music.bitchord.data.cover.CoverTitles.creditedArtist(song))?.let { name ->
                 // Asked here rather than in the recorder, because here is where
                 // the credit has already been reduced to a person: asking about
                 // "Cheema Y & Gur Sidhu" gets a picture of nobody and a genre of

@@ -822,13 +822,28 @@ class CrossfadeController(
         // length: it decides its own duration from each pair of tracks (beats,
         // tempo, structure), so requiring a nonzero [AppSettings.crossfadeSeconds]
         // first would tie an automatic feature to a manual one it doesn't use.
-        if (AppSettings.smartFadeEnabled.value) {
+        // A video on either side is the one pair Automix never plans: its
+        // analysis and cueing stay off video rows. Rather than no transition
+        // at all, such a pair gets the plain crossfade below — at the slider's
+        // length, or Automix's own fallback length when the slider is off.
+        val videoPair = player.currentMediaItem?.isVideoOrigin == true ||
+            player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
+        if (AppSettings.smartFadeEnabled.value && !videoPair) {
             considerSmartTransition(duration)
             return
         }
+        val automixVideoPair = AppSettings.smartFadeEnabled.value && videoPair
+        if (automixVideoPair) {
+            AppSettings.smartTransitionWindow.value = null
+            AppSettings.smartMixInProgress.value = false
+        }
 
-        if (configuredFadeMs() <= 0L) return
-        val fade = fadeFor(duration)
+        val fade = if (automixVideoPair && configuredFadeMs() <= 0L) {
+            minOf((DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong(), duration / 3).coerceAtLeast(0L)
+        } else {
+            if (configuredFadeMs() <= 0L) return
+            fadeFor(duration)
+        }
         if (fade <= 0L) return
 
         val remaining = duration - player.currentPosition

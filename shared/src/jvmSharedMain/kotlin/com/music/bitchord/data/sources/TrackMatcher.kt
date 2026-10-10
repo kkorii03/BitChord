@@ -55,8 +55,9 @@ object TrackMatcher {
     )
 
     fun targetOf(song: Song) = Target(
-        song.title,
-        song.artist,
+        // A cover is matched as the upload it is — see CoverTitles.
+        song.originalTitle ?: song.title,
+        song.originalArtist ?: song.artist,
         secondsOf(song.durationText),
         song.albumName,
         song.isExplicit,

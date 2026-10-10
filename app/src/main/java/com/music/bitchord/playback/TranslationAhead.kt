@@ -94,17 +94,21 @@ internal object TranslationAhead {
         // The player matches with a known length; a lookup without one may
         // settle on different lines, and those would not be the ones it shows.
         if (sources.isEmpty() || durationMs <= 0L) return null
+        // The same search the player makes — a cover as its song.
+        val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
         return try {
             withTimeoutOrNull(LOOKUP_TIMEOUT_MS) {
                 LyricsRepository.lyrics(
                     videoId = song.videoId,
-                    title = song.title,
-                    artist = song.artist,
+                    title = coverQuery.title,
+                    artist = coverQuery.artist,
                     durationMs = durationMs,
                     album = song.albumName,
                     sources = sources,
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    isVideo = coverQuery.isVideo,
+                    alternatives = coverQuery.alternatives,
                 )
             }?.lines?.takeIf { lines -> lines.any { it.text.isNotBlank() } }
         } catch (cancelled: CancellationException) {

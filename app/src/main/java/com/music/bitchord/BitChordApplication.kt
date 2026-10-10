@@ -65,6 +65,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // The content country, which YouTube Music's `gl` follows. Read live,
         // so a change applies from the next request.
         Innertube.contentCountry = { AppSettings.contentCountry.value }
+        // Channels marked as cover channels read their titles as covers.
+        com.music.bitchord.data.cover.CoverTitles.designatedChannels = { AppSettings.coverChannels.value }
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
         // PlaybackService shares this process, so seeding the cookie here means

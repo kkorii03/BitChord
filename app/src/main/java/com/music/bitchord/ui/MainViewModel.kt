@@ -314,6 +314,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val artist: String,
         val durationMs: Long,
         val album: String?,
+        val isVideo: Boolean = false,
+        val alternatives: List<Pair<String, String>> = emptyList(),
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
@@ -345,6 +347,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         durationMs: Long,
         album: String? = null,
         localUri: String? = null,
+        /** A video upload: its captions are asked first. */
+        isVideo: Boolean = false,
+        /** Other readings of a cover's title to search under — see CoverTitles. */
+        alternatives: List<Pair<String, String>> = emptyList(),
     ) {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
@@ -364,7 +370,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
-        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album)
+        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives)
         selectedLyricsSource = null
         manualLyricsJobs.values.forEach(Job::cancel)
         manualLyricsJobs.clear()
@@ -410,6 +416,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     providerFinished(generation, source, result)
                 },
                 onSourceCancelled = { source -> providerCancelled(generation, source) },
+                isVideo = isVideo,
+                alternatives = alternatives,
             )
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             _lyrics.value = selected?.lines
@@ -462,6 +470,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     providerFinished(generation, provider, result)
                 },
                 onSourceCancelled = { provider -> providerCancelled(generation, provider) },
+                alternatives = request.alternatives,
             )
         }
     }

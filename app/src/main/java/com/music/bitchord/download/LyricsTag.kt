@@ -74,17 +74,20 @@ internal object LyricsTag {
             Log.d(TAG, "no duration for ${track.videoId}; looking up lyrics by title and artist")
         }
 
+        val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(track)
         val found = try {
             withTimeoutOrNull(LOOKUP_MS) {
                 LyricsRepository.lyrics(
                     videoId = track.videoId,
-                    title = track.title,
-                    artist = track.artist,
+                    title = coverQuery.title,
+                    artist = coverQuery.artist,
                     durationMs = durationMs,
                     album = track.albumName,
                     sources = sources,
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    isVideo = coverQuery.isVideo,
+                    alternatives = coverQuery.alternatives,
                 )
             }
         } catch (e: CancellationException) {

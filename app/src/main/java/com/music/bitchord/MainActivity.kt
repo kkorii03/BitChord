@@ -968,10 +968,12 @@ private fun BitChordApp(
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     LaunchedEffect(player.song?.videoId, player.durationMs, syncedLyricsEnabled, lyricsSources) {
         player.song?.let {
+            // A cover is looked up as the song it covers — see CoverTitles.
+            val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(it)
             viewModel.loadLyrics(
                 it.videoId,
-                it.title,
-                it.artist,
+                query.title,
+                query.artist,
                 // The player's own length, and the catalogue's where it has
                 // none yet. Paused, ExoPlayer never finishes preparing the
                 // track it was skipped to, so it reports no duration at all —
@@ -980,6 +982,8 @@ private fun BitChordApp(
                 player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
                 it.albumName,
                 it.localUri,
+                isVideo = query.isVideo,
+                alternatives = query.alternatives,
             )
         }
     }

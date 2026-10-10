@@ -6,6 +6,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -103,12 +104,62 @@ object LyricsRepository {
         onSourceResult: ((LyricsSource, Result?) -> Unit)? = null,
         /** Lets callers turn a cancelled race loser back into "not fetched". */
         onSourceCancelled: ((LyricsSource) -> Unit)? = null,
+        /**
+         * A video upload rather than a catalogue track: its own captions are
+         * the likeliest lyrics to fit it, so [LyricsSource.YOUTUBE_TRANSCRIPT]
+         * is asked first, where the listener has it switched on.
+         */
+        isVideo: Boolean = false,
+        /**
+         * Other (title, artist) readings to try, in order, when [title] and
+         * [artist] find nothing — a cover whose title could be read two ways.
+         */
+        alternatives: List<Pair<String, String>> = emptyList(),
+    ): Result? {
+        val ordered = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in sources) {
+            listOf(LyricsSource.YOUTUBE_TRANSCRIPT) + order.filterNot { it == LyricsSource.YOUTUBE_TRANSCRIPT }
+        } else {
+            order
+        }
+        val first = lyricsFor(
+            videoId, title, artist, durationMs, album, sources, ordered, prioritizeSyllableSync, isrc,
+            onSourceStarted, onSourceResult, onSourceCancelled,
+        )
+        if (first != null || alternatives.isEmpty()) return first
+        for ((altTitle, altArtist) in alternatives) {
+            if (altTitle == title && altArtist == artist) continue
+            // The video's own captions were already asked: they do not change
+            // with the name the search is made under.
+            val found = lyricsFor(
+                videoId, altTitle, altArtist, durationMs, album,
+                sources - LyricsSource.YOUTUBE_TRANSCRIPT, ordered, prioritizeSyllableSync, isrc,
+                onSourceStarted, onSourceResult, onSourceCancelled,
+            )
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private suspend fun lyricsFor(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        sources: Set<LyricsSource>,
+        order: List<LyricsSource>,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        onSourceStarted: ((LyricsSource) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceCancelled: ((LyricsSource) -> Unit)?,
     ): Result? {
         // The last few answers, so the next track's lyrics looked up ahead of
         // time (see LyricsPrefetch) are the very lines the player then shows —
         // the same text is what lets the translation fetched with them be found.
         val memoKey = buildString {
-            append(videoId).append('\u0000').append(prioritizeSyllableSync)
+            append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
+            append('\u0000').append(prioritizeSyllableSync)
             append('\u0000').append(isrc.orEmpty())
             order.forEach { append('\u0000').append(it.name) }
             append('\u0001')
@@ -129,7 +180,10 @@ object LyricsRepository {
     }
 
     /** How long word-synced sources may keep a line-synced answer waiting. */
-    private const val SYLLABLE_GRACE_MS = 5_000L
+    private const val SYLLABLE_GRACE_MS = 8_000L
+
+    /** How often the grace period looks over the sources still running. */
+    private const val GRACE_POLL_MS = 80L
 
     private val recent = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 8
@@ -202,44 +256,63 @@ object LyricsRepository {
         }
 
         try {
-            var lineSynced: Result? = null
-            // Once a line-synced answer is in hand, the word-synced sources
-            // still running get this long to beat it, so holding out for the
-            // sweep never leaves the lyrics waiting on the slowest server.
-            var deadline = Long.MAX_VALUE
-            for ((source, job) in racing) {
-                // If we already found a line-synced or better result, skip Genius completely
-                if (lineSynced != null && source == LyricsSource.GENIUS) continue
-
-                val found = (
-                    if (deadline == Long.MAX_VALUE) {
-                        runCatching { job.await() }.getOrNull()
-                    } else {
-                        val remaining = deadline - System.currentTimeMillis()
-                        if (remaining <= 0L) break
-                        // Wrapped so a source that answered "nothing" can be
-                        // told apart from one that ran out of time.
-                        (withTimeoutOrNull(remaining) { listOf(runCatching { job.await() }.getOrNull()) } ?: break)
-                            .first()
-                    }
-                    ) ?: continue
+            var fallback: Result? = null
+            for ((index, entry) in racing.withIndex()) {
+                val (source, job) = entry
+                // With something in hand already, Genius (plain text) is not worth asking.
+                if (fallback != null && source == LyricsSource.GENIUS) continue
+                val found = runCatching { job.await() }.getOrNull() ?: continue
                 if (found.lines.any { it.isWordSynced }) return@coroutineScope found
-                if (!prioritizeSyllableSync && found.lines.any { it.timeMs > 0 }) {
-                    return@coroutineScope found
-                }
-                if (lineSynced == null) {
-                    lineSynced = found
-                    if (found.lines.any { it.timeMs > 0 }) {
-                        deadline = System.currentTimeMillis() + SYLLABLE_GRACE_MS
-                    }
+                val timed = found.lines.any { it.timeMs > 0 }
+                if (!prioritizeSyllableSync && timed) return@coroutineScope found
+                if (fallback == null || (timed && fallback.lines.none { it.timeMs > 0 })) fallback = found
+                if (timed) {
+                    // A line-synced answer is in hand. The sources still running
+                    // get [SYLLABLE_GRACE_MS] between them to beat it with a
+                    // word-synced one — all of them at once, so one slow server
+                    // early in the order no longer ends the wait for a faster one
+                    // further down that has already answered.
+                    val rest = racing.drop(index + 1).filter { it.first != LyricsSource.GENIUS }
+                    return@coroutineScope wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback
                 }
             }
-            lineSynced
+            fallback
         } finally {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
             racing.forEach { it.second.cancel() }
             documents.cancel()
+        }
+    }
+
+    /**
+     * The first word-synced answer among [rest], in their order, waiting at
+     * most [graceMs] for it. A source higher in the order that is still
+     * running is waited for before a lower one that has answered is taken;
+     * once time is up, the best that has answered wins.
+     */
+    private suspend fun wordSyncedWithin(
+        rest: List<Pair<LyricsSource, Deferred<Result?>>>,
+        graceMs: Long,
+    ): Result? {
+        if (rest.isEmpty()) return null
+        val deadline = System.currentTimeMillis() + graceMs
+        while (true) {
+            val timeUp = System.currentTimeMillis() >= deadline
+            var waitingAbove = false
+            for ((_, job) in rest) {
+                if (!job.isCompleted) {
+                    waitingAbove = true
+                    if (!timeUp) break
+                    continue
+                }
+                val answer = if (job.isCancelled) null else runCatching { job.await() }.getOrNull()
+                if (answer != null && answer.lines.any { it.isWordSynced }) {
+                    if (!waitingAbove || timeUp) return answer
+                }
+            }
+            if (!waitingAbove || timeUp) return null
+            delay(GRACE_POLL_MS)
         }
     }
 

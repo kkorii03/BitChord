@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.cover.CoverTitles
 import android.content.ComponentName
 import android.net.Uri
 import android.os.Bundle
@@ -405,6 +406,10 @@ fun MediaItem.toSong() = Song(
     playbackSourceId = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE_ID),
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
+    originalTitle = mediaMetadata.extras?.getString(EXTRA_ORIGINAL_TITLE),
+    originalArtist = mediaMetadata.extras?.getString(EXTRA_ORIGINAL_ARTIST),
+    coverSinger = mediaMetadata.extras?.getString(EXTRA_COVER_SINGER),
+    coverOriginalArtist = mediaMetadata.extras?.getString(EXTRA_COVER_ORIGINAL_ARTIST),
 )
 
 /** @see Song.fromAutoplay */
@@ -483,6 +488,10 @@ private const val EXTRA_DURATION = "bitchord.durationText"
 private const val EXTRA_EXPLICIT = "bitchord.explicit"
 private const val EXTRA_IS_VIDEO = "bitchord.isVideo"
 private const val EXTRA_VIDEO_ORIGIN = "bitchord.isVideoOrigin"
+private const val EXTRA_ORIGINAL_TITLE = "bitchord.originalTitle"
+private const val EXTRA_ORIGINAL_ARTIST = "bitchord.originalArtist"
+private const val EXTRA_COVER_SINGER = "bitchord.coverSinger"
+private const val EXTRA_COVER_ORIGINAL_ARTIST = "bitchord.coverOriginalArtist"
 
 /** Set only on the replacement item produced by [QualityUpgrade]. */
 const val EXTRA_QUALITY_UPGRADED = "bitchord.qualityUpgraded"
@@ -537,8 +546,10 @@ private fun resolvePlaybackUri(uriString: String, localPath: String?): String {
  * before.
  */
 private fun Song.matchQuery(): String = buildString {
-    append("&n=").append(Uri.encode(title))
-    append("&a=").append(Uri.encode(artist))
+    // A cover is matched as the upload it is, never as the song it covers:
+    // matched on its shown title, another source would play the original.
+    append("&n=").append(Uri.encode(originalTitle ?: title))
+    append("&a=").append(Uri.encode(originalArtist ?: artist))
     TrackMatcher.secondsOf(durationText)?.let { append("&d=").append(it) }
     albumName?.takeIf { it.isNotBlank() }?.let { append("&l=").append(Uri.encode(it)) }
     isExplicit?.let { append("&e=").append(if (it) "1" else "0") }
@@ -549,6 +560,9 @@ private fun Song.matchQuery(): String = buildString {
 }
 
 fun Song.toMediaItem(): MediaItem {
+    // A cover upload is shown as its song — see [CoverTitles]. Only what the
+    // item *shows* changes; the URI below is still built from the upload.
+    val shown = CoverTitles.applyTo(this)
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].
@@ -605,8 +619,8 @@ fun Song.toMediaItem(): MediaItem {
         .setUri(resolvePlaybackUri(uriString, localPath))
     .setMediaMetadata(
         MediaMetadata.Builder()
-            .setTitle(title)
-            .setArtist(artist)
+            .setTitle(shown.title)
+            .setArtist(shown.artist)
             // The release this track came off, when whoever queued it knew.
             //
             // A native field rather than an extra because Media3 bundles this
@@ -647,7 +661,8 @@ fun Song.toMediaItem(): MediaItem {
                     offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
                     isExplicit != null || isVideo || isVideoOrigin || radioName != null ||
-                    playbackSource != null || playbackSourceType != null || playbackSourceId != null
+                    playbackSource != null || playbackSourceType != null || playbackSourceId != null ||
+                    shown.originalTitle != null
                 ) {
                     setExtras(
                         bundleOf(
@@ -667,6 +682,10 @@ fun Song.toMediaItem(): MediaItem {
                             EXTRA_EXPLICIT to isExplicit,
                             EXTRA_IS_VIDEO to isVideo,
                             EXTRA_VIDEO_ORIGIN to isVideoOrigin,
+                            EXTRA_ORIGINAL_TITLE to shown.originalTitle,
+                            EXTRA_ORIGINAL_ARTIST to shown.originalArtist,
+                            EXTRA_COVER_SINGER to shown.coverSinger,
+                            EXTRA_COVER_ORIGINAL_ARTIST to shown.coverOriginalArtist,
                         ),
                     )
                 }

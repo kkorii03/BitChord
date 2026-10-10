@@ -6648,15 +6648,18 @@ class PlaybackService : MediaLibraryService() {
                 lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri)
             }
             if (lines == null) {
+                val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
                 val found = LyricsRepository.lyrics(
                     videoId = currentSong.videoId,
-                    title = currentSong.title,
-                    artist = currentSong.artist,
+                    title = coverQuery.title,
+                    artist = coverQuery.artist,
                     durationMs = trackDurationMs,
                     album = currentSong.albumName,
                     sources = AppSettings.lyricsSources.value,
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    isVideo = coverQuery.isVideo,
+                    alternatives = coverQuery.alternatives,
                 )
                 lines = found?.lines
             }

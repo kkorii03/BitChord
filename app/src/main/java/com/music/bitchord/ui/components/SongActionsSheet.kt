@@ -43,6 +43,8 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
 import androidx.compose.material.icons.rounded.Tune
@@ -333,6 +335,41 @@ fun SongActionsSheet(
                 stringResource(R.string.open_artist),
                 accent = palette.accent,
             ) { onOpenArtist(id) }
+        }
+        // Covers — see CoverTitles. The upload's own title, for a row shown
+        // as its song; tapping copies it.
+        song.originalTitle?.let { original ->
+            val context = LocalContext.current
+            ActionRow(
+                icon = Icons.Rounded.Subtitles,
+                label = stringResource(R.string.cover_original_title, original),
+                accent = palette.accent,
+            ) {
+                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("title", original))
+                android.widget.Toast.makeText(context, R.string.cover_original_title_copied, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        // A channel whose uploads are covers, read as such even without the
+        // date tag their titles usually end on.
+        val channelId = song.artistId
+        if (song.isVideo && !isOffline && !channelId.isNullOrBlank()) {
+            val context = LocalContext.current
+            val coverChannels by com.music.bitchord.data.settings.AppSettings.coverChannels.collectAsStateWithLifecycle()
+            val designated = channelId in coverChannels
+            ActionRow(
+                icon = Icons.Rounded.RecordVoiceOver,
+                label = stringResource(if (designated) R.string.cover_channel_unset else R.string.cover_channel_set),
+                tint = if (designated) palette.accent else null,
+                accent = palette.accent,
+            ) {
+                com.music.bitchord.data.settings.AppSettings.setCoverChannel(channelId, !designated)
+                android.widget.Toast.makeText(
+                    context,
+                    if (designated) R.string.cover_channel_unset_done else R.string.cover_channel_set_done,
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
         if (showSleepTimer) {
             ActionRow(

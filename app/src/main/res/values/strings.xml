@@ -1166,4 +1166,10 @@
     <string name="resume_on_headphones_subtitle">Plays the paused song again when Bluetooth or wired headphones connect</string>
     <string name="charts">Charts</string>
     <string name="charts_global">Global</string>
+    <string name="cover_original_title">Original title: %1$s</string>
+    <string name="cover_original_title_copied">Original title copied</string>
+    <string name="cover_channel_set">Mark this channel as a cover channel</string>
+    <string name="cover_channel_unset">Unmark cover channel</string>
+    <string name="cover_channel_set_done">Songs from this channel will show as covers from the next time they are queued</string>
+    <string name="cover_channel_unset_done">No longer treated as a cover channel</string>
 </resources>

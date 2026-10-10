@@ -119,6 +119,18 @@ data class Song(
     val playbackSourceType: PlaybackSourceType? = null,
     /** Browse id for an album, playlist, or other source page. */
     val playbackSourceId: String? = null,
+    /**
+     * A cover upload shown as its song (see CoverTitles): the upload's own
+     * title and channel, kept for the menu and for matching, while [title]
+     * and [artist] read "곡명" and "원곡자 · 부른사람 커버". Null on everything
+     * else.
+     */
+    val originalTitle: String? = null,
+    val originalArtist: String? = null,
+    /** Who sings a cover — what its plays are counted under. */
+    val coverSinger: String? = null,
+    /** Whose song a cover is, when its title says. */
+    val coverOriginalArtist: String? = null,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
