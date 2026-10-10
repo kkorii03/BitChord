@@ -280,8 +280,13 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
+                    // 0 at rest, 1 once lifted a third of the screen: by
+                    // then the content has faded out and settled back a little.
+                    val progress = (-lift.value / (size.height * 0.33f)).coerceIn(0f, 1f)
                     translationY = lift.value
-                    alpha = (1f + lift.value / (size.height * 0.6f)).coerceIn(0f, 1f)
+                    alpha = 1f - progress
+                    scaleX = 1f - 0.08f * progress
+                    scaleY = 1f - 0.08f * progress
                 }
                 .statusBarsPadding()
                 .navigationBarsPadding(),

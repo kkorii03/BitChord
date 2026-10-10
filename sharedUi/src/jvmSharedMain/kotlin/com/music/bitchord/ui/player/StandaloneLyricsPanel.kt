@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -40,6 +41,8 @@ fun StandaloneLyricsPanel(
         controlsOpen = true,
         onRevealControls = {},
         onHideControls = {},
-        modifier = modifier,
+        // The panel bleeds out by the player's gutter and pads its lines back
+        // in by the same amount, so it expects to sit inside that gutter.
+        modifier = modifier.padding(horizontal = PLAYER_GUTTER),
     )
 }
