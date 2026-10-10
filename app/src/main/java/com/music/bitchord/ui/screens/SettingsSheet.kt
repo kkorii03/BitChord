@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -213,6 +214,21 @@ fun SettingsScreen(
     val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
     val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
+    val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
+    // Read again whenever the page comes back, which is how a grant made in
+    // the system's own screen shows up here.
+    val settingsForeground = com.music.bitchord.ui.rememberIsForeground()
+    val canDrawOverlays = remember(settingsForeground) {
+        com.music.bitchord.lockscreen.LockScreenLyrics.canShow(context)
+    }
+    val openOverlayPermission: () -> Unit = {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
     val geminiKeyRejected by com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyRejected
         .collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -228,6 +244,7 @@ fun SettingsScreen(
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
+    val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -538,6 +555,15 @@ fun SettingsScreen(
                     checked = exportDownloads,
                     onCheckedChange = AppSettings::setExportDownloads,
                     subtitle = "Music/BitChord".takeIf { exportDownloads },
+                )
+            }
+            val autoDownloadLikedTitle = stringResource(R.string.auto_download_liked)
+            row(autoDownloadLikedTitle, "like", "heart", "offline", divided = false) {
+                SettingsSubRow(
+                    title = autoDownloadLikedTitle,
+                    checked = autoDownloadLiked,
+                    onCheckedChange = AppSettings::setAutoDownloadLiked,
+                    subtitle = stringResource(R.string.auto_download_liked_subtitle),
                 )
             }
         }
@@ -1062,6 +1088,42 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setKeepDownloadTranslation(!keepDownloadTranslation) },
+                    )
+                }
+                val lockScreenLyricsTitle = stringResource(R.string.lock_screen_lyrics)
+                row(lockScreenLyricsTitle, "lyrics", "lock screen", "lockscreen") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Lock,
+                        title = lockScreenLyricsTitle,
+                        subtitle = stringResource(
+                            if (lockScreenLyrics && !canDrawOverlays) {
+                                R.string.lock_screen_lyrics_needs_permission
+                            } else {
+                                R.string.lock_screen_lyrics_subtitle
+                            },
+                        ),
+                        trailing = {
+                            Switch(
+                                checked = lockScreenLyrics && canDrawOverlays,
+                                onCheckedChange = { on ->
+                                    AppSettings.setLockScreenLyrics(on)
+                                    if (on && !canDrawOverlays) openOverlayPermission()
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = {
+                            if (lockScreenLyrics && !canDrawOverlays) {
+                                openOverlayPermission()
+                            } else {
+                                val on = !lockScreenLyrics
+                                AppSettings.setLockScreenLyrics(on)
+                                if (on && !canDrawOverlays) openOverlayPermission()
+                            }
+                        },
                     )
                 }
             }

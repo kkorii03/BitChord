@@ -123,6 +123,7 @@ import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.scrobbling.ListenBrainzManager
 import com.music.bitchord.data.scrobbling.ScrobbleManager
@@ -1234,6 +1235,7 @@ class PlaybackService : MediaLibraryService() {
         NerdStats.forgetLastSession()
         localBitrateCache.clear()
         QualityUpgrade.forgetLastSession()
+        com.music.bitchord.lockscreen.LockScreenLyrics.attach(this) { player?.currentMediaItem != null }
 
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
@@ -2659,6 +2661,16 @@ class PlaybackService : MediaLibraryService() {
         refreshCustomLayouts()
         favoriteActionJob = scope.launch {
             YtMusicRepository.rate(videoId, target)
+                .onSuccess {
+                    if (target == LikeStatus.LIKE) {
+                        val playing = player?.currentMediaItem
+                            ?.takeIf { it.mediaId == videoId }
+                            ?.toSong()
+                        com.music.bitchord.download.LikedAutoDownload.onLiked(videoId, playing)
+                    } else if (previous == LikeStatus.LIKE) {
+                        com.music.bitchord.download.LikedAutoDownload.onUnliked(videoId)
+                    }
+                }
                 .onFailure {
                     LikeState.set(videoId, previous)
                     refreshCustomLayouts()
@@ -6494,6 +6506,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        com.music.bitchord.lockscreen.LockScreenLyrics.detach(this)
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.
@@ -6609,17 +6622,23 @@ class PlaybackService : MediaLibraryService() {
         scheduleTranslationAhead()
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
             serviceLyrics = null
+            com.music.bitchord.lockscreen.NowPlayingLyrics.publish(null, null)
             stopLyricsTicker()
             return
         }
 
         if (!AppSettings.syncedLyrics.value) {
             serviceLyrics = null
+            com.music.bitchord.lockscreen.NowPlayingLyrics.publish(null, null)
             stopLyricsTicker()
             return
         }
 
-        val trackDurationMs = (player?.duration ?: 0L).takeIf { it > 0 } ?: 0L
+        // The catalogue's length stands in until the player has its own, as it
+        // does for the lyrics screen: the same length finds the same lines, and
+        // the lyrics memo can then answer both.
+        val trackDurationMs = (player?.duration ?: 0L).takeIf { it > 0 }
+            ?: currentSong.durationMillis().coerceAtLeast(0L)
 
         serviceLyricsJob?.cancel()
         serviceLyricsJob = scope.launch(Dispatchers.IO) {
@@ -6643,6 +6662,7 @@ class PlaybackService : MediaLibraryService() {
             }
             withContext(Dispatchers.Main) {
                 serviceLyrics = lines
+                com.music.bitchord.lockscreen.NowPlayingLyrics.publish(currentSong.videoId, lines)
                 if (player?.isPlaying == true) {
                     updateLyricSubtitle()
                 }

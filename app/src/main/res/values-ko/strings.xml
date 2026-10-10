@@ -1042,4 +1042,24 @@
     <string name="prefetch_translation_subtitle">재생 중에 다음 곡 가사를 미리 번역해 두어 번역 버튼을 누르면 바로 표시됩니다.</string>
     <string name="keep_download_translation">다운로드할 때 번역 가사도 저장</string>
     <string name="keep_download_translation_subtitle">다운로드한 노래는 오프라인에서도 번역 가사를 볼 수 있습니다.</string>
+    <string name="auto_download_liked">좋아요한 노래 자동 다운로드</string>
+    <string name="auto_download_liked_subtitle">좋아요를 누른 노래를 자동으로 다운로드합니다. Wi-Fi 전용이 켜져 있으면 Wi-Fi에서만 받습니다.</string>
+    <string name="smart_top">많이 들은 곡</string>
+    <string name="smart_top_subtitle">이번 달과 지난달에 가장 많이 들은 노래</string>
+    <string name="smart_repeat">요즘 꽂힌 곡</string>
+    <string name="smart_repeat_subtitle">이번 주에 반복해서 들은 노래</string>
+    <string name="smart_rediscover">다시 듣기</string>
+    <string name="smart_rediscover_subtitle">예전에 즐겨 들었지만 한동안 듣지 않은 노래</string>
+    <string name="smart_liked_unplayed">좋아요했지만 거의 안 들은 곡</string>
+    <string name="smart_liked_unplayed_subtitle">좋아요를 눌렀지만 거의 재생하지 않은 노래</string>
+    <string name="smart_playlist_empty">아직 표시할 노래가 없습니다. 음악을 들을수록 채워집니다.</string>
+    <string name="smart_playlist_sign_in">좋아요한 노래를 보려면 로그인하십시오.</string>
+    <string name="lock_screen_lyrics">잠금화면 가사</string>
+    <string name="lock_screen_lyrics_subtitle">노래를 재생하거나 일시정지했을 때 잠금화면에 큰 실시간 가사를 표시합니다.</string>
+    <string name="lock_screen_lyrics_needs_permission">‘다른 앱 위에 표시’ 권한이 필요합니다. 탭하여 허용하십시오.</string>
+    <string name="lock_screen_lyrics_unlock">위로 밀어서 잠금 해제</string>
+    <string name="lock_screen_lyrics_previous">이전 곡</string>
+    <string name="lock_screen_lyrics_next">다음 곡</string>
+    <string name="lock_screen_lyrics_play">재생</string>
+    <string name="lock_screen_lyrics_pause">일시정지</string>
 </resources>

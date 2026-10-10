@@ -46,6 +46,8 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.stats.SmartPlaylist
+import com.music.bitchord.data.stats.SmartPlaylists
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
@@ -645,6 +647,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val unliked = previous == LikeStatus.LIKE &&
                         status == LikeStatus.INDIFFERENT
                     if (unliked) forgetFromLibrary(videoId)
+                    if (status == LikeStatus.LIKE) {
+                        com.music.bitchord.download.LikedAutoDownload.onLiked(videoId, knownSong(videoId))
+                    } else if (previous == LikeStatus.LIKE) {
+                        com.music.bitchord.download.LikedAutoDownload.onUnliked(videoId)
+                    }
                 },
                 onFailure = {
                     LikeState.set(videoId, previous)
@@ -707,6 +714,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 page.copy(songs = UiState.Success(songs.filterNot { it.videoId == videoId }))
             }
         }
+    }
+
+    /** A row already on screen for [videoId], newest page first, so a like can download it without a lookup. */
+    private fun knownSong(videoId: String): Song? {
+        _detailStack.value.asReversed().forEach { page ->
+            (page.songs as? UiState.Success)?.data?.firstOrNull { it.videoId == videoId }?.let { return it }
+        }
+        (_library.value as? UiState.Success)?.data?.likedSongs?.firstOrNull { it.videoId == videoId }?.let { return it }
+        (_history.value as? UiState.Success)?.data?.firstOrNull { it.videoId == videoId }?.let { return it }
+        return null
     }
 
     /** The heart: liked becomes neutral, anything else becomes liked. */
@@ -2507,6 +2524,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else UiState.Success(songs)
                 }
                 browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
+                SmartPlaylist.of(browseId) != null -> {
+                    val smart = smartPlaylistState(SmartPlaylist.of(browseId)!!)
+                    artwork = (smart as? UiState.Success)?.data
+                        ?.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
+                    smart
+                }
                 browseId == "local:all" -> {
                     val context = getApplication<Application>()
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
@@ -2706,6 +2729,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else UiState.Success(songs)
                 }
                 browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
+                SmartPlaylist.of(browseId) != null -> smartPlaylistState(SmartPlaylist.of(browseId)!!)
                 browseId == "local:all" -> {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
                         UiState.Error(text(R.string.storage_required_read))
@@ -2752,6 +2776,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val bare = browseId.removePrefix("VL")
         val id = Downloads.collections.value.keys.firstOrNull { it.removePrefix("VL") == bare } ?: return emptyList()
         return Downloads.getCollectionSongs(getApplication(), id)
+    }
+
+    /**
+     * One of the playlists made from this device's listening. The liked list
+     * is read whole from YouTube when it can be, so a long Liked Music still
+     * finds its unplayed songs; the library's first page stands in offline.
+     */
+    private suspend fun smartPlaylistState(kind: SmartPlaylist): UiState<List<Song>> {
+        val liked = if (kind == SmartPlaylist.LIKED_UNPLAYED) {
+            if (!_signedIn.value) return UiState.Error(text(R.string.smart_playlist_sign_in))
+            YtMusicRepository.allSongs(YtMusicRepository.LIKED_MUSIC).getOrNull()
+                ?: (_library.value as? UiState.Success)?.data?.likedSongs.orEmpty()
+        } else {
+            emptyList()
+        }
+        val songs = runCatching { SmartPlaylists.songs(kind, liked) }.getOrDefault(emptyList())
+        return if (songs.isEmpty()) UiState.Error(text(R.string.smart_playlist_empty)) else UiState.Success(songs)
     }
 
     /**
@@ -2878,6 +2919,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == CACHE_FOLDER_BROWSE_ID -> runCatching {
                     AudioCache.cachedSongs().map { it.song }
                         .ifEmpty { error(text(R.string.cached_songs_empty)) }
+                }
+                SmartPlaylist.of(browseId) != null -> runCatching {
+                    when (val smart = smartPlaylistState(SmartPlaylist.of(browseId)!!)) {
+                        is UiState.Success -> smart.data
+                        is UiState.Error -> error(smart.message)
+                        else -> emptyList()
+                    }
                 }
                 browseId == "local:all" -> runCatching {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {

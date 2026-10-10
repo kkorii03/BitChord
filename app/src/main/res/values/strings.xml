@@ -1138,4 +1138,24 @@
     <string name="prefetch_translation_subtitle">While a song plays, the next one’s lyrics are translated so the translate button answers at once</string>
     <string name="keep_download_translation">Save translations with downloads</string>
     <string name="keep_download_translation_subtitle">Downloaded songs show their translated lyrics offline too</string>
+    <string name="auto_download_liked">Download liked songs</string>
+    <string name="auto_download_liked_subtitle">Songs you like are downloaded automatically, on Wi-Fi when Wi-Fi only is on</string>
+    <string name="smart_top">Most played</string>
+    <string name="smart_top_subtitle">What you played most this month and last</string>
+    <string name="smart_repeat">On repeat</string>
+    <string name="smart_repeat_subtitle">Played again and again this week</string>
+    <string name="smart_rediscover">Rediscover</string>
+    <string name="smart_rediscover_subtitle">Old favourites you haven’t played in a while</string>
+    <string name="smart_liked_unplayed">Liked, rarely played</string>
+    <string name="smart_liked_unplayed_subtitle">Songs you liked but have barely listened to</string>
+    <string name="smart_playlist_empty">Nothing here yet. It fills in as you listen.</string>
+    <string name="smart_playlist_sign_in">Sign in to see your liked songs</string>
+    <string name="lock_screen_lyrics">Lyrics on lock screen</string>
+    <string name="lock_screen_lyrics_subtitle">Shows large synced lyrics over the lock screen while a song is playing or paused</string>
+    <string name="lock_screen_lyrics_needs_permission">Needs “Display over other apps”. Tap to allow</string>
+    <string name="lock_screen_lyrics_unlock">Swipe up to unlock</string>
+    <string name="lock_screen_lyrics_previous">Previous</string>
+    <string name="lock_screen_lyrics_next">Next</string>
+    <string name="lock_screen_lyrics_play">Play</string>
+    <string name="lock_screen_lyrics_pause">Pause</string>
 </resources>

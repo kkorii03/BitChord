@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Leaderboard
+import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Lan
 import androidx.compose.material.icons.rounded.Storage
@@ -20,6 +24,7 @@ import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.spotify_logo
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.stats.SmartPlaylist
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.SavedCollection
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -95,6 +100,31 @@ fun libraryLinks(): List<LibraryLink> {
             stringResource(R.string.spotify_library_subtitle),
             SPOTIFY_BROWSE_ID,
         ).takeIf { spotifyConnected.isNotBlank() }?.copy(logo = Res.drawable.spotify_logo),
+        // Made from this device's own listening — see [SmartPlaylists].
+        link(
+            Icons.Rounded.Leaderboard,
+            stringResource(R.string.smart_top),
+            stringResource(R.string.smart_top_subtitle),
+            SmartPlaylist.TOP.browseId,
+        ),
+        link(
+            Icons.Rounded.Repeat,
+            stringResource(R.string.smart_repeat),
+            stringResource(R.string.smart_repeat_subtitle),
+            SmartPlaylist.ON_REPEAT.browseId,
+        ),
+        link(
+            Icons.Rounded.History,
+            stringResource(R.string.smart_rediscover),
+            stringResource(R.string.smart_rediscover_subtitle),
+            SmartPlaylist.REDISCOVER.browseId,
+        ),
+        link(
+            Icons.Rounded.FavoriteBorder,
+            stringResource(R.string.smart_liked_unplayed),
+            stringResource(R.string.smart_liked_unplayed_subtitle),
+            SmartPlaylist.LIKED_UNPLAYED.browseId,
+        ),
     )
 }
 

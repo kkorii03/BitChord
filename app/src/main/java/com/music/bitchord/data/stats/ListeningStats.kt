@@ -304,6 +304,15 @@ object ListeningStats {
         }
     }
 
+    /**
+     * Each month's track totals, oldest first — what [SmartPlaylists] ranks.
+     * The open month is flushed first so the lists include what just played.
+     */
+    suspend fun monthlyTracks(): List<Pair<YearMonth, List<TrackEntry>>> = withContext(Dispatchers.IO) {
+        flushAndAwait()
+        months().mapNotNull { month -> read(month.toString())?.let { month to it.tracks } }
+    }
+
     /** Every month with a file, oldest first. */
     fun months(): List<YearMonth> {
         if (!ready) return emptyList()

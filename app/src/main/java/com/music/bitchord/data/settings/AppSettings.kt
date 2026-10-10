@@ -522,6 +522,12 @@ object AppSettings {
     /** Translate a song's lyrics as it is downloaded, and keep that for offline. */
     val keepDownloadTranslation = MutableStateFlow(true)
 
+    /** Download a song as soon as it is liked. See [LikedAutoDownload]. */
+    val autoDownloadLiked = MutableStateFlow(true)
+
+    /** Show the full-screen lyrics over the lock screen. See [LockScreenLyrics]. */
+    val lockScreenLyrics = MutableStateFlow(false)
+
     /** See [init]: a key supplied with this build, used while none is saved. */
     private var bundledGeminiApiKey = ""
 
@@ -883,6 +889,8 @@ object AppSettings {
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
         prefetchTranslation.value = prefs.getBoolean(KEY_PREFETCH_TRANSLATION, true)
         keepDownloadTranslation.value = prefs.getBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, true)
+        autoDownloadLiked.value = prefs.getBoolean(KEY_AUTO_DOWNLOAD_LIKED, true)
+        lockScreenLyrics.value = prefs.getBoolean(KEY_LOCK_SCREEN_LYRICS, false)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -1401,6 +1409,16 @@ object AppSettings {
     fun setKeepDownloadTranslation(value: Boolean) {
         keepDownloadTranslation.value = value
         prefs.edit().putBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, value).apply()
+    }
+
+    fun setAutoDownloadLiked(value: Boolean) {
+        autoDownloadLiked.value = value
+        prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD_LIKED, value).apply()
+    }
+
+    fun setLockScreenLyrics(value: Boolean) {
+        lockScreenLyrics.value = value
+        prefs.edit().putBoolean(KEY_LOCK_SCREEN_LYRICS, value).apply()
     }
 
     fun setGeminiApiKey(value: String) {
@@ -2028,6 +2046,8 @@ object AppSettings {
     private const val KEY_GEMINI_TRANSLATION = "gemini_translation"
     private const val KEY_PREFETCH_TRANSLATION = "prefetch_translation"
     private const val KEY_KEEP_DOWNLOAD_TRANSLATION = "keep_download_translation"
+    private const val KEY_AUTO_DOWNLOAD_LIKED = "auto_download_liked"
+    private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_SHOW_CACHE_FOLDER = "show_cache_folder"

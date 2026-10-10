@@ -11,6 +11,10 @@
     <!-- Saving a track to Music outlives the screen it was asked from. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lock screen lyrics: lets the player put its lyrics screen over the
+         lock screen as the screen goes off. Asked for only when that setting
+         is switched on. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Touch feedback. The system's own haptics switch is honoured on top of
          this, so granting it doesn't override a user who turned buzzing off. -->
@@ -104,6 +108,20 @@
           uiMode is deliberately *not* in the list: a day/night change should
           still recreate the Activity so the theme is rebuilt from resources.
         -->
+        <!-- The lyrics shown over the lock screen; see LockScreenLyrics. Its own
+             task so closing it returns to whatever was underneath, never to
+             the app. -->
+        <activity
+            android:name=".lockscreen.LockScreenLyricsActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="com.music.bitchord.lockscreen"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@style/Theme.BitChord" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
