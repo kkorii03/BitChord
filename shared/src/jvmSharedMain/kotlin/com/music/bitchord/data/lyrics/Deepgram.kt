@@ -38,12 +38,20 @@ object Deepgram {
      */
     const val MODEL_WHISPER = "whisper-large"
 
+    /** The key in use — the listener's own from settings, or the one built in. */
     @Volatile
     var apiKey: String = ""
+        set(value) {
+            field = value
+            keyRejected.value = value.isNotBlank() && value.trim() == rejectedKey
+        }
 
     /** A key Deepgram turned away: not asked with again until it changes. */
     @Volatile
     private var rejectedKey: String? = null
+
+    /** True once Deepgram turned the current key away — for the settings row. */
+    val keyRejected = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     val usable: Boolean get() = apiKey.isNotBlank() && apiKey.trim() != rejectedKey
 
@@ -76,6 +84,7 @@ object Deepgram {
                 client.newCall(request).execute().use { response ->
                     if (response.code == 401 || response.code == 403) {
                         rejectedKey = key
+                        keyRejected.value = true
                         return@withContext null
                     }
                     if (!response.isSuccessful) return@withContext null

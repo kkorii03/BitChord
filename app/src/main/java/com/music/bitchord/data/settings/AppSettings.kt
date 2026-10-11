@@ -828,8 +828,10 @@ object AppSettings {
         // built (never committed). It is only a default: a key typed in Settings wins.
         bundledGeminiApiKey = context.getString(com.music.bitchord.R.string.default_gemini_api_key).trim()
         // Baked into this personal build after CI, like Gemini's — never committed.
-        com.music.bitchord.data.lyrics.Deepgram.apiKey =
-            context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
+        // Also only a default: a key typed in Settings (or removed there) wins.
+        bundledDeepgramApiKey = context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
+        deepgramApiKey.value = prefs.getString(KEY_DEEPGRAM_API_KEY, null) ?: bundledDeepgramApiKey
+        com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
         this.authStore = authStore
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()
@@ -1565,6 +1567,22 @@ object AppSettings {
     fun setResumeOnHeadphones(value: Boolean) {
         resumeOnHeadphones.value = value
         prefs.edit().putBoolean(KEY_RESUME_ON_HEADPHONES, value).apply()
+    }
+
+    /** Deepgram's key for AI lyric timing; blank turns Deepgram (and Whisper) off. */
+    val deepgramApiKey = MutableStateFlow("")
+    private var bundledDeepgramApiKey = ""
+    private const val KEY_DEEPGRAM_API_KEY = "deepgram_api_key"
+
+    /** Whether the key in use is the one this build came with (vs. typed in Settings). */
+    val deepgramKeyIsBundled: Boolean
+        get() = bundledDeepgramApiKey.isNotBlank() && deepgramApiKey.value == bundledDeepgramApiKey
+
+    fun setDeepgramApiKey(value: String) {
+        val normalized = value.trim()
+        deepgramApiKey.value = normalized
+        prefs.edit().putString(KEY_DEEPGRAM_API_KEY, normalized).apply()
+        com.music.bitchord.data.lyrics.Deepgram.apiKey = normalized
     }
 
     fun setGeminiApiKey(value: String) {

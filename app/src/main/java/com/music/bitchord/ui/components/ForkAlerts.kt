@@ -92,6 +92,9 @@ fun GeminiKeyAlert(
     onSave: () -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
+    /** The same alert for another service's key (Deepgram). */
+    title: String = stringResource(R.string.gemini_api_key),
+    description: String = stringResource(R.string.gemini_api_key_description),
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
@@ -100,15 +103,15 @@ fun GeminiKeyAlert(
                 .padding(horizontal = 16.dp, vertical = 19.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            AlertTitle(stringResource(R.string.gemini_api_key))
+            AlertTitle(title)
             AlertMessage(
-                text = stringResource(R.string.gemini_api_key_description),
+                text = description,
                 modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
             )
             PillTextField(
                 value = value,
                 onValueChange = onValueChange,
-                placeholder = stringResource(R.string.gemini_api_key),
+                placeholder = title,
                 isPassword = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { onSave() }),

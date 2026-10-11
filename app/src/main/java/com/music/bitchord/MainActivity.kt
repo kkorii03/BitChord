@@ -576,6 +576,7 @@ private fun BitChordApp(
     var showTranslationLanguage by remember { mutableStateOf(false) }
     var showContentCountry by remember { mutableStateOf(false) }
     var showGeminiKey by remember { mutableStateOf(false) }
+    var showDeepgramKey by remember { mutableStateOf(false) }
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -2805,6 +2806,7 @@ private fun BitChordApp(
                             onAppLanguage = { showAppLanguage = true },
                             onContentCountry = { showContentCountry = true },
                             onGeminiKey = { showGeminiKey = true },
+                            onDeepgramKey = { showDeepgramKey = true },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -4933,6 +4935,33 @@ private fun BitChordApp(
                     showGeminiKey = false
                 },
                 onDismiss = { showGeminiKey = false },
+            )
+        }
+
+        if (showDeepgramKey) {
+            BackHandler { showDeepgramKey = false }
+            val savedKey by AppSettings.deepgramApiKey.collectAsStateWithLifecycle()
+            // The built-in key is never shown back: the field starts empty for it.
+            var keyInput by remember { mutableStateOf(if (AppSettings.deepgramKeyIsBundled) "" else savedKey) }
+            GeminiKeyAlert(
+                hazeState = hazeState,
+                value = keyInput,
+                onValueChange = { keyInput = it },
+                hasSavedKey = savedKey.isNotBlank(),
+                onSave = {
+                    val key = keyInput.trim()
+                    if (key.isNotEmpty()) {
+                        AppSettings.setDeepgramApiKey(key)
+                        showDeepgramKey = false
+                    }
+                },
+                onRemove = {
+                    AppSettings.setDeepgramApiKey("")
+                    showDeepgramKey = false
+                },
+                onDismiss = { showDeepgramKey = false },
+                title = stringResource(R.string.deepgram_api_key),
+                description = stringResource(R.string.deepgram_api_key_description),
             )
         }
 

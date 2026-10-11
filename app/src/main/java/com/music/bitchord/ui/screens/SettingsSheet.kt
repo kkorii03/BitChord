@@ -186,6 +186,8 @@ fun SettingsScreen(
     onContentCountry: () -> Unit,
     /** Opens the Gemini API key alert, hosted by the activity above the tab bar. */
     onGeminiKey: () -> Unit,
+    /** Opens the Deepgram API key alert (AI lyric timing), hosted the same way. */
+    onDeepgramKey: () -> Unit = {},
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -221,6 +223,8 @@ fun SettingsScreen(
     val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val geminiTranslation by AppSettings.geminiTranslation.collectAsStateWithLifecycle()
     val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
+    val deepgramApiKey by AppSettings.deepgramApiKey.collectAsStateWithLifecycle()
+    val deepgramKeyRejected by com.music.bitchord.data.lyrics.Deepgram.keyRejected.collectAsStateWithLifecycle()
     val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
     val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
     val autoLyricsTiming by AppSettings.autoLyricsTiming.collectAsStateWithLifecycle()
@@ -1159,6 +1163,23 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setAiTimingAhead(!aiTimingAhead) },
+                    )
+                }
+                val deepgramTitle = stringResource(R.string.deepgram_api_key)
+                row(deepgramTitle, "lyrics", "timing", "sync", "ai", "deepgram", "whisper", "key") {
+                    SettingsRow(
+                        icon = Icons.Rounded.AutoAwesome,
+                        title = deepgramTitle,
+                        subtitle = stringResource(
+                            when {
+                                deepgramApiKey.isBlank() -> R.string.deepgram_subtitle_missing
+                                deepgramKeyRejected -> R.string.deepgram_subtitle_rejected
+                                AppSettings.deepgramKeyIsBundled -> R.string.deepgram_subtitle_bundled
+                                else -> R.string.deepgram_subtitle_ready
+                            },
+                        ),
+                        trailing = { Chevron() },
+                        onClick = onDeepgramKey,
                     )
                 }
                 val aiLyricsTitle = stringResource(R.string.ai_lyrics)

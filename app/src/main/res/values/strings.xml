@@ -1193,4 +1193,10 @@
     <string name="ai_lyrics_subtitle">When no lyrics source has the song, Gemini listens to the video and writes the lyrics down with their timing. Takes up to a minute.</string>
     <string name="ai_timing_ahead">Time video lyrics with AI ahead</string>
     <string name="ai_timing_ahead_subtitle">Gemini times a video\'s lyrics as it starts, and the next song\'s ahead, so they are ready if the automatic measurement can\'t. Uses one Gemini request per video.</string>
+    <string name="deepgram_api_key">Deepgram API key</string>
+    <string name="deepgram_api_key_description">Used for AI lyric timing on videos: Deepgram listens first, then Whisper, then Gemini. Get a key at console.deepgram.com.</string>
+    <string name="deepgram_subtitle_missing">No key — AI timing uses Gemini only</string>
+    <string name="deepgram_subtitle_rejected">Deepgram rejected this key. Check it or enter a new one.</string>
+    <string name="deepgram_subtitle_bundled">Built-in key · Deepgram → Whisper → Gemini</string>
+    <string name="deepgram_subtitle_ready">Your key · Deepgram → Whisper → Gemini</string>
 </resources>

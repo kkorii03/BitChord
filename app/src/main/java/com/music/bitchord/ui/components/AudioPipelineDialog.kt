@@ -460,8 +460,8 @@ fun AudioPipelineDialog(
                 onStageIconPositioned = onStageIconPositioned,
             ) {
                 PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
-                PipelineRow("Route", outputStatus.routeKind.name)
-                PipelineRow("Transport", outputStatus.transportType.label)
+                PipelineRow("경로", outputStatus.routeKind.name)
+                PipelineRow("전송 방식", outputStatus.transportType.label)
 
                 val directStatusText = when {
                     outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
@@ -469,7 +469,7 @@ fun AudioPipelineDialog(
                     outputStatus.directPlaybackActual ->
                         "활성 (Direct AudioTrack, 믹서 우회)"
                     outputStatus.directPlaybackRejected ->
-                        "Rejected"
+                        "거부됨"
                     outputStatus.directPlaybackSupported ->
                         "지원됨 (프레임워크 믹스)"
                     else ->
@@ -495,7 +495,7 @@ fun AudioPipelineDialog(
                     else -> null
                 }
                 mixerText?.let {
-                    PipelineRow("System", it)
+                    PipelineRow("시스템 믹서", it)
                 }
 
                 outputStatus.usbEndpointFormat?.let {
@@ -507,19 +507,19 @@ fun AudioPipelineDialog(
                     val bt = outputStatus.bluetoothTelemetry
                     outputStatus.bluetoothProfile?.let { PipelineRow("Bluetooth", it) }
                     if (bt != null && bt.isConnected) {
-                        PipelineRow("Codec", if (bt.hasNamedCodec) bt.codecName else "시스템 관리")
-                        bt.bitDepth?.let { PipelineRow("Codec Bits", "$it-bit") }
-                        bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", rateText(it)) }
-                        PipelineRow("Codec Bitrate", bt.bitrateLabel)
-                        bt.mode?.let { PipelineRow("Codec Mode", it) }
+                        PipelineRow("코덱", if (bt.hasNamedCodec) bt.codecName else "시스템 관리")
+                        bt.bitDepth?.let { PipelineRow("코덱 비트", "$it-bit") }
+                        bt.sampleRateHz?.let { PipelineRow("코덱 샘플레이트", rateText(it)) }
+                        PipelineRow("코덱 비트레이트", bt.bitrateLabel)
+                        bt.mode?.let { PipelineRow("코덱 모드", it) }
                     } else {
-                        PipelineRow("Codec", "시스템 관리")
+                        PipelineRow("코덱", "시스템 관리")
                     }
                 }
 
                 if (outputStatus.fallbackReason != com.music.bitchord.playback.audio.FallbackReason.NONE) {
                     val fallbackText = outputStatus.fallbackDetail ?: outputStatus.fallbackReason.label
-                    PipelineRow("Fallback", fallbackText)
+                    PipelineRow("대체 경로", fallbackText)
                 }
             }
         }
