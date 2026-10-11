@@ -68,7 +68,16 @@ import java.util.concurrent.ConcurrentHashMap
 object LyricsRepository {
 
     /** Lyrics, and which source they turned out to come from. */
-    data class Result(val source: LyricsSource, val lines: List<LyricLine>)
+    data class Result(
+        val source: LyricsSource,
+        val lines: List<LyricLine>,
+        /**
+         * The (title, artist) the search that found these was made under —
+         * the original's name for a cover, or the name an original-language
+         * retry found. Their timings belong to that recording.
+         */
+        val searchedAs: Pair<String, String>? = null,
+    )
 
     /**
      * [sources] is the user's pick from Settings; anything not in it is not
@@ -209,7 +218,7 @@ object LyricsRepository {
         val found = lookUp(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled,
-        )
+        )?.copy(searchedAs = title to artist)
         // Only an answer matched against a known length is worth reusing: one
         // made without it may be a looser match than the player would make.
         if (found != null && durationMs > 0L) synchronized(recent) { recent[memoKey] = found }

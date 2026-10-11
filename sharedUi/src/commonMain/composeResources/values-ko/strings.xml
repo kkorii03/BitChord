@@ -208,4 +208,11 @@
     <string name="song_meaning_highlights">주목할 가사</string>
     <string name="song_meaning_retry">다시 시도</string>
     <string name="song_meaning_footer">Gemini가 가사를 바탕으로 작성한 해석입니다. 틀릴 수 있습니다.</string>
+    <string name="ai_lyrics_timing">AI로 이 비디오에 가사 타이밍 맞추기</string>
+    <string name="ai_lyrics_timing_undo">AI 타이밍 되돌리기</string>
+    <string name="lyrics_timing_running">AI가 이 비디오에 가사 타이밍을 맞추는 중…</string>
+    <string name="lyrics_timing_failed">이 비디오에 가사 타이밍을 맞출 수 없습니다.</string>
+    <string name="lyrics_timing_ai">%1$s · AI 타이밍</string>
+    <string name="lyrics_timing_auto">%1$s · 타이밍 자동 보정 %2$s</string>
+    <string name="lyrics_timing_seconds">%1$s초</string>
 </resources>

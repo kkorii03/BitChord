@@ -726,6 +726,13 @@ fun NowPlayingScreen(
     lyricsUnavailable: Boolean,
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
+    /**
+     * How the lyrics were moved onto the video's clock, and the AI timing
+     * button's handler. Null keeps the romanisation globe in that slot instead
+     * — for a host with no AI timing to offer.
+     */
+    lyricsTiming: LyricsTimingUi = LyricsTimingUi(),
+    onAiLyricsTiming: (() -> Unit)? = null,
     /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
     windowWidth: Dp,
     /**
@@ -1952,7 +1959,7 @@ fun NowPlayingScreen(
                         } else {
                             lyricsLoadingText
                         },
-                        status = lyricsTranslation.status,
+                        status = lyricsStatusWithTiming(lyricsTranslation.status, lyricsTiming),
                         onStatusClick = { showLyricsProviders = true },
                         picking = lyricPicker.picking,
                         pickBar = {
@@ -1964,12 +1971,20 @@ fun NowPlayingScreen(
                             )
                         },
                         romanizationToggle = {
-                            RomanizationToggleButton(
-                                state = lyricsTranslation.romanizationState,
-                                showingRomanization = lyricsTranslation.showingRomanization,
-                                enabled = !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleRomanization,
-                            )
+                            if (onAiLyricsTiming == null) {
+                                RomanizationToggleButton(
+                                    state = lyricsTranslation.romanizationState,
+                                    showingRomanization = lyricsTranslation.showingRomanization,
+                                    enabled = !lyrics.isNullOrEmpty(),
+                                    onClick = lyricsTranslation.toggleRomanization,
+                                )
+                            } else if (songMeaningAvailable && lyricsTiming.adjustable) {
+                                AiTimingButton(
+                                    timing = lyricsTiming,
+                                    enabled = !lyrics.isNullOrEmpty(),
+                                    onClick = onAiLyricsTiming,
+                                )
+                            }
                         },
                         translationToggle = {
                             TranslationToggleButton(
@@ -3357,12 +3372,20 @@ fun NowPlayingScreen(
                                 .align(Alignment.BottomStart)
                                 .graphicsLayer { alpha = translateFade },
                         ) {
-                            RomanizationToggleButton(
-                                state = lyricsTranslation.romanizationState,
-                                showingRomanization = lyricsTranslation.showingRomanization,
-                                enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                onClick = lyricsTranslation.toggleRomanization,
-                            )
+                            if (onAiLyricsTiming == null) {
+                                RomanizationToggleButton(
+                                    state = lyricsTranslation.romanizationState,
+                                    showingRomanization = lyricsTranslation.showingRomanization,
+                                    enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                    onClick = lyricsTranslation.toggleRomanization,
+                                )
+                            } else if (songMeaningAvailable && lyricsTiming.adjustable) {
+                                AiTimingButton(
+                                    timing = lyricsTiming,
+                                    enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                    onClick = onAiLyricsTiming,
+                                )
+                            }
                         }
                         Row(
                             modifier = Modifier
@@ -3539,7 +3562,7 @@ fun NowPlayingScreen(
             }
             if (lyricsOpen) {
                 LyricsStatusWithChange(
-                    status = lyricsTranslation.status,
+                    status = lyricsStatusWithTiming(lyricsTranslation.status, lyricsTiming),
                     onStatusClick = { showLyricsProviders = true },
                     modifier = Modifier
                         .fillMaxWidth()

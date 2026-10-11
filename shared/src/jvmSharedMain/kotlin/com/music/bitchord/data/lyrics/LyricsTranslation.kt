@@ -554,7 +554,11 @@ object LyricsTranslation {
      * Posts [body] to each Gemini model in turn until one answers with
      * something [parse] accepts. Null when none does, for whatever reason.
      */
-    private suspend fun <T : Any> askGemini(body: String, parse: (String) -> T?): T? {
+    private suspend fun <T : Any> askGemini(
+        body: String,
+        client: okhttp3.OkHttpClient = geminiClient,
+        parse: (String) -> T?,
+    ): T? {
         val key = cleanGeminiKey()
         if (key.isEmpty() || key == rejectedGeminiKey) return null
         if (System.currentTimeMillis() < geminiCooldownUntil) return null
@@ -567,7 +571,7 @@ object LyricsTranslation {
                 .post(body.toRequestBody(JSON_MEDIA))
                 .build()
             val (code, text) = try {
-                geminiClient.newCall(request).awaitResponse()
+                client.newCall(request).awaitResponse()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: IOException) {
@@ -1265,6 +1269,100 @@ object LyricsTranslation {
         Often the song is not Korean: it is a Japanese, Chinese or English song (J-pop, Vocaloid, anime, C-pop, Western pop) whose names were transliterated or translated into Hangul, for example a Korean cover of it.
         If you are confident which original song this is, return found=true with "title" and "artist" exactly as the original release writes them, in the original script (kanji/kana, Chinese characters, Latin letters). Example: {"title":"발묘","artist":"나나호시 관현악단"} -> {"found":true,"title":"抜錨","artist":"ナナホシ管弦楽団"}.
         If the song is originally Korean, or you are not confident, return found=false with empty strings. Never guess.
+    """.trimIndent()
+
+    // ---- When each line is sung in a video ---------------------------------------
+
+    /** A lyric line to place: its text, and when the original recording sings it. */
+    data class LineToPlace(val text: String, val referenceMs: Long)
+
+    /**
+     * Gemini watching the YouTube video [videoId] and saying when each of
+     * [lines] starts being sung in it, in milliseconds from the video's start —
+     * null for a line it did not hear. Null altogether when Gemini isn't set
+     * up or didn't answer in full.
+     *
+     * The video is handed over as its YouTube address, which Gemini fetches
+     * itself: nothing is uploaded from the phone. Video is the slow kind of
+     * request, so it runs on its own longer deadline.
+     */
+    suspend fun placeLinesInVideo(videoId: String, lines: List<LineToPlace>): List<Long?>? {
+        if (!geminiKeyUsable || lines.isEmpty()) return null
+        val input = buildJsonObject {
+            put("line_count", lines.size)
+            putJsonArray("lines") {
+                lines.forEachIndexed { index, line ->
+                    add(buildJsonObject {
+                        put("i", index)
+                        put("ref", "%.1f".format(Locale.ROOT, line.referenceMs / 1000.0))
+                        put("text", line.text)
+                    })
+                }
+            }
+        }
+        val body = buildJsonObject {
+            putJsonObject("systemInstruction") {
+                putJsonArray("parts") { add(buildJsonObject { put("text", PLACE_LINES_INSTRUCTION) }) }
+            }
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") {
+                        add(buildJsonObject {
+                            putJsonObject("fileData") {
+                                put("fileUri", "https://www.youtube.com/watch?v=$videoId")
+                                put("mimeType", "video/*")
+                            }
+                        })
+                        add(buildJsonObject { put("text", input.toString()) })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("temperature", 0)
+                put("mediaResolution", "MEDIA_RESOLUTION_LOW")
+                put("responseMimeType", "application/json")
+                putJsonObject("responseSchema") {
+                    put("type", "OBJECT")
+                    putJsonObject("properties") {
+                        putJsonObject("starts") {
+                            put("type", "ARRAY")
+                            putJsonObject("items") { put("type", "NUMBER") }
+                        }
+                    }
+                    putJsonArray("required") { add("starts") }
+                }
+            }
+        }.toString()
+        return try {
+            askGemini(body, geminiVideoClient) { text ->
+                runCatching {
+                    val starts = json.parseToJsonElement(geminiText(text)).jsonObject["starts"]!!.jsonArray
+                        .map { it.jsonPrimitive.contentOrNull?.toDoubleOrNull() }
+                    if (starts.size != lines.size) return@runCatching null
+                    starts.map { seconds -> seconds?.takeIf { it >= 0 }?.let { (it * 1000).toLong() } }
+                }.getOrNull()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private val geminiVideoClient by lazy {
+        Http.client.newBuilder()
+            // Gemini fetches and watches the whole video before it answers.
+            .callTimeout(150, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(150, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val PLACE_LINES_INSTRUCTION = """
+        You time song lyrics to a video. The video is someone singing a song (often a cover, a live take or a stream clip). You get the song's lyric lines in order; "ref" is when each line starts in the original studio recording, in seconds.
+        Listen to the video's audio and give, for every line, the time in seconds from the start of THIS video at which that line starts being sung. The video may begin earlier or later than the recording (an intro, talking) and may run slightly faster or slower, so use "ref" only for the order and the spacing of lines, never copy it.
+        Return JSON {"starts":[...]} with exactly line_count numbers, one per line in the same order, each with one decimal place. Use -1 for a line that is not sung in this video. The numbers must never decrease.
     """.trimIndent()
 
     private fun parseMeaning(response: String): SongMeaning? = runCatching {

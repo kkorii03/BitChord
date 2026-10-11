@@ -48,6 +48,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -1345,6 +1346,78 @@ internal fun RomanizationToggleButton(
             )
         }
     }
+}
+
+/**
+ * The AI timing control, in the left-hand slot the romanisation globe used to
+ * hold: asks Gemini to place the lines in this video, and — lit while its
+ * answer is what is showing — takes it back on a second tap. Drawn exactly like
+ * the translate disc beside it, so the row reads as one set of controls.
+ */
+@Composable
+internal fun AiTimingButton(
+    timing: LyricsTimingUi,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val active = timing.byAi || timing.aiRunning
+    val tint = when {
+        !enabled -> Color.White.copy(alpha = 0.42f)
+        active -> Color.White
+        else -> Color.White.copy(alpha = 0.78f)
+    }
+    val discAlpha by animateFloatAsState(
+        targetValue = if (active) 0.34f else 0.18f,
+        label = "aiTimingDisc",
+    )
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = discAlpha))
+            .clickable(
+                enabled = enabled && !timing.aiRunning,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (timing.aiRunning) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = tint,
+                strokeWidth = 1.7.dp,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Timer,
+                contentDescription = stringResource(
+                    if (timing.byAi) Res.string.ai_lyrics_timing_undo else Res.string.ai_lyrics_timing,
+                ),
+                tint = tint,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The line under the lyrics, with what was done to their timing after it:
+ * "가사 제공: VIBE · 타이밍 자동 보정 +3.2초". While Gemini is working, or
+ * when it came back empty, that is the whole line.
+ */
+@Composable
+internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String = when {
+    timing.aiRunning -> stringResource(Res.string.lyrics_timing_running)
+    timing.aiFailed -> stringResource(Res.string.lyrics_timing_failed)
+    timing.byAi -> stringResource(Res.string.lyrics_timing_ai, status)
+    timing.shiftMs != null -> {
+        val seconds = timing.shiftMs / 1000.0
+        val shown = String.format(java.util.Locale.ROOT, "%+.1f", seconds)
+        stringResource(Res.string.lyrics_timing_auto, status, stringResource(Res.string.lyrics_timing_seconds, shown))
+    }
+    else -> status
 }
 
 /**

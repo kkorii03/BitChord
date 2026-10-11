@@ -1,5 +1,7 @@
 package com.music.bitchord.ui
 
+import com.music.bitchord.playback.smart.LyricsTiming
+
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -283,6 +285,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
     val lyrics: StateFlow<List<LyricLine>?> = _lyrics.asStateFlow()
 
+    /** How the lyrics on screen were moved onto the video's clock — see [LyricsTiming]. */
+    private val _lyricsTiming = MutableStateFlow(com.music.bitchord.ui.player.LyricsTimingUi())
+    val lyricsTiming: StateFlow<com.music.bitchord.ui.player.LyricsTimingUi> = _lyricsTiming.asStateFlow()
+
+    /** The lyrics as their source timed them, before [LyricsTiming] moved them. */
+    private var rawLyricsResult: LyricsRepository.Result? = null
+    private var lyricsTimingJob: Job? = null
+    private var aiTimingJob: Job? = null
+
     /** Which of the four databases [lyrics] came from, for the panel's credit. */
     private val _lyricsSource = MutableStateFlow<LyricsSource?>(null)
     val lyricsSource: StateFlow<LyricsSource?> = _lyricsSource.asStateFlow()
@@ -382,6 +393,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED }
         _lyrics.value = null
         _lyricsSource.value = null
+        rawLyricsResult = null
+        lyricsTimingJob?.cancel()
+        aiTimingJob?.cancel()
+        _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi()
         lyricsJob?.cancel()
         if (sources.isEmpty()) {
             // Switched off, or every source unticked. Nothing to look up, and
@@ -424,8 +439,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 artistKnown = artistKnown,
             )
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
-            _lyrics.value = selected?.lines
-            _lyricsSource.value = selected?.source
+            publishLyrics(selected)
             _lyricsChecked.value = true
         }
     }
@@ -518,9 +532,105 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun showLyricsResult(result: LyricsRepository.Result) {
-        _lyrics.value = result.lines
-        _lyricsSource.value = result.source
+        publishLyrics(result)
         _lyricsChecked.value = true
+    }
+
+    /**
+     * Puts [result] on screen as its source timed it, then — for timed lyrics
+     * that aren't the video's own — on the video's clock: an AI answer or a
+     * measurement already kept for this video at once, and for a video not
+     * yet measured, the measurement, applied when it lands.
+     */
+    private fun publishLyrics(result: LyricsRepository.Result?) {
+        rawLyricsResult = result
+        _lyrics.value = result?.lines
+        _lyricsSource.value = result?.source
+        lyricsTimingJob?.cancel()
+        aiTimingJob?.cancel()
+        val request = currentLyricsRequest
+        val adjustable = request != null && result != null &&
+            result.lines.any { it.timeMs > 0 } && !LyricsTiming.timedToVideo(result.source)
+        _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi(adjustable = adjustable)
+        if (!adjustable || request == null || result == null) return
+        val generation = lyricsGeneration
+        val context = getApplication<Application>()
+        lyricsTimingJob = viewModelScope.launch {
+            LyricsTiming.known(context, request.videoId, result.lines)?.let {
+                applyLyricsTiming(generation, result, it)
+                return@launch
+            }
+            if (!request.isVideo || LyricsTiming.measured(context, request.videoId)) return@launch
+            val (title, artist) = result.searchedAs ?: (request.title to request.artist)
+            val video = Song(
+                videoId = request.videoId,
+                title = request.title,
+                artist = request.artist,
+                thumbnailUrl = null,
+                isVideo = true,
+            )
+            LyricsTiming.measure(context, video, title, artist)
+            LyricsTiming.known(context, request.videoId, result.lines)?.let {
+                applyLyricsTiming(generation, result, it)
+            }
+        }
+    }
+
+    private fun applyLyricsTiming(
+        generation: Long,
+        result: LyricsRepository.Result,
+        adjustment: LyricsTiming.Adjustment,
+    ) {
+        if (generation != lyricsGeneration || rawLyricsResult !== result) return
+        _lyrics.value = LyricsTiming.apply(result.lines, adjustment)
+        _lyricsTiming.update {
+            when (adjustment) {
+                is LyricsTiming.Adjustment.Shift -> it.copy(
+                    shiftMs = adjustment.ms, retimed = false, byAi = adjustment.byAi,
+                    aiRunning = false, aiFailed = false,
+                )
+                is LyricsTiming.Adjustment.Retimed -> it.copy(
+                    shiftMs = null, retimed = true, byAi = true, aiRunning = false, aiFailed = false,
+                )
+            }
+        }
+    }
+
+    /**
+     * The AI timing button: asks Gemini to place the lines in this video, or —
+     * when its answer is what is showing — takes it back, leaving the
+     * automatic measurement (if any) in place.
+     */
+    fun toggleAiLyricsTiming() {
+        val request = currentLyricsRequest ?: return
+        val result = rawLyricsResult ?: return
+        val state = _lyricsTiming.value
+        if (!state.adjustable || state.aiRunning) return
+        val generation = lyricsGeneration
+        val context = getApplication<Application>()
+        aiTimingJob?.cancel()
+        if (state.byAi) {
+            aiTimingJob = viewModelScope.launch {
+                LyricsTiming.clearAi(context, request.videoId)
+                if (generation != lyricsGeneration || rawLyricsResult !== result) return@launch
+                _lyrics.value = result.lines
+                _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi(adjustable = true)
+                LyricsTiming.known(context, request.videoId, result.lines)?.let {
+                    applyLyricsTiming(generation, result, it)
+                }
+            }
+            return
+        }
+        _lyricsTiming.update { it.copy(aiRunning = true, aiFailed = false) }
+        aiTimingJob = viewModelScope.launch {
+            val adjustment = LyricsTiming.placeWithAi(context, request.videoId, result.lines)
+            if (generation != lyricsGeneration || rawLyricsResult !== result) return@launch
+            if (adjustment == null) {
+                _lyricsTiming.update { it.copy(aiRunning = false, aiFailed = true) }
+            } else {
+                applyLyricsTiming(generation, result, adjustment)
+            }
+        }
     }
 
     private val _account = MutableStateFlow<Account?>(null)

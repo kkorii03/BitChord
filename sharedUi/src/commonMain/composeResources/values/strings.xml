@@ -208,4 +208,11 @@
     <string name="song_meaning_highlights">Lines to note</string>
     <string name="song_meaning_retry">Try again</string>
     <string name="song_meaning_footer">Written by Gemini from the lyrics. It can be wrong.</string>
+    <string name="ai_lyrics_timing">Time the lyrics to this video with AI</string>
+    <string name="ai_lyrics_timing_undo">Undo AI timing</string>
+    <string name="lyrics_timing_running">AI is timing the lyrics to this video…</string>
+    <string name="lyrics_timing_failed">Couldn’t time the lyrics to this video.</string>
+    <string name="lyrics_timing_ai">%1$s · AI timing</string>
+    <string name="lyrics_timing_auto">%1$s · Timed to video %2$s</string>
+    <string name="lyrics_timing_seconds">%1$ss</string>
 </resources>

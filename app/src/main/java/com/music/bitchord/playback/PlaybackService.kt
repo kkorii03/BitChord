@@ -6667,6 +6667,7 @@ class PlaybackService : MediaLibraryService() {
         serviceLyricsJob = scope.launch(Dispatchers.IO) {
             val localUri = currentSong.localUri
             var lines: List<LyricLine>? = null
+            var foundSource: com.music.bitchord.data.lyrics.LyricsSource? = null
             if (localUri != null) {
                 lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri)
             }
@@ -6686,12 +6687,33 @@ class PlaybackService : MediaLibraryService() {
                     artistKnown = coverQuery.artistKnown,
                 )
                 lines = found?.lines
+                foundSource = found?.source
             }
-            withContext(Dispatchers.Main) {
-                serviceLyrics = lines
-                com.music.bitchord.lockscreen.NowPlayingLyrics.publish(currentSong.videoId, lines)
-                if (player?.isPlaying == true) {
-                    updateLyricSubtitle()
+            // The same timing the lyrics screen applies — see LyricsTiming —
+            // and again whenever it changes for this video (a measurement
+            // landing, the AI button), for as long as this track is current.
+            val raw = lines
+            val timeable = raw != null && raw.any { it.timeMs > 0 } &&
+                localUri == null && !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
+            suspend fun publish() {
+                val shown = if (timeable && raw != null) {
+                    com.music.bitchord.playback.smart.LyricsTiming.known(this@PlaybackService, currentSong.videoId, raw)
+                        ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
+                } else {
+                    raw
+                }
+                withContext(Dispatchers.Main) {
+                    serviceLyrics = shown
+                    com.music.bitchord.lockscreen.NowPlayingLyrics.publish(currentSong.videoId, shown)
+                    if (player?.isPlaying == true) {
+                        updateLyricSubtitle()
+                    }
+                }
+            }
+            publish()
+            if (timeable) {
+                com.music.bitchord.playback.smart.LyricsTiming.changes.collect { videoId ->
+                    if (videoId == currentSong.videoId) publish()
                 }
             }
         }

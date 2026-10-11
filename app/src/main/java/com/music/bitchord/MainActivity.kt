@@ -760,6 +760,7 @@ private fun BitChordApp(
     val historyState by viewModel.history.collectAsStateWithLifecycle()
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
+    val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
@@ -2420,6 +2421,8 @@ private fun BitChordApp(
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsOffsetOpen = showLyricsOffset,
             onDismissLyricsOffset = { showLyricsOffset = false },
+            lyricsTiming = lyricsTiming,
+            onAiLyricsTiming = viewModel::toggleAiLyricsTiming,
             onListenTogether = {
                 // The player is a sheet over the page, so it has to come down
                 // for the page to be read at all.
