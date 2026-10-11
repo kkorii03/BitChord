@@ -115,7 +115,9 @@ class ScrobbleManager(
     }
 
     private fun scrobbleSong(song: Song, durationSeconds: Int) {
-        val scrobbleArtist = song.artist.forScrobble()
+        // A cover is scrobbled to who sings it — the byline "원곡자 · 가수 커버"
+        // is how the player shows it, not an artist Last.fm knows.
+        val scrobbleArtist = com.music.bitchord.data.cover.CoverTitles.creditedArtist(song).forScrobble()
         scope.launch {
             LastFM
                 .scrobble(
@@ -134,7 +136,9 @@ class ScrobbleManager(
     }
 
     private fun updateNowPlaying(song: Song) {
-        val scrobbleArtist = song.artist.forScrobble()
+        // A cover is scrobbled to who sings it — the byline "원곡자 · 가수 커버"
+        // is how the player shows it, not an artist Last.fm knows.
+        val scrobbleArtist = com.music.bitchord.data.cover.CoverTitles.creditedArtist(song).forScrobble()
         scope.launch {
             LastFM
                 .updateNowPlaying(
