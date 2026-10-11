@@ -1,0 +1,59 @@
+name: Timing lab
+
+# Real covers against their real originals, through the app's own lookups and
+# the chroma alignment — see LyricsTimingLiveTest. Pushes its report to the
+# timing-lab-results branch, since logs can't be read from where it's driven.
+on:
+  push:
+    branches: ['timing-lab']
+  workflow_dispatch:
+
+concurrency:
+  group: timing-lab
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: ffmpeg
+        run: which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Run the lab
+        shell: bash
+        env:
+          LIVE_TIMING: '1'
+          TIMING_OUT: ${{ github.workspace }}/timing-lab.txt
+        run: |
+          set +e
+          chmod +x gradlew
+          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.LyricsTimingLiveTest' --console=plain 2>&1 | tee lab.log
+          grep -E "^e: |FAILED|BUILD (SUCCESSFUL|FAILED)" lab.log | head -20 | while IFS= read -r l; do echo "::notice title=lab::$l"; done
+          [ -f timing-lab.txt ] || echo "no report" > timing-lab.txt
+          grep -E "^e: " lab.log >> timing-lab.txt || true
+          exit 0
+
+      - name: Publish the report
+        shell: bash
+        run: |
+          mkdir /tmp/out && cp timing-lab.txt /tmp/out/ && cd /tmp/out
+          git init -q -b timing-lab-results
+          git config user.name "timing-lab"
+          git config user.email "timing-lab@users.noreply.github.com"
+          git add timing-lab.txt
+          git commit -q -m "timing lab ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:timing-lab-results
