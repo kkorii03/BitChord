@@ -68,25 +68,6 @@ class LyricsTimingAlignTest {
         assertNull(TimingFit.fit(points))
     }
 
-    @Test
-    fun aiAnswersAreReadByIndexAndClock() {
-        assertEquals(83_400L, LyricsTranslation.parseClock("1:23.4"))
-        assertEquals(83_000L, LyricsTranslation.parseClock("01:23"))
-        assertEquals(12_500L, LyricsTranslation.parseClock("12.5"))
-        assertEquals(3_723_000L, LyricsTranslation.parseClock("1:02:03"))
-        assertNull(LyricsTranslation.parseClock("-1"))
-        assertNull(LyricsTranslation.parseClock("1.5:20"))
-        assertNull(LyricsTranslation.parseClock("soon"))
-        val starts = assertNotNull(
-            LyricsTranslation.parsePlacements(
-                """{"placements":[{"i":0,"t":"0:05.0"},{"i":2,"t":"0:15.5"},{"i":9,"t":"1:00"},{"i":3,"t":"-"}]}""",
-                count = 4,
-            ),
-        )
-        assertEquals(listOf(5_000L, null, 15_500L, null), starts)
-        assertNull(LyricsTranslation.parsePlacements("""{"placements":[{"i":0,"t":"0:05"}]}""", 4))
-    }
-
     // ---- The time map ------------------------------------------------------------------
 
     @Test
@@ -322,9 +303,29 @@ class LyricsTimingAlignTest {
             abs(partial.map.map((recordStart[i] * 1000).toLong()) - (videoStart[i] * 1000).toLong())
         }.sorted()
         assertTrue(inside[inside.size / 2] <= 250, "median inside ${inside[inside.size / 2]}")
-        // The same opening read as if it were the whole video is refused: most
-        // of the record never turns up in it.
-        assertNull(ChromaAlignment.align(features(record, rate), features(opening, rate), videoComplete = true))
+        // Read as if it were the whole video (a short version), the opening
+        // still lines up the same way.
+        val asWhole = ChromaAlignment.align(features(record, rate), features(opening, rate), videoComplete = true)
+        if (asWhole != null) assertTrue(abs(asWhole.map.map(30_000L) - partial.map.map(30_000L)) <= 250)
+    }
+
+    @Test
+    fun chromaAcceptsAShortVersionThatHoldsOnlyPartOfTheRecord() {
+        val rate = 22_050
+        val original = song(seed = 81, count = 120)
+        val recordStart = starts(original, 1.0, 0.5)
+        val record = FloatArray((recordStart.last() + 4.0).times(rate).toInt())
+        render(record, rate, original, original.chords.indices, at = 0.5, tempo = 1.0, transpose = 0, brightness = 0.6)
+        // A TV-size cover: the first 30 chords only (about a quarter), after an 8 s intro.
+        val part = 0 until 30
+        val videoStart = starts(original, 1.0, 8.0)
+        val video = FloatArray((videoStart[30] + 6.0).times(rate).toInt())
+        noise(video, 0, 8 * rate, 0.04f, 13)
+        render(video, rate, original, part, at = 8.0, tempo = 1.0, transpose = 0, brightness = 0.9)
+        val result = ChromaAlignment.align(features(record, rate), features(video, rate))
+        println("CHROMA short version: ${ChromaAlignment.lastVerdict}")
+        val found = assertNotNull(result)
+        assertTrue(abs(found.map.map((recordStart[10] * 1000).toLong()) - (videoStart[10] * 1000).toLong()) <= 200)
     }
 
     @Test

@@ -71,9 +71,6 @@ object ChromaAlignment {
     /** How far (frames) the fine pass may stray from the coarse path. */
     private const val BAND_RADIUS = 24
 
-    /** Transpositions taken through to the coarse pass. */
-    private const val KEY_CANDIDATES = 4
-
     // Every cost below is in units of what a random pairing of the two
     // costs ([randomPairCost]), so they mean the same thing whether the two
     // takes' profiles are sparse (a solo instrument) or dense (a full mix).
@@ -89,6 +86,9 @@ object ChromaAlignment {
      */
     private const val VIDEO_SKIP_COST = 0.5f
 
+    /** The least a step costs that moves on in the record alone — a little over [SKIP_COST]. */
+    private const val RECORD_STEP_FLOOR = SKIP_COST + 0.05f
+
     /** Extra cost of a step that moves on in only one of the two. */
     private const val STEP_PENALTY = 0.12f
 
@@ -96,10 +96,23 @@ object ChromaAlignment {
     private const val MIN_MATCHED = 0.5
 
     /** On average, the path's frames must cost at most this much (random pairs cost 1). */
-    private const val MAX_COST_RATIO = 0.75
+    private const val MAX_COST_RATIO = 0.8
 
     /** At least this share of the matched path's steps must move on in both at once. */
-    private const val MIN_STRAIGHT = 0.70
+    private const val MIN_STRAIGHT = 0.60
+
+    /**
+     * The warp must cost at most this share of what it costs against the
+     * video played backwards — see the significance test in [align].
+     * Different songs come out at 1.00; covers measured at 0.03–0.85.
+     */
+    private const val MAX_CHANCE_RATIO = 0.92
+
+    /** A video holding only part of the record: what it holds must match this well. */
+    private const val MIN_PART_MATCHED = 0.2
+    private const val MIN_PART_FRAMES = 300
+    private const val MIN_PART_STRAIGHT = 0.8
+    private const val MAX_PART_COST_RATIO = 0.7
 
     /** With only the opening of a video, a path ending this close (frames) to its end has reached it. */
     private const val END_SLACK = 20
@@ -304,36 +317,46 @@ object ChromaAlignment {
         if (baseline < 0.02) return refuse("no contrast (baseline ${"%.3f".format(java.util.Locale.ROOT, baseline)})")
         val norm = (1.0 / baseline).toFloat()
 
-        // Transpositions whose overall profile looks most like the video's.
-        val recordProfile = profile(record)
-        val videoProfile = profile(video)
-        val keys = (0 until 12).sortedByDescending { k ->
-            var dot = 0.0
-            for (pc in 0 until 12) dot += recordProfile[Math.floorMod(pc - k, 12)] * videoProfile[pc]
-            dot
-        }.take(KEY_CANDIDATES).toMutableList()
-        if (0 !in keys) keys[keys.size - 1] = 0
-
-        // Coarse pass, every candidate key, full grid.
+        // Every key, coarsely (0.4 s steps): a cover in another key, or one
+        // whose arrangement drops the chords' thirds, fools an overall pitch
+        // profile into picking the wrong one, and twelve coarse passes cost
+        // less than one fine one.
+        //
+        // Each is run twice — against the video, and against the video played
+        // backwards. Backwards keeps every chord the video has and none of its
+        // order: a different song "matches" about as well either way, since
+        // all it is doing is finding chords the two share, while the same song
+        // sung again matches forwards far better. Taking the best key on both
+        // sides keeps the comparison fair (the best of twelve tries is always
+        // a little lucky). It is the one test that held across every case
+        // tried, where cost and shape alone did not: a noisy rearranged cover
+        // can cost more per frame than a clean different song.
         val coarseVideo = coarse(video.chroma, video.frames, video.silent)
+        val m = coarseVideo.frames
+        val reversed = FloatArray(m * 12)
+        for (f in 0 until m) coarseVideo.chroma.copyInto(reversed, f * 12, (m - 1 - f) * 12, (m - f) * 12)
+        val coarseOpenEnd = if (videoComplete) -1 else max(1, END_SLACK / COARSE)
         var bestKey = 0
         var bestCoarse: Path? = null
-        for (k in keys) {
-            val rotated = rotate(record.chroma, record.frames, k)
-            val coarseRecord = coarse(rotated, record.frames, record.silent)
+        var bestChance = Double.MAX_VALUE
+        for (k in 0 until 12) {
+            val coarseRecord = coarse(rotate(record.chroma, record.frames, k), record.frames, record.silent)
             val n = coarseRecord.frames
-            val m = coarseVideo.frames
             val path = warp(
                 coarseRecord.chroma, n, coarseVideo.chroma, m, IntArray(n) { 0 }, IntArray(n) { m - 1 },
-                openEnd = if (videoComplete) -1 else max(1, END_SLACK / COARSE),
-                norm = norm,
+                openEnd = coarseOpenEnd, norm = norm,
             ) ?: continue
             if (bestCoarse == null || path.total < bestCoarse.total) {
                 bestCoarse = path
                 bestKey = k
             }
+            warp(
+                coarseRecord.chroma, n, reversed, m, IntArray(n) { 0 }, IntArray(n) { m - 1 },
+                openEnd = coarseOpenEnd, norm = norm, keepPath = false,
+            )?.let { bestChance = minOf(bestChance, it.total) }
         }
         val coarsePath = bestCoarse ?: return refuse("no coarse path")
+        val significance = if (bestChance <= 0.0 || bestChance == Double.MAX_VALUE) 1.0 else coarsePath.total / bestChance
 
         // Fine pass around the coarse path.
         val recordChroma = rotate(record.chroma, record.frames, bestKey)
@@ -353,6 +376,21 @@ object ChromaAlignment {
         val rowCells = IntArray(n)
         var steps = 0
         var diagonal = 0
+        // The path's ends can trail off along an edge — the record running on
+        // past where a short version stops, the video's intro before the song
+        // — which is leaving those parts out, not matching them. Its shape is
+        // judged between its first and last step in step.
+        var core = 1
+        var coreEnd = fine.cells.size - 1
+        fun diagonalAt(c: Int): Boolean {
+            val i0 = (fine.cells[c - 1] ushr 32).toInt()
+            val i1 = (fine.cells[c] ushr 32).toInt()
+            val j0 = (fine.cells[c - 1] and 0xFFFF_FFFFL).toInt()
+            val j1 = (fine.cells[c] and 0xFFFF_FFFFL).toInt()
+            return i1 == i0 + 1 && j1 == j0 + 1
+        }
+        while (core < fine.cells.size && !diagonalAt(core)) core++
+        while (coreEnd > core && !diagonalAt(coreEnd)) coreEnd--
         for (c in fine.cells.indices) {
             val row = (fine.cells[c] ushr 32).toInt()
             val j = (fine.cells[c] and 0xFFFF_FFFFL).toInt()
@@ -366,7 +404,7 @@ object ChromaAlignment {
             }
             rowCost[row] += cost(recordChroma, row, video.chroma, j) * norm
             rowCells[row]++
-            if (c > 0 && !record.silent[row]) {
+            if (c in core..coreEnd && !record.silent[row]) {
                 val pi = (fine.cells[c - 1] ushr 32).toInt()
                 val pj = (fine.cells[c - 1] and 0xFFFF_FFFFL).toInt()
                 steps++
@@ -379,8 +417,14 @@ object ChromaAlignment {
         val points = ArrayList<IntArray>()
         var onPath = 0
         var pathCost = 0.0
+        val coreRows = if (core <= coreEnd && core < fine.cells.size) {
+            (fine.cells[core - 1] ushr 32).toInt()..(fine.cells[coreEnd] ushr 32).toInt()
+        } else {
+            IntRange.EMPTY
+        }
         for (i in 0 until n) {
             if (enter[i] < 0 || record.silent[i]) continue
+            if (i !in coreRows) continue
             onPath++
             pathCost += rowCost[i] / rowCells[i]
             if (diagonalIn[i]) points += intArrayOf(i, enter[i])
@@ -397,12 +441,16 @@ object ChromaAlignment {
         val straight = if (steps == 0) 0.0 else diagonal.toDouble() / steps
         val ratio = if (onPath == 0) 1.0 else pathCost / onPath
         val figures = "matched ${(matchedShare * 100).roundToInt()}% straight ${(straight * 100).roundToInt()}% " +
-            "cost ${"%.2f".format(java.util.Locale.ROOT, ratio)} key +$bestKey"
-        if (matchedShare < MIN_MATCHED || points.size < MIN_FRAMES / 2 ||
-            straight < MIN_STRAIGHT || ratio > MAX_COST_RATIO
-        ) {
-            return refuse(figures)
-        }
+            "cost ${"%.2f".format(java.util.Locale.ROOT, ratio)} " +
+            "vs chance ${"%.2f".format(java.util.Locale.ROOT, significance)} key +$bestKey"
+        // A short version (a TV-size cover, a clip of one chorus) only ever
+        // holds part of the record. That is accepted too when what it holds
+        // matches unmistakably: half a minute or more, almost all in step.
+        val whole = matchedShare >= MIN_MATCHED && points.size >= MIN_FRAMES / 2 &&
+            straight >= MIN_STRAIGHT && ratio <= MAX_COST_RATIO
+        val part = matchedShare >= MIN_PART_MATCHED && points.size >= MIN_PART_FRAMES &&
+            straight >= MIN_PART_STRAIGHT && ratio <= MAX_PART_COST_RATIO
+        if (significance > MAX_CHANCE_RATIO || (!whole && !part)) return refuse(figures)
 
         // Straight line through the matched frames?
         val toMs = { frame: Int, f: Features -> (f.secondsAt(frame.toDouble()) * 1000.0).roundToLong() }
@@ -499,6 +547,8 @@ object ChromaAlignment {
         hi: IntArray,
         openEnd: Int = -1,
         norm: Float = 1f,
+        /** False when only the total is wanted: no directions kept, no path traced. */
+        keepPath: Boolean = true,
     ): Path? {
         if (n == 0 || m == 0) return null
         val rowStart = IntArray(n + 1)
@@ -506,7 +556,7 @@ object ChromaAlignment {
             val width = (hi[i] - lo[i] + 1).coerceAtLeast(0)
             rowStart[i + 1] = rowStart[i] + width
         }
-        val from = ByteArray(rowStart[n]) // 0 start, 1 diagonal, 2 record step, 3 video step
+        val from = ByteArray(if (keepPath) rowStart[n] else 0) // 0 start, 1 diagonal, 2 record step, 3 video step
         var prev = FloatArray(0)
         var prevLo = 0
         var prevHi = -1
@@ -522,25 +572,30 @@ object ChromaAlignment {
             val freeFrom = if (openEnd >= 0) m - 1 - openEnd else Int.MAX_VALUE
             for (j in l..h) {
                 val c = cost(a, i, b, j) * norm
-                var best = startCost + j * VIDEO_SKIP_COST
+                var best = startCost + j * VIDEO_SKIP_COST + c
                 var dir: Byte = 0
                 if (i > 0) {
                     if (j - 1 in prevLo..prevHi) {
-                        val v = prev[j - 1 - prevLo]
+                        val v = prev[j - 1 - prevLo] + c
                         if (v < best) { best = v; dir = 1 }
                     }
                     if (j in prevLo..prevHi) {
-                        val v = prev[j - prevLo] + STEP_PENALTY
+                        // The record moving on while the video holds still is
+                        // the record's part being left out of the video: it
+                        // costs at least what leaving a row out does, so a
+                        // path doesn't drag on along the video's last frame
+                        // where a short version has simply stopped.
+                        val v = prev[j - prevLo] + maxOf(c + STEP_PENALTY, RECORD_STEP_FLOOR)
                         if (v < best) { best = v; dir = 2 }
                     }
                 }
                 if (j > l) {
-                    val v = row[j - 1 - l] + STEP_PENALTY
+                    val v = row[j - 1 - l] + c + STEP_PENALTY
                     if (v < best) { best = v; dir = 3 }
                 }
-                val total = best + c
+                val total = best
                 row[j - l] = total
-                from[rowStart[i] + j - l] = dir
+                if (keepPath) from[rowStart[i] + j - l] = dir
                 val end = if (j >= freeFrom) total else total + tail
                 if (end < bestTotal) {
                     bestTotal = end
@@ -553,6 +608,7 @@ object ChromaAlignment {
             prevHi = h
         }
         if (bestI < 0) return null
+        if (!keepPath) return Path(LongArray(0), bestTotal.toDouble())
         val cells = ArrayList<Long>()
         var i = bestI
         var j = bestJ
@@ -632,18 +688,6 @@ object ChromaAlignment {
             for (pc in 0 until 12) out[f * 12 + (pc + k) % 12] = chroma[f * 12 + pc]
         }
         return out
-    }
-
-    /** Mean profile over the sounding frames. */
-    private fun profile(f: Features): DoubleArray {
-        val sum = DoubleArray(12)
-        for (i in 0 until f.frames) {
-            if (f.silent[i]) continue
-            for (pc in 0 until 12) sum[pc] += f.chroma[i * 12 + pc]
-        }
-        val norm = sqrt(sum.sumOf { it * it })
-        if (norm > 0) for (pc in 0 until 12) sum[pc] /= norm
-        return sum
     }
 
     /** What a match costs by chance: record and video frames paired at random. */
