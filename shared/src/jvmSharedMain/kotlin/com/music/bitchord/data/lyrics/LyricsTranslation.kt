@@ -1178,6 +1178,95 @@ object LyricsTranslation {
         }
     }
 
+    // ---- A song's name in its own language -----------------------------------
+
+    /** What Gemini made of a Hangul title: the original's name, or that there is none. */
+    sealed interface NativeNameResult {
+        data class Found(val title: String, val artist: String) : NativeNameResult
+        /** Gemini answered: the song is Korean, or it does not know it. Worth remembering. */
+        data object NotForeign : NativeNameResult
+        /** No key, no quota, no network: nothing learned, worth asking again later. */
+        data object Unavailable : NativeNameResult
+    }
+
+    @Serializable
+    private data class NativeNameAnswer(
+        val found: Boolean = false,
+        val title: String = "",
+        val artist: String = "",
+    )
+
+    /**
+     * The title and artist of a song as its original release prints them,
+     * given the way a Korean listener or uploader wrote them in Hangul — "발묘 /
+     * 나나호시 관현악단" for "抜錨 / ナナホシ管弦楽団". Lyrics catalogues file a
+     * Japanese, Chinese or English song under its own name; a Hangul spelling
+     * finds nothing in them.
+     */
+    suspend fun nativeName(title: String, artist: String): NativeNameResult {
+        if (!geminiKeyUsable) return NativeNameResult.Unavailable
+        val input = buildJsonObject {
+            put("title", title)
+            put("artist", artist)
+        }
+        val body = buildJsonObject {
+            putJsonObject("systemInstruction") {
+                putJsonArray("parts") {
+                    add(buildJsonObject { put("text", NATIVE_NAME_INSTRUCTION) })
+                }
+            }
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") {
+                        add(buildJsonObject { put("text", input.toString()) })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("temperature", 0)
+                put("responseMimeType", "application/json")
+                putJsonObject("responseSchema") {
+                    put("type", "OBJECT")
+                    putJsonObject("properties") {
+                        putJsonObject("found") { put("type", "BOOLEAN") }
+                        putJsonObject("title") { put("type", "STRING") }
+                        putJsonObject("artist") { put("type", "STRING") }
+                    }
+                    putJsonArray("required") {
+                        add("found")
+                        add("title")
+                        add("artist")
+                    }
+                }
+            }
+        }.toString()
+        val answer = try {
+            askGemini(body) { text ->
+                runCatching { json.decodeFromString<NativeNameAnswer>(geminiText(text)) }.getOrNull()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: return NativeNameResult.Unavailable
+        val foundTitle = answer.title.trim()
+        val foundArtist = answer.artist.trim()
+        if (!answer.found || foundTitle.isEmpty()) return NativeNameResult.NotForeign
+        // Asked for the original and handed the question back: nothing new.
+        if (foundTitle == title.trim() && (foundArtist.isEmpty() || foundArtist == artist.trim())) {
+            return NativeNameResult.NotForeign
+        }
+        return NativeNameResult.Found(foundTitle, foundArtist.ifEmpty { artist })
+    }
+
+    private val NATIVE_NAME_INSTRUCTION = """
+        You identify songs for a lyrics search. The input is a song title and artist as a Korean listener wrote them, usually in Hangul.
+        Often the song is not Korean: it is a Japanese, Chinese or English song (J-pop, Vocaloid, anime, C-pop, Western pop) whose names were transliterated or translated into Hangul, for example a Korean cover of it.
+        If you are confident which original song this is, return found=true with "title" and "artist" exactly as the original release writes them, in the original script (kanji/kana, Chinese characters, Latin letters). Example: {"title":"발묘","artist":"나나호시 관현악단"} -> {"found":true,"title":"抜錨","artist":"ナナホシ管弦楽団"}.
+        If the song is originally Korean, or you are not confident, return found=false with empty strings. Never guess.
+    """.trimIndent()
+
     private fun parseMeaning(response: String): SongMeaning? = runCatching {
         val parsed = json.decodeFromString<SongMeaning>(geminiText(response))
         val cleaned = parsed.copy(

@@ -1,0 +1,35 @@
+name: Korean WIP check
+
+# Compiles a work-in-progress branch (ko17-wip, ko18-wip, ...) and runs the
+# lyrics tests, without building or publishing a release. Releases still come
+# only from main via korean-build.yml.
+on:
+  push:
+    branches: ['ko*-wip']
+  workflow_dispatch:
+
+concurrency:
+  group: ko-wip-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Lyrics tests
+        run: |
+          chmod +x gradlew
+          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*' --stacktrace
+
+      - name: Compile the app
+        run: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --stacktrace

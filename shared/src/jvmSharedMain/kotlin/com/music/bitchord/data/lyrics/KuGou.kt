@@ -31,15 +31,76 @@ object KuGou {
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val keyword = keyword(title, artist, album)
         val seconds = (durationMs / 1000).toInt()
+        val wantsInstrumental = INSTRUMENTAL_TAG.containsMatchIn(title)
 
-        val candidate = searchSongs(keyword, seconds)?.firstNotNullOfOrNull { hash ->
-            searchLyrics(hash = hash)?.firstOrNull()
-        } ?: searchLyrics(keyword = keyword, seconds = seconds)?.firstOrNull()
-            ?: return@withContext null
+        // A candidate whose file turns out to be the "no words" placeholder is
+        // a miss, not an answer: the next one is tried instead.
+        fun fetch(candidate: Candidate): List<LyricLine>? {
+            val lrc = download(candidate.id, candidate.accesskey) ?: return null
+            return LrcLib.parseLrc(lrc).takeIf { it.isNotEmpty() && !isInstrumentalPlaceholder(it) }
+        }
 
-        val lrc = download(candidate.id, candidate.accesskey) ?: return@withContext null
-        LrcLib.parseLrc(lrc).takeIf { it.isNotEmpty() }
+        searchSongs(keyword, seconds, wantsInstrumental).orEmpty()
+            .take(MAX_HASHES)
+            .firstNotNullOfOrNull { hash -> searchLyrics(hash = hash)?.firstOrNull()?.let(::fetch) }
+            ?.let { return@withContext it }
+
+        searchLyrics(keyword = keyword, seconds = seconds).orEmpty()
+            // The keyword search matches on length as much as on name, so for a
+            // title KuGou doesn't know it hands back whatever else runs that
+            // long — usually an instrumental. Keep only a candidate whose own
+            // name has something in common with the title asked for.
+            .filter {
+                it.song.isNotBlank() && titlesOverlap(title, it.song) &&
+                    (wantsInstrumental || !INSTRUMENTAL_TAG.containsMatchIn(it.song))
+            }
+            .take(MAX_HASHES)
+            .firstNotNullOfOrNull(::fetch)
     }
+
+    /** How many search hits are worth downloading before giving up. */
+    private const val MAX_HASHES = 3
+
+    /**
+     * KuGou's stand-in for a song with no words: a single timed line such as
+     * "纯音乐，请欣赏" ("instrumental, please enjoy") or "此歌曲为没有填词的纯音乐".
+     * That is "no lyrics", not lyrics.
+     */
+    internal fun isInstrumentalPlaceholder(lines: List<LyricLine>): Boolean {
+        val words = lines.map { it.text.trim() }.filter { it.isNotEmpty() }
+        if (words.isEmpty()) return true
+        return words.size <= 3 && words.all { PLACEHOLDER.containsMatchIn(it) }
+    }
+
+    /**
+     * Whether two titles share enough of their letters to plausibly name the
+     * same song: at least [MIN_OVERLAP] of the shorter one's distinct letters
+     * appear in the other. Deliberately loose — it only has to tell "the song
+     * asked for" from "something else that happens to be as long".
+     */
+    internal fun titlesOverlap(wanted: String, got: String): Boolean {
+        val a = letters(wanted)
+        val b = letters(got)
+        if (a.isEmpty() || b.isEmpty()) return false
+        val shorter = if (a.size <= b.size) a else b
+        val longer = if (shorter === a) b else a
+        val shared = shorter.count { it in longer }
+        return shared >= shorter.size * MIN_OVERLAP
+    }
+
+    private fun letters(text: String): Set<Int> =
+        text.stripParenthetical().lowercase().codePoints()
+            .filter { Character.isLetterOrDigit(it) }
+            .toArray().toSet()
+
+    private const val MIN_OVERLAP = 0.4
+
+    private val PLACEHOLDER = Regex("""纯音乐|純音樂|没有填词|請欣賞|请欣赏|instrumental""", RegexOption.IGNORE_CASE)
+
+    /** A song-list row that is the backing track or instrumental of something. */
+    private val INSTRUMENTAL_TAG = Regex(
+        """伴奏|纯音乐|純音樂|(?i:\binst\.?\b|instrumental|off\s*vocal|karaoke|\bmr\b)|반주""",
+    )
 
     /**
      * Song hashes worth trying, restricted to cuts within
@@ -47,7 +108,7 @@ object KuGou {
      * first result for a common title is as likely to be a cover or a remix
      * as the right recording — and ordered closest match first.
      */
-    private fun searchSongs(keyword: Keyword, seconds: Int): List<String>? {
+    private fun searchSongs(keyword: Keyword, seconds: Int, wantsInstrumental: Boolean): List<String>? {
         val url = "https://mobileservice.kugou.com/api/v3/search/song".toHttpUrl().newBuilder()
             .addQueryParameter("version", "9108")
             .addQueryParameter("plat", "0")
@@ -59,6 +120,9 @@ object KuGou {
         val response = runCatching { lyricsJson.decodeFromString<SearchSongResponse>(body) }.getOrNull()
         return response?.data?.info.orEmpty()
             .filter { seconds <= 0 || abs(it.duration - seconds) <= DURATION_TOLERANCE_SECONDS }
+            // A backing track shares the hash search's name and length; its
+            // "lyrics" are the instrumental placeholder.
+            .filter { wantsInstrumental || !INSTRUMENTAL_TAG.containsMatchIn(it.songname + " " + it.filename) }
             .sortedBy { abs(it.duration - seconds) }
             .map { it.hash }
     }
@@ -144,14 +208,25 @@ object KuGou {
         data class Data(val info: List<Info> = emptyList())
 
         @Serializable
-        data class Info(val hash: String, val duration: Int = -1)
+        data class Info(
+            val hash: String,
+            val duration: Int = -1,
+            val songname: String = "",
+            val filename: String = "",
+        )
     }
 
     @Serializable
     private data class SearchLyricsResponse(val candidates: List<Candidate> = emptyList())
 
     @Serializable
-    private data class Candidate(val id: String, val accesskey: String)
+    private data class Candidate(
+        val id: String,
+        val accesskey: String,
+        /** The song this candidate was filed under. */
+        val song: String = "",
+        val singer: String = "",
+    )
 
     @Serializable
     private data class DownloadResponse(val content: String = "")

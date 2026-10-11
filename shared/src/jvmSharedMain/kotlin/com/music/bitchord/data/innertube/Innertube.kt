@@ -687,6 +687,20 @@ object Innertube {
             put("query", query)
         }
 
+    /**
+     * A filtered search made the same anonymous way as [searchTypeahead], for
+     * lookups the app makes on its own behalf — finding the original-language
+     * name of a song whose lyrics could not be found — which have no business
+     * in the listener's search history. Answers in English for the US
+     * catalogue, so names come back as the release prints them rather than
+     * localised.
+     */
+    suspend fun searchAnonymous(query: String, params: String? = null): JsonObject =
+        postMusicAnonymous("search") {
+            put("query", query)
+            params?.let { put("params", it) }
+        }
+
     /** The stats endpoints a player response nominates for one playback. */
     data class PlaybackTracking(
         val playbackUrl: String,

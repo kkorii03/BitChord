@@ -125,20 +125,43 @@ object LyricsRepository {
             videoId, title, artist, durationMs, album, sources, ordered, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled,
         )
-        if (first != null || alternatives.isEmpty()) return first
-        for ((altTitle, altArtist) in alternatives) {
-            if (altTitle == title && altArtist == artist) continue
-            // The video's own captions were already asked: they do not change
-            // with the name the search is made under.
-            val found = lyricsFor(
-                videoId, altTitle, altArtist, durationMs, album,
-                sources - LyricsSource.YOUTUBE_TRANSCRIPT, ordered, prioritizeSyllableSync, isrc,
+        if (first != null) return first
+        // The sources keyed on the video rather than on a name were already
+        // asked: they do not change with the name the search is made under.
+        val byName = sources - KEYED_ON_VIDEO
+        if (byName.isEmpty()) return null
+        val tried = mutableSetOf(title to artist)
+        suspend fun retry(name: Pair<String, String>): Result? {
+            if (!tried.add(name)) return null
+            return lyricsFor(
+                videoId, name.first, name.second, durationMs, album,
+                byName, ordered, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled,
             )
-            if (found != null) return found
+        }
+        for (alternative in alternatives) {
+            retry(alternative)?.let { return it }
+        }
+        // Still nothing, and the name is written in Hangul: very often a Korean
+        // spelling of a Japanese, Chinese or English song, which the catalogues
+        // file under its own name. Ask for that name and search once more —
+        // YouTube Music first, Gemini only if that doesn't do it.
+        if (!OriginalNames.worthTrying(title, artist)) return null
+        OriginalNames.fromYouTubeMusic(title, artist, durationMs)?.let { name ->
+            retry(name.title to name.artist)?.let { return it }
+        }
+        OriginalNames.fromGemini(title, artist)?.let { name ->
+            retry(name.title to name.artist)?.let { return it }
         }
         return null
     }
+
+    /** Sources that look a track up by its video id, whatever it is called. */
+    private val KEYED_ON_VIDEO = setOf(
+        LyricsSource.YOUTUBE_TRANSCRIPT,
+        LyricsSource.YOUTUBE_MUSIC,
+        LyricsSource.SIMP_MUSIC,
+    )
 
     private suspend fun lyricsFor(
         videoId: String,
