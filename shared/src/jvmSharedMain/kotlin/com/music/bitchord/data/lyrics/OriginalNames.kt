@@ -80,8 +80,12 @@ object OriginalNames {
     /** How far the original's length may stray from what is playing: covers run a little long or short. */
     private const val MAX_DRIFT_SECONDS = 15
 
-    /** Only the top of the list is trusted; further down is "other songs with similar words". */
-    private const val TOP_ROWS = 3
+    /**
+     * Only the top of the list is trusted: a Hangul spelling YouTube Music has
+     * no alias for still gets an answer, and further down that answer is
+     * "other songs with similar words".
+     */
+    private const val TOP_ROWS = 2
 
     private suspend fun searchYouTubeMusic(title: String, artist: String, durationMs: Long): Name? {
         val response = Innertube.searchAnonymous("$title $artist", SearchFilter.SONGS.params)
@@ -97,8 +101,10 @@ object OriginalNames {
                 if (compact(song.title) == compact(title)) return null
                 continue
             }
-            val length = TrackMatcher.secondsOf(song.durationText)
-            if (seconds > 0 && length != null && abs(length - seconds) > MAX_DRIFT_SECONDS) continue
+            // The length is the only check that works across scripts, so a row
+            // without one is not taken on trust.
+            val length = TrackMatcher.secondsOf(song.durationText) ?: continue
+            if (seconds > 0 && abs(length - seconds) > MAX_DRIFT_SECONDS) continue
             val foundArtist = TrackMatcher.primaryArtist(song.artist).ifBlank { song.artist }.trim()
             val foundTitle = song.title.trim()
             if (foundTitle.isEmpty()) continue

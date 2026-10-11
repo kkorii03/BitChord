@@ -57,7 +57,8 @@ internal val CONTENT_COUNTRIES = listOf(
 /** [code]'s name in the app's language: "대한민국" for KR in Korean. */
 internal fun countryDisplayName(code: String): String {
     val locale = AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault()
-    return Locale("", code).getDisplayCountry(locale).ifBlank { code }
+    val region = runCatching { Locale.Builder().setRegion(code).build() }.getOrNull() ?: return code
+    return region.getDisplayCountry(locale).ifBlank { code }
 }
 
 /** "전 세계" for the charts' global choice, the country's name otherwise. */

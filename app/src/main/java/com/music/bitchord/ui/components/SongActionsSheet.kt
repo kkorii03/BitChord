@@ -347,7 +347,11 @@ fun SongActionsSheet(
             ) {
                 val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
                 clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("title", original))
-                android.widget.Toast.makeText(context, R.string.cover_original_title_copied, android.widget.Toast.LENGTH_SHORT).show()
+                // Android 13 and later confirm a copy themselves; a toast on top
+                // of that would say it twice.
+                if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+                    android.widget.Toast.makeText(context, R.string.cover_original_title_copied, android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
         // A channel whose uploads are covers, read as such even without the
