@@ -1124,6 +1124,21 @@ object InnertubeParser {
             )
         }.distinctBy { it.key }
 
+    /**
+     * The music video YouTube Music pairs with the catalogue track [videoId] —
+     * what its own Song/Video switch plays — or null when it has none. Read
+     * off the queue row's `counterpart`, which only ever names the release's
+     * official video, never a fan upload or a lyric video found by search.
+     */
+    fun parseCounterpart(root: JsonElement, videoId: String): String? =
+        collectRenderers(root, "playlistPanelVideoWrapperRenderer").firstNotNullOfOrNull { wrapper ->
+            val primary = wrapper.o("primaryRenderer").o("playlistPanelVideoRenderer").s("videoId")
+            if (primary != videoId) return@firstNotNullOfOrNull null
+            wrapper.a("counterpart")?.firstNotNullOfOrNull { entry ->
+                entry.o("counterpartRenderer").o("playlistPanelVideoRenderer").s("videoId")
+            }?.takeIf { it.isNotBlank() && it != videoId }
+        }
+
     /** Tracks of a watch queue (`next` response) — the AutoPlay radio mix. */
     fun parseWatchQueue(root: JsonElement): List<Song> {
         val out = LinkedHashMap<String, Song>()

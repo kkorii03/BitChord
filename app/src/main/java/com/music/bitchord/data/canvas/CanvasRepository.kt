@@ -143,11 +143,12 @@ object CanvasRepository {
      */
     private suspend fun videoLoopFor(song: Song, seconds: Int?): CanvasArtwork? {
         if (!AppSettings.videoCanvas.value) return null
+        // A track's music video only as YouTube Music itself pairs them — never
+        // one found by searching, which turns up lyric videos and fan uploads.
         val videoId = if (song.isVideo) {
             song.videoId
         } else {
-            runCatching { com.music.bitchord.data.YtMusicRepository.resolveVideo(song) }.getOrNull()
-                ?.takeIf { looksLikeMusicVideo(it.title) }?.videoId
+            runCatching { com.music.bitchord.data.YtMusicRepository.officialVideo(song.videoId) }.getOrNull()
         }
         if (videoId.isNullOrBlank() || videoId.contains(':')) return null
         val loop = com.music.bitchord.data.innertube.StreamResolver.videoLoop(videoId) ?: return null
@@ -168,16 +169,6 @@ object CanvasRepository {
 
     private const val LOOP_MS = 12_000L
 
-    /** A video found for a track that is the song's own video, not a lyric card or a fan upload. */
-    private fun looksLikeMusicVideo(title: String): Boolean {
-        val lower = title.lowercase()
-        return NOT_MUSIC_VIDEO.none { it in lower }
-    }
-
-    private val NOT_MUSIC_VIDEO = listOf(
-        "lyric", "가사", "visuali", "audio", "1 hour", "1시간", "loop", "fanmade", "fan made", "cover", "커버",
-        "karaoke", "노래방", "inst", "piano", "sped up", "slowed", "nightcore", "8d", "reaction", "리액션",
-    )
 
     /**
      * A canvas already worked out for [song], without going near the network.

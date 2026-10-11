@@ -441,6 +441,26 @@ object YtMusicRepository {
      * This is the inverse of [resolveAudio] - it finds the music video
      * for a catalogue track. Returns null when no video version is found.
      */
+    /** [officialVideo] answers by track id; "" for a track without one. */
+    private val officialVideos = ConcurrentHashMap<String, String>()
+
+    /**
+     * The official music video of catalogue track [videoId], as YouTube Music
+     * itself pairs them (its Song/Video switch), or null. Unlike
+     * [resolveVideo] nothing is searched for, so nothing else — a lyric
+     * video, a fan upload with a translation — can be picked by mistake.
+     */
+    suspend fun officialVideo(videoId: String): String? {
+        if (videoId.isBlank()) return null
+        officialVideos[videoId]?.let { return it.ifEmpty { null } }
+        val found = call("counterpart:$videoId") {
+            InnertubeParser.parseCounterpart(Innertube.next(videoId), videoId)
+        }
+        // Only an answer is kept; a failed request may just have been offline.
+        found.onSuccess { officialVideos[videoId] = it.orEmpty() }
+        return found.getOrNull()
+    }
+
     suspend fun resolveVideo(song: Song): Song? {
         if (song.isVideo) return null
         videoVersionCache[song.videoId]?.let { return it }
