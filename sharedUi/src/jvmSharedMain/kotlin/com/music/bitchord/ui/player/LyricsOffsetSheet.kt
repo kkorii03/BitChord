@@ -500,7 +500,7 @@ private fun VideoTimingBlock(timing: LyricsTimingUi, onAiTiming: (() -> Unit)?) 
                     text = note,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.38f),
-                    maxLines = 4,
+                    maxLines = 8,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 4.dp),
                 )

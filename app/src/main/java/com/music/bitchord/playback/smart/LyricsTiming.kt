@@ -283,7 +283,15 @@ object LyricsTiming {
             times.append(label).append(' ').append(seconds(now - since))
             return now
         }
-        val candidates = RecordingPick.find(names, videoMs, max = MAX_CANDIDATES)
+        // Searched once per video: later passes over the same video ask again
+        // only if the first search found nothing.
+        val candidates = synchronized(picks) { picks[video.videoId] }
+            ?: RecordingPick.find(names, videoMs, max = MAX_CANDIDATES).also { found ->
+                if (found.isNotEmpty()) synchronized(picks) {
+                    picks[video.videoId] = found
+                    while (picks.size > PICKS_KEPT) picks.remove(picks.keys.first())
+                }
+            }
         var mark = lap("검색", began)
         if (candidates.isEmpty()) {
             TrackLog.d(TAG, "no original recording found for $names", video.videoId)
@@ -529,6 +537,10 @@ object LyricsTiming {
     }
 
     private const val VIDEOS_KEPT = 3
+
+    /** The recordings found for each video lately. */
+    private val picks = LinkedHashMap<String, List<Song>>()
+    private const val PICKS_KEPT = 16
 
     /** [song]'s audio, as much as is on disk up to [maxSeconds], reduced to pitch profiles. */
     private fun features(context: Context, song: Song, maxSeconds: Double, job: Job?): ChromaAlignment.Features? {
