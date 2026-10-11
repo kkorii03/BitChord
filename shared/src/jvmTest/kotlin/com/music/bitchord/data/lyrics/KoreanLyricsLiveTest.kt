@@ -52,17 +52,18 @@ class LyricsLookupTimingLiveTest {
         if (!live) return
         val start = System.nanoTime()
         val sources = LyricsSource.offered.toSet() - LyricsSource.PAXSENIX_SPOTIFY - LyricsSource.PAXSENIX_MUSIXMATCH
+        val seen = java.util.Collections.synchronizedList(mutableListOf<String>())
         runBlocking {
             LyricsRepository.lyrics(
                 "live-carousel-sources", "회전목마", "에피톤 프로젝트", 313_000L,
                 sources = sources, prioritizeSyllableSync = true,
                 onSourceResult = { source, result ->
                     val ms = (System.nanoTime() - start) / 1_000_000
-                    println("LOOKUP_MS source:${source.name} ${ms}ms found=${result != null}")
+                    seen += "${source.name}=${ms}${if (result != null) "+" else "-"}"
                 },
             )
         }
-        println("LOOKUP_MS source:TOTAL ${(System.nanoTime() - start) / 1_000_000}ms")
+        println("LOOKUP_MS sources ${seen.joinToString(" ")} TOTAL=${(System.nanoTime() - start) / 1_000_000}")
     }
 
     @Test
