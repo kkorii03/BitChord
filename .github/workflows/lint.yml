@@ -3,6 +3,8 @@ name: Lint (on demand)
 # Android Lint over the release variant: correctness, performance and unused
 # resources, as an artifact to read locally (gh run download).
 on:
+  push:
+    branches: ['lint-run']
   workflow_dispatch:
 
 jobs:
