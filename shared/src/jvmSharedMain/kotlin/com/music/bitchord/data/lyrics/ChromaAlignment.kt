@@ -137,6 +137,57 @@ object ChromaAlignment {
     ) {
         fun secondsAt(frame: Double): Double = firstCenterSeconds + frame * hopSeconds
         val durationSeconds: Double get() = secondsAt((frames - 1).coerceAtLeast(0).toDouble())
+
+        /**
+         * A compact copy for keeping on disk: each profile value (0..1, unit
+         * vectors) as one byte. About 30 kB for a four-minute song, and the
+         * quantisation (±0.002) is far below anything the alignment can see.
+         */
+        fun toBytes(): ByteArray {
+            val out = java.io.ByteArrayOutputStream(24 + frames * 13)
+            java.io.DataOutputStream(out).use { data ->
+                data.writeInt(FORMAT)
+                data.writeInt(frames)
+                data.writeDouble(hopSeconds)
+                data.writeDouble(firstCenterSeconds)
+                for (i in 0 until frames) {
+                    data.writeByte(if (silent[i]) 1 else 0)
+                    for (pc in 0 until 12) data.writeByte((chroma[i * 12 + pc].coerceIn(0f, 1f) * 255f).roundToInt())
+                }
+            }
+            return out.toByteArray()
+        }
+
+        companion object {
+            private const val FORMAT = 1
+
+            /** The inverse of [toBytes]; null for anything else. */
+            fun fromBytes(bytes: ByteArray): Features? = runCatching {
+                java.io.DataInputStream(bytes.inputStream()).use { data ->
+                    if (data.readInt() != FORMAT) return null
+                    val frames = data.readInt()
+                    if (frames <= 0 || frames > 200_000) return null
+                    val hop = data.readDouble()
+                    val first = data.readDouble()
+                    val chroma = FloatArray(frames * 12)
+                    val silent = BooleanArray(frames)
+                    for (i in 0 until frames) {
+                        silent[i] = data.readUnsignedByte() == 1
+                        for (pc in 0 until 12) chroma[i * 12 + pc] = data.readUnsignedByte() / 255f
+                        normalizeRow(chroma, i * 12)
+                    }
+                    Features(chroma, frames, hop, first, silent)
+                }
+            }.getOrNull()
+
+            private fun normalizeRow(v: FloatArray, at: Int) {
+                var s = 0f
+                for (pc in 0 until 12) s += v[at + pc] * v[at + pc]
+                if (s <= 0f) return
+                val inv = 1f / sqrt(s)
+                for (pc in 0 until 12) v[at + pc] *= inv
+            }
+        }
     }
 
     /**
@@ -173,11 +224,9 @@ object ChromaAlignment {
         private var out = FloatArray(12 * 2048)
         private var silentOut = BooleanArray(2048)
         private var frames = 0
-        private var finished = false
 
         /** Adds [count] samples from [samples]. */
         fun push(samples: FloatArray, count: Int = samples.size) {
-            check(!finished) { "already finished" }
             for (n in 0 until count) {
                 history[historyAt] = samples[n]
                 historyAt = if (historyAt + 1 == history.size) 0 else historyAt + 1
@@ -241,11 +290,11 @@ object ChromaAlignment {
         }
 
         /**
-         * The profiles of everything pushed, the first sample of which was
-         * [startSeconds] into the audio.
+         * The profiles of everything pushed so far, the first sample of which
+         * was [startSeconds] into the audio. More can be pushed afterwards and
+         * asked for again — a video still arriving is read a piece at a time.
          */
         fun finish(startSeconds: Double = 0.0): Features {
-            finished = true
             val n = frames
             val smoothed = FloatArray(n * 12)
             val uniform = (1.0 / sqrt(12.0)).toFloat()
@@ -296,6 +345,8 @@ object ChromaAlignment {
          * its pace, not measured.
          */
         val coveredUntilMs: Long,
+        /** Cost of the warp against its cost against the video played backwards; lower is surer. */
+        val chance: Double = 1.0,
     )
 
     /**
@@ -467,6 +518,7 @@ object ChromaAlignment {
                 costRatio = ratio,
                 straightShare = straight,
                 coveredUntilMs = toMs(points.last()[0], record),
+                chance = significance,
             )
         } else {
             // Not one line: a cut, an insert, a tempo that wanders. Follow the
@@ -497,6 +549,7 @@ object ChromaAlignment {
             Result(
                 map, rate, linear = false, (matchedShare * 100).roundToInt().coerceIn(0, 100), bestKey, ratio, straight,
                 coveredUntilMs = toMs(last[0], record),
+                chance = significance,
             )
         }
         lastVerdict = "accepted: $figures ${if (result.linear) "line" else "warp"} rate ${"%.3f".format(java.util.Locale.ROOT, result.rate)}"

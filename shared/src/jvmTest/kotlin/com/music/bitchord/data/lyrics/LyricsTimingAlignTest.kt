@@ -394,6 +394,33 @@ class LyricsTimingAlignTest {
     }
 
     @Test
+    fun profilesSurviveTheDiskAndArriveInPieces() {
+        val rate = 22_050
+        val original = song(seed = 91, count = 50)
+        val audio = FloatArray((starts(original, 1.0, 0.5).last() + 4.0).times(rate).toInt())
+        render(audio, rate, original, original.chords.indices, at = 0.5, tempo = 1.0, transpose = 0, brightness = 0.6)
+        val whole = features(audio, rate)
+        // Read in two goes, asked for in between: the same as read in one.
+        val extractor = ChromaAlignment.Extractor(rate)
+        val half = audio.size / 2
+        extractor.push(audio.copyOfRange(0, half))
+        val early = extractor.finish()
+        extractor.push(audio.copyOfRange(half, audio.size))
+        val late = extractor.finish()
+        assertTrue(early.frames < late.frames)
+        assertEquals(whole.frames, late.frames)
+        val back = assertNotNull(ChromaAlignment.Features.fromBytes(whole.toBytes()))
+        assertEquals(whole.frames, back.frames)
+        assertEquals(whole.hopSeconds, back.hopSeconds)
+        // Kept on disk, it still finds itself, to the frame.
+        val shifted = FloatArray(audio.size + 5 * rate)
+        audio.copyInto(shifted, 5 * rate)
+        val found = assertNotNull(ChromaAlignment.align(back, features(shifted, rate)))
+        assertTrue(abs(found.map.map(30_000L) - 35_000L) <= 60, "mapped ${found.map.map(30_000L)}")
+        assertNull(ChromaAlignment.Features.fromBytes(byteArrayOf(1, 2, 3)))
+    }
+
+    @Test
     fun chromaRefusesSilenceAndShortAudio() {
         val rate = 16_000
         val quiet = FloatArray(60 * rate)

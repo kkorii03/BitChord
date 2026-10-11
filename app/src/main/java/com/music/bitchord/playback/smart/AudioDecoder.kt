@@ -122,7 +122,8 @@ object AudioDecoder {
 
     /**
      * As [decodeRegion], but handing each decoded piece to [onChunk] — mono,
-     * with the sample rate it is at — instead of holding the region in memory.
+     * with the sample rate it is at and where in the track it starts —
+     * instead of holding the region in memory.
      *
      * For a pass over a whole song that keeps only a summary of it: a
      * four-minute track decodes to 46 MB of floats, its summary to a few
@@ -136,10 +137,10 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean = { false },
-        onChunk: (samples: FloatArray, sampleRate: Int) -> Unit,
+        onChunk: (samples: FloatArray, sampleRate: Int, atSeconds: Double) -> Unit,
     ): Double? {
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
-            onChunk(toMono(buffer, info, channels), rate)
+            onChunk(toMono(buffer, info, channels), rate, info.presentationTimeUs / 1_000_000.0)
         } ?: return null
         return decoded.second
     }

@@ -18,10 +18,12 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -159,19 +161,20 @@ object LyricsTiming {
 
     /** Whether the measurement has said all it is going to for [videoId]. */
     suspend fun measured(context: Context, videoId: String): Boolean =
-        store(context).get(videoId)?.let { it.autoVersion == AUTO_VERSION && it.autoComplete } == true
+        store(context).get(videoId)?.let { it.autoVersion == AUTO_VERSION && it.autoComplete && !it.autoRecordPartial } == true
 
     /**
      * Whether measuring [videoId] now could tell more than last time: it never
-     * has been, or only on an opening and much more of the video has reached
-     * the disk since.
+     * has been; it was, against only the opening of the record; or only on an
+     * opening of the video, and much more of it has reached the disk since.
      */
     suspend fun worthMeasuring(context: Context, videoId: String): Boolean {
         val entry = store(context).get(videoId)
         if (entry == null || entry.autoVersion != AUTO_VERSION) return true
+        if (entry.autoRecordPartial) return true
         if (entry.autoComplete) return false
         val copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return false
-        return copy.isComplete || copy.cachedPrefix >= entry.autoVideoBytes + maxOf(REMEASURE_GROWTH_BYTES, entry.autoVideoBytes / 3)
+        return copy.isComplete || copy.cachedPrefix >= entry.autoVideoBytes + maxOf(REMEASURE_GROWTH_BYTES, entry.autoVideoBytes / 4)
     }
 
     /**
@@ -182,7 +185,7 @@ object LyricsTiming {
      */
     suspend fun measurementGaveUp(context: Context, videoId: String): Boolean {
         val entry = store(context).get(videoId) ?: return false
-        if (entry.autoVersion != AUTO_VERSION || entry.auto != null || entry.autoNoChange) return false
+        if (entry.autoVersion != AUTO_VERSION || entry.auto != null || entry.autoNoChange || entry.autoRecordPartial) return false
         return entry.autoComplete || entry.autoVideoSeconds >= GIVE_UP_AFTER_SECONDS
     }
 
@@ -196,13 +199,17 @@ object LyricsTiming {
      * the record from other songs of the same name. The lyrics screen, the
      * lock screen and the next-song preparation may all ask at once; they
      * share one measurement.
+     *
+     * Fast first, then right: the candidates are tried at once, each first
+     * against the opening of its recording the moment that much has arrived
+     * — a first answer is kept and shown then — and again against all of it.
      */
     suspend fun measure(context: Context, video: Song, names: List<Pair<String, String>>, videoMs: Long) {
         val lock = measuring.getOrPut(video.videoId) { Mutex() }
         lock.withLock {
             if (!worthMeasuring(context, video.videoId)) return
             val outcome = try {
-                measureFresh(context, video, names, videoMs)
+                measureFresh(context, video, names, videoMs) { early -> keep(context, video.videoId, early) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
@@ -211,21 +218,26 @@ object LyricsTiming {
             }
             // Only a finished measurement is remembered: a dropped connection or
             // a decoder that wouldn't open is worth trying again, a refusal is
-            // not (until more of the video is there to look at).
+            // not (until more of the video, or of the record, is there to look at).
             if (outcome !is Measured.Done) return
-            store(context).update(video.videoId) {
-                it.copy(
-                    autoVersion = AUTO_VERSION,
-                    auto = outcome.result?.let(::savedOf),
-                    autoComplete = outcome.complete,
-                    autoNoChange = outcome.noChange,
-                    autoVideoBytes = outcome.videoBytes,
-                    autoVideoSeconds = outcome.videoSeconds,
-                    autoNote = outcome.note,
-                )
-            }
-            _changes.tryEmit(video.videoId)
+            keep(context, video.videoId, outcome)
         }
+    }
+
+    private suspend fun keep(context: Context, videoId: String, done: Measured.Done) {
+        store(context).update(videoId) {
+            it.copy(
+                autoVersion = AUTO_VERSION,
+                auto = done.result?.let(::savedOf),
+                autoComplete = done.complete,
+                autoRecordPartial = done.recordPartial,
+                autoNoChange = done.noChange,
+                autoVideoBytes = done.videoBytes,
+                autoVideoSeconds = done.videoSeconds,
+                autoNote = done.note,
+            )
+        }
+        _changes.tryEmit(videoId)
     }
 
     private sealed interface Measured {
@@ -238,77 +250,176 @@ object LyricsTiming {
             val noChange: Boolean = false,
             /** What it was measured against and how that went, for the drawer. */
             val note: String? = null,
+            /** Measured against only the opening of the record: worth doing again once all of it is in. */
+            val recordPartial: Boolean = false,
         ) : Measured
 
         data object Retry : Measured
     }
+
+    /** How one candidate recording fared. */
+    private class Tried(
+        val original: Song,
+        val result: ChromaAlignment.Result?,
+        /** The record's audio came down at all. */
+        val reached: Boolean,
+        /** Only the opening of it did, in the time given. */
+        val partial: Boolean,
+        val note: String,
+    )
 
     private suspend fun measureFresh(
         context: Context,
         video: Song,
         names: List<Pair<String, String>>,
         videoMs: Long,
+        early: suspend (Measured.Done) -> Unit,
     ): Measured {
+        val began = System.currentTimeMillis()
+        val times = StringBuilder()
+        fun lap(label: String, since: Long): Long {
+            val now = System.currentTimeMillis()
+            if (times.isNotEmpty()) times.append(" · ")
+            times.append(label).append(' ').append(seconds(now - since))
+            return now
+        }
         val candidates = RecordingPick.find(names, videoMs, max = MAX_CANDIDATES)
+        var mark = lap("검색", began)
         if (candidates.isEmpty()) {
             TrackLog.d(TAG, "no original recording found for $names", video.videoId)
-            return Measured.Done(null, complete = true, note = "no original recording found")
+            return Measured.Done(null, complete = true, note = "원곡을 찾지 못함 ($times)")
         }
         // The video is the record itself: nothing to move.
         if (candidates.any { it.videoId == video.videoId }) {
-            return Measured.Done(null, complete = true, noChange = true, note = "the video is the recording")
+            return Measured.Done(null, complete = true, noChange = true, note = "비디오가 원곡과 같음")
         }
 
         // The video, as much as has arrived (it is usually the track playing,
-        // and the player is the one fetching it), read once for every candidate.
+        // and the player is the one fetching it), read once for every candidate
+        // and, on later passes, only from where the last one stopped.
         val copy = awaitVideoOpening(video) ?: return Measured.Retry
+        mark = lap("비디오 대기", mark)
         val complete = copy.isComplete || video.localUri != null
         val job = currentCoroutineContext()[Job]
-        val clip = withContext(Dispatchers.IO) { features(context, video, MAX_SECONDS, job) } ?: return Measured.Retry
+        val clip = withContext(Dispatchers.IO) { videoFeatures(context, video, copy.key, job) } ?: return Measured.Retry
+        lap("비디오 분석", mark)
+        val videoNote = "비디오 ${clip.durationSeconds.roundToInt()}초" + if (complete) "" else " (받는 중)"
 
-        var anyRecord = false
-        val notes = mutableListOf<String>()
-        for (original in candidates) {
-            // The record, whole.
-            val ready = original.localUri != null || withTimeoutOrNull(RECORD_TIMEOUT_MS + 5_000L) {
-                AudioCache.awaitAnalysisTrack(Uri.parse(AutomixAnalysisSource.opusUri(original.videoId)), RECORD_TIMEOUT_MS)
-            } == true
-            if (!ready) continue
-            val record = withContext(Dispatchers.IO) { recordFeatures(context, original, job) } ?: continue
-            anyRecord = true
-            var result: ChromaAlignment.Result? = null
-            var verdict = ""
-            val alignMs = measureTimeMillis {
-                withContext(Dispatchers.Default) {
-                    result = ChromaAlignment.align(record, clip, videoComplete = complete)
-                    verdict = ChromaAlignment.lastVerdict
+        // Every candidate at once; the first to line up on its opening is kept
+        // and shown straight away, while all of them go on to the whole record.
+        val earlyGate = Mutex()
+        var earlySent = false
+        val tried = coroutineScope {
+            candidates.map { original ->
+                async {
+                    tryRecording(context, original, video, clip, complete, job) { firstResult, firstNote ->
+                        earlyGate.withLock {
+                            if (earlySent) return@withLock
+                            earlySent = true
+                            early(
+                                Measured.Done(
+                                    firstResult, complete = false, videoBytes = copy.cachedPrefix,
+                                    videoSeconds = clip.durationSeconds, recordPartial = true,
+                                    note = "$firstNote\n$times · $videoNote (원곡 앞부분으로 먼저 맞춤)",
+                                ),
+                            )
+                        }
+                    }
                 }
-            }
-            TrackLog.d(
-                TAG,
-                "chroma '${original.title}' / '${original.artist}' (${original.videoId}) -> ${video.videoId}: $verdict " +
-                    "(record ${record.durationSeconds.roundToInt()} s, video ${clip.durationSeconds.roundToInt()} s" +
-                    (if (complete) "" else " so far") + ", align ${alignMs} ms)",
-                video.videoId,
-            )
-            notes += "'${original.title}' / '${original.artist}': $verdict" +
-                (if (complete) "" else " (${clip.durationSeconds.roundToInt()} s of video so far)")
-            val found = result ?: continue
-            val same = found.linear && found.rate == 1.0 && abs(found.map.map(0L)) < MIN_SHIFT_MS
-            return Measured.Done(
-                found.takeUnless { same }, complete, copy.cachedPrefix, clip.durationSeconds,
-                noChange = same, note = notes.joinToString("\n"),
-            )
+            }.awaitAll()
         }
+        val note = (tried.map { it.note } + "$times · $videoNote · 전체 ${seconds(System.currentTimeMillis() - began)}")
+            .joinToString("\n")
         // Nothing to measure against came down: worth another go later.
-        if (!anyRecord) return Measured.Retry
-        return Measured.Done(null, complete, copy.cachedPrefix, clip.durationSeconds, note = notes.joinToString("\n"))
+        if (tried.none { it.reached }) return Measured.Retry
+        val best = tried.filter { it.result != null }.minByOrNull { it.result!!.chance }
+        val recordPartial = best?.partial ?: tried.any { it.partial }
+        val found = best?.result
+            ?: return Measured.Done(null, complete, copy.cachedPrefix, clip.durationSeconds, note = note, recordPartial = recordPartial)
+        val same = found.linear && found.rate == 1.0 && abs(found.map.map(0L)) < MIN_SHIFT_MS
+        return Measured.Done(
+            found.takeUnless { same }, complete, copy.cachedPrefix, clip.durationSeconds,
+            noChange = same, note = note, recordPartial = recordPartial,
+        )
     }
 
     /**
+     * [original] against [clip]: at once if its profiles are kept, otherwise
+     * on its opening as soon as that much is on disk (handing a match to
+     * [first]) and then on all of it.
+     */
+    private suspend fun tryRecording(
+        context: Context,
+        original: Song,
+        video: Song,
+        clip: ChromaAlignment.Features,
+        complete: Boolean,
+        job: Job?,
+        first: suspend (ChromaAlignment.Result, String) -> Unit,
+    ): Tried {
+        val began = System.currentTimeMillis()
+        val name = "'${original.title}' / '${original.artist}'"
+        suspend fun aligned(record: ChromaAlignment.Features): Pair<ChromaAlignment.Result?, String> =
+            withContext(Dispatchers.Default) {
+                val result = ChromaAlignment.align(record, clip, videoComplete = complete)
+                result to ChromaAlignment.lastVerdict
+            }
+        fun log(verdict: String, record: ChromaAlignment.Features, stage: String) = TrackLog.d(
+            TAG,
+            "chroma $name (${original.videoId}) -> ${video.videoId} [$stage]: $verdict " +
+                "(record ${record.durationSeconds.roundToInt()} s, video ${clip.durationSeconds.roundToInt()} s" +
+                (if (complete) "" else " so far") + ")",
+            video.videoId,
+        )
+
+        kept(context, original.videoId)?.let { record ->
+            val (result, verdict) = aligned(record)
+            log(verdict, record, "kept")
+            return Tried(original, result, reached = true, partial = false, note = "$name: $verdict (저장된 원곡, ${seconds(System.currentTimeMillis() - began)})")
+        }
+        if (original.localUri == null) {
+            val uri = Uri.parse(AutomixAnalysisSource.opusUri(original.videoId))
+            val head = withTimeoutOrNull(HEAD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisHead(uri, HEAD_TIMEOUT_MS) } == true
+            if (!head) return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 받지 못함")
+            val headAt = System.currentTimeMillis()
+            if (VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete != true) {
+                // The opening first: most of the time it is all the answer needs.
+                withContext(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }?.let { opening ->
+                    val (result, verdict) = aligned(opening)
+                    log(verdict, opening, "opening")
+                    if (result != null) {
+                        first(result, "$name: $verdict (원곡 앞 ${opening.durationSeconds.roundToInt()}초, ${seconds(System.currentTimeMillis() - began)})")
+                    }
+                }
+                withTimeoutOrNull(RECORD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisTrack(uri, RECORD_TIMEOUT_MS) }
+            }
+            val downloaded = System.currentTimeMillis()
+            val record = withContext(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }
+                ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
+            val whole = VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete == true
+            if (whole) keep(context, original.videoId, record)
+            val read = System.currentTimeMillis()
+            val (result, verdict) = aligned(record)
+            log(verdict, record, if (whole) "whole" else "part")
+            val note = "$name: $verdict (원곡 첫 부분 ${seconds(headAt - began)} · 나머지 ${seconds(downloaded - headAt)} · " +
+                "분석 ${seconds(read - downloaded)} · 정렬 ${seconds(System.currentTimeMillis() - read)}" +
+                (if (whole) "" else " · 원곡 일부만") + ")"
+            return Tried(original, result, reached = true, partial = !whole, note = note)
+        }
+        val record = withContext(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }
+            ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
+        keep(context, original.videoId, record)
+        val (result, verdict) = aligned(record)
+        log(verdict, record, "download")
+        return Tried(original, result, reached = true, partial = false, note = "$name: $verdict")
+    }
+
+    private fun seconds(ms: Long): String = String.format(java.util.Locale.ROOT, "%.1f초", ms / 1000.0)
+
+    /**
      * Waits (a while) for enough of [video]'s audio to be on disk to say
-     * something — about a minute of it, or all of it — and returns the copy
-     * to read. Asks for nothing itself: the video is normally the one
+     * something — about forty seconds of it, or all of it — and returns the
+     * copy to read. Asks for nothing itself: the video is normally the one
      * playing, and the player is already fetching it.
      */
     private suspend fun awaitVideoOpening(video: Song): AudioCache.Rendition? {
@@ -317,31 +428,107 @@ object LyricsTiming {
             val copy = VersionAudioAligner.renditionToMeasure(video.videoId)
             if (copy != null && (copy.isComplete || copy.cachedPrefix >= MIN_VIDEO_BYTES)) return copy
             if (System.currentTimeMillis() >= deadline) return null
-            delay(500)
+            delay(250)
         }
     }
 
+    // ---- Recordings' profiles, kept ---------------------------------------------------
+
     /**
-     * The original's profiles, kept for the last couple of recordings: a
-     * video still downloading is measured several times as it arrives, and
-     * the record it is measured against is the same each time.
+     * A recording's profiles, from memory or disk: a song has many covers, and
+     * measuring each against a record already read costs nothing but the
+     * alignment. Kept on disk at about 30 kB a song.
      */
-    private fun recordFeatures(context: Context, original: Song, job: Job?): ChromaAlignment.Features? {
-        synchronized(recordCache) { recordCache[original.videoId] }?.let { return it }
-        val features = features(context, original, MAX_SECONDS, job) ?: return null
-        // Only a whole record is worth keeping; a part one is read again next time.
-        val copy = VersionAudioAligner.renditionToMeasure(original.videoId)
-        if (original.localUri != null || copy?.isComplete == true) {
-            synchronized(recordCache) {
-                recordCache[original.videoId] = features
-                while (recordCache.size > RECORDS_KEPT) recordCache.remove(recordCache.keys.first())
-            }
+    private fun kept(context: Context, videoId: String): ChromaAlignment.Features? {
+        synchronized(recordCache) { recordCache[videoId] }?.let { return it }
+        val file = recordFile(context, videoId)
+        if (!file.exists()) return null
+        val features = runCatching { ChromaAlignment.Features.fromBytes(file.readBytes()) }.getOrNull() ?: run {
+            file.delete()
+            return null
         }
+        file.setLastModified(System.currentTimeMillis())
+        remember(videoId, features)
         return features
     }
 
+    private fun keep(context: Context, videoId: String, features: ChromaAlignment.Features) {
+        remember(videoId, features)
+        runCatching {
+            val dir = recordFile(context, videoId).parentFile ?: return
+            dir.mkdirs()
+            val temporary = File(dir, "$videoId.tmp")
+            temporary.writeBytes(features.toBytes())
+            temporary.renameTo(File(dir, "$videoId.bin"))
+            val files = dir.listFiles { f -> f.name.endsWith(".bin") }.orEmpty()
+            if (files.size > RECORDS_ON_DISK) {
+                files.sortedBy { it.lastModified() }.take(files.size - RECORDS_ON_DISK).forEach { it.delete() }
+            }
+        }
+    }
+
+    private fun remember(videoId: String, features: ChromaAlignment.Features) = synchronized(recordCache) {
+        recordCache.remove(videoId)
+        recordCache[videoId] = features
+        while (recordCache.size > RECORDS_KEPT) recordCache.remove(recordCache.keys.first())
+    }
+
+    private fun recordFile(context: Context, videoId: String): File =
+        File(File(context.applicationContext.filesDir, "chroma_records"), "$videoId.bin")
+
     private val recordCache = LinkedHashMap<String, ChromaAlignment.Features>()
-    private const val RECORDS_KEPT = 2
+    private const val RECORDS_KEPT = 4
+    private const val RECORDS_ON_DISK = 400
+
+    // ---- A video, read as it arrives ---------------------------------------------------
+
+    /** How far a video has been read, so the next pass reads only what came after. */
+    private class VideoReading(
+        val copyKey: String,
+        val extractor: ChromaAlignment.Extractor,
+        val rate: Int,
+        val startSeconds: Double,
+        var untilSeconds: Double,
+    )
+
+    private val videoReadings = LinkedHashMap<String, VideoReading>()
+
+    /**
+     * [video]'s profiles: everything on disk, read only from where the last
+     * pass stopped (the copy being the same one). A copy the player swapped
+     * for another is read again from the start.
+     */
+    private fun videoFeatures(context: Context, video: Song, copyKey: String, job: Job?): ChromaAlignment.Features? {
+        var reading = synchronized(videoReadings) { videoReadings[video.videoId] }?.takeIf { it.copyKey == copyKey }
+        val source = VersionAudioAligner.openDataSource(context, video) ?: return null
+        try {
+            val from = reading?.untilSeconds ?: 0.0
+            AudioDecoder.decodeMonoStream(source, from, MAX_SECONDS, abort = { job?.isActive == false }) { chunk, sampleRate, at ->
+                val r = reading ?: VideoReading(copyKey, ChromaAlignment.Extractor(sampleRate), sampleRate, at, at)
+                    .also { reading = it }
+                if (sampleRate != r.rate) return@decodeMonoStream
+                // The decoder starts at the nearest point it can seek to, which
+                // may be before where the last pass stopped: skip what is in.
+                val skip = ((r.untilSeconds - at) * sampleRate).roundToInt().coerceIn(0, chunk.size)
+                if (skip < chunk.size) {
+                    r.extractor.push(if (skip == 0) chunk else chunk.copyOfRange(skip, chunk.size))
+                    r.untilSeconds = maxOf(r.untilSeconds, at + chunk.size.toDouble() / sampleRate)
+                }
+            }
+        } finally {
+            runCatching { source.close() }
+        }
+        if (job?.isActive == false) return null
+        val done = reading ?: return null
+        synchronized(videoReadings) {
+            videoReadings.remove(video.videoId)
+            videoReadings[video.videoId] = done
+            while (videoReadings.size > VIDEOS_KEPT) videoReadings.remove(videoReadings.keys.first())
+        }
+        return done.extractor.finish(startSeconds = done.startSeconds).takeIf { it.frames > 0 }
+    }
+
+    private const val VIDEOS_KEPT = 3
 
     /** [song]'s audio, as much as is on disk up to [maxSeconds], reduced to pitch profiles. */
     private fun features(context: Context, song: Song, maxSeconds: Double, job: Job?): ChromaAlignment.Features? {
@@ -349,7 +536,7 @@ object LyricsTiming {
         return try {
             var extractor: ChromaAlignment.Extractor? = null
             var rate = 0
-            val start = AudioDecoder.decodeMonoStream(source, 0.0, maxSeconds, abort = { job?.isActive == false }) { chunk, sampleRate ->
+            val start = AudioDecoder.decodeMonoStream(source, 0.0, maxSeconds, abort = { job?.isActive == false }) { chunk, sampleRate, _ ->
                 val into = extractor ?: ChromaAlignment.Extractor(sampleRate).also {
                     extractor = it
                     rate = sampleRate
@@ -360,16 +547,19 @@ object LyricsTiming {
             if (job?.isActive == false) return null
             // A decoder that gave up part-way (where the bytes on disk stop,
             // say) still leaves everything before that, which is worth having.
-            extractor?.finish(startSeconds = start ?: 0.0)
+            extractor?.finish(startSeconds = start ?: 0.0)?.takeIf { it.frames > 0 }
         } finally {
             runCatching { source.close() }
         }
     }
 
-    /** Recordings tried against a video before giving up: a wrong guess costs a download, not a wrong timing. */
+    /** Recordings tried against a video at once: a wrong guess costs a download, not a wrong timing. */
     private const val MAX_CANDIDATES = 2
 
-    /** The record: whole, within this long. */
+    /** The opening of a record: this long to arrive. */
+    private const val HEAD_TIMEOUT_MS = 25_000L
+
+    /** The rest of it: this much longer. */
     private const val RECORD_TIMEOUT_MS = 60_000L
 
     /** The video: this long for an opening worth measuring to arrive. */
@@ -382,7 +572,7 @@ object LyricsTiming {
     private const val MIN_VIDEO_BYTES = AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
 
     /** Measure again once at least this much more of the video is on disk. */
-    private const val REMEASURE_GROWTH_BYTES = 600_000L
+    private const val REMEASURE_GROWTH_BYTES = 400_000L
 
     /** Nothing past this much of either is read. */
     private const val MAX_SECONDS = 720.0
@@ -538,6 +728,8 @@ object LyricsTiming {
         val autoComplete: Boolean = false,
         /** Measured, and the video keeps the record's time: nothing to move. */
         val autoNoChange: Boolean = false,
+        /** Measured against only the opening of the record so far. */
+        val autoRecordPartial: Boolean = false,
         /** How much of the video (bytes, seconds) the last measurement read. */
         val autoVideoBytes: Long = 0L,
         val autoVideoSeconds: Double = 0.0,

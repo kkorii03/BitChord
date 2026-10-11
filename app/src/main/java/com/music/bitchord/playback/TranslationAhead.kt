@@ -62,8 +62,8 @@ internal object TranslationAhead {
      * the queue. Gets the next track ready so it opens with everything in
      * place: its lyrics always (they land in [LyricsRepository]'s memo, which
      * the player then answers from at once), its translation when the
-     * translate button or auto-translate would ask for one, and — off a
-     * metered connection — its lyrics moved onto the video's own clock.
+     * translate button or auto-translate would ask for one, and its lyrics
+     * moved onto the video's own clock.
      */
     fun nextTrack(context: Context, next: Song?) {
         if (next == null || !AppSettings.syncedLyrics.value) {
@@ -99,14 +99,13 @@ internal object TranslationAhead {
     /**
      * Times the next video's lyrics to it — see
      * [com.music.bitchord.playback.smart.LyricsTiming] — so they are right
-     * from its first line: the measurement (which fetches the original
-     * recording, so only off a metered connection), and with "가사 타이밍
-     * 자동 보정" on, Gemini when the measurement has nothing. Only for a
-     * video whose lyrics are the record's.
+     * from its first line: the measurement, and with "가사 타이밍 자동 보정"
+     * on, Gemini when the measurement has nothing. Only for a video whose
+     * lyrics are the record's. On any connection: the original it fetches is
+     * a few megabytes, and the alternative is lyrics out of time for the
+     * first half-minute of every cover.
      */
     private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
-        // Unknown counts as metered: an extra download is not worth guessing about.
-        if (AppSettings.meteredConnection.value != false) return
         val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
         if (!query.isVideo || song.localUri != null) return
         if (found.lines.none { it.timeMs > 0 }) return

@@ -290,10 +290,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val PATIENCE_MS = 1_500L
 
     /** Measurements of one video while its lyrics are showing, at most — see [startTiming]. */
-    private val MAX_MEASURE_ATTEMPTS = 6
+    private val MAX_MEASURE_ATTEMPTS = 10
 
     /** How often to look whether more of a video has arrived to measure on. */
-    private val REMEASURE_CHECK_MS = 20_000L
+    private val REMEASURE_CHECK_MS = 8_000L
 
     /** How long to keep looking — longer than any video worth measuring takes to arrive. */
     private val MEASURE_WINDOW_MS = 15 * 60_000L
