@@ -2423,6 +2423,7 @@ private fun BitChordApp(
             onDismissLyricsOffset = { showLyricsOffset = false },
             lyricsTiming = lyricsTiming,
             onAiLyricsTiming = viewModel::toggleAiLyricsTiming,
+            onSongLyricsOffset = viewModel::setSongLyricsOffset,
             onListenTogether = {
                 // The player is a sheet over the page, so it has to come down
                 // for the page to be read at all.

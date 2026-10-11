@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +40,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,10 +52,16 @@ import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.utils.containSheetGestures
 import com.music.bitchord.ui.components.optimizedHazeEffect
@@ -70,13 +80,30 @@ private val DrawerMaxWidth = 640.dp
 private const val StepMs = 100
 private const val DismissDragFraction = 0.25f
 
-/** A player drawer for shifting all synced lyrics against the playback clock. */
+/**
+ * What the sync drawer needs to correct the song playing on its own: its
+ * correction now, the lines as they are showing (that correction included),
+ * where the lyrics clock is, and where to send a new correction.
+ */
+internal class SongLyricsSync(
+    val offsetMs: Long,
+    val lines: List<LyricLine>,
+    /** The lyrics clock now: the playhead with the all-songs offset applied, ms. */
+    val lyricPositionMs: () -> Long,
+    val onOffset: (Long) -> Unit,
+)
+
+/**
+ * A player drawer for shifting synced lyrics against the playback clock: for
+ * this song alone (by step, or by tapping as a line starts) and for every song.
+ */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 internal fun LyricsOffsetSheet(
     hazeState: HazeState,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    song: SongLyricsSync? = null,
 ) {
     val offsetMs by PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
@@ -150,6 +177,7 @@ internal fun LyricsOffsetSheet(
                         ) { _, delta -> drag = (drag + delta).coerceAtLeast(0f) }
                     }
                     .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
                     .padding(top = 10.dp, bottom = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -178,6 +206,11 @@ internal fun LyricsOffsetSheet(
                         .fillMaxWidth()
                         .padding(start = 4.dp, top = 3.dp, bottom = 14.dp),
                 )
+
+                if (song != null) {
+                    SongOffsetSection(song)
+                    SectionLabel(stringResource(Res.string.lyrics_offset_all))
+                }
 
                 Column(
                     modifier = Modifier
@@ -245,6 +278,184 @@ internal fun LyricsOffsetSheet(
 }
 
 @Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+        color = Color.White.copy(alpha = 0.85f),
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 8.dp),
+    )
+}
+
+/** Tapping registers a beat after the singer starts; this much is taken back off. */
+private const val TapReactionMs = 120L
+
+/** Per-song steps are finer to reach and coarser to need: a tap does the big moves. */
+private const val SongStepMs = 100L
+
+/**
+ * This song's own correction: a step either way, and "tap to sync" — pick a
+ * line, tap as it is heard, and that line lands on the tap.
+ */
+@Composable
+private fun SongOffsetSection(song: SongLyricsSync) {
+    val haptics = rememberHaptics()
+    val current by rememberUpdatedState(song)
+    val sung = remember(song.lines) { song.lines.filter { it.text.isNotBlank() } }
+    var tapping by remember { mutableStateOf(false) }
+    // The line the next tap is for, as an index into [sung].
+    var target by remember { mutableIntStateOf(-1) }
+
+    SectionLabel(stringResource(Res.string.lyrics_offset_song))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(ControlShape)
+            .background(Color.White.copy(alpha = 0.05f))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            OffsetButton(
+                label = "−",
+                contentDescription = stringResource(Res.string.decrease_lyrics_offset),
+                enabled = song.offsetMs > -MAX_SONG_OFFSET_MS,
+            ) {
+                haptics.play(Haptic.Select)
+                current.onOffset(current.offsetMs - SongStepMs)
+            }
+            Text(
+                text = formatOffset(song.offsetMs),
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = Color.White,
+            )
+            OffsetButton(
+                label = "+",
+                contentDescription = stringResource(Res.string.increase_lyrics_offset),
+                enabled = song.offsetMs < MAX_SONG_OFFSET_MS,
+            ) {
+                haptics.play(Haptic.Select)
+                current.onOffset(current.offsetMs + SongStepMs)
+            }
+        }
+        Text(
+            text = stringResource(Res.string.lyrics_offset_song_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.5f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
+        )
+
+        if (tapping && sung.isNotEmpty()) {
+            val index = target.coerceIn(0, sung.lastIndex)
+            Text(
+                text = stringResource(Res.string.lyrics_tap_sync_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { target = (index - 1).coerceAtLeast(0) }, enabled = index > 0) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                        contentDescription = stringResource(Res.string.lyrics_tap_previous_line),
+                        tint = Color.White.copy(alpha = if (index > 0) 0.85f else 0.25f),
+                    )
+                }
+                Text(
+                    text = sung[index].text,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { target = (index + 1).coerceAtMost(sung.lastIndex) }, enabled = index < sung.lastIndex) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = stringResource(Res.string.lyrics_tap_next_line),
+                        tint = Color.White.copy(alpha = if (index < sung.lastIndex) 0.85f else 0.25f),
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .clip(ControlShape)
+                    .background(Color.White.copy(alpha = 0.16f))
+                    .clickable {
+                        val now = current
+                        val line = sung.getOrNull(index) ?: return@clickable
+                        // The line lands where the tap was, less the time a
+                        // tap takes to follow what was heard.
+                        val moved = now.lyricPositionMs() - TapReactionMs - line.timeMs
+                        val next = (now.offsetMs + moved).coerceIn(-MAX_SONG_OFFSET_MS, MAX_SONG_OFFSET_MS)
+                        haptics.play(Haptic.Tap)
+                        now.onOffset((next / 10) * 10)
+                        target = (index + 1).coerceAtMost(sung.lastIndex)
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = stringResource(Res.string.lyrics_tap_now),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White,
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            Text(
+                text = stringResource(if (sung.isEmpty()) Res.string.lyrics_tap_no_lines else Res.string.lyrics_tap_sync),
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = if (sung.isEmpty()) 0.35f else if (tapping) 1f else 0.8f),
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = if (tapping) 0.14f else 0f))
+                    .clickable(enabled = sung.isNotEmpty()) {
+                        haptics.play(Haptic.Tap)
+                        if (!tapping) {
+                            // Start from the next line due by the lyrics clock.
+                            val at = current.lyricPositionMs()
+                            target = sung.indexOfFirst { it.timeMs > at }.let { if (it < 0) sung.lastIndex else it }
+                        }
+                        tapping = !tapping
+                    }
+                    .padding(horizontal = 18.dp, vertical = 9.dp),
+            )
+            Text(
+                text = stringResource(Res.string.lyrics_offset_reset),
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = if (song.offsetMs == 0L) 0.35f else 0.8f),
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(enabled = song.offsetMs != 0L) {
+                        haptics.play(Haptic.Tap)
+                        current.onOffset(0L)
+                    }
+                    .padding(horizontal = 18.dp, vertical = 9.dp),
+            )
+        }
+    }
+}
+
+/** How far a song's own correction may go either way — the same bound the app keeps. */
+internal const val MAX_SONG_OFFSET_MS = 60_000L
+
+@Composable
 private fun OffsetButton(
     label: String,
     contentDescription: String,
@@ -275,7 +486,9 @@ private fun fractionToOffset(fraction: Float): Int {
     return (raw / StepMs).roundToInt() * StepMs
 }
 
-private fun formatOffset(offsetMs: Int): String = String.format(
+private fun formatOffset(offsetMs: Int): String = formatOffset(offsetMs.toLong())
+
+private fun formatOffset(offsetMs: Long): String = String.format(
     Locale.getDefault(),
     "%+.1f s",
     offsetMs / 1_000f,

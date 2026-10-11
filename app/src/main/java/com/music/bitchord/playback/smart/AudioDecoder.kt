@@ -114,10 +114,34 @@ object AudioDecoder {
         abort: () -> Boolean = { false },
     ): Pair<Pcm, Double>? {
         val chunks = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
             chunks += toMono(buffer, info, channels)
         } ?: return null
         return Pcm(flatten(chunks), decoded.first) to decoded.second
+    }
+
+    /**
+     * As [decodeRegion], but handing each decoded piece to [onChunk] — mono,
+     * with the sample rate it is at — instead of holding the region in memory.
+     *
+     * For a pass over a whole song that keeps only a summary of it: a
+     * four-minute track decodes to 46 MB of floats, its summary to a few
+     * hundred kilobytes, and nothing in between needs to stay.
+     *
+     * @return the region's real start in seconds (see [decodeRegion]), or null
+     *   when nothing could be decoded.
+     */
+    fun decodeMonoStream(
+        source: MediaDataSource,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean = { false },
+        onChunk: (samples: FloatArray, sampleRate: Int) -> Unit,
+    ): Double? {
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
+            onChunk(toMono(buffer, info, channels), rate)
+        } ?: return null
+        return decoded.second
     }
 
     /**
@@ -136,7 +160,7 @@ object AudioDecoder {
     ): Pair<StereoPcm, Double>? {
         val left = ArrayList<FloatArray>()
         val right = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
         return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
@@ -166,7 +190,7 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
-        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int) -> Unit,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) return null
         val extractor = MediaExtractor()
@@ -242,7 +266,7 @@ object AudioDecoder {
                                 sawFirstSample = true
                             }
                             codec.getOutputBuffer(outputIndex)?.let { output ->
-                                onBuffer(output, bufferInfo, outputChannels)
+                                onBuffer(output, bufferInfo, outputChannels, outputRate)
                             }
                             if (bufferInfo.presentationTimeUs > endUs) outputDone = true
                         }

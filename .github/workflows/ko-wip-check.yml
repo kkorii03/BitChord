@@ -44,6 +44,8 @@ jobs:
             echo "::notice title=tests::$(basename "$f") $(echo "$line" | grep -oE '(tests|failures|errors|skipped)="[0-9]+"' | tr '\n' ' ')"
           done
           grep -ho "LOOKUP_MS [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | while IFS= read -r l; do echo "::notice title=timing::$l"; done || true
+          chroma=$(grep -ho "CHROMA [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | sed 's/CHROMA //' | tr '\n' '|' || true)
+          [ -n "$chroma" ] && echo "::notice title=chroma::$chroma" || true
           grep -E "^e: |FAILED|AssertionError|expected:" test.log | head -30 | while IFS= read -r l; do echo "::error title=test::$l"; done || true
           grep -E "BUILD (SUCCESSFUL|FAILED)" test.log | while IFS= read -r l; do echo "::notice title=tests-build::$l"; done || true
           exit $status
@@ -55,6 +57,6 @@ jobs:
           ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain 2>&1 | tee compile.log
           status=${PIPESTATUS[0]}
           grep -E "^e: " compile.log | head -40 | while IFS= read -r l; do echo "::error title=kotlin::$l"; done || true
-          grep -E "^w: .*(ContentCountryDialog|OriginalNames|KuGou|LyricsRepository|AccountChannelDialog)" compile.log | head -20 | while IFS= read -r l; do echo "::warning title=kotlin::$l"; done || true
+          grep -E "^w: .*(LyricsTiming|ChromaAlignment|LyricsTimeMap|LyricsOffsetSheet|AudioDecoder|TranslationAhead)" compile.log | head -20 | while IFS= read -r l; do echo "::warning title=kotlin::$l"; done || true
           grep -E "Task :app:compileProdReleaseKotlin|BUILD (SUCCESSFUL|FAILED)" compile.log | while IFS= read -r l; do echo "::notice title=compile::$l"; done || true
           exit $status

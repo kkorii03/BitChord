@@ -215,4 +215,17 @@
     <string name="lyrics_timing_ai">%1$s · AI timing</string>
     <string name="lyrics_timing_auto">%1$s · Timed to video %2$s</string>
     <string name="lyrics_timing_seconds">%1$ss</string>
+    <string name="lyrics_timing_ai_detail">%1$s · AI timing %2$s</string>
+    <string name="lyrics_timing_rate">%1$s× speed</string>
+    <string name="lyrics_timing_match">%1$s% match</string>
+    <string name="lyrics_timing_manual">%1$s · this song %2$s</string>
+    <string name="lyrics_offset_song">This song</string>
+    <string name="lyrics_offset_song_description">Only for this song, on top of any automatic timing.</string>
+    <string name="lyrics_offset_all">All songs</string>
+    <string name="lyrics_tap_sync">Tap to sync</string>
+    <string name="lyrics_tap_sync_hint">Tap the moment you hear this line start.</string>
+    <string name="lyrics_tap_now">Now</string>
+    <string name="lyrics_tap_previous_line">Previous line</string>
+    <string name="lyrics_tap_next_line">Next line</string>
+    <string name="lyrics_tap_no_lines">No timed lyrics to sync.</string>
 </resources>

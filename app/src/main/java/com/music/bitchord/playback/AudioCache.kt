@@ -1267,6 +1267,30 @@ object AudioCache {
     }
 
     /**
+     * As [awaitAnalysisHead], then on until the round that pulls the rest of
+     * the track — [requestAnalysisHead] asks for the whole file when it knows
+     * its size — has finished writing, or [timeoutMs] has passed since the
+     * call. For a pass that reads a whole song rather than its opening.
+     *
+     * A track some rendition of which is already complete on disk returns at
+     * once and fetches nothing.
+     *
+     * @return whether at least an opening worth measuring is on disk.
+     */
+    suspend fun awaitAnalysisTrack(uri: Uri, timeoutMs: Long = 60_000L): Boolean {
+        if (!::cache.isInitialized) return false
+        val videoId = uri.getQueryParameter("v") ?: return false
+        val watch = Uri.parse("bitchord://watch?v=$videoId")
+        if (renditionsOf(watch).any { it.isComplete && !it.key.endsWith(ALT_SUFFIX) }) return true
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        if (!awaitAnalysisHead(uri, timeoutMs)) return false
+        while (videoId in analysisHeadsInFlight && SystemClock.elapsedRealtime() < deadline) {
+            delay(100)
+        }
+        return true
+    }
+
+    /**
      * Whether [videoId]'s opening is as complete as it is ever going to be:
      * past [MIN_ALIGNMENT_PREFIX_BYTES], or as much as the round asked for once
      * that round has stopped writing.

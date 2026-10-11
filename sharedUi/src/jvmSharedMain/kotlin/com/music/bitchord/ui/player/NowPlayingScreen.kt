@@ -733,6 +733,12 @@ fun NowPlayingScreen(
      */
     lyricsTiming: LyricsTimingUi = LyricsTimingUi(),
     onAiLyricsTiming: (() -> Unit)? = null,
+    /**
+     * Keeps a correction for the song playing alone, in ms. Null leaves the
+     * sync drawer with the all-songs offset only — for a host that has nowhere
+     * to keep one.
+     */
+    onSongLyricsOffset: ((Long) -> Unit)? = null,
     /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
     windowWidth: Dp,
     /**
@@ -1568,9 +1574,30 @@ fun NowPlayingScreen(
             )
         }
         if (lyricsOffsetOpen) {
+            val playingNow by rememberUpdatedState(isPlaying)
+            val songSync = if (onSongLyricsOffset != null && lyricsTiming.manualAvailable && lyrics != null) {
+                SongLyricsSync(
+                    offsetMs = lyricsTiming.manualMs,
+                    lines = lyrics,
+                    lyricPositionMs = {
+                        // The reading as of now, not as of the last report: a
+                        // tap is timed to the hundredth, reports come twice a second.
+                        val sinceMs = if (playingNow && position.advancing) {
+                            ((System.nanoTime() - position.sampledAtNanos) / 1_000_000L).coerceIn(0L, 2_000L)
+                        } else {
+                            0L
+                        }
+                        adjustedLyricsPosition(position.positionMs + sinceMs, lyricsOffsetMs)
+                    },
+                    onOffset = onSongLyricsOffset,
+                )
+            } else {
+                null
+            }
             LyricsOffsetSheet(
                 hazeState = playerHaze,
                 onDismiss = onDismissLyricsOffset,
+                song = songSync,
             )
         }
         lyricsShare?.let { request ->

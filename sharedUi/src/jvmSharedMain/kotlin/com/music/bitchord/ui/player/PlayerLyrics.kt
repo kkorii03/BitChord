@@ -1404,21 +1404,37 @@ internal fun AiTimingButton(
 
 /**
  * The line under the lyrics, with what was done to their timing after it:
- * "가사 제공: VIBE · 타이밍 자동 보정 +3.2초". While Gemini is working, or
- * when it came back empty, that is the whole line.
+ * "가사 제공: VIBE · 타이밍 자동 보정 +3.2초 · 속도 0.98배", "… · AI 타이밍
+ * +2.1초 · 일치 85%", "… · 이 노래 싱크 +0.4초". While Gemini is working,
+ * or when it came back empty, that is the whole line.
  */
 @Composable
-internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String = when {
-    timing.aiRunning -> stringResource(Res.string.lyrics_timing_running)
-    timing.aiFailed -> stringResource(Res.string.lyrics_timing_failed)
-    timing.byAi -> stringResource(Res.string.lyrics_timing_ai, status)
-    timing.shiftMs != null -> {
-        val seconds = timing.shiftMs / 1000.0
-        val shown = String.format(java.util.Locale.ROOT, "%+.1f", seconds)
-        stringResource(Res.string.lyrics_timing_auto, status, stringResource(Res.string.lyrics_timing_seconds, shown))
+internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String {
+    if (timing.aiRunning) return stringResource(Res.string.lyrics_timing_running)
+    if (timing.aiFailed) return stringResource(Res.string.lyrics_timing_failed)
+    val details = buildList {
+        timing.shiftMs?.let { add(stringResource(Res.string.lyrics_timing_seconds, signedSeconds(it))) }
+        timing.rate?.let { add(stringResource(Res.string.lyrics_timing_rate, String.format(java.util.Locale.ROOT, "%.2f", it))) }
+        if (timing.byAi) timing.matchPercent?.let { add(stringResource(Res.string.lyrics_timing_match, it.toString())) }
+    }.joinToString(" · ")
+    val moved = when {
+        timing.byAi && details.isEmpty() -> stringResource(Res.string.lyrics_timing_ai, status)
+        timing.byAi -> stringResource(Res.string.lyrics_timing_ai_detail, status, details)
+        details.isNotEmpty() -> stringResource(Res.string.lyrics_timing_auto, status, details)
+        else -> status
     }
-    else -> status
+    return if (timing.manualMs != 0L) {
+        stringResource(
+            Res.string.lyrics_timing_manual,
+            moved,
+            stringResource(Res.string.lyrics_timing_seconds, signedSeconds(timing.manualMs)),
+        )
+    } else {
+        moved
+    }
 }
+
+private fun signedSeconds(ms: Long): String = String.format(java.util.Locale.ROOT, "%+.1f", ms / 1000.0)
 
 /**
  * A short text-material transition: the list and its playback clock stay in

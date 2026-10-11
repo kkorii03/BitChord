@@ -525,6 +525,12 @@ object AppSettings {
     /** Show every song's lyrics translated without tapping the translate button. */
     val autoTranslateLyrics = MutableStateFlow(false)
 
+    /**
+     * "가사 타이밍 자동 보정": when the free measurement can't time a video's
+     * lyrics, ask Gemini without waiting for the AI button. See LyricsTiming.
+     */
+    val autoLyricsTiming = MutableStateFlow(false)
+
     /** Download a song as soon as it is liked. See [LikedAutoDownload]. */
     val autoDownloadLiked = MutableStateFlow(true)
 
@@ -912,6 +918,7 @@ object AppSettings {
         }
         prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, true)
         autoTranslateLyrics.value = prefs.getBoolean(KEY_AUTO_TRANSLATE_LYRICS, false)
+        autoLyricsTiming.value = prefs.getBoolean(KEY_AUTO_LYRICS_TIMING, false)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
@@ -1451,6 +1458,11 @@ object AppSettings {
     fun setAutoTranslateLyrics(value: Boolean) {
         autoTranslateLyrics.value = value
         prefs.edit().putBoolean(KEY_AUTO_TRANSLATE_LYRICS, value).apply()
+    }
+
+    fun setAutoLyricsTiming(value: Boolean) {
+        autoLyricsTiming.value = value
+        prefs.edit().putBoolean(KEY_AUTO_LYRICS_TIMING, value).apply()
     }
 
     fun setAutoDownloadLiked(value: Boolean) {
@@ -2117,6 +2129,7 @@ object AppSettings {
     private const val KEY_KEEP_DOWNLOAD_TRANSLATION = "keep_download_translation"
     private const val KEY_AUTO_DOWNLOAD_LIKED = "auto_download_liked"
     private const val KEY_AUTO_TRANSLATE_LYRICS = "auto_translate_lyrics"
+    private const val KEY_AUTO_LYRICS_TIMING = "auto_lyrics_timing"
     private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
     private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
     private const val KEY_CONTENT_COUNTRY = "ko_content_country"

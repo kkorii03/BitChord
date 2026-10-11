@@ -1183,4 +1183,6 @@
     <string name="brand_channel">Brand channel</string>
     <string name="your_channel">Your channel</string>
     <string name="channel_default_suffix">%1$s · default</string>
+    <string name="auto_lyrics_timing">Fix lyrics timing automatically</string>
+    <string name="auto_lyrics_timing_subtitle">Video songs are always timed by matching their notes to the original. When that fails, Gemini times them without tapping the AI timing button.</string>
 </resources>

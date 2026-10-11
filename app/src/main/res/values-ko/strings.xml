@@ -1087,4 +1087,6 @@
     <string name="brand_channel">브랜드 채널</string>
     <string name="your_channel">내 채널</string>
     <string name="channel_default_suffix">%1$s · 기본</string>
+    <string name="auto_lyrics_timing">가사 타이밍 자동 보정</string>
+    <string name="auto_lyrics_timing_subtitle">비디오 노래는 항상 원곡과 음정을 맞춰 자동으로 보정합니다. 켜면 그 방법으로 맞추지 못한 비디오를 AI 타이밍 버튼을 누르지 않아도 Gemini가 맞춥니다.</string>
 </resources>

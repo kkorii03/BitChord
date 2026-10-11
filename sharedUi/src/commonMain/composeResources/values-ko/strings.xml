@@ -215,4 +215,17 @@
     <string name="lyrics_timing_ai">%1$s · AI 타이밍</string>
     <string name="lyrics_timing_auto">%1$s · 타이밍 자동 보정 %2$s</string>
     <string name="lyrics_timing_seconds">%1$s초</string>
+    <string name="lyrics_timing_ai_detail">%1$s · AI 타이밍 %2$s</string>
+    <string name="lyrics_timing_rate">속도 %1$s배</string>
+    <string name="lyrics_timing_match">일치 %1$s%</string>
+    <string name="lyrics_timing_manual">%1$s · 이 노래 싱크 %2$s</string>
+    <string name="lyrics_offset_song">이 노래</string>
+    <string name="lyrics_offset_song_description">이 노래에만 적용되며, 자동 보정 위에 더해집니다.</string>
+    <string name="lyrics_offset_all">모든 노래</string>
+    <string name="lyrics_tap_sync">탭해서 맞추기</string>
+    <string name="lyrics_tap_sync_hint">이 가사가 들리기 시작할 때 탭하십시오.</string>
+    <string name="lyrics_tap_now">지금</string>
+    <string name="lyrics_tap_previous_line">이전 줄</string>
+    <string name="lyrics_tap_next_line">다음 줄</string>
+    <string name="lyrics_tap_no_lines">맞출 수 있는 가사가 없습니다.</string>
 </resources>

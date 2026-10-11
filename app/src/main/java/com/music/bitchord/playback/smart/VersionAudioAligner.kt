@@ -267,7 +267,7 @@ object VersionAudioAligner {
      * the same order when it declares the head ready, so what the wait calls
      * ready is what gets opened here.
      */
-    private fun openDataSource(context: Context, song: Song): MediaDataSource? {
+    internal fun openDataSource(context: Context, song: Song): MediaDataSource? {
         song.localUri?.let { local ->
             val uri = Uri.parse(local)
             if (LocalAudioSource.isLocal(uri)) {
@@ -275,18 +275,24 @@ object VersionAudioAligner {
             }
         }
         val watch = Uri.parse("bitchord://watch?v=${song.videoId}")
+        val pick = renditionToMeasure(song.videoId) ?: return null
+        return AudioCache.renditionDataSource(watch, pick)
+    }
+
+    /** The copy of [videoId] that [openDataSource] reads — see there for the order. */
+    internal fun renditionToMeasure(videoId: String): AudioCache.Rendition? {
+        val watch = Uri.parse("bitchord://watch?v=$videoId")
         val onDisk = AudioCache.renditionsOf(watch)
         val sameSource = onDisk
             .filter { !it.key.endsWith("#alt") }
             .maxByOrNull { it.cachedPrefix }
-        val pick = if (sameSource != null &&
+        return if (sameSource != null &&
             sameSource.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
         ) {
             sameSource
         } else {
             onDisk.maxByOrNull { it.cachedPrefix }
-        } ?: return null
-        return AudioCache.renditionDataSource(watch, pick)
+        }
     }
 
     private fun safeClose(ds: MediaDataSource?) {

@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -220,6 +221,7 @@ fun SettingsScreen(
     val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
     val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
     val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
+    val autoLyricsTiming by AppSettings.autoLyricsTiming.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
@@ -1096,6 +1098,25 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setAutoTranslateLyrics(!autoTranslateLyrics) },
+                    )
+                }
+                val autoLyricsTimingTitle = stringResource(R.string.auto_lyrics_timing)
+                row(autoLyricsTimingTitle, "lyrics", "timing", "sync", "video", "ai", "gemini") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Timer,
+                        title = autoLyricsTimingTitle,
+                        subtitle = stringResource(R.string.auto_lyrics_timing_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = autoLyricsTiming,
+                                onCheckedChange = { AppSettings.setAutoLyricsTiming(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setAutoLyricsTiming(!autoLyricsTiming) },
                     )
                 }
                 val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)

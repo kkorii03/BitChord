@@ -6705,11 +6705,15 @@ class PlaybackService : MediaLibraryService() {
             // and again whenever it changes for this video (a measurement
             // landing, the AI button), for as long as this track is current.
             val raw = lines
-            val timeable = raw != null && raw.any { it.timeMs > 0 } &&
-                localUri == null && !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
+            val timed = raw != null && raw.any { it.timeMs > 0 }
+            // Moved onto the video's clock only when the lines are the
+            // record's; a correction by hand applies to any timed lines.
+            val timeable = timed && localUri == null &&
+                !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
             suspend fun publish() {
-                val shown = if (timeable && raw != null) {
-                    com.music.bitchord.playback.smart.LyricsTiming.known(this@PlaybackService, currentSong.videoId, raw)
+                val shown = if (timed && raw != null) {
+                    com.music.bitchord.playback.smart.LyricsTiming
+                        .timing(this@PlaybackService, currentSong.videoId, raw, baseAllowed = timeable)
                         ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
                 } else {
                     raw
@@ -6723,7 +6727,7 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
             publish()
-            if (timeable) {
+            if (timed) {
                 com.music.bitchord.playback.smart.LyricsTiming.changes.collect { videoId ->
                     if (videoId == currentSong.videoId) publish()
                 }

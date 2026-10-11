@@ -97,22 +97,33 @@ internal object TranslationAhead {
     }
 
     /**
-     * Measures how far the next video runs off the record's clock — see
-     * [com.music.bitchord.playback.smart.LyricsTiming] — so its lyrics are
-     * moved from the first line. Fetches two openings, so only off a metered
-     * connection, and only for a video whose lyrics are the record's.
+     * Times the next video's lyrics to it — see
+     * [com.music.bitchord.playback.smart.LyricsTiming] — so they are right
+     * from its first line: the measurement (which fetches the original
+     * recording, so only off a metered connection), and with "가사 타이밍
+     * 자동 보정" on, Gemini when the measurement has nothing. Only for a
+     * video whose lyrics are the record's.
      */
     private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
-        // Unknown counts as metered: two extra downloads are not worth guessing about.
+        // Unknown counts as metered: an extra download is not worth guessing about.
         if (AppSettings.meteredConnection.value != false) return
         val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
         if (!query.isVideo || song.localUri != null) return
         if (found.lines.none { it.timeMs > 0 }) return
-        if (com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(found.source)) return
-        if (com.music.bitchord.playback.smart.LyricsTiming.measured(context, song.videoId)) return
+        val timing = com.music.bitchord.playback.smart.LyricsTiming
+        if (timing.timedToVideo(found.source)) return
+        if (timing.hasAi(context, song.videoId, found.lines)) return
         val (title, artist) = found.searchedAs ?: (query.title to query.artist)
         try {
-            com.music.bitchord.playback.smart.LyricsTiming.measure(context, song.copy(isVideo = true), title, artist)
+            if (timing.worthMeasuring(context, song.videoId)) {
+                timing.measure(context, song.copy(isVideo = true), title, artist)
+            }
+            if (AppSettings.autoLyricsTiming.value &&
+                timing.measurementGaveUp(context, song.videoId) &&
+                !timing.aiAlreadyFailed(context, song.videoId, found.lines)
+            ) {
+                timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
