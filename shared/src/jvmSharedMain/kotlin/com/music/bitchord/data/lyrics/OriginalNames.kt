@@ -57,6 +57,28 @@ object OriginalNames {
         return found
     }
 
+    /**
+     * The song a cover sings, found by its [title] alone — for an upload whose
+     * title names the song and the singer but never the original's artist
+     * ("Drowning - 타비 Cover(06.12)"). YouTube Music is searched for the title
+     * and a row is taken only if its title is that title (or, for a Hangul
+     * title, the first row in another script) and its length is close to what
+     * is playing. Remembered per title, like [fromYouTubeMusic].
+     */
+    suspend fun fromTitle(title: String, durationMs: Long): Name? {
+        val key = key(title, "")
+        entry(key)?.takeIf { it.youtubeChecked }?.let { return it.youtube() }
+        val found = try {
+            searchTitleOnly(title, durationMs)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return null
+        }
+        update(key) { it.copy(youtubeChecked = true, youtubeTitle = found?.title, youtubeArtist = found?.artist) }
+        return found
+    }
+
     /** Gemini's answer for the original's name; null when it has none or isn't set up. */
     suspend fun fromGemini(title: String, artist: String): Name? {
         val key = key(title, artist)
@@ -109,6 +131,35 @@ object OriginalNames {
             val foundTitle = song.title.trim()
             if (foundTitle.isEmpty()) continue
             return Name(foundTitle, foundArtist.ifEmpty { artist })
+        }
+        return null
+    }
+
+    /** A live take runs longer or shorter than the record by more than a studio cover does. */
+    private const val MAX_TITLE_ONLY_DRIFT_SECONDS = 20
+
+    /** A title alone is a weaker question, so a few more rows are looked at — each held to the title. */
+    private const val TITLE_ONLY_ROWS = 3
+
+    private suspend fun searchTitleOnly(title: String, durationMs: Long): Name? {
+        val response = Innertube.searchAnonymous(title, SearchFilter.SONGS.params)
+        val songs = InnertubeParser.parseSearchPage(response, includeVideos = false).rows
+            .filterIsInstance<SearchResult.Track>()
+            .map { it.song }
+            .take(TITLE_ONLY_ROWS)
+        val seconds = (durationMs / 1000).toInt()
+        val wanted = compact(title)
+        songs.forEachIndexed { index, song ->
+            val length = TrackMatcher.secondsOf(song.durationText) ?: return@forEachIndexed
+            if (seconds > 0 && abs(length - seconds) > MAX_TITLE_ONLY_DRIFT_SECONDS) return@forEachIndexed
+            val sameTitle = compact(song.title) == wanted
+            // "야화" for a Japanese original: the only row that can be trusted
+            // without a matching title is the first, and only across scripts.
+            val transliterated = index == 0 && hasHangul(title) && !hasHangul(song.title)
+            if (!sameTitle && !transliterated) return@forEachIndexed
+            val foundArtist = TrackMatcher.primaryArtist(song.artist).ifBlank { song.artist }.trim()
+            if (foundArtist.isEmpty() || song.title.isBlank()) return@forEachIndexed
+            return Name(song.title.trim(), foundArtist)
         }
         return null
     }

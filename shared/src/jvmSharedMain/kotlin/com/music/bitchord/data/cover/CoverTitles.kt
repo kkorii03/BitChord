@@ -16,6 +16,11 @@ import com.music.bitchord.data.model.Song
  *    in brackets after the song. The same shape is an ordinary "artist - song
  *    (version)" title, so it is read only with the date tag these channels
  *    end on, or for a channel the listener has marked as a cover channel.
+ *  - C: `곡명 - 부른사람 Cover(06.12)` — the song first, then the singer and the
+ *    word "Cover", with a stream date or any other tag after it. The original's
+ *    artist is not named at all. The same words could be "원곡자 - 곡명 Cover",
+ *    so it is read this way only when the name before "Cover" is the channel's
+ *    own (타비 on 아라하시 타비).
  *
  * Anything else is left as it is. When a title could still be a cover read the
  * B way, [lyricsQueries] tries both readings so the lyrics are found either way
@@ -70,6 +75,7 @@ object CoverTitles {
     fun read(title: String, channel: String, channelId: String?): Cover? {
         val raw = title.trim()
         if (raw.isEmpty()) return null
+        readC(raw, channel)?.let { return it }
         readA(raw, channel)?.let { return it }
         val dated = DATE_TAG.containsMatchIn(raw)
         val designated = channelId != null && channelId in designatedChannels()
@@ -108,6 +114,12 @@ object CoverTitles {
         val artist: String,
         val alternatives: List<Pair<String, String>>,
         val isVideo: Boolean,
+        /**
+         * False for a cover whose title never names the original's artist:
+         * [artist] is then only the singer, and the song has to be found by
+         * its title alone.
+         */
+        val artistKnown: Boolean = true,
     )
 
     /**
@@ -126,6 +138,7 @@ object CoverTitles {
                 artist = original.ifEmpty { singer },
                 alternatives = listOfNotNull((song.title to singer).takeIf { original.isNotEmpty() }),
                 isVideo = true,
+                artistKnown = original.isNotEmpty(),
             )
         }
         val upload = if (song.originalTitle != null) {
@@ -140,7 +153,11 @@ object CoverTitles {
         }
         val queries = lyricsQueries(upload)
         val (title, artist) = queries.firstOrNull() ?: (song.title to song.artist)
-        return LyricsQuery(title, artist, queries.drop(1), song.isVideo)
+        val cover = read(upload)
+        return LyricsQuery(
+            title, artist, queries.drop(1), song.isVideo,
+            artistKnown = cover == null || cover.originalArtist != null,
+        )
     }
 
     /**
@@ -200,6 +217,28 @@ object CoverTitles {
         if (head.isBlank() || splitTopLevelDash(head) == null) return null
         val singer = cleanName(channel) ?: return null
         return headCover(head, singer)
+    }
+
+    /** "Cover" (or 커버) and whatever tags follow it, at the very end of a title. */
+    private val TRAILING_COVER_WORD = Regex(
+        """(?i)(?<![a-z가-힣])(?:cover(?:ed)?|커버)\s*(?:[(\[（【][^()\[\]（）【】]*[)\]）】]\s*)*$""",
+    )
+
+    private fun readC(raw: String, channel: String): Cover? {
+        val tail = TRAILING_COVER_WORD.find(raw) ?: return null
+        val head = raw.substring(0, tail.range.first).trimEnd()
+        val (song, singerPart) = splitTopLevelDash(head) ?: return null
+        val singer = cleanName(singerPart) ?: return null
+        if (!isChannelName(singer, channel)) return null
+        val title = cleanTitle(song) ?: return null
+        return Cover(title = title, originalArtist = null, singer = singer)
+    }
+
+    /** Whether [name] is the channel's own: "타비" on "아라하시 타비", "아라하시타비 노래 저장소". */
+    private fun isChannelName(name: String, channel: String): Boolean {
+        val a = name.lowercase().filter { it.isLetterOrDigit() }
+        val b = channel.lowercase().filter { it.isLetterOrDigit() }
+        return a.length >= 2 && b.isNotEmpty() && (a in b || b in a)
     }
 
     private fun headCover(head: String, singer: String, looseDash: Boolean = false): Cover? {

@@ -44,6 +44,26 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun songFirstSingerCoverTitlesAreRead() {
+        val drowning = assertNotNull(CoverTitles.read("Drowning - 타비 Cover(06.12)", "아라하시 타비", null))
+        assertEquals("Drowning", drowning.title)
+        assertEquals("타비", drowning.singer)
+        assertEquals(null, drowning.originalArtist)
+        assertEquals("타비 커버", drowning.byline)
+
+        val hit = assertNotNull(CoverTitles.read("Hit on Shot - 타비 Cover(06.16)", "아라하시타비 노래 저장소", null))
+        assertEquals("Hit on Shot", hit.title)
+
+        val again = assertNotNull(CoverTitles.read("추억의 소각장 - 타비 Cover(06.05)(2)", "아라하시 타비", null))
+        assertEquals("추억의 소각장", again.title)
+
+        // The same words on someone else's channel are "artist - song cover",
+        // which is not this shape.
+        val other = CoverTitles.read("아이유 - 밤편지 Cover(06.12)", "다른 채널", null)
+        assertTrue(other == null || other.title != "아이유")
+    }
+
+    @Test
     fun theReportedCoverSearchesAsTheOriginal() {
         val cover = assertNotNull(CoverTitles.read("나나호시 관현악단 - 발묘 / cover by 가수", "채널", null))
         assertEquals("발묘", cover.title)

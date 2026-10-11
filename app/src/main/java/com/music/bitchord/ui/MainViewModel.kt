@@ -316,6 +316,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val album: String?,
         val isVideo: Boolean = false,
         val alternatives: List<Pair<String, String>> = emptyList(),
+        val artistKnown: Boolean = true,
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
@@ -351,6 +352,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         isVideo: Boolean = false,
         /** Other readings of a cover's title to search under — see CoverTitles. */
         alternatives: List<Pair<String, String>> = emptyList(),
+        /** False when [artist] is only a cover's singer — see CoverTitles.LyricsQuery. */
+        artistKnown: Boolean = true,
     ) {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
@@ -370,7 +373,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
-        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives)
+        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives, artistKnown)
         selectedLyricsSource = null
         manualLyricsJobs.values.forEach(Job::cancel)
         manualLyricsJobs.clear()
@@ -418,6 +421,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onSourceCancelled = { source -> providerCancelled(generation, source) },
                 isVideo = isVideo,
                 alternatives = alternatives,
+                artistKnown = artistKnown,
             )
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             _lyrics.value = selected?.lines
@@ -471,6 +475,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onSourceCancelled = { provider -> providerCancelled(generation, provider) },
                 alternatives = request.alternatives,
+                artistKnown = request.artistKnown,
             )
         }
     }

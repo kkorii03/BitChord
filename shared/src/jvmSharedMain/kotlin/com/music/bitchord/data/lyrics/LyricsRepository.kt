@@ -115,6 +115,12 @@ object LyricsRepository {
          * [artist] find nothing — a cover whose title could be read two ways.
          */
         alternatives: List<Pair<String, String>> = emptyList(),
+        /**
+         * False when [artist] is only a cover's singer — the title never named
+         * the original's artist. Failing everything else, the song is then
+         * looked for by its title alone (see [OriginalNames.fromTitle]).
+         */
+        artistKnown: Boolean = true,
     ): Result? {
         val ordered = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in sources) {
             listOf(LyricsSource.YOUTUBE_TRANSCRIPT) + order.filterNot { it == LyricsSource.YOUTUBE_TRANSCRIPT }
@@ -141,6 +147,14 @@ object LyricsRepository {
         }
         for (alternative in alternatives) {
             retry(alternative)?.let { return it }
+        }
+        // A cover with no original artist named: the singer was never going to
+        // find it. Find the song by its title, then search under its real name.
+        if (!artistKnown) {
+            OriginalNames.fromTitle(title, durationMs)?.let { name ->
+                retry(name.title to name.artist)?.let { return it }
+            }
+            return null
         }
         // Still nothing, and the name is written in Hangul: very often a Korean
         // spelling of a Japanese, Chinese or English song, which the catalogues

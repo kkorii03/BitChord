@@ -988,6 +988,7 @@ private fun BitChordApp(
                 it.localUri,
                 isVideo = query.isVideo,
                 alternatives = query.alternatives,
+                artistKnown = query.artistKnown,
             )
         }
     }

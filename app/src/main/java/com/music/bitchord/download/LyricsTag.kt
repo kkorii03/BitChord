@@ -88,6 +88,7 @@ internal object LyricsTag {
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
+                    artistKnown = coverQuery.artistKnown,
                 )
             }
         } catch (e: CancellationException) {

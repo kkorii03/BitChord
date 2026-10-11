@@ -6683,6 +6683,7 @@ class PlaybackService : MediaLibraryService() {
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
+                    artistKnown = coverQuery.artistKnown,
                 )
                 lines = found?.lines
             }

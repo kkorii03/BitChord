@@ -109,6 +109,7 @@ internal object TranslationAhead {
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
+                    artistKnown = coverQuery.artistKnown,
                 )
             }?.lines?.takeIf { lines -> lines.any { it.text.isNotBlank() } }
         } catch (cancelled: CancellationException) {
