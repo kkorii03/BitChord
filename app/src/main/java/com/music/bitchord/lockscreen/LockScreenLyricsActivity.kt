@@ -455,10 +455,12 @@ private const val COVER_ART_PX = 720
 @Composable
 private fun Clock() {
     val context = LocalContext.current
+    // Hours and minutes only: woken on the minute, not every second — this
+    // screen sits under a dark display through whole albums.
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()
-            delay(1_000L - value % 1_000L)
+            delay(60_000L - value % 60_000L)
         }
     }
     val locale = remember { Locale.getDefault() }

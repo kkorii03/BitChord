@@ -840,15 +840,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * and found nothing, Gemini is asked — once per video and lyrics.
      */
     private suspend fun autoAiIfNeeded(generation: Long, lines: List<LyricLine>) {
-        if (!AppSettings.autoLyricsTiming.value) return
+        // "AI 싱크 미리 맞추기" already asks the quick engines on its own; once the
+        // measurement gives up it also gets Whisper's better ear.
+        if (!AppSettings.autoLyricsTiming.value && !AppSettings.aiTimingAhead.value) return
         val request = currentLyricsRequest ?: return
         if (generation != lyricsGeneration || timingLines !== lines || !timingBaseAllowed || !request.isVideo) return
         if (!timingMeasureAllowed) return
-        if (aiTimingJob?.isActive == true || !LyricsTranslation.geminiKeyUsable) return
+        if (aiTimingJob?.isActive == true) return
+        if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
         val context = getApplication<Application>()
         if (!LyricsTiming.measurementGaveUp(context, request.videoId)) return
-        if (LyricsTiming.hasAi(context, request.videoId, lines)) return
-        if (LyricsTiming.aiAlreadyFailed(context, request.videoId, lines)) return
+        // Nothing yet, or only a quicker engine's answer Whisper may better.
+        val untried = !LyricsTiming.hasAi(context, request.videoId, lines) &&
+            !LyricsTiming.aiAlreadyFailed(context, request.videoId, lines)
+        if (!LyricsTiming.wantsWhisper(context, request.videoId, lines) && !(untried && AppSettings.autoLyricsTiming.value)) return
         runAiTiming(generation, lines, automatic = true)
     }
 

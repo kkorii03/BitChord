@@ -161,11 +161,13 @@ internal object TranslationAhead {
                 timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
             }
             ahead?.join()
-            if (AppSettings.autoLyricsTiming.value &&
-                com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyUsable &&
-                timing.measurementGaveUp(context, song.videoId) &&
-                !timing.hasAi(context, song.videoId, found.lines) &&
+            val untried = !timing.hasAi(context, song.videoId, found.lines) &&
                 !timing.aiAlreadyFailed(context, song.videoId, found.lines)
+            if ((gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
+                timing.measurementGaveUp(context, song.videoId) &&
+                ((untried && AppSettings.autoLyricsTiming.value) ||
+                    ((AppSettings.autoLyricsTiming.value || AppSettings.aiTimingAhead.value) &&
+                        timing.wantsWhisper(context, song.videoId, found.lines)))
             ) {
                 timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
             }

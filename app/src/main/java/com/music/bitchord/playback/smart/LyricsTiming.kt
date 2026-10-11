@@ -691,11 +691,22 @@ object LyricsTiming {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) return null
         val key = textKey(lines)
-        // One request per video and lyrics, whoever asks — the button, the
-        // song starting, the next-song preparation.
-        val flight = "$videoId:$key"
+        // Whisper is slow and paid for by the minute, so an automatic request
+        // gets it only once the measurement has given up — while the free
+        // measurement may still time the video, the quick engines answer ahead.
+        val entry = store(context).get(videoId)
+        val engines = when {
+            !automatic -> ALL_ENGINES
+            !measurementGaveUp(context, videoId) -> AHEAD_ENGINES
+            // Already answered by Gemini: Whisper alone, to do better.
+            entry?.aiTextKey == key && entry.ai != null && entry.aiEngine != ENGINE_WHISPER -> listOf(ENGINE_WHISPER)
+            else -> ALL_ENGINES
+        }
+        // One request per video, lyrics and engines, whoever asks — the
+        // button, the song starting, the next-song preparation.
+        val flight = "$videoId:$key:${engines.joinToString(",")}"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            askAi(context, videoId, lines, sung, key)
+            askAi(context, videoId, lines, sung, key, engines)
         }
         val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
         if (running === fresh) {
@@ -721,6 +732,7 @@ object LyricsTiming {
         lines: List<LyricLine>,
         sung: List<IndexedValue<LyricLine>>,
         key: Int,
+        engines: List<String>,
     ): Adjustment.Mapped? {
         val started = System.currentTimeMillis()
         // The sound the phone already has, when it has all of it; the YouTube
@@ -740,7 +752,8 @@ object LyricsTiming {
             for ((model, name) in listOf(
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA to ENGINE_DEEPGRAM,
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_WHISPER,
-            )) {
+            ).filter { it.second in engines }) {
+                if (name == ENGINE_WHISPER) store(context).update(videoId) { it.copy(whisperKey = key) }
                 val asked = System.currentTimeMillis()
                 val heard = com.music.bitchord.data.lyrics.Deepgram.words(audio, language, model)
                 val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
@@ -767,7 +780,7 @@ object LyricsTiming {
         }
         // Gemini when Deepgram isn't set up, had no audio to hear, or heard too little.
         var answer: List<Long?>? = null
-        if (adjustment == null) {
+        if (adjustment == null && ENGINE_GEMINI in engines) {
             engine = ENGINE_GEMINI
             answer = LyricsTranslation.placeLinesInVideo(
                 videoId,
@@ -874,6 +887,23 @@ object LyricsTiming {
     const val ENGINE_DEEPGRAM = "Deepgram"
     const val ENGINE_WHISPER = "Whisper"
     const val ENGINE_GEMINI = "Gemini"
+
+    private val ALL_ENGINES = listOf(ENGINE_DEEPGRAM, ENGINE_WHISPER, ENGINE_GEMINI)
+    private val AHEAD_ENGINES = listOf(ENGINE_DEEPGRAM, ENGINE_GEMINI)
+
+    /**
+     * Whether an automatic request could still do better for [videoId]: the
+     * measurement gave up, and Whisper hasn't heard these lyrics yet while
+     * what is kept (if anything) is a quicker engine's answer.
+     */
+    suspend fun wantsWhisper(context: Context, videoId: String, lines: List<LyricLine>): Boolean {
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        val entry = store(context).get(videoId) ?: return false
+        if (!measurementGaveUp(context, videoId)) return false
+        val key = textKey(lines)
+        if (entry.whisperKey == key) return false
+        return !(entry.aiTextKey == key && entry.aiEngine == ENGINE_WHISPER)
+    }
 
     /** Deepgram's answer is used only when this much of the song agrees with its line; Gemini otherwise. */
     private const val MIN_DEEPGRAM_MATCH = 35
@@ -982,8 +1012,10 @@ object LyricsTiming {
         val aiPreferred: Boolean = false,
         /** This video's AI answer and measurement have been compared for [aiBias]. */
         val biasSampled: Boolean = false,
-        /** Who gave the AI answer: [ENGINE_DEEPGRAM] or [ENGINE_GEMINI] (null: Gemini, before ko-35). */
+        /** Who gave the AI answer: [ENGINE_DEEPGRAM], [ENGINE_WHISPER] or [ENGINE_GEMINI] (null: Gemini, before ko-35). */
         val aiEngine: String? = null,
+        /** The lyrics (text key) Whisper was last asked about, answered or not: asked once. */
+        val whisperKey: Int? = null,
     )
 
     @Serializable
