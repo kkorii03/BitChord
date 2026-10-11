@@ -57,9 +57,16 @@ internal object TranslationAhead {
         return locale?.language.orEmpty().ifBlank { "en" }
     }
 
-    /** Called as a track starts with what plays after it, or null at the end of the queue. */
+    /**
+     * Called as a track starts with what plays after it, or null at the end of
+     * the queue. Gets the next track ready so it opens with everything in
+     * place: its lyrics always (they land in [LyricsRepository]'s memo, which
+     * the player then answers from at once), its translation when the
+     * translate button or auto-translate would ask for one, and — off a
+     * metered connection — its lyrics moved onto the video's own clock.
+     */
     fun nextTrack(context: Context, next: Song?) {
-        if (next == null || !AppSettings.prefetchTranslation.value || !AppSettings.syncedLyrics.value) {
+        if (next == null || !AppSettings.syncedLyrics.value) {
             nextJob?.cancel()
             nextId = null
             return
@@ -70,8 +77,45 @@ internal object TranslationAhead {
         nextId = next.videoId
         val app = context.applicationContext
         nextJob = scope.launch {
-            val lines = linesFor(app, next) ?: return@launch
-            translate(next.videoId, lines, targetLanguage(app), keep = next.localUri != null)
+            // A download carries its own lyrics: nothing to look up or time.
+            next.localUri?.let { uri ->
+                val embedded = EmbeddedLyrics.forUri(app, uri)
+                if (embedded != null) {
+                    if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
+                        translate(next.videoId, embedded, targetLanguage(app), keep = true)
+                    }
+                    return@launch
+                }
+            }
+            val found = lookUp(next) ?: return@launch
+            val lines = found.lines.takeIf { lines -> lines.any { it.text.isNotBlank() } } ?: return@launch
+            if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
+                translate(next.videoId, lines, targetLanguage(app), keep = next.localUri != null)
+            }
+            prepareTiming(app, next, found)
+        }
+    }
+
+    /**
+     * Measures how far the next video runs off the record's clock — see
+     * [com.music.bitchord.playback.smart.LyricsTiming] — so its lyrics are
+     * moved from the first line. Fetches two openings, so only off a metered
+     * connection, and only for a video whose lyrics are the record's.
+     */
+    private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
+        if (AppSettings.meteredConnection.value) return
+        val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
+        if (!query.isVideo || song.localUri != null) return
+        if (found.lines.none { it.timeMs > 0 }) return
+        if (com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(found.source)) return
+        if (com.music.bitchord.playback.smart.LyricsTiming.measured(context, song.videoId)) return
+        val (title, artist) = found.searchedAs ?: (query.title to query.artist)
+        try {
+            com.music.bitchord.playback.smart.LyricsTiming.measure(context, song.copy(isVideo = true), title, artist)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Log.d(TAG, "no timing ahead for ${song.videoId}: ${e.message}")
         }
     }
 
@@ -85,10 +129,7 @@ internal object TranslationAhead {
         }
     }
 
-    private suspend fun linesFor(context: Context, song: Song): List<LyricLine>? {
-        song.localUri?.let { uri ->
-            EmbeddedLyrics.forUri(context, uri)?.let { return it }
-        }
+    private suspend fun lookUp(song: Song): LyricsRepository.Result? {
         val sources = AppSettings.lyricsSources.value
         val durationMs = song.durationMillis()
         // The player matches with a known length; a lookup without one may
@@ -111,7 +152,7 @@ internal object TranslationAhead {
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
                 )
-            }?.lines?.takeIf { lines -> lines.any { it.text.isNotBlank() } }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {

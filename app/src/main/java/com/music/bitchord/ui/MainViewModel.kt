@@ -291,6 +291,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The lyrics as their source timed them, before [LyricsTiming] moved them. */
     private var rawLyricsResult: LyricsRepository.Result? = null
+
+    /**
+     * The order the running lookup takes answers in — see [showFirstUsable].
+     * Empty while nothing is being looked up.
+     */
+    private var lyricsRaceOrder: List<LyricsSource> = emptyList()
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
 
@@ -391,6 +397,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsProviderResults.clear()
         _lyricsProviderStates.value =
             LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED }
+        val order = (AppSettings.lyricsSourceOrder.value + LyricsSource.offered).distinct()
+            .filter { it in sources && !it.hidden }
+        lyricsRaceOrder = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in order) {
+            listOf(LyricsSource.YOUTUBE_TRANSCRIPT) + (order - LyricsSource.YOUTUBE_TRANSCRIPT)
+        } else {
+            order
+        }
         _lyrics.value = null
         _lyricsSource.value = null
         rawLyricsResult = null
@@ -511,7 +524,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         lyricsProviderResults[source] = result
         _lyricsProviderStates.update { it + (source to LyricsProviderState.FOUND) }
-        if (selectedLyricsSource == source) showLyricsResult(result)
+        if (selectedLyricsSource == source) showLyricsResult(result) else showFirstUsable(generation)
+    }
+
+    /**
+     * Shows timed lyrics the moment the lookup has the answer it would settle
+     * on without waiting any further — the highest-priority source with timed
+     * lines, every source ahead of it having missed — rather than after the
+     * grace period the lookup gives word-synced sources to do better. If one
+     * does, the lookup's own answer replaces these when it lands.
+     */
+    private fun showFirstUsable(generation: Long) {
+        if (generation != lyricsGeneration || _lyrics.value != null || selectedLyricsSource != null) return
+        if (lyricsJob?.isActive != true) return
+        val states = _lyricsProviderStates.value
+        for (source in lyricsRaceOrder) {
+            when (states[source]) {
+                LyricsProviderState.FOUND -> {
+                    val result = lyricsProviderResults[source] ?: return
+                    if (result.lines.any { it.timeMs > 0 }) {
+                        publishLyrics(result)
+                    }
+                    return
+                }
+                LyricsProviderState.NOT_FOUND -> continue
+                else -> return
+            }
+        }
     }
 
     private fun providerCancelled(generation: Long, source: LyricsSource) {
@@ -543,6 +582,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * yet measured, the measurement, applied when it lands.
      */
     private fun publishLyrics(result: LyricsRepository.Result?) {
+        // The same lines already showing — the lookup confirming what
+        // [showFirstUsable] put up early: keep them and their timing work.
+        if (result != null && rawLyricsResult?.lines === result.lines) {
+            rawLyricsResult = result
+            return
+        }
         rawLyricsResult = result
         _lyrics.value = result?.lines
         _lyricsSource.value = result?.source
@@ -581,7 +626,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         result: LyricsRepository.Result,
         adjustment: LyricsTiming.Adjustment,
     ) {
-        if (generation != lyricsGeneration || rawLyricsResult !== result) return
+        if (generation != lyricsGeneration || rawLyricsResult?.lines !== result.lines) return
         _lyrics.value = LyricsTiming.apply(result.lines, adjustment)
         _lyricsTiming.update {
             when (adjustment) {
@@ -612,7 +657,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (state.byAi) {
             aiTimingJob = viewModelScope.launch {
                 LyricsTiming.clearAi(context, request.videoId)
-                if (generation != lyricsGeneration || rawLyricsResult !== result) return@launch
+                if (generation != lyricsGeneration || rawLyricsResult?.lines !== result.lines) return@launch
                 _lyrics.value = result.lines
                 _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi(adjustable = true)
                 LyricsTiming.known(context, request.videoId, result.lines)?.let {
@@ -624,7 +669,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsTiming.update { it.copy(aiRunning = true, aiFailed = false) }
         aiTimingJob = viewModelScope.launch {
             val adjustment = LyricsTiming.placeWithAi(context, request.videoId, result.lines)
-            if (generation != lyricsGeneration || rawLyricsResult !== result) return@launch
+            if (generation != lyricsGeneration || rawLyricsResult?.lines !== result.lines) return@launch
             if (adjustment == null) {
                 _lyricsTiming.update { it.copy(aiRunning = false, aiFailed = true) }
             } else {

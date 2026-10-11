@@ -131,6 +131,144 @@ object LyricsRepository {
          */
         artistKnown: Boolean = true,
     ): Result? {
+        // The whole answer — retries and original-language names included —
+        // kept against the whole question, so the lookup the next-track
+        // prefetch made is the one the player gets, rather than the player
+        // walking the same chain of misses again. A lookup still running for
+        // the same question is joined rather than started twice.
+        val key = buildString {
+            append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
+            append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
+            append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
+            alternatives.forEach { (t, a) -> append('\u0001').append(t).append('\u0000').append(a) }
+            order.forEach { append('\u0002').append(it.name) }
+            sources.map { it.name }.sorted().forEach { append('\u0003').append(it) }
+        }
+        answers.get(key)?.let { kept ->
+            kept.result?.let { onSourceResult?.invoke(it.source, it) }
+            return kept.result
+        }
+        if (durationMs <= 0L) {
+            return search(
+                videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+                onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
+            )
+        }
+        val shared = inFlight[key]
+        if (shared != null) {
+            val result = shared.await()
+            result?.let { onSourceResult?.invoke(it.source, it) }
+            return result
+        }
+        val started = background.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            search(
+                videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+                onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
+            ).also { answers.put(key, Answer(it)) }
+        }
+        val winner = inFlight.putIfAbsent(key, started)
+        if (winner != null) {
+            val result = winner.await()
+            result?.let { onSourceResult?.invoke(it.source, it) }
+            return result
+        }
+        started.invokeOnCompletion { inFlight.remove(key, started) }
+        started.start()
+        return started.await()
+    }
+
+    /** A whole lookup's answer, a miss included, and when it was made. */
+    private class Answer(val result: Result?, val at: Long = System.currentTimeMillis())
+
+    /**
+     * Answers by question. A miss is kept for [MISS_KEPT_MS] only — a source
+     * may have been down — while a hit lasts until it is pushed out.
+     */
+    private val answers = object {
+        private val entries = object : LinkedHashMap<String, Answer>(32, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, Answer>) = size > 40
+        }
+
+        @Synchronized fun get(key: String): Answer? {
+            val answer = entries[key] ?: return null
+            if (answer.result == null && System.currentTimeMillis() - answer.at > MISS_KEPT_MS) {
+                entries.remove(key)
+                return null
+            }
+            return answer
+        }
+
+        @Synchronized fun put(key: String, answer: Answer) {
+            entries[key] = answer
+        }
+    }
+
+    private const val MISS_KEPT_MS = 3L * 60L * 1000L
+
+    private val inFlight = ConcurrentHashMap<String, Deferred<Result?>>()
+
+    /**
+     * Where whole lookups run: not the asking coroutine's, so a listener
+     * skipping a track doesn't throw away a search the prefetch (or going
+     * back) would have used. Every source inside it is time-boxed, so nothing
+     * here runs for long.
+     */
+    private val background = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    private suspend fun search(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        sources: Set<LyricsSource>,
+        order: List<LyricsSource>,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        onSourceStarted: ((LyricsSource) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceCancelled: ((LyricsSource) -> Unit)?,
+        isVideo: Boolean,
+        alternatives: List<Pair<String, String>>,
+        artistKnown: Boolean,
+    ): Result? = coroutineScope {
+        // The original-language name is one cheap search away and needed the
+        // moment the first round comes back empty, so it is asked for now,
+        // alongside that round, rather than after it.
+        val nameAhead: Deferred<OriginalNames.Name?>? = when {
+            !artistKnown -> async { runCatching { OriginalNames.fromTitle(title, durationMs) }.getOrNull() }
+            OriginalNames.worthTrying(title, artist) ->
+                async { runCatching { OriginalNames.fromYouTubeMusic(title, artist, durationMs) }.getOrNull() }
+            else -> null
+        }
+        try {
+            searchRounds(
+                videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+                onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown, nameAhead,
+            )
+        } finally {
+            nameAhead?.cancel()
+        }
+    }
+
+    private suspend fun searchRounds(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        sources: Set<LyricsSource>,
+        order: List<LyricsSource>,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        onSourceStarted: ((LyricsSource) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceCancelled: ((LyricsSource) -> Unit)?,
+        isVideo: Boolean,
+        alternatives: List<Pair<String, String>>,
+        artistKnown: Boolean,
+        nameAhead: Deferred<OriginalNames.Name?>?,
+    ): Result? {
         val ordered = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in sources) {
             listOf(LyricsSource.YOUTUBE_TRANSCRIPT) + order.filterNot { it == LyricsSource.YOUTUBE_TRANSCRIPT }
         } else {
@@ -160,7 +298,7 @@ object LyricsRepository {
         // A cover with no original artist named: the singer was never going to
         // find it. Find the song by its title, then search under its real name.
         if (!artistKnown) {
-            OriginalNames.fromTitle(title, durationMs)?.let { name ->
+            nameAhead?.await()?.let { name ->
                 retry(name.title to name.artist)?.let { return it }
             }
             return null
@@ -170,7 +308,7 @@ object LyricsRepository {
         // file under its own name. Ask for that name and search once more —
         // YouTube Music first, Gemini only if that doesn't do it.
         if (!OriginalNames.worthTrying(title, artist)) return null
-        OriginalNames.fromYouTubeMusic(title, artist, durationMs)?.let { name ->
+        nameAhead?.await()?.let { name ->
             retry(name.title to name.artist)?.let { return it }
         }
         OriginalNames.fromGemini(title, artist)?.let { name ->
@@ -225,6 +363,23 @@ object LyricsRepository {
         return found
     }
 
+    /** The sources that can use a recording id, and so wait for [identify]. */
+    private val USES_RECORDING = setOf(LyricsSource.LRC_RED, LyricsSource.LYRICS_PLUS, LyricsSource.BINI_LYRICS)
+
+    /**
+     * The most a source may take, all its requests together. One request is
+     * already capped at six seconds; a source that chains several (search,
+     * then details, then the file) is held to this as a whole. PaxSenix's
+     * keyed routes wait on an upstream catalogue and get longer.
+     */
+    private fun budgetMs(source: LyricsSource): Long = when (source) {
+        LyricsSource.PAXSENIX_SPOTIFY, LyricsSource.PAXSENIX_MUSIXMATCH -> 18_000L
+        else -> 9_000L
+    }
+
+    /** Where provider work runs, so a stuck request never holds a lookup open. */
+    private val detached = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
     /** How long word-synced sources may keep a line-synced answer waiting. */
     private const val SYLLABLE_GRACE_MS = 8_000L
 
@@ -232,7 +387,7 @@ object LyricsRepository {
     private const val GRACE_POLL_MS = 80L
 
     private val recent = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 8
+        override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 32
     }
 
     private suspend fun lookUp(
@@ -263,12 +418,13 @@ object LyricsRepository {
         // name the recording does. What the caller knows beats what we worked
         // out last time, and both beat asking again.
         val known = isrc?.takeIf { it.isNotBlank() } ?: isrcs[videoId]
-        val hit = if (known == null) {
-            identify(videoId, searchTitle, searchArtist, durationMs, album, sequence)
+        // Only the sources that can use a recording id wait for it; everyone
+        // else starts at once instead of sitting out [IDENTIFY_TIMEOUT_MS].
+        val identifying: Deferred<BiniLyrics.Hit?>? = if (known == null) {
+            async(Dispatchers.IO) { identify(videoId, searchTitle, searchArtist, durationMs, album, sequence) }
         } else {
             null
         }
-        val recording = known ?: hit?.isrc?.takeIf { it.isNotBlank() }
         val documents = SharedDocuments(this)
 
         // Genius is a plain text web scraper. To preserve bandwidth and avoid rate-limiting,
@@ -278,17 +434,20 @@ object LyricsRepository {
             source to async(Dispatchers.IO, start = startMode) {
                 onSourceStarted?.invoke(source)
                 try {
-                    val found = fetch(
-                        source,
-                        videoId,
-                        searchTitle,
-                        searchArtist,
-                        durationMs,
-                        album,
-                        recording,
-                        hit,
-                        documents::get,
-                    )?.let { result(source, it) }
+                    val hit = if (source in USES_RECORDING) identifying?.await() else null
+                    val recording = known ?: hit?.isrc?.takeIf { it.isNotBlank() }
+                    // Run apart and waited on with a deadline: a provider making
+                    // several blocking requests in a row can't be interrupted
+                    // mid-request, so it is left to finish on its own instead of
+                    // holding the whole lookup past [budgetMs].
+                    val work = detached.async {
+                        fetch(source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit, documents::get)
+                    }
+                    val found = try {
+                        withTimeoutOrNull(budgetMs(source)) { work.await() }
+                    } finally {
+                        work.cancel()
+                    }?.let { result(source, it) }
                     onSourceResult?.invoke(source, found)
                     found
                 } catch (cancelled: CancellationException) {
@@ -318,7 +477,10 @@ object LyricsRepository {
                     // word-synced one — all of them at once, so one slow server
                     // early in the order no longer ends the wait for a faster one
                     // further down that has already answered.
-                    val rest = racing.drop(index + 1).filter { it.first != LyricsSource.GENIUS }
+                    // Only sources that *can* answer word by word are worth
+                    // the wait; a line-only one finishing later changes nothing.
+                    val rest = racing.drop(index + 1)
+                        .filter { it.first != LyricsSource.GENIUS && it.first.wordSynced }
                     return@coroutineScope wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback
                 }
             }
@@ -327,6 +489,7 @@ object LyricsRepository {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
             racing.forEach { it.second.cancel() }
+            identifying?.cancel()
             documents.cancel()
         }
     }

@@ -3,6 +3,9 @@ package com.music.bitchord.data.lyrics
 import java.net.URLEncoder
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 
@@ -27,11 +30,17 @@ object BugsLyrics {
         val page = lyricsGetAsBrowser("https://music.bugs.co.kr/search/track?q=$query", REFERER, "text/html")
             ?: return@withContext null
         val ids = TRACK_ROW.findAll(page).map { it.groupValues[1] }.distinct().take(MAX_CANDIDATES).toList()
-        val hits = ids.mapNotNull { id ->
-            val body = lyricsGetAsBrowser("https://music.bugs.co.kr/player/track/$id", REFERER) ?: return@mapNotNull null
-            val track = runCatching { lyricsJson.decodeFromString<TrackResponse>(body).track }.getOrNull()
-                ?: return@mapNotNull null
-            KoreanMatch.Hit(id, track.track_title, track.artist_nm, KoreanMatch.seconds(track.len))
+        // The candidates' details all at once rather than one after another.
+        val hits = coroutineScope {
+            ids.map { id ->
+                async {
+                    val body = lyricsGetAsBrowser("https://music.bugs.co.kr/player/track/$id", REFERER)
+                        ?: return@async null
+                    val track = runCatching { lyricsJson.decodeFromString<TrackResponse>(body).track }.getOrNull()
+                        ?: return@async null
+                    KoreanMatch.Hit(id, track.track_title, track.artist_nm, KoreanMatch.seconds(track.len))
+                }
+            }.awaitAll().filterNotNull()
         }
         val best = KoreanMatch.best(hits, title, artist, durationMs) ?: return@withContext null
         val timed = lyricsGetAsBrowser("https://music.bugs.co.kr/player/lyrics/T/${best.id}", REFERER)
