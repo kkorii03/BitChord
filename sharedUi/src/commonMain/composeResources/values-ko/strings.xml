@@ -7,7 +7,7 @@
     <string name="audio_output_playing">여기에서 재생 중</string>
     <string name="audio_pipeline">오디오 파이프라인</string>
     <string name="automix_analysis_status">자동 믹스 · 현재 노래: %1$s · 다음 노래: %2$s</string>
-    <string name="automix_not_supported_video">비디오 곡: 단순 크로스페이드로 전환돼요</string>
+    <string name="automix_not_supported_video">자동 믹스 · 비디오 노래: 단순 크로스페이드</string>
     <string name="automix_stopped_in_party">자동 믹스: 함께 듣기 중에는 중단됨</string>
     <string name="autoplay">자동 재생</string>
     <string name="autoplay_empty_description">비슷한 음악이 계속 재생됩니다.</string>
@@ -98,7 +98,7 @@
     <string name="more">더 보기</string>
     <string name="next_from">다음 재생: %1$s</string>
     <string name="next_in_queue">다음 재생</string>
-    <string name="no_lyrics_for_track">이 트랙에는 가사가 없습니다.</string>
+    <string name="no_lyrics_for_track">이 노래에는 가사가 없습니다.</string>
     <string name="no_lyrics_found">가사를 찾을 수 없습니다.</string>
     <string name="now_playing">지금 재생 중</string>
     <string name="open_lyrics">가사</string>

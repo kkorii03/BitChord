@@ -7,7 +7,7 @@
     <string name="audio_output_playing">Playing here</string>
     <string name="audio_pipeline">Audio Pipeline</string>
     <string name="automix_analysis_status">Automix · this song: %1$s · next: %2$s</string>
-    <string name="automix_not_supported_video">Video song: switching with a simple crossfade</string>
+    <string name="automix_not_supported_video">Automix · Video song: simple crossfade</string>
     <string name="automix_stopped_in_party">Automix: stopped in listen together</string>
     <string name="autoplay">AutoPlay</string>
     <string name="autoplay_empty_description">Similar music will keep playing</string>

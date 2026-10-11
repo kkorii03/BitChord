@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.music.bitchord.R
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.settings.AppSettings
 import dev.chrisbanes.haze.HazeState
@@ -112,7 +114,7 @@ fun AccountChannelDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "Listen as",
+                    text = stringResource(R.string.listen_as),
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = 17.sp,
                         fontWeight = FontWeight.W600,
@@ -122,13 +124,9 @@ fun AccountChannelDialog(
                 )
                 Text(
                     text = when {
-                        loading && channels.isEmpty() -> "Looking up your channels…"
-                        channels.isEmpty() ->
-                            "Couldn't list this account's channels. You can still pick " +
-                                "one in YouTube Music itself."
-                        else ->
-                            "Your library, likes and history come from the channel " +
-                                "you pick here."
+                        loading && channels.isEmpty() -> stringResource(R.string.account_channels_loading)
+                        channels.isEmpty() -> stringResource(R.string.account_channels_failed)
+                        else -> stringResource(R.string.account_channels_hint)
                     },
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
@@ -166,12 +164,12 @@ fun AccountChannelDialog(
             // and picking there means the session is read from a page already
             // showing the chosen channel rather than assembled from ids.
             AlertAction(
-                label = "Choose in YouTube Music",
+                label = stringResource(R.string.choose_in_youtube_music),
                 emphasised = channels.isEmpty(),
                 onClick = onChooseInYouTube,
             )
             AlertRule()
-            AlertAction(label = "Close", emphasised = false, onClick = onDismiss)
+            AlertAction(label = stringResource(R.string.close), emphasised = false, onClick = onDismiss)
         }
     }
 }
@@ -233,10 +231,10 @@ private fun ChannelRow(channel: AccountChannel, selected: Boolean, onClick: () -
             // The handle when there is one; otherwise what kind of channel it
             // is, which is the part a listener with two of them is choosing by.
             val subtitle = channel.subtitle.ifBlank {
-                if (channel.pageId != null) "Brand channel" else "Your channel"
+                if (channel.pageId != null) stringResource(R.string.brand_channel) else stringResource(R.string.your_channel)
             }
             Text(
-                text = if (channel.activeOnWeb) "$subtitle · default" else subtitle,
+                text = if (channel.activeOnWeb) stringResource(R.string.channel_default_suffix, subtitle) else subtitle,
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
