@@ -81,3 +81,23 @@ internal fun lyricsGetAuthorized(url: String, bearer: String): String? = runCatc
         if (response.isSuccessful) response.body?.string() else null
     }
 }.getOrNull()
+
+/**
+ * [lyricsGet] with the headers a service's own web page sends — the Korean
+ * services answer their web player's requests, so the request looks like one
+ * of those: a browser agent, the page as referer, nothing signed.
+ */
+internal fun lyricsGetAsBrowser(url: String, referer: String, accept: String = "application/json"): String? = runCatching {
+    val request = Request.Builder().url(url)
+        .header("User-Agent", BROWSER_AGENT)
+        .header("Accept", accept)
+        .header("Accept-Language", "ko-KR,ko;q=0.9")
+        .header("Referer", referer)
+        .build()
+    client.newCall(request).execute().use { response ->
+        if (response.isSuccessful) response.body?.string() else null
+    }
+}.getOrNull()
+
+private const val BROWSER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Mobile Safari/537.36"

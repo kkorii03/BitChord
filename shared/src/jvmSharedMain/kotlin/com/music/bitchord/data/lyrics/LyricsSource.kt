@@ -80,6 +80,20 @@ enum class LyricsSource(
         detail = "커뮤니티 미러에서 음절 단위",
         wordSynced = true,
     ),
+    // The Korean services: whole lines only, but the Korean catalogue the
+    // Apple hosts above miss — indie, OST, the originals covers are made of.
+    // Ahead of every line-only fallback below, so a Korean song gets its own
+    // service's lines before KuGou or Genius guesses at a name.
+    VIBE(
+        label = "VIBE",
+        detail = "네이버 VIBE, 한국 노래 줄 단위 싱크",
+        wordSynced = false,
+    ),
+    BUGS(
+        label = "벅스",
+        detail = "한국 노래 줄 단위 싱크",
+        wordSynced = false,
+    ),
     SIMP_MUSIC(
         label = "SimpMusic",
         detail = "비디오 기준으로 매칭되어 다른 버전과 헷갈리지 않음",

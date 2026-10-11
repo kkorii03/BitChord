@@ -388,6 +388,8 @@ object LyricsRepository {
             LyricsSource.KUGOU -> KuGou.lyrics(title, artist, durationMs, album)
             LyricsSource.MEGALOBIZ -> Megalobiz.lyrics(title, artist)
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
+            LyricsSource.VIBE -> VibeLyrics.lyrics(title, artist, durationMs)
+            LyricsSource.BUGS -> BugsLyrics.lyrics(title, artist, durationMs)
         }
         return found
     }

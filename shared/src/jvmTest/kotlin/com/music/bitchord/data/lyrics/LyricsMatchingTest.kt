@@ -88,6 +88,27 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun koreanServicesMatchTitleAndArtist() {
+        val hits = listOf(
+            KoreanMatch.Hit("1", "회전목마 (Feat. Zion.T, 원슈타인)", "sokodomo", 220),
+            KoreanMatch.Hit("2", "회전목마 (Vocal 손주희)", "에피톤 프로젝트(Epitone Project)", 313),
+        )
+        // The cover runs 4:56 against the record's 5:13: still the right song.
+        assertEquals("2", KoreanMatch.best(hits, "회전목마", "에피톤 프로젝트", 296_000L)?.id)
+        assertEquals("2", KoreanMatch.best(hits, "회전목마", "Epitone Project", 296_000L)?.id)
+        // A singer's name instead of the original artist finds nothing rather than the wrong song.
+        assertEquals(null, KoreanMatch.best(hits, "회전목마", "오화요", 296_000L))
+    }
+
+    @Test
+    fun bugsTimedLyricsParse() {
+        val lines = assertNotNull(BugsLyrics.parseTimed("18.0|저기 하늘 멀리로 애드벌룬＃31.0|도시 불빛은 내게 위로일까?＃42.0|낡은 조명을 켜고"))
+        assertEquals(3, lines.size)
+        assertEquals(31_000L, lines[1].timeMs)
+        assertEquals("도시 불빛은 내게 위로일까?", lines[1].text)
+    }
+
+    @Test
     fun theReportedCoverSearchesAsTheOriginal() {
         val cover = assertNotNull(CoverTitles.read("나나호시 관현악단 - 발묘 / cover by 가수", "채널", null))
         assertEquals("발묘", cover.title)
