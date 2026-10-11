@@ -31,6 +31,8 @@ jobs:
 
       - name: Lyrics tests
         shell: bash
+        env:
+          LIVE_KR_LYRICS: '1'
         run: |
           set +e -o pipefail
           chmod +x gradlew
