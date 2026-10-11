@@ -1163,7 +1163,7 @@
     <string name="content_country">Content country</string>
     <string name="content_country_description">Charts, moods and new releases come from this country. Your account\'s location doesn\'t change.</string>
     <string name="resume_on_headphones">Resume when headphones connect</string>
-    <string name="resume_on_headphones_subtitle">Resumes the paused song when Bluetooth or wired headphones connect.</string>
+    <string name="resume_on_headphones_subtitle">Resumes a song paused in the last 30 minutes when Bluetooth or wired headphones connect.</string>
     <string name="charts">Charts</string>
     <string name="charts_global">Global</string>
     <string name="cover_original_title">Original title: %1$s</string>

@@ -301,6 +301,13 @@ class PlaybackService : MediaLibraryService() {
      * service is alive with something loaded, never in a call, and only once
      * the sound is actually routed to them. See [HeadphoneResume].
      */
+    /** When playback last stopped (elapsedRealtime), 0 while playing or never started. */
+    @Volatile
+    private var stoppedPlayingAt = 0L
+
+    /** How recent a pause headphones connecting may resume — see [headphoneResume]. */
+    private val headphoneResumeWindowMs = 30L * 60L * 1000L
+
     private val headphoneResume: HeadphoneResume by lazy {
         HeadphoneResume(this) resume@{
             if (!AppSettings.resumeOnHeadphones.value) return@resume
@@ -311,6 +318,10 @@ class PlaybackService : MediaLibraryService() {
             val mode = audioManager?.mode ?: android.media.AudioManager.MODE_NORMAL
             if (mode != android.media.AudioManager.MODE_NORMAL) return@resume
             if (!headphoneResume.onHeadphones()) return@resume
+            // Only a pause that is still fresh: headphones (or a car) connecting
+            // hours after the music stopped is not a request to carry on.
+            val pausedFor = android.os.SystemClock.elapsedRealtime() - stoppedPlayingAt
+            if (stoppedPlayingAt == 0L || pausedFor > headphoneResumeWindowMs) return@resume
             TrackLog.d("BitChord", "headphones connected: resuming", about = sessionPlayer.currentMediaItem?.mediaId)
             if (sessionPlayer.playbackState == Player.STATE_IDLE) sessionPlayer.prepare()
             sessionPlayer.play()
@@ -830,6 +841,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            stoppedPlayingAt = if (isPlaying) 0L else android.os.SystemClock.elapsedRealtime()
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return

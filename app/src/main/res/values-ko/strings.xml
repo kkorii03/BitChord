@@ -1067,7 +1067,7 @@
     <string name="content_country">콘텐츠 국가</string>
     <string name="content_country_description">차트, 무드 및 최신 음악을 이 국가 기준으로 표시합니다. 계정 위치는 변경되지 않습니다.</string>
     <string name="resume_on_headphones">헤드폰 연결 시 이어서 재생</string>
-    <string name="resume_on_headphones_subtitle">Bluetooth 또는 유선 헤드폰을 연결하면 일시 정지된 노래를 다시 재생합니다.</string>
+    <string name="resume_on_headphones_subtitle">Bluetooth 또는 유선 헤드폰을 연결하면 30분 안에 일시 정지한 노래를 다시 재생합니다.</string>
     <string name="charts">차트</string>
     <string name="charts_global">전 세계</string>
     <string name="cover_original_title">원래 제목: %1$s</string>
