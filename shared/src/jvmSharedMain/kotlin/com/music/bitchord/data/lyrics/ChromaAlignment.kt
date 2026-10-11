@@ -563,7 +563,7 @@ object ChromaAlignment {
      * own (an [align] runs start to end on the thread that called it).
      */
     var lastVerdict: String
-        get() = verdicts.get()
+        get() = verdicts.get().orEmpty()
         private set(value) = verdicts.set(value)
 
     private val verdicts = ThreadLocal.withInitial { "" }
