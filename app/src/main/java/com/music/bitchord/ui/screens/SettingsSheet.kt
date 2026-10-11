@@ -181,6 +181,10 @@ fun SettingsScreen(
     onListenTogether: () -> Unit,
     onSpotifyCanvasAuth: () -> Unit,
     onAppLanguage: () -> Unit,
+    /** Opens the content-country picker, hosted by the activity above the tab bar. */
+    onContentCountry: () -> Unit,
+    /** Opens the Gemini API key alert, hosted by the activity above the tab bar. */
+    onGeminiKey: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -368,8 +372,6 @@ fun SettingsScreen(
         }
     }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
-    var showGeminiKeyDialog by remember { mutableStateOf(false) }
-    var showContentCountryDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
 
@@ -1065,7 +1067,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = geminiTranslation && geminiApiKey.isNotBlank(),
                                 onCheckedChange = { on ->
-                                    if (on && geminiApiKey.isBlank()) showGeminiKeyDialog = true
+                                    if (on && geminiApiKey.isBlank()) onGeminiKey()
                                     else AppSettings.setGeminiTranslation(on)
                                 },
                                 colors = SwitchDefaults.colors(
@@ -1074,7 +1076,7 @@ fun SettingsScreen(
                                 ),
                             )
                         },
-                        onClick = { showGeminiKeyDialog = true },
+                        onClick = onGeminiKey,
                     )
                 }
                 val autoTranslateTitle = stringResource(R.string.auto_translate_lyrics)
@@ -1523,7 +1525,7 @@ fun SettingsScreen(
                     title = contentCountryTitle,
                     subtitle = countryDisplayName(contentCountry),
                     trailing = { Chevron() },
-                    onClick = { showContentCountryDialog = true },
+                    onClick = onContentCountry,
                 )
             }
         }
@@ -1800,61 +1802,6 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showListenBrainzTokenDialog = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    if (showContentCountryDialog) {
-        ContentCountryDialog(
-            selected = contentCountry,
-            onSelect = { code ->
-                AppSettings.setContentCountry(code)
-                showContentCountryDialog = false
-            },
-            onDismiss = { showContentCountryDialog = false },
-        )
-    }
-
-    if (showGeminiKeyDialog) {
-        var keyInput by remember { mutableStateOf(geminiApiKey) }
-        AlertDialog(
-            onDismissRequest = { showGeminiKeyDialog = false },
-            title = { Text(stringResource(R.string.gemini_api_key)) },
-            text = {
-                Column {
-                    Text(
-                        text = stringResource(R.string.gemini_api_key_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    )
-                    OutlinedTextField(
-                        value = keyInput,
-                        onValueChange = { keyInput = it },
-                        label = { Text(stringResource(R.string.gemini_api_key)) },
-                        singleLine = true,
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                            imeAction = androidx.compose.ui.text.input.ImeAction.Done,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val key = keyInput.trim()
-                    AppSettings.setGeminiApiKey(key)
-                    AppSettings.setGeminiTranslation(key.isNotBlank())
-                    showGeminiKeyDialog = false
-                }) {
-                    Text(stringResource(R.string.save))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showGeminiKeyDialog = false }) {
                     Text(stringResource(R.string.cancel))
                 }
             },

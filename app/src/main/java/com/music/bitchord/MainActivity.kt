@@ -253,6 +253,8 @@ import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
+import com.music.bitchord.ui.components.ContentCountryAlert
+import com.music.bitchord.ui.components.GeminiKeyAlert
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.ServerEditorHost
@@ -572,6 +574,8 @@ private fun BitChordApp(
     var showLyricsSources by remember { mutableStateOf(false) }
     var showAppLanguage by remember { mutableStateOf(false) }
     var showTranslationLanguage by remember { mutableStateOf(false) }
+    var showContentCountry by remember { mutableStateOf(false) }
+    var showGeminiKey by remember { mutableStateOf(false) }
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -2794,6 +2798,8 @@ private fun BitChordApp(
                             },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
+                            onContentCountry = { showContentCountry = true },
+                            onGeminiKey = { showGeminiKey = true },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -4885,6 +4891,43 @@ private fun BitChordApp(
             AppLanguageDialog(
                 hazeState = hazeState,
                 onDismiss = { showAppLanguage = false },
+            )
+        }
+
+        if (showContentCountry) {
+            BackHandler { showContentCountry = false }
+            val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
+            ContentCountryAlert(
+                hazeState = hazeState,
+                selected = contentCountry,
+                onSelect = AppSettings::setContentCountry,
+                onDismiss = { showContentCountry = false },
+            )
+        }
+
+        if (showGeminiKey) {
+            BackHandler { showGeminiKey = false }
+            val savedKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
+            var keyInput by remember { mutableStateOf(savedKey) }
+            GeminiKeyAlert(
+                hazeState = hazeState,
+                value = keyInput,
+                onValueChange = { keyInput = it },
+                hasSavedKey = savedKey.isNotBlank(),
+                onSave = {
+                    val key = keyInput.trim()
+                    if (key.isNotEmpty()) {
+                        AppSettings.setGeminiApiKey(key)
+                        AppSettings.setGeminiTranslation(true)
+                        showGeminiKey = false
+                    }
+                },
+                onRemove = {
+                    AppSettings.setGeminiApiKey("")
+                    AppSettings.setGeminiTranslation(false)
+                    showGeminiKey = false
+                },
+                onDismiss = { showGeminiKey = false },
             )
         }
 

@@ -21,17 +21,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -61,44 +58,6 @@ internal val CONTENT_COUNTRIES = listOf(
 internal fun countryDisplayName(code: String): String {
     val locale = AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault()
     return Locale("", code).getDisplayCountry(locale).ifBlank { code }
-}
-
-@Composable
-internal fun ContentCountryDialog(
-    selected: String,
-    onSelect: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.content_country)) },
-        text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                item {
-                    Text(
-                        text = stringResource(R.string.content_country_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                }
-                items(CONTENT_COUNTRIES) { code ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelect(code) }
-                            .padding(vertical = 2.dp),
-                    ) {
-                        RadioButton(selected = code == selected, onClick = { onSelect(code) })
-                        Text(countryDisplayName(code), style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-        },
-    )
 }
 
 /** "전 세계" for the charts' global choice, the country's name otherwise. */

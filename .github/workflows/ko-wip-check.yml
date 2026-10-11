@@ -32,26 +32,26 @@ jobs:
       - name: Lyrics tests
         shell: bash
         run: |
-          set -o pipefail
+          set +e -o pipefail
           chmod +x gradlew
           ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*' --console=plain 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           for f in shared/build/test-results/jvmTest/*.xml; do
             [ -f "$f" ] || continue
-            line=$(grep -o '<testsuite [^>]*>' "$f" | head -1)
+            line=$(grep -o '<testsuite [^>]*>' "$f" | head -1 || true)
             echo "::notice title=tests::$(basename "$f") $(echo "$line" | grep -oE '(tests|failures|errors|skipped)="[0-9]+"' | tr '\n' ' ')"
           done
-          grep -E "^e: |FAILED|AssertionError|expected:" test.log | head -30 | while IFS= read -r l; do echo "::error title=test::$l"; done
-          grep -E "BUILD (SUCCESSFUL|FAILED)" test.log | while IFS= read -r l; do echo "::notice title=tests-build::$l"; done
+          grep -E "^e: |FAILED|AssertionError|expected:" test.log | head -30 | while IFS= read -r l; do echo "::error title=test::$l"; done || true
+          grep -E "BUILD (SUCCESSFUL|FAILED)" test.log | while IFS= read -r l; do echo "::notice title=tests-build::$l"; done || true
           exit $status
 
       - name: Compile the app
         shell: bash
         run: |
-          set -o pipefail
+          set +e -o pipefail
           ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain 2>&1 | tee compile.log
           status=${PIPESTATUS[0]}
-          grep -E "^e: " compile.log | head -40 | while IFS= read -r l; do echo "::error title=kotlin::$l"; done
-          grep -E "^w: .*(ContentCountryDialog|OriginalNames|KuGou|LyricsRepository|AccountChannelDialog)" compile.log | head -20 | while IFS= read -r l; do echo "::warning title=kotlin::$l"; done
-          grep -E "Task :app:compileProdReleaseKotlin|BUILD (SUCCESSFUL|FAILED)" compile.log | while IFS= read -r l; do echo "::notice title=compile::$l"; done
+          grep -E "^e: " compile.log | head -40 | while IFS= read -r l; do echo "::error title=kotlin::$l"; done || true
+          grep -E "^w: .*(ContentCountryDialog|OriginalNames|KuGou|LyricsRepository|AccountChannelDialog)" compile.log | head -20 | while IFS= read -r l; do echo "::warning title=kotlin::$l"; done || true
+          grep -E "Task :app:compileProdReleaseKotlin|BUILD (SUCCESSFUL|FAILED)" compile.log | while IFS= read -r l; do echo "::notice title=compile::$l"; done || true
           exit $status
