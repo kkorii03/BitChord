@@ -2820,7 +2820,11 @@ internal fun rememberLyricsTranslation(
     var romanizationState by remember(trackId, translationLanguage, lyrics) {
         mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
     }
-    var lyricsDisplayMode by remember(trackId, translationLanguage, lyrics) {
+    // The mode outlives a new list of the *same words* — the lyrics moved onto
+    // the video's clock arrive as one — so a translation the listener turned
+    // on stays on; see the effect after [requestTranslation].
+    val lyricsTextKey = remember(lyrics) { lyrics?.joinToString("\n") { it.text } }
+    var lyricsDisplayMode by remember(trackId, translationLanguage, lyricsTextKey) {
         mutableStateOf(LyricsDisplayMode.Original)
     }
     val showingTranslation = lyricsDisplayMode == LyricsDisplayMode.Translated
@@ -2910,6 +2914,18 @@ internal fun rememberLyricsTranslation(
                 PlayerPlatform.host.showMessage(alreadyInLanguageMessage)
             }
             LyricsTranslationUiState.Idle -> requestTranslation(false)
+        }
+    }
+    // Same words, new timings: the translation is asked for again — from the
+    // cache, at once — so it follows the moved lines instead of the old ones.
+    LaunchedEffect(lyrics) {
+        if (lyrics.isNullOrEmpty()) return@LaunchedEffect
+        when (lyricsDisplayMode) {
+            LyricsDisplayMode.Translated ->
+                if (translationState is LyricsTranslationUiState.Idle) requestTranslation(true)
+            LyricsDisplayMode.Romanized ->
+                if (romanizationState is LyricsTranslationUiState.Idle) lyricsDisplayMode = LyricsDisplayMode.Original
+            LyricsDisplayMode.Original -> Unit
         }
     }
     // Auto-translate: each new lyric sheet asks for its translation once, as

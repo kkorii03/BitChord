@@ -524,7 +524,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         lyricsProviderResults[source] = result
         _lyricsProviderStates.update { it + (source to LyricsProviderState.FOUND) }
-        if (selectedLyricsSource == source) showLyricsResult(result) else showFirstUsable(generation)
+        // Provider answers arrive on the lookup's IO threads; what is shown is
+        // changed on the main thread only, so two of them landing together
+        // can't interleave with the lookup's own result.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            if (generation != lyricsGeneration) return@launch
+            if (selectedLyricsSource == source) showLyricsResult(result) else showFirstUsable(generation)
+        }
     }
 
     /**
