@@ -125,6 +125,10 @@ class LyricsMatchingTest {
         assertEquals("I really want to stay at your house", house.title)
         assertEquals("Rosa Walton", house.originalArtist)
         assertEquals("오화요", house.singer)
+        // No spaces round the slash, lower-case "cover".
+        val two = assertNotNull(CoverTitles.read("Just The Two Of Us(URBAN ZAKAPA)/오화요cover", "오화요 노래주머니", null))
+        assertEquals("Just The Two Of Us", two.title)
+        assertEquals("URBAN ZAKAPA", two.originalArtist)
         val years = assertNotNull(CoverTitles.read("A Thousand Years(Christina Perri) / 오화요Cover", "오화요 노래주머니", null))
         assertEquals("A Thousand Years", years.title)
         assertEquals("Christina Perri", years.originalArtist)

@@ -460,7 +460,10 @@ object CoverTitles {
                 ')', ']', '）', '】', '}' -> if (depth > 0) depth--
                 '/', '／' -> if (depth == 0) {
                     val spaced = (i > 0 && text[i - 1] == ' ') || (i + 1 < text.length && text[i + 1] == ' ')
-                    if (spaced || text[i] == '／') at = i
+                    // "곡명(원곡자)/부른사람cover": right after a closing bracket a
+                    // slash can't be inside a name like "AC/DC".
+                    val afterGroup = i > 0 && text[i - 1] in ")]）】}"
+                    if (spaced || afterGroup || text[i] == '／') at = i
                 }
             }
         }
