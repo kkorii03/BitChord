@@ -29,7 +29,9 @@ object ListenBrainzManager {
                 val durationPart = if (durationMs > 0) "\"duration_ms\":$durationMs," else ""
                 val releaseName = song.albumName.orEmpty()
                 val releasePart = if (releaseName.isBlank()) "" else "\"release_name\":\"${escapeJson(releaseName)}\","
-                val artist = if (primaryArtistOnly) song.artist.primaryArtist() else song.artist
+                // A cover goes to its singer — see CoverTitles.creditedArtist.
+                val credited = com.music.bitchord.data.cover.CoverTitles.creditedArtist(song)
+                val artist = if (primaryArtistOnly) credited.primaryArtist() else credited
                 val trackMetadata = """{"track_metadata":{"artist_name":"${escapeJson(artist)}","track_name":"${escapeJson(song.title)}",$releasePart"additional_info":{${durationPart}"position_ms":$positionMs,"submission_client":"BitChord"}}}"""
                 val bodyJson = "{\"listen_type\":\"playing_now\",\"payload\":[$trackMetadata]}"
                 Log.d(TAG, "submitPlayingNow: $bodyJson")
@@ -79,7 +81,9 @@ object ListenBrainzManager {
                 if (listenedAtStart < MIN_LISTEN_TS) {
                     listenedAtStart = System.currentTimeMillis() / 1000L
                 }
-                val artist = if (primaryArtistOnly) song.artist.primaryArtist() else song.artist
+                // A cover goes to its singer — see CoverTitles.creditedArtist.
+                val credited = com.music.bitchord.data.cover.CoverTitles.creditedArtist(song)
+                val artist = if (primaryArtistOnly) credited.primaryArtist() else credited
                 val trackMetadata = """{"listened_at":$listenedAtStart,"track_metadata":{"artist_name":"${escapeJson(artist)}","track_name":"${escapeJson(song.title)}",$releasePart"additional_info":{${durationPart}"start_ms":$startMs,"end_ms":$endMs,"submission_client":"BitChord"}}}"""
                 val bodyJson = "{\"listen_type\":\"single\",\"payload\":[$trackMetadata]}"
                 Log.d(TAG, "submitFinished: $bodyJson")
