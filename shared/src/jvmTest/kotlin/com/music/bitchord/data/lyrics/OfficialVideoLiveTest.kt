@@ -35,6 +35,17 @@ class OfficialVideoLiveTest {
             )
             // The runner's searches are sometimes refused: nothing to check then.
             if (track == null) return@runBlocking
+            // What the watch queue actually carries, for when the pairing comes back empty.
+            runCatching {
+                val raw = Innertube.next(track.videoId).toString()
+                fun count(word: String) = Regex(Regex.escape(word)).findAll(raw).count()
+                val ids = Regex(""""videoId":"([\w-]{11})"""").findAll(raw).map { it.groupValues[1] }.distinct().take(4).toList()
+                println(
+                    "LOOKUP_MS counterpart raw len=${raw.length} wrappers=${count("playlistPanelVideoWrapperRenderer")} " +
+                        "counterpart=${count("counterpart")} panel=${count("playlistPanelVideoRenderer")} ids=$ids " +
+                        "omv=${count("MUSIC_VIDEO_TYPE_OMV")} atv=${count("MUSIC_VIDEO_TYPE_ATV")}",
+                )
+            }.onFailure { println("LOOKUP_MS counterpart raw failed: ${it.message}") }
             val video = runCatching { YtMusicRepository.officialVideo(track.videoId) }
                 .onFailure { println("LOOKUP_MS counterpart next failed: ${it.javaClass.simpleName} ${it.message}") }
                 .getOrNull()
