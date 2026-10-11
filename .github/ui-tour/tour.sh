@@ -18,6 +18,8 @@ for i in $(seq 1 60); do [ "$(adb shell getprop sys.boot_completed | tr -d '\r')
 adb shell settings put system screen_off_timeout 1800000
 adb install -r -g "$APK"
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS || true
+adb shell cmd locale set-app-locales $PKG --locales ko-KR || true
+adb logcat -c
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
 sleep 25
 
@@ -68,7 +70,7 @@ shot home
 swipe_up; shot home-scrolled
 swipe_up; shot home-scrolled-2
 
-tap "검색" last 5; shot search
+tap "검색" last 5; tap "Search" last 3; shot search
 # The search field: the first EditText on screen.
 field=$(python3 - <<'PY'
 import re, xml.etree.ElementTree as ET
@@ -93,12 +95,22 @@ tap "가사" first 8; shot lyrics
 adb shell input keyevent 4; sleep 3
 adb shell input keyevent 4; sleep 3
 
-tap "보관함" last 5; shot library
+tap "보관함" last 5; tap "Library" last 3; shot library
 swipe_up; shot library-scrolled
-tap "설정" first 5; shot settings
+tap "설정" first 5; tap "Settings" first 3; shot settings
 swipe_up; shot settings-2
 swipe_up; shot settings-3
 swipe_up; shot settings-4
 swipe_up; shot settings-5
+# A cover video, opened the way a shared link would be: player, lyrics, timing.
+for v in US2I6tSRjcE qQNbfxDLxq0; do
+  adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$v" $PKG
+  sleep 30; shot "video-$v-mini"
+  tap "Dance Monkey" last 4; tap "Rolling" last 4; shot "video-$v-player"
+  tap "가사" first 10; tap "Lyrics" first 6; shot "video-$v-lyrics"
+  sleep 40; shot "video-$v-lyrics-later"
+  adb shell input keyevent 4; sleep 2; adb shell input keyevent 4; sleep 2
+done
+adb logcat -d > "$OUT/logcat.txt"
 ls -la "$OUT"
 exit 0
