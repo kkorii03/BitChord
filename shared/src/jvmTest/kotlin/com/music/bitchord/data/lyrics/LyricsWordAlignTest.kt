@@ -50,5 +50,7 @@ class LyricsWordAlignTest {
         assertEquals("ko", Deepgram.languageFor(listOf("사랑해 너를 영원히")))
         assertEquals("ja", Deepgram.languageFor(listOf("昨日のことを忘れたから")))
         assertEquals("multi", Deepgram.languageFor(listOf("Cause you forgot yesterday")))
+        assertEquals("en", Deepgram.languageFor(listOf("I know you love me", "and I don't know what to do with all of it")))
+        assertEquals("multi", Deepgram.languageFor(listOf("Despacito quiero respirar tu cuello despacito", "deja que te diga cosas al oído")))
     }
 }

@@ -27,7 +27,16 @@ import java.util.concurrent.TimeUnit
 object Deepgram {
 
     private const val ENDPOINT = "https://api.deepgram.com/v1/listen"
-    private const val MODEL = "nova-3"
+
+    /** Fast (a second or two) but deaf to most singing over a band: 9–66 words in a whole pop song. */
+    const val MODEL_NOVA = "nova-3"
+
+    /**
+     * Whisper as Deepgram hosts it: a minute or two a song, but it hears the
+     * singing — 200+ words, 22 of 25 lines placed within a tenth of a second
+     * on a real cover, where nova-3 placed 3.
+     */
+    const val MODEL_WHISPER = "whisper-large"
 
     @Volatile
     var apiKey: String = ""
@@ -42,16 +51,21 @@ object Deepgram {
 
     private val client by lazy {
         Http.client.newBuilder()
-            .callTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .callTimeout(240, TimeUnit.SECONDS)
+            .readTimeout(240, TimeUnit.SECONDS)
             .build()
     }
 
-    /** The words heard in [audioWav], timed; null when Deepgram couldn't be asked or didn't answer. */
-    suspend fun words(audioWav: ByteArray, language: String): List<LyricsWordAlign.Heard>? {
+    /**
+     * The words heard in [audioWav] by [model], timed; null when Deepgram
+     * couldn't be asked or didn't answer. Whisper takes no "multi": it is told
+     * to work the language out itself instead.
+     */
+    suspend fun words(audioWav: ByteArray, language: String, model: String = MODEL_NOVA): List<LyricsWordAlign.Heard>? {
         val key = apiKey.trim()
         if (key.isEmpty() || key == rejectedKey) return null
-        val url = "$ENDPOINT?model=$MODEL&language=$language&punctuate=false&smart_format=false&numerals=false"
+        val spoken = if (model == MODEL_WHISPER && language == "multi") "detect_language=true" else "language=$language"
+        val url = "$ENDPOINT?model=$model&$spoken&punctuate=false&smart_format=false&numerals=false"
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Token $key")
@@ -109,7 +123,20 @@ object Deepgram {
             hangul * 4 >= total -> "ko"
             kana * 10 >= total -> "ja"
             han * 2 >= total -> "zh"
+            english(lines) -> "en"
             else -> "multi"
         }
     }
+
+    /** Latin lyrics that read as English: its commonest little words make up a good share of them. */
+    private fun english(lines: List<String>): Boolean {
+        val words = lines.flatMap { it.lowercase().split(Regex("[^a-z']+")) }.filter { it.isNotEmpty() }
+        if (words.size < 8) return false
+        return words.count { it in ENGLISH_WORDS } * 5 >= words.size
+    }
+
+    private val ENGLISH_WORDS = setOf(
+        "the", "you", "i", "me", "my", "your", "and", "to", "a", "it", "is", "in", "on", "of", "we", "that", "this",
+        "be", "love", "don't", "i'm", "it's", "with", "for", "all", "so", "can", "know", "just", "what", "when", "oh",
+    )
 }

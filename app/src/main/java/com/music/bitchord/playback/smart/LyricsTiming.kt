@@ -730,26 +730,40 @@ object LyricsTiming {
         // Deepgram first: every word it hears comes with its time to the
         // hundredth of a second, in a few seconds. It hears singing badly,
         // but the lyrics only need some of it heard right to be pinned.
+        // Then Whisper through the same key: a minute or two, but it hears the
+        // singing that nova-3 mostly can't (measured on real covers: nova-3
+        // placed 3 of 25 lines, Whisper 22, within a tenth of a second).
         var engine = ENGINE_DEEPGRAM
         var adjustment: Adjustment.Mapped? = null
         if (audio != null && com.music.bitchord.data.lyrics.Deepgram.usable) {
-            val heard = com.music.bitchord.data.lyrics.Deepgram.words(
-                audio,
-                com.music.bitchord.data.lyrics.Deepgram.languageFor(texts),
-            )
-            val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
-            adjustment = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
-                ?.takeIf { (it.matchPercent ?: 0) >= MIN_DEEPGRAM_MATCH }
-            TrackLog.d(
-                TAG,
-                "Deepgram timing (${(System.currentTimeMillis() - started) / 1000}s): " + when {
-                    heard == null -> "no answer"
-                    adjustment == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${sung.size} lines placed: not enough"
-                    else -> "${heard.size} words, rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
-                        "shift ${shownShiftMs(lines, adjustment)} ms, ${adjustment.matchPercent}% agree"
-                },
-                videoId,
-            )
+            val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+            for ((model, name) in listOf(
+                com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA to ENGINE_DEEPGRAM,
+                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_WHISPER,
+            )) {
+                val asked = System.currentTimeMillis()
+                val heard = com.music.bitchord.data.lyrics.Deepgram.words(audio, language, model)
+                val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
+                val fitted = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+                    ?.takeIf { (it.matchPercent ?: 0) >= MIN_DEEPGRAM_MATCH }
+                TrackLog.d(
+                    TAG,
+                    "$name timing ($language, ${(System.currentTimeMillis() - asked) / 1000}s): " + when {
+                        heard == null -> "no answer"
+                        fitted == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${sung.size} lines placed: not enough"
+                        else -> "${heard.size} words, rate ${"%.3f".format(java.util.Locale.ROOT, fitted.rate)}, " +
+                            "shift ${shownShiftMs(lines, fitted)} ms, ${fitted.matchPercent}% agree"
+                    },
+                    videoId,
+                )
+                if (fitted != null) {
+                    adjustment = fitted
+                    engine = name
+                    break
+                }
+                // A key Deepgram turned away is turned away for Whisper too.
+                if (!com.music.bitchord.data.lyrics.Deepgram.usable) break
+            }
         }
         // Gemini when Deepgram isn't set up, had no audio to hear, or heard too little.
         var answer: List<Long?>? = null
@@ -858,6 +872,7 @@ object LyricsTiming {
     }
 
     const val ENGINE_DEEPGRAM = "Deepgram"
+    const val ENGINE_WHISPER = "Whisper"
     const val ENGINE_GEMINI = "Gemini"
 
     /** Deepgram's answer is used only when this much of the song agrees with its line; Gemini otherwise. */
