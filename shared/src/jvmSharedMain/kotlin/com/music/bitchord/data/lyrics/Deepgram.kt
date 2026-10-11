@@ -1,0 +1,115 @@
+package com.music.bitchord.data.lyrics
+
+import com.music.bitchord.data.Http
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
+
+/**
+ * Deepgram's speech recognition, for when each word of a song is said —
+ * the timed words [LyricsWordAlign] lines the lyrics up against. A few
+ * seconds for a song, to a hundredth of a second a word, where Gemini takes
+ * tens of seconds and places whole lines to about a second.
+ *
+ * The key ([apiKey]) is baked into this personal build, like Gemini's. The
+ * audio is the song's sound the phone already has (16 kHz WAV).
+ */
+object Deepgram {
+
+    private const val ENDPOINT = "https://api.deepgram.com/v1/listen"
+    private const val MODEL = "nova-3"
+
+    @Volatile
+    var apiKey: String = ""
+
+    /** A key Deepgram turned away: not asked with again until it changes. */
+    @Volatile
+    private var rejectedKey: String? = null
+
+    val usable: Boolean get() = apiKey.isNotBlank() && apiKey.trim() != rejectedKey
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private val client by lazy {
+        Http.client.newBuilder()
+            .callTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** The words heard in [audioWav], timed; null when Deepgram couldn't be asked or didn't answer. */
+    suspend fun words(audioWav: ByteArray, language: String): List<LyricsWordAlign.Heard>? {
+        val key = apiKey.trim()
+        if (key.isEmpty() || key == rejectedKey) return null
+        val url = "$ENDPOINT?model=$MODEL&language=$language&punctuate=false&smart_format=false&numerals=false"
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Token $key")
+            .post(audioWav.toRequestBody("audio/wav".toMediaType()))
+            .build()
+        return try {
+            withContext(Dispatchers.IO) {
+                client.newCall(request).execute().use { response ->
+                    if (response.code == 401 || response.code == 403) {
+                        rejectedKey = key
+                        return@withContext null
+                    }
+                    if (!response.isSuccessful) return@withContext null
+                    parse(response.body?.string() ?: return@withContext null)
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** `results.channels[0].alternatives[0].words[]`: word, start, end (seconds). */
+    internal fun parse(body: String): List<LyricsWordAlign.Heard>? = runCatching {
+        val words = json.parseToJsonElement(body).jsonObject["results"]!!.jsonObject["channels"]!!.jsonArray[0]
+            .jsonObject["alternatives"]!!.jsonArray[0].jsonObject["words"]!!.jsonArray
+        words.mapNotNull { item ->
+            val word = item.jsonObject
+            val text = word["word"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val start = word["start"]?.jsonPrimitive?.doubleOrNull ?: return@mapNotNull null
+            val end = word["end"]?.jsonPrimitive?.doubleOrNull ?: start
+            LyricsWordAlign.Heard(text, (start * 1000).toLong(), (end * 1000).toLong())
+        }
+    }.getOrNull()
+
+    /**
+     * Which language to listen for, read off the lyrics: the script most of
+     * them are in. Latin-script lyrics go to Nova-3's multilingual model,
+     * which takes English and the other European languages in one.
+     */
+    fun languageFor(lines: List<String>): String {
+        var hangul = 0
+        var kana = 0
+        var han = 0
+        var latin = 0
+        for (line in lines) for (c in line) when {
+            c in '\uAC00'..'\uD7A3' -> hangul++
+            c in '\u3040'..'\u30FF' -> kana++
+            c in '\u4E00'..'\u9FFF' -> han++
+            c in 'a'..'z' || c in 'A'..'Z' -> latin++
+        }
+        val total = (hangul + kana + han + latin).coerceAtLeast(1)
+        return when {
+            hangul * 4 >= total -> "ko"
+            kana * 10 >= total -> "ja"
+            han * 2 >= total -> "zh"
+            else -> "multi"
+        }
+    }
+}

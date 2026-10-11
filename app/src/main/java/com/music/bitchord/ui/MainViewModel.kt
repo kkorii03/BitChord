@@ -822,12 +822,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
                 manualMs = timing?.manualMs ?: 0L,
                 note = note,
+                aiEngine = timing?.aiEngine,
             )
         }
     }
 
     private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
-        if (!AppSettings.aiTimingAhead.value || !LyricsTranslation.geminiKeyUsable) return
+        if (!AppSettings.aiTimingAhead.value) return
+        if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
         if (LyricsTiming.hasAi(context, videoId, lines) || LyricsTiming.aiAlreadyFailed(context, videoId, lines)) return
         runCatching { LyricsTiming.placeWithAi(context, videoId, lines, automatic = true) }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }

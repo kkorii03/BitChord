@@ -140,7 +140,8 @@ internal object TranslationAhead {
             // Gemini at the same time as the measurement, not after it gives up:
             // the next song then starts with an answer either way.
             val gemini = com.music.bitchord.data.lyrics.LyricsTranslation
-            val ahead = if (AppSettings.aiTimingAhead.value && gemini.geminiKeyUsable &&
+            val ahead = if (AppSettings.aiTimingAhead.value &&
+                (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 !timing.hasAi(context, song.videoId, found.lines) &&
                 !timing.aiAlreadyFailed(context, song.videoId, found.lines)
             ) {

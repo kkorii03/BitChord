@@ -1381,6 +1381,7 @@ internal fun lyricsTimingDetail(timing: LyricsTimingUi): String? {
         timing.shiftMs?.let { add(stringResource(Res.string.lyrics_timing_seconds, signedSeconds(it))) }
         timing.rate?.let { add(stringResource(Res.string.lyrics_timing_rate, String.format(java.util.Locale.ROOT, "%.2f", it))) }
         if (timing.byAi) timing.matchPercent?.let { add(stringResource(Res.string.lyrics_timing_match, it.toString())) }
+        if (timing.byAi) timing.aiEngine?.let { add(it) }
     }.joinToString(" · ")
     return stringResource(
         if (timing.byAi) Res.string.lyrics_timing_detail_ai else Res.string.lyrics_timing_detail_auto,

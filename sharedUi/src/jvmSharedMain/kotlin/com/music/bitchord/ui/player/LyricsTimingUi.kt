@@ -27,4 +27,6 @@ data class LyricsTimingUi(
     val note: String? = null,
     /** The lines are timed by the video's own captions: nothing to measure, only Gemini or a hand to move them. */
     val videoOwn: Boolean = false,
+    /** Who gave the AI answer: "Deepgram" or "Gemini" — shown beside it. */
+    val aiEngine: String? = null,
 )

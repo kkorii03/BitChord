@@ -827,6 +827,9 @@ object AppSettings {
         // A Gemini key can be baked into a personal build's resources after it is
         // built (never committed). It is only a default: a key typed in Settings wins.
         bundledGeminiApiKey = context.getString(com.music.bitchord.R.string.default_gemini_api_key).trim()
+        // Baked into this personal build after CI, like Gemini's — never committed.
+        com.music.bitchord.data.lyrics.Deepgram.apiKey =
+            context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
         this.authStore = authStore
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()

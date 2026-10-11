@@ -1134,6 +1134,7 @@
     <string name="korean">Korean</string>
     <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
     <string name="default_gemini_api_key" translatable="false"></string>
+    <string name="default_deepgram_api_key" translatable="false"></string>
     <string name="prefetch_translation">Translate the next song\'s lyrics ahead</string>
     <string name="prefetch_translation_subtitle">Translates the next song\'s lyrics while this one plays, so they show the moment you tap Translate.</string>
     <string name="keep_download_translation">Save translations with downloads</string>

@@ -95,7 +95,13 @@ object LyricsTiming {
      * top — and, for Gemini's answer, [aiBiasMs] taken off: how late its
      * answers have run against the measurement, learned over many songs.
      */
-    data class Timing(val base: Adjustment?, val manualMs: Long, val aiBiasMs: Long = 0L) {
+    data class Timing(
+        val base: Adjustment?,
+        val manualMs: Long,
+        val aiBiasMs: Long = 0L,
+        /** Who gave [base] when it is an AI answer — "Deepgram" or "Gemini". */
+        val aiEngine: String? = null,
+    ) {
         val isEmpty: Boolean get() = base == null && manualMs == 0L
 
         /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
@@ -138,8 +144,9 @@ object LyricsTiming {
     ): Timing? {
         val entry = store(context).get(videoId) ?: return null
         val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed) else null
-        val bias = if (base?.byAi == true) aiBias(context) else 0L
-        return Timing(base, entry.manualMs ?: 0L, bias).takeUnless { it.isEmpty }
+        val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
+        val bias = engine?.let { aiBias(context, it) } ?: 0L
+        return Timing(base, entry.manualMs ?: 0L, bias, engine).takeUnless { it.isEmpty }
     }
 
     private fun baseOf(entry: Entry, lines: List<LyricLine>, measuredAllowed: Boolean = true): Adjustment? {
@@ -719,23 +726,53 @@ object LyricsTiming {
         // The sound the phone already has, when it has all of it; the YouTube
         // address (Gemini fetching and watching the video) otherwise.
         val audio = runCatching { VideoAudio.wav(context, videoId) }.getOrNull()
-        val answer = LyricsTranslation.placeLinesInVideo(
-            videoId,
-            sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
-            audioWav = audio,
-        )
-        val adjustment = answer?.let { fitAi(lines, sung.map { it.index }, it) }
-        TrackLog.d(
-            TAG,
-            "AI timing (${if (audio != null) "audio" else "video"}, ${(System.currentTimeMillis() - started) / 1000}s): " +
-                when {
-                    answer == null -> "no answer"
-                    adjustment == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
-                    else -> "rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
+        val texts = sung.map { it.value.text }
+        // Deepgram first: every word it hears comes with its time to the
+        // hundredth of a second, in a few seconds. It hears singing badly,
+        // but the lyrics only need some of it heard right to be pinned.
+        var engine = ENGINE_DEEPGRAM
+        var adjustment: Adjustment.Mapped? = null
+        if (audio != null && com.music.bitchord.data.lyrics.Deepgram.usable) {
+            val heard = com.music.bitchord.data.lyrics.Deepgram.words(
+                audio,
+                com.music.bitchord.data.lyrics.Deepgram.languageFor(texts),
+            )
+            val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
+            adjustment = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+                ?.takeIf { (it.matchPercent ?: 0) >= MIN_DEEPGRAM_MATCH }
+            TrackLog.d(
+                TAG,
+                "Deepgram timing (${(System.currentTimeMillis() - started) / 1000}s): " + when {
+                    heard == null -> "no answer"
+                    adjustment == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${sung.size} lines placed: not enough"
+                    else -> "${heard.size} words, rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
                         "shift ${shownShiftMs(lines, adjustment)} ms, ${adjustment.matchPercent}% agree"
                 },
-            videoId,
-        )
+                videoId,
+            )
+        }
+        // Gemini when Deepgram isn't set up, had no audio to hear, or heard too little.
+        var answer: List<Long?>? = null
+        if (adjustment == null) {
+            engine = ENGINE_GEMINI
+            answer = LyricsTranslation.placeLinesInVideo(
+                videoId,
+                sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
+                audioWav = audio,
+            )
+            adjustment = answer?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+            TrackLog.d(
+                TAG,
+                "AI timing (${if (audio != null) "audio" else "video"}, ${(System.currentTimeMillis() - started) / 1000}s): " +
+                    when {
+                        answer == null -> "no answer"
+                        adjustment == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
+                        else -> "rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
+                            "shift ${shownShiftMs(lines, adjustment)} ms, ${adjustment.matchPercent}% agree"
+                    },
+                videoId,
+            )
+        }
         if (adjustment == null) {
             if (answer != null) store(context).update(videoId) { it.copy(aiFailedKey = key) }
             return null
@@ -751,6 +788,7 @@ object LyricsTiming {
                 // over the measurement; it's [placeWithAi] that says it is.
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
                 biasSampled = false,
+                aiEngine = engine,
             )
         }
         sampleBias(context, videoId)
@@ -793,28 +831,37 @@ object LyricsTiming {
         store(context).update(videoId) { it.copy(biasSampled = true) }
         // A different take, a cut the straight AI line can't follow: no lesson in it.
         if (abs(median) > BIAS_SAMPLE_LIMIT_MS || spread > BIAS_SPREAD_MS) return
+        val engine = entry.aiEngine ?: ENGINE_GEMINI
         val prefs = context.applicationContext.getSharedPreferences(BIAS_PREFS, Context.MODE_PRIVATE)
         synchronized(this) {
-            val kept = prefs.getString(BIAS_KEY, null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }
+            val kept = prefs.getString(biasKey(engine), null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }
             val next = (kept + median).takeLast(BIAS_SAMPLES)
-            prefs.edit().putString(BIAS_KEY, next.joinToString(",")).apply()
-            cachedBias = null
+            prefs.edit().putString(biasKey(engine), next.joinToString(",")).apply()
+            cachedBias.remove(engine)
         }
-        TrackLog.d(TAG, "AI lateness sample ${median} ms (spread ${spread} ms)", videoId)
+        TrackLog.d(TAG, "$engine lateness sample ${median} ms (spread ${spread} ms)", videoId)
     }
 
-    @Volatile
-    private var cachedBias: Long? = null
+    /** Each engine runs late its own way: learned apart. */
+    private fun biasKey(engine: String) = if (engine == ENGINE_GEMINI) BIAS_KEY else "${BIAS_KEY}_${engine.lowercase()}"
 
-    /** What to take off Gemini's answers, ms; 0 until enough songs have taught it. */
-    private fun aiBias(context: Context): Long {
-        cachedBias?.let { return it }
+    private val cachedBias = ConcurrentHashMap<String, Long>()
+
+    /** What to take off [engine]'s answers, ms; 0 until enough songs have taught it. */
+    private fun aiBias(context: Context, engine: String): Long {
+        cachedBias[engine]?.let { return it }
         val samples = context.applicationContext.getSharedPreferences(BIAS_PREFS, Context.MODE_PRIVATE)
-            .getString(BIAS_KEY, null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }.sorted()
+            .getString(biasKey(engine), null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }.sorted()
         val bias = if (samples.size < BIAS_MIN_SAMPLES) 0L else samples[samples.size / 2].coerceIn(-BIAS_MAX_MS, BIAS_MAX_MS)
-        cachedBias = bias
+        cachedBias[engine] = bias
         return bias
     }
+
+    const val ENGINE_DEEPGRAM = "Deepgram"
+    const val ENGINE_GEMINI = "Gemini"
+
+    /** Deepgram's answer is used only when this much of the song agrees with its line; Gemini otherwise. */
+    private const val MIN_DEEPGRAM_MATCH = 35
 
     private const val BIAS_PREFS = "lyrics_timing"
     private const val BIAS_KEY = "ai_bias_samples"
@@ -920,6 +967,8 @@ object LyricsTiming {
         val aiPreferred: Boolean = false,
         /** This video's AI answer and measurement have been compared for [aiBias]. */
         val biasSampled: Boolean = false,
+        /** Who gave the AI answer: [ENGINE_DEEPGRAM] or [ENGINE_GEMINI] (null: Gemini, before ko-35). */
+        val aiEngine: String? = null,
     )
 
     @Serializable
