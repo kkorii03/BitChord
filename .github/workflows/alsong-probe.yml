@@ -1,0 +1,10 @@
+name: ALSong probe (temporary)
+on:
+  push:
+    branches: [alsong-test]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/probe/alsong_probe.py
