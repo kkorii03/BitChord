@@ -62,10 +62,11 @@ object RecordingPick {
             if (BRACKETS.containsMatchIn(clean[0].first)) add(Ask(clean[0], "en", "US", main = false))
             clean.getOrNull(1)?.let { add(Ask(it, "en", "US", main = true)) }
         }
+        val failed = java.util.concurrent.atomic.AtomicInteger()
         val rows = coroutineScope {
             asks.map { ask ->
                 async {
-                    runCatching {
+                    runCatching<List<Song>> {
                         val (name, hl, gl) = Triple(ask.name, ask.hl, ask.gl)
                         // The main reading: a translation in brackets mostly
                         // throws the search off (see the as-written ask above).
@@ -77,10 +78,17 @@ object RecordingPick {
                             .filterIsInstance<SearchResult.Track>()
                             .map { it.song }
                             .take(5)
-                    }.getOrDefault(emptyList())
+                    }.getOrElse {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        failed.incrementAndGet()
+                        emptyList()
+                    }
                 }
             }.awaitAll()
         }
+        // Not one search got an answer — offline, or the catalogue erroring:
+        // that is no verdict on the song, and must not be kept as "no original".
+        if (failed.get() == asks.size) throw java.io.IOException("every search for the original failed")
         // Interleaved, so each search's own first answer keeps its standing.
         val merged = buildList {
             for (i in 0 until 5) rows.forEach { list -> list.getOrNull(i)?.let(::add) }

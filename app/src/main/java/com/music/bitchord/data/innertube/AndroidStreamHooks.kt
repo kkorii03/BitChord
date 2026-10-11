@@ -23,13 +23,18 @@ object AndroidStreamHooks {
     /** Before anything logs or resolves. */
     fun installEarly() {
         MonotonicClock.nowMs = SystemClock::elapsedRealtime
+        // Release builds echo too, so `adb logcat` on the listener's phone shows
+        // why a lyric or a video timing went the way it did: warnings and errors
+        // from everything, chatter only from the paths still being tuned, each
+        // line cut short (a search response can run to pages).
         TrackLog.echo = { level, tag, message, error ->
-            if (BuildConfig.DEBUG) {
+            if (BuildConfig.DEBUG || level != 'D' || tag in RELEASE_DEBUG_TAGS) {
+                val text = if (BuildConfig.DEBUG || message.length <= RELEASE_LINE_CHARS) message else message.take(RELEASE_LINE_CHARS) + "…"
                 when (level) {
-                    'D' -> Log.d(tag, message, error)
-                    'I' -> Log.i(tag, message, error)
-                    'W' -> Log.w(tag, message, error)
-                    else -> Log.e(tag, message, error)
+                    'D' -> Log.d(tag, text, error)
+                    'I' -> Log.i(tag, text, error)
+                    'W' -> Log.w(tag, text, error)
+                    else -> Log.e(tag, text, error)
                 }
             }
         }
@@ -46,6 +51,13 @@ object AndroidStreamHooks {
         StreamResolver.maxKbps = { AppSettings.effectiveAudioQuality.maxKbps }
         InnerTubeXResolver.debugLogging = BuildConfig.DEBUG
     }
+
+    /** Debug lines a release build still echoes to logcat. */
+    private val RELEASE_DEBUG_TAGS = setOf(
+        "LyricsTiming", "AiLyrics", "VideoAudio", "VersionAudioAligner", "BitChordAudioDecoder",
+        "CanvasRepository", "AppleMusicCanvas", "CanvasArtworkPlayer",
+    )
+    private const val RELEASE_LINE_CHARS = 1_000
 
     /** What `InnerTubeXResolver.init(context)` did when it lived in the app. */
     fun initInnerTubeX(context: Context) {

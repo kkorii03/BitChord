@@ -660,10 +660,10 @@ object LyricsTiming {
     private const val GIVE_UP_AFTER_SECONDS = 150.0
 
     /** ko-27: covers read singer-first, title-only searches for covers that don't name the original. */
-    private const val SEARCH_VERSION = 1
+    private const val SEARCH_VERSION = 2 // ko-36: a search that failed outright is no longer kept as "no original"
 
     /** Measurements kept before this version (the loudness one) are measured again. */
-    private const val AUTO_VERSION = 2
+    private const val AUTO_VERSION = 3 // ko-36: bass-heavy songs were refused as "no contrast"
 
     // ---- AI ----------------------------------------------------------------------------
 

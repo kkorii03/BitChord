@@ -364,8 +364,11 @@ object ChromaAlignment {
         if (sounding < MIN_FRAMES / 2) return refuse("record nearly silent")
 
         // What a match costs by chance; every cost is measured against it.
+        // Dense, bass-heavy mixes read nearly flat once log-compressed, so their
+        // random pairs cost little (0.01–0.02 on real pop songs); the costs below
+        // are scaled by it, and the backwards test still tells songs apart.
         val baseline = randomPairCost(record.chroma, record, video)
-        if (baseline < 0.02) return refuse("no contrast (baseline ${"%.3f".format(java.util.Locale.ROOT, baseline)})")
+        if (baseline < 0.004) return refuse("no contrast (baseline ${"%.3f".format(java.util.Locale.ROOT, baseline)})")
         val norm = (1.0 / baseline).toFloat()
 
         // Every key, coarsely (0.4 s steps): a cover in another key, or one
