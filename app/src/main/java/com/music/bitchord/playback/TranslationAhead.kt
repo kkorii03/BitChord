@@ -103,7 +103,8 @@ internal object TranslationAhead {
      * connection, and only for a video whose lyrics are the record's.
      */
     private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
-        if (AppSettings.meteredConnection.value) return
+        // Unknown counts as metered: two extra downloads are not worth guessing about.
+        if (AppSettings.meteredConnection.value != false) return
         val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
         if (!query.isVideo || song.localUri != null) return
         if (found.lines.none { it.timeMs > 0 }) return
