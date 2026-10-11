@@ -138,24 +138,35 @@ object OriginalNames {
     /** A live take runs longer or shorter than the record by more than a studio cover does. */
     private const val MAX_TITLE_ONLY_DRIFT_SECONDS = 20
 
+    /** See [searchTitleOnly]: the same title, a cut that runs on. */
+    private const val MAX_SAME_TITLE_DRIFT_SECONDS = 75
+
+    private val TITLE_BRACKETS = Regex("""[(\[（【「『][^)\]）】」』]*[)\]）】」』]""")
+
     /** A title alone is a weaker question, so a few more rows are looked at — each held to the title. */
     private const val TITLE_ONLY_ROWS = 3
 
     private suspend fun searchTitleOnly(title: String, durationMs: Long): Name? {
-        val response = Innertube.searchAnonymous(title, SearchFilter.SONGS.params)
+        // A cover's title often carries its reading in brackets
+        // ("ギラギラ(기라기라)"): searched without it, matched on any of them.
+        val main = TITLE_BRACKETS.replace(title, " ").trim().ifBlank { title }
+        val response = Innertube.searchAnonymous(main, SearchFilter.SONGS.params)
         val songs = InnertubeParser.parseSearchPage(response, includeVideos = false).rows
             .filterIsInstance<SearchResult.Track>()
             .map { it.song }
             .take(TITLE_ONLY_ROWS)
         val seconds = (durationMs / 1000).toInt()
-        val wanted = compact(title)
+        val wanted = RecordingPick.readings(title)
         songs.forEachIndexed { index, song ->
             val length = TrackMatcher.secondsOf(song.durationText) ?: return@forEachIndexed
-            if (seconds > 0 && abs(length - seconds) > MAX_TITLE_ONLY_DRIFT_SECONDS) return@forEachIndexed
-            val sameTitle = compact(song.title) == wanted
+            val sameTitle = RecordingPick.readings(song.title).any { it in wanted }
+            // A stream archive's cut runs on past the song (a greeting, the
+            // chat read out), so a title that matches outright is given more room.
+            val drift = if (sameTitle) MAX_SAME_TITLE_DRIFT_SECONDS else MAX_TITLE_ONLY_DRIFT_SECONDS
+            if (seconds > 0 && abs(length - seconds) > drift) return@forEachIndexed
             // "야화" for a Japanese original: the only row that can be trusted
             // without a matching title is the first, and only across scripts.
-            val transliterated = index == 0 && hasHangul(title) && !hasHangul(song.title)
+            val transliterated = index == 0 && hasHangul(main) && !hasHangul(song.title)
             if (!sameTitle && !transliterated) return@forEachIndexed
             val foundArtist = TrackMatcher.primaryArtist(song.artist).ifBlank { song.artist }.trim()
             if (foundArtist.isEmpty() || song.title.isBlank()) return@forEachIndexed

@@ -107,7 +107,8 @@ class LyricsTimingLiveTest {
         if (LyricsSourceVideo.timedToVideo(found.source)) return "$head | $lyr | VIDEO-OWN"
         val names = buildList {
             if (q.artistKnown) add(q.title to q.artist)
-            found.searchedAs?.let(::add)
+            found.searchedAs?.takeIf { q.artistKnown || it.second != q.artist }?.let(::add)
+            if (!q.artistKnown) add(q.title to "")
             add(q.title to q.artist)
             addAll(q.alternatives)
         }.distinct()

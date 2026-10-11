@@ -21,6 +21,11 @@ import com.music.bitchord.data.model.Song
  *    artist is not named at all. The same words could be "원곡자 - 곡명 Cover",
  *    so it is read this way only when the name before "Cover" is the channel's
  *    own (타비 on 아라하시 타비).
+ *  - D: `부른사람-곡명(번역) Cover.(2)` — C the other way round: the singer
+ *    first, the dash often without spaces, "Cover" with a full stop and a
+ *    take number. Read the same way C is: only when the name before the dash
+ *    is the channel's own, or shares a word with it (아카네 리제 on 리제 노래
+ *    아카이브 — a fan archive of the same singer).
  *
  * Anything else is left as it is. When a title could still be a cover read the
  * B way, [lyricsQueries] tries both readings so the lyrics are found either way
@@ -228,25 +233,42 @@ object CoverTitles {
 
     /** "Cover" (or 커버) and whatever tags follow it, at the very end of a title. */
     private val TRAILING_COVER_WORD = Regex(
-        """(?i)(?<![a-z가-힣])(?:cover(?:ed)?|커버)\s*(?:[(\[（【][^()\[\]（）【】]*[)\]）】]\s*)*$""",
+        """(?i)(?<![a-z가-힣])(?:cover(?:ed)?|커버)\.?\s*(?:[(\[（【][^()\[\]（）【】]*[)\]）】]\s*)*$""",
     )
 
     private fun readC(raw: String, channel: String): Cover? {
         val tail = TRAILING_COVER_WORD.find(raw) ?: return null
         val head = raw.substring(0, tail.range.first).trimEnd()
-        val (song, singerPart) = splitTopLevelDash(head) ?: return null
-        val singer = cleanName(singerPart) ?: return null
+        // "Cover" at the end makes a dash without spaces a split too
+        // ("아카네 리제-붉은 장미 Cover."), though a spaced one still wins.
+        val (left, right) = splitTopLevelDash(head) ?: splitTopLevelDash(head, unspaced = true) ?: return null
+        // D: the singer first.
+        cleanName(left)?.takeIf { isChannelName(it, channel) }?.let { singer ->
+            cleanTitle(right)?.let { return Cover(title = it, originalArtist = null, singer = singer) }
+        }
+        // C: the song first.
+        val singer = cleanName(right) ?: return null
         if (!isChannelName(singer, channel)) return null
-        val title = cleanTitle(song) ?: return null
+        val title = cleanTitle(left) ?: return null
         return Cover(title = title, originalArtist = null, singer = singer)
     }
 
-    /** Whether [name] is the channel's own: "타비" on "아라하시 타비", "아라하시타비 노래 저장소". */
+    /**
+     * Whether [name] is the channel's own: "타비" on "아라하시 타비",
+     * "아라하시타비 노래 저장소" — or shares a word of two letters or more
+     * with it: "아카네 리제" on "리제 노래 아카이브".
+     */
     private fun isChannelName(name: String, channel: String): Boolean {
-        val a = name.lowercase().filter { it.isLetterOrDigit() }
-        val b = channel.lowercase().filter { it.isLetterOrDigit() }
-        return a.length >= 2 && b.isNotEmpty() && (a in b || b in a)
+        fun compact(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
+        val a = compact(name)
+        val b = compact(channel)
+        if (a.length < 2 || b.isEmpty()) return false
+        if (a in b || b in a) return true
+        return name.split(' ', '\u3000').map(::compact).any { word -> word.length >= 2 && word !in NOT_NAMES && word in b }
     }
+
+    /** Words a channel and a title can share without being the same person. */
+    private val NOT_NAMES = setOf("cover", "커버", "노래", "music", "official", "song", "songs", "channel", "채널")
 
     private fun headCover(head: String, singer: String, looseDash: Boolean = false): Cover? {
         // With "cover by" in the title it is a cover for certain, so a dash

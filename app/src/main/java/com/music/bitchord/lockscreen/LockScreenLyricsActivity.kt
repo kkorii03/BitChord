@@ -34,6 +34,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -56,6 +58,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -309,38 +312,67 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
             Clock()
             Spacer(Modifier.height(8.dp))
 
-            Box(
+            // The cover first, the lyrics a swipe to the side — the way the
+            // listener left it last time. Just the cover when there are no lyrics.
+            val prefs = remember { context.getSharedPreferences("bitchord_settings", android.content.Context.MODE_PRIVATE) }
+            val pages = if (song != null && hasWords) 2 else 1
+            val pager = rememberPagerState(
+                initialPage = if (pages > 1) prefs.getInt(KEY_LOCK_PAGE, 0).coerceIn(0, 1) else 0,
+            ) { pages }
+            // A song's lyrics arrive after it starts: back to them, if they are
+            // what the listener was reading.
+            LaunchedEffect(pages) {
+                if (pages > 1 && pager.currentPage == 0 && prefs.getInt(KEY_LOCK_PAGE, 0) == 1) pager.scrollToPage(1)
+            }
+            LaunchedEffect(pager, pages) {
+                snapshotFlow { pager.settledPage }.collect { page ->
+                    if (pages > 1) prefs.edit().putInt(KEY_LOCK_PAGE, page).apply()
+                }
+            }
+            HorizontalPager(
+                state = pager,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-            ) {
-                if (song != null && hasWords) {
-                    StandaloneLyricsPanel(
-                        lines = lines,
-                        subLines = translated,
-                        trackKey = song.videoId,
-                        position = state.position,
-                        isPlaying = state.isPlaying,
-                        onSeek = { controller?.seekTo(it) },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else if (song != null) {
-                    // No lyrics: the cover itself, large.
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 48.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
+            ) { page ->
+                Box(Modifier.fillMaxSize()) {
+                    if (page == 1 && song != null && hasWords) {
+                        StandaloneLyricsPanel(
+                            lines = lines,
+                            subLines = translated,
+                            trackKey = song.videoId,
+                            position = state.position,
+                            isPlaying = state.isPlaying,
+                            onSeek = { controller?.seekTo(it) },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else if (song != null) {
                         AsyncImage(
                             model = artwork.artworkAt(COVER_ART_PX),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(horizontal = 36.dp)
                                 .fillMaxWidth()
                                 .aspectRatio(1f)
-                                .clip(RoundedCornerShape(20.dp))
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(Color.White.copy(alpha = 0.08f)),
+                        )
+                    }
+                }
+            }
+            if (pages > 1) {
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    repeat(pages) { index ->
+                        Box(
+                            Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = if (pager.currentPage == index) 0.9f else 0.35f)),
                         )
                     }
                 }
@@ -412,6 +444,7 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
 }
 
 private const val BACKDROP_ART_PX = 360
+private const val KEY_LOCK_PAGE = "lock_screen_lyrics_page"
 private const val COVER_ART_PX = 720
 
 @Composable

@@ -558,6 +558,8 @@ object LyricsTranslation {
         body: String,
         client: okhttp3.OkHttpClient = geminiClient,
         models: List<String> = GEMINI_MODELS,
+        /** Collects each model's status code, for a caller that retries on what they were. */
+        codes: MutableList<Int>? = null,
         parse: (String) -> T?,
     ): T? {
         val key = cleanGeminiKey()
@@ -578,6 +580,7 @@ object LyricsTranslation {
             } catch (_: IOException) {
                 return null
             }
+            codes?.add(code)
             when {
                 code in 200..299 -> {
                     val parsed = parse(text)
@@ -1301,7 +1304,11 @@ object LyricsTranslation {
                 }
             }
         }
-        val body = buildJsonObject {
+        // Quick by default: the video watched at a frame every five seconds
+        // (the answer is in the audio, the frames only cost time) and little
+        // thinking — the job is hearing, not reasoning. Asked plainly as
+        // before if Gemini won't take those settings.
+        fun body(quick: Boolean) = buildJsonObject {
             putJsonObject("systemInstruction") {
                 putJsonArray("parts") { add(buildJsonObject { put("text", PLACE_LINES_INSTRUCTION) }) }
             }
@@ -1314,6 +1321,7 @@ object LyricsTranslation {
                                 put("fileUri", "https://www.youtube.com/watch?v=$videoId")
                                 put("mimeType", "video/*")
                             }
+                            if (quick) putJsonObject("videoMetadata") { put("fps", VIDEO_FPS) }
                         })
                         add(buildJsonObject { put("text", input.toString()) })
                     }
@@ -1322,6 +1330,7 @@ object LyricsTranslation {
             putJsonObject("generationConfig") {
                 put("temperature", 0)
                 put("mediaResolution", "MEDIA_RESOLUTION_LOW")
+                if (quick) putJsonObject("thinkingConfig") { put("thinkingLevel", "low") }
                 put("responseMimeType", "application/json")
                 putJsonObject("responseSchema") {
                     put("type", "OBJECT")
@@ -1346,9 +1355,14 @@ object LyricsTranslation {
             // The stronger model first: hearing where a line starts is the one
             // job here the lite models are noticeably worse at. An unknown
             // model or a used-up quota falls through to the next.
-            askGemini(body, geminiVideoClient, models = VIDEO_MODELS) { text ->
-                runCatching { parsePlacements(geminiText(text), lines.size) }.getOrNull()
-            }
+            val codes = mutableListOf<Int>()
+            val parse = { text: String -> runCatching { parsePlacements(geminiText(text), lines.size) }.getOrNull() }
+            askGemini(body(quick = true), geminiVideoClient, models = VIDEO_MODELS, codes = codes, parse = parse)
+                ?: if (codes.isNotEmpty() && codes.all { it == 400 }) {
+                    askGemini(body(quick = false), geminiVideoClient, models = VIDEO_MODELS, parse = parse)
+                } else {
+                    null
+                }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -1357,6 +1371,9 @@ object LyricsTranslation {
     }
 
     private val VIDEO_MODELS = listOf("gemini-3.5-flash") + GEMINI_MODELS
+
+    /** Frames a second Gemini looks at when placing lines; see [placeLinesInVideo]. */
+    private const val VIDEO_FPS = 0.2
 
     /**
      * `{"placements":[{"i":0,"t":"0:12.4"}, …]}` as one start per line (ms),

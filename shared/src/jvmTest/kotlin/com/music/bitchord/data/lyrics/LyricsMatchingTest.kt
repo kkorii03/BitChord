@@ -77,6 +77,28 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun singerFirstCoverTitlesAreRead() {
+        // The singer's own channel and a fan archive of hers, same title shape.
+        val rose = assertNotNull(CoverTitles.read("아카네 리제-붉은 장미 Cover.", "아카네 리제", null))
+        assertEquals("붉은 장미", rose.title)
+        assertEquals("아카네 리제", rose.singer)
+        assertEquals(null, rose.originalArtist)
+
+        val gira = assertNotNull(CoverTitles.read("아카네 리제-ギラギラ(기라기라) Cover.(2)", "리제 노래 아카이브", null))
+        assertEquals("ギラギラ(기라기라)", gira.title)
+        assertEquals("아카네 리제", gira.singer)
+
+        val mask = assertNotNull(CoverTitles.read("아카네 리제 - 가면 무도회 Cover.(2)", "리제 노래 아카이브", null))
+        assertEquals("가면 무도회", mask.title)
+
+        val usse = assertNotNull(CoverTitles.read("아카네 리제-うっせぇわ(웃세와) cover.", "리제 노래 아카이브", null))
+        assertEquals("うっせぇわ(웃세와)", usse.title)
+
+        // Someone else's name first, on a channel that isn't theirs: not this shape.
+        assertEquals(null, CoverTitles.read("아이유-밤편지 Cover.", "리제 노래 아카이브", null))
+    }
+
+    @Test
     fun coverByTitlesReadEvenWithoutTheVideoFlag() {
         // A Recents row arrives without its video flag; "cover by" still says it all.
         val cover = assertNotNull(

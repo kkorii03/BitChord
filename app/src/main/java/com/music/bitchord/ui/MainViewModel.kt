@@ -686,7 +686,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // A cover that names the original's artist is searched under
                 // that first; one that doesn't, under what its lyrics were found as.
                 if (request.artistKnown) add(request.title to request.artist)
-                searchedAs?.let(::add)
+                // Found under the singer's name is no lead to the original.
+                searchedAs?.takeIf { request.artistKnown || it.second != request.artist }?.let(::add)
+                // A cover that never names the original: its title alone.
+                if (!request.artistKnown) add(request.title to "")
                 add(request.title to request.artist)
                 addAll(request.alternatives)
             }.distinct()

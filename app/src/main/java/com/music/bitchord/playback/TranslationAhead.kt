@@ -131,7 +131,8 @@ internal object TranslationAhead {
         if (timing.timedToVideo(found.source)) return
         val names = buildList {
             if (query.artistKnown) add(query.title to query.artist)
-            found.searchedAs?.let(::add)
+            found.searchedAs?.takeIf { query.artistKnown || it.second != query.artist }?.let(::add)
+            if (!query.artistKnown) add(query.title to "")
             add(query.title to query.artist)
             addAll(query.alternatives)
         }.distinct()

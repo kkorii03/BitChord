@@ -164,7 +164,16 @@ object LyricsTiming {
 
     /** Whether the measurement has said all it is going to for [videoId]. */
     suspend fun measured(context: Context, videoId: String): Boolean =
-        store(context).get(videoId)?.let { it.autoVersion == AUTO_VERSION && it.autoComplete && !it.autoRecordPartial } == true
+        store(context).get(videoId)?.let {
+            it.autoVersion == AUTO_VERSION && it.autoComplete && !it.autoRecordPartial && !searchOutdated(it)
+        } == true
+
+    /**
+     * Found nothing to measure against with an older way of searching: worth
+     * one more search, since the newer one finds originals the old one missed.
+     */
+    private fun searchOutdated(entry: Entry): Boolean =
+        entry.auto == null && !entry.autoNoChange && entry.searchVersion < SEARCH_VERSION
 
     /**
      * Whether measuring [videoId] now could tell more than last time: it never
@@ -174,7 +183,7 @@ object LyricsTiming {
     suspend fun worthMeasuring(context: Context, videoId: String): Boolean {
         val entry = store(context).get(videoId)
         if (entry == null || entry.autoVersion != AUTO_VERSION) return true
-        if (entry.autoRecordPartial) return true
+        if (entry.autoRecordPartial || searchOutdated(entry)) return true
         if (entry.autoComplete) return false
         val copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return false
         return copy.isComplete || copy.cachedPrefix >= entry.autoVideoBytes + maxOf(REMEASURE_GROWTH_BYTES, entry.autoVideoBytes / 4)
@@ -189,6 +198,7 @@ object LyricsTiming {
     suspend fun measurementGaveUp(context: Context, videoId: String): Boolean {
         val entry = store(context).get(videoId) ?: return false
         if (entry.autoVersion != AUTO_VERSION || entry.auto != null || entry.autoNoChange || entry.autoRecordPartial) return false
+        if (searchOutdated(entry)) return false
         return entry.autoComplete || entry.autoVideoSeconds >= GIVE_UP_AFTER_SECONDS
     }
 
@@ -242,6 +252,7 @@ object LyricsTiming {
                 autoVideoBytes = done.videoBytes,
                 autoVideoSeconds = done.videoSeconds,
                 autoNote = done.note,
+                searchVersion = SEARCH_VERSION,
             )
         }
         _changes.tryEmit(videoId)
@@ -605,6 +616,9 @@ object LyricsTiming {
     /** A refusal on this much of a video is the measurement giving up. */
     private const val GIVE_UP_AFTER_SECONDS = 150.0
 
+    /** ko-27: covers read singer-first, title-only searches for covers that don't name the original. */
+    private const val SEARCH_VERSION = 1
+
     /** Measurements kept before this version (the loudness one) are measured again. */
     private const val AUTO_VERSION = 2
 
@@ -764,6 +778,8 @@ object LyricsTiming {
         val manualMs: Long? = null,
         /** See [note]. */
         val autoNote: String? = null,
+        /** Which way of searching for the original the measurement used; see [searchOutdated]. */
+        val searchVersion: Int = 0,
     )
 
     @Serializable
