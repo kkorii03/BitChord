@@ -1,0 +1,4436 @@
+# status 200
+
+
+
+
+
+<!DOCTYPE html>
+<head>
+    
+
+
+
+
+<title>지니</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon-precomposed" href="//image.genie.co.kr/imageg/mobile_web/common/favicon.png" />
+<link rel="shortcut icon" href="//image.genie.co.kr/imageg/mobile_web/common/favicon.ico" />
+<meta name="description" content="국내 최다 음원 보유, FLAC 고음질, 지니차트, 최신음악, 앨범, 뮤직비디오, 오늘의 선곡, TV속음악, 시대별음악, 지니라이프 등 제공" />
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="-1">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://image.genie.co.kr"/>
+<meta property="og:image:secure_url" content="https://image.genie.co.kr" />
+<meta property="og:title" content="지니 : 음악, 그리고 설레임"/>
+<meta property="og:description" content="음악, 그리고 설레임 - 지니"/>
+<meta property="fb:app_id" content="458810570822272" />
+
+<link rel="stylesheet" href="/resources/commons/css/common.css?v=202609211500">
+<link rel="stylesheet" href="/resources/commons/css/sub.css?v=202609211500">
+
+<script type="text/javascript" src="/resources/commons/jscript/jquery-1.9.1.min.js" ></script>
+<script type="text/javascript" src="/resources/commons/jscript/modernizr.custom.53905.js" ></script>
+<script type="text/javascript" src="/resources/commons/jscript/front.common.js?v=202609211500" ></script>
+<script type="text/javascript" src="/resources/commons/jscript/iscroll.js"></script>
+<script type="text/javascript" src="/resources/commons/jscript/common_ui.js?v=202609211500"></script>
+<script type="text/javascript" src="/resources/commons/jscript/common.js?v=202609211500" ></script>
+<script type="text/javascript" src="/resources/commons/jscript/genie.launch.js?v=202609211500"></script>
+
+<script type="text/javascript" src="/resources/js/common.js?v=202609211500" ></script>
+
+<script type="text/javascript">
+    $("document").ready(function() {
+        /*
+         // 트위터 공유하기
+         $(".tw").click(function () { shareSNS('twitter', 'https://mw.genie.co.kr' + _rfr) });
+         // 페이스북 공유하기
+         $(".fb").click(function () { shareSNS('facebook', 'https://mw.genie.co.kr' + _rfr) });
+         */
+        var snsSharUrl = "";
+
+        document.title = "지니 : 음악, 그리고 설레임";
+    });
+</script>
+
+
+
+
+
+
+
+
+<meta name="robots" content="noai">
+
+
+
+
+
+
+
+
+<script>
+  // 에어브릿지 공통모듈
+  (function(a_,i_,r_,_b,_r,_i,_d,_g,_e){if(!a_[_b]){var n=function(){var c=i_.createElement(r_);c.onerror=function(){g.queue.filter(function(a){return 0<=_d.indexOf(a[0])}).forEach(function(a){a=a[1];a=a[a.length-1];"function"===typeof a&&a("error occur when load airbridge")})};c.async=1;c.src=_r;"complete"===i_.readyState?i_.head.appendChild(c):a_.addEventListener("load",function h(){a_.removeEventListener("load",h);i_.head.appendChild(c)})},g={queue:[],get isSDKEnabled(){return!1}};_i.concat(_d).forEach(function(c){var a=c.split("."),h=a.pop();a.reduce(function(p,q){return p[q]=p[q]||{}},g)[h]=function(){g.queue.push([c,arguments])}});a_[_b]=g;0<_g?(_b=new (a_.XDomainRequest||a_.XMLHttpRequest),_i=function(){},_b.open("GET",_r),_b.timeout=_g,_b.onload=function(){n()},_b.onerror=_i,_b.onprogress=_i,_b.ontimeout=_i,_b.send()):n()}})(window,document,"script","airbridge","//static.airbridge.io/sdk/latest/airbridge.min.js","init startTracking stopTracking fetchResource openBanner setBanner setDownload setDownloads openDeeplink setDeeplinks sendWeb setUserAgent setMobileAppData setUserID clearUserID setUserEmail clearUserEmail setUserPhone clearUserPhone setUserAttribute removeUserAttribute clearUserAttributes setUserAlias removeUserAlias clearUserAlias clearUser setUserId setUserAttributes addUserAlias setDeviceAlias removeDeviceAlias clearDeviceAlias setDeviceIFV setDeviceIFA setDeviceGAID events.send events.signIn events.signUp events.signOut events.purchased events.addedToCart events.productDetailsViewEvent events.homeViewEvent events.productListViewEvent events.searchResultViewEvent".split(" "),["events.wait","createTouchpoint"],0);
+
+  airbridge.init({
+    app: 'geniemusic',
+    webToken: 'b7b4df2c0292498280453e44d717859f',
+    utmParsing: true,
+    user: {
+      externalUserID: '',
+    },
+    cookieWindow: 3,
+  });
+
+  // 에어브릿지 Wrapper 함수
+  function airbridgeEvent(category, action, callback, memUno) {
+    if (!category) return;
+
+    if (memUno) airbridge.setUserID(memUno);
+
+    const eventParams = {};
+    if (action) eventParams.action = action;
+
+    let isAlreadyCallback = false;
+
+    try {
+      if (Object.keys(eventParams).length > 0) {
+        airbridge.events.send(category, eventParams);
+      } else {
+        airbridge.events.send(category);
+      }
+
+      airbridge.events.wait(1000, function (error) {
+        if (callback) {
+          callback();
+        }
+        isAlreadyCallback = true;
+      });
+    } catch (e) {
+      console.log(e.message);
+
+      if (!isAlreadyCallback) {
+        if (callback) {
+          callback();
+        }
+      }
+    }
+  }
+
+  function getLoginMethod(suxt) {
+    let login_method = "genie";
+    if (suxt != null) {
+        switch (suxt) {
+            case "F": login_method = "facebook"; break;
+            case "T": login_method = "twitter"; break;
+            case "O": login_method = "kakao"; break;
+            case "A": login_method = "apple"; break;
+            case "N": login_method = "naver"; break;
+            default: break;
+        }
+    }
+    return login_method;
+  }
+</script>
+</head>
+<body class="bg-white">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+	var vmd = "M";
+	var iMemUno = "";
+	var isMemStatus = "0";
+	var genieDomain = "https://mw.genie.co.kr";
+	var genieSSLurl = "https://mw.genie.co.kr";
+	var memberSSLurl = "//member.genie.co.kr";
+	var svnVer = FG_cookie.get("apvn");
+	var sAgentType = FG_cookie.get("svc");
+
+	if (vmd == "") {
+		vmd = "M";
+	}
+
+	if (svnVer == "") {
+		svnVer = 0;
+	}
+</script>
+
+
+
+<header class="header has-nav">
+	<!-- GNB -->
+	<div class="gnb">
+		<h1 class="logo"><a href="https://mw.genie.co.kr">genie</a></h1>
+		<ul class="list-gnb">
+			
+			
+				
+				
+					<li><a href="https://pay.genie.co.kr/product/productMain" class="menu btn-payment">이용권</a></li>
+					<li><a href="#" class="menu btn-profile" id="btnLogin">로그인</a></li>
+				
+			
+		</ul>
+	</div>
+	<!--// GNB -->
+
+	<!-- LNB -->
+	<nav class="nav">
+		<ul>
+			<li class="active"><a href="https://mw.genie.co.kr">홈</a></li>
+			<li ><a href="https://mw.genie.co.kr/chart">지니차트</a></li>
+			<li ><a href="https://mw.genie.co.kr/newest">최신음악</a></li>
+			<li ><a href="https://mw.genie.co.kr/recommend">추천</a></li>
+		</ul>
+	</nav>
+	<!--// LNB -->
+</header>
+
+<script type="text/javascript">
+	$("#btnLogin").click(function() {
+		var rtnUrl = location.href;
+		location.href="https://mw.genie.co.kr/login/login?rtnURL=" + escape(rtnUrl);
+	});
+
+	$("#btnLogout").click(function() {
+		commonAjax({
+			url: '/login/logout',
+			successFunction: function(result) {
+				if (result.retCode == "0") {
+					fnShowAlert("정상적으로 로그아웃이 되었습니다.");
+					window.location.reload();
+				} else {
+					fnShowAlert("정상적으로 로그아웃이 되지않았습니다.");
+					return false;
+				}
+			}
+		});
+	});
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+	var vmd = "M";
+	var iMemUno = "";
+	var isMemStatus = "0";
+	var genieDomain = "https://mw.genie.co.kr";
+	var genieSSLurl = "https://mw.genie.co.kr";
+	var memberSSLurl = "//member.genie.co.kr";
+	var svnVer = FG_cookie.get("apvn");
+	var sAgentType = FG_cookie.get("svc");
+
+	if (vmd == "") {
+		vmd = "M";
+	}
+
+	if (svnVer == "") {
+		svnVer = 0;
+	}
+</script>
+
+
+
+<link rel="stylesheet" href="/resources/commons/css/tv.css?v=202609211500">
+
+<h2 class="hide">지니홈</h2>
+
+<div class="main">
+	<!-- BANNER -->
+	<article class="magazine top">
+		
+			
+			
+			
+		
+	</article>
+	<!--// BANNER -->
+	<!-- RECENT -->
+	<section class="recent">
+		<h3 class="title text-bold"><a href="/newest">최신음악</a></h3>
+		<ul class="tab">
+			<li><a href="#" id="new_L000" onclick="getNewList('L000'); return false;" class="active">전체</a></li>
+			<li><a href="#" id="new_K000" onclick="getNewList('K000'); return false;" class="text-lightgray">국내</a></li>
+			<li><a href="#" id="new_NK00" onclick="getNewList('NK00'); return false;" class="text-lightgray">국외</a></li>
+		</ul>
+		<!-- LIST -->
+		<ul class="list-tile" id="newList">
+			
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88232599">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/232/599/88232599_1790736697299_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="그게 아닌 것만 같아서" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">그게 아닌 것만 같아서</strong>
+								<span class="artist text-palegray ellipsis">이민정</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88241676">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/241/676/88241676_1790907127603_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="네가 떠난 밤은 아직 밝아서" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">네가 떠난 밤은 아직 밝아서</strong>
+								<span class="artist text-palegray ellipsis">위즈(WIZ)</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88266323">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/266/323/88266323_1791356198864_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="소원빌기 (해시태그는 첫사랑 X 우예린)" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">소원빌기 (해시태그는 첫사랑 X 우예린)</strong>
+								<span class="artist text-palegray ellipsis">우예린</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88264954">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/264/954/88264954_1791337298622_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="Fall-ing" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">Fall-ing</strong>
+								<span class="artist text-palegray ellipsis">TOVE</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88271130">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/271/130/88271130_1791442609075_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="Sober Enough (Feat.허성현)" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">Sober Enough (Feat.허성현)</strong>
+								<span class="artist text-palegray ellipsis">CLOCK</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88226968">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/226/968/88226968_1791426576964_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="NGL VOL.11" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">NGL VOL.11</strong>
+								<span class="artist text-palegray ellipsis">피스트범프</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88243054">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/243/054/88243054_1791442916065_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="Late Checkout" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">Late Checkout</strong>
+								<span class="artist text-palegray ellipsis">PS영준</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88261612">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/261/612/88261612_1791282485624_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="One Time (Feat. Gist)" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">One Time (Feat. Gist)</strong>
+								<span class="artist text-palegray ellipsis">ZUO & 은기</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88243323">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/243/323/88243323_1791340880287_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="마음이 아파요" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">마음이 아파요</strong>
+								<span class="artist text-palegray ellipsis">디어밍</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88241855">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/241/855/88241855_1790910098334_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="EXtra" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">EXtra</strong>
+								<span class="artist text-palegray ellipsis">MARTI:N (마틴)</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88260501">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/260/501/88260501_1791339351576_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="빛나는 너에게" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">빛나는 너에게</strong>
+								<span class="artist text-palegray ellipsis">배우리</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88221813">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/221/813/88221813_1791427054037_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="Witch love" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">Witch love</strong>
+								<span class="artist text-palegray ellipsis">EAN</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88269983">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/269/983/88269983_1791425492392_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="AMBITION 10/10" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">AMBITION 10/10</strong>
+								<span class="artist text-palegray ellipsis">Nosun & 언텔 (untell) & TRADE L (트레이드 엘) & MilliMax (밀리맥스) & ZENE THE ZILLA (제네 더 질라) & 던말릭 (DON MALIK) & The Quiett</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88265917">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/265/917/88265917_1791351133493_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="비상선언" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">비상선언</strong>
+								<span class="artist text-palegray ellipsis">이오몽</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88261684">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/261/684/88261684_1791283425305_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="놀면 뭐하니? 숏폼 드라마 OST" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">놀면 뭐하니? 숏폼 드라마 OST</strong>
+								<span class="artist text-palegray ellipsis">소녀시대-효리수 (Girls' Generation-HRS)</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88270190">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/270/190/88270190_1791429404420_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="BOYFRIEND" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">BOYFRIEND</strong>
+								<span class="artist text-palegray ellipsis">호시</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88266463">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/266/463/88266463_1791357691293_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="BIG DREAM" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">BIG DREAM</strong>
+								<span class="artist text-palegray ellipsis">키드킹 (Kidd King)</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88261719">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/261/719/88261719_1791283892994_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="Adios" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">Adios</strong>
+								<span class="artist text-palegray ellipsis">전유진</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88241304">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/241/304/88241304_1790902291780_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="산책 (권연우 X MOODIVE)" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">산책 (권연우 X MOODIVE)</strong>
+								<span class="artist text-palegray ellipsis">권연우</span>
+							</div>
+						</a>
+					</li>
+				
+					<li>
+						<a href="/detail/albumInfo?axnm=88243019">
+							<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/243/019/88243019_1791442615363_1_200x200.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="사랑이 온다 OST Part.22" /></div>
+							<div class="info">
+								<strong class="track text-white ellipsis">사랑이 온다 OST Part.22</strong>
+								<span class="artist text-palegray ellipsis">리타(Rita)</span>
+							</div>
+						</a>
+					</li>
+				
+			
+			<li class="more">
+				<a href="/newest" class="btn-more">최신음악 더보기</a>
+			</li>
+		</ul>
+		<!--// LIST -->
+	</section>
+	<!--// RECENT -->
+
+	<!-- CHART -->
+	<section class="chart">
+		<h3 class="title text-bold"><a href="/chart">지니차트</a></h3>
+
+		
+		
+			
+			
+			
+				
+			
+		
+
+		<p class="time text-lightgray">오후 1:00</p>
+		<!-- LIST -->
+		
+
+
+
+<ul class="list-music list-chart">
+    
+        <li id="116515405" >
+            <div class="ranking text-center">
+                <em>1</em>
+                
+                
+                    
+                    
+                    
+                    
+                        <p class="rank none">
+                            <span class="hide">유지</span>
+                        </p>
+                    
+                
+            </div>
+            <div class="thumbnail">
+                <a href="/detail/albumInfo?axnm=88050320">
+                    <img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/088/050/320/88050320_1788509199611_1_140x140.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="퇴사할게여 (Narr. 기안84)" />
+                </a>
+            </div>
+            <div class="info">
+                <a href="/detail/songInfo?xgnm=116515405">
+                    <p class="track ellipsis"><img src="https://image.genie.co.kr/imageg/mobile_web/common/blt_playing.gif" class="blt-playing" alt="재생 중인 곡" />
+                        
+                            퇴사할게여 (Narr. 기안84)
+                    </p>
+                    <span class="artist text-gray ellipsis">소연 (SOYEON)</span>
+                </a>
+            </div>
+            <div class="controls">
+                <button type="button" class="btn-play hide" onclick="fnPlaySong('116515405'); return false;">재생</button>
+            </div>
+        </li>
+    
+        <li id="107590768" >
+            <div class="ranking text-center">
+                <em>2</em>
+                
+                
+                    
+                    
+                    
+                    
+                        <p class="rank none">
+                            <span class="hide">유지</span>
+                        </p>
+                    
+                
+            </div>
+            <div class="thumbnail">
+                <a href="/detail/albumInfo?axnm=85542577">
+                    <img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/085/542/577/85542577_1724656614230_1_140x140.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="LOVE ATTACK" />
+                </a>
+            </div>
+            <div class="info">
+                <a href="/detail/songInfo?xgnm=107590768">
+                    <p class="track ellipsis"><img src="https://image.genie.co.kr/imageg/mobile_web/common/blt_playing.gif" class="blt-playing" alt="재생 중인 곡" />
+                        
+                            LOVE ATTACK
+                    </p>
+                    <span class="artist text-gray ellipsis">RESCENE (리센느)</span>
+                </a>
+            </div>
+            <div class="controls">
+                <button type="button" class="btn-play hide" onclick="fnPlaySong('107590768'); return false;">재생</button>
+            </div>
+        </li>
+    
+        <li id="115057327" >
+            <div class="ranking text-center">
+                <em>3</em>
+                
+                
+                    
+                    
+                    
+                    
+                        <p class="rank none">
+                            <span class="hide">유지</span>
+                        </p>
+                    
+                
+            </div>
+            <div class="thumbnail">
+                <a href="/detail/albumInfo?axnm=87617571">
+                    <img src="https://image.genie.co.kr/Y/IMAGE/IMG_ALBUM/087/617/571/87617571_1778574852112_1_140x140.JPG" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="갑자기" />
+                </a>
+            </div>
+            <div class="info">
+                <a href="/detail/songInfo?xgnm=115057327">
+                    <p class="track ellipsis"><img src="https://image.genie.co.kr/imageg/mobile_web/common/blt_playing.gif" class="blt-playing" alt="재생 중인 곡" />
+                        
+                            갑자기
+                    </p>
+                    <span class="artist text-gray ellipsis">아이오아이 (I.O.I)</span>
+                </a>
+            </div>
+            <div class="controls">
+                <button type="button" class="btn-play hide" onclick="fnPlaySong('115057327'); return false;">재생</button>
+            </div>
+        </li>
+    
+</ul>
+		<!--// LIST -->
+	</section>
+	<!--// CHART -->
+
+	
+
+<article class="magazine">
+	
+		
+			
+			
+
+			
+			
+
+			
+			
+
+			
+			
+				<section class="list-template list-4">
+					<h3 class="hd">오늘의 선곡</h3>
+					<ul>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '35107'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026108105941.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="가사가 오래 남는 계절에✍🏻🍁" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">가사가 오래 남는 계절에✍🏻🍁</p>
+								<span class="desc">DJ 기린</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '35063'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026106194227.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="🍂 가을에는 바람도 리듬 타나 봐" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">🍂 가을에는 바람도 리듬 타나 봐</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>32</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '35031'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026102191645.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="가을밤의 달콤쌉쌀한 낭만 챙기기 ☕" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">가을밤의 달콤쌉쌀한 낭만 챙기기 ☕</p>
+								<span class="desc">DJ 호이</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '35009'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_20261011789.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="가을의 크로아티아를 걸으며..." /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">가을의 크로아티아를 걸으며...</p>
+								<span class="desc">TravelList</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34971'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026929143243.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="🧥 후드 꺼낸 날엔 달달한 비트 어때?" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">🧥 후드 꺼낸 날엔 달달한 비트 어때?</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>49</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34970'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026929143216.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="🪩 OuiOui, 가사는 몰라도 리듬은 알지" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">🪩 OuiOui, 가사는 몰라도 리듬은 알지</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>39</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34925'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026923142849.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="그립다, 그때 그 시절 ⋆˙⟡" /></div>
+								
+								
+							
+							<span class="category line">추천선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">그립다, 그때 그 시절 ⋆˙⟡</p>
+								<span class="desc">DJ 감또</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>35</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34895'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026922161148.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="여름과 작별하며 듣는 쾌청한 인디음악들" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">여름과 작별하며 듣는 쾌청한 인디음악들</p>
+								<span class="desc">DJ 수수</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34836'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026920215422.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="가을이 오면 생각나는 국내 뮤지컬 넘버🍂" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">가을이 오면 생각나는 국내 뮤지컬 넘버🍂</p>
+								<span class="desc">DJ 자몽</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34817'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026917224340.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="오늘은 조금 로맨틱한 재즈 🤎" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">오늘은 조금 로맨틱한 재즈 🤎</p>
+								<span class="desc">DJ 삐삐</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34784'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026916122347.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="🕺수요일쯤엔 이런 리듬도 필요하니까" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">🕺수요일쯤엔 이런 리듬도 필요하니까</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>37</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34760'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026915184147.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="달콤쌉싸름 K-R&B 맛 좀 보실래요?🖤" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">달콤쌉싸름 K-R&B 맛 좀 보실래요?🖤</p>
+								<span class="desc">DJ 157</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34734'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026914113144.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="🫧꿈만 같았던 순간을 꺼내 듣는 플리" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">🫧꿈만 같았던 순간을 꺼내 듣는 플리</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>22</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34719'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026911175732.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="가을, 그거 어떻게 안 타는 건데🤎" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">가을, 그거 어떻게 안 타는 건데🤎</p>
+								<span class="desc">DJ 구쓰</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '34642'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202698102145.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="재즈힙합을 좋아하세요…" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">재즈힙합을 좋아하세요…</p>
+								<span class="desc">DJ 기린</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '31933'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202633119317.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="꽃구경 가자🌸 노래는 내가 준비할게!" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">꽃구경 가자🌸 노래는 내가 준비할게!</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>33</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '17113'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2024115214014.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="To. 마음이 피곤한 사람들에게✍" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">To. 마음이 피곤한 사람들에게✍</p>
+								<span class="desc">DJ 호이</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '16346'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2024219152934.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="아름다운 모래사장에서 감미로운 여행을 위한 소리🏖️" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">아름다운 모래사장에서 감미로운 여행을 위한 소리🏖️</p>
+								<span class="desc">DJ 노찌</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '16092'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_20231128121449.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="2023 좋은 드라마, 좋은 OST 🎞" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">2023 좋은 드라마, 좋은 OST 🎞</p>
+								<span class="desc">DJ 호이</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '15986'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_20231027213635.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="가끔 생각해요, 흘러가버린 마음과 이름들을" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">가끔 생각해요, 흘러가버린 마음과 이름들을</p>
+								<span class="desc">DJ 호이</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>16</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '15594'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202375152510.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="hola😎 환상의 섬 이비자의 열기가 느껴지는 하우스 뮤직" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">hola😎 환상의 섬 이비자의 열기가 느껴지는 하우스 뮤직</p>
+								<span class="desc">DJ 솝</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>15</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '15253'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202332814177.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="봄날의 선선한 저녁공기마시며 듣는 한강드라이빙 플리" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">봄날의 선선한 저녁공기마시며 듣는 한강드라이빙 플리</p>
+								<span class="desc">DJ 삐삐</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>15</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '8632'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2022107181344.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="일상속에서 음악으로 하는 산책" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">일상속에서 음악으로 하는 산책</p>
+								<span class="desc">DJ 달</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>15</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+							
+								
+								 <!--앨범형-->
+									<li class="album">
+									<a href="#" onclick="goMenuByMgzLanding('162', '14541'); return false;">
+									<div class="cover mask"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2022101122251.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="선선한 날 언제든 툭 걸치기 좋은 편안한 어쿠스틱 POP" /></div>
+								
+								
+							
+							<span class="category line">추천 선곡</span>
+							<div class="info">
+								<p class="title text-white ellipsis">선선한 날 언제든 툭 걸치기 좋은 편안한 어쿠스틱 POP</p>
+								<span class="desc">DJ 자몽</span>
+							</div>
+
+							 <!-- 앨범형+2곡 이상 -->
+								<div class="cnt text-white middle">
+									<div><span>30</span>Songs</div>
+								</div>
+							
+
+							
+							</a>
+							</li>
+						
+					</ul>
+				</section>
+			
+
+			
+			
+
+			
+			
+
+			
+			
+
+			
+			
+
+			
+		
+	
+		
+			
+			
+
+			
+			
+
+			
+			
+
+			
+			
+
+			
+			
+				<section class="list-template list-5">
+					<h3 class="hd"></h3>
+					<ul>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16457'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026107192329.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="엔플라잉 (N,Flying), [Still] 시간이 흘러도 끝내 남아 있는 것들" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">엔플라잉 (N,Flying), [Still] 시간이 흘러도 끝내 남아 있는 것들</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16454'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202610719232.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="나의 반려 음악 만들기 – 귀로 정리하는 서양음악사 (4)" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">나의 반려 음악 만들기 – 귀로 정리하는 서양음악사 (4)</p>
+											
+											
+										
+										<span class="category normal text-gray">스페셔</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16459'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026107104126.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="일상에서 마주하는 다양한 사랑의 형태들을 풀어낸, 김재환의 [Love, From Here]" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">일상에서 마주하는 다양한 사랑의 형태들을 풀어낸, 김재환의 [Love, From Here]</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16463'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202610710417.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="고민할 시간이 아까워 GO해! 영파씨 (YOUNG POSSE) [GO해]" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">고민할 시간이 아까워 GO해! 영파씨 (YOUNG POSSE) [GO해]</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16461'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026107104034.png" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="첫사랑의 설렘이 가득한, KO1KEYZ의 데뷔 싱글 [KO1KEYZ]" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">첫사랑의 설렘이 가득한, KO1KEYZ의 데뷔 싱글 [KO1KEYZ]</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16462'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026106104550.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="X:IN The 1st Studio Album [Chain Reaction] 뮤비 촬영 비하인드" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">X:IN The 1st Studio Album [Chain Reaction] 뮤비 촬영 비하인드</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16460'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026106104439.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="KickFlip(킥플립) [KICK OFF THE WALL Pt. 1] ‘미완성’ MV 촬영 현장 포토 독점 공개" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">KickFlip(킥플립) [KICK OFF THE WALL Pt. 1] ‘미완성’ MV 촬영 현장 포토 독점 공개</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16458'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026106104335.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="서로 다른 속도로 흐르는 두 마음의 이야기 [시, 분, 초] 자켓 촬영 현장 비하인드" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">서로 다른 속도로 흐르는 두 마음의 이야기 [시, 분, 초] 자켓 촬영 현장 비하인드</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '8^클래식 공감^16453'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026106104311.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="라틴아메리카로 향한 트리포노프의 시선, 〈Mi Historia Americana – Sur〉" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">라틴아메리카로 향한 트리포노프의 시선, 〈Mi Historia Americana – Sur〉</p>
+											
+											
+										
+										<span class="category normal text-gray">클래식 공감</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '12^방송^16452'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026101111024.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="사랑이 서툰 두 청춘의 맵고, 쓰고, 달콤한 로맨스💓 ENA <연애박사>" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">사랑이 서툰 두 청춘의 맵고, 쓰고, 달콤한 로맨스💓 ENA <연애박사></p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">방송</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '8^클래식 공감^16456'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202610111956.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="생명으로부터 피어난 음악, 아그네스 오벨의 〈The Meaning of Flowers〉" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">생명으로부터 피어난 음악, 아그네스 오벨의 〈The Meaning of Flowers〉</p>
+											
+											
+										
+										<span class="category normal text-gray">클래식 공감</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16455'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202610111927.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="내한공연을 순식간에 매진시킨 그 밴드, Penthouse (펜트하우스)" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">내한공연을 순식간에 매진시킨 그 밴드, Penthouse (펜트하우스)</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16451'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_20261011194.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="이젠 눈을 떠! 클로즈 유어 아이즈 ‘Open Your Eyes’ MV 촬영 비하인드" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">이젠 눈을 떠! 클로즈 유어 아이즈 ‘Open Your Eyes’ MV 촬영 비하인드</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16449'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202693011817.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="초승 (CHOSNG), 붉은 마음에 관한 다섯 가지 이야기, [이를테면 사랑]" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">초승 (CHOSNG), 붉은 마음에 관한 다섯 가지 이야기, [이를테면 사랑]</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16448'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202692311317.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="Keyveatz ‘A1ㄱ’ MV 비하인드 만나보기" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">Keyveatz ‘A1ㄱ’ MV 비하인드 만나보기</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16447'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202693011716.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="아홉 개의 파동이 만나 하나의 울림으로, CRAVITY EP [sonorous] 발매" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">아홉 개의 파동이 만나 하나의 울림으로, CRAVITY EP [sonorous] 발매</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16445'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026923113020.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="처음 그 날의 마음으로, FT아일랜드 처음 그 날처럼 녹음 비하인드" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">처음 그 날의 마음으로, FT아일랜드 처음 그 날처럼 녹음 비하인드</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '8^클래식 공감^16436'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026929112521.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="짧지만 충만했던 인생을 생각하며 – 존 콜트레인 탄생 100주년을 맞이하다" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">짧지만 충만했던 인생을 생각하며 – 존 콜트레인 탄생 100주년을 맞이하다</p>
+											
+											
+										
+										<span class="category normal text-gray">클래식 공감</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '6^MM JAZZ^16450'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026929112549.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="전통의 가치 충분히 수렴한 창의적 발상! New Jazz Underground 외" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">전통의 가치 충분히 수렴한 창의적 발상! New Jazz Underground 외</p>
+											
+											
+										
+										<span class="category normal text-gray">MM JAZZ</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16446'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_2026923112930.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="ALLDAY PROJECT The 2nd EP Album CRASH 발매" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">ALLDAY PROJECT The 2nd EP Album CRASH 발매</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+							<li>
+								<a href="#" onclick="goMenuByMgzLanding('26', '1^스페셜^16443'); return false;">
+									<div class="cover"><img src="https://image.genie.co.kr/Y/IMAGE/IMG_MUZICAT/main/mainContents_202692311295.jpg" onerror="this.src='https://image.genie.co.kr/imageg/mobile_web/common/default_img.png';" alt="일렉트로 펑크에 도전! 한층 성장한 보이넥스트도어의 ‘무대 본능’!" /></div>
+									<div class="info middle">
+										<div>
+											<p class="title ellipsis">일렉트로 펑크에 도전! 한층 성장한 보이넥스트도어의 ‘무대 본능’!</p>
+											
+											
+												<span class="icon event">이벤트</span>
+												
+											
+										
+										<span class="category normal text-gray">스페셜</span>
+										</div>
+									</div>
+								</a>
+							</li>
+						
+					</ul>
+				</section>
+			
+
+			
+			
+
+			
+			
+
+			
+			
+
+			
+		
+	
+</article>
+
+<script type="text/javascript">
+	function btnMhSlide(type, songIds, path, e) {
+		//alert("BTN");
+		if (type == "05") {
+			executeApp('31', songIds, true, vmd);
+		} else if (type == "162" || type == "24") {	// 추천선곡 case
+			executeApp('164', path, true, vmd);
+		} else {
+			executeApp('31', path, true, vmd);
+		}
+
+		e.preventDefault();
+		e.stopPropagation();
+	}
+</script>
+</div>
+
+<script type="text/javascript">
+	// 페이지 로딩시 실행
+	$(document).ready(function () {
+		// 에어브릿지 (메인 조회)
+		airbridgeEvent('airbridge.ecommerce.home.viewed');
+	});
+	function getNewList(code) {
+		$('[id^=new]').removeClass('active').addClass('text-lightgray');
+		$('[id=new_' + code + ']').addClass('active');
+
+		commonAjax({
+			url: '/newest/mainList',
+			paramData: {GenreCode:code, pageSize:20},
+			successFunction: function(result) {
+				var strHtml = '';
+				var list = result.albumList;
+				for (var idx = 0; idx < list.length; idx++) {
+					var item = list[idx];
+
+					strHtml += '<li>';
+					strHtml += '	<a href="/detail/albumInfo?axnm=' + item.albumId + '">';
+					strHtml += '		<div class="cover"><img src="https://image.genie.co.kr' + item.albumImgPath + '" onerror="this.src=\'https://image.genie.co.kr/imageg/mobile_web/common/default_img.png\';" alt="' + item.albumName + '" /></div>';
+					strHtml += '		<div class="info">';
+					strHtml += '			<strong class="track text-white ellipsis">' + item.albumName + '</strong>';
+					strHtml += '			<span class="artist text-palegray ellipsis">' + item.artistName + '</span>';
+					strHtml += '		</div>';
+					strHtml += '	</a>';
+					strHtml += '</li>';
+				}
+
+				strHtml += '<li class="more">';
+				strHtml += '<a href="/newest?GenreCode=' + code + '" class="btn-more">최신음악 더보기</a>';
+				strHtml += '</li>';
+
+				$('#newList').html(strHtml).scrollLeft(0);
+			}
+		});
+	}
+</script>
+
+
+
+
+
+
+
+	
+	
+		<footer class="footer">
+			<a href="#" class="btn-top text-lightgray">맨위로</a><br/>
+			<a href="#" onclick="fnAppInstall(); return false;" class="btn-app text-lightgray">지니 App 설치</a>
+			<ul class="menu">
+				<li><a href="#" onclick="FG_layerPopup.show($('#agreement')); return false;"
+					   class="text-darkgray">이용약관</a></li>
+				<li><a href="#" onclick="FG_layerPopup.show($('#privacy')); return false;" class="text-bold">개인정보처리방침</a>
+				</li>
+				<li><a href="#" onclick="FG_layerPopup.show($('#youthPolicy')); return false;" class="text-darkgray">청소년보호정책</a>
+				</li>
+				<li><a href="#" onclick="FG_layerPopup.show($('#locationPolicy')); return false;" class="text-darkgray">위치기반
+					서비스 이용약관</a></li>
+			</ul>
+			<dl class="info text-lightgray">
+				<dt class="hide">회사명</dt>
+				<dd>(주)케이티지니뮤직</dd>
+				<dt>대표이사:</dt>
+				<dd>서인욱</dd>
+			</dl>
+			<dl class="info text-lightgray">
+				<dt class="hide">주소</dt>
+				<dd>서울특별시 강남구 강남대로 456,4-9층(역삼동, 한석타워)</dd>
+				<dt>문의전화:</dt>
+				<dd><a href="tel:1577-5337">1577-5337</a> / help@ktmusic.co.kr</dd>
+			</dl>
+			<dl class="info text-lightgray">
+				<dt>사업자등록번호:</dt>
+				<dd>314-81-03453</dd>
+				<dt>통신판매업신고:</dt>
+				<dd>2013-서울강남-01302</dd><br />
+				<dt>호스팅제공자:</dt>
+				<dd>(주)케이티지니뮤직</dd>
+			</dl>
+			<p><small class="copyright text-palegray">&copy; KT GENIE MUSIC CORP. ALL RIGHTS RESERVED</small></p>
+		</footer>
+
+		<script type="text/javascript">
+			//마켓 실행
+			function getAgentInfo() {
+				var ua = navigator.userAgent.toLowerCase();
+
+				if(ua.match('iphone') != null || ua.match('ipod') != null || ua.match('ipad') != null) {
+					if(ua.indexOf( "naver" ) > -1 || ua.indexOf( "daum" ) > -1) {
+						return "iphone_hybrid"; //네이버, 다음
+					} else {
+						return "iphone";
+					}
+				} else if(ua.match('android') != null) {
+					if(ua.indexOf( "naver" ) > -1 || ua.indexOf( "daum" ) > -1) {
+						return "android_hybrid"; //네이버, 다음
+					} else {
+						return "android";
+					}
+				} else {
+					return "";
+				}
+			}
+
+			function fnAppInstall() {
+				executeApp('19', '', true);
+			}
+		</script>
+
+	
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/resources/commons/flowplayer/skin/skin.css">
+<link rel="stylesheet" href="/resources/commons/flowplayer/skin/skin_genie_video.css">
+
+<script type="text/javascript" src="/resources/commons/flowplayer/flowplayer.js?v=202609211500" ></script>
+<script type="text/javascript" src="/resources/commons/flowplayer/flowplayer.html5.audio.js" ></script>
+
+<!-- 비디오 플레이어 소스 -->
+<div id="fp-video" class="flowplayer fp-minimal" data-aspect-ratio="16:9" style="display:none;">
+	<video>
+		<source type="video/mp4" src="https://mobile-mv.genie.co.kr/check/mute.mp4">
+	</video>
+</div>
+<!--// 비디오 플레이어 소스 -->
+
+<script type="text/javascript" src="/resources/commons/jscript/player.common.js?v=202609211500" ></script>
+
+
+
+
+
+
+<!--
+[alert 팝업]
+ * common.js > fnShowAlert(msg)
+ * 메시지 예제
+   - 청소년 이용제한 안내 (19세 미만) : 청소년 이용제한 음원으로 이용 불가능 합니다.
+-->
+<div class="popup" id="layerAlert" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">알림</header>
+		<div class="pop-contents">
+			<p class="txt"></p>
+		</div>
+		<footer class="pop-ft">
+			<button type="button" class="btn-pop layer-close" title="확인">확인</button>
+		</footer>
+	</div>
+</div>
+
+<!--
+[confirm 팝업]
+ * common.js > fnShowConfirm(msg, callback)
+ * 메시지 예제
+   - 1분 미리 듣기 안내 (상품 미보유)  : 회원님께서는 1분 미리 듣기만 가능 합니다.<br />음악 감상 상품을 구매하시겠습니까?
+   - 1분 미리 듣기 안내 (비로그인)     : 1분 미리듣기만 가능합니다.<br />지금 재생하시겠습니까?
+   - 청소년 이용제한 안내 (비로그인)   : 청소년 이용제한 음원으로 로그인 후 이용 가능 합니다.<br />로그인 페이지로 이동하시겠습니까?
+   - 로그인 안내                      : 로그인 후 이용 가능 합니다.<br />로그인 페이지로 이동하시겠습니까?
+-->
+<div class="popup" id="layerConfirm" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">안내</header>
+		<div class="pop-contents">
+			<p class="txt"></p>
+		</div>
+		<footer class="pop-ft col-2">
+			<button type="button" class="btn-pop text-lightgray layer-close" title="취소">취소</button>
+			<a href="#" class="btn-pop" title="확인">확인</a>
+		</footer>
+	</div>
+</div>
+
+<div class="popup" id="layerPlayConfirm" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">안내</header>
+		<div class="pop-contents">
+			<p class="txt"></p>
+		</div>
+		<footer class="pop-ft col-2">
+			<button type="button" class="btn-pop text-lightgray layer-close" title="지금 재생하기">지금 재생하기</button>
+			<a href="#" class="btn-pop" title="로그인 하기">로그인 하기</a>
+		</footer>
+	</div>
+</div>
+
+<div class="popup" id="layerAnotherLogin" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">안내</header>
+		<div class="pop-contents">
+			<p class="txt">다른 기기에서 동일 아이디로 스트리밍 중입니다.<br>현재 기기에서 계속 재생하시겠습니까?</p>
+		</div>
+		<footer class="pop-ft col-2">
+			<button type="button" class="btn-pop text-lightgray layer-close" title="취소" onclick="fnStopAnotherIP(); return false;">취소</button>
+			<a href="#" class="btn-pop" title="확인" onclick="fnAnotherIP(); return false;">확인</a>
+		</footer>
+	</div>
+</div>
+
+<!--
+[toast 팝업]
+* common.js > fnShowToast(msg)
+* 메시지 예제
+- 음악감상 차감 안내 : <span class="text-blue">1곡 차감</span>되어 <span class="text-blue">98곡</span> 남음
+-->
+<div class="toast-popup" id="layerToast" style="display:none;">
+	<div class="pop-contents text-white">
+		<p class="txt"></p>
+	</div>
+	<button type="button" class="btn-close layer-close" title="닫기">닫기</button>
+</div>
+
+<!--
+[toast confirm 팝업]
+ * common.js > fnShowToastConfirm(msg, callback)
+ * 메시지 예제
+   - 음악감상 차감 안내 : 음악감상 차감형 상품을 이용 중입니다. 재생 시 곡이 차감됩니다.
+-->
+<div class="toast-popup" id="layerToastConfirm" style="display:none;">
+	<div class="pop-contents text-white">
+		<p class="txt text-center"></p>
+	</div>
+	<footer class="pop-ft text-center">
+		<button type="button" class="btn-pop layer-close text-lightgray" title="취소하기">취소하기</button>
+		<a href="#" class="btn-pop btn-blue" title="확인하기">확인하기</a>
+	</footer>
+	<button type="button" class="btn-close layer-close" title="닫기">닫기</button>
+</div>
+
+<!-- 신고하기 -->
+<div class="popup" id="layerDeclare" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">신고하기</header>
+		<div class="pop-contents">
+			<ul class="list-border text-center">
+				<li>광고/도배</li>
+				<li>욕설/비방/불건전</li>
+				<li>기타</li>
+			</ul>
+		</div>
+		<footer class="pop-ft">
+			<button type="button" class="btn-pop text-lightgray layer-close" title="취소">취소</button>
+		</footer>
+	</div>
+</div>
+
+<!-- 공유하기 -->
+<div class="popup full" id="layerShare" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+	var vmd = "M";
+	var iMemUno = "";
+	var isMemStatus = "0";
+	var genieDomain = "https://mw.genie.co.kr";
+	var genieSSLurl = "https://mw.genie.co.kr";
+	var memberSSLurl = "//member.genie.co.kr";
+	var svnVer = FG_cookie.get("apvn");
+	var sAgentType = FG_cookie.get("svc");
+
+	if (vmd == "") {
+		vmd = "M";
+	}
+
+	if (svnVer == "") {
+		svnVer = 0;
+	}
+</script>
+
+
+
+<!-- custom js / css -->
+<script src="https://developers.kakao.com/sdk/js/kakao.min.js"></script>
+<script src="/resources/commons/jscript/kakao.link.js" ></script>
+
+<!-- HEADER -->
+<header class="header fixed">
+	<div class="gnb">
+		<div id="share_close" class="close"><a href="#" class="layer-close">닫기</a></div>
+		<h1 class="title text-center ellipsis" id="shareTitle">공유하기</h1>
+	</div>
+</header>
+<!--// HEADER -->
+<section class="share scroll-wrap">
+	<div class="title text-white">
+		<h2 class="txt ellipsis"></h2>
+		
+    </div>
+    <div>
+        <h3 class="hide">공유하기</h3>
+        <ul class="list-sns clearfix">
+            <li><a href="#" id="sns_fb" class="btn-fb">페이스북</a></li>
+            <li><a href="#" id="sns_kt" class="btn-kakao">카카오톡</a></li>
+            <li><a href="#" id="sns_tw" class="btn-twitter">트위터</a></li>
+            <li><a href="#" id="sms_send" class="btn-sms">문자발송</a></li>
+            <li><a href="#" class="btn-copy">링크복사</a></li>
+        </ul>
+        <div class="copy-url">
+            <label for="txt_url" class="blind">링크 주소 복사</label>
+            <input type="text" id="txt_url" name="" class="ipt" readonly="readonly" value=""/>
+            <p class="desc text-darkgray">링크 복사가 안될 경우 위의 URL을 복사하여 공유하실 수 있습니다.</p>
+        </div>
+    </div>
+</section>
+<script>
+    setShare();
+
+    var snsType = "";
+    $(document).ready(function () {
+
+        //kakao init
+        Kakao.init('3d95e91552f8708aaf3ef3194a7b0544');
+
+        fnSnsLinkV2("", "");
+
+        $("#sns_tw").click(function () {
+            fnSnsShare('T', "", "", "", "", "https://image.genie.co.kr");
+            return false;
+        });
+
+        $("#sns_fb").click(function () {
+            fnSnsShare('F', "", "", "", "", "https://image.genie.co.kr");
+            return false;
+        });
+
+        $("#sns_kt").click(function () {
+            fnSnsShare('K', "", "", "", "", "https://image.genie.co.kr");
+            return false;
+        });
+
+        $("#sms_send").click(function () {
+            fnSnsShare('S', "", "", "", "", "https://image.genie.co.kr");
+            return false;
+        });
+
+        $("#share_close").click(function () {
+            var url = location.href;
+            if (url.indexOf("/share") > -1) {
+                history.back();
+                return false;
+            }
+        });
+
+        // 공유하기 내용 50자로 제한
+        /*$('#snsContent').on('keyup', function () {
+            if($(this).val().length > 50) {
+                $(this).val($(this).val().substring(0, 50));
+            }
+        });*/
+    });
+
+    //통합검색 결과에서 SNS 링크 공유 시 링크 URL을 아티스트, 앨범 곡 상세로 이동
+    function fnSnsLinkV2(varSnsType, varSnsSeq) {
+        var shareUrl = "http://app.genie.co.kr/sns/f_getGenie",
+            _lt = "",
+            _lp = "";
+
+        switch (varSnsType.toLowerCase()) {
+            case "artist":
+				_lt = "07";
+				_lp = varSnsSeq;
+				snsType = "아티스트";
+				break;
+
+			case "album":
+				_lt = "05";
+				_lp = varSnsSeq;
+				snsType = "앨범";
+				break;
+
+			case "song":
+				_lt = "06";
+				_lp = varSnsSeq;
+				snsType = "곡";
+				break;
+
+			case "today":
+				_lt = "24";
+				_lp = varSnsSeq;
+				snsType = "추천";
+				break;
+
+			case "magazine":
+				_lt = "26";
+				_lp = varSnsMgzPram;
+				snsType = "매거진";
+				break;
+
+			case "playlist":
+				_lt = "162";
+				_lp = varSnsSeq;
+				snsType = "추천선곡";
+				break;
+
+			case "video":
+				_lt = "39";
+				_lp = varSnsSeq;
+				snsType = "영상";
+				break;
+
+			case "broadcast":
+				_lt = "12";
+				_lp = varSnsSeq;
+				snsType = "방송";
+				break;
+		}
+
+		if(_lp != "") {
+			shareUrl = shareUrl + "?landingtype=" + _lt + "&landingtarget=" + _lp;
+
+			var m = "/api/makeShortUrl"
+			var n = "post";
+			var o = "lurl=" + escape(shareUrl);
+			sharFlag = "s";
+			$.ajax({
+				type: n,
+				url: m,
+				contentType: "application/x-www-form-urlencoded; charset=euc-kr",
+				data: o,
+				dataType: "json",
+				error: function (a, b) {
+					fnShowAlert("SNS 공유 처리 중 에러가 발생하였습니다.");
+				},
+				success: function (k) {
+					var RetCode = k.Result.RetCode;
+					if (RetCode == "0" ){
+						if (k.DataSet) {
+							snsSharUrl = URLDecode(k.DataSet.S_URL);
+
+							if (snsSharUrl.indexOf("http") < 0) {
+								snsSharUrl = "http://" + snsSharUrl;
+							}
+
+							$("#txt_url").val(snsSharUrl);
+
+							return false;
+
+							/*if (snsFlag == "F"){
+							 strSiteUrl = "http://www.facebook.com/sharer.php?u="+sharUrl+"&t=" + encodeURIComponent(""+strMsg+" ") ;	// 구버전
+							 window.open(strSiteUrl);
+							 }else if (snsFlag == "T"){
+							 var RAND = Math.floor(Math.random() * 10);
+							 strSiteUrl = "http://twitter.com/share?nocache=" + RAND+"&url=" + sharUrl+"&text="+encodeURIComponent("[" +strMsg+"] "+sharUrl);
+							 window.open(strSiteUrl);
+							 }*/
+						}
+					}
+				}
+			});
+		}
+	}
+
+	//SNS 공유하기
+	function fnSnsShare(varSnsFlag, varSnsType, varSnsSeq, varSNSTitle, varSNSContents, varSNSImg){
+		//varSnsFlag : F(페이스북), T(트위터), K(카카오톡), S(문자)
+
+		if (varSnsFlag == "S" && iMemUno == "") {
+			fnShowConfirm('로그인 후 이용 가능 합니다.<br />로그인 페이지로 이동하시겠습니까?', null, fnShareGoLogin);
+			return;
+		}
+
+		var varSnsTitle = "";
+		/*if ($.trim(varSNSContents) == "" && varSnsFlag != "F") {
+			fnShowAlert("내용을 입력해 주세요.");
+			$("#snsContent").focus();
+			return false;
+		}*/
+
+		if (snsSharUrl != undefined && snsSharUrl.indexOf('genie.co.kr') > -1) {
+			if (varSnsFlag == "F"){
+				if (vmd == "A" && svnVer >= 40000){
+					//alert("vmd:"+vmd);
+					executeApp("150",varSNSContents +"^"+snsSharUrl , true, "A");
+					//executeApp("150",varSnsTitle + " " + varSNSContents +"^"+snsSharUrl , true, "A");
+				}
+				else{
+					//strSiteUrl = "https://www.facebook.com/sharer/sharer.php?s=100&p[url]="+snsSharUrl+"&p[images][0]="+encodeURIComponent(varSNSImg)+"&p[title]="+ encodeURIComponent(varSNSTitle) +"&p[summary]="+encodeURIComponent(varSNSContents);
+					strSiteUrl = "https://www.facebook.com/dialog/share?app_id=1850116821891295&display=popup&href="+snsSharUrl+"&redirect_uri=";
+					window.open(strSiteUrl, 'sharer','toolbar=0,status=0,width=1000,height=600');
+				}
+			} else if (varSnsFlag == "T"){
+				varSnsTitle = "[genie][공유]" + varSNSTitle;
+				varSNSContents = varSnsTitle + "\r\n" + varSNSContents;
+
+				//ios일경우 인코딩
+                var _Agent = getAgentInfo();
+                if (vmd == "A" && (_Agent == 'iphone' || _Agent == 'iphone_hybrid')) {
+                    varSNSContents = encodeURIComponent(varSNSContents);
+                }
+
+                strSiteUrl = "https://twitter.com/intent/tweet?text=" + encodeURIComponent(varSNSContents) + "&url=" + snsSharUrl + "";
+
+                if (vmd == "A" && varSNSContents == "") {
+                    executeApp('98', strSiteUrl, true, vmd); //웹뷰일경우 처리 페이지로 이동 08.18
+                } else if (vmd == "A") {
+                    //location.href = strSiteUrl;
+                    executeApp('98', strSiteUrl, true, vmd);
+                } else {
+                    window.open(strSiteUrl);
+                }
+            } else if (varSnsFlag == "K") {
+                //alert(snsSharUrl + ":" + varSNSTitle + ":" + varSNSImg + ":" + varSNSContents);
+                if ($.trim(varSNSContents) != "") {
+                    varSNSContents = "[" + varSNSContents + "]";
+                }
+
+                if (varSnsSeq == "10058")
+                    varSNSImg = "https://image.genie.co.kr/imageg/mobile_web/magazine/share/genieSonata.jpg";
+
+                // 2018-06-11  카카오 링크 교체 (이강우)
+                Kakao.Link.sendDefault({
+                    objectType: 'feed',
+                    content: {
+                        title: varSNSTitle,
+                        description: varSNSContents,
+                        imageUrl: varSNSImg,
+                        imageWidth: 300,
+                        imageHeight: 300,
+                        link: {
+                            mobileWebUrl: snsSharUrl
+                        }
+                    },
+                    buttons: [
+                        {
+                            title: '지니 바로가기',
+                            link: {
+                                mobileWebUrl: snsSharUrl
+                            }
+							}
+						],
+						fail: function() {
+							alert('KakaoLink is currently only supported in iOS and Android platforms.');
+						}
+				});
+				return false;
+			} else if (varSnsFlag == "S"){
+				var memName = "";
+
+				//var content = '[genie]%0D%0A[발신 메시지]%0D%0A' + varSNSContents + '%0D%0A' + memName + '님이%0D%0A♬' + snsType + '♬♪을%0D%0A공유 합니다.%0D%0A' + varSNSTitle + '%0D%0A%0D%0A아래의 주소를 선택해 주세요.%0D%0A' + snsSharUrl;
+				var content = '[genie]\r\n[발신 메시지]\r\n' + varSNSContents + '\r\n[' + snsType + ']을(를)\r\n공유 합니다.\r\n' + varSNSTitle + '\r\n\r\n아래의 주소를 선택해 주세요.\r\n' + snsSharUrl;
+				var _Agent = getAgentInfo();
+
+				if (vmd == "A" && sAgentType == "IV") {
+					content = content.replace(/%0D%0A/gi, "\r\n");
+				}
+
+				//sms 특수문자 인코딩 처리
+				if (vmd == "M") {
+					if (_Agent != 'iphone' && _Agent != 'iphone_hybrid') {
+						content = content.replace(/&/gi, "＆");
+					}
+					content = encodeURIComponent(content);
+				}
+
+				if (vmd == "A" && svnVer >= 40000) {
+					goMenuByLanding("153", content);
+					return false;
+				} else if (_Agent == 'iphone' || _Agent == 'iphone_hybrid') {
+					location.href = "sms:&body=" + content;
+				} else {
+					//content = encodeURIComponent(content);
+					location.href = "sms:?body=" + content;
+				}
+
+				/*$.ajax({
+					url: "/Includes/Commons/Module/jSmsSend",
+					type: "POST",
+					datType: "json",
+					data: {title:varSNSTitle, content:content},
+					success: function(result) {
+						if (result.RetCode == "0") {
+							fnShowAlert("공유 문자가 발송되었습니다.");
+						} else {
+							fnShowAlert("필수파라메타가 없습니다.");
+							return false;
+						}
+					},
+					error: function(code, msg) {
+						alert("code: " + code + ", message: " + msg);
+					}
+				});*/
+            }
+            //$("#snsContent").val("");
+            return false;
+        } else {
+            fnShowAlert("필수 파라메타가 없습니다.");
+            return false;
+        }
+    }
+
+    function fnShareGoLogin() {
+        var rtnUrl = location.href;
+
+		if (vmd == "A"){
+			executeApp("20", genieDomain + rtnUrl, true, vmd);
+			return false;
+		}else{
+			location.href = "/login/login?rtnURL=" + escape(rtnUrl);
+		}
+	}
+</script>
+		</div>
+	</div>
+</div>
+<!--// 공유하기 -->
+
+<!-- 개인정보 제3자 제공 동의 -->
+<div class="popup pop-large" id="layerAgreeInfo" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">안내</header>
+		<div class="pop-contents narrow">
+			<small class="note">※ 당첨 시, 배송될 주소를 확인해 주세요.</small>
+			<div class="box_dl">
+				<h4>회원정보 확인</h4>
+				<dl>
+					<dt>아이디</dt>
+					<dd id="sMemid"></dd>
+				</dl>
+				<dl>
+					<dt>이메일</dt>
+					<dd id="sMemEmail"></dd>
+				</dl>
+				<dl>
+					<dt>핸드폰</dt>
+					<dd id="sMemPhoneNum"></dd>
+				</dl>
+				<dl class="last">
+					<dt>주소</dt>
+					<dd id="sMemAddress"></dd>
+				</dl>
+			</div>
+			<ul class="text-darkgray list blt">
+				<li>회원정보 변경이 필요하신 분들께서는<br /><span class="text-red">내정보 &gt; 회원정보 수정</span> 에서 주소를 변경해 주세요.</li>
+			</ul>
+		</div>
+		<footer class="pop-ft col-2">
+			<button type="button" class="btn-pop text-lightgray layer-close" onclick="fnEventJoinReply('X'); return false;" title="취소">취소</button>
+			<a href="#" id="evtConfirmBtn" class="btn-pop layer-close" title="동의 (이벤트 참여)" onclick="fnEventJoinReply('O'); return false;">확인(이벤트 참여)</a>
+		</footer>
+	</div>
+</div>
+
+<div class="popup pop-large" id="noneMyInfoSub" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">안내</header>
+		<div class="pop-contents">
+			<article class="agree-information">
+				<h2 class="sub-title" style="padding-top:0.9791666666em;">이벤트 응모를 위해<br />안내 사항을 확인해주세요.</h2>
+				<section class="info-wrap">
+					<div class="info">
+						<ul class="list blt text-darkgray" style="font-size:0.875em;margin-top:1.516129032258em;">
+							<li>당첨안내 및 경품배송을 위해 주소와 연락처 등 회원정보가 정확한지 꼭 확인해주세요.</li>
+							<li>회원정보 미기재 시 당첨에서 제외 되며, 오입력으로 인한 경품 반송 시 재발송은 어려운 점 참고 부탁 드립니다.</li>
+							<li>이벤트 경품은 기획사 사정에 의해 변경 및 배송 지연 될 수 있습니다.</li>
+							<li>회원정보 수정이 필요하신 분들께서는, 반드시 이벤트 진행 기간 중에 <span class="text-red">[내정보>회원정보 수정]</span>에서 수정해주세요.</li>
+						</ul>
+					</div>
+				</section>
+			</article>
+		</div>
+		<footer class="pop-ft">
+			<a href="#" id="evtConfirmBtn" class="btn-pop text-blue layer-close" title="확인" onclick="fnEventJoinReply('O'); return false;">확인</a>
+		</footer>
+	</div>
+</div>
+
+<div class="popup pop-large" id="noneMyInfo" style="display:none;">
+	<div class="pop-wrap">
+		<header class="pop-hd">안내</header>
+		<div class="pop-contents">
+			<article class="agree-information">
+				<h2 class="sub-title" style="padding-top:0.9791666666em;">이벤트 응모를 위해<br />회원님의<span class="text-blue">개인정보 제3자 제공에 동의</span>해주세요.</h2>
+				<section class="info-wrap">
+					<div class="info">
+						<dl class="list_t1">
+							<dt>개인정보를 제공받는자</dt>
+							<dd id="thirdPartyName" class="text-blue"></dd>
+							<dt>개인정보를 제공받는자의 개인정보 이용목적</dt>
+							<dd id="thirdPartyUse" class="text-blue"></dd>
+							<dt>제공하는 개인정보의 항목</dt>
+							<dd id="thirdPartyInfo"></dd>
+							<dt>개인정보를 제공받는 자의 개인정보 보유 및 이용기간</dt>
+							<dd id="thirdPartyPeriod" class="text-blue"></dd>
+						</dl>
+						<p class="desc text-darkgray" style="font-size:0.875em;"><strong>※ 개인정보 제3자 제공 동의를 거부할 수 있으며, 동의 거부 시 해당 이벤트에 참여할 수 없습니다.</strong></p>
+						<ul class="list blt text-darkgray" style="font-size:0.875em;">
+							<li>당첨안내 및 경품배송을 위해 주소와 연락처 등 회원정보가 정확한지 꼭 확인해주세요.</li>
+							<li>회원정보 미기재 시 당첨에서 제외 되며, 오입력으로 인한 경품 반송 시 재발송은 어려운 점 참고 부탁 드립니다.</li>
+							<li>이벤트 경품은 기획사 사정에 의해 변경 및 배송 지연 될 수 있습니다.</li>
+							<li>회원정보 수정이 필요하신 분들께서는, 반드시 이벤트 진행 기간 중에 <span class="text-red">[내정보>회원정보 수정]</span>에서 수정해주세요.</li>
+						</ul>
+					</div>
+				</section>
+			</article>
+		</div>
+		<footer class="pop-ft col-2">
+			<button type="button" class="btn-pop text-lightgray layer-close" onclick="fnEventJoinReply('X'); return false;" title="거부">거부</button>
+			<a href="#" id="evtConfirmBtn" class="btn-pop text-blue layer-close" title="동의 (이벤트 참여)" onclick="fnEventJoinReply('O'); return false;">동의(이벤트 참여)</a>
+		</footer>
+	</div>
+</div>
+<!--// 개인정보 제3자 제공 동의 -->
+
+<!-- 이용약관 -->
+<div id="agreement" class="popup full" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="gnb">
+					<div class="close"><a href="#" class="layer-close">닫기</a></div>
+					<h1 class="title text-center ellipsis layer-close" id="agreementTitle">서비스 이용약관</h1>
+				</div>
+			</header>
+			<!--// HEADER -->
+			<section class="agreement bg-gray text-gray scroll-wrap">
+				
+<div class="agree_area">
+	<h1>서비스 이용약관</h1>
+	<div>
+		<h3 id="agreement_1">제1장 총칙</h3>
+		<h4>제1조 [목적]</h4>
+		<p>이 약관은 주식회사 케이티지니뮤직( 이하 “회사”라 합니다)과 이용자 간에 “회사”가 제공하는 콘텐츠 서비스인 genie 서비스(이하 “서비스”라 합니다) 및 제반 서비스를 유선 또는 무선 인터넷 등의 수단으로 이용함에 있어 “회사”와 이용자 간의 권리, 의무에 관한 사항과 기타 필요한 사항을 규정하는 것을 목적으로 합니다.</p>
+		<h4>제2조 [용어의 정의]</h4>
+		<ol>
+			<li><span>①</span> 이 약관에서 사용하는 용어의 정의는 다음 각 호와 같습니다.
+				<ol>
+					<li><span>1.</span> “이용자”라 함은 “회사”가 제공하는 “서비스”에 유선 또는 무선 인터넷 등의 수단으로 접속하여 이 약관에 따라 “회사”가 제공하는 “콘텐츠” 및 제반 서비스를 이용하는 “회원” 및 “비회원”을 말합니다.</li>
+					<li><span>2.</span> “회원”이라 함은 “회사”와 이용계약을 체결하고 아이디(ID)를 부여 받은 “이용자”로서 “회사”의 정보를 지속적으로 제공받으며 “회사”가 제공하는 서비스를 이용할 수 있는 자를 말합니다.</li>
+					<li><span>3.</span> “비회원”이라 함은 “회원”이 아니면서 “회사”가 제공하는 서비스를 이용할 수 있는 자를 말하며, “회사”는 “회원”과 “비회원”에게 제공하는 서비스에 차별을 두어 제공할 수 있습니다.</li>
+					<li><span>4.</span> “아이디(ID)”라 함은 “회원” 식별과 “회원”의 서비스 이용을 위하여 “회원”이 선정하고 “회사”가 승인하는 영문자와 숫자의 조합을 의미합니다.</li>
+					<li><span>5.</span> “비밀번호(Password)”라 함은 “회원”이 부여 받은 “아이디(ID)”와 일치되는 “회원”임을 확인하고 비밀보호를 위해 “회원”자신이 정한 문자 또는 숫자의 조합을 말합니다.</li>
+					<li><span>6.</span> “콘텐츠”라 함은 『정보통신망 이용촉진 및 정보 보호 등에 관한 법률』 제2조 제1항 제1호의 규정에 의한 정보통신망에서 사용되는 부호, 문자, 음성, 음향, 이미지 또는 영상 등으로 표현된 자료 또는 정보로서, 그 보존 및 이용에 있어서 효용을 높일 수 있도록 전자적 형태로 제작 또는 처리된 것을 말합니다.</li>
+					<li><span>7.</span> “유료서비스”라 함은 “회원”이 일정 금액을 “결제”하고 이용할 수 있는 “콘텐츠” 서비스 또는 상품을 의미합니다.</li>
+					<li><span>8.</span> “지니캐시“라 함은 “회사”가 제공하는 다양한 “유료서비스”를 이용하기 위해 특정 결제수단 중 원하는 지불수단을 선택하여 현금처럼 지불할 수 있는 사이버 머니를 말하며, 현금 1원당 “지니캐시“ 1원의 비율로 충전됩니다.</li>
+					<li><span>9.</span> “게시물”이라 함은 “서비스”에 “회원”이 올린 글, 그림, 사진, 음악선곡리스트, 각종 파일과 링크, 각종 댓글 등의 정보의 총칭을 말합니다.</li>
+					<li><span>10.</span> “상품권”이란 “회사”가 온∙오프라인에서 발행한 “유료서비스” 이용권을 말하며, 사용방법은 “상품권” 또는 이용안내 페이지 등에 별도로 표기합니다.</li>
+				</ol>
+			</li>
+			<li><span>②</span> 본 조에서 정의된 용어 이외의 용어에 대해서는 관계 법령 및 서비스별 안내에서 정의하는 바에 따릅니다.</li>
+		</ol>
+		<h4>제3조 [신원정보 등의 제공]</h4>
+		<p>“회사”는 이 약관의 내용, 상호, 대표자 성명, 영업소 소재지 주소(소비자의 불만을 처리할 수 있는 곳의 주소를 포함), 전화번호, 전자우편주소, 사업자등록번호, 통신판매업 신고번호 및 개인정보보호책임자 등을 이용자가 쉽게 알 수 있도록 서비스 초기화면에 게시합니다. 다만, 약관 및 개인정보처리방침은 이용자가 연결화면을 통하여 볼 수 있도록 할 수 있습니다.</p>
+		<h4>제4조 [약관의 게시 등]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 이 약관을 “이용자”가 그 전부를 인쇄할 수 있고 이용과정에서 해당 약관의 내용을 확인할 수 있도록 기술 조치를 취합니다.</li>
+			<li><span>②</span> “회사”는 “이용자”가 “회사”와 이 약관의 내용에 관하여 질의 및 응답할 수 있도록 기술적 장치를 설치합니다.</li>
+		</ol>
+		<h4>제5조 [약관의 효력 및 개정]</h4>
+		<ol>
+			<li><span>①</span> 이 약관의 내용은 “회원” 가입 시 게재되거나 공지된 내용에 “회원”이 동의함으로써 그 효력이 발생합니다.</li>
+			<li><span>②</span> <strong>“회사”는 『콘텐츠산업 진흥법』, 『약관의 규제에 관한 법률』, 『정보통신망 이용촉진 및 정보보호 등에 관한 법률』, 『전자상거래 등에서의 소비자보호에 관한 법률』 등 관계 법령을 위배하지 않는 범위 내에서 필요 시 이 약관을 개정할 수 있으며, 약관을 개정할 경우에는 적용일자 및 개정사유를 명시하여 현행약관과 함께 서비스 초기화면에 그 적용일자 10일(“회원”에게 불리한 변경 또는 중대한 사항의 변경은 30일) 이전부터 적용일자 이후 상당한 기간 동안 공지하고, 기존 ”회원”에게는 개정약관, 적용일자 및 변경사유(중요 내용에 대한 변경인 경우 이에 대한 설명을 포함) 전자우편주소로 발송하고, 해당기간 동안 개정 약관의 적용에 대한 “회원”의 동의 여부를 확인합니다.</strong></li>
+			<li><span>③</span> <strong>“회사”가 제2항의 기간 동안 [거부의사를 표시하지 않으면 의사표시가 표명된 것으로 본다]는 뜻을 공지하였음에도 불구하고, “회원”이 명시적으로 거부의사를 표시하지 아니하는 경우 “회원”이 개정약관에 동의한 것으로 봅니다.</strong></li>
+			<li><span>④</span> 이 약관에 동의하지 않는 “회원”에게 “회사”는 약관을 적용하지 아니하고, “회원”은 “서비스” 이용을 중단하고 이용계약을 해지할 수 있습니다. 또한 기존 약관을 적용할 수 없는 특별한 사정이 있는 경우 “회사”가 이용계약을 해지할 수 있습니다.</li>
+		</ol>
+		<h4>제6조 [약관의 해석 및 약관 외 사항에 대한 규정]</h4>
+		<p>이 약관에 명시되지 않은 사항에 대해서는 『콘텐츠산업 진흥법』, 『전자문서 및 전자거래 기본법』, 『전자상거래 등에서의 소비자보호에 관한 법률』, 『약관의 규제에 관한 법률』, 『콘텐츠 이용자보호지침』 등 관계 법령 및 “회사”가 정한 서비스 이용 정책 등에 의합니다.</p>
+
+		<h3 id="agreement_2">제2장 서비스 이용 계약</h3>
+		<h4>제7조 [이용신청, 승낙 및 거절, 계약의 성립]</h4>
+		<ol>
+			<li><span>①</span> “회원”이 되고자 희망하는 “이용자”는 약관의 내용에 대하여 동의를 하고 “회원” 가입신청을 한 후 “회사”가 이러한 신청에 대하여 승낙함으로써 이용계약이 체결됩니다.</li>
+			<li><span>②</span> “회원”이 되고자 희망하는 “이용자”는 본 약관 동의와 함께 “회사”가 필요로 하는 정보를 정확히 작성하여 제출하여야 합니다.</li>
+			<li><span>③</span> “회사”는 다음 각 호의 어느 하나에 해당하는 사유가 있는 경우, “회원” 가입신청을 거절할 수 있습니다.
+				<ol>
+					<li><span>1.</span> 이용자 등록 사항을 누락하거나 오기하여 신청하는 경우</li>
+					<li><span>2.</span> “회원” 자격을 상실한 자로서, “회사”가 정한 일정 가입보류 기간이 경과되지 아니한 자</li>
+					<li><span>3.</span> 만 14세 미만의 자가 법정대리인의 동의를 얻지 않은 경우</li>
+					<li><span>4.</span> 회사가 정한 이용신청 요건이 충족되지 못한 경우</li>
+				</ol>
+			</li>
+			<li><span>④</span> “회사”는 서비스 관련 설비의 여유가 없거나 기술상 또는 업무상 문제가 있는 경우에는 가입신청의 승낙을 유보하거나 거절할 수 있습니다.</li>
+			<li><span>⑤</span> 제3항 또는 제4항에 따라 회원가입 신청에 대하여 유보하거나 거절한 경우 “회사”는 이를 신청자에게 즉시 알려야 합니다. 다만, “회사”가 고의 또는 과실 없이 신청자에게 통지할 수 없는 경우에는 그러하지 않습니다.</li>
+			<li><span>⑥</span> <strong>“회사”는 『정보통신망 이용촉진 및 정보보호 등에 관한 법률』, 『청소년보호법』, 『영화 및 비디오물의 진흥에 관한 법률』 등의 규정에 의하여 연령 및 등급에 제한을 둘 수 있으며, 별도의 성인인증의 절차를 실시할 수 있습니다.</strong></li>
+		</ol>
+		<h4>제8조 [만 14세 미만 미성년자의 “회원” 가입에 관한 특칙]</h4>
+		<ol>
+			<li><span>①</span> 만 14세 미만의 “이용자”는 개인정보의 수집 및 이용목적에 대하여 충분히 숙지하고 부모 등 법정대리인의 동의를 얻은 후에 “회원”가입을 신청하고 본인의 개인정보를 제공하여야 합니다.</li>
+			<li><span>②</span> “회사”는 부모 등 법정대리인의 동의에 대한 확인절차를 거치지 않은 만 14세 미만 이용자에 대하여는 가입을 취소 또는 불허합니다.</li>
+			<li><span>③</span> 만 14세 미만 “이용자”의 부모 등 법정대리인은 미성년자에 대한 개인정보의 열람, 정정, 갱신을 요청하거나 “회원”가입에 대한 동의를 철회할 수 있으며, 이러한 경우에 “회사”는 지체 없이 필요한 조치를 취해야 합니다.</li>
+		</ol>
+		<h4>제9조 [“회원” 정보의 수정 및 관리]</h4>
+		<ol>
+			<li><span>①</span> “회원”은 “회원” 정보확인 화면을 통해서 언제든지 개인정보를 열람하고 수정할 수 있으며, 이때 서비스 관리를 위해 필요한 실명, 아이디 등은 수정이 불가합니다.</li>
+			<li><span>②</span> “회원”은 가입신청 시 기재한 사항이 변경되었을 경우, 직접 회원정보 수정 등의 방법으로 수정하여야 합니다.</li>
+			<li><span>③</span> “회사”는 “회원”이 제2항에 따라 회원정보를 수정하지 않아 발생한 불이익에 대하여 책임을 지지 않습니다.</li>
+			<li><span>④</span> “회원”은 자신의 “아이디”와 “비밀번호”에 관하여 관리할 책임이 있으며, 제3자에게 이를 이용하도록 하여서는 안됩니다</li>
+			<li><span>⑤</span> “회사”는 “회원”의 “아이디”가 개인정보유출 우려가 있거나, 반사회적 행위 및 미풍양속을 저해하거나 “회사” 및 “회사”의 운영자로 오인하게 할 수 있도록 사용되는 경우, “아이디”의 이용을 제한 할 수 있습니다.</li>
+			<li><span>⑥</span> “회원”은 자신의 “아이디”가 도용되거나 제3자가 사용하고 있는 사실을 안 때에는 지체 없이 이를 “회사”에 통지하여야 하며, 통지하지 아니하거나 통지한 경우에도 “회사”의 정책에 따르지 않은 경우 발생한 결과에 대하여 “회사”는 책임을 지지 않습니다.</li>
+		</ol>
+		<h4>제10조 [“회원”에 대한 통지]</h4>
+		<ol>
+			<li><span>①</span> "회사”는 “회원”에 대한 통지는 이메일, 문자 메시지, 서비스 알림 메시지 등 기타 유효한 전자적 방법에 의합니다</li>
+			<li><span>②</span> “회사”는 “회원” 전체에 대하여 통지할 경우에는 10일 이상의 기간 동안 “서비스”의 홈페이지를 통해서 게시하거나 팝업화면 등을 제시함으로써 제1항의 통지에 갈음할 수 있습니다. 다만, 제5조에 따른 약관의 변경 또는 “회원” 본인과 관련된 중요한 사항에 대하여는 제1항에서 정한 통지를 합니다.</li>
+		</ol>
+		<h4>제11조 [“회원”탈퇴 및 자격 상실 등]</h4>
+		<ol>
+			<li><span>①</span> “회원”은 “회사”에 언제든지 탈퇴를 요청할 수 있으며, “회사”는 즉시 “회원” 탈퇴 요청을 처리합니다.</li>
+			<li><span>②</span> “회원”이 다음 각 호의 사유에 해당하는 경우, “회사”는 “회원” 자격을 제한 및 정지시킬 수 있습니다. 이 경우 “회사”는 “회원”에게 해당 사유를 통지합니다.
+				<ol>
+					<li><span>1.</span> 가입신청 또는 “콘텐츠” 이용 신청 또는 변경 시 허위내용을 등록한 경우</li>
+					<li><span>2.</span> “회사”가 회원가입 후 또는 최종 사용일 이후 1년 동안 서비스 사용이력이 없는 회원에 대해 사용의사를 묻는 고지를 하고, “회사”가 정한 기한 내에 “회원”의 답변 없는 경우</li>
+					<li><span>3.</span> 다른 사람이 “회사”의 서비스를 이용하는 것을 방해하거나 그 정보를 도용하는 등 전자상거래 질서를 위협하는 경우</li>
+					<li><span>4.</span> “회사”가 금지한 정보(컴퓨터 프로그램 등)의 사용, 송신 또는 게시</li>
+					<li><span>5.</span> “회사” 또는 제3자의 저작권 등 지식 재산권에 대한 침해</li>
+					<li><span>6.</span> “회사” 또는 제3자의 명예를 손상시키거나 업무를 방해하는 행위</li>
+					<li><span>7.</span> “회사”를 이용하여 법령 또는 이 약관이 금지하거나 공서양속에 반하는 행위를 하는 경우</li>
+					<li><span>8.</span> “회사”의 기술적 보호조치를 회피 혹은 무력화 하는 행위</li>
+					<li><span>9.</span> “회사”가 제공하는 서비스를 정상적인 용도 이외 또는 부당한 방법으로 서비스를 이용하는 행위</li>
+					<li><span>10.</span> “회사”의 영업상 방해를 목적으로 서비스를 비정상적으로 악용하는 행위</li>
+				</ol>
+			</li>
+			<li><span>③</span> “회사”가 “회원” 자격을 제한, 정지 시킨 후, 동일한 행위가 2회 이상 반복되거나 30일 이내에 그 사유가 시정되지 아니하는 경우, “회사”는 “회원” 자격을 상실시킬 수 있습니다.</li>
+			<li><span>④</span> “회사”가 “회원” 자격을 상실시키는 경우에는 “회원”등록을 말소합니다. 이 경우 “회원”에게 이를 통지하고, “회원” 등록 말소 전에 최소한 30일 이상의 기간을 정하여 소명하고, 그 내용이 정당한 경우 “회사”는 즉시 “회원”의 자격을 복구합니다. 단, “회사”가 정한 소명기간 동안 소명치 않은 경우 회원 등록 말소 동의로 간주합니다.</li>
+			<li><span>⑤</span> “회사”는 “회원”이 탈퇴하거나 회원자격을 상실하는 경우 “회원”의 개인정보를 『정보통신망 이용촉진 및 정보보호 등에 관한 법률』 등 관계 법령에서 정한 범위와 절차에 따라 파기합니다.</li>
+			<li><span>⑥</span> 회사는 “서비스”를 1년 동안 이용하지 아니한 “회원”의 개인정보를 보호하기 위하여 다른 “회원”의 개인정보와 분리하여 별도로 저장·관리하되, “회원”이 “서비스” 재이용을 원하는 경우 “회원”의 본인확인절차를 거쳐 재이용 할 수 있도록 합니다.</li>
+		</ol>
+		<h4>제12조 [개인정보의 보호]</h4>
+		<p>“회사”는 관계 법령이 정하는 바에 따라서 “회원” 등록정보를 포함한 “회원”의 개인정보를 보호하기 위하여 노력합니다. “회원”의 개인정보보호에 관해서는 관계 법령 및 “회사”가 정하는 “개인정보처리방침”에 정한 바에 따릅니다. 다만, “회사”의 사이트 이외에 단순 링크사이트, 제휴된 사이트 등의 경우에는 “회사”의 개인정보처리방침이 적용되지 아니합니다.</p>
+
+		<h3 id="agreement_3">제3장 서비스 이용</h3>
+		<h4>제13조 [서비스의 이용개시]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 “회원”의 이용 신청을 승낙한 때부터 서비스를 개시합니다. 단, 유료서비스의 경우 “결제“가 완료된 후 이용 가능합니다.</li>
+			<li><span>②</span> “회사”의 업무상 또는 기술상의 장애로 인하여 서비스를 개시하지 못하는 경우에는 사이트에 공지하거나 “회원”에게 이를 통지합니다.</li>
+			<li><span>③</span> “회사” 는 각 서비스 이용에 필요한 최소 또는 권장 기술 사양 정보를 각 서비스별 홈페이지를 통해 제공합니다.</li>
+			<li><span>④</span> “회원”은 각 서비스 이용을 위해 기기 사양, 유무선 통신망의 품질 등이 해당 서비스 이용에 적합한지 여부를 확인하여야 합니다. 서비스 업데이트와 기술 발전 등의 환경 변화로 서비스 이용에 필요한 기술 사양 정보가 변경될 수 있으며,“회사”는 그 내용을 서비스 공지사항 등에 기재하는 것으로 갈음하고, 기술 사양 정보의 변경으로 인한 책임을 부담하지 않습니다.</li>
+		</ol>
+		<h4>제14조 [유료서비스의 이용 및 계약의 성립]</h4>
+		<ol>
+			<li><span>①</span> “회원”이 “회사”에 대하여 “유료서비스” 이용 신청을 하고 “회사”가 이를 승낙함으로써 “유료서비스”에 대한 이용계약이 성립됩니다.</li>
+			<li><span>②</span> “회사”는 “유료서비스” 결제 전에 다음 각 호의 사항에 관하여 “회원”이 정확하게 이해하고 실수 또는 착오 없이 거래할 수 있도록 정보를 제공합니다.
+				<ol>
+					<li><span>1.</span> 해당 “유료서비스”의 내용, 가격, 이용기간, 이용방법, 청약철회 및 해지 조건 및 그 방법, 환불에 관한 사항 및 유료서비스의 선택과 관련한 사항</li>
+					<li><span>2.</span> “콘텐츠” 목록의 열람 및 선택</li>
+					<li><span>3.</span> 청약철회가 불가능한 “콘텐츠”에 대해 “회사”가 취한 조치에 관련한 내용에 대한 확인</li>
+					<li><span>4.</span> “콘텐츠”의 이용신청에 관한 확인 또는 “회사”의 확인에 대한 동의</li>
+					<li><span>5.</span> 결제방법의 선택</li>
+				</ol>
+			</li>
+			<li><span>③</span> “회원”은 “회사”가 지정하는 지불수단으로 “유료서비스”를 이용할 수 있으며, 각종 프로모션이나 이벤트 등을 통하여 발행된 쿠폰 또는 “회사”가 발행한 “상품권” 등을 이용하여 “유료서비스”를 이용할 수 있습니다.</li>
+			<li><span>④</span> 해당 “유료서비스”에 대한 세부 이용조건은 상품 안내 및 구매 페이지와 상품 보관함 페이지에서 안내합니다.</li>
+			<li><span>⑤</span> “회사”는 “회원”의 “유료서비스” 이용신청이 다음 각 호에 해당하는 경우에는 승낙하지 않거나 승낙을 유보할 수 있습니다.
+				<ol>
+					<li><span>1.</span> 허위의 정보를 기재하거나, “회사”가 제시하는 필수 내용을 기재하지 않은 경우</li>
+					<li><span>2.</span> 미성년자가 청소년보호법에 의해서 이용이 금지되는 “콘텐츠”를 이용하고자 하는 경우</li>
+					<li><span>3.</span> 서비스 관련 설비의 여유가 없거나, 기술상 또는 업무상 문제가 있는 경우</li>
+				</ol>
+			</li>
+			<li><span>⑥</span> “회사”의 승낙은 제10조 제1항의 수신확인통지형태로 “회원”에게 이용신청에 대한 확인 및 서비스제공 가능여부, 이용신청의 정정, 취소 등에 관한 정보 등을 포함하여 발송하며, 도달한 시점에 “유료서비스” 이용계약이 성립한 것으로 봅니다</li>
+			<li><span>⑦</span> “회사”가 제공하는 상품 중 각 음원권리자들의 이용허락 여부에 따라 제공되는 시기가 달라질 수 있습니다.</li>
+			<li><span>⑧</span> 무선으로 “유료서비스” 이용시의 데이터량에 따른 요금은 “회사”가 별도로 청구하지 않으며, “회원”이 가입한 이동통신사가 청구합니다.</li>
+			<li><span>⑨</span> 일부 “유료서비스”는 중복사용이 불가할 수 있습니다.</li>
+			<li><span>⑩</span> 일부 음원의 경우에는 권리자의 요청에 따라 음원의 이용금액(또는 차감 곡수)이 상이하거나 단일 음원 단위로 판매될 수 있습니다.</li>
+		</ol>
+		<h4>제15조 [음악감상 상품]</h4>
+		<p>음악감상 상품은 결제 후, 이용 시작일로부터 “서비스”가 제공하는 음악듣기, 뮤직비디오 등의 음악감상서비스를 일정기간 동안 횟수 제한 없이 이용하실 수 있는 기간제형과 이용시작일부터 일정 기간 동안 정해진 재생 횟수만큼 음악듣기, 뮤직비디오 감상 등을 이용할 수 있는 차감형 및 일정기간 동안 감상한 곡에 대한 금액이 청구되는 후불제형으로 구분되며, 본 상품을 통해 제공되는 음악은 “회원”의 Device에 저장되지 않습니다.</p>
+		<h4>제16조 [다운로드 상품, 곡 다운로드]</h4>
+		<ol>
+			<li><span>①</span> 다운로드 상품은 회사에서 제공하는 DRM(Digital Right Management)이 적용되었거나 적용되어있지 않은 파일을 “회원”이 일정한 대가를 지급하고 다운받아 이용하실 수 있는 서비스를 의미합니다.</li>
+			<li><span>②</span> 다운로드 상품은 “결제“ 후, 이용시작일로부터 일정기간 동안 일정 수량으로 음악파일을 다운로드 할 수 있는 기간제형과 단일 곡을 다운로드 할 수 있는 개별형으로 구분되며, 기간제형의 경우, 해당기간 내 사용하지 않은 다운로드 수량에 대해서는 이월되지 않습니다.</li>
+			<li><span>③</span> 기간제형과 개별형 다운로드를 통해 구매한 곡은 서비스 내 조회할 수 있는 특정 페이지에 구매일로부터 보관 및 재다운로드 할 수 있습니다. 단, 권리사의 요청이 있는 경우 일부 구매한 곡에 대한 보관기간 및 재 다운로드 가능기간은 1년 또는 사이트에 명기된 기간으로 제한되며 이후에는 자동으로 삭제되고 복구되지 않습니다. 다만, 이벤트성으로 무상 제공된 곡의 경우에는 “회사”에서 정한 기간에 재다운로드가 가능합니다.</li>
+			<li><span>④</span> “회원”을 탈퇴하는 경우에는 재다운로드가 불가합니다.</li>
+			<li><span>⑤</span> 다운로드 서비스는 기기 등록 후 이용할 수 있으며, 등록 가능한 기기는 PC 3대 및 휴대폰, 태블릿PC 등을포함하는 기타 기기 2대를 합하여 총 5대입니다. 단, 특정 다운로드 전용 이용권의 경우 등록 가능 기기의 종류 및 대수가 제한될 수 있으며, 이는 이용권 구매페이지에 게시 및 안내합니다. 등록한 PC를 변경할 경우에는 월 1회에 한하여 1대의 PC를 변경 할 수 있습니다.</li>
+			<li><span>⑥</span> 일부 권리자의 요청에 따라 다운로드 및 전송이 불가한 곡이 있을 수 있으며, 다운로드 상품을 이용 중이시더라도, 일부 곡은 소유형 지원기기에서 재생 가능한 파일로만 다운로드 하실 수 있습니다.</li>
+			<li><span>⑦</span> 다운로드 상품 개별형의 경우에 영상파일, 이미지 파일 등의 묶음 형태로 판매가 가능하며, 이 경우 상품의 가격과 이용 가능한 Device를 달리할 수 있습니다.</li>
+		</ol>
+		<h4>제17조 [기간 임대형 다운로드 상품]</h4>
+		<ol>
+			<li><span>①</span> 기간 임대형 다운로드 상품이란 일정기간 동안만 재생이 가능하도록 DRM이 적용된 음악 파일을 다운받아 이용하실 수 있는 서비스를 뜻합니다.</li>
+			<li><span>②</span> 상품 이용 중 다운로드 하신 음악 파일은 스마트폰 어플리케이션 및 기간 임대형 지원기기에서만 이용가능하며(지적재산권 보호), 재생 유효 기간은 상품 사용 기간으로 제한됩니다.</li>
+			<li><span>③</span> 다운로드 이용 시 하나의 ID로 이용가능 Device수는 월 2대로 등록 제한되며 PC로의 다운로드 기능은 지원하지 않습니다.</li>
+		</ol>
+		<h4>제18조 [복합 상품]</h4>
+		<ol>
+			<li><span>①</span> 복합 상품은 음악감상 상품 기간제형과 다운로드 상품(NON-DRM) 기간제형 또는 기간임대형 다운로드 상품이 결합된 형태의 상품입니다.</li>
+			<li><span>②</span> 복합 상품 이용방법은 제15조 음악감상 상품의 기간제형, 제16조 다운로드 상품의 기간제형 및 제17조 기간임대형 다운로드 상품과 동일합니다.</li>
+		</ol>
+		<h4>제19조 [상품에 대한 이용기간의 약정]</h4>
+		<ol>
+			<li><span>①</span> “회원”은 제15조 내지 제18조의 상품에 대하여 일정기간 동안 각 상품을 이용하기로 약정 할 수 있습니다. “회사”는 약정한 기간 동안은 “회사”에서 정한 할인액을 적용하여 청구합니다.</li>
+			<li><span>②</span> 약정 상품의 이용 조건은 제15조 내지 제18조의 각 상품별 이용조건과 동일합니다.</li>
+			<li><span>③</span> 약정 기간 중 “회원”의 사정으로 인하여 이용계약을 해지하는 경우, “회사”에서 정한 할인반환금이 청구될 수 있습니다.</li>
+		</ol>
+		<h4>제20조 [DRM(Digital Right Management) 적용범위]</h4>
+		<ol>
+			<li><span>①</span> 기간 임대형 다운로드 상품으로 구매한 DRM 적용 파일은 상품 사용기간 동안 재생 및 반복 다운로드가 가능합니다.</li>
+			<li><span>②</span> DRM 파일의 이용권한은 타인에게 양도할 수 없습니다.</li>
+			<li><span>③</span> “회원”이 정상적인 방법을 통해 구매하여 다운로드한 파일은 PC, 휴대폰 단말기, 기타 플레이어 등 Device 특성에 따라 DRM 적용 여부가 다를 수 있습니다.</li>
+			<li><span>④</span> DRM이 적용되지 않은 파일은 모든 Device에서 기간제한 없이 재생 가능하지만, 일부 DRM 적용 파일의 다운로드 및 재생은 DRM이 적용된 Device(회사에서 지원하는 DRM을 지원하는 기기)에서만 가능합니다.</li>
+			<li><span>⑤</span> DRM 적용 파일의 다운로드 및 재생은 이동전화 서비스가 제공되지 않은 경우에는 제한될 수 있습니다.</li>
+		</ol>
+		<h4>제21조 [서비스의 변경 및 중지]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 운영상, 법률상, 기술상의 상당한 이유가 있는 경우, 관계 법령을 위반하지 않는 범위 내에서 서비스의 내용, 이용 방법, 지원기기 범위 등 서비스의 전부 또는 일부를 변경할 수 있습니다.</li>
+			<li><span>②</span> “회사”는 제1항의 경우, 변경될 서비스의 내용 및 제공일자를 제5조에서 정한 방법으로 회원에게 통지하고, “회원”의 선택에 따라 환불 또는 다른 상품으로 전환할 수 있는 서비스를 제공합니다.</li>
+			<li><span>③</span> “회사”는 무료로 제공하는 서비스의 전부 또는 일부를 “회사”의 정책 및 운영의 필요상 변경하거나 중단할 수 있으며, 이에 대하여 “회원”에게 별도의 보상을 하지 않습니다.</li>
+			<li><span>④</span> “회사”는 다음 각 호에 해당하는 사유가 발생한 경우, 서비스의 전부 또는 일부를 일시적으로 제한하거나 중지할 수 있으며, 이 경우 해당 내용을 사전에 “회원”에게 고지하거나, 사전 고지가 어려운 사항일 경우 사후에 고지할 수 있습니다.
+				<ol>
+					<li><span>1.</span> 서비스용 설비의 보수 등 공사로 인한 부득이한 경우</li>
+					<li><span>2.</span> 정기점검, 서비스 업그레이드 및 사이트 유지보수 등을 위해 필요한 경우</li>
+					<li><span>3.</span> 정전, 제반 설비의 장애 또는 이용량의 폭주 등으로 정상적인 서비스 이용에 지장이 있는 경우</li>
+					<li><span>4.</span> 기타 천재지변, 국가비상사태 등 불가항력적 사유가 있는 경우</li>
+				</ol>
+			</li>
+		</ol>
+		<h4>제22조 [결제수단 등]</h4>
+		<ol>
+			<li><span>①</span> “회원”이 결제를 위하여 이용할 수 있는 지불수단은 다음 각 호와 같으며, 각 지불 수단마다 결제가 가능한 “유료서비스”가 제한 될 수 있습니다.
+				<ol>
+					<li><span>1.</span> 선불카드, 직불카드, 신용카드 등의 각종 카드</li>
+					<li><span>2.</span> 전화 또는 휴대전화 요금합산</li>
+					<li><span>3.</span> 폰 뱅킹, 인터넷 뱅킹 등의 각종 계좌이체</li>
+					<li><span>4.</span> 전자화폐</li>
+					<li><span>5.</span> “회사”와 계약을 체결한 자가 발행한 상품권 또는 포인트</li>
+					<li><span>6.</span> “지니캐시“</li>
+					<li><span>7.</span> 기타 전자적 지급방법에 의한 대금지급 등</li>
+					<li><span>8.</span> 휴대폰 소액결제 방식</li>
+					<li><span>9.</span> “지니캐시” 이외에 회사가 발행한 마일리지 또는 포인트 등</li>
+				</ol>
+			</li>
+			<li><span>②</span> 제1항의 지불수단은 "상품"의 특성에 따라 정기적으로 “결제“될 수 있고, 이 경우 회사는 "회원"에게 관계 법령에 따른 동의 및 고지절차를 진행합니다.</li>
+			<li><span>③</span> 제1항의 지불수단 중 “지니캐시”의 경우에는 충전시, 그 외 지불수단으로 결제하는 경우에는 부가가치세가 별도로 청구됩니다.</li>
+			<li><span>④</span> “회사”의 사정에 따라 특정 지불수단이 추가되거나 서비스 제공이 중단될 수 있습니다.</li>
+			<li><span>⑤</span> 지불수단과 함께 사용될 수 있는 포인트 결제의 경우, 회사의 사정에 따라 제공기간과 방식이 변경될 수 있습니다.</li>
+			<li><span>⑥</span> 제1항 제8호의 휴대폰 소액결제를 통한 정기결제 유료상품의 경우에는 번호이동에 따른 통신사 변경이 발생하면 정기결제가 유지되지 않을 수 있습니다. 다만, 사전에 ‘회원’이 통신사 변경에도 불구하고 휴대폰 소액결제를 통한 정기결제가 유지되는 것에 동의를 하고, 변경된 통신사의 휴대폰 소액결제 이용약관 등에 동의를 한 경우에는 “회사”는 통신사 변경 경로를 확인하여 휴대폰 소액결제를 통한 정기결제를 유지시킬 수 있습니다.</li>
+		</ol>
+		<h4>제23조 [“지니캐시“의 충전 및 유효기간]</h4>
+		<ol>
+			<li><span>①</span> “회원”은 “지니캐시“ 충전 시 “회사”에서 지정하는 지불수단을 통해 충전요금을 지불하여야 합니다.</li>
+			<li><span>②</span> “회사”는 “회원”의 “지니캐시“에 대한 금융이자 지급 의무가 없습니다.</li>
+			<li><span>③</span> “지니캐시“를 마지막으로 이용한 날로부터 5년이 경과하는 동안 “지니캐시“를 단 한번도 충전하거나 사용하지 않을 경우, 회원에게 충전된 “지니캐시“는 자동 소멸되며, “지니캐시“의 추가적인 충전 또는 사용이 있는 경우 다시 그 날짜를 기준으로 5년간 유효하게 됩니다. 다만, 이벤트성으로 제공되는 “지니캐시”는 “회사”의 정책에 따라 자동으로 소멸됩니다.</li>
+			<li><span>④</span> “회원”은 “지니캐시“를 타인에게 양도하거나 타인으로부터 양도 받을 수 없습니다.</li>
+			<li><span>⑤</span> “지니캐시“를 충전하는 것만으로는 “유료서비스”를 이용할 수 없으며, “지니캐시“ 또는 “회사”가 지정하는 지불수단으로 구매하여야 “유료서비스” 이용이 가능합니다.</li>
+			<li><span>⑥</span> 상품 보관함에 등록된 상품의 유효기간은 구입일 또는 지급일로부터 60일이며, 유효기간 이내 사용하지 않은 상품은 “지니캐시“로 자동 전환됩니다. 단, 무상으로 제공된 이벤트성 상품의 경우에는 “지니캐시”로 전환되지 않습니다.</li>
+		</ol>
+		<h4>제24조 [콘텐츠 내용 등의 게시]</h4>
+		<p><strong>“회사”는 다음 사항을 해당 “콘텐츠”의 특성에 따라 초기화면 또는 이용화면에 “이용자”가 알기 쉽게 표시합니다.</strong></p>
+		<ol>
+			<li><span>1.</span> <strong>“콘텐츠”의 명칭 또는 제호</strong></li>
+			<li><span>2.</span> <strong>“콘텐츠”의 제작 및 표시 연월일</strong></li>
+			<li><span>3.</span> <strong>“콘텐츠” 제작자의 성명(법인인 경우에는 법인의 명칭)</strong></li>
+			<li><span>4.</span> <strong>“콘텐츠”의 내용, 이용방법, 이용료, 환불조건 등의 기타 이용조건</strong></li>
+		</ol>
+		<h4>제25조 [미성년자 이용계약에 관한 특칙]</h4>
+		<p><strong>“회사”는 만 19세 미만의 미성년이용자가 유료서비스를 이용하고자 하는 경우에 부모 등 법정 대리인의 동의를 얻거나, 계약체결 후 추인을 얻지 않으면 미성년자 본인 또는 법정대리인이 그 계약을 취소할 수 있다는 내용을 계약체결 전에 고지하는 조치를 취합니다.</strong></p>
+		<h4>제26조 [수신확인통지, 이용신청 변경 및 취소]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 “회원”의 이용신청이 있는 경우 “회원”에게 수신확인통지를 합니다.</li>
+			<li><span>②</span> 수신확인통지를 받은 “회원”은 의사표시의 불일치 등이 있는 경우에는 수신확인통지를 받은 후 즉시 이용신청 변경 및 취소를 요청할 수 있고, “회사”는 “유료서비스” 제공 전에 “회원”의 요청이 있는 경우에는 지체 없이 그 요청에 따라 처리하여야 합니다. 다만, 이미 대금을 지불한 경우에는 청약철회 등에 관한 제35조의 규정에 따릅니다.</li>
+		</ol>
+		<h4>제27조 [서비스의 이용시간]</h4>
+		<ol>
+			<li><span>①</span> 서비스의 이용은 연중무휴 1일 24시간을 원칙으로 합니다. 다만, “회사”의 업무상이나 기술상의 이유로 서비스가 일시 중지될 수 있고, 운영상의 목적으로 “회사”가 정한 기간에 “서비스”가 일시 중지될 수 있습니다. 이러한 경우 “회사”는 사전에 공지함이 원칙이나 불가피한 경우 사후에 공지할 수 있습니다.</li>
+			<li><span>②</span> “회사”는 “서비스”를 일정범위로 분할하여 각 범위 별로 이용 가능한 시간을 별도로 정할 수 있거나 서비스별 이용 가능시간을 “회사”의 정책으로 정할 수 있습니다.</li>
+		</ol>
+		<h4>제28조 [서비스의 이용 및 저장]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 “서비스”의 이용에 관하여 본 약관 외에 게시물 등의 관리정책을 별도로 둘 수 있으며, 이를 통해 게시물 또는 기타 게재된 내용이 “서비스”에 의해 보유되는 최대 일수 및 용량, “서비스” 서버에 할당되는 최대 디스크 공간 및 정해진 기간 동안 “서비스”에 접속할 수 있는 최대한의 수 (최대 기간) 등을 관리할 수 있습니다.</li>
+			<li><span>②</span> “회사”의 정책에도 불구하고 “회사”의 귀책사유 없이 제1항의 정책에 따라 “서비스”에 보관되는 게시물 또는 기타 게재된 내용 등을 삭제하거나 저장하지 못한데 대해 “회사”는 아무런 책임을 지지 않습니다.</li>
+			<li><span>③</span> “회사”는 본 약관에 따른 “서비스”의 제공지역을 대한민국으로 한정할 수 있습니다.</li>
+		</ol>
+		<h4>제29조 [정보 및 광고의 제공]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 “회원”의 “서비스” 이용과 관련하여 필요한 정보를 “서비스” 홈페이지에 게재하거나 우편물, e-mail 및 어플리케이션, SMS, MMS 등을 통해 제공할 수 있습니다. 단, “회원”이 정보제공을 원치 않는다는 의사를 밝히는 경우 정보제공대상에서 해당 “회원”을 제외하며, 정보제공 대상에서 제외되어 정보를 제공받지 못해 불이익이 발생할 경우에는 “회사”는 이에 대한 책임을 지지 않습니다.</li>
+			<li><span>②</span> “회사”는 법령에 따른 의무가 있거나, “회원”이 명시 적으로 동의한 경우에 한하여 제1항과 동일한 방법으로 광고성 정보를 제공하며, “회원”이 본 항에 따른 회사의 광고성 정보의 제공에 동의하지 않는 경우에도 “서비스” 의 이용에는 아무런 제한이 없습니다.</li>
+			<li><span>③</span> “회원”이 광고를 통한 제3의 서비스를 이용하는 것과 관련하여 발생하는 모든 문제에 대해서 “회사”는 어떠한 책임도 지지 않습니다.</li>
+		</ol>
+
+		<h3 id="agreement_4">제4장 계약당사자의 의무</h3>
+		<h4>제30조 [회사의 의무]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 “회원”의 개인정보를 보호하고 보안시스템을 구비하여 “회원”이 안전하게 “서비스”를 이용할 수 있도록 제반 환경을 제공합니다.</li>
+			<li><span>②</span> “회사”는 제1항의 범위 내에서 업무와 관련하여 “회원”의 사전 동의 없이 “회원” 전체 또는 일부의 개인정보에 관한 통계자료를 작성하여 이를 사용할 수 있고, 이를 위하여 “회원”의 컴퓨터에 쿠키를 전송할 수 있습니다. 이 경우 “회원”은 쿠키의 수신을 거부하거나 쿠키의 수신에 대하여 경고하도록 사용하는 컴퓨터의 브라우저의 설정을 변경할 수 있습니다.</li>
+			<li><span>③</span> “회사”는 “서비스”와 관련한 “회원”의 불만사항이 접수되는 경우 이를 신속하게 처리하여야 하며, 신속한 처리가 곤란한 경우 그 사유와 처리 일정을 “서비스” 화면에 게재하거나 전자우편 등을 통하여 동 “회원”에게 통지합니다.</li>
+			<li><span>④</span> “회사”는 『정보통신망 이용촉진 및 정보보호 등에 관한 법률』, 『통신비밀보호법』, 『전기통신사업법』, 『개인정보보호법』 등 “서비스”의 운영, 유지와 관련 있는 법규를 준수합니다.</li>
+		</ol>
+		<h4>제31조 [회원의 의무]</h4>
+		<ol>
+			<li><span>①</span> “회원”은 다음 각 호의 행위를 하여서는 아니 됩니다.
+				<ol>
+					<li><span>1.</span> 이용 신청 및 서비스를 제공받기 위해 등록 양식에서 요구되는 정보를 허위 또는 타인의 명의로 작성하거나, 다른 “회원”의 ID 및 비밀번호를 도용, 부정하게 사용하는 행위</li>
+					<li><span>2.</span> “회사”의 “서비스” 정보를 이용하여 얻은 정보를 “회사”의 사전 승낙 없이 복제 또는 유통시키거나 상업적으로 이용하는 행위</li>
+					<li><span>3.</span> 타인의 명예를 손상시키거나 불이익을 주는 행위</li>
+					<li><span>4.</span> 음란물을 게재, 공개하거나 음란사이트를 연결(링크)하는 행위</li>
+					<li><span>5.</span> “회사” 및 제3자의 지적재산권 등 기타 권리를 침해하는 행위</li>
+					<li><span>6.</span> 공공질서 및 미풍양속에 위반되는 내용의 정보, 문장, 도형, 음성 등을 타인에게 유포하는 행위</li>
+					<li><span>7.</span> “서비스”와 관련된 설비의 오 동작이나 정보 등의 파괴 및 혼란을 유발시키는 컴퓨터 바이러스 감염자료를 등록 또는 유포하는 행위</li>
+					<li><span>8.</span> “서비스” 운영을 고의로 방해하거나 “서비스”의 안정적 운영을 방해할 수 있는 정보 및 수신자의 의사에 반하여 광고성 정보를 전송하는 행위</li>
+					<li><span>9.</span> “회사”에서 공식적으로 인정한 경우를 제외한 “서비스”를 이용하여 상품을 판매하는 영업 활동 및 해킹, 영리를 목적으로 하는 광고행위, 음란사이트를 통한 상업행위, 상용소프트웨어 불법배포 행위</li>
+					<li><span>10.</span> 법률에 의하거나 계약상 또는 위임에 의하여 전송할 수 있는 권리가 없는 내용을 게시, 게재, 전자메일 또는 기타의 방법으로 전송하거나 공개하는 행위</li>
+					<li><span>11.</span> 타인을 "스톡(stalk)"하거나 달리 괴롭히는 행위 또는 다른 “회원”에 대한 개인정보를 수집 또는 저장하는 행위</li>
+					<li><span>12.</span> 기타 불법적이거나 부당한 행위</li>
+				</ol>
+			</li>
+			<li><span>②</span> “회원”은 관계 법령, 본 약관의 규정, 이용안내 및 “서비스”상에 공지한 주의사항, “회사”가 통지하는 사항 등을 준수하여야 하며, 기타 “회사”의 업무에 방해되는 행위를 하여서는 아니 됩니다.</li>
+			<li><span>③</span> “회원”의 본 조 위반이 있을 경우 “회사”는 “회원”의 계정을 중지하거나 해지할 수 있으며, 현재 또는 장래의 모든 또는 일부의 서비스 이용을 거절할 수 있습니다. 또한 본 조의 위반으로 인해 발생된 “회원”의 관계기관에 의한 구속 등 법적 조치 등에 관해서는 “회사”가 책임을 지지 않으며, “회원”은 이와 같은 행위와 관련하여 “회사”에 손해를 끼쳤을 경우 “회사”에 대하여 손해배상 의무를 집니다.</li>
+		</ol>
+		<h4>제32조 [지적재산권]</h4>
+		<ol>
+			<li><span>①</span> “서비스”에 게재되거나 공개, 제출된 모든 자료(“회원”간 전달 포함)에 대한 소유권은 “회원”과 “회사”가 별도로 정하지 않는 한 공개자 또는 게시자에게 있습니다. 단, “회사”는 원활한 “서비스”를 위하여 게시물 관리정책, 서비스 점검 또는 『정보통신망 이용촉진 및 정보보호 등에 관한 법률』, 『청소년 보호법』, 『저작권법』 등의 법률에 따라 일정한 기간 이후에는 공개자 또는 게시자의 동의 없이 게재된 내용을 삭제할 수 있습니다.</li>
+			<li><span>②</span> “회원”이 이용계약을 해지하거나 적법한 사유로 이용계약이 해지 된 경우 “회원” 게시물의 권리는 “회사”에 귀속됩니다.</li>
+			<li><span>③</span> “회원”은 관련법령의 규정에서 별도로 정하지 않는 한 “서비스”에 공개적으로 게재하거나 제출한 자료에 대해 “회사”에게 비독점적이고 재라이센스 할 수 있는 권한을 부여하는 것으로 간주 합니다.</li>
+			<li><span>④</span> “회원”은 “서비스”를 이용하여 얻은 정보를 가공, 판매하는 행위 등 서비스에 게재된 자료를 영리목적으로 이용하거나 제3자에게 이용하게 할 수 없으며, 공개물 또는 게시물에 대한 저작권 침해는 관계 법령의 적용을 받습니다.</li>
+			<li><span>⑤</span> “회원”은 “회원”이 제출한 내용으로 인하여 지적재산권 분쟁이 발생한 경우, “회사” 및 관계자를 면책하고 해를 입지 않도록 할 것을 동의합니다.</li>
+			<li><span>⑥</span> 본 “서비스” 또는 “서비스”와 관련된 소프트웨어는 관련 지적재산권 및 기타 법률에 의해 보호되며, 후원 광고에 포함되어 있는 내용이나 본 “서비스” 또는 광고주를 통하여 “회원”에게 제공되는 정보는 저작권, 상표권, 특허 등 제반 지적재산권 관련 법규에 의해 보호됩니다.</li>
+			<li><span>⑦</span> “회원”은 소프트웨어를 복사, 수정, 창작물의 제작, 리버스 엔지니어, 리버스 어셈블 또는 소스코드를 발견하려고 시도하거나, 판매, 양도, 재라이센스, 담보권을 설정하거나 소프트웨어상의 어떠한 권리를 달리 양도하여서는 안되며, 제3자로 하여금 위와 같은 행위를 하도록 허락하여서도 안됩니다.</li>
+		</ol>
+		<h4>제33조 [게시물의 관리]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 제31조 제1항 각 호에 해당하는 게시물이나 자료를 사전통지 없이 삭제하거나 이동 또는 등록 거부를 할 수 있으며, 이에 대해 “회사”는 어떠한 책임도 지지 않습니다. 또한, 그 게시물의 양과 성격에 따라 “서비스” 사용 중지 또는 “회원”자격의 제한을 둘 수 있습니다.</li>
+			<li><span>②</span> “회사”는 게시판에 『정보통신망 이용촉진 및 정보보호에 관한 법률』을 위반한 청소년 유해 매체물이 게시되어 있는 경우에는 이를 지체 없이 삭제 합니다. 다만, 19세 이상의 “이용자”만 이용할 수 있는 게시판은 예외로 합니다.</li>
+			<li><span>③</span> “회사”가 운영하는 게시판 등에 게시된 정보로 인하여 법률상 이익이 침해된 자는 “회사”에게 당해 정보의 삭제 또는 반박내용의 게재를 요청할 수 있습니다. 이 경우 “회사”는 지체 없이 필요한 조치를 취하고 이를 즉시 신청인에게 통지합니다.</li>
+			<li><span>④</span> “회사”는 게시물에 관련된 세부 이용지침을 별도로 정하여 시행할 수 있으며, “회원”은 그 지침에 따라 각 종 게시물(“회원”간 전달 포함)을 등록하거나 삭제하여야 합니다.</li>
+			<li><span>⑤</span> “회원”이 게시하였던 게시물은 자동 삭제 되지 않으므로 삭제를 원할 경우 탈퇴 이전에 삭제하여야 하며, “회사”는 “회원”이 이용계약을 해지하거나 적법한 사유로 이용계약이 해지된 경우 “회원”의 게시물을 삭제 또는 별도 관리 할 수 있습니다.</li>
+			<li><span>⑥</span> “회원”의 게시물이 『정보통신망 이용촉진 및 정보보호 등에 관한 법률』 및 『저작권법』 등 관련 법령에 위반 되는 내용을 포함할 경우, 해당 권리자는 관련 법령이 정한 절차에 의거하여 해당 게시물의 게시 중단 및 삭제 등을 “회사”에 요청 할 수 있으며, “회사”는 관련 법령에 따른 조치를 취하여야 합니다.</li>
+		</ol>
+
+		<h3 id="agreement_5">제5장 계약해지 및 기타</h3>
+		<h4>제34조 [유료서비스 이용에 관한 해제∙해지]</h4>
+		<ol>
+			<li><span>①</span> <strong>“회사”와 “콘텐츠”의 이용에 관한 “유료서비스”를 구매한 “회원”은 구매한 날로부터 7일 이내에는 청약의 철회를 할 수 있습니다. 다만, 다음 각 호 중 하나에 해당하는 경우에는 “회원”의 청약 철회권이 제한될 수 있습니다.</strong>
+				<ol>
+					<li><span>1.</span> “회사”가 시용상품을 제공한 경우</li>
+					<li><span>2.</span> “콘텐츠”의 제공이 개시된 경우. 다만, 가분적 “콘텐츠”로 구성된 계약의 경우에는 제공이 개시되지 아니한 부분에 대하여는 제한되지 않음</li>
+					<li><span>3.</span> “회사”가 청약의 철회가 불가능한 “콘텐츠”에 대하여 그 사실의 표시와 함께 “콘텐츠”에 대한 한시적 또는 일부 이용등의 방법을 제공한 경우</li>
+				</ol>
+			</li>
+			<li><span>②</span> <strong>“회원”은 다음 각 호의 사유가 있을 때에는 당해 “콘텐츠”를 공급받은 날로부터 3월 이내 또는 그 사실을 안 날 또는 알 수 있었던 날부터 30일 이내에 “유료서비스” 구매를 해제∙해지할 수 있습니다.</strong>
+				<ol>
+					<li><span>1.</span> 이용계약에서 약정한 “콘텐츠”가 제공되지 않는 경우</li>
+					<li><span>2.</span> <strong>제공되는 “콘텐츠”가 표시, 광고 등과 상이하거나 현저한 차이가 있는 경우</strong></li>
+					<li><span>3.</span> 기타 “콘텐츠”의 결함으로 정상적인 이용이 현저히 불가능한 경우</li>
+				</ol>
+			</li>
+			<li><span>③</span> <strong>제1항 내지 제2항의 경우에 “회원”은 언제든지 “고객센터”, “개인정보관리 페이지” 등을 통해서 이용계약을 해지 신청할 수 있으며 “회사”는 관계 법령 등에서 정하는 절차에 따라 이를 신속하게 처리합니다.</strong></li>
+			<li><span>④</span> “회사”는 제3항에 따라 “회원”이 표시한 계약해제, 해지의 의사표시를 수신한 후 지체 없이 이러한 사실을 “회원”에게 회신합니다.</li>
+			<li><span>⑤</span> “회원”은 제2항 2호의 사유로 계약해제, 해지의 의사표시를 하기 전에 상당한 기간을 정하여 “서비스” 이용의 하자에 대한 치유를 요구할 수 있습니다. 다만, “회사”가 하자의 치유가 불가능하다고 판단하는 경우에는 즉시 그 사실을 “회원”에게 통지하고 이용계약을 해제∙해지할 수 있습니다.</li>
+			<li><span>⑥</span> “회사”는 “회원”이 제31조에 규정한 “회원”의 의무를 이행하지 않을 경우 사전 통지 없이 본 “서비스” 이용 계약을 해지하거나 또는 “유료서비스” 이용을 중지 시킬 수 있습니다.</li>
+		</ol>
+		<h4>제35조 [“이용자”의 청약철회와 계약 해제∙해지의 효과]</h4>
+		<ol>
+			<li><span>①</span> <strong>“회사”는 ”회원”이 청약철회의 의사표시를 한 날로부터 또는 ”회원”에게 계약 해제∙해지의 의사표시에 대하여 회신한 날로부터 3영업일 이내에 대금의 결제와 동일한 방법으로 이를 환불하여야 하며,</strong> 동일한 방법으로 환불이 불가능할 때에는 이를 사전에 고지하여야 합니다. 다만, 수납확인이 필요한 지불수단의 경우에는 수납확인일로부터 3영업일 이내에 이를 환불하도록 합니다.</li>
+			<li><span>②</span> “회사”는 전 항의 청약철회에 대하여 위 대금을 환불함에 있어 ”회원”이 신용카드 또는 전자화폐 등으로 결제를 한 때에는 지체 없이 해당 지불수단을 제공한 사업자로 하여금 재화 등의 대금의 청구를 정지 또는 취소하도록 요청합니다.</li>
+			<li><span>③</span> <strong>“회사”는 청약철회 기간 경과 또는 “유료서비스”의 중도 해지 요청에 대하여 다음 각 호의 방법에 따라 환불합니다.</strong>
+				<ol>
+					<li><span>1.</span> 계좌이체 및 신용카드(또는 체크카드 등), 휴대폰 소액결제, kt청구서, LG유플러스 청구서, 일반전화 결제, 각종 상품권 등의 지불수단에 대해서는 아래와 같이 환불합니다.
+						<ol>
+							<li><span>가.</span> “회원”이 직접 구매하거나, 구입한 이용권을 전환한 “지니캐시”에 대하여 현금으로 환불을 요청하면 이를 환불 받을 수 있습니다. 환불시에는 은행이체 및 결제대행 수수료 등의 사유로 남아있는 “지니캐시” 잔액의 10% 이내 금액이 공제되어 환불될 수 있습니다.</li>
+							<li><span>나.</span> <strong>“유료서비스”에 대해 일부 이용 후, 해지하여 환불을 요청하는 경우에는 “콘텐츠”를 이용한 다운로드(또는 스트리밍) 건 수, 이용한 기간 등 서비스 또는 상품을 통하여 얻은 이익에 해당하는 금액을 차감 후 남은 금액의 10% 이내 금액이 공제되어 환불될 수 있습니다.</strong></li>
+						</ol>
+					</li>
+					<li><span>2.</span> “회사”가 인정한 포인트 등의 지불수단으로 결제한 유료서비스에 대해서는 아래와 같이 환불합니다.
+						<ol>
+							<li><span>가.</span> 포인트 등으로 결제한 유료서비스에 대해서는 현금으로 환불하지 아니하고, 각 포인트 제공사에게 취소를 요청합니다.</li>
+							<li><span>나.</span> 포인트 등으로 결제한 유료서비스를 일부 이용한 경우에는 취소가 불가능합니다.</li>
+						</ol>
+					</li>
+				</ol>
+			</li>
+			<li><span>④</span> “회원”은 회원 탈퇴시 “지니캐시“ 잔액이 남아 있는 경우 탈퇴신청 전에 이를 환불 받으시거나 소진하여야 하며, 회원탈퇴 후에는 “회사”의 개인정보처리방침에 따른 개인정보의 삭제로 인하여 환불신청이 불가능할 수 있습니다.</li>
+			<li><span>⑤</span> “회원”이 제11조 제2항에 해당하는 행위를 하였을 경우, “회사”가 계약을 해제 또는 해지하거나 서비스 이용을 제한한 후 환불해야 할 금액이 있을 경우에는 본 조에서 정한 환불 기준을 적용하여 공제하고 환불합니다. 이 경우 “회원”은 해당 조치에 대하여 “회사”가 정한 절차에 따라 이의 신청을 할 수 있으며, “회사”는 정당하다고 인정하는 경우 즉시 서비스 이용 재개 등을 합니다.</li>
+			<li><span>⑥</span> <strong>“회사”는 ”회원”에게 청약철회를 이유로 위약금 또는 손해배상을 청구하지 않으며, ”회원”의 계약 해제∙해지는 손해배상의 청구에 영향을 미치지 않습니다.</strong></li>
+			<li><span>⑦</span> “회사”가 “회원”에게 본 조 제1항의 환불을 지연한 때에는 그 지연기간에 대하여 전자상거래 등에서의 소비자보호에 관한 법률시행령이 정하는 지연이자율을 곱하여 산정한 지연이자를 지급합니다.</li>
+		</ol>
+		<h4>제36조 [“회사”의 계약 해제∙해지 및 이용제한]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 ”회원”이 제11조 제2항에서 정한 행위를 하였을 경우 계약을 해제, 해지하거나 또는 기간을 정하여 “서비스” 이용을 제한할 수 있습니다.</li>
+			<li><span>②</span> 제1항의 해제∙해지는 “회사”가 자신이 정한 통지방법에 따라 ”회원”에게 그 의사를 표시한 때에 효력이 발생합니다.</li>
+			<li><span>③</span> “회사”의 해제∙해지 및 이용제한에 대하여 ”회원”은 “회사”가 정한 절차에 따라 이의 신청을 할 수 있습니다. 이 때 이의가 정당하다고 “회사”가 인정하는 경우, “회사”는 즉시 “서비스”의 이용을 재개합니다.</li>
+		</ol>
+		<h4>제37조 [“회사”의 계약 해제∙해지의 효과]</h4>
+		<p><strong>”회원”의 귀책사유에 따른 이용계약의 해제, 해지의 효과는 제35조를 준용합니다.</strong></p>
+		<h4>제38조 [과오금]</h4>
+		<ol>
+			<li><span>①</span> <strong>“회사”는 과오금이 발생한 경우 이용대금의 “결제“와 동일한 방법으로 과오금 전액을 환불하여야 합니다. 다만, 동일한 방법으로 환불이 불가능할 때는 이를 사전에 고지합니다.</strong></li>
+			<li><span>②</span> “회사”의 책임 있는 사유로 과오금이 발생한 경우 “회사”는 계약비용, 수수료 등에 관계없이 과오금 전액을 환불합니다. 다만, “이용자”의 책임 있는 사유로 과오금이 발생한 경우, “회사”가 과오금을 환불하는 데 소요되는 비용은 합리적인 범위 내에서 “이용자”가 부담하여야 합니다.</li>
+			<li><span>③</span> “회사”는 “이용자”가 주장하는 과오금에 대해 환불을 거부할 경우에 정당하게 이용대금이 부과되었음을 입증할 책임을 집니다.</li>
+			<li><span>④</span> <strong>“회사”는 과오금의 환불절차를 『콘텐츠 이용자보호지침』에 따라 처리합니다.</strong></li>
+		</ol>
+		<h4>제39조 [콘텐츠하자 등에 의한 이용자피해보상]</h4>
+		<p><strong>“회사”는 콘텐츠하자 및 장애 등으로 인하여 “이용자” 에게 피해가 가는 경우 이용자피해보상의 기준, 범위, 방법 및 절차에 관한 사항을 『콘텐츠 이용자보호지침』 및 『전기통신사업법』 등 관계법령에 따라 처리합니다.</strong></p>
+		<h4>제40조 [보증의 부인]</h4>
+		<ol>
+			<li><span>①</span> 본 “서비스”를 이용하여 어떠한 자료를 다운로드하는 행위는 “회원”의 판단 및 위험에 의해 행하여지고, 그러한 자료와 다운로드로 인해 초래되는 컴퓨터 시스템에 대한 손해 및 데이터 손실에 대해서는 “회원”이 전적으로 책임을 부담합니다.</li>
+			<li><span>②</span> “회원”이 본 “서비스”를 통하여 취득한 구두 또는 문서상의 모든 충고와 정보에 대하여서는 본 약관에 명시적으로 규정되어 있지 않은 한 어떠한 보증도 제공되지 않습니다.</li>
+		</ol>
+		<h4>제41조 [양도 금지]</h4>
+		<p>“회원”은 “서비스”의 이용권한, 기타 이용 계약상 지위를 타인에게 양도, 증여할 수 없으며 게시물 등 모든 형태의 공개자료에 대한 저작권을 포함한 모든 권리 및 책임은 이를 공개한 “회원”에게 있습니다.</p>
+
+		<h3 id="agreement_6">제6장 손해배상 등</h3>
+		<h4>제42조 [손해배상]</h4>
+		<ol>
+			<li><span>①</span> 본 “서비스”는 “회원”의 편의를 위하여 제공하는 “서비스”로, 본 “서비스”와 관련된 부과금액 등 이용요금이 무료인 동안에는 본 “서비스” 이용과 관련하여 발생한 어떠한 손해에 대하여도 “회사”가 책임을 지지 않습니다.</li>
+			<li><span>②</span> “회원”이 본 약관을 위반함으로 인하여 “회사”에 손해가 발생하게 되는 경우, 이 약관을 위반한 “회원”은 “회사”에 발생하는 모든 손해를 배상하여야 합니다.</li>
+			<li><span>③</span> “회원”이 “서비스”를 이용함에 있어 행한 불법행위나 본 약관 위반행위로 인하여 “회사”가 당해 “회원” 이외의 제3자로부터 손해배상 청구 또는 소송을 비롯한 각종 이의제기를 받는 경우 당해 “회원”은 자신의 책임과 비용으로 “회사”를 면책시켜야 하며, “회사”가 면책되지 못한 경우 당해 “회원”은 그로 인하여 “회사”에 발생한 모든 손해를 배상하여야 합니다.</li>
+			<li><span>④</span> 회사의 “지니캐시” 및 유료서비스 제공과 관련하여 회사의 귀책사유로 인하여 회원이 “서비스” 이용에 손해를 입은 경우, 회원은 다음 각 호에 따라 적절한 보상을 받을 수 있습니다.
+				<ol>
+					<li><span>1.</span> “회사”가 서비스의 중지·장애에 대하여 사전에 알리지 않은 경우 “회원”의 피해구제 등은 다음 각목에 의합니다. 다만, “회원”의 책임있는 사유 또는 불가항력 또는 제3자의 불법행위 등으로 인해 서비스가 중지되거나 장애가 발생한 경우 서비스 중지·장애시간에 포함하지 않습니다.
+						<ol>
+							<li><span>가.</span> “회사”의 책임 있는 사유로 인한 서비스 중지 또는 장애가 4시간을 초과하여 지속된 경우 : 유료 상품 및 서비스에 대한 서비스 중지∙장애 시간의 3배를 무료로 연장하며, 상품 및 서비스 제공 방식의 사유로 시간 연장이 불가능 할 경우 이에 준하는 보상을 회사가 지정한 방식으로 할 수 있습니다.</li>
+							<li><span>나.</span> 1개월 동안의 서비스 중지·장애발생 누적시간이 72시간을 초과한 경우 : “회원"은 계약을 해제 또는 해지할 수 있으며, 회사는 계약 해제 또는 해지 및 미이용기간을 포함한 잔여 기간에 대한 이용료 환급 및 손해 배상을 합니다(단, 사업자가 고의 또는 과실 없음을 입증한 경우 손해배상책임을 지지 않음).</li>
+						</ol>
+					</li>
+					<li><span>2.</span> “회사”가 서비스의 중지·장애에 대하여 사전에 알린 경우 “회원”의 피해구제 등은 다음 각목에 의합니다. 다만, 서비스 개선을 목적으로 한 설비 점검 및 보수시 1개월을 기준으로 최대 24시간은 중지·장애 시간에 포함하지 않습니다.
+						<ol>
+							<li><span>가.</span> 1개월을 기준으로 서비스 중지·장애시간이 10시간을 초과하는 경우 : “회사”는 10시간과 이를 초과한 시간만큼 이용기간을 연장하며, 상품 및 서비스 제공 방식의 사유로 시간 연장이 불가능 할 경우 이에 준하는 보상을 “회사”가 지정한 방식으로 할 수 있습니다.</li>
+							<li><span>나.</span> 적용함에 있어서 사전고지는 서비스 중지, 장애 시점을 기준으로 24시간 이전에 알린 것에 한합니다.</li>
+						</ol>
+					</li>
+					<li><span>3.</span> 다운로드를 지원하는 이용권에 음악 콘텐츠 자체에 이용 장애를 유발하는 하자가 있는 경우 회사는 완전한 음악 콘텐츠를 회원에게 재공급해야 하며, 24시간 내에 완전한 온라인 콘텐츠를 공급하지 못하는 경우 이에 1호의 기준으로 보상을 합니다.</li>
+					<li><span>4.</span> 회사는 서비스 중 무료로 제공되는 서비스의 일부 또는 전부를 회사의 정책 및 운영의 필요상 유료화, 중단, 변경할 수 있으며, 이에 대하여 관련법에 특별한 규정이 없는 한 회원에게 별도의 보상을 하지 않습니다.</li>
+				</ol>
+			</li>
+		</ol>
+		<h4>제43조 [면책사항]</h4>
+		<ol>
+			<li><span>①</span> “회사”는 다음 각 호의 1에 해당하는 사유로 인하여 “회원” 또는 제3자에게 발생한 손해에 대하여는 그 책임을 지지 아니합니다.
+				<ol>
+					<li><span>1.</span> 천재지변 또는 이에 준하는 불가항력으로 인해 “서비스”를 제공할 수 없는 경우</li>
+					<li><span>2.</span> “회원”이 자신의 ID 또는 비밀번호 등의 관리를 소홀히 하는 등 타인의 부정사용을 방치한 경우</li>
+					<li><span>3.</span> “회원”이 제3자의 ID, 비밀번호, 휴대폰, 계좌, 신용카드 번호 등 개인정보를 도용하여 제3자에게 손해를 발생시킨 경우</li>
+					<li><span>4.</span> “회사”의 관리 영역이 아닌 공중통신선로의 장애로 서비스 이용이 불가능한 경우</li>
+					<li><span>5.</span> 기타 “회사”의 귀책 사유가 없는 통신서비스 등의 장애로 인한 경우</li>
+				</ol>
+			</li>
+			<li><span>②</span> “회사”는 “회원”이 “서비스”를 이용하여 기대하는 수익을 상실한 것에 대하여 책임을 지지 않으며 그 밖에 “서비스”를 통하여 얻은 자료로 인한 손해 등에 대하여도 책임을 지지 않습니다.</li>
+			<li><span>③</span> “회사”는 “회원”이 “서비스”에 게재한 정보, 자료, 사실의 신뢰도, 정확성 등 내용에 관하여는 책임을 지지 않습니다.</li>
+			<li><span>④</span> “회사”는 “서비스” 이용과 관련하여 “회원”에게 발생한 손해 가운데 “회원”의 고의, 과실에 의한 손해에 대하여 책임을 지지 않습니다.</li>
+			<li><span>⑤</span> “회사”는 “회원” 상호간 또는 “회원”과 제3자 상호간에 “서비스”를 매개로 발생한 분쟁에 대해서는 개입할 의무가 없으며 이로 인한 손해를 배상할 책임도 없습니다.</li>
+		</ol>
+		<h4>제44조 [분쟁해결 등]</h4>
+		<ol>
+			<li><span>①</span> <strong>“회사”와 “회원”간 제기된 소송은 대한민국 법률을 준거법으로 합니다.</strong></li>
+			<li><span>②</span> <strong>”회사”와 “회원”간의 “콘텐츠” 이용계약에 관한 소의 관할은 제소 당시의 “회원”의 주소에 의하고, 주소가 없는 경우 거소를 관할하는 지방 법원의 전속관할로 합니다.</strong></li>
+			<li><span>③</span> <strong>제소 당시 “회원”의 주소 또는 거소가 분명하지 아니한 경우에는 『민사소송법』에 따라 관할법원을 정합니다.</strong></li>
+		</ol>
+		<h4>부칙 (시행일)</h4>
+		<p>본 약관은 2026년 10월 6일부터 적용하고, 2025년 3월 26일부터 시행되던 종전의 약관은 본 약관으로 대체합니다.</p>
+	</div>
+</div>
+			</section>
+		</div>
+	</div>
+</div>
+<!--// 이용약관 -->
+
+<!-- 개인정보처리방침 -->
+<div id="privacy" class="popup full" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="gnb">
+					<div class="close"><a href="#" class="layer-close">닫기</a></div>
+					<h1 class="title text-center ellipsis layer-close" id="privacyTitle">개인정보처리방침</h1>
+				</div>
+			</header>
+			<!--// HEADER -->
+			<section id="privacyArticle" class="agreement bg-gray text-gray scroll-wrap">
+				<div class="agree_area">
+					<h1>개인정보처리방침</h1>
+					<p class="date">(지니_2026년 10월 06일)</p>
+					
+<div class="labeling">
+    <h3>주요 개인정보 처리 표시 (라벨링)</h3>
+    <ul>
+        <li><strong class="label_1">(제1조) 처리항목</strong><span>아이디, 휴대폰번호, 이메일주소 등</span></li>
+        <li><strong class="label_2">(제1조) 처리목적</strong><span>회원 가입 및 관리, 재화 또는 서비스 제공, 고객 상담, 이벤트 등</span></li>
+        <li><strong class="label_3">(제1조) 보유기간</strong><span>회원 탈퇴 시, 법정 의무 보유기간 만료 시까지 등</span></li>
+        <li><strong class="label_4">(제8조) 자동화 수집</strong><span>쿠키, 광고식별자, 이용자IP, MAC주소 등</span></li>
+        <li><strong class="label_5">(제2조) 제3자 제공</strong><span>국세청, KT, 케이티밀리의서재, 이벤트 상품 발송 업체</span></li>
+        <li><strong class="label_6">(제10조) 고충처리부서</strong><span>고객센터 : 1577-5337, help@ktmusic.co.kr<br></span></li>
+    </ul>
+    <em>※ 세부항목은 개인정보처리방침 본문에서 확인하실 수 있습니다.</em>
+</div>
+<div class="index">
+    <ul>
+        <li><a href="#agreement_1">01. 개인정보의 처리 목적, 항목 및 보유기간</a></li>
+        <li><a href="#agreement_2">02. 개인정보의 제3자 제공</a></li>
+        <li><a href="#agreement_3">03. 개인정보 처리의 위탁</a></li>
+        <li><a href="#agreement_4">04. 개인정보의 국외 수집 및 이전에 관한 사항</a></li>
+        <li><a href="#agreement_5">05. 고객 및 법정대리인의 권리·의무 및 행사방법</a></li>
+        <li><a href="#agreement_6">06. 개인정보의 파기</a></li>
+        <li><a href="#agreement_7">07. 개인정보의 안전성 확보조치</a></li>
+        <li><a href="#agreement_8">08. 개인정보 자동 수집장치의 설치∙운영 및 그 거부에 관한 사항</a></li>
+        <li><a href="#agreement_9">09. 행태정보의 수집·이용·제공 및 거부 등에 관한 사항</a></li>
+        <li><a href="#agreement_10">10. 개인정보 보호책임자 및 권익침해 구제방법</a></li>
+        <li><a href="#agreement_11">11. 링크 사이트</a></li>
+        <li><a href="#agreement_12">12. 개인정보 처리방침의 변경</a></li>
+    </ul>
+</div>
+
+<div class="section">
+
+    <p style="padding-top:16px">주식회사 케이티지니뮤직(이하 ‘회사’라 한다)은 정보통신망 이용촉진 및 정보보호 등에 관한 법률(이하 ‘정보통신망법’) 및 개인정보 보호법에 따라 정보주체의 개인정보를 보호하고 이와 관련한 고충을 신속하고 원활하게 처리할 수 있도록 하기 위하여 다음과 같이 개인정보 처리방침을 수립·공개합니다. </p>
+
+    <h4 id="agreement_1">제1조 개인정보의 처리 목적, 항목 및 보유기간</h4>
+    <ol>
+        <li><span>1.</span> 회사는 다음의 목적을 위하여 개인정보를 처리하고 있으며, 개인정보는 다음의 목적 이외의 용도로는 이용하지 않습니다. 법령 또는 정보주체로부터 개인정보를 수집 시 동의 받은 개인정보 보유기간 내에서 개인정보를 처리 및 이용합니다.</li>
+        <li><span>2.</span> 회사에서 처리하는 개인정보의 이용 목적, 항목, 보유기간은 다음과 같습니다.
+            <ol>
+                <li><strong><span>가.</span> 회원가입</strong></li>
+                <li>- 회사는 다음의 개인정보 항목을 정보주체의 동의를 받아 처리하고 있습니다<span lang="EN-US">.</span></li>
+                <li><ol style="font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; font-size: 13.5px; font-family: DroidSansFallback, &quot;APPLE SD Gothic Neo&quot;, dotum, sans-serif;">
+                    <li></li><li></li></ol><table>
+                    <caption>회원가입 개인정보의 이용 목적, 항목, 보유기간</caption>
+                    <thead>
+                    <tr>
+                        <th scope="col" width="10%">처리 근거</th>
+                        <th scope="col" width="8%">구분</th>
+                        <th scope="col" width="25%">목적</th>
+                        <th scope="col">항목</th>
+                        <th scope="col" width="10%">보유기간</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr>
+                        <td rowspan="9">개인정보보호법제15조제1항제1호(회원동의) 및 제4호(계약 이행)</td>
+                        <td rowspan="9">필수</td>
+                        <td>회원가입</td>
+                        <td>아이디, 비밀번호, 휴대폰번호, 이메일, 통신사인증정보</td>
+                        <td rowspan="12"><strong>회원탈퇴&nbsp; 시까지</strong></td>
+                    </tr>
+                    <tr>
+                        <td>만 14세 미만 회원가입</td>
+                        <td>아이디, 비밀번호, 휴대폰번호, 이메일</td>
+                    </tr>
+                    <tr>
+                        <td>만 14세 미만 회원가입 법정대리인 본인 인증</td>
+                        <td>법정대리인의 생년월일, 법정대리인의 본인인증정보(CI/DI), 통신사인증정보</td>
+                    </tr>
+                    <tr>
+                        <td>SNS(카카오톡, 페이스북, X, 애플) 회원가입</td>
+                        <td>아이디, SNS키값, 이메일, 휴대폰번호, 통신사인증정보</td>
+                    </tr>
+                    <tr>
+                        <td>SNS(네이버) 회원가입</td>
+                        <td>본인인증정보(CI)</td>
+                    </tr>
+                    <tr>
+                        <td>KT, LGU+ 휴대폰 간편 회원가입</td>
+                        <td>휴대폰번호, 이메일, 통신사인증정보</td>
+                    </tr>
+                    <tr>
+                        <td>지니홈 간편 회원가입</td>
+                        <td>집 전화번호, 이메일, 통신사인증정보</td>
+                    </tr>
+                    <tr>
+                        <td>미디어팩 연동 회원가입</td>
+                        <td>휴대폰번호, 통신사인증정보</td>
+                    </tr>
+                    <tr>
+                        <td>기가지니 뮤직팩 회원가입</td>
+                        <td>이메일</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="3">개인정보보호법제15조제1항제1호(회원동의)</td>
+                        <td rowspan="3">선택</td>
+                        <td>KT, LGU+ 휴대폰 간편 회원가입</td>
+                        <td>아이디</td>
+                    </tr>
+                    <tr>
+                        <td>지니홈 간편 가입회원</td>
+                        <td>아이디</td>
+                    </tr><tr><td>미디어팩 연동회원</td><td>이메일, 아이디</td></tr></tbody></table></li>
+                <li><strong><span>나.</span> 회원관리</strong></li><li>- 회사는 다음의 개인정보 항목을 정보주체의 동의를 받아 처리하고 있습니다<span lang="EN-US">.</span></li><li></li><li>
+                <table>
+                    <caption>회원관리 개인정보의 이용 목적, 항목, 보유기간</caption>
+                    <thead>
+                    <tr>
+                        <th scope="col" width="10%">처리 근거</th>
+
+                        <th scope="col" width="8%">구분</th>
+                        <th scope="col" width="25%">목적</th>
+                        <th scope="col">항목</th>
+                        <th scope="col" width="10%">보유기간</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr>
+                        <td rowspan="6">개인정보보호법제15조제1항제1호(회원동의) 및 제4호(계약 이행)</td>
+
+                        <td rowspan="6">필수</td>
+                        <td>지니서비스 이용 시 개인식별</td>
+                        <td>아이디, 닉네임, 프로필사진</td>
+
+                        <td rowspan="5"><strong>회원탈퇴&nbsp; 시까지</strong></td>
+                    </tr>
+                    <tr>
+                        <td>서비스 부정 이용 및 비인가 사용방지를 위한 접속빈도파악 및 통계 활용</td>
+                        <td>아이디, 서비스이용기록, 회원기기정보</td>
+                    </tr>
+                    <tr>
+                        <td>서비스 이용 실적 통계·분석, 서비스 개선 및 신규 서비스 개발, 맞춤형 상품 추천 서비스 제공</td>
+                        <td>연령대, 성별, 서비스이용기록</td>
+                    </tr>
+                    <tr>
+                        <td>AI DJ 사용</td>
+                        <td>AI DJ 대화 및 감상 이력</td>
+                    </tr>
+                    <tr>
+                        <td>러닝 기록 서비스 사용</td>
+                        <td>러닝 세션 시작 시간, 건강 기록 고유 ID, 러닝 거리, 평균 페이스, 운동 시간, 칼로리</td>
+                    </tr>
+                    <tr>
+                        <td>불량 이용자의 재가입 및 부정이용 방지</td>
+                        <td>아이디, 이메일, 휴대폰번호, 회원가입일, 회원탈퇴일, 본인인증정보(CI/DI), 본인인증일</td>
+                        <td><strong>회원탈퇴 후 6개월</strong></td>
+                    </tr>
+                    <tr>
+                        <td rowspan="4">개인정보보호법제15조제1항제1호(회원동의)</td>
+                        <td rowspan="4">선택</td>
+
+                        <td>홈페이지 탈퇴회원 대상 철회 요청 대응</td>
+                        <td>아이디, 비밀번호, 본인인증정보(CI/DI) 또는 법정대리인의 본인인증정보(CI/DI), 통신사인증정보, 생년월일, 휴대폰번호, 성별, 이메일, 주소, 그 외 서비스 이용과정에서 생성된 개인정보 (서비스이용기록, 사이트방문기록, 회원 기기정보, IP주소)</td>
+                        <td><strong>회원탈퇴 후 30일</strong></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </li>
+                <li><strong><span>다.</span> 재화 또는 서비스 제공</strong></li><li>- 회사는 다음의 개인정보 항목을 정보주체의 동의를 받아 처리하고 있습니다<span lang="EN-US">.</span></li><li></li><li></li><li>
+                <table>
+                    <caption>재화 또는 서비스 제공 개인정보의 이용 목적, 항목, 보유기간</caption>
+                    <thead>
+                    <tr>
+                        <th scope="col" width="10%">처리 근거</th>
+                        <th scope="col" width="8%">구분</th>
+
+                        <th scope="col" width="25%">목적</th>
+                        <th scope="col">항목</th>
+                        <th scope="col" width="10%">보유기간</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr>
+                        <td rowspan="6">개인정보보호법제15조제1항제1호(회원동의) 및 제4호(계약 이행)</td>
+                        <td rowspan="6">필수</td>
+
+                        <td>서비스 이용 시 본인인증<br>
+                            (이용권 구매, 나이 제한 컨텐츠 이용)</td>
+                        <td>이름, 생년월일, 성별, 본인인증정보(CI/DI)</td>
+                        <td><strong>회원탈퇴&nbsp; 시까지</strong></td>
+                    </tr>
+                    <tr>
+                        <td>이용권 구매 및 캐시충전</td>
+                        <td>[KB Pay, PAYCO, 신용/체크카드, 휴대폰청구서, 현대카드, IBK나라사랑카드] 카드사명, 카드번호, CVC번호, 유효기간, 통신사, 휴대폰번호, 결제승인번호, 결제비밀번호<br>
+                            [내통장 결제] 은행, 계좌번호, 결제승인번호, 성명, 생년월일, 성별<br>
+                            [토스페이, 카카오페이] 결제승인번호<br>
+                            [상품권 구매] 상품권 사이트 아이디
+                        </td>
+                        <td><strong>회원탈퇴 또는 휴면 계정 전환 후 5년<br>(전자상거래법 제6조제1항)</strong><br>
+                            ※ 대금 결제 시 수집하는 개인정보는 결제대행업체(PG사)에서 수집 및 저장하고 있으며, 회사는 결제대행업체에서 제공하는 거래내역만을 제공받고 있습니다.</td>
+                    </tr>
+                    <tr>
+                        <td>이용권 구매 시 할인 적용</td>
+                        <td>[OK캐쉬백] 멤버십 카드번호, 카드비밀번호<br>
+                            [KT맴버십] 휴대폰번호, 생년월일</td>
+                        <td rowspan="4"><strong>회원탈퇴&nbsp; 시까지</strong></td>
+                    </tr>
+                    <tr>
+                        <td>음악선물</td>
+                        <td>기기에 저장된 이름, 휴대폰번호</td>
+                    </tr>
+                    <tr>
+                        <td>부가서비스(지니팩) 이용</td>
+                        <td>통신사인증정보</td>
+                    </tr>
+                    <tr>
+                        <td>스페셜 이용권 및 사은품 제공이 포함된 이용권 구매에 따른 상품 배송</td>
+                        <td>이름, 주소, 휴대폰번호, 아이디</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </li>
+                <li><strong><span>라.</span> 고객 상담</strong></li><li>- 회사는 다음의 개인정보 항목을 정보주체의 동의를 받아 처리하고 있습니다<span lang="EN-US">.</span></li><li></li><li></li><li>
+                <table>
+                    <caption>고객 상담 개인정보의 이용 목적, 항목, 보유기간</caption>
+                    <thead>
+                    <tr>
+                        <th scope="col" width="10%">처리 근거</th>
+                        <th scope="col" width="8%">구분</th>
+                        <th scope="col" width="25%">목적</th>
+                        <th scope="col">항목</th>
+                        <th scope="col" width="10%">보유기간</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr>
+                        <td>개인정보보호법제15조제1항제1호(회원동의)</td>
+                        <td>필수</td>
+                        <td>게시판 문의내용 해결 및 답변</td>
+                        <td>(회원) 아이디, 이메일, 휴대폰번호<br>(비회원) 이메일, 휴대폰번호</td>
+                        <td rowspan="1"><strong>문의 등록일로부터 3년<br>(전자상거래법 제6조제1항)</strong></td>
+                    </tr>
+                    <tr>
+                        <td>개인정보보호법제15조제1항제1호(회원동의)</td>
+                        <td>선택</td>
+                        <td>채팅 상담 응대</td><td>[본인확인] 아이디, 휴대폰번호, 생년월일, 이메일<br>[결제내역확인] 카드번호, 승인번호, 휴대폰번호, 예금주명, 구글계정<br>[환불처리] 은행명, 예금주명, 계좌번호<br>[이벤트] 아이디, 생년월일, 휴대폰번호, 주소<br>※ 상담에 필요한 개인정보만 처리합니다.</td>
+                        <td rowspan="1"><strong>문의 등록일로부터 3년<br>(전자상거래법 제6조제1항)</strong></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </li>
+                <li>- 회사는 다음의 개인정보 항목을 정보주체의 동의 없이 처리하고 있습니다<span lang="EN-US">.</span></li>
+                <li>
+                    <table style="font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; font-family: DroidSansFallback, &quot;APPLE SD Gothic Neo&quot;, dotum, sans-serif;">
+                        <thead>
+                        <tr>
+                            <th scope="col" width="10%">처리 근거</th>
+                            <th scope="col" width="8%">구분</th>
+                            <th scope="col" width="25%">목적</th>
+                            <th scope="col">항목</th>
+                            <th scope="col" width="10%">보유기간</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td>개인정보보호법제15조제1항제4호(계약 이행)</td>
+                            <td>필수</td>
+                            <td>유선 문의내용 해결 및 답변<br>- 서비스장애 및 결제 관련</td>
+                            <td>단말기정보(Windows/Mac), 계좌정보(은행명, 계좌번호, 예금주명), 휴대폰번호 이용 계약 증명서, 생년월일</td>
+                            <td><strong style="font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-size: 11.25px; font-family: DroidSansFallback, &quot;APPLE SD Gothic Neo&quot;, dotum, sans-serif;"><strong>3년<br>(전자상거래법 제6조제1항)</strong></strong><br></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </li>
+                <li></li><li></li><li></li>
+                <li><strong><span>마.</span> 이벤트 및 마케팅</strong></li>
+                <li>- 회사는 다음의 개인정보 항목을 정보주체의 동의를 받아 처리하고 있습니다<span lang="EN-US">.</span></li>
+                <li></li><li></li><li></li><li>
+                <table>
+                    <caption>이벤트 개인정보의 이용 목적, 항목, 보유기간</caption>
+                    <thead>
+                    <tr>
+                        <th scope="col" width="10%">처리 근거</th>
+                        <th scope="col" width="8%">구분</th>
+                        <th scope="col" width="25%">목적</th>
+                        <th scope="col">항목</th>
+                        <th scope="col" width="10%">보유기간</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+
+                    <tr>
+                        <td rowspan="3">개인정보보호법제15조제1항제1호(회원동의)</td>
+                        <td rowspan="3">선택</td>
+                        <td>이벤트 진행</td>
+                        <td>[매거진 이벤트] 이름, 휴대폰번호, 아이디, 생년월일, 주소<br>
+                            [SNS 이벤트] SNS 아이디, 이름, 휴대폰번호</td>
+                        <td><strong>동의 받은 기간까지<br>(경품 배송 후 30일/3개월/7일)</strong></td>
+                    </tr>
+                    <tr>
+                        <td>회원관리, 당첨자 경품 배송</td>
+                        <td>주소</td>
+                        <td rowspan="2"><strong>회원탈퇴 또는 동의&nbsp; 철회 시까지</strong></td>
+                    </tr>
+                    <tr>
+                        <td>이용자의 관심, 기호, 성향 분석을 통한 맞춤형 혜택 제공 및 마케팅 활용</td>
+                        <td>서비스이용기록, 상품구매이력, 사이트방문기록, 연령대, 성별, 기기정보(OS종류, PUSH토큰, 디바이스ID), 광고식별자, 쿠키, 브라우저 정보, IP주소, MAC주소, 휴대폰번호</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </li>
+                <li>- 회사는 다음의 개인정보 항목을 정보주체의 동의 없이 처리하고 있습니다
+                    <span lang="EN-US">.</span></li>
+                <li>
+                    <table style="font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; font-family: DroidSansFallback, &quot;APPLE SD Gothic Neo&quot;, dotum, sans-serif;">
+                        <thead>
+                        <tr>
+                            <th scope="col" width="10%">처리 근거</th>
+                            <th scope="col" width="8%">구분</th>
+                            <th scope="col" width="25%">목적</th>
+                            <th scope="col">항목</th>
+                            <th scope="col" width="10%">보유기간</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td>소득세법 제21조(기타소득), 제127조(원천징수의무), 제164조(지급명세서의 제출)</td>
+                            <td>필수</td>
+
+                            <td>경품 제세공과금처리 목적</td>
+                            <td><strong>주민등록번호</strong><br>※ 5만원 이상 경품의 경우<br>※ 5만원 이하 경품 당첨자의 경우에는 수집하지 않습니다.</td>
+                            <td><strong>5년 (소득세법에 따른 의무 보유기간 만료 시까지)</strong></td>
+                        </tr>
+                        </tbody>
+                    </table></li>
+                <li><span>3.</span> 서비스 이용과정에서 다음의 개인정보 항목이 자동으로 생성되어 수집될 수 있으며, 개인정보처리방침에 기재된 목적 범위 안에서 수집하여 이용할 수 있습니다. 또한 고객이 선택 동의에 동의할 경우, 해당 목적 범위 안에서도 이용할 수 있습니다.
+                    <div class="textbox">서비스이용기록, 사이트방문기록, 상품구매이력, 불량 이용기록, 쿠키, 회원 기기정보(OS종류, PUSH용 토큰, 디바이스 ID), 브라우저 정보, IP주소, MAC주소, 휴대폰번호, Canvas Fingerprinting 정보(이용자가 접속하는 단말기에 따라, 생성되는 이미지 정보)를 변환한 임의 값, 광고식별자, AI DJ 이용기록</div>
+                </li>
+                <li><span>4.</span> 회사는 법령에 따라 수집 목적과 합리적으로 관련된 범위에서는 고객님의 동의 없이 개인정보를 이용할 수 있습니다. 이때 '당초 수집 목적과 관련성이 있는지, 수집한 정황 또는 처리 관행에 비추어 볼 때 예측 가능성이 있는지, 고객님의 이익을 부당하게 침해하는지, 가명처리 또는 암호화 등 안전성 확보에 필요한 조치를 하였는지'를 종합적으로 고려합니다.
+                </li>
+                <li><span>5.</span> 스마트폰 앱 서비스로서 정보주체가 접근 권한을 허용하였다고 하여 단말기 정보 등으로부터 허용된 권한 관련 모든 정보가 즉시 수집(전송)되는 것은 아니며, 정보주체로부터 개인정보 수집∙이용 동의를 받은 범위 내에서, 단말기 정보 등에 접근한다는 것을 고지∙승인 후 수집됩니다.
+                </li>
+            </ol>
+        </li>
+    </ol>
+
+    <h4 id="agreement_2">제2조 개인정보의 제3자 제공</h4>
+    <ol>
+        <li><span>1.</span> 회사는 정보주체의 개인정보를 처리방침 제1조(개인정보의 처리 목적, 항목 및 보유기간)에서 명시한 범위 내에서만 처리하며, 정보주체의 동의, 법률의 특별한 규정(개인정보 보호법 제17조) 등에 해당하는 경우에만 개인정보를 제3자에게 제공합니다.
+        </li>
+        <li><span>2.</span> 회사는 사전에 별도로 동의한 고객에 한하여 프로모션 또는 이벤트 진행을 위해 아래와 같이 제3자에게 개인정보를 제공하고 있습니다.
+
+            <table>
+                <caption>관련 법령에 의한 개인정보 보유 및 사유, 기간</caption>
+                <thead>
+                <tr>
+                    <th scope="col" width="10%">처리 근거</th>
+                    <th scope="col" width="20%">제공받는 자</th>
+                    <th scope="col" width="26%">제공항목</th>
+                    <th scope="col" width="30%">제공목적</th>
+                    <th scope="col">보유 및 처리기간</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr>
+                    <td rowspan="4">개인정보보호법제15조제1항제1호(회원동의)</td>
+
+                    <td>㈜케이티, ㈜케이티밀리의서재</td>
+                    <td>서비스 가입/이용 시 수집/이용에 동의한 인적 정보(생년월일, 성별), 연계정보(CI, 이메일, 휴대번호)<br>
+                        사용 정보(앱 이용 시간, 사용 메뉴, 검색 이력), 음악 정보(재생 음악, 청취 및 선호 장르, 플레이 리스트)
+                    </td>
+                    <td>· 상품서비스 안내 및 이용권유<br>
+                        · 개인 맞춤형 부가혜택 제공 및 안내<br>
+                        · 고객 분석 및 상품·서비스 연구개발</td>
+                    <td><strong>제공하는 자의 서비스 이용 기간 또는 고객 동의 철회 시 까지<br>(단, 관계법령에 정해진 규정이 있는 경우 해당 기간동안 보관 후 파기)</strong><br></td>
+                </tr>
+                <tr>
+                    <td>이벤트 상품 발송 업체<br>
+                        <a href="#" onclick="window.open('https://www.genie.co.kr/guide/eventCorp?id=cp1', 'event','toolbar=0,status=0,width=370,height=400');return false;" style="text-decoration: underline">업체보기</a></td>
+                    <td rowspan="3">아이디, 주소, 전화번호, 생년월일</td>
+                    <td rowspan="3">· 이벤트 당첨자 상품 발송</td>
+                    <td><strong>경품 배송 종료 후 3개월</strong><br></td>
+                </tr>
+                <tr>
+                    <td>이벤트 상품 발송 업체<br>
+                        <a href="#" onclick="window.open('https://www.genie.co.kr/guide/eventCorp?id=cp2', 'event','toolbar=0,status=0,width=370,height=400');return false;" style="text-decoration: underline">업체보기</a></td>
+                    <td><strong>발송 완료 후 30일 이내</strong><br></td>
+                </tr>
+                <tr>
+                    <td>이벤트 상품 발송 업체<br>
+                        <a href="#" onclick="window.open('https://www.genie.co.kr/guide/eventCorp?id=cp3', 'event','toolbar=0,status=0,width=370,height=400');return false;" style="text-decoration: underline">업체보기</a></td>
+                    <td><strong>전시/공연 종료 후 7일 이내</strong><br></td>
+                </tr>
+                <tr>
+                    <td colspan="5">※ 매거진 이벤트 상품 발송에 따라 제3자 제공업체가 수시로 변경되며, 제공업체 별 보유 및 처리기간이 상이하여 이벤트 응모 시 정보주체의 별도 동의를 받고 있음</td>
+                </tr>
+                </tbody>
+            </table>
+        </li>
+        <li><span>3.</span> 다음 각 호에 해당하는 경우에 한하여 회사는 고객의 동의 없이 고객의 개인정보를 제3자에게 제공할 수 있습니다.
+            <ol>
+                <li><span>가.</span> 서비스 제공에 따른 요금 정산을 위하여 필요한 경우
+                </li>
+                <li><span>나.</span> 금융실명거래 및 비밀보장에 관한 법률, 신용정보의 이용 및 보호에 관한 법률, 전기통신기본법, 전기통신사업법, 지방세법, 소비자보호법, 한국은행법, 형사소송법 등 기타 관계법령에서 정한 절차에 따른 요청이 있는 경우
+                </li>
+                <li><span>다.</span> 정부 관계부처가 합동으로 발표한 「긴급상황 시 개인정보 처리 및 보호수칙」에 따라 재난, 감염병, 급박한 생명·신체 위험을 초래하는 사건·사고, 급박한 재산 손실 등의 긴급상황이 발생하는 경우 정보주체의 동의 없이 관계기관에 개인정보를 제공할 수 있습니다. 자세한 사항은
+                    <a href="https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS217&amp;mCode=D010030000&amp;nttId=7641#LINK" target="_blank" style="text-decoration: underline">여기*</a>를 눌러 확인하시기 바랍니다.</li>
+                <li>
+                    <table style="font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; font-family: DroidSansFallback, &quot;APPLE SD Gothic Neo&quot;, dotum, sans-serif;">
+                        <thead>
+                        <tr>
+                            <th scope="col" width="20%">처리 근거</th>
+                            <th scope="col" width="12%">제공받는 자</th>
+                            <th scope="col" width="10%">제공항목</th>
+                            <th scope="col" width="30%">제공목적</th>
+                            <th scope="col">보유 및 처리기간</th>
+                        </tr></thead>
+                        <tbody>
+                        <tr>
+                            <td>소득세법 제21조(기타소득), 제127조(원천징수의무), 제164조(지급명세서의제출)</td>
+                            <td>국세청</td>
+                            <td>이름,&nbsp;<strong>주민등록번호</strong></td>
+                            <td>· 이벤트 당첨자 원천세 신고</td>
+                            <td><strong>5년 <br>(소득세법에 따른 의무 보유기간 만료 시까지)</strong></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </li>
+            </ol>
+        </li>
+    </ol>
+    <h4 id="agreement_3">제3조 개인정보 처리의 위탁</h4>
+    <ol>
+        <li><span>1.</span> 원활한 개인정보 처리 업무를 위하여 개인정보 처리 업무를 외부 전문업체에게 위탁하고 있습니다.</li>
+        <li><span>2.</span> 수탁자와 위탁계약 체결 시 관련 법규 및 지침의 준수, 정보보호 및 비밀유지, 제3자 제공 금지, 사고 시 책임부담, 위탁기간, 처리 종료 후의 개인정보의 반환 또는 파기의무 등을 규정하여 수탁자가 개인정보를 안전하게 처리하는지를 관리·감독하고 있습니다.</li>
+        <li><span>3.</span> 회사의 개인정보 처리를 위탁받아 처리하는 수탁자는 아래와 같으며, 회사는 위탁업무의 내용이나 수탁자가 변경될 경우에는 「개인정보 처리방침」을 통하여 변경 사항을 고지합니다.
+
+            <table>
+                <caption>개인정보 처리의 위탁</caption>
+                <thead>
+                <tr>
+                    <th scope="col" width="20%">위탁받는 자</th>
+                    <th scope="col" width="35%">재위탁</th>
+                    <th scope="col">위탁업무의 내용</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr>
+                    <td rowspan="4">㈜케이티</td>
+                    <td></td>
+                    <td>&middot; 제휴 서비스 제공 및 정산<br>
+                        &middot; 멤버쉽 조회 및 결제적용차감<br>
+                        &middot; 부가서비스 가입을 위한 정보공유<br>
+                    </td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td>
+                        &middot; 제3자제공 동의 플랫폼 운영 및 보안 관리<br>
+                        &middot; 제3자제공 동의 및 광고수신 관련 동의 수령/철회/관리<br>
+                    </td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td>
+                        &middot; 통신사 가입여부 확인<br>
+                    </td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td>
+                        &middot; 크로샷 문자 발송 서비스 <br>
+                    </td>
+                </tr>
+                <tr>
+                    <td>㈜엘지유플러스</td>
+                    <td></td>
+                    <td>&middot; 제휴 서비스 제공 및 정산<br>
+                        &middot; 멤버쉽 조회 및 결제적용차감<br>
+                        &middot; 통신사 가입여부 확인<br>
+                        &middot; 부가서비스 가입을 위한 정보공유
+                    </td>
+                </tr>
+                <tr>
+                    <td>페이레터㈜</td>
+                    <td></td>
+
+                    <td>&middot; 상품 결제를 위한 결제 대행<br>
+                        &middot; 빌링시스템 운영 대행 </td>
+                </tr>
+                <tr>
+                    <td rowspan="2">㈜케이티밀리의서재</td>
+                    <td></td>
+                    <td>&middot; 결합 상품 판매를 위한 회원 정보 연동</td>
+                </tr>
+                <tr>
+                    <td>㈜케이티아이에스</td>
+
+                    <td>&middot; 제3자제공 동의 및 광고수신 관련 동의 수령/철회/관리</td>
+                </tr>
+                <tr>
+                    <td>㈜케이지이니시스</td>
+                    <td></td>
+
+                    <td>&middot; 신용카드 자동결제 승인 처리</td>
+                </tr>
+                <tr>
+                    <td>㈜CJ올리브네트웍스</td>
+                    <td></td>
+
+                    <td>&middot; 신용카드 결제 대행</td>
+                </tr>
+                <tr>
+                    <td>나이스평가정보㈜</td>
+                    <td></td>
+
+                    <td>&middot; 본인인증 서비스 제공 및 대행</td>
+                </tr>
+                <tr>
+                    <td>㈜위즈커뮤니케이션</td>
+                    <td></td>
+
+                    <td>&middot; 통화연결음, 벨소리 서비스 운영 및 고객 관리</td>
+                </tr>
+                <tr>
+                    <td>주식회사 케이티 알파<br></td>
+                    <td></td>
+
+                    <td>&middot; 이벤트 경품 발송, 스페셜 이용권 사은품 발송</td>
+                </tr>
+                <tr>
+                    <td>원은</td>
+                    <td>롯데택배</td>
+
+                    <td>&middot; 이벤트 경품 발송</td>
+                </tr>
+                <tr>
+                    <td>㈜Kt ds</td>
+                    <td></td>
+
+                    <td>&middot; 정보시스템 운영관리<br>
+                        · 서비스 보안관제</td>
+                </tr>
+                <tr>
+                    <td>㈜에스디씨솔루션</td>
+                    <td></td>
+
+                    <td>&middot; 휴대폰 자동결제 시 결제정보 전송</td>
+                </tr>
+                <tr>
+                    <td>넷퍼씨</td>
+                    <td>KIS 정보통신, 비즈톡</td>
+
+                    <td>&middot; 이메일 및 카카오톡 각종 안내 메시징 전송</td>
+                </tr>
+                <tr>
+                    <td>㈜케이티아이에스</td>
+                    <td></td>
+
+                    <td>&middot; 고객센터 업무 위탁 운영</td>
+                </tr>
+                <tr>
+                    <td>퍼닌</td>
+                    <td></td>
+
+                    <td>&middot; 검색추천 개발 및 운영</td>
+                </tr>
+                <tr>
+                    <td>블룸에이아이</td>
+                    <td></td>
+                    <td>&middot; 채팅상담</td>
+                </tr>
+                <tr>
+                    <td>AB180</td>
+                    <td></td>
+                    <td>&middot; braze amplitude 시스템 제공 및 기술지원</td>
+                </tr>
+                <tr>
+                    <td>Amazone Web Service<br>(Seoul Region)</td>
+                    <td></td>
+
+                    <td>&middot; 클라우드 서버 운영 및 관리</td>
+                </tr>
+                </tbody>
+            </table>
+        </li>
+    </ol>
+
+    <h4 id="agreement_4">제4조 개인정보의 국외 수집 및 이전에 관한 사항</h4>
+    <ol>
+        <li><span>1.</span>&nbsp;회사는 개인정보보호법 제28조의 8(개인정보의 국외 이전) 제1항제3호를 근거로 일부 서비스에서 개인정보를 아래와 같이 국외에 제공하고 있습니다.</li>
+        <table>
+            <thead>
+            <tr>
+                <th scope="col" width="12%">목적</th>
+                <th scope="col">제공받는 자</th>
+                <th scope="col" width="22%">제공항목</th>
+                <th scope="col" width="10%">이전되는<br/>국가</th>
+                <th scope="col" width="18%">이전되는 시기 및 방법</th>
+                <th scope="col" width="13%">보유 및 이용기간</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td style="text-align: center;">서비스 이용 통계 분석, 앱 서비스 품질 향상</td>
+                <td style="text-align: center;">Google LLC (https://developers.google.com/analytics?hl=ko)</td>
+                <td style="text-align: center;">웹/앱 서비스 방문이력, 사용이력, 구매 및 검색이력, 기기정보, 광고식별자, 기타 온라인상 활동정보</td>
+                <td style="text-align: center;">미국</td>
+                <td style="text-align: center;">Google에서 제공하는 웹로그 분석 도구인 Google Analytics를 통해 앱 실행 시 자동으로 수집</td>
+                <td style="text-align: center;">수집일로부터 14개월 보관 후 파기</td>
+            </tr>
+            </tbody>
+        </table>
+        <li><span>2.</span>&nbsp;Google Analytics를 통한 국외이전을 원치 않을 경우, 고객은 모바일 단말기의 설정 변경을 통해 앱의 맞춤형 광고를 차단·허용할 수 있습니다. 단, 차단 설정 시 맞춤형 서비스 이용에 어려움이 있을 수 있습니다.</li><li>① (안드로이드) 설정 → 보안 및 개인정보 보호 → 개인정보 보호 → 기타 개인정보 설정 → 광고 → 광고ID 재설정 또는 광고ID 삭제</li><li>② (아이폰) 설정 → 개인정보 보호 및 보안 → 추적 → 앱 추적 허용 해제</li><li>※ 모바일 OS 버전에 따라 메뉴 및 방법이 다소 상이할 수 있습니다.</li>
+    </ol>
+
+    <h4 id="agreement_5">제5조 고객 및 법정대리인의 권리·의무 및 행사방법</h4>
+    <ol>
+        <li><span>1.</span> 고객은 회사에 대해 언제든지 다음과 같은 방법으로 개인정보의 열람, 정정, 삭제, 처리정지 등 개인정보 보호 관련 권리를 행사할 수 있습니다.
+
+            <ol>
+                <li><span>가.</span> 웹사이트 또는 어플리케이션의 우측 상단 본인 닉네임/프로필에서 내정보/회원정보 수정을 통한 직접 열람 또는 정정</li>
+                <li><span>나.</span> 웹사이트 또는 어플리케이션의 우측 상단 본인 닉네임/프로필에서 회원탈퇴를 통한 개인정보 처리 동의 철회</li>
+            </ol>
+        </li>
+        <li><span>2.</span> 만 14세 미만 아동의 경우, 법정대리인이 아동의 개인정보를 조회하거나 수정 및 삭제, 처리정지, 수집 및 이용 동의를 철회할 권리가 있습니다.</li>
+        <li><span>3.</span> 제1항에 따른 권리 행사는 고객의 법정대리인이나 위임을 받은 자 등 대리인을 통하여 할 수 있습니다. 이 경우 “개인정보 처리 방법에 관한 고시” 별지 제11호 서식에 따른 위임장을 제출하여야 합니다.</li>
+        <li><span>4.</span> 회사는 고객 또는 고객의 대리인의 개인정보에 대한 동의 철회 및 열람∙증명 등의 요청에 성실하게 대응하며, 고객 또는 고객의 대리인이 개인정보의 오류 등에 대한 정정 또는 삭제를 요구한 경우에는 회사는 정정 또는 삭제를 완료할 때까지 당해 개인정보를 이용하거나 제공하지 않습니다.</li>
+        <li><span>5.</span> 고객은 자신의 개인정보를 최신의 상태로 정확하게 입력하여 불의의 사고를 사전에 예방하여야 합니다. 부정확한 정보의 입력으로 인해 발생하는 결과에 대한 책임은 고객에게 있으며, 타인 정보의 도용 등 허위정보를 입력할 경우 회원 자격이 상실될 수 있습니다.</li>
+        <li><span>6.</span> 고객은 개인정보 보호법 등 관계법령을 위반하여 회사가 처리하고 있는 고객 본인이나 타인의 개인정보 및 사생활을 침해하지 않도록 유의해야 합니다. </li>
+        <li><span>7.</span>&nbsp;고객은 권리 행사를 아래의 부서에 할 수 있습니다. 회사는 정보주체로부터 권리 행사를 청구 받은 날로부터 10일 이내 회신하겠습니다.</li>
+        <li>- 부서명: 지니기획팀</li><li>- 이메일: help@ktmusic.co.kr</li>
+    </ol>
+
+    <h4 id="agreement_6">제6조 개인정보의 파기</h4>
+    <ol>
+        <li><span>1.</span> 회사는 개인정보의 보유 기간이 경과하거나 처리 목적이 달성된 후에는 지체 없이 해당 개인정보를 파기하며, 파기의 절차 및 방법은 다음 각 호와 같습니다.
+            <ol>
+                <li><span>가.</span> 파기절차<br>
+                    ① 파기 사유가 발생한 개인정보를 선정하여 개인정보 보호책임자의 승인을 받아 파기
+                </li>
+                <li><span>나.</span> 파기방법<br>
+                    ① 종이(서면)에 작성·출력된 개인정보 : 분쇄하거나 소각 등의 방법으로 파기<br>
+                    ② DB 등 전자적 파일 형태로 저장된 개인정보 : 재생할 수 없는 기술적 방법으로 파기
+                </li>
+            </ol>
+        </li>
+        <li><span>2.</span> 회사는 개인정보 수집 시에 동의 받은 개인정보 보유·이용기간 내에서 개인정보를 처리·보유하며, 회원탈퇴 또는 개인정보 처리 목적이 달성된 경우 고객의 개인정보를 지체 없이 파기합니다. 단, 회사는 다음 각 호의 사유가 있는 경우에는 예외적으로 일정 기간 개인정보를 보유합니다.
+            <ol>
+                <li><span>가.</span> 회사 내부 방침에 의한 경우<br>
+                    ① 해지, 탈퇴 등으로 서비스가 종료되었으나 상품 또는 서비스의 미납이 존재하는 경우 : <strong>요금 완납 시까지</strong><br>
+                    ② 회사와 고객 간 민원, 소송 등 분쟁이 있는 경우 : <strong>분쟁 해결 시까지</strong>
+                </li>
+            </ol>
+        </li>
+        <li><span>3.</span> 회사는 고객으로부터 동의 받은 개인정보 보유기간이 경과하거나 처리목적이 달성되었음에도 불구하고 다른 법령에 따라 개인정보를 계속 보존하여야 하는 경우에는, 해당 개인정보를 별도의 DB로 옮기거나 보관장소를 달리하여 보존합니다.
+
+            <ol>
+                <li><span>가.</span> 관련 법령에 따른 경우<br>
+
+                    <table>
+                        <caption>회원가입 개인정보의 이용 목적, 항목, 보유기간</caption>
+                        <thead>
+                        <tr>
+                            <th scope="col" width="46%">보존정보</th>
+                            <th scope="col" width="34%">보존근거법령</th>
+                            <th scope="col">보전기간</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td>계약 또는 청약철회에 관한 기록</td>
+                            <td>전자상거래 등에서의 소비자보호에 관한 법률 <br>제6조제1항</td>
+                            <td><strong>5년</strong></td>
+                        </tr>
+                        <tr>
+                            <td>대금 결제 및 재화 등의 공급에 관한 기록</td>
+                            <td>전자상거래 등에서의 소비자보호에 관한 법률<br>제6조제1항</td>
+                            <td><strong>5년</strong></td>
+                        </tr>
+                        <tr>
+                            <td>소비자의 불만 또는 분쟁처리에 관한 기록</td>
+                            <td>전자상거래 등에서의 소비자보호에 관한 법률 <br>제6조제1항</td>
+                            <td><strong>3년</strong></td>
+                        </tr>
+                        <tr>
+                            <td>사이트 방문에 관한 기록</td>
+                            <td>통신비밀보호법 제15조의2제2항</td>
+                            <td><strong>3개월</strong></td>
+                        </tr>
+                        <tr>
+                            <td>세법이 규정하는 모든 거래에 관한 장부 및 증빙서류에 관한 기록</td>
+                            <td>국세기본법 제85조의3제2항</td>
+                            <td><strong>5년</strong></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </li>
+            </ol>
+        </li>
+        <li><span>4.</span> 장기 미이용 고객(이하 “휴면고객”이라 합니다)의 경우
+            <ol>
+                <li><span>가.</span> 휴면고객이란 회원 가입 후 또는 최종 사용일 이후 1년 동안 서비스 사용이력이 없는 고객에 대해 휴면처리 1개월 전 회사가 사용의사를 묻는 고지를 하고, 30일 내에 답변 없는 고객을 말합니다.</li>
+                <li><span>나.</span> 회사는 휴면고객의 개인정보를 보호하기 위하여 다른 고객의 개인정보와 분리하여 별도로 저장관리하고 있으며, 고객이 서비스를 재이용하기 원하는 경우 고객의 본인확인절차를 거쳐 재이용할 수 있습니다.</li>
+                <li><span>다.</span> 분리 보관된 개인정보는 내부 방침 및 기타 관련 법령에 의한 정보보호 사유에 따라 일정 기간 저장된 후 파기됩니다.</li>
+            </ol>
+        </li>
+        <li><span>5.</span> 앱 서비스의 경우 정보주체가 앱을 삭제하더라도 개인정보를 완전히 삭제하기 위해서는 회원탈퇴 등 별도 요청이 필요합니다.</li>
+    </ol>
+
+    <h4 id="agreement_7">제7조 개인정보의 안전성 확보조치</h4>
+    <p>회사는 개인정보의 안전성 확보를 위해 다음 각 호와 같은 조치를 취하고 있습니다.</p>
+    <ol>
+        <li><span>1.</span> 관리적 조치 : 정보보호관리체계(ISMS) 등 인증 취득, 내부관리계획 수립·시행, 개인정보 처리인원 제한, 정기적 직원 교육, 신규직원 채용 시 정보보호서약서 서명
+        </li>
+        <li><span>2.</span> 기술적 조치 : 개인정보처리시스템 등의 접근권한 관리, 사내 네트워크 침입차단시스템 및 침입탐지시스템 운영, 암호알고리즘 및 보안장치 이용, 백신프로그램 설치</li>
+        <li><span>3.</span> 물리적 조치 : 전산실 및 자료보관실 출입 통제</li>
+    </ol>
+
+    <h4 id="agreement_8">제8조 개인정보 자동 수집장치의 설치∙운영 및 그 거부에 관한 사항</h4>
+    <ol>
+        <li><span>1.</span> 회사는 서비스 운영에 있어 필요한 경우 웹 서버가 웹 브라우저에 보내어 저장했다가 서버의 부가적인 요청이 있을 때 다시 서버로 보내주는 문자열 정보인 '쿠키(Cookie)'를 사용하며, 고객의 ID, 접속IP, 접속로그 및 이용 콘텐츠 등의 서비스 이용정보를 쿠키 정보로 수집·저장할 수 있습니다.
+        </li>
+        <li><span>2.</span> 회사는 제1항에 따라 수집·저장한 쿠키 정보를 다음 각 호의 목적을 위해 사용할 수 있습니다.
+            <ol>
+                <li><span>가.</span> 고객의 관심분야에 따라 차별화된 정보 제공</li>
+                <li><span>나.</span> 회원 고객과 비회원 고객의 접속 빈도나 방문 시간 등을 분석하여 이용자의 취향과 관심분야를 파악하여 타겟(Target) 마케팅 및 서비스 개편의 척도로 활용</li>
+            </ol>
+        </li>
+        <li><span>3.</span> 고객은 웹브라우저의 설정을 조정하여 쿠키에 의한 정보 수집 수준을 정할 수 있습니다. 단, 쿠키의 수집·저장을 거부할 경우 서비스 이용에 어려움이 있을 수 있습니다.<br></li><li>*쿠키 허용 / 차단방법</li><li>▶ 웹 브라우저에서 쿠키 허용/차단</li><li>･크롬(Chrome) : 웹브라우저 오른쪽 상단 ‘ ⁝ ’ 표시 선택 &gt; 새 시크릿 창 (단축키 : Ctrl+Shift+N)</li><li>･엣지(Edge) : 웹 브라우저 오른쪽 상단 ‘…’ 표시 선택 &gt; 새 InPrivate 창 (단축키 : Ctrl+Shift+N)</li><li>▶ 모바일 브라우저에서 쿠키 허용/차단</li><li>･크롬(Chrome) : 모바일 브라우저 오른쪽 상단 ‘ ⁝ ’ 표시 선택 &gt; 새 시크릿 탭</li><li>･사파리(Safari) : 모바일 기기 설정 &gt; 사파리(Safari) &gt; 고급 &gt; 모든 쿠키 차단</li><li>･삼성 인터넷 : 모바일 브라우저 아래쪽 ‘탭’ 아이콘 선택 &gt; 비밀 모드 켜기 &gt; 시작</li><li></li><li><ol>
+    </ol>
+    </li>
+    </ol>
+
+    <h4 id="agreement_9">제9조 행태정보의 수집·이용·제공 및 거부 등에 관한 사항</h4>
+    <ol>
+        <li><span>1.</span> 회사는 서비스 이용과정에서 정보주체에게 맞춤서비스 제공이나 더 나은 환경의 서비스 및 광고를 제공하기 위하여 행태정보를 수집·이용하고 있습니다.<br>
+            <table>
+                <caption>행태정보 수집 이용</caption>
+                <thead>
+                <tr>
+                    <th width="25%">수집·이용 항목</th>
+                    <th width="25%">수집·이용 방법</th>
+                    <th width="25%">수집·이용 목적</th>
+                    <th>보유·이용기간 및 이후 정보처리 방법</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr>
+                    <td>웹/앱 서비스 방문이력, 사용이력, 구매 및 검색이력, 기기정보, 광고식별자, 기타 온라인상 활동정보</td>
+                    <td>분석 툴을 통해 웹/앱 실행 시 자동으로 수집<br></td>
+                    <td>웹/앱 서비스 품질개선, 맞춤형 서비스 및 혜택 제공, 온라인 맞춤형 광고 제공</td>
+                    <td>수집일로부터 최대 2년 이내 파기</td>
+                </tr>
+                <tr>
+                    <td colspan="4">행태정보란 웹사이트 방문이력, 웹/앱 사용이력, 구매 및 검색이력 등 이용자의 관심, 흥미, 기호 및 성향 등을 파악하고 분석할 수 있는 온라인 상의 이용자 활동정보입니다.<br></td>
+                </tr>
+                </tbody>
+            </table>
+        </li>
+        <li><span>2.</span> 회사는 다음과 같이 온라인 맞춤형 광고 사업자가 행태정보를 수집·처리하도록 허용하고 있습니다.<br>
+            <table>
+                <caption>행태정보 수집</caption>
+                <tbody><tr>
+                    <th width="20%">수집·처리 사업자</th>
+                    <th width="40%">Google Analytics</th>
+                    <th>AB180</th>
+                </tr>
+                <tr>
+                    <th>수집·처리 항목</th>
+                    <td colspan="2" style="text-align: center">웹/앱 서비스 방문이력, 사용이력, 구매 및 검색이력, 기기정보, 광고식별자, 기타 온라인상 활동정보</td>
+                </tr>
+                <tr>
+                    <th>수집 방법</th>
+                    <td>Google에서 제공하는 웹로그 분석 도구인 Google Analytics를 통해 앱 실행 시 자동으로 수집</td>
+                    <td>웹/앱 접속 시 Airbridge 트래킹 분석 툴을 통해 자동으로 수집</td></tr><tr><th>수집·처리 목적</th>
+                    <td>서비스 이용 통계 분석, 앱 서비스 품질 향상</td>
+                    <td>광고 노출 및 유저 유입 경로 파악, 인앱 행동 패턴 분석</td>
+                </tr>
+                <tr>
+                    <th>보유·이용기간 및 이후 정보처리 방법</th>
+                    <td>수집일로부터 14개월 보관 후 파기</td>
+                    <td>수집일로부터 180일 보관 후 파기</td>
+                </tr>
+                <tr>
+                    <th>처리근거</th>
+                    <td colspan="2" style="text-align: center">개인정보보호법제15조제1항제1호(회원동의) 및 제4호(계약 이행)</td>
+                </tr>
+                </tbody>
+            </table>
+        </li>
+        <li><span>3.</span> 회사는 온라인 맞춤형 광고 등에 필요한 최소한의 행태정보만을 수집하며, 사상, 신념, 가족 및 친인척관계, 학력·병력, 기타 사회활동 경력 등 개인의 권리·이익이나 사생활을 뚜렷하게 침해할 우려가 있는 민감한 행태정보를 수집하지 않습니다.</li>
+        <li><span>4.</span> 회사는 만 14세 미만임을 알고 있는 아동이나 만 14세 미만의 아동을 주 이용자로 하는 온라인 서비스로부터 맞춤형 광고 목적의 행태정보를 수집하지 않고, 만 14세 미만임을 알고 있는 아동에게는 맞춤형 광고를 제공하지 않습니다.</li>
+        <li><span>5.</span> 회사는 모바일 앱에서 정보주체에게 맞춤서비스 제공이나 더 나은 환경의 광고를 제공하기 위하여 광고식별자를 수집•이용합니다. 광고식별자란 모바일 단말기에서 부여되는 광고용 고유 식별 값입니다. 고객은 모바일 단말기의 설정 변경을 통해 앱의 맞춤형 광고를 차단•허용할 수 있습니다. 단, 차단 설정 시 맞춤형 서비스 이용에 어려움이 있을 수 있습니다.<br>
+            가. 거부방법<br></li><li>① (안드로이드) 설정 → 보안 및 개인정보 보호 → 개인정보 보호 → 기타 개인정보 설정 → 광고 → 광고ID 재설정 또는 광고ID 삭제</li><li>② (아이폰) 설정 → 개인정보 보호 및 보안 → 추적 → 앱 추적 허용 해제</li><li>※ 모바일 OS 버전에 따라 메뉴 및 방법이 다소 상이할 수 있습니다.</li>
+    </ol>
+
+    <h4 id="agreement_10">제10조 개인정보 보호책임자 및 권익침해 구제방법</h4>
+    <ol>
+        <li><span>1.</span> 회사는 고객의 개인정보를 보호하고 개인정보와 관련한 불만 및 열람 청구 등을 처리하기 위하여 아래와 같이 개인정보보호 책임자를 두고 있습니다. 개인정보와 관련한 문의사항이 있으시면 아래의 개인정보보호 책임자 또는 개인정보보호 담당자에게 연락하여 주시기 바랍니다.
+            <table>
+                <caption></caption>
+                <thead>
+                <tr>
+                    <th scope="col" width="20%">구분</th>
+                    <th scope="col" width="40%">개인정보보호 책임자</th>
+                    <th scope="col">개인정보보호 담당자</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr>
+                    <td>성명</td>
+                    <td>홍세희</td>
+                    <td>황정수</td>
+                </tr>
+                <tr>
+                    <td>직위</td>
+                    <td>본부장</td>
+                    <td>과장</td>
+                </tr>
+                <tr>
+                    <td>소속부서</td>
+                    <td>플랫폼사업본부</td>
+                    <td>정보보호팀</td>
+                </tr>
+                <tr>
+                    <td>전화</td>
+                    <td colspan="2">(국번없이) 1577-5337 (유료)</td>
+                </tr>
+                <tr>
+                    <td>이메일</td>
+                    <td colspan="2">help@ktmusic.co.kr</td>
+                </tr>
+                <tr>
+                    <td>온라인 상담</td>
+                    <td colspan="2">웹사이트 하단 고객센터 &gt; 서비스 문의</td>
+                </tr>
+                </tbody>
+            </table>
+        </li>
+        <li><span>2.</span> 회사의 귀책사유에 의하여 고객의 개인정보에 대한 침해사고가 발생하는 경우 회사는 관련 법령에 따라 책임을 부담합니다. 다만, 기술적인 보안조치를 했음에도 불구하고, 해킹 등 기본적인 네트워크상의 위험성에 의해 발생하는 예기치 못한 사고로 인한 정보의 훼손 및 고객이 작성한 게시물에 의한 각종 분쟁에 관해서는 책임이 없습니다.</li>
+        <li><span>3.</span> 기타 개인정보 침해에 대한 신고나 상담이 필요한 경우 다음 각 호의 기관에 문의하시기 바랍니다.
+            <ol>
+                <li><span>가.</span> 한국인터넷진흥원 개인정보침해신고센터 : privacy.kisa.or.kr, (국번없이) 118</li>
+                <li><span>나.</span> 개인정보분쟁조정위원회 : www.kopico.go.kr, (국번없이) 1833-6972</li>
+                <li><span>다.</span> 대검찰청 : www.spo.go.kr, (국번없이) 1301</li>
+                <li><span>라.</span> 경찰청 사이버수사국 : ecrm.police.go.kr (국번없이) 182</li>
+            </ol>
+        </li>
+    </ol>
+
+    <h4 id="agreement_11">제11조 링크 사이트</h4>
+    <ol>
+        <li><span>1.</span> 회사는 웹사이트 또는 어플리케이션을 통하여 고객에게 다른 회사의 웹사이트 등에 대한 링크를 제공할 수 있으며, 고객이 링크를 통해 외부 웹사이트 등으로 이동한 경우 해당 사이트의 이용에 관하여는 회사의 「개인정보 처리방침」이 적용되지 않습니다.</li>
+        <li><span>2.</span> 회사는 고객이 링크를 통해 이동한 외부 웹사이트 등으로부터 제공받는 서비스나 자료의 이용과 관련한 일체의 책임을 부담하지 않습니다.</li>
+    </ol>
+
+    <h4 id="agreement_12">제12조 개인정보 처리방침의 변경</h4>
+    <p>본 「개인정보 처리방침」은 2026.10.06부터 적용됩니다.</p>
+
+</div>
+				</div>
+			</section>
+		</div>
+	</div>
+</div>
+<!--// 개인정보처리방침 -->
+
+<!-- 개인정보 수집/이용 -->
+<div id="privacyCollect" class="popup full" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="gnb">
+					<div class="close"><a href="#" class="layer-close">닫기</a></div>
+					<h1 class="title text-center ellipsis">개인정보 수집/이용</h1>
+				</div>
+			</header>
+			<!--// HEADER -->
+			<section class="agreement bg-gray text-gray scroll-wrap">
+				
+
+<div class="agree_area">
+    <div class="section">
+        <h4>수집하는 개인정보의 항목</h4>
+        <p>회사는 회원 가입, 상담, 서비스 제공을 위하여 아래와 같이 최소한의 개인정보만을 수집하며, 사상·신념, 가족 및 친인척관계, 학력(學歷)·병력(病歷), 기타 사회활동 경력 등 고객의 권리·이익이나 사생활을 뚜렷하게 침해할 우려가 있는 개인정보를 수집하지 않습니다. 다만, 고객이 동의하거나 다른 법률에 따라 특별히 허용된 경우에는 필요한 범위에서 최소한으로 위 개인정보를 수집할 수 있습니다.<br><br>
+            회사는 고객의 개인정보를 필수정보와 선택정보로 구분하여 수집하고 있습니다. 이때 고객은 개인정보의 수집 및 이용 동의를 거부할 권리가 있습니다. 다만 필수정보 제공에 동의하지 않는 경우 “지니” 상품∙서비스 제공을 받기 어렵다는 점을 충분히 설명해드리고 있으며, 선택정보 제공에 동의하지 않더라도 서비스 이용에는 제한이 없음을 알려드립니다.</p>
+        <ol>
+            <li>
+
+                <ol>
+                    <li><span>1.</span> 회원 가입 및 관리
+
+                        <table>
+                            <caption>회원 가입 및 관리</caption>
+                            <thead>
+                            <tr>
+                                <th scope="col" width="20%">구분</th>
+                                <th scope="col" width="35%">회원 구분</th>
+                                <th scope="col">처리 항목</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr>
+                                <td rowspan="6">필수항목</td>
+                                <td>일반 회원</td>
+                                <td>아이디, 비밀번호, 휴대폰번호, 이메일, 통신사인증정보</td>
+                            </tr>
+                            <tr>
+                                <td>만14세미만회원</td>
+                                <td>아이디, 비밀번호, 휴대폰번호, 이메일, 통신사인증정보, 법정대리인의 생년월일, 법정대리인의 본인인증정보(CI/DI)</td>
+                            </tr>
+                            <tr>
+                                <td>SNS(카카오톡,페이스북,트위터,애플) 회원</td>
+                                <td>아이디, SNS키값, 이메일, 휴대폰번호, 통신사인증정보</td>
+                            </tr>
+                            <tr>
+                                <td>휴대폰 간편 가입회원
+                                    (KT, LGU+)
+                                </td>
+                                <td>휴대폰번호, 통신사인증정보, 이메일</td>
+                            </tr>
+                            <tr>
+                                <td>지니홈 간편 가입회원</td>
+                                <td>집 전화번호, 통신사인증정보, 이메일</td>
+                            </tr>
+                            <tr>
+                                <td>미디어팩 연동회원</td>
+                                <td>휴대폰번호, 통신사인증정보</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </li>
+                    <li><span>2.</span> 재화 또는 서비스 제공
+
+                        <table>
+                            <caption>재화 또는 서비스 제공</caption>
+                            <thead>
+                            <tr>
+                                <th scope="col" width="20%">구분</th>
+                                <th scope="col" width="35%">처리 목적</th>
+                                <th scope="col">처리 항목</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr>
+                                <td rowspan="7">필수항목</td>
+                                <td>&middot; 유료서비스 제공<br>
+                                    &middot; 일부 컨텐츠 이용 시 법령에 따른 나이 또는 본인 확인
+                                </td>
+                                <td>이름, 생년월일, 성별, 본인인증정보(CI/DI)</td>
+                            </tr>
+                            <tr>
+                                <td>&middot; 유료서비스 제공에 따른 요금 청구∙결제∙정산∙할인</td>
+                                <td>※결제수단별<br>
+                                    신용카드 : 카드사명, Billkey<br>
+                                    상품권 : 상품권 사이트 아이디<br>
+                                    휴대폰결제 : 휴대폰번호, 가입통신사, Billkey<br>
+                                    할인수단 : (할인)카드번호, 휴대폰번호, 생년월일</td>
+                            </tr>
+                            <tr>
+                                <td>&middot; 서비스 부정 이용 및 비인가 사용방지<br>
+                                    &middot; 접속빈도파악 및 통계 활용</td>
+                                <td>아이디, 서비스이용기록, 회원기기정보</td>
+                            </tr>
+                            <tr>
+                                <td>&middot; 서비스사용빈도 파악 및 통계 활용<br>
+                                    &middot; 맞춤형 서비스 제공</td>
+                                <td>연령대, 성별, 서비스이용기록</td>
+                            </tr>
+                            <tr>
+                                <td>음악선물</td>
+                                <td>기기에 저장된 이름, 휴대폰번호</td>
+                            </tr>
+                            <tr>
+                                <td>부가서비스(지니팩)</td>
+                                <td>통신사인증정보</td>
+                            </tr>
+                            <tr>
+                                <td>&middot; 스페셜 이용권 및 사은품 제공이 포함된 이용권 구매에 따른 상품 배송</td>
+                                <td>이름, 배송지 주소, 휴대폰번호</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </li>
+                    <li><span>3.</span> 고객 상담
+
+                        <table>
+                            <caption>고객 상담</caption>
+                            <thead>
+                            <tr>
+                                <th scope="col" width="20%">구분</th>
+                                <th scope="col" width="35%">처리 목적</th>
+                                <th scope="col">처리 항목</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr>
+                                <td rowspan="2">필수항목</td>
+                                <td rowspan="2">고객상담업무의 처리</td>
+                                <td>회원: 이메일</td>
+                            </tr>
+                            <tr>
+                                <td>비회원: 휴대폰번호, 이메일</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </li>
+                    <li><span>4.</span> 이벤트
+
+                        <table>
+                            <caption>이벤트</caption>
+                            <thead>
+                            <tr>
+                                <th scope="col" width="20%">구분</th>
+                                <th scope="col" width="35%">처리 목적</th>
+                                <th scope="col">처리 항목</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr>
+                                <td>선택항목</td>
+                                <td>이벤트 진행 및 당첨자 경품 배송</td>
+                                <td>아이디, 본인인증정보(CI/DI), 이메일, 휴대폰번호,
+                                    주소, 사용상품, 당첨횟수</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </li>
+                </ol>
+            </li>
+            <li><span>-</span> 서비스 이용과정에서 다음의 개인정보 항목이 자동으로 생성되어 수집될 수 있습니다.<br>
+                <span> </span> 서비스이용기록, 사이트방문기록, 불량 이용기록, 쿠키, 회원 기기정보(OS종류, PUSH용 토큰, 디바이스 ID), 브라우저 정보, 상품구매이력, IP주소, MAC주소, 휴대폰번호(Android 지니뮤직 어플리케이션이 설치된 기기에 한함), Canvas Fingerprinting 정보(이용자가 접속하는 단말기에 따라, 생성되는 이미지 정보)를 변환한 임의 값
+            </li>
+        </ol>
+    </div>
+    <div class="section">
+        <h4>개인정보의 수집 및 이용목적</h4>
+        <p>회사는 수집한 개인정보를 다음의 목적을 위해 이용합니다. 처리하고 있는 개인정보는 다음의 목적 이외의 용도로는 이용되지 않으며, 이용 목적이 변경되는 경우에는 별도 안내 후 동의를 받는 등 필요한 조치를 이행할 예정입니다.</p>
+        <ol>
+            <li><span>1.</span> 회원 가입 및 관리<br>
+                회원 가입 의사·연령·가입 자격 확인, 회원제 서비스 제공에 따른 본인 식별·인증, 회원 가입 및 탈퇴 처리, 회원 자격 유지·관리, 만 14세 미만 아동의 개인정보 처리 시 법정대리인의 동의 여부 확인 및 법정대리인 본인 확인, 각종 고지·통지
+            </li>
+            <li><span>2.</span> 재화 또는 서비스 제공<br>
+                유료 서비스 구매·변경·해지 등 처리, 일부 콘텐츠 이용 시 연령 확인, 금융거래 본인 인증 및 법정대리인의 의사 확인, 유료서비스 계약 이행 및 서비스 제공에 따른 요금청구, 결제, 할인 및 정산, 이용 요금 고지 및 추심, 서비스 부정이용 및 비인가 사용 방지, 서비스 이용 내역 확인, 연령, 성별, 취향 등에 따른 개인 맞춤형 서비스 제공, 접속 빈도 파악 또는 회원의 서비스 이용에 대한 통계 활용, 서비스 관련 안내
+
+            </li>
+            <li><span>3.</span> 고객 상담<br>
+                불만처리 등 의사소통 경로 확보, 고객 신원 및 이용 관련 문의, 불만사항 등 확인, 사실조사를 위한 연락, 통지 및 처리결과 통보, 분쟁 조정을 위한 기록 보존
+            </li>
+            <li><span>4.</span> 이벤트<br>
+                신규 서비스, 상품, 이벤트 등의 최신정보 안내, 이벤트, 프로모션 당첨 고객에 대한 경품 지급
+            </li>
+            <li><span>5.</span> 기타 「개인정보 처리방침」에 고지된 수탁자에게 서비스 제공 등 계약의 이행에 필요한 업무의 위탁
+            </li>
+        </ol>
+    </div>
+    <div class="section">
+        <h4>개인정보의 보유 및 이용기간</h4>
+        <p>회사는 개인정보 수집 시에 동의 받은 개인정보 보유·이용기간 내에서 개인정보를 처리·보유하며, 회원탈퇴 또는 개인정보 처리 목적이 달성된 경우 고객의 개인정보를 지체 없이 파기합니다. 단, 회사는 다음 각 호의 사유가 있는 경우에는 예외적으로 일정 기간 개인정보를 보유합니다.</p>
+        <ol>
+            <li><span>1.</span> 회사 내부 방침에 의한 경우
+
+                <ol>
+                    <li><span>가.</span> 해지, 탈퇴 등으로 서비스가 종료되었으나 상품 또는 서비스의 미납이 존재하는 경우
+
+                        <ol>
+                            <li><span>&middot;</span> <strong style="font-weight: bold">요금 완납시까지</strong></li>
+                        </ol>
+
+                    </li>
+                    <li><span>나.</span> 회사와 고객 간 민원, 소송 등 분쟁이 있는 경우
+
+                        <ol>
+                            <li><span>&middot;</span> <strong style="font-weight: bold">분쟁 해결 시까지</strong></li>
+                        </ol>
+
+                    </li>
+                    <li><span>다.</span> 회사가 개별적으로 고객의 동의를 받은 경우
+
+                        <ol>
+                            <li><span>&middot;</span> <strong style="font-weight: bold">동의를 받은 기간까지</strong></li>
+                        </ol>
+                    </li>
+                    <li><span>라.</span> 불량이용자의 재가입 방지, 부정이용 방지의 경우
+                        <ol>
+                            <li><span>&middot;</span> 보유정보: 아이디, 이메일, 휴대폰번호, 회원가입일, 회원탈퇴일, 본인인증정보(CI/DI), 본인인증일</li>
+                            <li><span>&middot;</span> 보유기간: <strong style="font-weight: bold">탈퇴 후 6개월</strong></li>
+                        </ol>
+                    </li>
+                </ol>
+
+            </li>
+            <li><span>2.</span> 관련 법령에 따른 경우
+                <table>
+                    <caption>관련 법령에 의한 개인정보 보유 및 사유, 기간</caption>
+                    <thead>
+                    <tr>
+                        <th scope="col">보존정보</th>
+                        <th scope="col">보존근거법령</th>
+                        <th scope="col">보전기간</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr>
+                        <td>계약 또는 청약철회에 관한 기록</td>
+                        <td>전자상거래 등에서의 소비자보호에 관한 법률</td>
+                        <td><strong style="font-weight: bold">5년</strong></td>
+                    </tr>
+                    <tr>
+                        <td>대금 결제 및 재화 등의 공급에 관한 기록</td>
+                        <td>전자상거래 등에서의 소비자보호에 관한 법률</td>
+                        <td><strong style="font-weight: bold">5년</strong></td>
+                    </tr>
+                    <tr>
+                        <td>소비자의 불만 또는 분쟁처리에 관한 기록</td>
+                        <td>전자상거래 등에서의 소비자보호에 관한 법률 </td>
+                        <td><strong style="font-weight: bold">3년</strong></td>
+                    </tr>
+                    <tr>
+                        <td>사이트 방문에 관한 기록</td>
+                        <td>통신비밀보호법</td>
+                        <td><strong style="font-weight: bold">3개월</strong></td>
+                    </tr>
+                    <tr>
+                        <td>세법이 규정하는 모든 거래에 관한 장부 및 증빙서류</td>
+                        <td>국세기본법</td>
+                        <td><strong style="font-weight: bold">5년</strong></td>
+                    </tr>
+                    </tbody>
+                </table>
+
+            </li>
+            <li><span>3.</span> 장기 미이용 고객(이하 “휴면고객”이라 합니다)의 경우
+
+                <ol>
+                    <li><span>가.</span> 휴면고객이란 회원 가입 후 또는 최종 사용일 이후 1년 동안 서비스 사용이력이 없는 고객에 대해 휴면처리 1개월 전  회사가 사용의사를 묻는 고지를 하고, 30일 내에 답변 없는 고객을 말합니다.
+                    </li>
+                    <li><span>나.</span> 회사는 휴면고객의 개인정보를 보호하기 위하여 다른 고객의 개인정보와 분리하여 별도로 저장관리하고 있으며, 고객이 서비스를 재이용하기 원하는 경우 고객의 본인확인절차를 거쳐 재이용할 수 있습니다.
+                    </li>
+                    <li><span>다.</span> 분리 보관된 개인정보는 내부 방침 및 기타 관련 법령에 의한 정보보호 사유에 따라 일정 기간 저장된 후 파기됩니다.
+                    </li>
+                </ol>
+
+            </li>
+        </ol>
+    </div>
+</div>
+			</section>
+		</div>
+	</div>
+</div>
+<!--// 개인정보 수집/이용 -->
+
+<!-- 개인정보 취급위탁 -->
+<div id="privacyTrust" class="popup full" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="gnb">
+					<div class="close"><a href="#" class="layer-close">닫기</a></div>
+					<h1 class="title text-center ellipsis">개인정보 취급위탁</h1>
+				</div>
+			</header>
+			<!--// HEADER -->
+			<section class="agreement bg-gray text-gray scroll-wrap">
+				
+
+<div class="agree_area">
+    <div>
+        <h1>개인정보의 취급위탁</h1>
+        <p>1. “지니”는 보다 나은 서비스 제공, 고객편의 제공 등 원활한 업무 수행을 위하여 다음과 같이 개인정보 취급 업무를 외부 전문업체에 위탁하여 운영하고 있습니다. 해당 위탁사업자는 계약체결 기간 동안 고객의 개인정보를 보유합니다. 단, 관계법령에서 법정 보유기간을 명시하고 있는 경우는 당해 업체는 해당 기간 동안 보유합니다.</p>
+        <p>2. “지니”는 위탁업무계약서 등을 통하여 개인정보보호 관련 법규의 준수, 개인정보에 관한 비밀유지, 제3자 제공에 대한 금지, 사고시의 책임부담, 위탁기간, 처리 종료 후의 개인정보의 반환 또는 파기 의무 등을 규정하고, 이를 준수하도록 관리하고 있습니다.</p>
+        <ol>
+            <li>3. 개인정보 취급업무 수탁사 및 위탁내용
+                <table cellpadding="0" cellspacing="0" border="0">
+                    <caption>개인정보 취급 위탁 이용 목적</caption>
+                    <tbody>
+                    <tr>
+                        <th>수탁사</th>
+                        <th>이용목적</th>
+                    </tr>
+                    <tr>
+                        <td>㈜케이티</td>
+                        <td>통신부가상품의 인증 및 프로모션, 청구서 및 올레포인트 결제, 휴대전화 번호 인증 문자 발송 대행</td>
+                    </tr>
+                    <tr>
+                        <td>㈜케이티엠하우스</td>
+                        <td>이벤트 당첨용 기프티쇼 MMS 발송</td>
+                    </tr>
+                    <tr>
+                        <td>㈜제이비물류</td>
+                        <td>이벤트 경품 발송</td>
+                    </tr>
+                    <tr>
+                        <td>나이스평가정보㈜</td>
+                        <td>본인인증 서비스 제공/대행</td>
+                    </tr>
+                    <tr>
+                        <td>이지스엔터프라이즈올더게이트㈜</td>
+                        <td>신용카드 결제 및 bc top point 결제대행</td>
+                    </tr>
+                    <tr>
+                        <td>㈜케이지이니시스</td>
+                        <td>신용카드 결제 대행</td>
+                    </tr>
+                    <tr>
+                        <td>페이레터㈜</td>
+                        <td>상품 운영 및 휴대폰 소액, 신용카드 결제</td>
+                    </tr>
+                    <tr>
+                        <td>㈜다우기술</td>
+                        <td>kt집전화 결제 대행</td>
+                    </tr>
+                    <tr>
+                        <td>지에스엠비즈㈜</td>
+                        <td>GS&amp;POINT 포인트 회원 가입 여부 인증, 마일리지 사용 및 적립</td>
+                    </tr>
+                    <tr>
+                        <td>신한카드㈜</td>
+                        <td>카드 부가서비스 가입여부 인증 및 마일리지 사용</td>
+                    </tr>
+                    <tr>
+                        <td>SK플래닛㈜</td>
+                        <td>OK캐쉬백 포인트 적립/사용시 본인 확인</td>
+                    </tr>
+                    <tr>
+                        <td>㈜문정아중국어연구소</td>
+                        <td>제휴 상품 배송 및 이용</td>
+                    </tr>
+                    <tr>
+                        <td>브랜드 네트웍스㈜</td>
+                        <td>제휴 상품 배송</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </li>
+        </ol>
+    </div>
+</div>
+			</section>
+		</div>
+	</div>
+</div>
+<!--// 개인정보 취급위탁 -->
+
+<!-- 청소년보호정책 -->
+<div id="youthPolicy" class="popup full" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="gnb">
+					<div class="close"><a href="#" class="layer-close">닫기</a></div>
+					<h1 class="title text-center ellipsis">청소년보호정책</h1>
+				</div>
+			</header>
+			<!--// HEADER -->
+			<section class="agreement bg-gray text-gray scroll-wrap">
+				
+
+<div class="agree_area">
+    <h1>케이티지니뮤직 청소년 보호정책</h1>
+    <div>
+        <p style="padding-top:16px">주식회사 케이티지니뮤직(이하 '회사'라 한다)은 각종 청소년 유해정보로부터 청소년을 보호하고자 관련 법률에 따라 19세 미만의 청소년들이 유해정보에 접근할 수 없도록 청소년 보호정책을 마련하여 시행하고 있습니다. 또한 회사는 청소년들의 건전한 성장을 위하여 다음과 같이 활동하고 있습니다.</p>
+        <h3>1. 청소년 유해정보로부터의 청소년 보호계획</h3>
+        <p>회사는 청소년 보호계획을 회사의 개인정보 보호 계획에 포함하여 수립하여 시행하고 있습니다.</p>
+        <h3>2. 청소년 유해정보에 대한 청소년 접근제한 및 관리 조치</h3>
+        <p>회사는 청소년이 아무런 제한장치 없이 청소년 유해정보에 노출되지 않도록 청소년 유해 매체물에 대해서는 별도의 인증장치를 마련, 적용하며 청소년 유해정보가 노출되지 않기 위한 예방차원의 조치를 취합니다.</p>
+        <h3>3. 정보통신업무 종사자에 대한 청소년 유해정보로부터의 청소년 보호를 위한 교육</h3>
+        <p>회사는 정보통신업무 종사자를 대상으로 청소년보호 관련 법령 및 제재기준, 유해정보 발견 시 대처법, 위반사항 처리에 대한 보고절차 등을 교육하고 있습니다.</p>
+        <h3>4. 청소년 유해정보로 인한 피해상담 및 고충처리</h3>
+        <p>이용자 분들께서는 하단에 명시한 '5. 청소년보호 책임자 및 담당자의 소속, 성명 및 연락처'항을 참고하여 전화나 메일을 통하여 피해상담 및 고충처리를 요청할 수 있습니다.</p>
+        <h3>5. 청소년 보호 책임자 및 담당자의 소속, 성명 및 연락처</h3>
+        <h4>청소년 보호 관리 책임자</h4>
+        <p>
+            성 명 : 김정욱<br />
+            직 책 : 본부장<br />
+            소 속 : 서비스기획본부<br />
+            전화번호 : 1577-5337<br />
+            전자우편주소 : <a href="mailto:help@ktmusic.co.kr">help@ktmusic.co.kr</a>
+        </p>
+        <br />
+        <h4>청소년 보호 관리 담당자</h4>
+        <p>
+            성 명 : 김태훈<br />
+            직 책 : 팀장<br />
+            소 속 : 지니기획팀<br />
+            전화번호 : 1577-5337<br />
+            전자우편주소 : <a href="mailto:help@ktmusic.co.kr">help@ktmusic.co.kr</a>
+        </p>
+    </div>
+</div>
+			</section>
+		</div>
+	</div>
+</div>
+<!--// 청소년보호정책 -->
+
+<!-- 위치기반 서비스 이용약관 -->
+<div id="locationPolicy" class="popup full" style="display:none;">
+	<div class="pop-wrap">
+		<div class="pop-contents">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="gnb">
+					<div class="close"><a href="#" class="layer-close">닫기</a></div>
+					<h1 class="title text-center ellipsis">위치기반 서비스 이용약관</h1>
+				</div>
+			</header>
+			<!--// HEADER -->
+			<section class="agreement bg-gray text-gray scroll-wrap">
+				
+
+<div class="agree_area">
+    <h2>제 1 조 (목적)</h2>
+    <p>본 약관은 회원(본 약관에 동의한 자를 말합니다. 이하 “회원”이라고 합니다)이 주식회사 케이티지니뮤직(이하 “회사”라고 합니다)이 제공하는 위치기반 서비스(이하 “서비스”라고 합니다)를 이용함에 있어 회사와
+        회원의 권리·의무 및 책임사항을 규정함을 목적으로 합니다.
+    </p>
+
+    <h2>제 2 조 (약관의 효력 및 변경)</h2>
+    <ol>
+        <li><span>①</span> 회사는 본 약관의 내용을 회원이 쉽게 알 수 있도록 서비스 초기 화면 또는 별도의 연결화면에 게시합니다.</li>
+        <li><span>②</span> 본 약관에 따른 서비스 이용계약은 고객 또는 개인위치정보주체가 본 약관에 동의하고 회사가 정한 소정의 절차에 따라 서비스의 이용자로 등록함으로써 성립합니다.</li>
+        <li><span>③</span> 회원이 온라인에서 본 약관의 "동의하기" 버튼을 클릭하였을 경우 본 약관의 내용을 모두 읽고 이를 충분히 이해하였으며, 그 적용에 동의한 것으로 봅니다.</li>
+        <li><span>④</span> 회사는 위치정보의 보호 및 이용 등에 관한 법률, 콘텐츠산업 진흥법, 전자상거래 등에서의 소비자보호에 관한 법률, 소비자기본법, 약관의 규제에 관한 법률 등 관련법령을
+            위배하지 않는 범위에서 본 약관을 개정할 수 있습니다.
+        </li>
+        <li><span>⑤</span> 회사가 약관을 개정할 경우에는 기존약관과 개정약관 및 개정약관의 적용일자와 개정사유를 명시하여 현행약관과 함께 그 적용일자 10일 전부터 적용일 이후 상당한 기간 동안
+            공지만을 하고, 개정 내용이 회원에게 불리한 경우에는 그 적용일자 30일 전부터 적용일 이후 상당한 기간 동안 각각 이를 서비스 홈페이지에 게시하거나 회원에게 전자적 형태(전자우편, SMS
+            등)로 약관 개정 사실을 발송하여 고지합니다.
+        </li>
+        <li><span>⑥</span> 회사가 전항에 따라 개정약관을 공지 또는 통지하면서 회원에게 개정약관의 적용일까지 거부의사를 표시하지 아니하면 의사표시가 표명된 것으로 본다는 뜻을 공지 또는
+            통지하였음에도 불구하고 회원이 명시적으로 거부의사를 표시하지 아니한 경우 회원이 개정약관에 동의한 것으로 봅니다.
+        </li>
+        <li><span>⑦</span> 회원은 개정약관에 동의하지 않을 경우, 서비스의 이용을 중단하고 이용계약을 해지할 수 있습니다.</li>
+    </ol>
+
+    <h2>제 3 조 (약관 외 준칙)</h2>
+    <ol>
+        <li><span>①</span> 본 약관에 명시되지 아니한 사항은 위치정보의 보호 및 이용 등에 관한 법률, 정보통신망 이용촉진 및 정보보호 등에 관한 법률, 개인정보보호법 등 관련법령과 회사의
+            ‘지니(genie)’ 이용약관 및 개인정보처리방침, 회사가 별도로 정한 지침 등에 의합니다.
+        </li>
+        <li><span>②</span> 본 약관과 회사의 ‘지니(genie)’ 이용약관의 내용이 충돌하는 경우 본 약관의 내용이 우선합니다.
+        </li>
+    </ol>
+
+    <h2>제 4 조 (서비스의 내용)</h2>
+    <p>회사가 제공하는 서비스는 아래와 같습니다.</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+        <caption>회사가 제공하는 서비스</caption>
+        <thead>
+        <tr>
+            <th scope="col">서비스 명</th>
+            <th scope="col">서비스 내용</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <td>위치기반<br/>음악추천 서비스</td>
+            <td>회원의 위치에 따른 날씨 정보 및<br/>그에 따른 추천 음악 제공 서비스</td>
+        </tr>
+        </tbody>
+    </table>
+
+    <h2>제 5 조 (서비스 이용요금)</h2>
+    <p>본 서비스는 기본적으로 무료입니다. 단, 서비스 이용과정에서 통신비용이 발생할 수 있고, 이 경우 통신비용은 회원이 가입한 각 이동통신사의 정책에 따릅니다.</p>
+
+    <h2>제 6 조 (서비스내용변경 등 통지)</h2>
+    <ol>
+        <li>① 회사가 서비스 내용을 변경하거나 종료하는 경우 회사는 회원이 등록한 전자우편 주소로 이메일을 통하여 서비스 내용의 변경 사항 또는 종료를 통지할 수 있습니다.</li>
+        <li>② 위 ①항의 경우 불특정 다수인을 상대로 통지를 함에 있어서는 웹사이트 등 기타 회사의 공지사항을 통하여 통지할 수 있습니다.</li>
+    </ol>
+
+    <h2>제 7 조 (서비스이용의 제한 및 중지)</h2>
+    <ol>
+        <li>① 회사는 아래 각 호의 1에 해당하는 사유가 발생한 경우에는 회원의 서비스 이용을 제한하거나 중지시킬 수 있습니다.
+            <ol>
+                <li><span>1.</span> 회원이 회사 서비스의 운영을 고의 또는 중과실로 방해하는 경우</li>
+                <li><span>2.</span> 서비스용 설비 점검, 보수 또는 공사로 인하여 부득이한 경우</li>
+                <li><span>3.</span> 전기통신사업법에 규정된 기간통신사업자가 전기통신 서비스를 중지했을 경우</li>
+                <li><span>4.</span> 국가비상사태, 서비스 설비의 장애 또는 서비스 이용의 폭주 등으로 서비스 이용에 지장이 있는 경우</li>
+                <li><span>5.</span> 기타 중대한 사유로 인하여 회사가 서비스 제공을 지속하는 것이 부적당하다고 인정하는 경우</li>
+            </ol>
+        </li>
+        <li>② 회사는 전항의 규정에 의하여 서비스의 이용을 제한하거나 중지한 때에는 그 사유 및 제한기간 등을 회원에게 알려야 합니다.</li>
+    </ol>
+
+    <h2>제 8 조 (개인위치정보의 이용 및 제공)</h2>
+    <ol>
+        <li>① 회사는 개인위치정보를 이용하여 서비스를 제공하고자 하는 경우에는 미리 이용약관에 명시한 후 개인위치정보주체의 동의를 얻어야 합니다.</li>
+        <li>② 회사는 타사업자 또는 회원과의 요금정산 및 민원처리를 위해 개인위치정보 이용•제공사실 확인자료를 자동 기록•보존하며, 해당 자료는 1년간 보관합니다. 단, 개인위치정보가 아닌 단순 위치정보의
+            경우는 보관하지 않습니다.
+        </li>
+        <li>③ 회사는 회원의 동의 없이 회원의 개인위치정보를 제3자에게 제공하지 않습니다.</li>
+        <li>④ 회사는 개인위치정보를 회원이 지정하는 제3자에게 제공하는 경우에는 개인위치정보를 수집한 당해 통신 단말장치로 위치정보의 보호 및 이용 등에 관한 법률에 따라 회원에게 통보합니다. 단, 아래
+            각 호의 1에 해당하는 경우에는 회원이 미리 특정하여 지정한 통신 단말장치 또는 전자우편주소로 통보합니다.
+            <ol>
+                <li><span>1.</span> 개인위치정보를 수집한 당해 통신단말장치가 문자, 음성 또는 영상의 수신기능을 갖추지 아니한 경우</li>
+                <li><span>2.</span> 회원이 온라인 게시 등의 방법으로 통보할 것을 미리 요청한 경우</li>
+            </ol>
+        </li>
+    </ol>
+
+    <h2>제 9 조 (개인위치정보주체의 권리)</h2>
+    <ol>
+        <li>① 회원은 회사에 대하여 언제든지 개인위치정보를 이용한 위치기반서비스 제공에 대한 동의의 전부 또는 일부를 철회할 수 있습니다. 이 경우 회사는 수집한 개인위치정보 및 개인위치정보 이용,
+            제공사실 확인자료를 파기합니다.
+        </li>
+        <li>② 회원은 회사에 대하여 언제든지 개인위치정보의 수집, 이용 또는 제공의 일시적인 중지를 요구할 수 있으며, 회사는 이를 거절할 수 없고 이를 위한 기술적 수단을 갖추고 있습니다.</li>
+        <li>③ 회원은 회사에 대하여 아래 각 호의 자료에 대한 열람 또는 고지를 요구할 수 있고, 당해 자료에 오류가 있는 경우에는 그 정정을 요구할 수 있습니다. 이 경우 회사는 정당한 사유 없이 회원의
+            요구를 거절할 수 없습니다.
+            <ol>
+                <li><span>1.</span> 본인에 대한 개인위치정보 수집, 이용사실 확인자료</li>
+                <li><span>2.</span> 본인의 개인위치정보가 위치정보의 보호 및 이용 등에 관한 법률 또는 다른 법률 규정에 의하여 제3자에게 제공된 이유 및 내용</li>
+            </ol>
+        </li>
+        <li>④ 회원은 제1항 내지 제3항의 권리행사를 위해 회사의 소정의 절차를 통해 요구할 수 있습니다.</li>
+    </ol>
+
+    <h2>제 10 조 (법정대리인의 권리)</h2>
+    <ol>
+        <li>① 회사는 만14세 미만의 회원에 대해서는 개인위치정보를 이용한 위치기반서비스 제공에 대한 동의를 당해 회원과 당해 회원의 법정대리인으로부터 동의를 받아야 합니다. 이 경우 법정대리인은 제9조에
+            의한 회원의 권리를 모두 가집니다.
+        </li>
+        <li>② 회사는 만14세 미만의 회원의 개인위치정보 또는 개인위치정보 이용사실 확인자료를 이용약관에 명시 또는 고지한 범위를 넘어 이용하고자 하는 경우에는 14세미만의 회원과 그 법정대리인의 동의를
+            받아야 합니다. 단, 아래 각 호의 경우는 제외합니다.
+            <ol>
+                <li><span>1.</span> 위치정보 및 위치기반서비스 제공에 따른 요금정산을 위하여 개인위치정보 이용, 제공사실 확인자료가 필요한 경우</li>
+                <li><span>2.</span> 통계작성, 학술연구 또는 시장조사를 위하여 특정 개인을 알아볼 수 없는 형태로 가공하여 제공하는 경우</li>
+            </ol>
+        </li>
+        <li>③ 회사는 서비스 정책상 만14세 미만의 회원에 대한 서비스의 이용을 제한할 수 있습니다.</li>
+    </ol>
+
+    <h2>제 11 조 (8세 이하의 아동 등의 보호의무자의 권리)</h2>
+    <ol>
+        <li>① 회사는 아래의 경우에 해당하는 자(이하 “8세 이하의 아동 등”이라 합니다)의 보호의무자가 8세 이하의 아동 등의 생명 또는 신체보호를 위하여 개인위치정보의 이용 또는 제공에 동의하는
+            경우에는 본인의 동의가 있는 것으로 봅니다.
+            <ol>
+                <li><span>1.</span> 8세 이하의 아동</li>
+                <li><span>2.</span> 피성년후견인</li>
+                <li><span>3.</span> 장애인복지법 제2조 제2항 제2호의 규정에 의한 정신적 장애를 가진 자로서 장애인고용촉진 및 직업재활법 제2조 제2호의 규정에 의한 중증장애인에
+                    해당하는 자(장애인복지법에 따라 장애인등록을 한 자에 한합니다)
+                </li>
+            </ol>
+        </li>
+        <li>② 8세 이하의 아동 등의 생명 또는 신체의 보호를 위하여 개인위치정보의 이용 또는 제공에 동의를 하고자 하는 보호의무자는 서면동의서에 보호의무자임을 증명하는 서면을 첨부하여 회사에 제출하여야
+            합니다.
+        </li>
+        <li>③ 보호의무자는 8세 이하의 아동 등의 개인위치정보 이용 또는 제공에 동의하는 경우 개인위치정보주체 권리의 전부를 행사할 수 있습니다.</li>
+    </ol>
+
+    <h2>제 12 조 (위치정보관리책임자의 지정)</h2>
+    <ol>
+        <li>① 회사는 위치정보를 적절히 관리․보호하고 개인위치정보주체의 불만을 원활히 처리할 수 있도록 실질적인 책임을 질 수 있는 지위에 있는 자를 위치정보관리책임자로 지정해 운영합니다.</li>
+        <li>② 위치정보관리책임자는 위치기반서비스를 제공하는 부서의 부서장으로서 구체적인 사항은 본 약관의 부칙에 따릅니다.</li>
+    </ol>
+
+    <h2>제 13 조 (손해배상)</h2>
+    <ol>
+        <li>① 회사가 위치정보의 보호 및 이용 등에 관한 법률 제15조 내지 제26조의 규정을 위반한 행위로 회원에게 손해가 발생한 경우 회원은 회사에 대하여 손해배상 청구를 할 수 있습니다. 이 경우
+            회사는 고의, 과실이 없음을 입증하지 못하는 경우 책임을 면할 수 없습니다.
+        </li>
+        <li>② 회원이 본 약관을 위반하여 회사에 손해가 발생한 경우 회사는 회원에 대하여 손해배상을 청구할 수 있습니다.</li>
+    </ol>
+
+    <h2>제 14 조 (면책)</h2>
+    <ol>
+        <li>① 회사는 다음 각 호의 경우로 서비스를 제공할 수 없는 경우 이로 인하여 회원에게 발생한 손해에 대해서는 책임을 부담하지 않습니다.
+            <ol>
+                <li><span>1.</span> 천재지변 또는 이에 준하는 불가항력의 상태가 있는 경우</li>
+                <li><span>2.</span> 서비스 제공을 위하여 회사와 서비스 제휴계약을 체결한 제3자의 고의적인 서비스 방해가 있는 경우</li>
+                <li><span>3.</span> 회원의 귀책사유로 서비스 이용에 장애가 있는 경우</li>
+                <li><span>4.</span> 제1호 내지 제3호를 제외한 기타 회사의 고의∙과실이 없는 사유로 인한 경우</li>
+            </ol>
+        </li>
+        <li>② 회사는 서비스 및 서비스에 게재된 정보, 자료, 사실의 신뢰도, 정확성 등에 대해서는 보증을 하지 않으며 이로 인해 발생한 회원의 손해에 대하여는 책임을 부담하지 아니합니다.</li>
+    </ol>
+
+    <h2>제 15 조 (분쟁의 조정)</h2>
+    <ol>
+        <li>① 회사는 위치정보와 관련된 분쟁에 대해 개인위치정보주체와 협의가 이루어지지 아니하거나 협의를 할 수 없는 경우에는 방송통신위원회에 재정을 신청할 수 있습니다.</li>
+        <li>② 회사 또는 개인위치정보주체는 위치정보와 관련된 분쟁에 대해 당사자간 협의가 이루어지지 아니하거나 협의를 할 수 없는 경우에는 개인정보보호법에 따라 개인정보분쟁조정위원회에 조정을 신청할 수
+            있습니다.
+        </li>
+    </ol>
+
+    <h2>제 16 조 (사업자 정보)</h2>
+    <p>회사의 상호 및 주소 등은 다음과 같습니다.</p>
+    <ol>
+        <li><span>1.</span> 상 호 : 주식회사 케이티지니뮤직</li>
+        <li><span>2.</span> 대 표 자 : 서인욱</li>
+        <li><span>3.</span> 주 소 : 서울특별시 강남구 강남대로 456,4-9층(역삼동, 한석타워)</li>
+        <li><span>4.</span> 대표전화 : 1577-5337</li>
+    </ol>
+
+    <h2>부칙</h2>
+    <ol>
+        <li>제1조 (시행일) 이 약관은 2025년 3월 26일부터 시행되던 종전의 약관은 본 약관으로 대체하며, 본 약관은 2026년 10월 6일부터 적용됩니다.</li>
+        <li class="sp-top">제2조 위치정보관리책임자
+            <p>회사는 다음과 같이 위치정보 관리책임자를 지정하여 이용자들이 서비스 이용과정에서 발생한 민원사항 처리를 비롯하여 개인위치정보주체의 권리 보호를 위해 힘쓰고 있습니다.</p>
+            <ul class="sp-top">
+                <li>위치정보 관리책임자 : (개인)정보보호 담당 부서 임원(개인정보보호책임자 겸직)</li>
+                <li>전화번호 : 1577-5337</li>
+                <li>이메일 주소 : help@ktmusic.co.kr</li>
+            </ul>
+    </ol>
+</div>
+			</section>
+		</div>
+	</div>
+</div>
+<!--// 위치기반 서비스 이용약관 -->
+</body>
+</html>
