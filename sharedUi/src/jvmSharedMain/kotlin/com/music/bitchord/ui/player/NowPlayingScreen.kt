@@ -1579,7 +1579,13 @@ fun NowPlayingScreen(
                 SongLyricsSync(
                     offsetMs = lyricsTiming.manualMs,
                     timing = lyricsTiming,
-                    onAiTiming = onAiLyricsTiming?.takeIf { songMeaningAvailable && lyricsTiming.adjustable },
+                    // Offered while the measurement has nothing (or Gemini's
+                    // answer is what shows, to take it back): a measured
+                    // timing is the better one and wins over Gemini's anyway.
+                    onAiTiming = onAiLyricsTiming?.takeIf {
+                        songMeaningAvailable && lyricsTiming.adjustable &&
+                            (lyricsTiming.byAi || lyricsTiming.shiftMs == null)
+                    },
                     lines = lyrics,
                     lyricPositionMs = {
                         // The reading as of now, not as of the last report: a

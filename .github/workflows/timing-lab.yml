@@ -40,7 +40,7 @@ jobs:
         env:
           LIVE_TIMING: '1'
           TIMING_OUT: ${{ github.workspace }}/timing-lab.txt
-          TIMING_LIMIT: '12'
+          TIMING_LIMIT: '100'
         run: |
           set +e
           chmod +x gradlew

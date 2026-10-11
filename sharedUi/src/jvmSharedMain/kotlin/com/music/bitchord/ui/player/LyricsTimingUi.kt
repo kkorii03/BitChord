@@ -23,4 +23,6 @@ data class LyricsTimingUi(
     val manualAvailable: Boolean = false,
     /** This song's own correction by hand, ms; positive shows the lyrics later. */
     val manualMs: Long = 0L,
+    /** What the measurement compared and how it came out — a diagnostic for the sync drawer. */
+    val note: String? = null,
 )

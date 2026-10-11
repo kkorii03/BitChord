@@ -281,9 +281,12 @@ object CoverTitles {
             when (val c = text[i]) {
                 '(', '[', '（', '【', '{' -> depth++
                 ')', ']', '）', '】', '}' -> if (depth > 0) depth--
-                '-', '–', '—' -> if (depth == 0) {
+                '-', '–', '—', '_' -> if (depth == 0) {
                     val spaced = (i > 0 && text[i - 1] == ' ') || (i + 1 < text.length && text[i + 1] == ' ')
-                    if (c != '-' || spaced || unspaced) {
+                    // An underscore separates only with spaces on both sides:
+                    // "YOUNHA _ WINTER FLOWER", never "snake_case".
+                    val bothSpaced = i > 0 && text[i - 1] == ' ' && i + 1 < text.length && text[i + 1] == ' '
+                    if (if (c == '_') bothSpaced else c != '-' || spaced || unspaced) {
                         val left = text.substring(0, i).trim()
                         val right = text.substring(i + 1).trim()
                         if (left.isNotEmpty() && right.isNotEmpty()) return left to right
@@ -298,7 +301,9 @@ object CoverTitles {
     private fun cleanName(text: String): String? {
         var name = text.trim()
         // Everything after a closing bracket or a second separator is not the name.
-        name = name.split('|', '｜', '/', '#').first().trim()
+        // A slash only separates with a space beside it: "HUNTR/X" and "AC/DC"
+        // are names, "가수 / 소속" is two things.
+        name = name.split('|', '｜', '#').first().split(SPACED_SLASH).first().trim()
         while (true) {
             val stripped = ANY_GROUP.replace(name, "").trim()
             if (stripped == name) break
@@ -314,6 +319,8 @@ object CoverTitles {
         title = title.trim(' ', '-', '–', '/', '|', ',', '"', '\'', '“', '”', '「', '」', '『', '』')
         return title.takeIf { it.isNotEmpty() }
     }
+
+    private val SPACED_SLASH = Regex("""\s/|/\s""")
 
     private val VERSION_WORDS = Regex(
         """(?i)\b(?:live|ver\.?|version|remix|mix|acoustic|inst\.?|instrumental|mr|piano|edit|demo|""" +

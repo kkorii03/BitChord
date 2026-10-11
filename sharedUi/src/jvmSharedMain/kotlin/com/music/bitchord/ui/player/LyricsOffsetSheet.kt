@@ -493,6 +493,18 @@ private fun VideoTimingBlock(timing: LyricsTimingUi, onAiTiming: (() -> Unit)?) 
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            // The measurement's own figures: which recording, how close. Small
+            // and dim — it is there for a screenshot when a video won't time.
+            timing.note?.let { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.38f),
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
         if (onAiTiming != null) {
             Box(

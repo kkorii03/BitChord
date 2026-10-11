@@ -4,21 +4,15 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.innertube.Innertube
-import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.TimingFit
-import com.music.bitchord.data.lyrics.artistForLyricsSearch
-import com.music.bitchord.data.lyrics.forLyricsSearch
 import com.music.bitchord.data.lyrics.timedBy
-import com.music.bitchord.data.model.SearchFilter
-import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -28,8 +22,6 @@ import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -123,6 +115,9 @@ object LyricsTiming {
     }
 
     private fun baseOf(entry: Entry, lines: List<LyricLine>): Adjustment? {
+        // The measurement first: when it lines the two up it is right to a
+        // tenth of a second, which Gemini's answers never are.
+        if (entry.autoVersion == AUTO_VERSION) entry.auto?.toAdjustment(byAi = false)?.let { return it }
         if (entry.aiTextKey != null && entry.aiTextKey == textKey(lines)) {
             entry.ai?.toAdjustment(byAi = true)?.let { return it }
             entry.aiShiftMs?.let { return Adjustment.Shift(it, byAi = true) }
@@ -134,9 +129,15 @@ object LyricsTiming {
                 fitAi(lines, sung, sung.map { starts[it] })?.let { return it }
             }
         }
-        if (entry.autoVersion == AUTO_VERSION) return entry.auto?.toAdjustment(byAi = false)
         return null
     }
+
+    /**
+     * What the last measurement of [videoId] made of it, in figures — which
+     * recording it was measured against and how the two compared — for the
+     * sync drawer, so a screenshot says why a video was or wasn't timed.
+     */
+    suspend fun note(context: Context, videoId: String): String? = store(context).get(videoId)?.autoNote
 
     /** [lines] as [timing] puts them; words, syllables and backing vocals move with their line. */
     fun apply(lines: List<LyricLine>, timing: Timing): List<LyricLine> = when (val base = timing.base) {
@@ -188,17 +189,20 @@ object LyricsTiming {
     private val measuring = ConcurrentHashMap<String, Mutex>()
 
     /**
-     * Measures how [video] runs against the original recording named [title] /
-     * [artist], on as much of the video as is on disk, and keeps the answer.
-     * The lyrics screen, the lock screen and the next-song preparation may all
-     * ask at once; they share one measurement.
+     * Measures how [video] runs against its original recording, on as much of
+     * the video as is on disk, and keeps the answer. The record is searched
+     * for under [names] — (title, artist), most trusted first, see
+     * [RecordingPick] — and [videoMs] is the video's length, which helps tell
+     * the record from other songs of the same name. The lyrics screen, the
+     * lock screen and the next-song preparation may all ask at once; they
+     * share one measurement.
      */
-    suspend fun measure(context: Context, video: Song, title: String, artist: String) {
+    suspend fun measure(context: Context, video: Song, names: List<Pair<String, String>>, videoMs: Long) {
         val lock = measuring.getOrPut(video.videoId) { Mutex() }
         lock.withLock {
             if (!worthMeasuring(context, video.videoId)) return
             val outcome = try {
-                measureFresh(context, video, title, artist)
+                measureFresh(context, video, names, videoMs)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
@@ -217,6 +221,7 @@ object LyricsTiming {
                     autoNoChange = outcome.noChange,
                     autoVideoBytes = outcome.videoBytes,
                     autoVideoSeconds = outcome.videoSeconds,
+                    autoNote = outcome.note,
                 )
             }
             _changes.tryEmit(video.videoId)
@@ -231,62 +236,73 @@ object LyricsTiming {
             val videoSeconds: Double = 0.0,
             /** Measured, and the video already keeps the record's time. */
             val noChange: Boolean = false,
+            /** What it was measured against and how that went, for the drawer. */
+            val note: String? = null,
         ) : Measured
 
         data object Retry : Measured
     }
 
-    private suspend fun measureFresh(context: Context, video: Song, title: String, artist: String): Measured {
-        val original = findRecording(title, artist) ?: run {
-            TrackLog.d(TAG, "no original recording found for '$title' / '$artist'", video.videoId)
-            return Measured.Done(null, complete = true)
+    private suspend fun measureFresh(
+        context: Context,
+        video: Song,
+        names: List<Pair<String, String>>,
+        videoMs: Long,
+    ): Measured {
+        val candidates = RecordingPick.find(names, videoMs, max = MAX_CANDIDATES)
+        if (candidates.isEmpty()) {
+            TrackLog.d(TAG, "no original recording found for $names", video.videoId)
+            return Measured.Done(null, complete = true, note = "no original recording found")
         }
         // The video is the record itself: nothing to move.
-        if (original.videoId == video.videoId) return Measured.Done(null, complete = true, noChange = true)
+        if (candidates.any { it.videoId == video.videoId }) {
+            return Measured.Done(null, complete = true, noChange = true, note = "the video is the recording")
+        }
 
-        // The record, whole; the video, as much as has arrived (it is usually
-        // the track playing, and the player is the one fetching it).
-        val ready = withTimeoutOrNull(RECORD_TIMEOUT_MS + 5_000L) {
-            coroutineScope {
-                val record = async {
-                    original.localUri != null || AudioCache.awaitAnalysisTrack(
-                        Uri.parse(AutomixAnalysisSource.opusUri(original.videoId)), RECORD_TIMEOUT_MS,
-                    )
-                }
-                val opening = async { awaitVideoOpening(video) }
-                record.await() to opening.await()
-            }
-        } ?: return Measured.Retry
-        if (!ready.first || ready.second == null) return Measured.Retry
-        val copy = ready.second!!
+        // The video, as much as has arrived (it is usually the track playing,
+        // and the player is the one fetching it), read once for every candidate.
+        val copy = awaitVideoOpening(video) ?: return Measured.Retry
         val complete = copy.isComplete || video.localUri != null
-
         val job = currentCoroutineContext()[Job]
-        var recordFeatures: ChromaAlignment.Features? = null
-        var videoFeatures: ChromaAlignment.Features? = null
-        val decodeMs = measureTimeMillis {
-            coroutineScope {
-                val r = async(Dispatchers.IO) { recordFeatures(context, original, job) }
-                val v = async(Dispatchers.IO) { features(context, video, MAX_SECONDS, job) }
-                recordFeatures = r.await()
-                videoFeatures = v.await()
+        val clip = withContext(Dispatchers.IO) { features(context, video, MAX_SECONDS, job) } ?: return Measured.Retry
+
+        var anyRecord = false
+        val notes = mutableListOf<String>()
+        for (original in candidates) {
+            // The record, whole.
+            val ready = original.localUri != null || withTimeoutOrNull(RECORD_TIMEOUT_MS + 5_000L) {
+                AudioCache.awaitAnalysisTrack(Uri.parse(AutomixAnalysisSource.opusUri(original.videoId)), RECORD_TIMEOUT_MS)
+            } == true
+            if (!ready) continue
+            val record = withContext(Dispatchers.IO) { recordFeatures(context, original, job) } ?: continue
+            anyRecord = true
+            var result: ChromaAlignment.Result? = null
+            var verdict = ""
+            val alignMs = measureTimeMillis {
+                withContext(Dispatchers.Default) {
+                    result = ChromaAlignment.align(record, clip, videoComplete = complete)
+                    verdict = ChromaAlignment.lastVerdict
+                }
             }
+            TrackLog.d(
+                TAG,
+                "chroma '${original.title}' / '${original.artist}' (${original.videoId}) -> ${video.videoId}: $verdict " +
+                    "(record ${record.durationSeconds.roundToInt()} s, video ${clip.durationSeconds.roundToInt()} s" +
+                    (if (complete) "" else " so far") + ", align ${alignMs} ms)",
+                video.videoId,
+            )
+            notes += "'${original.title}' / '${original.artist}': $verdict" +
+                (if (complete) "" else " (${clip.durationSeconds.roundToInt()} s of video so far)")
+            val found = result ?: continue
+            val same = found.linear && found.rate == 1.0 && abs(found.map.map(0L)) < MIN_SHIFT_MS
+            return Measured.Done(
+                found.takeUnless { same }, complete, copy.cachedPrefix, clip.durationSeconds,
+                noChange = same, note = notes.joinToString("\n"),
+            )
         }
-        val record = recordFeatures ?: return Measured.Retry
-        val clip = videoFeatures ?: return Measured.Retry
-        var result: ChromaAlignment.Result? = null
-        val alignMs = measureTimeMillis {
-            result = withContext(Dispatchers.Default) { ChromaAlignment.align(record, clip, videoComplete = complete) }
-        }
-        TrackLog.d(
-            TAG,
-            "chroma ${original.videoId} -> ${video.videoId}: ${ChromaAlignment.lastVerdict} " +
-                "(record ${record.durationSeconds.roundToInt()} s, video ${clip.durationSeconds.roundToInt()} s" +
-                (if (complete) "" else " so far") + ", decode ${decodeMs} ms, align ${alignMs} ms)",
-            video.videoId,
-        )
-        val same = result?.let { it.linear && it.rate == 1.0 && abs(it.map.map(0L)) < MIN_SHIFT_MS } == true
-        return Measured.Done(result.takeUnless { same }, complete, copy.cachedPrefix, clip.durationSeconds, noChange = same)
+        // Nothing to measure against came down: worth another go later.
+        if (!anyRecord) return Measured.Retry
+        return Measured.Done(null, complete, copy.cachedPrefix, clip.durationSeconds, note = notes.joinToString("\n"))
     }
 
     /**
@@ -350,21 +366,8 @@ object LyricsTiming {
         }
     }
 
-    /**
-     * The catalogue recording of the song, from an anonymous YouTube Music
-     * search — a lookup the app makes for itself, kept out of the listener's
-     * search history.
-     */
-    private suspend fun findRecording(title: String, artist: String): Song? = withContext(Dispatchers.IO) {
-        val cleanTitle = title.forLyricsSearch()
-        val cleanArtist = artist.artistForLyricsSearch()
-        val response = Innertube.searchAnonymous("$cleanTitle $cleanArtist", SearchFilter.SONGS.params)
-        InnertubeParser.parseSearchPage(response, includeVideos = false).rows
-            .filterIsInstance<SearchResult.Track>()
-            .map { it.song }
-            .take(5)
-            .firstOrNull { !it.isVideo && TrackMatcher.matches(it, cleanTitle, cleanArtist) }
-    }
+    /** Recordings tried against a video before giving up: a wrong guess costs a download, not a wrong timing. */
+    private const val MAX_CANDIDATES = 2
 
     /** The record: whole, within this long. */
     private const val RECORD_TIMEOUT_MS = 60_000L
@@ -542,6 +545,8 @@ object LyricsTiming {
         /** The automatic AI fallback got nothing for the lyrics with this key. */
         val aiFailedKey: Int? = null,
         val manualMs: Long? = null,
+        /** See [note]. */
+        val autoNote: String? = null,
     )
 
     @Serializable

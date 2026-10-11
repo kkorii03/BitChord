@@ -44,6 +44,19 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun coverTitlesWithSlashNamesAndUnderscoresAreRead() {
+        val golden = assertNotNull(CoverTitles.read("HUNTR/X (헌트릭스) - Golden /cover by 오화요(허니즈)", "젤리의 노래저장소", null))
+        assertEquals("Golden", golden.title)
+        assertEquals("HUNTR/X", golden.originalArtist)
+        assertEquals("오화요", golden.singer)
+        val flower = assertNotNull(
+            CoverTitles.read("YOUNHA(윤하) _ WINTER FLOWER(雪中梅) / cover by 오화요(허니즈)", "젤리의 노래저장소", null),
+        )
+        assertEquals("WINTER FLOWER(雪中梅)", flower.title)
+        assertEquals("YOUNHA", flower.originalArtist)
+    }
+
+    @Test
     fun songFirstSingerCoverTitlesAreRead() {
         val drowning = assertNotNull(CoverTitles.read("Drowning - 타비 Cover(06.12)", "아라하시 타비", null))
         assertEquals("Drowning", drowning.title)

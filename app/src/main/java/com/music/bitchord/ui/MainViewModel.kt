@@ -680,10 +680,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             refreshTiming(generation, lines)
             if (!adjustable || !request.isVideo) return@launch
-            // A kept AI answer is what shows; measuring under it would be
-            // spent on nothing. Taking the answer back starts this again.
-            if (LyricsTiming.hasAi(context, request.videoId, lines)) return@launch
-            val (title, artist) = searchedAs ?: (request.title to request.artist)
+            // The record is searched for under every name the lyrics know:
+            // what they were found as first, then the video's own readings.
+            val names = buildList {
+                searchedAs?.let(::add)
+                add(request.title to request.artist)
+                addAll(request.alternatives)
+            }
             val video = Song(
                 videoId = request.videoId,
                 title = request.title,
@@ -698,7 +701,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ) {
                 if (LyricsTiming.worthMeasuring(context, request.videoId)) {
                     attempts++
-                    LyricsTiming.measure(context, video, title, artist)
+                    LyricsTiming.measure(context, video, names, request.durationMs)
                     refreshTiming(generation, lines)
                     autoAiIfNeeded(generation, lines)
                     if (LyricsTiming.measured(context, request.videoId)) break
@@ -721,6 +724,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _lyrics.value = if (timing == null) lines else LyricsTiming.apply(lines, timing)
         }
         val base = timing?.base
+        val note = if (timingBaseAllowed) LyricsTiming.note(getApplication(), request.videoId) else null
+        if (generation != lyricsGeneration || timingLines !== lines) return
         _lyricsTiming.update {
             it.copy(
                 shiftMs = base?.let { adjustment -> LyricsTiming.shownShiftMs(lines, adjustment) },
@@ -728,6 +733,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 rate = (base as? LyricsTiming.Adjustment.Mapped)?.rate?.takeIf { rate -> rate != 1.0 },
                 matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
                 manualMs = timing?.manualMs ?: 0L,
+                note = note,
             )
         }
     }

@@ -112,8 +112,9 @@ class LyricsTimingLiveTest {
         }
         val candidates = RecordingPick.find(names, durationMs)
         if (candidates.isEmpty()) return "$head | $lyr | NO-ORIGINAL for $names"
+        val picks = "picks=" + candidates.joinToString(" ; ") { "'${it.title}'/'${it.artist}' ${it.durationText}" } + " (video ${song.durationText})"
         val videoFile = File(work, "${song.videoId}.audio")
-        download(song.videoId, videoFile)?.let { return "$head | $lyr | NO-VIDEO-AUDIO $it" }
+        download(song.videoId, videoFile)?.let { return "$head | $lyr | $picks | NO-VIDEO-AUDIO ${it.take(60)}" }
         val video = features(videoFile) ?: return "$head | $lyr | DECODE-FAIL video"
         val tried = mutableListOf<String>()
         for (original in candidates) {

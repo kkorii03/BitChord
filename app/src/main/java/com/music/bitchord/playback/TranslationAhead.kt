@@ -112,11 +112,14 @@ internal object TranslationAhead {
         if (found.lines.none { it.timeMs > 0 }) return
         val timing = com.music.bitchord.playback.smart.LyricsTiming
         if (timing.timedToVideo(found.source)) return
-        if (timing.hasAi(context, song.videoId, found.lines)) return
-        val (title, artist) = found.searchedAs ?: (query.title to query.artist)
+        val names = buildList {
+            found.searchedAs?.let(::add)
+            add(query.title to query.artist)
+            addAll(query.alternatives)
+        }
         try {
             if (timing.worthMeasuring(context, song.videoId)) {
-                timing.measure(context, song.copy(isVideo = true), title, artist)
+                timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
             }
             if (AppSettings.autoLyricsTiming.value &&
                 com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyUsable &&
