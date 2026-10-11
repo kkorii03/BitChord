@@ -1079,4 +1079,5 @@
     <string name="upstream_channel_name">원본 BitChord 새 버전</string>
     <string name="upstream_new_version">원본 BitChord %1$s가 나왔어요</string>
     <string name="upstream_new_version_detail">포크에 합치기가 필요합니다</string>
+    <string name="select_country">국가 선택</string>
 </resources>

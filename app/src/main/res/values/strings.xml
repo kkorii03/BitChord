@@ -1175,4 +1175,5 @@
     <string name="upstream_channel_name">Original BitChord releases</string>
     <string name="upstream_new_version">Original BitChord %1$s is out</string>
     <string name="upstream_new_version_detail">Merge it into the fork to get the new features</string>
+    <string name="select_country">Select country</string>
 </resources>
