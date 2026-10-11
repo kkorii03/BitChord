@@ -105,42 +105,37 @@ class LyricsTimingLiveTest {
         val lyr = "lyrics=${found.source} lines=${found.lines.size} timed=$timed as=${found.searchedAs}"
         if (!timed) return "$head | $lyr | UNTIMED"
         if (LyricsSourceVideo.timedToVideo(found.source)) return "$head | $lyr | VIDEO-OWN"
-        val (title, artist) = found.searchedAs ?: (q.title to q.artist)
-        val (original, candidates) = findRecording(title, artist)
-        if (original == null) return "$head | $lyr | NO-ORIGINAL for '$title'/'$artist' candidates=$candidates"
-        val orig = "orig=${original.videoId} '${original.title}'/'${original.artist}' ${original.durationText}"
-        val recordFile = File(work, "${original.videoId}.audio")
+        val names = buildList {
+            found.searchedAs?.let(::add)
+            add(q.title to q.artist)
+            addAll(q.alternatives)
+        }
+        val candidates = RecordingPick.find(names, durationMs)
+        if (candidates.isEmpty()) return "$head | $lyr | NO-ORIGINAL for $names"
         val videoFile = File(work, "${song.videoId}.audio")
-        val dlStart = System.nanoTime()
-        download(original.videoId, recordFile)?.let { return "$head | $lyr | $orig | NO-RECORD-AUDIO $it" }
-        download(song.videoId, videoFile)?.let { return "$head | $lyr | $orig | NO-VIDEO-AUDIO $it" }
-        val dlMs = (System.nanoTime() - dlStart) / 1_000_000
-        val t0 = System.nanoTime()
-        val record = features(recordFile) ?: return "$head | $lyr | $orig | DECODE-FAIL record"
-        val video = features(videoFile) ?: return "$head | $lyr | $orig | DECODE-FAIL video"
-        val featMs = (System.nanoTime() - t0) / 1_000_000
-        val t1 = System.nanoTime()
-        val result = ChromaAlignment.align(record, video)
-        val verdict = ChromaAlignment.lastVerdict
-        val alignMs = (System.nanoTime() - t1) / 1_000_000
-        val sizes = "rec=${record.durationSeconds.roundToInt()}s vid=${video.durationSeconds.roundToInt()}s dl=${dlMs}ms feat=${featMs}ms align=${alignMs}ms"
-        if (result == null) return "$head | $lyr | $orig | $sizes | $verdict"
-        val first = found.lines.first { it.text.isNotBlank() }
-        val last = found.lines.last { it.text.isNotBlank() }
-        val moved = "first ${first.timeMs}->${result.map.map(first.timeMs)} last ${last.timeMs}->${result.map.map(last.timeMs)}"
-        return "$head | $lyr | $orig | $sizes | $verdict | $moved"
-    }
-
-    private suspend fun findRecording(title: String, artist: String): Pair<Song?, String> = withContext(Dispatchers.IO) {
-        val cleanTitle = title.forLyricsSearch()
-        val cleanArtist = artist.artistForLyricsSearch()
-        val response = Innertube.searchAnonymous("$cleanTitle $cleanArtist", SearchFilter.SONGS.params)
-        val rows = InnertubeParser.parseSearchPage(response, includeVideos = false).rows
-            .filterIsInstance<SearchResult.Track>()
-            .map { it.song }
-            .take(5)
-        val pick = rows.firstOrNull { !it.isVideo && TrackMatcher.matches(it, cleanTitle, cleanArtist) }
-        pick to rows.joinToString(";") { "'${it.title}'/'${it.artist}'${if (it.isVideo) "(v)" else ""}" }
+        download(song.videoId, videoFile)?.let { return "$head | $lyr | NO-VIDEO-AUDIO $it" }
+        val video = features(videoFile) ?: return "$head | $lyr | DECODE-FAIL video"
+        val tried = mutableListOf<String>()
+        for (original in candidates) {
+            val orig = "orig=${original.videoId} '${original.title}'/'${original.artist}' ${original.durationText}"
+            val recordFile = File(work, "${original.videoId}.audio")
+            download(original.videoId, recordFile)?.let { tried += "$orig NO-RECORD-AUDIO $it"; continue }
+            val record = features(recordFile) ?: run { tried += "$orig DECODE-FAIL"; continue }
+            val t1 = System.nanoTime()
+            val result = ChromaAlignment.align(record, video)
+            val verdict = ChromaAlignment.lastVerdict
+            val alignMs = (System.nanoTime() - t1) / 1_000_000
+            val sizes = "rec=${record.durationSeconds.roundToInt()}s vid=${video.durationSeconds.roundToInt()}s align=${alignMs}ms"
+            if (result == null) {
+                tried += "$orig $sizes $verdict"
+                continue
+            }
+            val first = found.lines.first { it.text.isNotBlank() }
+            val last = found.lines.last { it.text.isNotBlank() }
+            val moved = "first ${first.timeMs}->${result.map.map(first.timeMs)} last ${last.timeMs}->${result.map.map(last.timeMs)}"
+            return "$head | $lyr | ${tried.joinToString(" || ")}${if (tried.isEmpty()) "" else " || "}$orig $sizes | $verdict | $moved"
+        }
+        return "$head | $lyr | FAILED ${tried.joinToString(" || ")}"
     }
 
     private val downloaded = ConcurrentHashMap<String, String>()

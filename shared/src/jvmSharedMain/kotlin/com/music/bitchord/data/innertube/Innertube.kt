@@ -695,8 +695,14 @@ object Innertube {
      * catalogue, so names come back as the release prints them rather than
      * localised.
      */
-    suspend fun searchAnonymous(query: String, params: String? = null): JsonObject =
-        postMusicAnonymous("search") {
+    suspend fun searchAnonymous(
+        query: String,
+        params: String? = null,
+        /** The catalogue to answer from; "ko"/"KR" lists Korean releases under their Korean names. */
+        hl: String = "en",
+        gl: String = "US",
+    ): JsonObject =
+        postMusicAnonymous("search", hl, gl) {
             put("query", query)
             params?.let { put("params", it) }
         }
@@ -1215,6 +1221,8 @@ object Innertube {
      */
     private suspend fun postMusicAnonymous(
         endpoint: String,
+        hl: String = "en",
+        gl: String = "US",
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         val clientVersion = webRemixVersion
@@ -1235,8 +1243,8 @@ object Innertube {
                             putJsonObject("client") {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", clientVersion)
-                                put("hl", "en")
-                                put("gl", "US")
+                                put("hl", hl)
+                                put("gl", gl)
                                 visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {

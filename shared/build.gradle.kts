@@ -59,6 +59,8 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+            // Stream resolution's fallback, for the live timing lab.
+            implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
         }
     }
 }
