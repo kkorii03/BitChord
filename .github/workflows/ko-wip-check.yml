@@ -43,6 +43,7 @@ jobs:
             line=$(grep -o '<testsuite [^>]*>' "$f" | head -1 || true)
             echo "::notice title=tests::$(basename "$f") $(echo "$line" | grep -oE '(tests|failures|errors|skipped)="[0-9]+"' | tr '\n' ' ')"
           done
+          grep -ho "LOOKUP_MS [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | while IFS= read -r l; do echo "::notice title=timing::$l"; done || true
           grep -E "^e: |FAILED|AssertionError|expected:" test.log | head -30 | while IFS= read -r l; do echo "::error title=test::$l"; done || true
           grep -E "BUILD (SUCCESSFUL|FAILED)" test.log | while IFS= read -r l; do echo "::notice title=tests-build::$l"; done || true
           exit $status

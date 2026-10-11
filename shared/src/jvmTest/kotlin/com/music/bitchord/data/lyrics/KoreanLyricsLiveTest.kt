@@ -34,3 +34,41 @@ class KoreanLyricsLiveTest {
         assertTrue(vibe.any { it.text.contains("맨발") } && bugs.any { it.text.contains("맨발") })
     }
 }
+
+/** Times whole lookups against the real services. LIVE_KR_LYRICS=1 only. */
+class LyricsLookupTimingLiveTest {
+    private val live = System.getenv("LIVE_KR_LYRICS") == "1"
+
+    private fun timed(label: String, block: () -> LyricsRepository.Result?): LyricsRepository.Result? {
+        val start = System.nanoTime()
+        val result = block()
+        val ms = (System.nanoTime() - start) / 1_000_000
+        println("LOOKUP_MS $label ${ms}ms source=${result?.source} lines=${result?.lines?.size}")
+        return result
+    }
+
+    @Test
+    fun wholeLookupsAndTheMemo() {
+        if (!live) return
+        val sources = LyricsSource.offered.toSet() - LyricsSource.PAXSENIX_SPOTIFY - LyricsSource.PAXSENIX_MUSIXMATCH
+        val songs = listOf(
+            Triple("회전목마", "에피톤 프로젝트", 313_000L),
+            Triple("밤편지", "아이유", 253_000L),
+            Triple("Shape of You", "Ed Sheeran", 234_000L),
+        )
+        for ((title, artist, ms) in songs) {
+            val first = timed("first:$title") {
+                runBlocking {
+                    LyricsRepository.lyrics("live-$title", title, artist, ms, sources = sources, prioritizeSyllableSync = true)
+                }
+            }
+            assertNotNull(first)
+            val again = timed("memo:$title") {
+                runBlocking {
+                    LyricsRepository.lyrics("live-$title", title, artist, ms, sources = sources, prioritizeSyllableSync = true)
+                }
+            }
+            assertTrue(again === first)
+        }
+    }
+}
