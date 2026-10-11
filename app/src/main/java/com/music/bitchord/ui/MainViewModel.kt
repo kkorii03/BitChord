@@ -285,6 +285,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
     val lyrics: StateFlow<List<LyricLine>?> = _lyrics.asStateFlow()
 
+    /** How long timed lines wait on a higher-priority source still answering — see [showFirstUsable]. */
+    private val PATIENCE_MS = 1_500L
+
     /** How the lyrics on screen were moved onto the video's clock — see [LyricsTiming]. */
     private val _lyricsTiming = MutableStateFlow(com.music.bitchord.ui.player.LyricsTimingUi())
     val lyricsTiming: StateFlow<com.music.bitchord.ui.player.LyricsTimingUi> = _lyricsTiming.asStateFlow()
@@ -540,21 +543,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * grace period the lookup gives word-synced sources to do better. If one
      * does, the lookup's own answer replaces these when it lands.
      */
-    private fun showFirstUsable(generation: Long) {
+    private fun showFirstUsable(generation: Long, stopWaiting: Boolean = false) {
         if (generation != lyricsGeneration || _lyrics.value != null || selectedLyricsSource != null) return
         if (lyricsJob?.isActive != true) return
         val states = _lyricsProviderStates.value
+        var blocked = false
         for (source in lyricsRaceOrder) {
             when (states[source]) {
                 LyricsProviderState.FOUND -> {
-                    val result = lyricsProviderResults[source] ?: return
-                    if (result.lines.any { it.timeMs > 0 }) {
+                    val result = lyricsProviderResults[source] ?: continue
+                    if (result.lines.none { it.timeMs > 0 }) continue
+                    if (!blocked || stopWaiting) {
                         publishLyrics(result)
+                    } else {
+                        // Timed lines are in hand, but a source ahead of them is
+                        // still answering. It gets [PATIENCE_MS], not the whole
+                        // lookup: a slow mirror shouldn't keep good lines off the
+                        // screen. If it does better, the lookup's own answer
+                        // replaces these when it lands.
+                        viewModelScope.launch {
+                            delay(PATIENCE_MS)
+                            showFirstUsable(generation, stopWaiting = true)
+                        }
                     }
                     return
                 }
                 LyricsProviderState.NOT_FOUND -> continue
-                else -> return
+                else -> blocked = true
             }
         }
     }
