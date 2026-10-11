@@ -225,6 +225,7 @@ fun SettingsScreen(
     val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
     val autoLyricsTiming by AppSettings.autoLyricsTiming.collectAsStateWithLifecycle()
     val aiLyrics by AppSettings.aiLyrics.collectAsStateWithLifecycle()
+    val aiTimingAhead by AppSettings.aiTimingAhead.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
@@ -1139,6 +1140,25 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setAutoLyricsTiming(!autoLyricsTiming) },
+                    )
+                }
+                val aiTimingAheadTitle = stringResource(R.string.ai_timing_ahead)
+                row(aiTimingAheadTitle, "lyrics", "timing", "sync", "ai", "gemini", "ahead") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Timer,
+                        title = aiTimingAheadTitle,
+                        subtitle = stringResource(R.string.ai_timing_ahead_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = aiTimingAhead,
+                                onCheckedChange = { AppSettings.setAiTimingAhead(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setAiTimingAhead(!aiTimingAhead) },
                     )
                 }
                 val aiLyricsTitle = stringResource(R.string.ai_lyrics)

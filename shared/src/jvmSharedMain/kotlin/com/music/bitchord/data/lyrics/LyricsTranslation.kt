@@ -1294,7 +1294,12 @@ object LyricsTranslation {
      * itself: nothing is uploaded from the phone. Video is the slow kind of
      * request, so it runs on its own longer deadline.
      */
-    suspend fun placeLinesInVideo(videoId: String, lines: List<LineToPlace>): List<Long?>? {
+    suspend fun placeLinesInVideo(
+        videoId: String,
+        lines: List<LineToPlace>,
+        /** The video's sound as WAV, when the phone has it: heard in seconds rather than fetched and watched. */
+        audioWav: ByteArray? = null,
+    ): List<Long?>? {
         if (!geminiKeyUsable || lines.isEmpty()) return null
         val input = buildJsonObject {
             put("line_count", lines.size)
@@ -1320,13 +1325,7 @@ object LyricsTranslation {
                 add(buildJsonObject {
                     put("role", "user")
                     putJsonArray("parts") {
-                        add(buildJsonObject {
-                            putJsonObject("fileData") {
-                                put("fileUri", "https://www.youtube.com/watch?v=$videoId")
-                                put("mimeType", "video/*")
-                            }
-                            if (quick) putJsonObject("videoMetadata") { put("fps", VIDEO_FPS) }
-                        })
+                        add(mediaPart(videoId, audioWav, quick))
                         add(buildJsonObject { put("text", input.toString()) })
                     }
                 })
@@ -1376,6 +1375,26 @@ object LyricsTranslation {
 
     private val VIDEO_MODELS = listOf("gemini-3.5-flash") + GEMINI_MODELS
 
+    /**
+     * What Gemini listens to: the video's sound sent along (16 kHz WAV —
+     * seconds to take in), or the YouTube address for it to fetch and watch,
+     * which is what made these requests take a minute.
+     */
+    private fun mediaPart(videoId: String, audioWav: ByteArray?, quick: Boolean) = buildJsonObject {
+        if (audioWav != null) {
+            putJsonObject("inlineData") {
+                put("mimeType", "audio/wav")
+                put("data", java.util.Base64.getEncoder().encodeToString(audioWav))
+            }
+        } else {
+            putJsonObject("fileData") {
+                put("fileUri", "https://www.youtube.com/watch?v=$videoId")
+                put("mimeType", "video/*")
+            }
+            if (quick) putJsonObject("videoMetadata") { put("fps", VIDEO_FPS) }
+        }
+    }
+
     // ---- Lyrics heard off a video ------------------------------------------------
 
     /**
@@ -1384,7 +1403,7 @@ object LyricsTranslation {
      * lyrics source has anything for. An empty list when nothing is sung;
      * null when Gemini isn't set up, refused or didn't answer usably.
      */
-    suspend fun transcribeVideo(videoId: String, durationMs: Long): List<LyricLine>? {
+    suspend fun transcribeVideo(videoId: String, durationMs: Long, audioWav: ByteArray? = null): List<LyricLine>? {
         if (!geminiKeyUsable || videoId.isBlank()) return null
         fun body(quick: Boolean) = buildJsonObject {
             putJsonObject("systemInstruction") {
@@ -1394,13 +1413,7 @@ object LyricsTranslation {
                 add(buildJsonObject {
                     put("role", "user")
                     putJsonArray("parts") {
-                        add(buildJsonObject {
-                            putJsonObject("fileData") {
-                                put("fileUri", "https://www.youtube.com/watch?v=$videoId")
-                                put("mimeType", "video/*")
-                            }
-                            if (quick) putJsonObject("videoMetadata") { put("fps", VIDEO_FPS) }
-                        })
+                        add(mediaPart(videoId, audioWav, quick))
                         add(buildJsonObject { put("text", "Video length: ${clock(durationMs)}") })
                     }
                 })

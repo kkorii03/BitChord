@@ -544,6 +544,13 @@ object AppSettings {
     /** With no lyrics anywhere, Gemini writes them down off the video — see AiLyrics. */
     val aiLyrics = MutableStateFlow(true)
 
+    /**
+     * Ask Gemini to time a video's lyrics as it starts (and the next one
+     * ahead), alongside the measurement — see LyricsTiming. The measurement
+     * still wins where it holds; this is the answer ready when it doesn't.
+     */
+    val aiTimingAhead = MutableStateFlow(true)
+
     /** Download a song as soon as it is liked. See [LikedAutoDownload]. */
     val autoDownloadLiked = MutableStateFlow(true)
 
@@ -942,6 +949,7 @@ object AppSettings {
         autoTranslateLyrics.value = prefs.getBoolean(KEY_AUTO_TRANSLATE_LYRICS, false)
         autoLyricsTiming.value = prefs.getBoolean(KEY_AUTO_LYRICS_TIMING, false)
         aiLyrics.value = prefs.getBoolean(KEY_AI_LYRICS, true)
+        aiTimingAhead.value = prefs.getBoolean(KEY_AI_TIMING_AHEAD, true)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
@@ -1492,6 +1500,11 @@ object AppSettings {
     fun setAutoLyricsTiming(value: Boolean) {
         autoLyricsTiming.value = value
         prefs.edit().putBoolean(KEY_AUTO_LYRICS_TIMING, value).apply()
+    }
+
+    fun setAiTimingAhead(value: Boolean) {
+        aiTimingAhead.value = value
+        prefs.edit().putBoolean(KEY_AI_TIMING_AHEAD, value).apply()
     }
 
     fun setAiLyrics(value: Boolean) {
@@ -2187,6 +2200,7 @@ object AppSettings {
     private const val KEY_AUTO_TRANSLATE_LYRICS = "auto_translate_lyrics"
     private const val KEY_AUTO_LYRICS_TIMING = "auto_lyrics_timing"
     private const val KEY_AI_LYRICS = "ko_ai_lyrics"
+    private const val KEY_AI_TIMING_AHEAD = "ko_ai_timing_ahead"
     private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
     private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
     private const val KEY_CONTENT_COUNTRY = "ko_content_country"

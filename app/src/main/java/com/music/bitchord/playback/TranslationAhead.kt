@@ -137,6 +137,20 @@ internal object TranslationAhead {
             addAll(query.alternatives)
         }.distinct()
         try {
+            // Gemini at the same time as the measurement, not after it gives up:
+            // the next song then starts with an answer either way.
+            val gemini = com.music.bitchord.data.lyrics.LyricsTranslation
+            val ahead = if (AppSettings.aiTimingAhead.value && gemini.geminiKeyUsable &&
+                !timing.hasAi(context, song.videoId, found.lines) &&
+                !timing.aiAlreadyFailed(context, song.videoId, found.lines)
+            ) {
+                scope.launch {
+                    runCatching { timing.placeWithAi(context, song.videoId, found.lines, automatic = true) }
+                        .onFailure { if (it is CancellationException) throw it }
+                }
+            } else {
+                null
+            }
             if (timing.worthMeasuring(context, song.videoId)) {
                 // Its audio coming down now, not when it starts playing, so
                 // the measurement has something to read before then.
@@ -145,9 +159,11 @@ internal object TranslationAhead {
                 )
                 timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
             }
+            ahead?.join()
             if (AppSettings.autoLyricsTiming.value &&
                 com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyUsable &&
                 timing.measurementGaveUp(context, song.videoId) &&
+                !timing.hasAi(context, song.videoId, found.lines) &&
                 !timing.aiAlreadyFailed(context, song.videoId, found.lines)
             ) {
                 timing.placeWithAi(context, song.videoId, found.lines, automatic = true)

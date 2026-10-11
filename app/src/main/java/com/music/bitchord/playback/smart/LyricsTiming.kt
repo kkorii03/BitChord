@@ -90,9 +90,16 @@ object LyricsTiming {
         ) : Adjustment
     }
 
-    /** Everything applied to one video's lyrics: [base], then [manualMs] on top. */
-    data class Timing(val base: Adjustment?, val manualMs: Long) {
+    /**
+     * Everything applied to one video's lyrics: [base], then [manualMs] on
+     * top — and, for Gemini's answer, [aiBiasMs] taken off: how late its
+     * answers have run against the measurement, learned over many songs.
+     */
+    data class Timing(val base: Adjustment?, val manualMs: Long, val aiBiasMs: Long = 0L) {
         val isEmpty: Boolean get() = base == null && manualMs == 0L
+
+        /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
+        val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
     }
 
     /**
@@ -131,7 +138,8 @@ object LyricsTiming {
     ): Timing? {
         val entry = store(context).get(videoId) ?: return null
         val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed) else null
-        return Timing(base, entry.manualMs ?: 0L).takeUnless { it.isEmpty }
+        val bias = if (base?.byAi == true) aiBias(context) else 0L
+        return Timing(base, entry.manualMs ?: 0L, bias).takeUnless { it.isEmpty }
     }
 
     private fun baseOf(entry: Entry, lines: List<LyricLine>, measuredAllowed: Boolean = true): Adjustment? {
@@ -168,9 +176,9 @@ object LyricsTiming {
 
     /** [lines] as [timing] puts them; words, syllables and backing vocals move with their line. */
     fun apply(lines: List<LyricLine>, timing: Timing): List<LyricLine> = when (val base = timing.base) {
-        null -> lines.timedBy(null, timing.manualMs)
-        is Adjustment.Shift -> lines.timedBy(LyricsTimeMap.shift(base.ms), timing.manualMs)
-        is Adjustment.Mapped -> lines.timedBy(base.map, timing.manualMs)
+        null -> lines.timedBy(null, timing.extraMs)
+        is Adjustment.Shift -> lines.timedBy(LyricsTimeMap.shift(base.ms), timing.extraMs)
+        is Adjustment.Mapped -> lines.timedBy(base.map, timing.extraMs)
     }
 
     /** How far [adjustment] moves the first sung line of [lines] — the figure worth showing. */
@@ -275,8 +283,10 @@ object LyricsTiming {
                 autoVideoSeconds = done.videoSeconds,
                 autoNote = done.note,
                 searchVersion = SEARCH_VERSION,
+                biasSampled = false,
             )
         }
+        sampleBias(context, videoId)
         _changes.tryEmit(videoId)
     }
 
@@ -674,23 +684,60 @@ object LyricsTiming {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) return null
         val key = textKey(lines)
+        // One request per video and lyrics, whoever asks — the button, the
+        // song starting, the next-song preparation.
+        val flight = "$videoId:$key"
+        val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            askAi(context, videoId, lines, sung, key)
+        }
+        val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
+        if (running === fresh) {
+            fresh.invokeOnCompletion { aiInFlight.remove(flight, fresh) }
+            fresh.start()
+        }
+        val adjustment = running.await() ?: return null
+        if (!automatic) {
+            // Asked for by hand: it now wins over the measurement, and a
+            // correction made on top of the old timing no longer fits it.
+            store(context).update(videoId) { it.copy(aiPreferred = true, manualMs = null) }
+            _changes.tryEmit(videoId)
+        }
+        return adjustment
+    }
+
+    private val aiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val aiInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
+
+    private suspend fun askAi(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        sung: List<IndexedValue<LyricLine>>,
+        key: Int,
+    ): Adjustment.Mapped? {
+        val started = System.currentTimeMillis()
+        // The sound the phone already has, when it has all of it; the YouTube
+        // address (Gemini fetching and watching the video) otherwise.
+        val audio = runCatching { VideoAudio.wav(context, videoId) }.getOrNull()
         val answer = LyricsTranslation.placeLinesInVideo(
             videoId,
             sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
+            audioWav = audio,
         )
         val adjustment = answer?.let { fitAi(lines, sung.map { it.index }, it) }
         TrackLog.d(
             TAG,
-            "AI timing: " + when {
-                answer == null -> "no answer"
-                adjustment == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
-                else -> "rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
-                    "shift ${shownShiftMs(lines, adjustment)} ms, ${adjustment.matchPercent}% agree"
-            },
+            "AI timing (${if (audio != null) "audio" else "video"}, ${(System.currentTimeMillis() - started) / 1000}s): " +
+                when {
+                    answer == null -> "no answer"
+                    adjustment == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
+                    else -> "rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
+                        "shift ${shownShiftMs(lines, adjustment)} ms, ${adjustment.matchPercent}% agree"
+                },
             videoId,
         )
         if (adjustment == null) {
-            if (automatic && answer != null) store(context).update(videoId) { it.copy(aiFailedKey = key) }
+            if (answer != null) store(context).update(videoId) { it.copy(aiFailedKey = key) }
             return null
         }
         store(context).update(videoId) {
@@ -700,10 +747,13 @@ object LyricsTiming {
                 aiShiftMs = null,
                 aiStarts = null,
                 aiFailedKey = null,
-                manualMs = null,
-                aiPreferred = !automatic,
+                // A new answer to the same lyrics keeps whether it was wanted
+                // over the measurement; it's [placeWithAi] that says it is.
+                aiPreferred = it.aiPreferred && it.aiTextKey == key,
+                biasSampled = false,
             )
         }
+        sampleBias(context, videoId)
         _changes.tryEmit(videoId)
         return adjustment
     }
@@ -717,6 +767,65 @@ object LyricsTiming {
     }
 
     private const val MIN_AI_LINES = 3
+
+    // ---- How late Gemini runs ----------------------------------------------------------
+
+    /**
+     * Gemini places a line where it hears it start, and hears it late — about
+     * half a second to a second, the same way song after song. Where a video
+     * has both its answer and a measurement (right to a tenth of a second),
+     * the two are compared: the median gap over the song is one sample, and
+     * the median of the last [BIAS_SAMPLES] samples is taken off every AI
+     * answer from then on. Nothing is taken off until [BIAS_MIN_SAMPLES] songs
+     * agree, and never more than [BIAS_MAX_MS].
+     */
+    private suspend fun sampleBias(context: Context, videoId: String) {
+        val entry = store(context).get(videoId) ?: return
+        if (entry.biasSampled || entry.autoVersion != AUTO_VERSION) return
+        val measured = entry.auto?.toAdjustment(byAi = false) ?: return
+        val ai = entry.ai?.toAdjustment(byAi = true) ?: return
+        // Only a measurement that clearly held: most of the song agreeing.
+        if ((measured.matchPercent ?: 0) < 60 || (ai.matchPercent ?: 0) < 50) return
+        val gaps = (BIAS_FROM_MS..BIAS_TO_MS step BIAS_STEP_MS).map { t -> ai.map.map(t) - measured.map.map(t) }.sorted()
+        if (gaps.isEmpty()) return
+        val median = gaps[gaps.size / 2]
+        val spread = gaps[gaps.size * 3 / 4] - gaps[gaps.size / 4]
+        store(context).update(videoId) { it.copy(biasSampled = true) }
+        // A different take, a cut the straight AI line can't follow: no lesson in it.
+        if (abs(median) > BIAS_SAMPLE_LIMIT_MS || spread > BIAS_SPREAD_MS) return
+        val prefs = context.applicationContext.getSharedPreferences(BIAS_PREFS, Context.MODE_PRIVATE)
+        synchronized(this) {
+            val kept = prefs.getString(BIAS_KEY, null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }
+            val next = (kept + median).takeLast(BIAS_SAMPLES)
+            prefs.edit().putString(BIAS_KEY, next.joinToString(",")).apply()
+            cachedBias = null
+        }
+        TrackLog.d(TAG, "AI lateness sample ${median} ms (spread ${spread} ms)", videoId)
+    }
+
+    @Volatile
+    private var cachedBias: Long? = null
+
+    /** What to take off Gemini's answers, ms; 0 until enough songs have taught it. */
+    private fun aiBias(context: Context): Long {
+        cachedBias?.let { return it }
+        val samples = context.applicationContext.getSharedPreferences(BIAS_PREFS, Context.MODE_PRIVATE)
+            .getString(BIAS_KEY, null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }.sorted()
+        val bias = if (samples.size < BIAS_MIN_SAMPLES) 0L else samples[samples.size / 2].coerceIn(-BIAS_MAX_MS, BIAS_MAX_MS)
+        cachedBias = bias
+        return bias
+    }
+
+    private const val BIAS_PREFS = "lyrics_timing"
+    private const val BIAS_KEY = "ai_bias_samples"
+    private const val BIAS_SAMPLES = 40
+    private const val BIAS_MIN_SAMPLES = 3
+    private const val BIAS_MAX_MS = 1_500L
+    private const val BIAS_SAMPLE_LIMIT_MS = 3_000L
+    private const val BIAS_SPREAD_MS = 1_200L
+    private const val BIAS_FROM_MS = 20_000L
+    private const val BIAS_TO_MS = 150_000L
+    private const val BIAS_STEP_MS = 5_000L
 
     /**
      * Gemini's per-line starts as one straight line — see [TimingFit]. Lines
@@ -809,6 +918,8 @@ object LyricsTiming {
         val searchVersion: Int = 0,
         /** The AI answer was asked for by hand, so it beats the measurement — see [baseOf]. */
         val aiPreferred: Boolean = false,
+        /** This video's AI answer and measurement have been compared for [aiBias]. */
+        val biasSampled: Boolean = false,
     )
 
     @Serializable

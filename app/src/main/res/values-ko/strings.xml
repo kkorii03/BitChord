@@ -1094,4 +1094,6 @@
     <string name="video_canvas">움직이는 아트워크가 없으면 영상 일부를 반복 재생</string>
     <string name="ai_lyrics">가사를 못 찾으면 AI 받아쓰기</string>
     <string name="ai_lyrics_subtitle">가사 제공처 어디에도 없는 노래는 Gemini가 영상을 듣고 가사와 타이밍을 받아씁니다. 최대 1분 정도 걸리며 틀린 줄이 있을 수 있습니다.</string>
+    <string name="ai_timing_ahead">AI 싱크 미리 맞추기</string>
+    <string name="ai_timing_ahead_subtitle">비디오 노래가 시작될 때와 다음 노래를 준비할 때 Gemini에게 미리 싱크를 맞춰 둡니다. 자동 보정이 실패해도 바로 맞춰진 가사가 나옵니다. 비디오마다 Gemini 요청을 한 번 씁니다.</string>
 </resources>

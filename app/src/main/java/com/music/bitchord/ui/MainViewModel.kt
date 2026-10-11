@@ -718,6 +718,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             refreshTiming(generation, lines)
             if (!adjustable || !measure || !measureNow || !request.isVideo) return@launch
+            // Gemini asked alongside the measurement rather than after it gives
+            // up: if the measurement can't time this video, the answer is
+            // already in (or close) — and if it can, the two are compared to
+            // learn how late Gemini runs. The measurement still wins.
+            launch { aiAhead(context, request.videoId, lines) }
             // The record is searched for under every name the lyrics know:
             // what they were found as first, then the video's own readings.
             val names = buildList {
@@ -809,7 +814,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (generation != lyricsGeneration || timingLines !== lines) return
         _lyricsTiming.update {
             it.copy(
-                shiftMs = base?.let { adjustment -> LyricsTiming.shownShiftMs(lines, adjustment) },
+                shiftMs = base?.let { adjustment ->
+                    LyricsTiming.shownShiftMs(lines, adjustment) - if (adjustment.byAi) timing.aiBiasMs else 0L
+                },
                 byAi = base?.byAi == true,
                 rate = (base as? LyricsTiming.Adjustment.Mapped)?.rate?.takeIf { rate -> rate != 1.0 },
                 matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
@@ -817,6 +824,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 note = note,
             )
         }
+    }
+
+    private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
+        if (!AppSettings.aiTimingAhead.value || !LyricsTranslation.geminiKeyUsable) return
+        if (LyricsTiming.hasAi(context, videoId, lines) || LyricsTiming.aiAlreadyFailed(context, videoId, lines)) return
+        runCatching { LyricsTiming.placeWithAi(context, videoId, lines, automatic = true) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     /**

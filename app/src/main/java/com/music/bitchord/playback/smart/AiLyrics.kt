@@ -42,7 +42,10 @@ object AiLyrics {
         if (!AppSettings.aiLyrics.value || !LyricsTranslation.geminiKeyUsable) return null
         if (durationMs > MAX_DURATION_MS || videoId in failedThisSession || videoId in silent()) return null
         TrackLog.d(TAG, "no lyrics anywhere; asking Gemini to write them down", videoId)
-        val lines = LyricsTranslation.transcribeVideo(videoId, durationMs)
+        // The sound already on the phone when it is all there: heard in
+        // seconds, where Gemini fetching the video itself takes a minute.
+        val audio = context?.let { runCatching { VideoAudio.wav(it, videoId) }.getOrNull() }
+        val lines = LyricsTranslation.transcribeVideo(videoId, durationMs, audio)
         when {
             lines == null -> {
                 failedThisSession += videoId
