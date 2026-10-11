@@ -141,6 +141,17 @@ enum class LyricsSource(
         detail = "일반 텍스트 대체, 방대한 웹 카탈로그",
         wordSynced = false,
     ),
+    /**
+     * Not a source anyone picks: what Gemini heard sung in a video no source
+     * had lyrics for — see [LyricsRepository.transcriber]. Hidden, so it is
+     * never raced or listed.
+     */
+    GEMINI_TRANSCRIPT(
+        label = "Gemini 받아쓰기",
+        detail = "가사를 찾지 못한 비디오를 Gemini가 듣고 받아씀",
+        wordSynced = false,
+        hidden = true,
+    ),
     ;
 
     companion object {

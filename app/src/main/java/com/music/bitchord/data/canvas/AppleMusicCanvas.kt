@@ -43,7 +43,32 @@ object AppleMusicCanvas {
         Locale.getDefault().country.takeIf { it.length == 2 }?.lowercase(Locale.ROOT) ?: "us"
     }
 
-    fun search(title: String, artist: String, album: String?): CanvasArtwork? {
+    /**
+     * The device's storefront first, then the US one and — for a Japanese
+     * title — Japan's: the same release is often in one catalogue and not
+     * another, and names come back in each storefront's own spelling.
+     */
+    private fun storefrontsFor(text: String): List<String> = buildList {
+        add(storefront)
+        add("us")
+        if (text.any { it in '\u3040'..'\u30ff' }) add("jp")
+        if (text.any { it in '가'..'힣' }) add("kr")
+    }.distinct()
+
+    fun search(title: String, artist: String, album: String?, durationMs: Long? = null): CanvasArtwork? {
+        for (front in storefrontsFor("$title $artist")) {
+            searchIn(front, title, artist, album, durationMs)?.let { return it }
+        }
+        return null
+    }
+
+    private fun searchIn(
+        front: String,
+        title: String,
+        artist: String,
+        album: String?,
+        durationMs: Long?,
+    ): CanvasArtwork? {
         val bearer = token() ?: return null
 
         // The catalog search is term-based, so fold everything we know into
@@ -57,7 +82,7 @@ object AppleMusicCanvas {
             }
         }
 
-        val url = "$AMP/$storefront/search".toHttpUrl().newBuilder()
+        val url = "$AMP/$front/search".toHttpUrl().newBuilder()
             .addQueryParameter("term", term)
             .addQueryParameter("types", "songs")
             .addQueryParameter("limit", "10")
@@ -75,7 +100,7 @@ object AppleMusicCanvas {
 
         val ranked = hits.mapNotNull { hit ->
             val song = hit as? JsonObject ?: return@mapNotNull null
-            val score = score(song, title, artist, album) ?: return@mapNotNull null
+            val score = score(song, title, artist, album, durationMs = durationMs) ?: return@mapNotNull null
             score to song
         }.sortedByDescending { it.first }
 
@@ -86,7 +111,11 @@ object AppleMusicCanvas {
             }
             val attributes = song["attributes"]?.jsonObject ?: continue
             val songName = attributes["name"]?.jsonPrimitive?.contentOrNull
+            // Credited in another script ("IU" for 아이유) and let through on
+            // title and length: answered under the name asked for, so the
+            // caller's own artist check agrees.
             val songArtist = attributes["artistName"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { creditsMatch(artist, it) } ?: artist
             val albumName = attributes["albumName"]?.jsonPrimitive?.contentOrNull
 
             // Some searches already carry the motion artwork inline, which
@@ -99,7 +128,7 @@ object AppleMusicCanvas {
             }
 
             val albumId = albumId(song) ?: continue
-            fetchAlbum(albumId, bearer, songName, songArtist)?.let { return it }
+            fetchAlbum(front, albumId, bearer, songName, songArtist)?.let { return it }
         }
         return null
     }
@@ -179,6 +208,7 @@ object AppleMusicCanvas {
         album: String?,
         // An album result has no `albumName` of its own — it *is* the album.
         albumIsSelf: Boolean = false,
+        durationMs: Long? = null,
     ): Int? {
         val attributes = song["attributes"]?.jsonObject ?: return null
         val hitName = attributes["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -191,7 +221,17 @@ object AppleMusicCanvas {
 
         if (isCompilation(hitName) || isCompilation(hitAlbum)) return null
 
-        if (!creditsMatch(artist, hitArtist)) return null
+        if (!creditsMatch(artist, hitArtist)) {
+            // The same person under another script's name — "IU" for 아이유,
+            // "YOASOBI" for 요아소비 — can't be compared by spelling. Let it
+            // through only for the exact title at the same length, to a second
+            // or two: a different song by someone else doesn't get both right.
+            val hitMs = attributes["durationInMillis"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+            val scriptsDiffer = scriptOf(artist) != scriptOf(hitArtist)
+            val sameTitle = hitName.normalizeForMatch() == title.normalizeForMatch() || titlesMatch(hitName, title)
+            val sameLength = durationMs != null && hitMs != null && kotlin.math.abs(hitMs - durationMs) <= 2_500L
+            if (albumIsSelf || !scriptsDiffer || !sameTitle || !sameLength) return null
+        }
 
         var score = 10
 
@@ -226,6 +266,14 @@ object AppleMusicCanvas {
         }
 
         return score
+    }
+
+    /** Which writing system a name is in, roughly: Latin, Hangul, kana/Han, or other. */
+    private fun scriptOf(name: String): Int = when {
+        name.any { it in '가'..'힣' } -> 1
+        name.any { it in '\u3040'..'\u30ff' || it in '\u4e00'..'\u9fff' } -> 2
+        name.any { it in 'a'..'z' || it in 'A'..'Z' } -> 0
+        else -> 3
     }
 
     private val EDITION_WORDS =
@@ -266,12 +314,13 @@ object AppleMusicCanvas {
     }
 
     private fun fetchAlbum(
+        front: String,
         albumId: String,
         bearer: String,
         songTitle: String?,
         songArtist: String?,
     ): CanvasArtwork? {
-        val url = "$AMP/$storefront/albums/$albumId".toHttpUrl().newBuilder()
+        val url = "$AMP/$front/albums/$albumId".toHttpUrl().newBuilder()
             .addQueryParameter("extend", "editorialVideo")
             .build()
             .toString()

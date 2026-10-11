@@ -213,6 +213,7 @@ fun SettingsScreen(
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
+    val videoCanvas by AppSettings.videoCanvas.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
@@ -223,6 +224,7 @@ fun SettingsScreen(
     val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
     val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
     val autoLyricsTiming by AppSettings.autoLyricsTiming.collectAsStateWithLifecycle()
+    val aiLyrics by AppSettings.aiLyrics.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
@@ -970,6 +972,14 @@ fun SettingsScreen(
                         onCheckedChange = AppSettings::setCanvasOverCellular,
                     )
                 }
+                val videoCanvasTitle = stringResource(R.string.video_canvas)
+                row(videoCanvasTitle, "canvas", "video", "music video", divided = false) {
+                    SettingsSubRow(
+                        title = videoCanvasTitle,
+                        checked = videoCanvas,
+                        onCheckedChange = AppSettings::setVideoCanvas,
+                    )
+                }
                 val spotifyCanvasTitle = stringResource(R.string.integrate_spotify_canvas)
                 row(spotifyCanvasTitle, "spotify", "canvas", divided = false) {
                     Row(
@@ -1129,6 +1139,25 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setAutoLyricsTiming(!autoLyricsTiming) },
+                    )
+                }
+                val aiLyricsTitle = stringResource(R.string.ai_lyrics)
+                row(aiLyricsTitle, "lyrics", "ai", "gemini", "transcribe") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Timer,
+                        title = aiLyricsTitle,
+                        subtitle = stringResource(R.string.ai_lyrics_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = aiLyrics,
+                                onCheckedChange = { AppSettings.setAiLyrics(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setAiLyrics(!aiLyrics) },
                     )
                 }
                 val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)

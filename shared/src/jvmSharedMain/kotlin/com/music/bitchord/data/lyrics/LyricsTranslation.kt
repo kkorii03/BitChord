@@ -1376,6 +1376,111 @@ object LyricsTranslation {
 
     private val VIDEO_MODELS = listOf("gemini-3.5-flash") + GEMINI_MODELS
 
+    // ---- Lyrics heard off a video ------------------------------------------------
+
+    /**
+     * Gemini listening to the YouTube video [videoId] and writing down what
+     * is sung, line by line, with when each line starts — for a video no
+     * lyrics source has anything for. An empty list when nothing is sung;
+     * null when Gemini isn't set up, refused or didn't answer usably.
+     */
+    suspend fun transcribeVideo(videoId: String, durationMs: Long): List<LyricLine>? {
+        if (!geminiKeyUsable || videoId.isBlank()) return null
+        fun body(quick: Boolean) = buildJsonObject {
+            putJsonObject("systemInstruction") {
+                putJsonArray("parts") { add(buildJsonObject { put("text", TRANSCRIBE_INSTRUCTION) }) }
+            }
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    put("role", "user")
+                    putJsonArray("parts") {
+                        add(buildJsonObject {
+                            putJsonObject("fileData") {
+                                put("fileUri", "https://www.youtube.com/watch?v=$videoId")
+                                put("mimeType", "video/*")
+                            }
+                            if (quick) putJsonObject("videoMetadata") { put("fps", VIDEO_FPS) }
+                        })
+                        add(buildJsonObject { put("text", "Video length: ${clock(durationMs)}") })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("temperature", 0)
+                put("mediaResolution", "MEDIA_RESOLUTION_LOW")
+                put("maxOutputTokens", 8192)
+                if (quick) putJsonObject("thinkingConfig") { put("thinkingLevel", "low") }
+                put("responseMimeType", "application/json")
+                putJsonObject("responseSchema") {
+                    put("type", "OBJECT")
+                    putJsonObject("properties") {
+                        putJsonObject("sung") { put("type", "BOOLEAN") }
+                        putJsonObject("lines") {
+                            put("type", "ARRAY")
+                            putJsonObject("items") {
+                                put("type", "OBJECT")
+                                putJsonObject("properties") {
+                                    putJsonObject("t") { put("type", "STRING") }
+                                    putJsonObject("text") { put("type", "STRING") }
+                                }
+                                putJsonArray("required") { add("t"); add("text") }
+                            }
+                        }
+                    }
+                    putJsonArray("required") { add("sung"); add("lines") }
+                }
+            }
+        }.toString()
+        return try {
+            val codes = mutableListOf<Int>()
+            val parse = { text: String -> runCatching { parseTranscript(geminiText(text), durationMs) }.getOrNull() }
+            askGemini(body(quick = true), geminiVideoClient, models = VIDEO_MODELS, codes = codes, parse = parse)
+                ?: if (codes.isNotEmpty() && codes.all { it == 400 }) {
+                    askGemini(body(quick = false), geminiVideoClient, models = VIDEO_MODELS, parse = parse)
+                } else {
+                    null
+                }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * `{"sung":true,"lines":[{"t":"0:12.4","text":"…"}, …]}` as timed lines in
+     * order — an empty list for `"sung":false`; null for an answer too thin or
+     * too disordered to show (under three lines, or times running backwards
+     * for more than a few of them).
+     */
+    internal fun parseTranscript(text: String, durationMs: Long): List<LyricLine>? {
+        val root = json.parseToJsonElement(text).jsonObject
+        val sung = root["sung"]?.jsonPrimitive?.booleanOrNull
+        val items = root["lines"]?.jsonArray.orEmpty()
+        val limit = if (durationMs > 0L) durationMs + 5_000L else Long.MAX_VALUE
+        val lines = items.mapNotNull { item ->
+            val obj = item as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+            val words = obj["text"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val at = obj["t"]?.jsonPrimitive?.contentOrNull?.let(::parseClock)?.takeIf { it <= limit } ?: return@mapNotNull null
+            LyricLine(timeMs = at, text = words)
+        }
+        if (lines.isEmpty()) return if (sung == false) emptyList() else null
+        val backwards = lines.zipWithNext().count { (a, b) -> b.timeMs < a.timeMs }
+        if (lines.size < 3 || backwards > lines.size / 10 + 1) return null
+        return lines.sortedBy { it.timeMs }
+            .distinctBy { it.timeMs to it.text }
+            // A line held at 0:00 is a header the model wrote out, not something sung.
+            .let { sorted -> if (sorted.size > 3 && sorted.first().timeMs == 0L && sorted[1].timeMs > 15_000L) sorted.drop(1) else sorted }
+    }
+
+    private val TRANSCRIBE_INSTRUCTION = """
+        You write down the lyrics sung in a video so they can be shown in time with it. The video is someone singing a song: an official video, a cover, a live take or a clip from a stream.
+        Listen to the audio and write each lyric line exactly as it is sung, in the language and script it is sung in: Korean in Hangul, Japanese in its usual kanji and kana, English in English, and so on. Do not translate, romanize, summarize or correct the singer.
+        Break the lyrics into lines the way a lyric sheet does, a phrase of a few seconds each, and give for each line the moment its first word starts being sung, as M:SS.s counted from the very start of the video (0:00.0). Write a chorus out again every time it is sung. Leave out talking, chat, announcements and parts with no singing.
+        Only write words you actually hear. If a stretch is impossible to make out, leave it out rather than guessing, and never fill in lines from memory that are not sung in this video.
+        Return JSON {"sung":true,"lines":[{"t":"0:12.4","text":"…"},…]} in time order. If nothing is sung in the video, return {"sung":false,"lines":[]}.
+    """.trimIndent()
+
     /** Frames a second Gemini looks at when placing lines; see [placeLinesInVideo]. */
     private const val VIDEO_FPS = 0.2
 

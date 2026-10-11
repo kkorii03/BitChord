@@ -194,7 +194,21 @@ internal fun AndroidCanvasArtworkPlayer(
             // see that object's doc for why this matters far more here than
             // it would for a clip played once.
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client))),
+                DefaultMediaSourceFactory(
+                    CanvasCache.dataSourceFactory(
+                        // A loop cut from a YouTube video is fetched with the
+                        // headers of the client that minted its link.
+                        androidx.media3.datasource.ResolvingDataSource.Factory(OkHttpDataSource.Factory(Http.client)) { spec ->
+                            if (spec.uri.host?.endsWith("googlevideo.com") == true) {
+                                spec.withAdditionalHeaders(
+                                    com.music.bitchord.data.innertube.StreamResolver.mediaHeadersFor(spec.uri.toString()),
+                                )
+                            } else {
+                                spec
+                            }
+                        },
+                    ),
+                ),
             )
             .build()
             .apply {
@@ -244,6 +258,15 @@ internal fun AndroidCanvasArtworkPlayer(
         reportAspect(0f)
         val item = MediaItem.Builder().setUri(url)
         mimeTypeOf(url)?.let { item.setMimeType(it) }
+        // A stretch of a whole video, looped: REPEAT_MODE_ONE replays the clip.
+        canvas.clipStartMs?.let { start ->
+            item.setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(start)
+                    .apply { canvas.clipEndMs?.let { end -> setEndPositionMs(end) } }
+                    .build(),
+            )
+        }
         player.setMediaItem(item.build())
         player.prepare()
     }

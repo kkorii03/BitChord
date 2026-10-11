@@ -1055,6 +1055,64 @@ object StreamResolver {
     private val AudioStream.isWebmOpus: Boolean
         get() = format == MediaFormat.WEBMA_OPUS
 
+    // ---- Video for the moving cover -------------------------------------------
+
+    /** A video-only rendition of an upload, for a muted loop in the cover's place. */
+    class VideoLoop(val url: String, val durationMs: Long, val expiresAtMs: Long)
+
+    private val videoLoops = ConcurrentHashMap<String, VideoLoop>()
+
+    /**
+     * A video-only stream of [videoId] no taller than [maxHeight] — H.264 first,
+     * which every decoder takes and seeks in cheaply, then VP9, then AV1 — or
+     * null when there is none to be had. Asked of NewPipe, which hands back
+     * URLs already deciphered; playback's own resolver asks only for audio.
+     * Kept until shortly before the URL expires.
+     */
+    suspend fun videoLoop(videoId: String, maxHeight: Int = 480): VideoLoop? {
+        val now = System.currentTimeMillis()
+        videoLoops[videoId]?.let { if (it.expiresAtMs - now > LOOP_MARGIN_MS) return it }
+        val found = try {
+            extractionGate.withLock {
+                withContext(Dispatchers.IO) {
+                    val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+                    extractor.fetchPage()
+                    val usable = extractor.videoOnlyStreams.filter {
+                        !it.content.isNullOrBlank() &&
+                            it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP &&
+                            it.height in 1..maxHeight
+                    }
+                    val pick = usable.sortedWith(
+                        compareBy<org.schabi.newpipe.extractor.stream.VideoStream>(
+                            { LOOP_ITAGS.indexOf(it.itag).let { at -> if (at < 0) Int.MAX_VALUE else at } },
+                            { -it.height },
+                        ),
+                    ).firstOrNull() ?: return@withContext null
+                    val expires = pick.content.toHttpUrlOrNull()?.queryParameter("expire")?.toLongOrNull()
+                        ?.times(1000) ?: (now + DEFAULT_LOOP_LIFETIME_MS)
+                    TrackLog.d(TAG, "video loop for $videoId: itag ${pick.itag} ${pick.height}p")
+                    VideoLoop(pick.content, extractor.length * 1000L, expires)
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "no video loop for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        } catch (e: LinkageError) {
+            TrackLog.w(TAG, "no video loop for $videoId: ${e.javaClass.name}")
+            null
+        } ?: return null
+        if (videoLoops.size >= 64) videoLoops.clear()
+        videoLoops[videoId] = found
+        return found
+    }
+
+    /** 480p and 360p: H.264, then VP9, then AV1. */
+    private val LOOP_ITAGS = listOf(135, 134, 244, 243, 397, 396)
+    private const val LOOP_MARGIN_MS = 20L * 60 * 1000
+    private const val DEFAULT_LOOP_LIFETIME_MS = 5L * 60 * 60 * 1000
+
     // ---- Cache --------------------------------------------------------------
 
     /**

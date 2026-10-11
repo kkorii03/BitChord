@@ -77,7 +77,12 @@ object CanvasRepository {
 
         val title = song.title.cleaned()
         val artist = song.artist.cleaned()
-        if (title.isBlank() || artist.isBlank()) return null
+        if (title.isBlank()) return null
+        // A cover's credit is its byline ("원곡자 · 가수 커버"), which no
+        // catalogue knows — and the original's artwork would be someone
+        // else's record. Its own video is the cover's moving art.
+        val cover = com.music.bitchord.data.cover.CoverTitles.isCover(song)
+        val seconds = com.music.bitchord.data.sources.TrackMatcher.secondsOf(song.durationText)
 
         // Keyed on the track alone. The album is deliberately not part of
         // this: it arrives after the player opens, and keying on it made the
@@ -89,33 +94,90 @@ object CanvasRepository {
         val key = cacheKey("song|${song.videoId}", spotifyFirst)
 
         return resolve(key, album != null) {
-            val forTrack = if (spotifyFirst) {
-                firstHit(
-                    { SpotifyCanvas.search(title, artist, album) },
-                    { AppleMusicCanvas.search(title, artist, album) },
-                    { TidalCanvas.search(title, artist, album) },
-                    { CommunityCanvas.search(title, artist, album) },
-                ) { it.matches(title, artist, album) }
-            } else {
-                firstHit(
-                    { AppleMusicCanvas.search(title, artist, album) },
-                    { TidalCanvas.search(title, artist, album) },
-                    { CommunityCanvas.search(title, artist, album) },
-                    { SpotifyCanvas.search(title, artist, album) },
-                ) { it.matches(title, artist, album) }
-            }
-            forTrack ?: album?.cleaned()?.takeIf { it.isNotBlank() }?.let { release ->
-                // No clip for the track itself: the album's motion artwork,
-                // which is what Apple Music plays behind every track of a
-                // release that has one. Its title is the album's, so it is
-                // dropped — the track's own title is checked by the caller.
-                firstHit(
-                    { AppleMusicCanvas.searchAlbum(release, artist) },
-                    { TidalCanvas.searchAlbum(release, artist) },
-                ) { it.matches(release, artist, release) }?.copy(title = null)
-            }
+            val official = if (cover || artist.isBlank()) null else officialFor(title, artist, album, seconds, spotifyFirst)
+            official ?: videoLoopFor(song, seconds)
         }
     }
+
+    /** Motion artwork published for the track or its album — Apple, Tidal, the community list, Spotify. */
+    private suspend fun officialFor(
+        title: String,
+        artist: String,
+        album: String?,
+        seconds: Int?,
+        spotifyFirst: Boolean,
+    ): CanvasArtwork? {
+        val durationMs = seconds?.let { it * 1000L }
+        val forTrack = if (spotifyFirst) {
+            firstHit(
+                { SpotifyCanvas.search(title, artist, album) },
+                { AppleMusicCanvas.search(title, artist, album, durationMs) },
+                { TidalCanvas.search(title, artist, album) },
+                { CommunityCanvas.search(title, artist, album) },
+            ) { it.matches(title, artist, album) }
+        } else {
+            firstHit(
+                { AppleMusicCanvas.search(title, artist, album, durationMs) },
+                { TidalCanvas.search(title, artist, album) },
+                { CommunityCanvas.search(title, artist, album) },
+                { SpotifyCanvas.search(title, artist, album) },
+            ) { it.matches(title, artist, album) }
+        }
+        return forTrack ?: album?.cleaned()?.takeIf { it.isNotBlank() }?.let { release ->
+            // No clip for the track itself: the album's motion artwork,
+            // which is what Apple Music plays behind every track of a
+            // release that has one. Its title is the album's, so it is
+            // dropped — the track's own title is checked by the caller.
+            firstHit(
+                { AppleMusicCanvas.searchAlbum(release, artist) },
+                { TidalCanvas.searchAlbum(release, artist) },
+            ) { it.matches(release, artist, release) }?.copy(title = null)
+        }
+    }
+
+    /**
+     * A stretch of video looped in the cover's place, with nothing published
+     * for the track: a video's own upload — a cover, a clip, a music video —
+     * or, for a track, its music video. Muted; about a third of the way in,
+     * where the song is well under way, for [LOOP_MS].
+     */
+    private suspend fun videoLoopFor(song: Song, seconds: Int?): CanvasArtwork? {
+        if (!AppSettings.videoCanvas.value) return null
+        val videoId = if (song.isVideo) {
+            song.videoId
+        } else {
+            runCatching { com.music.bitchord.data.YtMusicRepository.resolveVideo(song) }.getOrNull()
+                ?.takeIf { looksLikeMusicVideo(it.title) }?.videoId
+        }
+        if (videoId.isNullOrBlank() || videoId.contains(':')) return null
+        val loop = com.music.bitchord.data.innertube.StreamResolver.videoLoop(videoId) ?: return null
+        val length = loop.durationMs.takeIf { it > 0 } ?: seconds?.let { it * 1000L } ?: 0L
+        val start = when {
+            length <= 0L -> 30_000L
+            length < LOOP_MS + 20_000L -> 0L
+            else -> (length * 35 / 100).coerceIn(15_000L, length - LOOP_MS - 5_000L)
+        }
+        Log.d(TAG, "video loop for '${song.title}' from $videoId at ${start / 1000}s")
+        return CanvasArtwork(
+            url = loop.url,
+            clipStartMs = start,
+            clipEndMs = start + LOOP_MS,
+            expiresAtMs = loop.expiresAtMs,
+        )
+    }
+
+    private const val LOOP_MS = 12_000L
+
+    /** A video found for a track that is the song's own video, not a lyric card or a fan upload. */
+    private fun looksLikeMusicVideo(title: String): Boolean {
+        val lower = title.lowercase()
+        return NOT_MUSIC_VIDEO.none { it in lower }
+    }
+
+    private val NOT_MUSIC_VIDEO = listOf(
+        "lyric", "가사", "visuali", "audio", "1 hour", "1시간", "loop", "fanmade", "fan made", "cover", "커버",
+        "karaoke", "노래방", "inst", "piano", "sped up", "slowed", "nightcore", "8d", "reaction", "리액션",
+    )
 
     /**
      * A canvas already worked out for [song], without going near the network.
@@ -129,7 +191,7 @@ object CanvasRepository {
             base = "song|${song.videoId}",
             spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value,
         )
-        return synchronized(cache) { cache[key]?.artwork }
+        return synchronized(cache) { cache[key]?.artwork }?.takeUnless { it.expired() }
     }
 
     /**
@@ -189,8 +251,17 @@ object CanvasRepository {
      * too, unless it was reached blind and there is now an album name to try,
      * which is the one case worth spending a second round of requests on.
      */
-    private fun Entry.reusable(withAlbum: Boolean): Boolean =
-        artwork != null || this.withAlbum || !withAlbum
+    private fun Entry.reusable(withAlbum: Boolean): Boolean {
+        val art = artwork
+        // A video's link runs out after some hours: worked out again then.
+        if (art != null && art.expired()) return false
+        // A loop of video is the fallback: with the album now known, the
+        // published artwork it stood in for may turn up after all.
+        return (art != null && !art.fromVideo) || this.withAlbum || !withAlbum
+    }
+
+    private fun CanvasArtwork.expired(): Boolean =
+        expiresAtMs?.let { it - System.currentTimeMillis() < 60_000L } == true
 
     /**
      * The first source that answers with something that survives [accept].

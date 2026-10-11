@@ -1187,4 +1187,7 @@
     <string name="auto_lyrics_timing_subtitle">Video songs are always timed by matching their notes to the original. When that fails, Gemini times them without tapping the AI timing button.</string>
     <string name="automix_videos">Automix video songs too</string>
     <string name="automix_videos_subtitle">Mixed on their beats once analysed; a plain crossfade until then.</string>
+    <string name="video_canvas">Loop part of the video when there is no animated cover</string>
+    <string name="ai_lyrics">Write lyrics with AI when none are found</string>
+    <string name="ai_lyrics_subtitle">When no lyrics source has the song, Gemini listens to the video and writes the lyrics down with their timing. Takes up to a minute.</string>
 </resources>

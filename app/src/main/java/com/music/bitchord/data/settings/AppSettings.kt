@@ -448,6 +448,12 @@ object AppSettings {
     val prioritizeSpotifyCanvas = MutableStateFlow(false)
 
     /**
+     * With no motion artwork found, loop a stretch of video instead: the
+     * upload itself for a video, the song's music video for a track.
+     */
+    val videoCanvas = MutableStateFlow(true)
+
+    /**
      * Blows the player's cover art out to a full-bleed banner running off the
      * top of the screen, rather than sitting it in a square card.
      *
@@ -534,6 +540,9 @@ object AppSettings {
      * lyrics, ask Gemini without waiting for the AI button. See LyricsTiming.
      */
     val autoLyricsTiming = MutableStateFlow(false)
+
+    /** With no lyrics anywhere, Gemini writes them down off the video — see AiLyrics. */
+    val aiLyrics = MutableStateFlow(true)
 
     /** Download a song as soon as it is liked. See [LikedAutoDownload]. */
     val autoDownloadLiked = MutableStateFlow(true)
@@ -909,6 +918,7 @@ object AppSettings {
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
+        videoCanvas.value = prefs.getBoolean(KEY_VIDEO_CANVAS, true)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
         lastPlayerScreen.value = runCatching {
@@ -931,6 +941,7 @@ object AppSettings {
         prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, true)
         autoTranslateLyrics.value = prefs.getBoolean(KEY_AUTO_TRANSLATE_LYRICS, false)
         autoLyricsTiming.value = prefs.getBoolean(KEY_AUTO_LYRICS_TIMING, false)
+        aiLyrics.value = prefs.getBoolean(KEY_AI_LYRICS, true)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
@@ -1483,6 +1494,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_AUTO_LYRICS_TIMING, value).apply()
     }
 
+    fun setAiLyrics(value: Boolean) {
+        aiLyrics.value = value
+        prefs.edit().putBoolean(KEY_AI_LYRICS, value).apply()
+    }
+
     fun setAutoDownloadLiked(value: Boolean) {
         autoDownloadLiked.value = value
         prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD_LIKED, value).apply()
@@ -1566,6 +1582,11 @@ object AppSettings {
     fun setSpotifyCanvasAutoHide(value: Boolean) {
         spotifyCanvasAutoHide.value = value
         prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value).apply()
+    }
+
+    fun setVideoCanvas(value: Boolean) {
+        videoCanvas.value = value
+        prefs.edit().putBoolean(KEY_VIDEO_CANVAS, value).apply()
     }
 
     fun setPrioritizeSpotifyCanvas(value: Boolean) {
@@ -2148,6 +2169,7 @@ object AppSettings {
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
+    private const val KEY_VIDEO_CANVAS = "ko_video_canvas"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
@@ -2164,6 +2186,7 @@ object AppSettings {
     private const val KEY_AUTO_DOWNLOAD_LIKED = "auto_download_liked"
     private const val KEY_AUTO_TRANSLATE_LYRICS = "auto_translate_lyrics"
     private const val KEY_AUTO_LYRICS_TIMING = "auto_lyrics_timing"
+    private const val KEY_AI_LYRICS = "ko_ai_lyrics"
     private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
     private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
     private const val KEY_CONTENT_COUNTRY = "ko_content_country"

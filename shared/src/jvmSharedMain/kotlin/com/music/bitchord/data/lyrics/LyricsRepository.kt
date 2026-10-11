@@ -162,7 +162,7 @@ object LyricsRepository {
                     checkAgain(key, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                            null, null, null, isVideo, alternatives, artistKnown,
+                            null, null, null, isVideo, alternatives, artistKnown, transcribe = false,
                         )
                     }
                 }
@@ -351,6 +351,28 @@ object LyricsRepository {
      */
     private val background = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * Set by the app: the lyrics heard off a video when nothing else has any
+     * (Gemini, see [LyricsTranslation.transcribeVideo]) — null when that is
+     * off. Lines, an empty list for "nothing is sung", or null for no answer.
+     */
+    @Volatile
+    var transcriber: (suspend (videoId: String, durationMs: Long) -> List<LyricLine>?)? = null
+
+    /** What [transcriber] hears in [videoId], as an answer; null for nothing. */
+    private suspend fun transcribed(videoId: String, durationMs: Long): Result? {
+        val ask = transcriber ?: return null
+        if (videoId.isBlank() || videoId.contains(':') || durationMs <= 0L) return null
+        val lines = try {
+            ask(videoId, durationMs)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        return lines?.takeIf { it.isNotEmpty() }?.let { Result(LyricsSource.GEMINI_TRANSCRIPT, it) }
+    }
+
     private suspend fun search(
         videoId: String,
         title: String,
@@ -367,6 +389,8 @@ object LyricsRepository {
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
+        /** Off for the background re-check of kept lyrics: heard once is enough. */
+        transcribe: Boolean = true,
     ): Result? = coroutineScope {
         // The original-language name is one cheap search away and needed the
         // moment the first round comes back empty, so it is asked for now,
@@ -381,7 +405,7 @@ object LyricsRepository {
             searchRounds(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown, nameAhead,
-            )
+            ) ?: if (transcribe && sources.isNotEmpty()) transcribed(videoId, durationMs) else null
         } finally {
             nameAhead?.cancel()
         }
@@ -698,6 +722,8 @@ object LyricsRepository {
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
             LyricsSource.VIBE -> VibeLyrics.lyrics(title, artist, durationMs)
             LyricsSource.BUGS -> BugsLyrics.lyrics(title, artist, durationMs)
+            // Never raced: only ever the last resort of [search].
+            LyricsSource.GEMINI_TRANSCRIPT -> null
         }
         return found
     }

@@ -70,6 +70,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // Singers seen on cover titles, so their clips without "Cover" in the title read as theirs too.
         com.music.bitchord.data.cover.CoverTitles.knownSingers = { AppSettings.coverSingers.value }
         com.music.bitchord.data.cover.CoverTitles.onSingerSeen = AppSettings::rememberCoverSinger
+        // Lyrics no source has: Gemini writes them down off the video.
+        com.music.bitchord.playback.smart.AiLyrics.init(this)
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
         // PlaybackService shares this process, so seeding the cookie here means
