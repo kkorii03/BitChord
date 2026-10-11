@@ -154,27 +154,106 @@ object LyricsRepository {
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
             )
         }
-        val shared = inFlight[key]
-        if (shared != null) {
-            val result = shared.await()
-            result?.let { onSourceResult?.invoke(it.source, it) }
+        // Everyone asking hears every provider as it starts and answers — not
+        // only whoever asked first. The playback service (for the lock screen)
+        // and the next-song preparation ask without listening, and usually
+        // ask first; the lyrics screen joining their lookup used to hear
+        // nothing until the whole of it was over, and so could not put up the
+        // first usable lines while slower sources were still being waited for.
+        val listener = Listener(onSourceStarted, onSourceResult, onSourceCancelled)
+        val fresh = Lookup()
+        val lookup = inFlight.putIfAbsent(key, fresh) ?: fresh
+        lookup.join(listener)
+        try {
+            if (lookup === fresh) {
+                val started = background.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    search(
+                        videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+                        lookup::started, lookup::answered, lookup::cancelled, isVideo, alternatives, artistKnown,
+                    ).also { answers.put(key, Answer(it)) }
+                }
+                started.invokeOnCompletion { inFlight.remove(key, lookup) }
+                lookup.start(started)
+                started.start()
+            }
+            val result = lookup.await()
+            // Joined at the very end, after the last provider had reported:
+            // the answer itself is still news to this caller.
+            if (!listener.heard && result != null) onSourceResult?.invoke(result.source, result)
             return result
+        } finally {
+            lookup.leave(listener)
         }
-        val started = background.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            search(
-                videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-            ).also { answers.put(key, Answer(it)) }
+    }
+
+    /** One caller's provider callbacks. */
+    private class Listener(
+        val onStarted: ((LyricsSource) -> Unit)?,
+        val onResult: ((LyricsSource, Result?) -> Unit)?,
+        val onCancelled: ((LyricsSource) -> Unit)?,
+    ) {
+        @Volatile var heard = false
+    }
+
+    /**
+     * A lookup in progress, shared by everyone asking the same question: its
+     * provider events go to each of them, and one joining late is first told
+     * what has happened so far.
+     */
+    private class Lookup {
+        private val job = kotlinx.coroutines.CompletableDeferred<Deferred<Result?>>()
+
+        /** Hands over the search itself, once, right after the lookup is published. */
+        fun start(search: Deferred<Result?>) {
+            job.complete(search)
         }
-        val winner = inFlight.putIfAbsent(key, started)
-        if (winner != null) {
-            val result = winner.await()
-            result?.let { onSourceResult?.invoke(it.source, it) }
-            return result
+        private val listeners = ArrayList<Listener>()
+        private val running = LinkedHashSet<LyricsSource>()
+        private val finished = LinkedHashMap<LyricsSource, Result?>()
+
+        fun join(listener: Listener) {
+            val (wasRunning, wasFinished) = synchronized(this) {
+                listeners += listener
+                running.toList() to finished.toList()
+            }
+            wasRunning.forEach { listener.onStarted?.invoke(it) }
+            wasFinished.forEach { (source, result) ->
+                listener.heard = true
+                listener.onResult?.invoke(source, result)
+            }
         }
-        started.invokeOnCompletion { inFlight.remove(key, started) }
-        started.start()
-        return started.await()
+
+        fun leave(listener: Listener) = synchronized(this) { listeners -= listener }
+
+        fun started(source: LyricsSource) {
+            val now = synchronized(this) {
+                running += source
+                listeners.toList()
+            }
+            now.forEach { it.onStarted?.invoke(source) }
+        }
+
+        fun answered(source: LyricsSource, result: Result?) {
+            val now = synchronized(this) {
+                running -= source
+                finished[source] = result
+                listeners.toList()
+            }
+            now.forEach {
+                it.heard = true
+                it.onResult?.invoke(source, result)
+            }
+        }
+
+        fun cancelled(source: LyricsSource) {
+            val now = synchronized(this) {
+                running -= source
+                listeners.toList()
+            }
+            now.forEach { it.onCancelled?.invoke(source) }
+        }
+
+        suspend fun await(): Result? = job.await().await()
     }
 
     /** A whole lookup's answer, a miss included, and when it was made. */
@@ -205,7 +284,7 @@ object LyricsRepository {
 
     private const val MISS_KEPT_MS = 3L * 60L * 1000L
 
-    private val inFlight = ConcurrentHashMap<String, Deferred<Result?>>()
+    private val inFlight = ConcurrentHashMap<String, Lookup>()
 
     /**
      * Where whole lookups run: not the asking coroutine's, so a listener

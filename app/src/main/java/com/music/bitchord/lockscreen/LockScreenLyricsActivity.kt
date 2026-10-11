@@ -206,7 +206,10 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
 
     // The translation, small under each line — the same one the player shows,
     // usually already made ahead of time and answered from the cache.
-    var translated by remember(song?.videoId, lines) { mutableStateOf<List<LyricLine>?>(null) }
+    // Kept per song, not per list: the lines re-timed onto the video arrive
+    // as a new list, and the translation stays up while it follows them.
+    val textKey = remember(lines) { lines.joinToString("\n") { it.text } }
+    var translated by remember(song?.videoId, textKey) { mutableStateOf<List<LyricLine>?>(null) }
     LaunchedEffect(song?.videoId, lines) {
         val id = song?.videoId ?: return@LaunchedEffect
         if (lines.isEmpty()) return@LaunchedEffect
@@ -218,8 +221,9 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
         } catch (_: Exception) {
             null
         }
-        translated = (result as? LyricsTranslation.Result.Translated)?.lines
+        (result as? LyricsTranslation.Result.Translated)?.lines
             ?.takeIf { it.size == lines.size }
+            ?.let { translated = it }
     }
 
     // Swiping up lifts the whole screen with the finger, the way the system

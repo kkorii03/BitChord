@@ -2436,6 +2436,12 @@ private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String):
             progress.snapTo(if (target != null) 1f else 0f)
             return@LaunchedEffect
         }
+        // The same lines re-timed (the lyrics moved onto the video's clock):
+        // swapped in place, nothing to fold.
+        if (sameWords(shown.value, target) && progress.value > 0f) {
+            shown.value = target
+            return@LaunchedEffect
+        }
         // Switching straight from romanized to translated closes the one
         // before opening the other, so two scripts never share the gap.
         if (shown.value != null && shown.value !== target && progress.value > 0f) {
@@ -2450,6 +2456,14 @@ private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String):
     }
     return remember(trackKey) { SubLyricsReveal(progress.asState(), shown) }
 }
+
+/** Whether [made] — a translation or romanization — keeps [source]'s line timings. */
+private fun sameTiming(made: List<LyricLine>, source: List<LyricLine>): Boolean =
+    made.size == source.size && made.indices.all { made[it].timeMs == source[it].timeMs }
+
+/** The same small lines re-timed: same count, same words. */
+private fun sameWords(a: List<LyricLine>?, b: List<LyricLine>?): Boolean =
+    a != null && b != null && a.size == b.size && a.indices.all { a[it].text == b[it].text }
 
 /**
  * Opens downward out of the line above: the height grows from nothing while
@@ -2776,29 +2790,30 @@ internal fun rememberLyricsTranslation(
     val translationUnavailableMessage = stringResource(Res.string.lyrics_translation_unavailable)
     val alreadyRomanizedMessage = stringResource(Res.string.lyrics_already_romanized)
     val romanizationUnavailableMessage = stringResource(Res.string.lyrics_romanization_unavailable)
-    var translationState by remember(trackId, translationLanguage, lyrics) {
-        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
-    }
-    var romanizationState by remember(trackId, translationLanguage, lyrics) {
-        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
-    }
-    // The mode outlives a new list of the *same words* — the lyrics moved onto
-    // the video's clock arrive as one — so a translation the listener turned
-    // on stays on; see the effect after [requestTranslation].
+    // The state outlives a new list of the *same words* — the lyrics moved
+    // onto the video's clock arrive as one, and the sync drawer sends one per
+    // tap — so a translation on screen stays on screen while it is re-timed;
+    // see the effect after [requestTranslation].
     val lyricsTextKey = remember(lyrics) { lyrics?.joinToString("\n") { it.text } }
+    var translationState by remember(trackId, translationLanguage, lyricsTextKey) {
+        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
+    }
+    var romanizationState by remember(trackId, translationLanguage, lyricsTextKey) {
+        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
+    }
     var lyricsDisplayMode by remember(trackId, translationLanguage, lyricsTextKey) {
         mutableStateOf(LyricsDisplayMode.Original)
     }
     val showingTranslation = lyricsDisplayMode == LyricsDisplayMode.Translated
     val showingRomanization = lyricsDisplayMode == LyricsDisplayMode.Romanized
     var translationTransition by remember(trackId) { mutableIntStateOf(0) }
-    var translationJob by remember(trackId, translationLanguage, lyrics) {
+    var translationJob by remember(trackId, translationLanguage, lyricsTextKey) {
         mutableStateOf<Job?>(null)
     }
-    var romanizationJob by remember(trackId, translationLanguage, lyrics) {
+    var romanizationJob by remember(trackId, translationLanguage, lyricsTextKey) {
         mutableStateOf<Job?>(null)
     }
-    DisposableEffect(trackId, translationLanguage, lyrics) {
+    DisposableEffect(trackId, translationLanguage, lyricsTextKey) {
         onDispose {
             translationJob?.cancel()
             romanizationJob?.cancel()
@@ -2878,16 +2893,33 @@ internal fun rememberLyricsTranslation(
             LyricsTranslationUiState.Idle -> requestTranslation(false)
         }
     }
-    // Same words, new timings: the translation is asked for again — from the
-    // cache, at once — so it follows the moved lines instead of the old ones.
+    // Same words, new timings: what is on screen is made again for the moved
+    // lines — from the cache, at once — and swapped in quietly, without
+    // folding the small lines away and back or a haptic for a tap nobody made.
     LaunchedEffect(lyrics) {
-        if (lyrics.isNullOrEmpty()) return@LaunchedEffect
-        when (lyricsDisplayMode) {
-            LyricsDisplayMode.Translated ->
-                if (translationState is LyricsTranslationUiState.Idle) requestTranslation(true)
-            LyricsDisplayMode.Romanized ->
-                if (romanizationState is LyricsTranslationUiState.Idle) lyricsDisplayMode = LyricsDisplayMode.Original
-            LyricsDisplayMode.Original -> Unit
+        val source = lyrics
+        if (source.isNullOrEmpty()) return@LaunchedEffect
+        val translated = translationState as? LyricsTranslationUiState.Ready
+        if (translated != null && !sameTiming(translated.lines, source)) {
+            val result = PlayerPlatform.host.translateLyrics(
+                trackId = trackId,
+                lines = source,
+                targetLanguageTag = translationLanguage,
+            )
+            if (result is LyricsTranslationResult.Translated) {
+                translationState = LyricsTranslationUiState.Ready(result.lines, result.byGemini)
+            }
+        }
+        val romanized = romanizationState as? LyricsTranslationUiState.Ready
+        if (romanized != null && !sameTiming(romanized.lines, source)) {
+            val result = PlayerPlatform.host.romanizeLyrics(
+                trackId = trackId,
+                lines = source,
+                targetLanguageTag = translationLanguage,
+            )
+            if (result is LyricsRomanizationResult.Romanized) {
+                romanizationState = LyricsTranslationUiState.Ready(result.lines)
+            }
         }
     }
     // Auto-translate: each new lyric sheet asks for its translation once, as

@@ -559,10 +559,14 @@ object ChromaAlignment {
     /**
      * Why the last [align] came out the way it did, with its figures — for the
      * track log, since "no timing" otherwise says nothing about how close it was.
+     * Per thread: two candidates are aligned at once, and each must read its
+     * own (an [align] runs start to end on the thread that called it).
      */
-    @Volatile
-    var lastVerdict: String = ""
-        private set
+    var lastVerdict: String
+        get() = verdicts.get()
+        private set(value) = verdicts.set(value)
+
+    private val verdicts = ThreadLocal.withInitial { "" }
 
     private fun refuse(why: String): Result? {
         lastVerdict = "refused: $why"

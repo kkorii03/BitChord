@@ -1324,6 +1324,7 @@ private fun PlayPill(
     /** Punch the triangle out of the circle, so the page shows through it, as Apple's does. */
     cutout: Boolean = false,
 ) {
+    val playLabel = stringResource(R.string.play)
     // Black on the light fills Apple picks, white on the rare dark one.
     val contentColor = if (containerColor.luminance() > 0.35f) Color.Black else Color.White
     // Resume rather than a flat tap: this button starts a queue, and the rising
@@ -1365,7 +1366,7 @@ private fun PlayPill(
                         blendMode = BlendMode.Clear,
                     )
                 }
-                .semantics { contentDescription = "Play" },
+                .semantics { contentDescription = playLabel },
         )
         return
     }

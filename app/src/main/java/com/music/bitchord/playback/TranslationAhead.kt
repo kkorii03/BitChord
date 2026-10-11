@@ -89,12 +89,30 @@ internal object TranslationAhead {
             }
             val found = lookUp(next) ?: return@launch
             val lines = found.lines.takeIf { lines -> lines.any { it.text.isNotBlank() } } ?: return@launch
+            // The timing alongside the translation rather than after it, and
+            // outside [nextJob]: this song is about to be the one playing, and
+            // the next nextTrack — the moment it starts — must not throw away
+            // a measurement half done for it.
+            startTiming(app, next, found)
             if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
                 translate(next.videoId, lines, targetLanguage(app), keep = next.localUri != null)
             }
-            prepareTiming(app, next, found)
         }
     }
+
+    /** Timing jobs still running: this song's, the one before (now usually playing). */
+    private val timingJobs = ArrayDeque<Pair<String, Job>>()
+
+    private fun startTiming(context: Context, song: Song, found: LyricsRepository.Result) {
+        synchronized(timingJobs) {
+            timingJobs.removeAll { !it.second.isActive }
+            if (timingJobs.any { it.first == song.videoId }) return
+            while (timingJobs.size >= MAX_TIMING_JOBS) timingJobs.removeFirst().second.cancel()
+            timingJobs.addLast(song.videoId to scope.launch { prepareTiming(context, song, found) })
+        }
+    }
+
+    private const val MAX_TIMING_JOBS = 2
 
     /**
      * Times the next video's lyrics to it — see
@@ -119,6 +137,11 @@ internal object TranslationAhead {
         }.distinct()
         try {
             if (timing.worthMeasuring(context, song.videoId)) {
+                // Its audio coming down now, not when it starts playing, so
+                // the measurement has something to read before then.
+                com.music.bitchord.playback.AudioCache.requestAnalysisHead(
+                    android.net.Uri.parse(com.music.bitchord.playback.smart.AutomixAnalysisSource.opusUri(song.videoId)),
+                )
                 timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
             }
             if (AppSettings.autoLyricsTiming.value &&

@@ -19,8 +19,10 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -28,6 +30,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -206,21 +209,25 @@ object LyricsTiming {
      */
     suspend fun measure(context: Context, video: Song, names: List<Pair<String, String>>, videoMs: Long) {
         val lock = measuring.getOrPut(video.videoId) { Mutex() }
-        lock.withLock {
-            if (!worthMeasuring(context, video.videoId)) return
-            val outcome = try {
-                measureFresh(context, video, names, videoMs) { early -> keep(context, video.videoId, early) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (e: Exception) {
-                TrackLog.w(TAG, "measurement failed: ${e.message}", video.videoId)
-                return
+        // Off the caller's thread — the lyrics screen asks from the main one —
+        // since the kept records are read from disk along the way.
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                if (!worthMeasuring(context, video.videoId)) return@withContext
+                val outcome = try {
+                    measureFresh(context, video, names, videoMs) { early -> keep(context, video.videoId, early) }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (e: Exception) {
+                    TrackLog.w(TAG, "measurement failed: ${e.message}", video.videoId)
+                    return@withContext
+                }
+                // Only a finished measurement is remembered: a dropped connection or
+                // a decoder that wouldn't open is worth trying again, a refusal is
+                // not (until more of the video, or of the record, is there to look at).
+                if (outcome !is Measured.Done) return@withContext
+                keep(context, video.videoId, outcome)
             }
-            // Only a finished measurement is remembered: a dropped connection or
-            // a decoder that wouldn't open is worth trying again, a refusal is
-            // not (until more of the video, or of the record, is there to look at).
-            if (outcome !is Measured.Done) return
-            keep(context, video.videoId, outcome)
         }
     }
 
@@ -301,6 +308,12 @@ object LyricsTiming {
         if (candidates.any { it.videoId == video.videoId }) {
             return Measured.Done(null, complete = true, noChange = true, note = "비디오가 원곡과 같음")
         }
+
+        // The records start coming down now, while the video's opening is
+        // still on its way, rather than once it has arrived.
+        candidates
+            .filter { it.localUri == null && kept(context, it.videoId) == null }
+            .forEach { AudioCache.requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(it.videoId))) }
 
         // The video, as much as has arrived (it is usually the track playing,
         // and the player is the one fetching it), read once for every candidate
@@ -770,24 +783,53 @@ object LyricsTiming {
 
         suspend fun get(videoId: String): Entry? = mutex.withLock { loaded()[videoId] }
 
-        suspend fun update(videoId: String, change: (Entry) -> Entry) = mutex.withLock {
-            val map = loaded()
-            map[videoId] = change(map.remove(videoId) ?: Entry())
-            while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
-            val text = json.encodeToString(Saved.serializer(), Saved(LinkedHashMap(map)))
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val temporary = File(file.parentFile, "${file.name}.tmp")
-                    temporary.writeText(text)
-                    if (!temporary.renameTo(file)) {
-                        temporary.copyTo(file, overwrite = true)
-                        temporary.delete()
+        suspend fun update(videoId: String, change: (Entry) -> Entry) {
+            mutex.withLock {
+                val map = loaded()
+                map[videoId] = change(map.remove(videoId) ?: Entry())
+                while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
+                dirty = true
+            }
+            scheduleSave()
+        }
+
+        @Volatile private var dirty = false
+        private val saving = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /**
+         * Written a moment later, off the main thread, once for however many
+         * changes came in meanwhile: the file holds every video's maps and
+         * can run to megabytes, and tapping the sync buttons changes it ten
+         * times a second.
+         */
+        private fun scheduleSave() {
+            if (!saving.compareAndSet(false, true)) return
+            saveScope.launch {
+                try {
+                    delay(SAVE_DELAY_MS)
+                    val snapshot = mutex.withLock {
+                        dirty = false
+                        Saved(LinkedHashMap(loaded()))
                     }
+                    runCatching {
+                        val text = json.encodeToString(Saved.serializer(), snapshot)
+                        val temporary = File(file.parentFile, "${file.name}.tmp")
+                        temporary.writeText(text)
+                        if (!temporary.renameTo(file)) {
+                            temporary.copyTo(file, overwrite = true)
+                            temporary.delete()
+                        }
+                    }
+                } finally {
+                    saving.set(false)
+                    if (dirty) scheduleSave()
                 }
             }
-            Unit
         }
     }
+
+    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private const val SAVE_DELAY_MS = 800L
 
     private const val MAX_ENTRIES = 1_000
     private val json = Json { ignoreUnknownKeys = true }
