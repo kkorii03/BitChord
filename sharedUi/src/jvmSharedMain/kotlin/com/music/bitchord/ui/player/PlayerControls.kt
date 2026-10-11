@@ -141,7 +141,9 @@ internal fun playbackOriginText(song: Song, playedBy: String?): String =
         stringResource(Res.string.playing_radio, it)
     } ?: stringResource(
         Res.string.playing_from,
-        song.playbackSource ?: song.albumName ?: stringResource(Res.string.queue),
+        // A shelf's own name ("Recents") in the words the home page shows it under.
+        song.playbackSource?.let { com.music.bitchord.ui.screens.localizeShelfTitle(it) }
+            ?: song.albumName ?: stringResource(Res.string.queue),
     )
 
 /**
