@@ -196,6 +196,7 @@ fun SettingsScreen(
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val automixVideos by AppSettings.automixVideos.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
@@ -715,6 +716,17 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
                 )
+            }
+            if (smartFade) {
+                val automixVideosTitle = stringResource(R.string.automix_videos)
+                row(automixVideosTitle, "video", "automix", "mix") {
+                    SettingsSubRow(
+                        title = automixVideosTitle,
+                        subtitle = stringResource(R.string.automix_videos_subtitle),
+                        checked = automixVideos,
+                        onCheckedChange = AppSettings::setAutomixVideos,
+                    )
+                }
             }
             val automixPerformanceTitle = stringResource(R.string.automix_performance)
             row(automixPerformanceTitle, "cpu", "battery") {

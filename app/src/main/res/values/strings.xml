@@ -1185,4 +1185,6 @@
     <string name="channel_default_suffix">%1$s · default</string>
     <string name="auto_lyrics_timing">Fix lyrics timing automatically</string>
     <string name="auto_lyrics_timing_subtitle">Video songs are always timed by matching their notes to the original. When that fails, Gemini times them without tapping the AI timing button.</string>
+    <string name="automix_videos">Automix video songs too</string>
+    <string name="automix_videos_subtitle">Mixed on their beats once analysed; a plain crossfade until then.</string>
 </resources>

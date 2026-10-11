@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -148,6 +149,26 @@ object LyricsRepository {
             kept.result?.let { onSourceResult?.invoke(it.source, it) }
             return kept.result
         }
+        // Heard before, on any earlier day: on the device already. Shown at
+        // once, and looked for again in the background only while something
+        // better than what is kept could still turn up.
+        if (durationMs > 0L) {
+            val kept = kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.read(key) }
+            val keptResult = kept?.result
+            if (kept != null && keptResult != null) {
+                answers.put(key, Answer(keptResult))
+                onSourceResult?.invoke(keptResult.source, keptResult)
+                if (LyricsDiskCache.worthCheckingAgain(kept)) {
+                    checkAgain(key, videoId, keptResult) {
+                        search(
+                            videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+                            null, null, null, isVideo, alternatives, artistKnown,
+                        )
+                    }
+                }
+                return keptResult
+            }
+        }
         if (durationMs <= 0L) {
             return search(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
@@ -170,7 +191,12 @@ object LyricsRepository {
                     search(
                         videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                         lookup::started, lookup::answered, lookup::cancelled, isVideo, alternatives, artistKnown,
-                    ).also { answers.put(key, Answer(it)) }
+                    ).also {
+                        answers.put(key, Answer(it))
+                        // Only answers go on disk: "nothing found" may only
+                        // mean the phone was offline.
+                        if (it != null) LyricsDiskCache.write(key, it)
+                    }
                 }
                 started.invokeOnCompletion { inFlight.remove(key, lookup) }
                 lookup.start(started)
@@ -183,6 +209,37 @@ object LyricsRepository {
             return result
         } finally {
             lookup.leave(listener)
+        }
+    }
+
+    /**
+     * Lyrics a background check found better than the ones shown for a video
+     * — word-synced where only lines were kept, say: (video id, lyrics).
+     */
+    val upgrades: kotlinx.coroutines.flow.SharedFlow<Pair<String, Result>> get() = _upgrades
+    private val _upgrades = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, Result>>(extraBufferCapacity = 4)
+
+    /** Keys checked again this session: once is enough. */
+    private val checkedAgain = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+    private fun checkAgain(key: String, videoId: String, kept: Result, search: suspend () -> Result?) {
+        if (!checkedAgain.add(key)) return
+        background.launch {
+            val found = try {
+                search()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (found != null && LyricsDiskCache.rank(found) > LyricsDiskCache.rank(kept)) {
+                answers.put(key, Answer(found))
+                LyricsDiskCache.write(key, found)
+                _upgrades.tryEmit(videoId to found)
+            } else {
+                // Nothing better: not asked again for a while.
+                LyricsDiskCache.touchChecked(key)
+            }
         }
     }
 

@@ -99,6 +99,24 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun streamClipTitlesAreRead() {
+        val betel = assertNotNull(CoverTitles.read("[2023.06.18 아카네 리제] 유우리 - 베텔기우스", "서아린", null))
+        assertEquals("베텔기우스", betel.title)
+        assertEquals("유우리", betel.originalArtist)
+        assertEquals("아카네 리제", betel.singer)
+        assertEquals("유우리 · 아카네 리제 커버", betel.byline)
+
+        val fly = assertNotNull(CoverTitles.read("[2023.07.23 아카네 리제] Fly me to the moon", "서아린", null))
+        assertEquals("Fly me to the moon", fly.title)
+        assertEquals(null, fly.originalArtist)
+
+        val sid = assertNotNull(CoverTitles.read("[2023.07.23 아카네 리제] S.I.D-Sim", "서아린", null))
+        assertEquals("S.I.D", sid.originalArtist)
+
+        assertEquals(null, CoverTitles.read("[2023.06.18 Live] Artist - Song", "Artist", null, unambiguousOnly = true))
+    }
+
+    @Test
     fun coverByTitlesReadEvenWithoutTheVideoFlag() {
         // A Recents row arrives without its video flag; "cover by" still says it all.
         val cover = assertNotNull(

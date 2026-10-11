@@ -88,7 +88,7 @@ object LyricsTranslation {
     private const val CACHE_DIRECTORY = "lyrics_translation_v3"
     // Room for roughly two thousand songs: every Gemini answer kept here is a
     // request (and a few seconds) the next play of that song does not spend.
-    private const val MAX_CACHE_BYTES = 8L * 1024L * 1024L
+    private const val MAX_CACHE_BYTES = 30L * 1024L * 1024L
     private const val MAX_BATCH_CHARS = 3_500
     private const val MAX_PARALLEL_REQUESTS = 2
     // Input Tools changes ASCII digits to the destination script, so match the
@@ -938,11 +938,15 @@ object LyricsTranslation {
             .joinToString("") { "%02x".format(it) }
     }
 
+    // Under the app's own files when it has them, where Android's cache
+    // clearing doesn't reach: a song's translation is made once. One made
+    // before then is still read from the cache it was written to.
     private suspend fun readCache(key: String): CachedTranslation? =
-        readEntry(cacheDir, CACHE_DIRECTORY, key)
+        readEntry(keepDir ?: cacheDir, CACHE_DIRECTORY, key)
+            ?: cacheDir?.takeIf { keepDir != null }?.let { readEntry(it, CACHE_DIRECTORY, key) }
 
     private suspend fun writeCache(key: String, value: CachedTranslation) =
-        writeEntry(cacheDir, CACHE_DIRECTORY, key, value, MAX_CACHE_BYTES)
+        writeEntry(keepDir ?: cacheDir, CACHE_DIRECTORY, key, value, MAX_CACHE_BYTES)
 
     private suspend fun readEntry(root: File?, directory: String, key: String): CachedTranslation? =
         readStored(root, directory, key)?.let { text ->

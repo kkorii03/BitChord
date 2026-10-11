@@ -510,7 +510,7 @@ object LyricsTiming {
 
     private val recordCache = LinkedHashMap<String, ChromaAlignment.Features>()
     private const val RECORDS_KEPT = 4
-    private const val RECORDS_ON_DISK = 400
+    private const val RECORDS_ON_DISK = 1_000
 
     // ---- A video, read as it arrives ---------------------------------------------------
 
@@ -847,7 +847,7 @@ object LyricsTiming {
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private const val SAVE_DELAY_MS = 800L
 
-    private const val MAX_ENTRIES = 1_000
+    private const val MAX_ENTRIES = 3_000
     private val json = Json { ignoreUnknownKeys = true }
 
     @Volatile

@@ -1727,6 +1727,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        // Kept lyrics a background check has since bettered (word timing where
+        // only lines were kept): swapped in for the song on screen, unless a
+        // source was picked by hand.
+        viewModelScope.launch {
+            LyricsRepository.upgrades.collect { (videoId, result) ->
+                if (currentLyricsRequest?.videoId == videoId && selectedLyricsSource == null && _lyrics.value != null) {
+                    publishLyrics(result)
+                }
+            }
+        }
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()

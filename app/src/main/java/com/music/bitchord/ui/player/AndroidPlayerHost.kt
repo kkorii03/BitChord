@@ -76,6 +76,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val syncedLyrics get() = AppSettings.syncedLyrics
         override val translationLanguage get() = AppSettings.translationLanguage
         override val autoTranslateLyrics get() = AppSettings.autoTranslateLyrics
+        override val automixVideos get() = AppSettings.automixVideos
         override val versionAlignmentInProgress get() = AppSettings.versionAlignmentInProgress
 
         override fun setLastPlayerScreen(value: LastPlayerScreen) = AppSettings.setLastPlayerScreen(value)

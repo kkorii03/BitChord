@@ -127,6 +127,7 @@ interface PlayerHost {
 private val NoCast = MutableStateFlow(CastUi())
 private val NoSongMeaning = MutableStateFlow(false)
 private val NoAutoTranslate = MutableStateFlow(false)
+private val NoAutomixVideos = MutableStateFlow(false)
 
 /** What the output drawer needs to know about casting to draw its row. */
 data class CastUi(
@@ -182,6 +183,8 @@ interface PlayerSettingsSource {
     val translationLanguage: StateFlow<String>
     /** Translate every song's lyrics without the button being pressed. */
     val autoTranslateLyrics: StateFlow<Boolean> get() = NoAutoTranslate
+    /** Automix mixes video songs too; off, they get a plain crossfade. */
+    val automixVideos: StateFlow<Boolean> get() = NoAutomixVideos
     val versionAlignmentInProgress: StateFlow<Boolean>
 
     fun setLastPlayerScreen(value: LastPlayerScreen)

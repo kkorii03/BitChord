@@ -327,6 +327,7 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
     if (!showNerdStats) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val automixVideos by PlayerSettings.automixVideos.collectAsStateWithLifecycle()
     val smartAnalysis by PlayerSettings.smartAnalysis.collectAsStateWithLifecycle()
     // A party doesn't mix, and doesn't analyse for one either — see
     // [com.music.bitchord.playback.CrossfadeController]. So the two flows above
@@ -378,7 +379,7 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
                     // not, so naming the video limitation there would describe
                     // a rule that is not the one in force.
                     inParty -> stringResource(Res.string.automix_stopped_in_party)
-                    song.isVideoOrigin ->
+                    song.isVideoOrigin && !automixVideos ->
                         stringResource(Res.string.automix_not_supported_video)
                     else -> stringResource(
                         Res.string.automix_analysis_status,

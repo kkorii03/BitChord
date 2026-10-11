@@ -26,6 +26,10 @@ import com.music.bitchord.data.model.Song
  *    take number. Read the same way C is: only when the name before the dash
  *    is the channel's own, or shares a word with it (아카네 리제 on 리제 노래
  *    아카이브 — a fan archive of the same singer).
+ *  - E: `[2023.06.18 부른사람] 원곡자 - 곡명` — a stream archive's clip: the
+ *    date and the singer in a leading bracket, then the song as it is
+ *    credited. The leading date-and-name tag makes it a cover outright, on
+ *    whatever channel it was clipped to.
  *
  * Anything else is left as it is. When a title could still be a cover read the
  * B way, [lyricsQueries] tries both readings so the lyrics are found either way
@@ -82,6 +86,7 @@ object CoverTitles {
     fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? {
         val raw = title.trim()
         if (raw.isEmpty()) return null
+        readE(raw)?.let { return it }
         readC(raw, channel)?.let { return it }
         readA(raw, channel, allowBareTag = !unambiguousOnly)?.let { return it }
         if (unambiguousOnly) return null
@@ -251,6 +256,22 @@ object CoverTitles {
         if (!isChannelName(singer, channel)) return null
         val title = cleanTitle(left) ?: return null
         return Cover(title = title, originalArtist = null, singer = singer)
+    }
+
+    /** "[2023.06.18 아카네 리제] 유우리 - 베텔기우스": the date, the singer, the song. */
+    private val LEADING_DATE_SINGER = Regex(
+        """^[\[(【]\s*\d{2,4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}\s+([^\])】]+?)\s*[\])】]\s*(.+)$""",
+    )
+
+    private fun readE(raw: String): Cover? {
+        val match = LEADING_DATE_SINGER.find(raw) ?: return null
+        val singer = cleanName(match.groupValues[1]) ?: return null
+        // "[23.06.18 Live] …" is a dated live upload, not someone's cover.
+        if (isVersionWord(singer)) return null
+        val rest = match.groupValues[2].trim()
+        // A trailing "Cover" tag, if any, says nothing more.
+        val head = TRAILING_COVER_WORD.find(rest)?.let { rest.substring(0, it.range.first).trim() }?.ifEmpty { null } ?: rest
+        return headCover(head, singer, looseDash = true)
     }
 
     /**

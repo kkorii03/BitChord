@@ -88,6 +88,7 @@ import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.player.StandaloneLyricsPanel
 import com.music.bitchord.ui.player.ThinSlider
+import com.music.bitchord.ui.theme.SFProDisplay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -308,9 +309,9 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                 .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
             Clock()
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
 
             // The cover first, the lyrics a swipe to the side — the way the
             // listener left it last time. Just the cover when there are no lyrics.
@@ -347,18 +348,23 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else if (song != null) {
-                        AsyncImage(
-                            model = artwork.artworkAt(COVER_ART_PX),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .padding(horizontal = 36.dp)
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color.White.copy(alpha = 0.08f)),
-                        )
+                        // As large as the space allows, and never more: on a
+                        // short screen it shrinks rather than run up into the clock.
+                        androidx.compose.foundation.layout.BoxWithConstraints(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 36.dp, vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val side = minOf(maxWidth, maxHeight)
+                            AsyncImage(
+                                model = artwork.artworkAt(COVER_ART_PX),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(side)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.White.copy(alpha = 0.08f)),
+                            )
+                        }
                     }
                 }
             }
@@ -461,18 +467,27 @@ private fun Clock() {
     val datePattern = remember(locale) { DateFormat.getBestDateTimePattern(locale, "MMMMdEEEE") }
     val time = remember(now / 60_000L, timePattern) { SimpleDateFormat(timePattern, locale).format(Date(now)) }
     val date = remember(now / 60_000L, datePattern) { SimpleDateFormat(datePattern, locale).format(Date(now)) }
-    Text(
-        text = time,
-        color = Color.White,
-        fontSize = 84.sp,
-        fontWeight = FontWeight.Bold,
-        lineHeight = 88.sp,
-    )
+    // The way the system lock screen sets it: the date small above, the time
+    // large and tight beneath, in the same face as the rest of the player.
     Text(
         text = date,
-        color = Color.White.copy(alpha = 0.85f),
-        fontSize = 18.sp,
-        fontWeight = FontWeight.Medium,
+        color = Color.White.copy(alpha = 0.82f),
+        fontFamily = SFProDisplay,
+        fontSize = 19.sp,
+        fontWeight = FontWeight.W600,
+    )
+    Text(
+        text = time,
+        color = Color.White.copy(alpha = 0.94f),
+        fontFamily = SFProDisplay,
+        fontSize = 96.sp,
+        fontWeight = FontWeight.W600,
+        letterSpacing = (-2.5).sp,
+        lineHeight = 100.sp,
+        style = androidx.compose.ui.text.TextStyle(
+            fontFeatureSettings = "tnum",
+            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+        ),
     )
 }
 

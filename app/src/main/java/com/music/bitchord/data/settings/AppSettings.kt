@@ -233,6 +233,9 @@ object AppSettings {
      */
     val smartFadeEnabled = MutableStateFlow(false)
 
+    /** Automix plans video songs' transitions too, rather than a plain crossfade. */
+    val automixVideos = MutableStateFlow(true)
+
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
     val skipSilence = MutableStateFlow(false)
@@ -836,6 +839,7 @@ object AppSettings {
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        automixVideos.value = prefs.getBoolean(KEY_AUTOMIX_VIDEOS, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -1152,6 +1156,11 @@ object AppSettings {
     fun setSmartFadeEnabled(value: Boolean) {
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
+    }
+
+    fun setAutomixVideos(value: Boolean) {
+        automixVideos.value = value
+        prefs.edit().putBoolean(KEY_AUTOMIX_VIDEOS, value).apply()
     }
 
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
@@ -2073,6 +2082,7 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_AUTOMIX_VIDEOS = "automix_videos"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"

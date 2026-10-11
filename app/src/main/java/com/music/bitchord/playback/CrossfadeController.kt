@@ -837,8 +837,13 @@ class CrossfadeController(
         // analysis and cueing stay off video rows. Rather than no transition
         // at all, such a pair gets the plain crossfade below — at the slider's
         // length, or Automix's own fallback length when the slider is off.
-        val videoPair = player.currentMediaItem?.isVideoOrigin == true ||
-            player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
+        // "비디오 노래도 자동 믹스" (the default) lifts that: the analysis is of
+        // the audio either way, and a video Automix can't read yet still gets
+        // the plain fade its fallback starts from.
+        val videoPair = !AppSettings.automixVideos.value && (
+            player.currentMediaItem?.isVideoOrigin == true ||
+                player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
+            )
         if (AppSettings.smartFadeEnabled.value && !videoPair) {
             considerSmartTransition(duration)
             return
@@ -902,7 +907,7 @@ class CrossfadeController(
         // Even a manual catalogue match is still video-origin. AutoMix's
         // analysis and cueing are deliberately never applied to either side
         // of a transition involving a video row.
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) {
+        if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) {
             AppSettings.smartTransitionWindow.value = null
             AppSettings.smartMixInProgress.value = false
             return
@@ -1071,7 +1076,7 @@ class CrossfadeController(
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return
+        if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) return
         requestAnalysis(currentItem, duration)
         requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem))
     }
