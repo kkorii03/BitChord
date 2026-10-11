@@ -30,14 +30,17 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: ffmpeg
-        run: which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: ffmpeg and yt-dlp
+        run: |
+          which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          pip install -q -U yt-dlp || true
 
       - name: Run the lab
         shell: bash
         env:
           LIVE_TIMING: '1'
           TIMING_OUT: ${{ github.workspace }}/timing-lab.txt
+          TIMING_LIMIT: '12'
         run: |
           set +e
           chmod +x gradlew

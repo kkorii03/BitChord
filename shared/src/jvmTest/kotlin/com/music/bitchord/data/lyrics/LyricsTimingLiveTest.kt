@@ -112,8 +112,8 @@ class LyricsTimingLiveTest {
         val recordFile = File(work, "${original.videoId}.audio")
         val videoFile = File(work, "${song.videoId}.audio")
         val dlStart = System.nanoTime()
-        if (!download(original.videoId, recordFile)) return "$head | $lyr | $orig | NO-RECORD-AUDIO"
-        if (!download(song.videoId, videoFile)) return "$head | $lyr | $orig | NO-VIDEO-AUDIO"
+        download(original.videoId, recordFile)?.let { return "$head | $lyr | $orig | NO-RECORD-AUDIO $it" }
+        download(song.videoId, videoFile)?.let { return "$head | $lyr | $orig | NO-VIDEO-AUDIO $it" }
         val dlMs = (System.nanoTime() - dlStart) / 1_000_000
         val t0 = System.nanoTime()
         val record = features(recordFile) ?: return "$head | $lyr | $orig | DECODE-FAIL record"
@@ -143,44 +143,60 @@ class LyricsTimingLiveTest {
         pick to rows.joinToString(";") { "'${it.title}'/'${it.artist}'${if (it.isVideo) "(v)" else ""}" }
     }
 
-    private val downloaded = ConcurrentHashMap<String, Boolean>()
+    private val downloaded = ConcurrentHashMap<String, String>()
 
-    private suspend fun download(videoId: String, file: File): Boolean {
-        downloaded[videoId]?.let { return it && file.length() > 0 }
-        val ok = runCatching {
-            val url = StreamResolver.resolve(videoId)
-            val headers = StreamResolver.mediaHeadersFor(url)
-            file.outputStream().use { sink ->
-                var position = 0L
-                var total = Long.MAX_VALUE
-                while (position < total) {
-                    val end = position + CHUNK - 1
-                    val request = Request.Builder().url(url).apply {
-                        headers.forEach { (k, v) -> header(k, v) }
-                        header("Range", "bytes=$position-$end")
-                    }.build()
-                    Http.client.newCall(request).execute().use { response ->
-                        check(response.code == 206 || response.code == 200) { "HTTP ${response.code}" }
-                        @Suppress("UNNECESSARY_NOT_NULL_ASSERTION", "USELESS_ELVIS")
-                        val body = response.body!!
-                        val range = response.header("Content-Range")
-                        total = range?.substringAfterLast('/')?.toLongOrNull()
-                            ?: body.contentLength().takeIf { response.code == 200 } ?: total
-                        val bytes = body.bytes()
-                        if (bytes.isEmpty()) return@runCatching false
-                        sink.write(bytes)
-                        position += bytes.size
-                        if (response.code == 200) total = position
-                    }
+    /** Null when [file] now holds the audio; otherwise why not. App's resolver first, yt-dlp second. */
+    private suspend fun download(videoId: String, file: File): String? {
+        downloaded[videoId]?.let { return it.takeIf { r -> r.isNotEmpty() } }
+        val viaApp = runCatching { fetchWithResolver(videoId, file) }.exceptionOrNull()
+        val why = if (viaApp == null && file.length() > 100_000) {
+            null
+        } else {
+            val app = "app:${viaApp?.let { "${it::class.simpleName} ${it.message?.take(120)}" } ?: "short ${file.length()}"}"
+            file.delete()
+            val ytdlp = runCatching { fetchWithYtDlp(videoId, file) }.exceptionOrNull()
+            if (ytdlp == null && file.length() > 100_000) null else "$app; yt-dlp:${ytdlp?.message?.take(160)}"
+        }
+        downloaded[videoId] = why.orEmpty()
+        return why
+    }
+
+    private suspend fun fetchWithResolver(videoId: String, file: File) {
+        val url = StreamResolver.resolve(videoId)
+        val headers = StreamResolver.mediaHeadersFor(url)
+        file.outputStream().use { sink ->
+            var position = 0L
+            var total = Long.MAX_VALUE
+            while (position < total) {
+                val end = position + CHUNK - 1
+                val request = Request.Builder().url(url).apply {
+                    headers.forEach { (k, v) -> header(k, v) }
+                    header("Range", "bytes=$position-$end")
+                }.build()
+                Http.client.newCall(request).execute().use { response ->
+                    check(response.code == 206 || response.code == 200) { "HTTP ${response.code}" }
+                    @Suppress("UNNECESSARY_NOT_NULL_ASSERTION", "USELESS_ELVIS")
+                    val body = response.body!!
+                    val range = response.header("Content-Range")
+                    total = range?.substringAfterLast('/')?.toLongOrNull()
+                        ?: body.contentLength().takeIf { response.code == 200 } ?: total
+                    val bytes = body.bytes()
+                    check(bytes.isNotEmpty()) { "empty body at $position" }
+                    sink.write(bytes)
+                    position += bytes.size
+                    if (response.code == 200) total = position
                 }
             }
-            true
-        }.getOrElse {
-            println("TIMING download $videoId failed: ${it.message}")
-            false
         }
-        downloaded[videoId] = ok
-        return ok
+    }
+
+    private fun fetchWithYtDlp(videoId: String, file: File) {
+        val process = ProcessBuilder(
+            "yt-dlp", "-q", "--no-warnings", "-f", "bestaudio", "-o", file.absolutePath, "--force-overwrites",
+            "https://www.youtube.com/watch?v=$videoId",
+        ).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        check(process.waitFor() == 0) { output.lines().lastOrNull { it.isNotBlank() } ?: "exit ${process.exitValue()}" }
     }
 
     /** Decoded by ffmpeg to 48 kHz mono float, the way the phone hands MediaCodec's output over. */

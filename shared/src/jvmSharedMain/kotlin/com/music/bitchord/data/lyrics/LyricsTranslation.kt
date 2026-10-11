@@ -557,13 +557,14 @@ object LyricsTranslation {
     private suspend fun <T : Any> askGemini(
         body: String,
         client: okhttp3.OkHttpClient = geminiClient,
+        models: List<String> = GEMINI_MODELS,
         parse: (String) -> T?,
     ): T? {
         val key = cleanGeminiKey()
         if (key.isEmpty() || key == rejectedGeminiKey) return null
         if (System.currentTimeMillis() < geminiCooldownUntil) return null
         var quotaRefusals = 0
-        for (model in GEMINI_MODELS) {
+        for (model in models) {
             val request = Request.Builder()
                 .url(GEMINI_ENDPOINT.format(model))
                 .header("x-goog-api-key", key)
@@ -601,7 +602,7 @@ object LyricsTranslation {
                 else -> return null
             }
         }
-        if (quotaRefusals == GEMINI_MODELS.size) {
+        if (quotaRefusals == models.size) {
             geminiCooldownUntil = System.currentTimeMillis() + GEMINI_COOLDOWN_MS
         }
         return null
@@ -1294,7 +1295,7 @@ object LyricsTranslation {
                 lines.forEachIndexed { index, line ->
                     add(buildJsonObject {
                         put("i", index)
-                        put("ref", "%.1f".format(Locale.ROOT, line.referenceMs / 1000.0))
+                        put("ref", clock(line.referenceMs))
                         put("text", line.text)
                     })
                 }
@@ -1325,29 +1326,79 @@ object LyricsTranslation {
                 putJsonObject("responseSchema") {
                     put("type", "OBJECT")
                     putJsonObject("properties") {
-                        putJsonObject("starts") {
+                        putJsonObject("placements") {
                             put("type", "ARRAY")
-                            putJsonObject("items") { put("type", "NUMBER") }
+                            putJsonObject("items") {
+                                put("type", "OBJECT")
+                                putJsonObject("properties") {
+                                    putJsonObject("i") { put("type", "INTEGER") }
+                                    putJsonObject("t") { put("type", "STRING") }
+                                }
+                                putJsonArray("required") { add("i"); add("t") }
+                            }
                         }
                     }
-                    putJsonArray("required") { add("starts") }
+                    putJsonArray("required") { add("placements") }
                 }
             }
         }.toString()
         return try {
-            askGemini(body, geminiVideoClient) { text ->
-                runCatching {
-                    val starts = json.parseToJsonElement(geminiText(text)).jsonObject["starts"]!!.jsonArray
-                        .map { it.jsonPrimitive.contentOrNull?.toDoubleOrNull() }
-                    if (starts.size != lines.size) return@runCatching null
-                    starts.map { seconds -> seconds?.takeIf { it >= 0 }?.let { (it * 1000).toLong() } }
-                }.getOrNull()
+            // The stronger model first: hearing where a line starts is the one
+            // job here the lite models are noticeably worse at. An unknown
+            // model or a used-up quota falls through to the next.
+            askGemini(body, geminiVideoClient, models = VIDEO_MODELS) { text ->
+                runCatching { parsePlacements(geminiText(text), lines.size) }.getOrNull()
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             null
         }
+    }
+
+    private val VIDEO_MODELS = listOf("gemini-3.5-flash") + GEMINI_MODELS
+
+    /**
+     * `{"placements":[{"i":0,"t":"0:12.4"}, …]}` as one start per line (ms),
+     * null where a line wasn't placed. Read by index, not position: a model
+     * that skips a line or adds one must not shift every answer after it.
+     * Takes "M:SS.s" as asked and plain seconds as models sometimes answer.
+     */
+    internal fun parsePlacements(text: String, count: Int): List<Long?>? {
+        val items = json.parseToJsonElement(text).jsonObject["placements"]?.jsonArray ?: return null
+        val starts = arrayOfNulls<Long>(count)
+        for (item in items) {
+            val obj = item.jsonObject
+            val index = obj["i"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toInt() ?: continue
+            if (index !in 0 until count) continue
+            val ms = parseClock(obj["t"]?.jsonPrimitive?.contentOrNull ?: continue) ?: continue
+            if (starts[index] == null) starts[index] = ms
+        }
+        return starts.toList().takeIf { list -> list.count { it != null } >= 2 }
+    }
+
+    /** "1:23.4", "01:23", "83.4" → ms; null for "-", "", a negative or anything else. */
+    internal fun parseClock(raw: String): Long? {
+        val t = raw.trim()
+        if (t.isEmpty() || t.startsWith("-")) return null
+        val parts = t.split(':')
+        if (parts.size > 3) return null
+        var seconds = 0.0
+        for ((n, part) in parts.withIndex()) {
+            val value = part.trim().toDoubleOrNull() ?: return null
+            if (value < 0) return null
+            if (n < parts.lastIndex && (value != Math.floor(value))) return null
+            seconds = seconds * 60 + value
+        }
+        return (seconds * 1000).toLong()
+    }
+
+    /** ms → "M:SS.s", the way the model reads and writes video time best. */
+    private fun clock(ms: Long): String {
+        val tenths = (ms + 50) / 100
+        val minutes = tenths / 600
+        val rest = tenths % 600
+        return "%d:%02d.%d".format(Locale.ROOT, minutes, rest / 10, rest % 10)
     }
 
     private val geminiVideoClient by lazy {
@@ -1360,9 +1411,9 @@ object LyricsTranslation {
     }
 
     private val PLACE_LINES_INSTRUCTION = """
-        You time song lyrics to a video. The video is someone singing a song (often a cover, a live take or a stream clip). You get the song's lyric lines in order; "ref" is when each line starts in the original studio recording, in seconds.
-        Listen to the video's audio and give, for every line, the time in seconds from the start of THIS video at which that line starts being sung. The video may begin earlier or later than the recording (an intro, talking) and may run slightly faster or slower, so use "ref" only for the order and the spacing of lines, never copy it.
-        Return JSON {"starts":[...]} with exactly line_count numbers, one per line in the same order, each with one decimal place. Use -1 for a line that is not sung in this video. The numbers must never decrease.
+        You time song lyrics to a video. The video is someone singing a song (often a cover, a live take or a stream clip). You get the song's lyric lines in order with an index "i"; "ref" is when each line starts in the original studio recording, as M:SS.s.
+        Listen to the video's audio and find, for each line, the moment in THIS video when the singer starts singing its first word. Give that moment as M:SS.s counted from the very start of the video (0:00.0). The video may begin earlier or later than the recording (an intro, talking), may run slightly faster or slower, and may leave parts out, so use "ref" only for the order and the spacing of lines; never copy it or add a fixed amount to it.
+        Return JSON {"placements":[{"i":0,"t":"0:12.4"},...]} with one entry per line you actually hear sung, in order. Leave out lines that are not sung in this video. Times must never decrease. Only give a time you heard; do not guess.
     """.trimIndent()
 
     private fun parseMeaning(response: String): SongMeaning? = runCatching {
