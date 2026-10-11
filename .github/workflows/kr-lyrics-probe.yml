@@ -1,0 +1,25 @@
+name: Korean lyrics probe (temporary)
+
+# Temporary: checks which Korean music services answer lyrics without auth.
+# Lives only on the kr-lyrics-probe branch; delete the branch when done.
+on:
+  push:
+    branches: [kr-lyrics-probe]
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe
+        run: python3 .github/probe/kr_lyrics_probe.py || true
+      - name: Save result to branch
+        run: |
+          git config user.name probe
+          git config user.email probe@users.noreply.github.com
+          git add probe-result.txt
+          git commit -m "Probe result" || exit 0
+          git push
