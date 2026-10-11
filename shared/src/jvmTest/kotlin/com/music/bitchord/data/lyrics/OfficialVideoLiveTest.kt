@@ -50,6 +50,10 @@ class OfficialVideoLiveTest {
                 .onFailure { println("LOOKUP_MS counterpart next failed: ${it.javaClass.simpleName} ${it.message}") }
                 .getOrNull()
             println("LOOKUP_MS counterpart ${track.title} ${track.videoId} -> $video")
+            val searched = runCatching { YtMusicRepository.officialVideoBySearch(track) }
+                .onFailure { println("LOOKUP_MS counterpart search-pick failed: ${it.message}") }
+                .getOrNull()
+            println("LOOKUP_MS counterpart by-search ${track.artist}/${track.artistId} -> $searched")
             assertTrue(video == null || video != track.videoId)
         }
     }

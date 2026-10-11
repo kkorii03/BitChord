@@ -149,6 +149,7 @@ object CanvasRepository {
             song.videoId
         } else {
             runCatching { com.music.bitchord.data.YtMusicRepository.officialVideo(song.videoId) }.getOrNull()
+                ?: runCatching { com.music.bitchord.data.YtMusicRepository.officialVideoBySearch(song) }.getOrNull()
         }
         if (videoId.isNullOrBlank() || videoId.contains(':')) return null
         val loop = com.music.bitchord.data.innertube.StreamResolver.videoLoop(videoId) ?: return null

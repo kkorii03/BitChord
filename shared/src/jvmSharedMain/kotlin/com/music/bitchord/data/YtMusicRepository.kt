@@ -461,6 +461,48 @@ object YtMusicRepository {
         return found.getOrNull()
     }
 
+    private val officialBySearch = ConcurrentHashMap<String, String>()
+
+    /**
+     * The music video of catalogue track [song] when YouTube Music doesn't
+     * pair one ([officialVideo] — signed out, it often doesn't): a video
+     * search, but only a result posted by the track's own artist channel —
+     * the same channel id the track credits, or an "…VEVO" channel of the
+     * same name — titled with the song and nothing that makes it a lyric
+     * video, a live stage, a cover or a reaction. Anything else — a fan's
+     * subtitled upload, a TV show's stage — is no answer at all.
+     */
+    suspend fun officialVideoBySearch(song: Song): String? {
+        if (song.isVideo || song.videoId.isBlank()) return null
+        officialBySearch[song.videoId]?.let { return it.ifEmpty { null } }
+        val title = song.title.substringBefore(" (").substringBefore(" [").trim()
+        val artist = song.artist.split(",", "&", " x ", " X ").first().trim()
+        if (title.isBlank() || artist.isBlank()) return null
+        val results = search("$artist $title", SearchFilter.VIDEOS).getOrNull() ?: return null
+        val seconds = TrackMatcher.secondsOf(song.durationText)
+        fun fold(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
+        val wantTitle = fold(title)
+        val wantArtist = fold(artist)
+        val pick = results.filterIsInstance<SearchResult.Track>().map { it.song }.firstOrNull { video ->
+            val ownChannel = (song.artistId != null && video.artistId == song.artistId) ||
+                fold(video.artist).let { it == wantArtist || it == wantArtist + "vevo" || it == wantArtist + "official" }
+            val lower = video.title.lowercase()
+            val titled = wantTitle.isNotEmpty() && wantTitle in fold(video.title)
+            val notOther = NOT_THE_VIDEO.none { it in lower }
+            val length = TrackMatcher.secondsOf(video.durationText)
+            val lengthOk = seconds == null || length == null || length in (seconds - 15)..(seconds + 90)
+            ownChannel && titled && notOther && lengthOk
+        }?.videoId
+        officialBySearch[song.videoId] = pick.orEmpty()
+        return pick
+    }
+
+    private val NOT_THE_VIDEO = listOf(
+        "lyric", "가사", "visuali", "audio", "live", "라이브", "cover", "커버", "reaction", "리액션",
+        "stage", "무대", "performance", "dance practice", "안무", "fancam", "직캠", "karaoke", "inst",
+        "sped up", "slowed", "1 hour", "loop", "teaser", "티저", "behind", "making",
+    )
+
     suspend fun resolveVideo(song: Song): Song? {
         if (song.isVideo) return null
         videoVersionCache[song.videoId]?.let { return it }
