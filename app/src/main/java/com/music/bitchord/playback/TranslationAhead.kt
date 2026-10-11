@@ -113,10 +113,11 @@ internal object TranslationAhead {
         val timing = com.music.bitchord.playback.smart.LyricsTiming
         if (timing.timedToVideo(found.source)) return
         val names = buildList {
+            if (query.artistKnown) add(query.title to query.artist)
             found.searchedAs?.let(::add)
             add(query.title to query.artist)
             addAll(query.alternatives)
-        }
+        }.distinct()
         try {
             if (timing.worthMeasuring(context, song.videoId)) {
                 timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())

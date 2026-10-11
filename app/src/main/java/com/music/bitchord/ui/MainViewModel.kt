@@ -683,10 +683,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // The record is searched for under every name the lyrics know:
             // what they were found as first, then the video's own readings.
             val names = buildList {
+                // A cover that names the original's artist is searched under
+                // that first; one that doesn't, under what its lyrics were found as.
+                if (request.artistKnown) add(request.title to request.artist)
                 searchedAs?.let(::add)
                 add(request.title to request.artist)
                 addAll(request.alternatives)
-            }
+            }.distinct()
             val video = Song(
                 videoId = request.videoId,
                 title = request.title,

@@ -52,18 +52,26 @@ object RecordingPick {
             .filter { it.first.isNotBlank() }
             .distinct()
         if (clean.isEmpty()) return@withContext emptyList()
+        // (name, catalogue, main reading only)
+        data class Ask(val name: Pair<String, String>, val hl: String, val gl: String, val main: Boolean)
         val asks = buildList {
-            add(Triple(clean[0], "en", "US"))
-            add(Triple(clean[0], "ko", "KR"))
-            clean.getOrNull(1)?.let { add(Triple(it, "en", "US")) }
+            add(Ask(clean[0], "en", "US", main = true))
+            add(Ask(clean[0], "ko", "KR", main = true))
+            // As written too: the bracketed reading sometimes is the one the
+            // catalogue knows ("がらくた(잡동사니)" finds Yonezu, "がらくた" alone a namesake).
+            if (BRACKETS.containsMatchIn(clean[0].first)) add(Ask(clean[0], "en", "US", main = false))
+            clean.getOrNull(1)?.let { add(Ask(it, "en", "US", main = true)) }
         }
         val rows = coroutineScope {
-            asks.map { (name, hl, gl) ->
+            asks.map { ask ->
                 async {
                     runCatching {
-                        // The main reading only: a translation in brackets
-                        // throws the search off more than it helps it.
-                        val title = BRACKETS.replace(name.first, " ").split(" - ", " / ").first().trim().ifBlank { name.first }
+                        val (name, hl, gl) = Triple(ask.name, ask.hl, ask.gl)
+                        // The main reading: a translation in brackets mostly
+                        // throws the search off (see the as-written ask above).
+                        val title = if (!ask.main) name.first else {
+                            BRACKETS.replace(name.first, " ").split(" - ", " / ").first().trim().ifBlank { name.first }
+                        }
                         val response = Innertube.searchAnonymous("$title ${name.second}".trim(), SearchFilter.SONGS.params, hl, gl)
                         InnertubeParser.parseSearchPage(response, includeVideos = false).rows
                             .filterIsInstance<SearchResult.Track>()

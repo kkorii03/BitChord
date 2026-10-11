@@ -106,10 +106,11 @@ class LyricsTimingLiveTest {
         if (!timed) return "$head | $lyr | UNTIMED"
         if (LyricsSourceVideo.timedToVideo(found.source)) return "$head | $lyr | VIDEO-OWN"
         val names = buildList {
+            if (q.artistKnown) add(q.title to q.artist)
             found.searchedAs?.let(::add)
             add(q.title to q.artist)
             addAll(q.alternatives)
-        }
+        }.distinct()
         val candidates = RecordingPick.find(names, durationMs)
         if (candidates.isEmpty()) return "$head | $lyr | NO-ORIGINAL for $names"
         val picks = "picks=" + candidates.joinToString(" ; ") { "'${it.title}'/'${it.artist}' ${it.durationText}" } + " (video ${song.durationText})"
