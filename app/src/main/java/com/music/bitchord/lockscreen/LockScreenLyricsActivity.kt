@@ -40,12 +40,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -89,6 +83,11 @@ import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.player.StandaloneLyricsPanel
 import com.music.bitchord.ui.player.ThinSlider
 import com.music.bitchord.ui.theme.SFProDisplay
+import com.music.bitchord.sharedui.resources.Res as SharedRes
+import com.music.bitchord.sharedui.resources.ic_player_next
+import com.music.bitchord.sharedui.resources.ic_player_pause
+import com.music.bitchord.sharedui.resources.ic_player_play
+import com.music.bitchord.sharedui.resources.ic_player_previous
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -533,14 +532,16 @@ private fun NowPlayingCard(
                 Text(
                     text = title,
                     color = Color.White,
+                    fontFamily = SFProDisplay,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.W600,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = artist,
                     color = Color.White.copy(alpha = 0.65f),
+                    fontFamily = SFProDisplay,
                     fontSize = 14.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -555,10 +556,10 @@ private fun NowPlayingCard(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        imageVector = if (liked) com.music.bitchord.ui.icons.BitChordIcons.HeartFilled else com.music.bitchord.ui.icons.BitChordIcons.Heart,
                         contentDescription = stringResource(if (liked) R.string.remove_from_liked else R.string.like),
                         tint = if (liked) Color(0xFFFF4D66) else Color.White.copy(alpha = 0.85f),
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
@@ -581,13 +582,19 @@ private fun NowPlayingCard(
             Text(
                 text = formatTime((shown * durationMs).toLong()),
                 color = Color.White.copy(alpha = 0.6f),
+                fontFamily = SFProDisplay,
                 fontSize = 12.sp,
+                fontWeight = FontWeight.W600,
+                style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
             )
             Spacer(Modifier.weight(1f))
             Text(
                 text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                 color = Color.White.copy(alpha = 0.6f),
+                fontFamily = SFProDisplay,
                 fontSize = 12.sp,
+                fontWeight = FontWeight.W600,
+                style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
             )
         }
         Row(
@@ -597,39 +604,45 @@ private fun NowPlayingCard(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TransportButton(Icons.Rounded.SkipPrevious, R.string.lock_screen_lyrics_previous, 34, onPrevious)
+            TransportButton(SharedRes.drawable.ic_player_previous, R.string.lock_screen_lyrics_previous, 36, onPrevious)
             TransportButton(
-                if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                if (isPlaying) SharedRes.drawable.ic_player_pause else SharedRes.drawable.ic_player_play,
                 if (isPlaying) R.string.lock_screen_lyrics_pause else R.string.lock_screen_lyrics_play,
-                46,
+                40,
                 onPlayPause,
             )
-            TransportButton(Icons.Rounded.SkipNext, R.string.lock_screen_lyrics_next, 34, onNext)
+            TransportButton(SharedRes.drawable.ic_player_next, R.string.lock_screen_lyrics_next, 36, onNext)
         }
     }
 }
 
 @Composable
 private fun TransportButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: org.jetbrains.compose.resources.DrawableResource,
     label: Int,
     sizeDp: Int,
     onClick: () -> Unit,
 ) {
+    // The player's own glyphs (◀◀ ▶▶, the rounded play), not the system's
+    // skip-to-bar ones: the same transport as everywhere else in the app.
     Box(
         modifier = Modifier
             .size((sizeDp + 18).dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = icon,
+            painter = org.jetbrains.compose.resources.painterResource(icon),
             contentDescription = stringResource(label),
             tint = Color.White,
             modifier = Modifier.size(sizeDp.dp),
         )
     }
+}
 }
 
 private fun formatTime(ms: Long): String {

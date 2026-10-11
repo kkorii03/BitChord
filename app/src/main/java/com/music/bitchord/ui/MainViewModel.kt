@@ -426,6 +426,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         aiTimingJob?.cancel()
         _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi()
         lyricsJob?.cancel()
+        startEarlyMeasure(videoId, title, artist, durationMs, localUri, isVideo, alternatives, artistKnown)
         if (sources.isEmpty()) {
             // Switched off, or every source unticked. Nothing to look up, and
             // nothing to say about it — the player drops the lyric strip
@@ -715,6 +716,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay(REMEASURE_CHECK_MS)
             }
             autoAiIfNeeded(generation, lines)
+        }
+    }
+
+    private var earlyMeasureJob: Job? = null
+
+    /**
+     * Starts measuring a cover against its original as the track starts,
+     * rather than once its lyrics are in: the measurement needs only the
+     * names, and is kept per video for whichever lyrics turn up. Only for a
+     * cover that names its original's artist — one that doesn't is searched
+     * better under the name its lyrics are found as, so it waits for them.
+     */
+    private fun startEarlyMeasure(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        localUri: String?,
+        isVideo: Boolean,
+        alternatives: List<Pair<String, String>>,
+        artistKnown: Boolean,
+    ) {
+        earlyMeasureJob?.cancel()
+        if (!isVideo || !artistKnown || localUri != null || durationMs <= 0L) return
+        val context = getApplication<Application>()
+        val video = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = true)
+        val names = (listOf(title to artist) + alternatives).distinct()
+        earlyMeasureJob = viewModelScope.launch {
+            if (LyricsTiming.worthMeasuring(context, videoId)) {
+                LyricsTiming.measure(context, video, names, durationMs)
+            }
         }
     }
 

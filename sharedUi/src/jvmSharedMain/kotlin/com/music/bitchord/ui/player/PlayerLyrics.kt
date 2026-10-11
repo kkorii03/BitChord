@@ -109,7 +109,6 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -470,33 +469,42 @@ internal fun LyricsStatusWithChange(
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
+    // A chevron, as Apple marks a row that opens something, rather than an
+    // underline — and the whole line is the target, not just its letters.
     Row(
-        modifier = modifier,
+        modifier = modifier.then(
+            if (onStatusClick != null) {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    haptics.play(Haptic.Select)
+                    onStatusClick()
+                }
+            } else {
+                Modifier
+            },
+        ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = status,
             style = MaterialTheme.typography.titleMedium,
             color = Color.White.copy(alpha = 0.55f),
-            textDecoration = if (onStatusClick != null) TextDecoration.Underline else null,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .then(
-                    if (onStatusClick != null) {
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            haptics.play(Haptic.Select)
-                            onStatusClick()
-                        }
-                    } else {
-                        Modifier
-                    },
-                ),
+            modifier = Modifier.weight(1f, fill = false),
         )
+        if (onStatusClick != null) {
+            Icon(
+                imageVector = com.music.bitchord.ui.icons.BitChordIcons.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.45f),
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(14.dp),
+            )
+        }
     }
 }
 

@@ -520,11 +520,21 @@ private fun VideoTimingBlock(timing: LyricsTimingUi, onAiTiming: (() -> Unit)?) 
                 contentAlignment = Alignment.Center,
             ) {
                 if (timing.aiRunning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        color = Color.White,
-                        strokeWidth = 1.7.dp,
-                    )
+                    // A spinner alone in the pill read as a stray mark; it
+                    // says what it is doing, the way the button says what it does.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            color = Color.White.copy(alpha = 0.8f),
+                            strokeWidth = 1.5.dp,
+                        )
+                        Text(
+                            text = stringResource(Res.string.lyrics_timing_ai_button_running),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                 } else {
                     Text(
                         text = stringResource(

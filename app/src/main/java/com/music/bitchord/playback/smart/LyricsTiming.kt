@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -333,7 +334,7 @@ object LyricsTiming {
         mark = lap("비디오 대기", mark)
         val complete = copy.isComplete || video.localUri != null
         val job = currentCoroutineContext()[Job]
-        val clip = withContext(Dispatchers.IO) { videoFeatures(context, video, copy.key, job) } ?: return Measured.Retry
+        val clip = withContext(analysis) { videoFeatures(context, video, copy.key, job) } ?: return Measured.Retry
         lap("비디오 분석", mark)
         val videoNote = "비디오 ${clip.durationSeconds.roundToInt()}초" + if (complete) "" else " (받는 중)"
 
@@ -392,7 +393,7 @@ object LyricsTiming {
         val began = System.currentTimeMillis()
         val name = "'${original.title}' / '${original.artist}'"
         suspend fun aligned(record: ChromaAlignment.Features): Pair<ChromaAlignment.Result?, String> =
-            withContext(Dispatchers.Default) {
+            withContext(analysis) {
                 val result = ChromaAlignment.align(record, clip, videoComplete = complete)
                 result to ChromaAlignment.lastVerdict
             }
@@ -416,7 +417,7 @@ object LyricsTiming {
             val headAt = System.currentTimeMillis()
             if (VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete != true) {
                 // The opening first: most of the time it is all the answer needs.
-                withContext(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }?.let { opening ->
+                withContext(analysis) { recordFeatures(context, original, job) }?.let { opening ->
                     val (result, verdict) = aligned(opening)
                     log(verdict, opening, "opening")
                     if (result != null) {
@@ -426,7 +427,7 @@ object LyricsTiming {
                 withTimeoutOrNull(RECORD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisTrack(uri, RECORD_TIMEOUT_MS) }
             }
             val downloaded = System.currentTimeMillis()
-            val record = withContext(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }
+            val record = withContext(analysis) { recordFeatures(context, original, job) }
                 ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
             val whole = VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete == true
             if (whole) keep(context, original.videoId, record)
@@ -438,7 +439,7 @@ object LyricsTiming {
                 (if (whole) "" else " · 원곡 일부만") + ")"
             return Tried(original, result, reached = true, partial = !whole, note = note)
         }
-        val record = withContext(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }
+        val record = withContext(analysis) { recordFeatures(context, original, job) }
             ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
         keep(context, original.videoId, record)
         val (result, verdict) = aligned(record)
@@ -530,7 +531,26 @@ object LyricsTiming {
      * pass stopped (the copy being the same one). A copy the player swapped
      * for another is read again from the start.
      */
-    private fun videoFeatures(context: Context, video: Song, copyKey: String, job: Job?): ChromaAlignment.Features? {
+    private fun videoFeatures(context: Context, video: Song, copyKey: String, job: Job?): ChromaAlignment.Features? =
+        // One reader per recording at a time: two covers of one song measured
+        // at once may both be reading its record.
+        synchronized(readingLocks.getOrPut(video.videoId) { Any() }) { readFeatures(context, video, copyKey, job) }
+
+    private val readingLocks = ConcurrentHashMap<String, Any>()
+
+    /**
+     * Where the decoding and the alignment run: a few threads at background
+     * priority, so a measurement — the song starting, the next one being
+     * prepared — never takes the CPU from scrolling and animation.
+     */
+    private val analysis = java.util.concurrent.Executors.newFixedThreadPool(3) { task ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            task.run()
+        }, "lyrics-timing").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
+
+    private fun readFeatures(context: Context, video: Song, copyKey: String, job: Job?): ChromaAlignment.Features? {
         var reading = synchronized(videoReadings) { videoReadings[video.videoId] }?.takeIf { it.copyKey == copyKey }
         val source = VersionAudioAligner.openDataSource(context, video) ?: return null
         try {
@@ -560,34 +580,19 @@ object LyricsTiming {
         return done.extractor.finish(startSeconds = done.startSeconds).takeIf { it.frames > 0 }
     }
 
-    private const val VIDEOS_KEPT = 3
+    /**
+     * A record's profiles read the same way as a video's: its opening first,
+     * then only what came after it, rather than the opening decoded twice.
+     */
+    private fun recordFeatures(context: Context, original: Song, job: Job?): ChromaAlignment.Features? =
+        videoFeatures(context, original, VersionAudioAligner.renditionToMeasure(original.videoId)?.key ?: "record", job)
+
+    /** Readings kept: the video playing, the next one, and two records each. */
+    private const val VIDEOS_KEPT = 6
 
     /** The recordings found for each video lately. */
     private val picks = LinkedHashMap<String, List<Song>>()
     private const val PICKS_KEPT = 16
-
-    /** [song]'s audio, as much as is on disk up to [maxSeconds], reduced to pitch profiles. */
-    private fun features(context: Context, song: Song, maxSeconds: Double, job: Job?): ChromaAlignment.Features? {
-        val source = VersionAudioAligner.openDataSource(context, song) ?: return null
-        return try {
-            var extractor: ChromaAlignment.Extractor? = null
-            var rate = 0
-            val start = AudioDecoder.decodeMonoStream(source, 0.0, maxSeconds, abort = { job?.isActive == false }) { chunk, sampleRate, _ ->
-                val into = extractor ?: ChromaAlignment.Extractor(sampleRate).also {
-                    extractor = it
-                    rate = sampleRate
-                }
-                // A stream that changes rate part-way is not one this can read on.
-                if (sampleRate == rate) into.push(chunk)
-            }
-            if (job?.isActive == false) return null
-            // A decoder that gave up part-way (where the bytes on disk stop,
-            // say) still leaves everything before that, which is worth having.
-            extractor?.finish(startSeconds = start ?: 0.0)?.takeIf { it.frames > 0 }
-        } finally {
-            runCatching { source.close() }
-        }
-    }
 
     /** Recordings tried against a video at once: a wrong guess costs a download, not a wrong timing. */
     private const val MAX_CANDIDATES = 2
