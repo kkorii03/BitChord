@@ -1579,12 +1579,12 @@ fun NowPlayingScreen(
                 SongLyricsSync(
                     offsetMs = lyricsTiming.manualMs,
                     timing = lyricsTiming,
-                    // Offered while the measurement has nothing (or Gemini's
-                    // answer is what shows, to take it back): a measured
-                    // timing is the better one and wins over Gemini's anyway.
+                    // Always offered for timed lyrics: a measured timing can
+                    // still be off, and Gemini's answer, asked for here,
+                    // then wins over it. When it is what shows, the button
+                    // takes it back.
                     onAiTiming = onAiLyricsTiming?.takeIf {
-                        songMeaningAvailable && lyricsTiming.adjustable &&
-                            (lyricsTiming.byAi || lyricsTiming.shiftMs == null)
+                        songMeaningAvailable && lyricsTiming.adjustable
                     },
                     lines = lyrics,
                     lyricPositionMs = {

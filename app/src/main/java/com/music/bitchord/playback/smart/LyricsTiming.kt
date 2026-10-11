@@ -95,9 +95,13 @@ object LyricsTiming {
         val isEmpty: Boolean get() = base == null && manualMs == 0L
     }
 
-    /** Sources whose timings already belong to the video they were fetched for. */
-    fun timedToVideo(source: LyricsSource?): Boolean = source == LyricsSource.YOUTUBE_TRANSCRIPT ||
-        source == LyricsSource.YOUTUBE_MUSIC || source == LyricsSource.SIMP_MUSIC
+    /**
+     * Sources whose timings already belong to the video they were fetched
+     * for: the video's own captions. YouTube Music's and SimpMusic's lyrics
+     * are asked for by video too, but they are the song's lyrics, timed to
+     * the record — on a cover they run as early or late as any other source.
+     */
+    fun timedToVideo(source: LyricsSource?): Boolean = source == LyricsSource.YOUTUBE_TRANSCRIPT
 
     /** Fires the video id whose timing just changed, for screens showing it. */
     val changes: SharedFlow<String> get() = _changes
@@ -112,18 +116,33 @@ object LyricsTiming {
     /**
      * What is known for [videoId] and these [lines]: an AI answer first, then
      * the measurement, then the correction by hand. [baseAllowed] false keeps
-     * only the correction — for lyrics that are already the video's own.
+     * only the correction. [measuredAllowed] false leaves the measurement out —
+     * for lyrics timed by the video's own captions, which an AI answer asked
+     * for may still move but a record's measurement has nothing to say about.
      */
-    suspend fun timing(context: Context, videoId: String, lines: List<LyricLine>, baseAllowed: Boolean): Timing? {
+    suspend fun timing(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        baseAllowed: Boolean,
+        measuredAllowed: Boolean = baseAllowed,
+    ): Timing? {
         val entry = store(context).get(videoId) ?: return null
-        val base = if (baseAllowed) baseOf(entry, lines) else null
+        val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed) else null
         return Timing(base, entry.manualMs ?: 0L).takeUnless { it.isEmpty }
     }
 
-    private fun baseOf(entry: Entry, lines: List<LyricLine>): Adjustment? {
-        // The measurement first: when it lines the two up it is right to a
-        // tenth of a second, which Gemini's answers never are.
-        if (entry.autoVersion == AUTO_VERSION) entry.auto?.toAdjustment(byAi = false)?.let { return it }
+    private fun baseOf(entry: Entry, lines: List<LyricLine>, measuredAllowed: Boolean = true): Adjustment? {
+        val measured = entry.auto?.takeIf { measuredAllowed && entry.autoVersion == AUTO_VERSION }
+        // Asked for by hand, over a measurement the listener saw was off: Gemini's.
+        if (entry.aiPreferred) aiOf(entry, lines)?.let { return it }
+        // Otherwise the measurement first: when it lines the two up it is right
+        // to a tenth of a second, which Gemini's answers never are.
+        measured?.toAdjustment(byAi = false)?.let { return it }
+        return aiOf(entry, lines)
+    }
+
+    private fun aiOf(entry: Entry, lines: List<LyricLine>): Adjustment? {
         if (entry.aiTextKey != null && entry.aiTextKey == textKey(lines)) {
             entry.ai?.toAdjustment(byAi = true)?.let { return it }
             entry.aiShiftMs?.let { return Adjustment.Shift(it, byAi = true) }
@@ -680,6 +699,7 @@ object LyricsTiming {
                 aiStarts = null,
                 aiFailedKey = null,
                 manualMs = null,
+                aiPreferred = !automatic,
             )
         }
         _changes.tryEmit(videoId)
@@ -689,7 +709,7 @@ object LyricsTiming {
     /** Forgets the AI answer for [videoId] (and a correction made on top of it); the measurement applies again. */
     suspend fun clearAi(context: Context, videoId: String) {
         store(context).update(videoId) {
-            it.copy(aiTextKey = null, ai = null, aiShiftMs = null, aiStarts = null, manualMs = null)
+            it.copy(aiTextKey = null, ai = null, aiShiftMs = null, aiStarts = null, manualMs = null, aiPreferred = false)
         }
         _changes.tryEmit(videoId)
     }
@@ -785,6 +805,8 @@ object LyricsTiming {
         val autoNote: String? = null,
         /** Which way of searching for the original the measurement used; see [searchOutdated]. */
         val searchVersion: Int = 0,
+        /** The AI answer was asked for by hand, so it beats the measurement — see [baseOf]. */
+        val aiPreferred: Boolean = false,
     )
 
     @Serializable

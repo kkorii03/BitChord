@@ -67,6 +67,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         Innertube.contentCountry = { AppSettings.contentCountry.value }
         // Channels marked as cover channels read their titles as covers.
         com.music.bitchord.data.cover.CoverTitles.designatedChannels = { AppSettings.coverChannels.value }
+        // Singers seen on cover titles, so their clips without "Cover" in the title read as theirs too.
+        com.music.bitchord.data.cover.CoverTitles.knownSingers = { AppSettings.coverSingers.value }
+        com.music.bitchord.data.cover.CoverTitles.onSingerSeen = AppSettings::rememberCoverSinger
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
         // PlaybackService shares this process, so seeding the cookie here means

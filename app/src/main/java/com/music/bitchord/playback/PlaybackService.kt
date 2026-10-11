@@ -6707,13 +6707,21 @@ class PlaybackService : MediaLibraryService() {
             val raw = lines
             val timed = raw != null && raw.any { it.timeMs > 0 }
             // Moved onto the video's clock only when the lines are the
-            // record's; a correction by hand applies to any timed lines.
-            val timeable = timed && localUri == null &&
+            // record's (the AI answer asked for, also for the video's own
+            // captions); a correction by hand applies to any timed lines.
+            val timeable = timed && localUri == null
+            val recordTimed = timeable &&
                 !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
             suspend fun publish() {
                 val shown = if (timed && raw != null) {
                     com.music.bitchord.playback.smart.LyricsTiming
-                        .timing(this@PlaybackService, currentSong.videoId, raw, baseAllowed = timeable)
+                        .timing(
+                            this@PlaybackService,
+                            currentSong.videoId,
+                            raw,
+                            baseAllowed = timeable,
+                            measuredAllowed = recordTimed,
+                        )
                         ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
                 } else {
                     raw

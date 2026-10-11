@@ -30,6 +30,14 @@ import com.music.bitchord.data.model.Song
  *    date and the singer in a leading bracket, then the song as it is
  *    credited. The leading date-and-name tag makes it a cover outright, on
  *    whatever channel it was clipped to.
+ *  - C/: `곡명(원곡자) / 부른사람Cover` — the slash says the name after it is
+ *    who sings, so it is read on any channel; "Cover" may touch the name.
+ *  - F: `곡명 - 원곡자 (부른사람 Cover)` — the singer and "Cover" in a closing
+ *    bracket. Which side of the dash is the song is not certain
+ *    ([Cover.orderUnsure]); song first is how these clip titles mostly run.
+ *  - K: `부른사람 - 곡명` / `곡명 - 부른사람` with no "Cover" at all — read
+ *    only for a singer already seen on a cover ([knownSingers]), and not on
+ *    that singer's own channel, where it is their own song.
  *
  * Anything else is left as it is. When a title could still be a cover read the
  * B way, [lyricsQueries] tries both readings so the lyrics are found either way
@@ -45,6 +53,12 @@ object CoverTitles {
         val originalArtist: String?,
         /** Who sings this upload. */
         val singer: String,
+        /**
+         * "X - Y (부른사람 Cover)" names the song and its artist in an order the
+         * title does not settle. Read song first; the lyrics are looked up
+         * both ways round.
+         */
+        val orderUnsure: Boolean = false,
     ) {
         /** "원곡자 · 부른사람 커버", or "부른사람 커버" with no original credit. */
         val byline: String
@@ -54,6 +68,18 @@ object CoverTitles {
     /** Channel ids the listener marked as cover channels. Set by the app. */
     @Volatile
     var designatedChannels: () -> Set<String> = { emptySet() }
+
+    /**
+     * Singers seen named on covers read for certain ([onSingerSeen]), kept
+     * by the app. A clip channel's "아카네 리제 - 곡명" or "곡명 - 아카네 리제"
+     * says nothing else that it is a cover; the singer's name does.
+     */
+    @Volatile
+    var knownSingers: () -> Set<String> = { emptySet() }
+
+    /** Told each singer a cover title names for certain. Set by the app. */
+    @Volatile
+    var onSingerSeen: (String) -> Unit = {}
 
     private const val COVER_WORD = "커버"
     private const val SEPARATOR = " · "
@@ -86,13 +112,20 @@ object CoverTitles {
     fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? {
         val raw = title.trim()
         if (raw.isEmpty()) return null
-        readE(raw)?.let { return it }
-        readC(raw, channel)?.let { return it }
-        readA(raw, channel, allowBareTag = !unambiguousOnly)?.let { return it }
+        // The shapes that name the singer for certain: worth remembering who.
+        (readE(raw) ?: readC(raw, channel) ?: readF(raw) ?: readA(raw, channel, allowBareTag = false))?.let {
+            runCatching { onSingerSeen(it.singer) }
+            return it
+        }
         if (unambiguousOnly) return null
+        // A bare "(Cover)": the channel stands in for the singer, so it isn't one to learn.
+        readA(raw, channel, allowBareTag = true)?.let { return it }
         val dated = DATE_TAG.containsMatchIn(raw)
+        val undated = DATE_TAG.replace(raw, "").trim()
+        // Before B: a known singer on the right of the dash would read the wrong way round as B.
+        readKnown(undated, channel)?.let { return it }
         val designated = channelId != null && channelId in designatedChannels()
-        if (dated || designated) readB(DATE_TAG.replace(raw, "").trim())?.let { return it }
+        if (dated || designated) readB(undated)?.let { return it }
         return null
     }
 
@@ -103,9 +136,12 @@ object CoverTitles {
      */
     fun lyricsQueries(song: Song): List<Pair<String, String>> {
         read(song)?.let { cover ->
+            val artist = cover.originalArtist
             return listOfNotNull(
-                cover.title to (cover.originalArtist ?: cover.singer),
-                (cover.title to cover.singer).takeIf { cover.originalArtist != null },
+                cover.title to (artist ?: cover.singer),
+                // "Song - Artist" read the other way round, in case it was "Artist - Song".
+                (artist?.let { it to cover.title })?.takeIf { cover.orderUnsure },
+                (cover.title to cover.singer).takeIf { artist != null },
             )
         }
         if (!song.isVideo) return listOf(song.title to song.artist)
@@ -236,14 +272,24 @@ object CoverTitles {
         return headCover(head, singer)
     }
 
-    /** "Cover" (or 커버) and whatever tags follow it, at the very end of a title. */
+    /**
+     * "Cover" (or 커버) and whatever tags follow it, at the very end of a title.
+     * "Cover" may touch a name in another script ("오화요Cover"), never a Latin
+     * letter ("Discover"); "커버" never a Hangul one.
+     */
     private val TRAILING_COVER_WORD = Regex(
-        """(?i)(?<![a-z가-힣])(?:cover(?:ed)?|커버)\.?\s*(?:[(\[（【][^()\[\]（）【】]*[)\]）】]\s*)*$""",
+        """(?i)(?:(?<![a-z])cover(?:ed)?|(?<![가-힣])커버)\.?\s*(?:[(\[（【][^()\[\]（）【】]*[)\]）】]\s*)*$""",
     )
 
     private fun readC(raw: String, channel: String): Cover? {
         val tail = TRAILING_COVER_WORD.find(raw) ?: return null
         val head = raw.substring(0, tail.range.first).trimEnd()
+        // "곡명(원곡자) / 오화요Cover": after a slash, the name is who sings —
+        // on any channel ("아오쿠모 린 Cover" on a fan's account).
+        splitTopLevelSlash(head)?.let { (song, name) ->
+            val singer = cleanName(name)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
+            if (singer != null) songFirst(song, singer)?.let { return it }
+        }
         // "Cover" at the end makes a dash without spaces a split too
         // ("아카네 리제-붉은 장미 Cover."), though a spaced one still wins.
         val (left, right) = splitTopLevelDash(head) ?: splitTopLevelDash(head, unspaced = true) ?: return null
@@ -272,6 +318,156 @@ object CoverTitles {
         // A trailing "Cover" tag, if any, says nothing more.
         val head = TRAILING_COVER_WORD.find(rest)?.let { rest.substring(0, it.range.first).trim() }?.ifEmpty { null } ?: rest
         return headCover(head, singer, looseDash = true)
+    }
+
+    /** "(아카네 리제 Cover)" closing a title: the singer's name, then the word. */
+    private val SINGER_COVER_GROUP = Regex(
+        """(?i)[(\[（【]\s*([^()\[\]（）【】]*?[^\s()\[\]（）【】])\s*(?:(?<![a-z])cover(?:ed)?|(?<![가-힣])커버)\.?\s*[)\]）】]\s*$""",
+    )
+
+    /** F: "Welcome to the Black Parade - My Chemical Romance (아카네 리제 Cover)". */
+    private fun readF(raw: String): Cover? {
+        val match = SINGER_COVER_GROUP.find(raw) ?: return null
+        val name = match.groupValues[1].trim()
+        // "(Acoustic Cover)", "(Korean Cover)", "(cover by X)" say how, not who.
+        if (isVersionWord(name) || isDescriptor(name)) return null
+        val singer = cleanName(name) ?: return null
+        val head = raw.substring(0, match.range.first).trim().trimEnd('/', '|', '｜', '-', '–', '—', '·', ',', ' ')
+        if (head.isEmpty()) return null
+        return songFirst(head, singer)
+    }
+
+    /**
+     * K: a clip of a singer already seen on covers, titled with nothing but
+     * the singer and the song — "아카네 리제 - しわあわせ(주름 행복)",
+     * "-ERROR (VOCALOID) - 아카네 리제". Not on the singer's own channel,
+     * where the same title is their own song.
+     */
+    private fun readKnown(raw: String, channel: String): Cover? {
+        val keys = knownSingerKeys()
+        if (keys.isEmpty()) return null
+        val (left, right) = splitTopLevelDash(raw) ?: splitTopLevelDash(raw, unspaced = true) ?: return null
+        fun singerOf(side: String): String? =
+            cleanName(side)?.takeIf { compactName(it) in keys && !isChannelName(it, channel) }
+        singerOf(left)?.let { singer -> return songCover(right, singer) }
+        singerOf(right)?.let { singer -> return songCover(left, singer) }
+        return null
+    }
+
+    @Volatile
+    private var singerKeyCache: Pair<Set<String>, Set<String>>? = null
+
+    private fun knownSingerKeys(): Set<String> {
+        val known = knownSingers()
+        singerKeyCache?.let { (source, keys) -> if (source === known) return keys }
+        val keys = known.mapNotNullTo(HashSet()) { compactName(it).takeIf { key -> key.length >= 2 } }
+        singerKeyCache = known to keys
+        return keys
+    }
+
+    private fun compactName(text: String): String = text.lowercase().filter { it.isLetterOrDigit() }
+
+    /**
+     * "곡명 - 원곡자" when [head] has a dash — song first, the order unsure —
+     * or "곡명(원곡자)" when it doesn't.
+     */
+    private fun songFirst(head: String, singer: String): Cover? {
+        val (song, artist) = splitTopLevelDash(head) ?: return songCover(head, singer)
+        val title = cleanTitle(song) ?: return null
+        val credit = cleanName(artist)?.takeUnless { isVersionWord(it) || isGenericCredit(it) }
+            ?: return Cover(title = title, originalArtist = null, singer = singer)
+        return Cover(title = title, originalArtist = credit, singer = singer, orderUnsure = true)
+    }
+
+    private fun songCover(text: String, singer: String): Cover? {
+        val (title, artist) = songAndCredit(text) ?: return null
+        return Cover(title = title, originalArtist = artist, singer = singer)
+    }
+
+    /** "(원곡: Vaundy)", "(원곡 Vaundy)", "/ 원곡 Vaundy". */
+    private val ORIGINAL_CREDIT = Regex(
+        """\s*(?:[(\[（【]\s*원곡\s*[:：]?\s*([^()\[\]（）【】]+?)\s*[)\]）】]|[/|｜]\s*원곡\s*[:：]?\s*(.+)$)""",
+    )
+
+    /**
+     * A song's name and, from a bracket closing it, its artist: "A Thousand
+     * Years(Christina Perri)". Not when the bracket is a version, a voicebank
+     * ("VOCALOID") or the name in the other script ("しわあわせ(주름 행복)",
+     * "소녀 레이(少女レイ)") — those stay with the name, or are dropped.
+     */
+    private fun songAndCredit(text: String): Pair<String, String?>? {
+        var rest = text.trim()
+        var artist: String? = null
+        ORIGINAL_CREDIT.find(rest)?.let { match ->
+            artist = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] })
+            rest = rest.removeRange(match.range).trim()
+        }
+        if (artist == null) {
+            TRAILING_GROUP.find(rest)?.let { group ->
+                val credit = group.groupValues[1].trim()
+                val inner = rest.removeRange(group.range).trim()
+                when {
+                    inner.isEmpty() -> Unit
+                    credit.isEmpty() || isGenericCredit(credit) -> rest = inner
+                    isVersionWord(credit) || isDescriptor(credit) || isTranslation(inner, credit) -> Unit
+                    else -> {
+                        artist = cleanName(credit)
+                        rest = inner
+                    }
+                }
+            }
+        }
+        val title = cleanTitle(rest) ?: return null
+        return title to artist
+    }
+
+    private fun hasHangul(text: String) = text.any { it in '가'..'힣' || it in 'ㄱ'..'ㆎ' }
+    private fun hasKanaOrHan(text: String) = text.any { it in '぀'..'ヿ' || it in '一'..'鿿' }
+
+    /** The bracket gives [name] in the other script — a reading or a translation, not a person. */
+    private fun isTranslation(name: String, bracket: String): Boolean =
+        (hasKanaOrHan(name) && !hasHangul(name) && hasHangul(bracket) && !hasKanaOrHan(bracket)) ||
+            (hasHangul(name) && hasKanaOrHan(bracket) && !hasHangul(bracket))
+
+    private val GENERIC_CREDIT = Regex(
+        """(?i)^(?:vocaloid|보컬로이드|보카로|utau|cevio|synth\s*v|synthesizer\s*v|歌ってみた|cover|커버|노래)$""",
+    )
+
+    /** A voicebank or a word, not whose song it is. */
+    private fun isGenericCredit(text: String): Boolean = GENERIC_CREDIT.matches(text.trim())
+
+    private val DESCRIPTOR_WORDS = setOf(
+        "korean", "english", "japanese", "chinese", "kor", "eng", "jpn", "jp", "kr",
+        "한국어", "영어", "일본어", "중국어", "한국어버전", "male", "female", "남자", "여자", "남자키", "여자키",
+        "full", "short", "band", "밴드", "acoustic", "어쿠스틱", "guitar", "기타", "피아노", "vocal", "보컬",
+        "a", "cappella", "acappella", "아카펠라", "duet", "듀엣", "혼성", "ai", "커버곡", "rock", "jazz", "재즈",
+        "orchestra", "오케스트라", "lofi", "lo-fi", "metal", "punk", "rnb", "r&b", "ballad", "발라드",
+    )
+
+    /** "Korean", "Full", "Male Ver", "어쿠스틱 밴드" — how it was covered, not by whom. */
+    private fun isDescriptor(text: String): Boolean {
+        val words = text.lowercase().split(' ', '　', '.', '/').filter { it.isNotBlank() }
+        return words.isNotEmpty() && words.all { it in DESCRIPTOR_WORDS || it.all(Char::isDigit) }
+    }
+
+    /** The last slash between words, outside any bracket: "곡명(원곡자) / 부른사람". Not "AC/DC". */
+    internal fun splitTopLevelSlash(text: String): Pair<String, String>? {
+        var depth = 0
+        var at = -1
+        for (i in text.indices) {
+            when (text[i]) {
+                '(', '[', '（', '【', '{' -> depth++
+                ')', ']', '）', '】', '}' -> if (depth > 0) depth--
+                '/', '／' -> if (depth == 0) {
+                    val spaced = (i > 0 && text[i - 1] == ' ') || (i + 1 < text.length && text[i + 1] == ' ')
+                    if (spaced || text[i] == '／') at = i
+                }
+            }
+        }
+        if (at < 0) return null
+        val left = text.substring(0, at).trim()
+        val right = text.substring(at + 1).trim()
+        return if (left.isNotEmpty() && right.isNotEmpty()) left to right else null
     }
 
     /**
@@ -359,7 +555,10 @@ object CoverTitles {
     private fun cleanTitle(text: String): String? {
         var title = text.trim()
         title = COVER_TAG.replace(title, " ").trim()
+        // A dash touching the first letter is part of the name: "-ERROR".
+        val dashName = title.length > 1 && title[0] == '-' && title[1].isLetterOrDigit()
         title = title.trim(' ', '-', '–', '/', '|', ',', '"', '\'', '“', '”', '「', '」', '『', '』')
+        if (dashName && title.isNotEmpty()) title = "-$title"
         return title.takeIf { it.isNotEmpty() }
     }
 

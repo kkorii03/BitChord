@@ -117,6 +117,73 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun slashAndBracketCoverTitlesAreRead() {
+        // "오화요Cover": the word touching the name, a slash before it, the original in brackets.
+        val house = assertNotNull(
+            CoverTitles.read("I really want to stay at your house(Rosa Walton) / 오화요Cover", "오화요 노래주머니", null),
+        )
+        assertEquals("I really want to stay at your house", house.title)
+        assertEquals("Rosa Walton", house.originalArtist)
+        assertEquals("오화요", house.singer)
+        val years = assertNotNull(CoverTitles.read("A Thousand Years(Christina Perri) / 오화요Cover", "오화요 노래주머니", null))
+        assertEquals("A Thousand Years", years.title)
+        assertEquals("Christina Perri", years.originalArtist)
+
+        // On a fan's account: the slash still says who sings. The first bracket is the name in Japanese.
+        val rei = assertNotNull(CoverTitles.read("소녀 레이(少女レイ) (미키토P) / 아오쿠모 린 Cover", "덕질용계정", null))
+        assertEquals("소녀 레이(少女レイ)", rei.title)
+        assertEquals("미키토P", rei.originalArtist)
+        assertEquals("아오쿠모 린", rei.singer)
+
+        // The singer in a closing bracket; song first, the other order also searched.
+        val parade = assertNotNull(
+            CoverTitles.read("Welcome to the Black Parade - My Chemical Romance (아카네 리제 Cover)", "캐스터네츠", null),
+        )
+        assertEquals("Welcome to the Black Parade", parade.title)
+        assertEquals("My Chemical Romance", parade.originalArtist)
+        assertEquals("아카네 리제", parade.singer)
+        assertTrue(parade.orderUnsure)
+
+        // How, not who.
+        assertEquals(null, CoverTitles.read("Song - Artist (Acoustic Cover)", "채널", null))
+        assertEquals(null, CoverTitles.read("Song - Artist (Korean Cover)", "채널", null))
+        // "Discover" is not "Cover"; a Latin letter before it never splits.
+        assertEquals(null, CoverTitles.read("Daft Punk - Discover", "채널", null))
+        // "AC/DC" is a name, not a slash between two.
+        assertEquals(null, CoverTitles.read("AC/DC - Thunderstruck", "채널", null))
+    }
+
+    @Test
+    fun knownSingersReadClipsWithoutTheWordCover() {
+        val before = CoverTitles.knownSingers
+        CoverTitles.knownSingers = { setOf("아카네 리제") }
+        try {
+            val happy = assertNotNull(CoverTitles.read("아카네 리제 - しわあわせ(주름 행복)", "피엔나야 클립따줘", null))
+            assertEquals("しわあわせ(주름 행복)", happy.title)
+            assertEquals(null, happy.originalArtist)
+            assertEquals("아카네 리제", happy.singer)
+
+            val error = assertNotNull(CoverTitles.read("-ERROR (VOCALOID) - 아카네 리제", "악질영상업로더", null))
+            assertEquals("-ERROR", error.title)
+            assertEquals(null, error.originalArtist)
+            assertEquals("아카네 리제", error.singer)
+
+            val dated = assertNotNull(CoverTitles.read("밤편지(아이유) - 아카네 리제 [24.08.04]", "클립", null))
+            assertEquals("밤편지", dated.title)
+            assertEquals("아이유", dated.originalArtist)
+            assertEquals("아카네 리제", dated.singer)
+
+            // On her own channel it is her own song; an unknown name is nobody's cover.
+            assertEquals(null, CoverTitles.read("아카네 리제 - 붉은 장미", "아카네 리제", null))
+            assertEquals(null, CoverTitles.read("아이유 - 밤편지", "피엔나야 클립따줘", null))
+            // Only for videos.
+            assertEquals(null, CoverTitles.read("아카네 리제 - 곡", "클립", null, unambiguousOnly = true))
+        } finally {
+            CoverTitles.knownSingers = before
+        }
+    }
+
+    @Test
     fun coverByTitlesReadEvenWithoutTheVideoFlag() {
         // A Recents row arrives without its video flag; "cover by" still says it all.
         val cover = assertNotNull(

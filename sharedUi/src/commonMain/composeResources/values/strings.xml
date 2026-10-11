@@ -235,6 +235,7 @@
     <string name="lyrics_timing_detail_ai">AI timing %1$s</string>
     <string name="lyrics_timing_section">Video timing</string>
     <string name="lyrics_timing_untouched">As the original recording times them.</string>
+    <string name="lyrics_timing_video_own">As timed by this video’s own captions.</string>
     <string name="lyrics_timing_ai_button">Time with AI</string>
     <string name="lyrics_timing_ai_button_running">Timing…</string>
 </resources>

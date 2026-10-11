@@ -15,6 +15,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 
 
 /**
@@ -555,6 +556,13 @@ object AppSettings {
      */
     val coverChannels = MutableStateFlow<Set<String>>(emptySet())
 
+    /**
+     * Singers seen named on cover titles, so a clip channel's "가수 - 곡명"
+     * with no "Cover" in it is read as theirs — see
+     * [com.music.bitchord.data.cover.CoverTitles.knownSingers].
+     */
+    val coverSingers = MutableStateFlow<Set<String>>(emptySet())
+
     /** Pick a paused song back up when headphones connect. */
     val resumeOnHeadphones = MutableStateFlow(true)
 
@@ -938,6 +946,7 @@ object AppSettings {
         chartsCountry.value = prefs.getString(KEY_CHARTS_COUNTRY, null)?.takeIf { it.isNotBlank() }
             ?: contentCountry.value
         coverChannels.value = prefs.getStringSet(KEY_COVER_CHANNELS, null)?.toSet().orEmpty()
+        coverSingers.value = prefs.getStringSet(KEY_COVER_SINGERS, null)?.toSet().orEmpty()
         resumeOnHeadphones.value = prefs.getBoolean(KEY_RESUME_ON_HEADPHONES, true)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
@@ -1504,6 +1513,21 @@ object AppSettings {
         if (next == coverChannels.value) return
         coverChannels.value = next
         prefs.edit().putStringSet(KEY_COVER_CHANNELS, next).apply()
+    }
+
+    /** Called for every cover title read; writes only when [name] is new. */
+    fun rememberCoverSinger(name: String) {
+        val singer = name.trim()
+        if (singer.length < 2 || singer.length > 40 || singer in coverSingers.value) return
+        if (!::prefs.isInitialized) return
+        var next: Set<String> = emptySet()
+        coverSingers.update { current ->
+            next = if (singer in current) current else (current + singer).let { all ->
+                if (all.size > MAX_COVER_SINGERS) all.drop(all.size - MAX_COVER_SINGERS).toSet() else all
+            }
+            next
+        }
+        prefs.edit().putStringSet(KEY_COVER_SINGERS, HashSet(next)).apply()
     }
 
     fun setResumeOnHeadphones(value: Boolean) {
@@ -2145,6 +2169,8 @@ object AppSettings {
     private const val KEY_CONTENT_COUNTRY = "ko_content_country"
     private const val KEY_CHARTS_COUNTRY = "ko_charts_country"
     private const val KEY_COVER_CHANNELS = "ko_cover_channels"
+    private const val KEY_COVER_SINGERS = "ko_cover_singers"
+    private const val MAX_COVER_SINGERS = 400
     private const val KEY_RESUME_ON_HEADPHONES = "ko_resume_on_headphones"
     const val DEFAULT_CONTENT_COUNTRY = "KR"
     private const val KEY_REPLAY_GENRES = "replay_genres"

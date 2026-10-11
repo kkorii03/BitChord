@@ -235,6 +235,7 @@
     <string name="lyrics_timing_detail_ai">AI 타이밍 %1$s</string>
     <string name="lyrics_timing_section">비디오 타이밍</string>
     <string name="lyrics_timing_untouched">원곡 타이밍 그대로입니다.</string>
+    <string name="lyrics_timing_video_own">이 비디오 자막의 타이밍 그대로입니다.</string>
     <string name="lyrics_timing_ai_button">AI로 맞추기</string>
     <string name="lyrics_timing_ai_button_running">맞추는 중…</string>
 </resources>

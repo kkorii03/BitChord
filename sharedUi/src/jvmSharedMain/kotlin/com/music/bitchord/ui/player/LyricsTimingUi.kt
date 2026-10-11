@@ -25,4 +25,6 @@ data class LyricsTimingUi(
     val manualMs: Long = 0L,
     /** What the measurement compared and how it came out — a diagnostic for the sync drawer. */
     val note: String? = null,
+    /** The lines are timed by the video's own captions: nothing to measure, only Gemini or a hand to move them. */
+    val videoOwn: Boolean = false,
 )

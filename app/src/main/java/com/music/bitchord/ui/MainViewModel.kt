@@ -422,6 +422,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         rawLyricsResult = null
         timingLines = null
         timingBaseAllowed = false
+        timingMeasureAllowed = true
         lyricsTimingJob?.cancel()
         aiTimingJob?.cancel()
         _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi()
@@ -626,9 +627,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyrics.value = result?.lines
         _lyricsSource.value = result?.source
         val request = currentLyricsRequest
-        val adjustable = request != null && result != null &&
-            result.lines.any { it.timeMs > 0 } && !LyricsTiming.timedToVideo(result.source)
-        startTiming(result?.lines, adjustable, searchedAs = result?.searchedAs)
+        // Any timed lines can be put on the video's clock by Gemini; only the
+        // record's are measured against the record.
+        val adjustable = request != null && result != null && result.lines.any { it.timeMs > 0 }
+        startTiming(
+            result?.lines,
+            adjustable,
+            searchedAs = result?.searchedAs,
+            measure = !LyricsTiming.timedToVideo(result?.source),
+        )
     }
 
     /** The lines on screen before any timing moved them; what [LyricsTiming] works from. */
@@ -636,6 +643,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Whether [timingLines] may be moved onto the video's clock, or only corrected by hand. */
     private var timingBaseAllowed = false
+
+    /** Whether [timingLines] are the record's, to be measured against it — not the video's own captions. */
+    private var timingMeasureAllowed = true
 
     /** What [refreshTiming] last put on [timingLines]. */
     private var appliedTiming: LyricsTiming.Timing? = null
@@ -654,11 +664,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         adjustable: Boolean,
         searchedAs: Pair<String, String>?,
         cancelAi: Boolean = true,
+        measure: Boolean = true,
     ) {
         lyricsTimingJob?.cancel()
         if (cancelAi) aiTimingJob?.cancel()
         timingLines = lines
         timingBaseAllowed = adjustable
+        timingMeasureAllowed = measure
         val timed = lines != null && lines.any { it.timeMs > 0 }
         // As the source timed them, until [refreshTiming] says otherwise.
         appliedTiming = null
@@ -666,6 +678,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi(
             adjustable = adjustable,
             manualAvailable = timed,
+            videoOwn = adjustable && !measure,
         )
         val request = currentLyricsRequest
         if (!timed || request == null || lines == null) return
@@ -680,7 +693,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             refreshTiming(generation, lines)
-            if (!adjustable || !request.isVideo) return@launch
+            if (!adjustable || !measure || !request.isVideo) return@launch
             // The record is searched for under every name the lyrics know:
             // what they were found as first, then the video's own readings.
             val names = buildList {
@@ -753,7 +766,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Puts what [LyricsTiming] knows for the current video onto [lines] and the line under them. */
     private suspend fun refreshTiming(generation: Long, lines: List<LyricLine>) {
         val request = currentLyricsRequest ?: return
-        val timing = LyricsTiming.timing(getApplication(), request.videoId, lines, timingBaseAllowed)
+        val timing = LyricsTiming.timing(
+            getApplication(),
+            request.videoId,
+            lines,
+            timingBaseAllowed,
+            measuredAllowed = timingBaseAllowed && timingMeasureAllowed,
+        )
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;
         // the lines are only rebuilt when what applies actually changed.
@@ -762,7 +781,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _lyrics.value = if (timing == null) lines else LyricsTiming.apply(lines, timing)
         }
         val base = timing?.base
-        val note = if (timingBaseAllowed) LyricsTiming.note(getApplication(), request.videoId) else null
+        val note = if (timingBaseAllowed && timingMeasureAllowed) LyricsTiming.note(getApplication(), request.videoId) else null
         if (generation != lyricsGeneration || timingLines !== lines) return
         _lyricsTiming.update {
             it.copy(
@@ -784,6 +803,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!AppSettings.autoLyricsTiming.value) return
         val request = currentLyricsRequest ?: return
         if (generation != lyricsGeneration || timingLines !== lines || !timingBaseAllowed || !request.isVideo) return
+        if (!timingMeasureAllowed) return
         if (aiTimingJob?.isActive == true || !LyricsTranslation.geminiKeyUsable) return
         val context = getApplication<Application>()
         if (!LyricsTiming.measurementGaveUp(context, request.videoId)) return
@@ -832,7 +852,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             aiTimingJob = viewModelScope.launch {
                 LyricsTiming.clearAi(context, request.videoId)
                 if (generation != lyricsGeneration || timingLines !== lines) return@launch
-                startTiming(lines, adjustable = true, searchedAs = rawLyricsResult?.searchedAs, cancelAi = false)
+                startTiming(
+                    lines,
+                    adjustable = true,
+                    searchedAs = rawLyricsResult?.searchedAs,
+                    cancelAi = false,
+                    measure = timingMeasureAllowed,
+                )
             }
             return
         }

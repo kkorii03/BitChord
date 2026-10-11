@@ -469,7 +469,9 @@ private fun VideoTimingBlock(timing: LyricsTimingUi, onAiTiming: (() -> Unit)?) 
     val line = when {
         timing.aiRunning -> stringResource(Res.string.lyrics_timing_running)
         timing.aiFailed -> stringResource(Res.string.lyrics_timing_failed)
-        else -> lyricsTimingDetail(timing) ?: stringResource(Res.string.lyrics_timing_untouched)
+        else -> lyricsTimingDetail(timing) ?: stringResource(
+            if (timing.videoOwn) Res.string.lyrics_timing_video_own else Res.string.lyrics_timing_untouched,
+        )
     }
     Row(
         modifier = Modifier
