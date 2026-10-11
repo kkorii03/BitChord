@@ -26,6 +26,7 @@ import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.PlaybackTracker
@@ -293,6 +294,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** How often to look whether more of a video has arrived to measure on. */
     private val REMEASURE_CHECK_MS = 20_000L
+
+    /** How long to keep looking — longer than any video worth measuring takes to arrive. */
+    private val MEASURE_WINDOW_MS = 15 * 60_000L
 
     /** How the lyrics on screen were moved onto the video's clock — see [LyricsTiming]. */
     private val _lyricsTiming = MutableStateFlow(com.music.bitchord.ui.player.LyricsTimingUi())
@@ -688,7 +692,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 isVideo = true,
             )
             var attempts = 0
-            while (attempts < MAX_MEASURE_ATTEMPTS && !LyricsTiming.measured(context, request.videoId)) {
+            val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
+            while (attempts < MAX_MEASURE_ATTEMPTS && System.currentTimeMillis() < giveUpAt &&
+                !LyricsTiming.measured(context, request.videoId)
+            ) {
                 if (LyricsTiming.worthMeasuring(context, request.videoId)) {
                     attempts++
                     LyricsTiming.measure(context, video, title, artist)
@@ -717,7 +724,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsTiming.update {
             it.copy(
                 shiftMs = base?.let { adjustment -> LyricsTiming.shownShiftMs(lines, adjustment) },
-                retimed = base is LyricsTiming.Adjustment.Retimed,
                 byAi = base?.byAi == true,
                 rate = (base as? LyricsTiming.Adjustment.Mapped)?.rate?.takeIf { rate -> rate != 1.0 },
                 matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
@@ -734,7 +740,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!AppSettings.autoLyricsTiming.value) return
         val request = currentLyricsRequest ?: return
         if (generation != lyricsGeneration || timingLines !== lines || !timingBaseAllowed || !request.isVideo) return
-        if (aiTimingJob?.isActive == true) return
+        if (aiTimingJob?.isActive == true || !LyricsTranslation.geminiKeyUsable) return
         val context = getApplication<Application>()
         if (!LyricsTiming.measurementGaveUp(context, request.videoId)) return
         if (LyricsTiming.hasAi(context, request.videoId, lines)) return

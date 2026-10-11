@@ -119,6 +119,7 @@ internal object TranslationAhead {
                 timing.measure(context, song.copy(isVideo = true), title, artist)
             }
             if (AppSettings.autoLyricsTiming.value &&
+                com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyUsable &&
                 timing.measurementGaveUp(context, song.videoId) &&
                 !timing.aiAlreadyFailed(context, song.videoId, found.lines)
             ) {

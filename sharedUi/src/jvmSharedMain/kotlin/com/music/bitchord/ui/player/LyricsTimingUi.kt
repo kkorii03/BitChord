@@ -9,8 +9,6 @@ data class LyricsTimingUi(
     val adjustable: Boolean = false,
     /** Where the first line moved to, in milliseconds; null when nothing moved it. */
     val shiftMs: Long? = null,
-    /** Each line moved on its own (an AI answer kept from before ko-23). */
-    val retimed: Boolean = false,
     /** The current timing came from Gemini rather than the automatic measurement. */
     val byAi: Boolean = false,
     /** Gemini is watching the video right now. */

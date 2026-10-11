@@ -78,11 +78,6 @@ object LyricsTiming {
         /** Every line by the same amount — what ko-21/22 kept. */
         data class Shift(val ms: Long, override val byAi: Boolean) : Adjustment
 
-        /** Each line to its own start — an AI answer kept by ko-21/22. */
-        data class Retimed(val startsMs: List<Long>) : Adjustment {
-            override val byAi: Boolean get() = true
-        }
-
         /**
          * Record time to video time through [map]: a shift, a shift and a pace,
          * or (measured) a path through a cut or an insert.
@@ -131,7 +126,13 @@ object LyricsTiming {
         if (entry.aiTextKey != null && entry.aiTextKey == textKey(lines)) {
             entry.ai?.toAdjustment(byAi = true)?.let { return it }
             entry.aiShiftMs?.let { return Adjustment.Shift(it, byAi = true) }
-            entry.aiStarts?.takeIf { it.size == lines.size }?.let { return Adjustment.Retimed(it) }
+            // A ko-21/22 per-line answer: the very one that drifted. Its
+            // starts go through today's fit; when they don't make a line,
+            // the measurement applies instead.
+            entry.aiStarts?.takeIf { it.size == lines.size }?.let { starts ->
+                val sung = lines.indices.filter { lines[it].text.isNotBlank() }
+                fitAi(lines, sung, sung.map { starts[it] })?.let { return it }
+            }
         }
         if (entry.autoVersion == AUTO_VERSION) return entry.auto?.toAdjustment(byAi = false)
         return null
@@ -142,10 +143,6 @@ object LyricsTiming {
         null -> lines.timedBy(null, timing.manualMs)
         is Adjustment.Shift -> lines.timedBy(LyricsTimeMap.shift(base.ms), timing.manualMs)
         is Adjustment.Mapped -> lines.timedBy(base.map, timing.manualMs)
-        is Adjustment.Retimed -> lines.mapIndexed { index, line ->
-            val start = base.startsMs.getOrNull(index) ?: line.timeMs
-            listOf(line).timedBy(LyricsTimeMap.shift(start - line.timeMs), timing.manualMs).single()
-        }
     }
 
     /** How far [adjustment] moves the first sung line of [lines] — the figure worth showing. */
@@ -154,7 +151,6 @@ object LyricsTiming {
         return when (adjustment) {
             is Adjustment.Shift -> adjustment.ms
             is Adjustment.Mapped -> adjustment.map.map(first.timeMs) - first.timeMs
-            is Adjustment.Retimed -> (adjustment.startsMs.getOrNull(lines.indexOf(first)) ?: first.timeMs) - first.timeMs
         }
     }
 
@@ -270,7 +266,7 @@ object LyricsTiming {
         var videoFeatures: ChromaAlignment.Features? = null
         val decodeMs = measureTimeMillis {
             coroutineScope {
-                val r = async(Dispatchers.IO) { features(context, original, MAX_SECONDS, job) }
+                val r = async(Dispatchers.IO) { recordFeatures(context, original, job) }
                 val v = async(Dispatchers.IO) { features(context, video, MAX_SECONDS, job) }
                 recordFeatures = r.await()
                 videoFeatures = v.await()
@@ -304,12 +300,32 @@ object LyricsTiming {
         while (true) {
             val copy = VersionAudioAligner.renditionToMeasure(video.videoId)
             if (copy != null && (copy.isComplete || copy.cachedPrefix >= MIN_VIDEO_BYTES)) return copy
-            if (System.currentTimeMillis() >= deadline) {
-                return copy?.takeIf { it.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES }
-            }
+            if (System.currentTimeMillis() >= deadline) return null
             delay(500)
         }
     }
+
+    /**
+     * The original's profiles, kept for the last couple of recordings: a
+     * video still downloading is measured several times as it arrives, and
+     * the record it is measured against is the same each time.
+     */
+    private fun recordFeatures(context: Context, original: Song, job: Job?): ChromaAlignment.Features? {
+        synchronized(recordCache) { recordCache[original.videoId] }?.let { return it }
+        val features = features(context, original, MAX_SECONDS, job) ?: return null
+        // Only a whole record is worth keeping; a part one is read again next time.
+        val copy = VersionAudioAligner.renditionToMeasure(original.videoId)
+        if (original.localUri != null || copy?.isComplete == true) {
+            synchronized(recordCache) {
+                recordCache[original.videoId] = features
+                while (recordCache.size > RECORDS_KEPT) recordCache.remove(recordCache.keys.first())
+            }
+        }
+        return features
+    }
+
+    private val recordCache = LinkedHashMap<String, ChromaAlignment.Features>()
+    private const val RECORDS_KEPT = 2
 
     /** [song]'s audio, as much as is on disk up to [maxSeconds], reduced to pitch profiles. */
     private fun features(context: Context, song: Song, maxSeconds: Double, job: Job?): ChromaAlignment.Features? {
@@ -324,8 +340,11 @@ object LyricsTiming {
                 }
                 // A stream that changes rate part-way is not one this can read on.
                 if (sampleRate == rate) into.push(chunk)
-            } ?: return null
-            extractor?.finish(startSeconds = start)
+            }
+            if (job?.isActive == false) return null
+            // A decoder that gave up part-way (where the bytes on disk stop,
+            // say) still leaves everything before that, which is worth having.
+            extractor?.finish(startSeconds = start ?: 0.0)
         } finally {
             runCatching { source.close() }
         }
@@ -353,8 +372,11 @@ object LyricsTiming {
     /** The video: this long for an opening worth measuring to arrive. */
     private const val VIDEO_TIMEOUT_MS = 30_000L
 
-    /** About a minute of a YouTube Opus stream. */
-    private const val MIN_VIDEO_BYTES = 1_000_000L
+    /**
+     * About forty seconds of a YouTube Opus stream: enough to get past an
+     * intro and into the song, and within what the player buffers ahead.
+     */
+    private const val MIN_VIDEO_BYTES = AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
 
     /** Measure again once at least this much more of the video is on disk. */
     private const val REMEASURE_GROWTH_BYTES = 600_000L
