@@ -43,7 +43,9 @@ jobs:
             line=$(grep -o '<testsuite [^>]*>' "$f" | head -1 || true)
             echo "::notice title=tests::$(basename "$f") $(echo "$line" | grep -oE '(tests|failures|errors|skipped)="[0-9]+"' | tr '\n' ' ')"
           done
-          grep -ho "LOOKUP_MS [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | while IFS= read -r l; do echo "::notice title=timing::$l"; done || true
+          # One notice for every measurement: GitHub shows only ten per step.
+          timing=$(grep -ho "LOOKUP_MS [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | sed 's/LOOKUP_MS //' | tr '\n' '|' || true)
+          [ -n "$timing" ] && echo "::notice title=timing::$timing" || true
           chroma=$(grep -ho "CHROMA [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | sed 's/CHROMA //' | tr '\n' '|' || true)
           [ -n "$chroma" ] && echo "::notice title=chroma::$chroma" || true
           grep -E "^e: |FAILED|AssertionError|expected:" test.log | head -30 | while IFS= read -r l; do echo "::error title=test::$l"; done || true
