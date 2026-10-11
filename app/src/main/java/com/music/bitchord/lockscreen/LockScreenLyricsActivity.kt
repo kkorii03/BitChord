@@ -643,7 +643,6 @@ private fun TransportButton(
         )
     }
 }
-}
 
 private fun formatTime(ms: Long): String {
     val total = (ms.coerceAtLeast(0L) / 1000L)
