@@ -158,7 +158,10 @@ object CoverTitles {
         val (title, artist) = queries.firstOrNull() ?: (song.title to song.artist)
         val cover = read(upload)
         return LyricsQuery(
-            title, artist, queries.drop(1), song.isVideo,
+            // A cover is an upload whatever the row says — a Recents row can
+            // arrive without its video flag — so its captions are asked first
+            // and its lyrics are put on its own clock.
+            title, artist, queries.drop(1), song.isVideo || cover != null,
             artistKnown = cover == null || cover.originalArtist != null,
         )
     }
