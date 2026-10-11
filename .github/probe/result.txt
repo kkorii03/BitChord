@@ -1,0 +1,55 @@
+DNS lyrics.alsong.co.kr 218.153.8.16
+DNS lyric.altools.com 218.153.8.4
+DNS www.altools.co.kr 172.66.2.16
+
+###### http://lyrics.alsong.co.kr/alsongwebservice/service1.asmx
+== GetResembleLyric2 발묘/나나호시 관현악단 -> HTTP 200, 350 bytes
+   tags: []
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetResembleLyric2Response xmlns="ALSongWebServer"><GetResembleLyric2Result /></GetResembleLyric2Response></soap:Body></soap:Envelope>
+== GetResembleLyric2 抜錨/ナナホシ管弦楽団 -> HTTP 200, 350 bytes
+   tags: []
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetResembleLyric2Response xmlns="ALSongWebServer"><GetResembleLyric2Result /></GetResembleLyric2Response></soap:Body></soap:Envelope>
+== GetResembleLyric2 발묘/ -> HTTP 200, 350 bytes
+   tags: []
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetResembleLyric2Response xmlns="ALSongWebServer"><GetResembleLyric2Result /></GetResembleLyric2Response></soap:Body></soap:Envelope>
+== GetResembleLyric2 좋은 날/아이유 -> HTTP 200, 350 bytes
+   tags: []
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetResembleLyric2Response xmlns="ALSongWebServer"><GetResembleLyric2Result /></GetResembleLyric2Response></soap:Body></soap:Envelope>
+== GetResembleLyricList2 enc=0 -> HTTP 200, 301 bytes
+   tags: []
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetResembleLyricList2Response xmlns="ALSongWebServer" /></soap:Body></soap:Envelope>
+== GetSyncLyricBySearch enc=0 -> HTTP 200, 786 bytes
+   tags: ['GetSyncLyricBySearchResult', 'strCountBad', 'strCountGood', 'strInfoID', 'strStatusID']
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetSyncLyricBySearchResponse xmlns="ALSongWebServer"><GetSyncLyricBySearchResult><strStatusID>2</strStatusID><strInfoID>-1</strInfoID><strRegistDate /><strTitle /><strArtist /><strAlbum /><strCountGood>0</strCountGood><strCountBad>0</strCountBad><strLyric /><strRegisterFirstName /><strRegisterFirstEMail /><strRegisterFirstURL /><strRegisterFirstPhone /><strRegisterFirstComment /><
+== GetResembleLyricList2 enc=96 -> HTTP 200, 301 bytes
+   tags: []
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetResembleLyricList2Response xmlns="ALSongWebServer" /></soap:Body></soap:Envelope>
+== GetSyncLyricBySearch enc=96 -> HTTP 200, 786 bytes
+   tags: ['GetSyncLyricBySearchResult', 'strCountBad', 'strCountGood', 'strInfoID', 'strStatusID']
+   titles: []
+   artists: []
+   raw: <?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body><GetSyncLyricBySearchResponse xmlns="ALSongWebServer"><GetSyncLyricBySearchResult><strStatusID>2</strStatusID><strInfoID>-1</strInfoID><strRegistDate /><strTitle /><strArtist /><strAlbum /><strCountGood>0</strCountGood><strCountBad>0</strCountBad><strLyric /><strRegisterFirstName /><strRegisterFirstEMail /><strRegisterFirstURL /><strRegisterFirstPhone /><strRegisterFirstComment /><
+
+###### https://lyrics.alsong.co.kr/alsongwebservice/service1.asmx
+== GetResembleLyric2 발묘/나나호시 관현악단 -> ERR <urlopen error timed out>
+== GetResembleLyric2 抜錨/ナナホシ管弦楽団 -> ERR <urlopen error timed out>
+== GetResembleLyric2 발묘/ -> ERR <urlopen error timed out>
+== GetResembleLyric2 좋은 날/아이유 -> ERR <urlopen error timed out>
+== GetResembleLyricList2 enc=0 -> ERR <urlopen error timed out>
+== GetSyncLyricBySearch enc=0 -> ERR <urlopen error timed out>
+== GetResembleLyricList2 enc=96 -> ERR <urlopen error timed out>
+== GetSyncLyricBySearch enc=96 -> ERR <urlopen error timed out>
