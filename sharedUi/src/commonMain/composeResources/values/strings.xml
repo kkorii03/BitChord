@@ -228,4 +228,12 @@
     <string name="lyrics_tap_previous_line">Previous line</string>
     <string name="lyrics_tap_next_line">Next line</string>
     <string name="lyrics_tap_no_lines">No timed lyrics to sync.</string>
+    <string name="lyrics_timing_adjusted">%1$s · Timed to video</string>
+    <string name="lyrics_timing_manual_short">%1$s · Sync adjusted</string>
+    <string name="lyrics_timing_running_short">%1$s · AI is timing…</string>
+    <string name="lyrics_timing_detail_auto">Auto-timed %1$s</string>
+    <string name="lyrics_timing_detail_ai">AI timing %1$s</string>
+    <string name="lyrics_timing_section">Video timing</string>
+    <string name="lyrics_timing_untouched">As the original recording times them.</string>
+    <string name="lyrics_timing_ai_button">Time with AI</string>
 </resources>

@@ -1578,6 +1578,8 @@ fun NowPlayingScreen(
             val songSync = if (onSongLyricsOffset != null && lyricsTiming.manualAvailable && lyrics != null) {
                 SongLyricsSync(
                     offsetMs = lyricsTiming.manualMs,
+                    timing = lyricsTiming,
+                    onAiTiming = onAiLyricsTiming?.takeIf { songMeaningAvailable && lyricsTiming.adjustable },
                     lines = lyrics,
                     lyricPositionMs = {
                         // The reading as of now, not as of the last report: a
@@ -2005,13 +2007,10 @@ fun NowPlayingScreen(
                                     enabled = !lyrics.isNullOrEmpty(),
                                     onClick = lyricsTranslation.toggleRomanization,
                                 )
-                            } else if (songMeaningAvailable && lyricsTiming.adjustable) {
-                                AiTimingButton(
-                                    timing = lyricsTiming,
-                                    enabled = !lyrics.isNullOrEmpty(),
-                                    onClick = onAiLyricsTiming,
-                                )
                             }
+                            // With AI timing on offer, the slot stays empty: the
+                            // control lives in the sync drawer, away from the
+                            // lines a near miss would have jumped to.
                         },
                         translationToggle = {
                             TranslationToggleButton(
@@ -3406,18 +3405,19 @@ fun NowPlayingScreen(
                                     enabled = translateShown && !lyrics.isNullOrEmpty(),
                                     onClick = lyricsTranslation.toggleRomanization,
                                 )
-                            } else if (songMeaningAvailable && lyricsTiming.adjustable) {
-                                AiTimingButton(
-                                    timing = lyricsTiming,
-                                    enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                    onClick = onAiLyricsTiming,
-                                )
                             }
+                            // With AI timing on offer the slot stays empty — see
+                            // the landscape pane.
                         }
                         Row(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
-                                .graphicsLayer { alpha = translateFade },
+                                .graphicsLayer { alpha = translateFade }
+                                // A tap that misses a disc by a little lands
+                                // here rather than on the line underneath —
+                                // which would jump the song to it.
+                                .then(if (translateShown) Modifier.swallowTaps() else Modifier)
+                                .padding(start = 14.dp, top = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (songMeaningAvailable) {

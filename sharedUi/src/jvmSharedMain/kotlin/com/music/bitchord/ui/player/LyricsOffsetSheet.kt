@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +88,10 @@ private const val DismissDragFraction = 0.25f
  */
 internal class SongLyricsSync(
     val offsetMs: Long,
+    /** How the lines were moved onto the video's clock, for the figures shown here. */
+    val timing: LyricsTimingUi,
+    /** Asks Gemini to time the lines (or takes its answer back); null where it can't. */
+    val onAiTiming: (() -> Unit)?,
     val lines: List<LyricLine>,
     /** The lyrics clock now: the playhead with the all-songs offset applied, ms. */
     val lyricPositionMs: () -> Long,
@@ -307,6 +312,7 @@ private fun SongOffsetSection(song: SongLyricsSync) {
     var target by remember { mutableIntStateOf(-1) }
 
     SectionLabel(stringResource(Res.string.lyrics_offset_song))
+    VideoTimingBlock(song.timing, song.onAiTiming)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -448,6 +454,75 @@ private fun SongOffsetSection(song: SongLyricsSync) {
                     }
                     .padding(horizontal = 18.dp, vertical = 9.dp),
             )
+        }
+    }
+}
+
+/**
+ * What the app did to put the lines on this video's clock — the measurement's
+ * or Gemini's answer, with its figures — and the AI timing control, kept here
+ * rather than over the lyrics where a near miss jumped the song.
+ */
+@Composable
+private fun VideoTimingBlock(timing: LyricsTimingUi, onAiTiming: (() -> Unit)?) {
+    val haptics = rememberHaptics()
+    val line = when {
+        timing.aiRunning -> stringResource(Res.string.lyrics_timing_running)
+        timing.aiFailed -> stringResource(Res.string.lyrics_timing_failed)
+        else -> lyricsTimingDetail(timing) ?: stringResource(Res.string.lyrics_timing_untouched)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(ControlShape)
+            .background(Color.White.copy(alpha = 0.05f))
+            .padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(Res.string.lyrics_timing_section),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.55f),
+            )
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.9f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (onAiTiming != null) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = if (timing.byAi) 0.22f else 0.12f))
+                    .clickable(enabled = !timing.aiRunning) {
+                        haptics.play(Haptic.Tap)
+                        onAiTiming()
+                    }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (timing.aiRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = Color.White,
+                        strokeWidth = 1.7.dp,
+                    )
+                } else {
+                    Text(
+                        text = stringResource(
+                            if (timing.byAi) Res.string.ai_lyrics_timing_undo else Res.string.lyrics_timing_ai_button,
+                        ),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                    )
+                }
+            }
         }
     }
 }

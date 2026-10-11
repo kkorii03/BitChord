@@ -2,6 +2,7 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -134,3 +135,10 @@ internal fun Modifier.toggleSpotifyCanvasControlsOnTap(
         }
     }
 }
+
+/**
+ * Takes taps that land here and does nothing with them — for the margin round
+ * a control floated over the lyrics, so a tap that just misses it doesn't
+ * fall through to the line underneath and jump the song there.
+ */
+internal fun Modifier.swallowTaps(): Modifier = pointerInput(Unit) { detectTapGestures { } }

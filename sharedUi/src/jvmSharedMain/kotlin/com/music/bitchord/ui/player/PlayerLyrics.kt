@@ -1349,92 +1349,38 @@ internal fun RomanizationToggleButton(
 }
 
 /**
- * The AI timing control, in the left-hand slot the romanisation globe used to
- * hold: asks Gemini to place the lines in this video, and — lit while its
- * answer is what is showing — takes it back on a second tap. Drawn exactly like
- * the translate disc beside it, so the row reads as one set of controls.
+ * The line under the lyrics: who provided them, and — in a word — whether
+ * they were moved onto this video's clock. Short on purpose, like the credit
+ * line it extends; the figures (how far, how fast, how sure) are in the sync
+ * drawer, see [lyricsTimingDetail].
  */
 @Composable
-internal fun AiTimingButton(
-    timing: LyricsTimingUi,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val active = timing.byAi || timing.aiRunning
-    val tint = when {
-        !enabled -> Color.White.copy(alpha = 0.42f)
-        active -> Color.White
-        else -> Color.White.copy(alpha = 0.78f)
-    }
-    val discAlpha by animateFloatAsState(
-        targetValue = if (active) 0.34f else 0.18f,
-        label = "aiTimingDisc",
-    )
-    Box(
-        modifier = Modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = discAlpha))
-            .clickable(
-                enabled = enabled && !timing.aiRunning,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (timing.aiRunning) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                color = tint,
-                strokeWidth = 1.7.dp,
-            )
-        } else {
-            Icon(
-                imageVector = Icons.Rounded.Timer,
-                contentDescription = stringResource(
-                    if (timing.byAi) Res.string.ai_lyrics_timing_undo else Res.string.ai_lyrics_timing,
-                ),
-                tint = tint,
-                modifier = Modifier.size(19.dp),
-            )
-        }
-    }
+internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String = when {
+    timing.aiRunning -> stringResource(Res.string.lyrics_timing_running_short, status)
+    timing.shiftMs != null || timing.byAi -> stringResource(Res.string.lyrics_timing_adjusted, status)
+    timing.manualMs != 0L -> stringResource(Res.string.lyrics_timing_manual_short, status)
+    else -> status
 }
 
 /**
- * The line under the lyrics, with what was done to their timing after it:
- * "가사 제공: VIBE · 타이밍 자동 보정 +3.2초 · 속도 0.98배", "… · AI 타이밍
- * +2.1초 · 일치 85%", "… · 이 노래 싱크 +0.4초". While Gemini is working,
- * or when it came back empty, that is the whole line.
+ * What was done to the timing, with its figures — "자동 보정 +3.2초 · 속도
+ * 0.98배", "AI 타이밍 +2.1초 · 일치 85%" — or null when nothing moved the lines.
  */
 @Composable
-internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String {
-    if (timing.aiRunning) return stringResource(Res.string.lyrics_timing_running)
-    if (timing.aiFailed) return stringResource(Res.string.lyrics_timing_failed)
+internal fun lyricsTimingDetail(timing: LyricsTimingUi): String? {
+    if (timing.shiftMs == null && !timing.byAi) return null
     val details = buildList {
         timing.shiftMs?.let { add(stringResource(Res.string.lyrics_timing_seconds, signedSeconds(it))) }
         timing.rate?.let { add(stringResource(Res.string.lyrics_timing_rate, String.format(java.util.Locale.ROOT, "%.2f", it))) }
         if (timing.byAi) timing.matchPercent?.let { add(stringResource(Res.string.lyrics_timing_match, it.toString())) }
     }.joinToString(" · ")
-    val moved = when {
-        timing.byAi && details.isEmpty() -> stringResource(Res.string.lyrics_timing_ai, status)
-        timing.byAi -> stringResource(Res.string.lyrics_timing_ai_detail, status, details)
-        details.isNotEmpty() -> stringResource(Res.string.lyrics_timing_auto, status, details)
-        else -> status
-    }
-    return if (timing.manualMs != 0L) {
-        stringResource(
-            Res.string.lyrics_timing_manual,
-            moved,
-            stringResource(Res.string.lyrics_timing_seconds, signedSeconds(timing.manualMs)),
-        )
-    } else {
-        moved
-    }
+    return stringResource(
+        if (timing.byAi) Res.string.lyrics_timing_detail_ai else Res.string.lyrics_timing_detail_auto,
+        details,
+    ).trim()
 }
 
-private fun signedSeconds(ms: Long): String = String.format(java.util.Locale.ROOT, "%+.1f", ms / 1000.0)
+internal fun signedSeconds(ms: Long): String = String.format(java.util.Locale.ROOT, "%+.1f", ms / 1000.0)
 
 /**
  * A short text-material transition: the list and its playback clock stay in
