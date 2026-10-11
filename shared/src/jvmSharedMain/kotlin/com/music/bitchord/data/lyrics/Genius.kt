@@ -180,7 +180,15 @@ object Genius {
             val titleMatches = normTitle.isNotBlank() && (title == normTitle || title.contains(normTitle) || normTitle.contains(title))
             val artistMatches = normArtist.isNotBlank() && (artist == normArtist || artist.contains(normArtist) || normArtist.contains(artist))
 
-            if (!titleMatches && !artistMatches) return@mapNotNull null
+            // Both, not either: a title alone is how "회전목마" by 에피톤 프로젝트
+            // came back as sokodomo's 회전목마, and an artist alone is any of
+            // their other songs. Only a search with no artist to check against
+            // may go by the title.
+            if (!titleMatches) return@mapNotNull null
+            if (normArtist.isNotBlank() && !artistMatches) return@mapNotNull null
+            // Genius's own romanisation and translation pages ("Genius
+            // Romanizations", "Genius English Translations") are not the lyrics.
+            if (artist.startsWith("genius ")) return@mapNotNull null
 
             if (title == normTitle) score += 50
             else if (titleMatches) score += 25

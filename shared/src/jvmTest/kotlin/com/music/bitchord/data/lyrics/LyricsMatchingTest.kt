@@ -64,6 +64,30 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun coverByTitlesReadEvenWithoutTheVideoFlag() {
+        // A Recents row arrives without its video flag; "cover by" still says it all.
+        val cover = assertNotNull(
+            CoverTitles.read(
+                "에피톤 프로젝트 - 회전목마 / cover by 오화요(허니즈)",
+                "젤리의 노래저장소",
+                null,
+                unambiguousOnly = true,
+            ),
+        )
+        assertEquals("회전목마", cover.title)
+        assertEquals("에피톤 프로젝트", cover.originalArtist)
+        assertEquals("오화요", cover.singer)
+        // The loose shapes stay off for such a row: "IU - Song (Cover)" by IU's topic channel.
+        assertEquals(null, CoverTitles.read("가수 - 노래 (Cover)", "가수", null, unambiguousOnly = true))
+    }
+
+    @Test
+    fun kugouSongSearchNeedsTheTitle() {
+        assertFalse(KuGou.titlesOverlap("동거", "同居"))
+        assertFalse(KuGou.titlesOverlap("동거", "数算硬币的生活"))
+    }
+
+    @Test
     fun theReportedCoverSearchesAsTheOriginal() {
         val cover = assertNotNull(CoverTitles.read("나나호시 관현악단 - 발묘 / cover by 가수", "채널", null))
         assertEquals("발묘", cover.title)

@@ -40,7 +40,7 @@ object KuGou {
             return LrcLib.parseLrc(lrc).takeIf { it.isNotEmpty() && !isInstrumentalPlaceholder(it) }
         }
 
-        searchSongs(keyword, seconds, wantsInstrumental).orEmpty()
+        searchSongs(keyword, seconds, wantsInstrumental, title).orEmpty()
             .take(MAX_HASHES)
             .firstNotNullOfOrNull { hash -> searchLyrics(hash = hash)?.firstOrNull()?.let(::fetch) }
             ?.let { return@withContext it }
@@ -108,7 +108,7 @@ object KuGou {
      * first result for a common title is as likely to be a cover or a remix
      * as the right recording — and ordered closest match first.
      */
-    private fun searchSongs(keyword: Keyword, seconds: Int, wantsInstrumental: Boolean): List<String>? {
+    private fun searchSongs(keyword: Keyword, seconds: Int, wantsInstrumental: Boolean, title: String): List<String>? {
         val url = "https://mobileservice.kugou.com/api/v3/search/song".toHttpUrl().newBuilder()
             .addQueryParameter("version", "9108")
             .addQueryParameter("plat", "0")
@@ -123,6 +123,10 @@ object KuGou {
             // A backing track shares the hash search's name and length; its
             // "lyrics" are the instrumental placeholder.
             .filter { wantsInstrumental || !INSTRUMENTAL_TAG.containsMatchIn(it.songname + " " + it.filename) }
+            // A song search for a name KuGou doesn't know still answers, with
+            // whatever it has of that length — "동거" came back as a Chinese
+            // song. The row has to carry the title asked for.
+            .filter { titlesOverlap(title, it.songname.ifBlank { it.filename }) }
             .sortedBy { abs(it.duration - seconds) }
             .map { it.hash }
     }

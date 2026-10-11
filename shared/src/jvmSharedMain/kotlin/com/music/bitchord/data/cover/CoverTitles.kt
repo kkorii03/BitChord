@@ -67,16 +67,19 @@ object CoverTitles {
     private val ANY_GROUP = Regex("""\s*[(\[（【][^()\[\]（）【】]*[)\]）】]""")
 
     /** The cover a song plays as, or null for anything that is not one. */
-    fun read(song: Song): Cover? {
-        if (!song.isVideo) return null
-        return read(song.title, song.artist, song.artistId)
-    }
+    fun read(song: Song): Cover? =
+        // A row that lost its video flag on the way — history and Recents
+        // shelves often draw an upload with a square thumbnail — is still a
+        // cover when its title says so outright. Only the shapes that can't be
+        // an ordinary track are read for it.
+        read(song.title, song.artist, song.artistId, unambiguousOnly = !song.isVideo)
 
-    fun read(title: String, channel: String, channelId: String?): Cover? {
+    fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? {
         val raw = title.trim()
         if (raw.isEmpty()) return null
         readC(raw, channel)?.let { return it }
-        readA(raw, channel)?.let { return it }
+        readA(raw, channel, allowBareTag = !unambiguousOnly)?.let { return it }
+        if (unambiguousOnly) return null
         val dated = DATE_TAG.containsMatchIn(raw)
         val designated = channelId != null && channelId in designatedChannels()
         if (dated || designated) readB(DATE_TAG.replace(raw, "").trim())?.let { return it }
@@ -89,13 +92,13 @@ object CoverTitles {
      * without its tag tries both ways round.
      */
     fun lyricsQueries(song: Song): List<Pair<String, String>> {
-        if (!song.isVideo) return listOf(song.title to song.artist)
         read(song)?.let { cover ->
             return listOfNotNull(
                 cover.title to (cover.originalArtist ?: cover.singer),
                 (cover.title to cover.singer).takeIf { cover.originalArtist != null },
             )
         }
+        if (!song.isVideo) return listOf(song.title to song.artist)
         val raw = song.title.trim()
         val (left, right) = splitTopLevelDash(raw) ?: return listOf(song.title to song.artist)
         val group = TRAILING_GROUP.find(right)
@@ -204,7 +207,7 @@ object CoverTitles {
 
     // ---- Shapes -------------------------------------------------------------
 
-    private fun readA(raw: String, channel: String): Cover? {
+    private fun readA(raw: String, channel: String, allowBareTag: Boolean = true): Cover? {
         val marker = COVER_BY.find(raw)
         if (marker != null) {
             val singer = cleanName(raw.substring(marker.range.last + 1)) ?: return null
@@ -212,6 +215,7 @@ object CoverTitles {
             return headCover(head, singer, looseDash = true)
         }
         // "원곡자 - 곡명 (Cover)" with no name: the channel is the singer.
+        if (!allowBareTag) return null
         val tag = COVER_TAG.findAll(raw).lastOrNull() ?: return null
         val head = raw.removeRange(tag.range).trimEnd(' ', '/', '|', '｜', '-', '–', '—', '·', ',')
         if (head.isBlank() || splitTopLevelDash(head) == null) return null
