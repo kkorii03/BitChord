@@ -6680,11 +6680,16 @@ class PlaybackService : MediaLibraryService() {
             val localUri = currentSong.localUri
             var lines: List<LyricLine>? = null
             var foundSource: com.music.bitchord.data.lyrics.LyricsSource? = null
+            val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
+            var fromFile = false
             if (localUri != null) {
-                lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri)
+                EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
+                    lines = file.lines
+                    foundSource = file.source
+                    fromFile = true
+                }
             }
             if (lines == null) {
-                val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
                 val found = LyricsRepository.lyrics(
                     videoId = currentSong.videoId,
                     title = coverQuery.title,
@@ -6697,6 +6702,7 @@ class PlaybackService : MediaLibraryService() {
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
+                    transcribe = localUri == null,
                 )
                 lines = found?.lines
                 foundSource = found?.source
@@ -6706,11 +6712,12 @@ class PlaybackService : MediaLibraryService() {
             // landing, the AI button), for as long as this track is current.
             val raw = lines
             val timed = raw != null && raw.any { it.timeMs > 0 }
-            // Moved onto the video's clock only when the lines are the
-            // record's (the AI answer asked for, also for the video's own
-            // captions); a correction by hand applies to any timed lines.
-            val timeable = timed && localUri == null
-            val recordTimed = timeable &&
+            // The same rules the lyrics screen keeps: a song's own file is timed
+            // for it (a correction by hand only); a video's lyrics — streamed,
+            // or carried in its download — take Gemini's answer, and the
+            // measurement when they are known to be the record's.
+            val timeable = timed && (!fromFile || coverQuery.isVideo)
+            val recordTimed = timeable && (!fromFile || foundSource != null) &&
                 !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
             suspend fun publish() {
                 val shown = if (timed && raw != null) {

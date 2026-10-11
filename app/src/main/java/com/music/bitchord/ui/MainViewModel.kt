@@ -347,6 +347,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val isVideo: Boolean = false,
         val alternatives: List<Pair<String, String>> = emptyList(),
         val artistKnown: Boolean = true,
+        /** Played from a file: there is no stream on disk to measure against. */
+        val localUri: String? = null,
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
@@ -403,7 +405,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
-        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives, artistKnown)
+        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives, artistKnown, localUri)
         selectedLyricsSource = null
         manualLyricsJobs.values.forEach(Job::cancel)
         manualLyricsJobs.clear()
@@ -442,14 +444,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // nothing is being matched here — these lyrics were written into
             // this exact file, for this exact recording.
             if (localUri != null) {
-                EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
+                EmbeddedLyrics.withSource(getApplication(), localUri)?.let { file ->
+                    val embedded = file.lines
                     _lyrics.value = embedded
                     // No source to name: what the file records is the lyrics,
                     // not which of the eight services they came from months ago.
                     _lyricsSource.value = null
                     _lyricsChecked.value = true
-                    // Timed for this file already; only a correction by hand applies.
-                    startTiming(embedded, adjustable = false, searchedAs = null)
+                    // A song's own file is timed for it already: only a correction
+                    // by hand. A downloaded video (a cover) carries its lyrics as
+                    // they were found — the record's, which the video's timing
+                    // kept for it still moves, unless they were the video's own;
+                    // and whatever they are, Gemini can be asked to place them.
+                    val onVideo = isVideo && embedded.any { it.timeMs > 0 }
+                    val recordTimed = onVideo && file.source != null && !LyricsTiming.timedToVideo(file.source)
+                    startTiming(
+                        embedded,
+                        adjustable = onVideo,
+                        searchedAs = null,
+                        measure = recordTimed,
+                        measureNow = false,
+                        videoOwn = onVideo && file.source != null && !recordTimed,
+                    )
                     return@launch
                 }
             }
@@ -469,6 +485,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 isVideo = isVideo,
                 alternatives = alternatives,
                 artistKnown = artistKnown,
+                transcribe = localUri == null,
             )
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)
@@ -630,11 +647,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Any timed lines can be put on the video's clock by Gemini; only the
         // record's are measured against the record.
         val adjustable = request != null && result != null && result.lines.any { it.timeMs > 0 }
+        val videoOwn = LyricsTiming.timedToVideo(result?.source)
         startTiming(
             result?.lines,
             adjustable,
             searchedAs = result?.searchedAs,
-            measure = !LyricsTiming.timedToVideo(result?.source),
+            measure = !videoOwn,
+            measureNow = request?.localUri == null,
+            videoOwn = adjustable && videoOwn,
         )
     }
 
@@ -665,6 +685,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         searchedAs: Pair<String, String>?,
         cancelAi: Boolean = true,
         measure: Boolean = true,
+        /** Measure the video now, as it streams in — not for a file, which has no stream on disk. */
+        measureNow: Boolean = true,
+        /** The lines are timed to the video already (its captions, Gemini's transcript). */
+        videoOwn: Boolean = adjustable && !measure,
     ) {
         lyricsTimingJob?.cancel()
         if (cancelAi) aiTimingJob?.cancel()
@@ -678,7 +702,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsTiming.value = com.music.bitchord.ui.player.LyricsTimingUi(
             adjustable = adjustable,
             manualAvailable = timed,
-            videoOwn = adjustable && !measure,
+            videoOwn = videoOwn,
         )
         val request = currentLyricsRequest
         if (!timed || request == null || lines == null) return
@@ -693,7 +717,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             refreshTiming(generation, lines)
-            if (!adjustable || !measure || !request.isVideo) return@launch
+            if (!adjustable || !measure || !measureNow || !request.isVideo) return@launch
             // The record is searched for under every name the lyrics know:
             // what they were found as first, then the video's own readings.
             val names = buildList {
@@ -858,6 +882,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     searchedAs = rawLyricsResult?.searchedAs,
                     cancelAi = false,
                     measure = timingMeasureAllowed,
+                    measureNow = request.localUri == null,
+                    videoOwn = _lyricsTiming.value.videoOwn,
                 )
             }
             return

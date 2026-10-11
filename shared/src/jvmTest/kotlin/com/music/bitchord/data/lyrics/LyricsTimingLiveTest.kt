@@ -229,5 +229,6 @@ class LyricsTimingLiveTest {
 
 /** The sources whose timing is already the video's — mirrors the app's LyricsTiming.timedToVideo. */
 private object LyricsSourceVideo {
-    fun timedToVideo(source: LyricsSource?): Boolean = source == LyricsSource.YOUTUBE_TRANSCRIPT
+    fun timedToVideo(source: LyricsSource?): Boolean =
+        source == LyricsSource.YOUTUBE_TRANSCRIPT || source == LyricsSource.GEMINI_TRANSCRIPT
 }

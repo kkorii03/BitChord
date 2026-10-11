@@ -191,6 +191,7 @@ internal object TranslationAhead {
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
+                    transcribe = song.localUri == null,
                 )
             }
         } catch (cancelled: CancellationException) {

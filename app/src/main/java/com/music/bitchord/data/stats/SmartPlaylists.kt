@@ -101,13 +101,5 @@ object SmartPlaylists {
         }
     }
 
-    private fun Totals.toSong() = Song(
-        videoId = entry.id,
-        title = entry.title,
-        artist = entry.artist,
-        thumbnailUrl = entry.art,
-        artistId = entry.artistId,
-        albumId = entry.albumId,
-        albumName = entry.album,
-    )
+    private fun Totals.toSong() = entry.asSong()
 }

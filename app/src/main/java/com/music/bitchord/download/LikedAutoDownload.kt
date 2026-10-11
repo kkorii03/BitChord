@@ -114,7 +114,9 @@ internal object LikedAutoDownload {
     private suspend fun drain() = drainLock.withLock {
         for (videoId in parked()) {
             if (!AppSettings.autoDownloadLiked.value || !allowedNow()) return@withLock
-            download(videoId, null, parkOnFailure = false)
+            // A miss stays parked for the next time downloads are allowed,
+            // rather than dropping a liked song for one failed request.
+            download(videoId, null, parkOnFailure = true)
         }
     }
 

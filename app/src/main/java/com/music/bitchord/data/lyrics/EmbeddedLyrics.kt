@@ -65,7 +65,17 @@ object EmbeddedLyrics {
      * Touches the filesystem, so it runs on [Dispatchers.IO] regardless of
      * where it is called from.
      */
-    suspend fun forUri(context: Context, uriString: String): List<LyricLine>? =
+    suspend fun forUri(context: Context, uriString: String): List<LyricLine>? = withSource(context, uriString)?.lines
+
+    /** A file's lyrics, and — for those this app wrote — which source they came from. */
+    class Embedded(val lines: List<LyricLine>, val source: LyricsSource?)
+
+    /**
+     * [forUri], with the source named in the `[re:BitChord …]` line this
+     * app's downloads write ([sourceHeader]). Null source for anything else:
+     * an older download, a file from elsewhere.
+     */
+    suspend fun withSource(context: Context, uriString: String): Embedded? =
         withContext(Dispatchers.IO) {
             val raw = runCatching { read(context, Uri.parse(uriString)) }
                 .onFailure { Log.d(TAG, "no embedded lyrics in $uriString: ${it.message}") }
@@ -73,9 +83,20 @@ object EmbeddedLyrics {
                 ?: return@withContext null
             // The same last pass the network sources get, so a downloaded track
             // and a streamed one draw their backing vocals the same way.
-            LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
+            val lines = LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
                 ?.withBackgroundVocals()
+                ?: return@withContext null
+            val source = SOURCE_TAG.find(raw)?.groupValues?.get(1)?.let { name ->
+                LyricsSource.entries.firstOrNull { it.name == name }
+            }
+            Embedded(lines, source)
         }
+
+    /** `[re:BitChord LRCLIB]`: the header a download writes naming where its lyrics came from. */
+    private val SOURCE_TAG = Regex("""(?m)^\[re:BitChord ([A-Z_]+)]""")
+
+    /** The header line naming [source], for a download's LRC. */
+    fun sourceHeader(source: LyricsSource): String = "[re:BitChord ${source.name}]\n"
 
     /** The raw LRC text for the file, preferring this app's word-timed field. */
     private fun read(context: Context, uri: Uri): String? =

@@ -131,20 +131,74 @@ object LyricsRepository {
          * looked for by its title alone (see [OriginalNames.fromTitle]).
          */
         artistKnown: Boolean = true,
+        /**
+         * With nothing found anywhere, have [transcriber] write the lyrics
+         * down off the video. Only for what is playing or about to — never
+         * for one provider tried by hand, or a download filling its tags.
+         */
+        transcribe: Boolean = false,
+    ): Result? {
+        val found = lookUpAll(
+            videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+            onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
+        )
+        if (found != null || !transcribe || sources.isEmpty()) return found
+        return transcribed(videoId, durationMs)?.also { heard ->
+            // Kept like any answer, so the next play — today or after a
+            // restart — shows it without listening again.
+            val key = questionKey(
+                videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
+            )
+            answers.put(key, Answer(heard))
+            kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, heard) }
+        }
+    }
+
+    private fun questionKey(
+        videoId: String,
+        title: String,
+        artist: String,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        isVideo: Boolean,
+        artistKnown: Boolean,
+        alternatives: List<Pair<String, String>>,
+        order: List<LyricsSource>,
+        sources: Set<LyricsSource>,
+    ): String = buildString {
+        append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
+        append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
+        append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
+        alternatives.forEach { (t, a) -> append('\u0001').append(t).append('\u0000').append(a) }
+        order.forEach { append('\u0002').append(it.name) }
+        sources.map { it.name }.sorted().forEach { append('\u0003').append(it) }
+    }
+
+    private suspend fun lookUpAll(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        sources: Set<LyricsSource>,
+        order: List<LyricsSource>,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        onSourceStarted: ((LyricsSource) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceCancelled: ((LyricsSource) -> Unit)?,
+        isVideo: Boolean,
+        alternatives: List<Pair<String, String>>,
+        artistKnown: Boolean,
     ): Result? {
         // The whole answer — retries and original-language names included —
         // kept against the whole question, so the lookup the next-track
         // prefetch made is the one the player gets, rather than the player
         // walking the same chain of misses again. A lookup still running for
         // the same question is joined rather than started twice.
-        val key = buildString {
-            append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
-            append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
-            append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
-            alternatives.forEach { (t, a) -> append('\u0001').append(t).append('\u0000').append(a) }
-            order.forEach { append('\u0002').append(it.name) }
-            sources.map { it.name }.sorted().forEach { append('\u0003').append(it) }
-        }
+        val key = questionKey(
+            videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
+        )
         answers.get(key)?.let { kept ->
             kept.result?.let { onSourceResult?.invoke(it.source, it) }
             return kept.result
@@ -162,7 +216,7 @@ object LyricsRepository {
                     checkAgain(key, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                            null, null, null, isVideo, alternatives, artistKnown, transcribe = false,
+                            null, null, null, isVideo, alternatives, artistKnown,
                         )
                     }
                 }
@@ -232,7 +286,10 @@ object LyricsRepository {
             } catch (_: Exception) {
                 null
             }
-            if (found != null && LyricsDiskCache.rank(found) > LyricsDiskCache.rank(kept)) {
+            // Anything a source has beats what Gemini heard, timed as well or not.
+            val replacesHeard = kept.source == LyricsSource.GEMINI_TRANSCRIPT &&
+                found != null && found.source != LyricsSource.GEMINI_TRANSCRIPT
+            if (found != null && (replacesHeard || LyricsDiskCache.rank(found) > LyricsDiskCache.rank(kept))) {
                 answers.put(key, Answer(found))
                 LyricsDiskCache.write(key, found)
                 _upgrades.tryEmit(videoId to found)
@@ -359,18 +416,40 @@ object LyricsRepository {
     @Volatile
     var transcriber: (suspend (videoId: String, durationMs: Long) -> List<LyricLine>?)? = null
 
-    /** What [transcriber] hears in [videoId], as an answer; null for nothing. */
+    /** Transcriptions running, by video: the player, the lock screen and the next-song preparation share one. */
+    private val transcribing = ConcurrentHashMap<String, Deferred<Result?>>()
+
+    /** What was heard this session, by video — kept on disk too, under each question that led to it. */
+    private val heard = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 32
+    }
+
+    /**
+     * What [transcriber] hears in [videoId], as an answer; null for nothing.
+     * Run once per video however many ask, in the background so a skip
+     * doesn't throw away a minute of listening the next play would want.
+     */
     private suspend fun transcribed(videoId: String, durationMs: Long): Result? {
         val ask = transcriber ?: return null
         if (videoId.isBlank() || videoId.contains(':') || durationMs <= 0L) return null
-        val lines = try {
-            ask(videoId, durationMs)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            null
+        synchronized(heard) { heard[videoId] }?.let { return it }
+        val fresh = background.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            val lines = try {
+                ask(videoId, durationMs)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            lines?.takeIf { it.isNotEmpty() }?.let { Result(LyricsSource.GEMINI_TRANSCRIPT, it) }
+                ?.also { synchronized(heard) { heard[videoId] = it } }
         }
-        return lines?.takeIf { it.isNotEmpty() }?.let { Result(LyricsSource.GEMINI_TRANSCRIPT, it) }
+        val running = transcribing.putIfAbsent(videoId, fresh) ?: fresh
+        if (running === fresh) {
+            fresh.invokeOnCompletion { transcribing.remove(videoId, fresh) }
+            fresh.start()
+        }
+        return running.await()
     }
 
     private suspend fun search(
@@ -389,8 +468,6 @@ object LyricsRepository {
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
-        /** Off for the background re-check of kept lyrics: heard once is enough. */
-        transcribe: Boolean = true,
     ): Result? = coroutineScope {
         // The original-language name is one cheap search away and needed the
         // moment the first round comes back empty, so it is asked for now,
@@ -405,7 +482,7 @@ object LyricsRepository {
             searchRounds(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown, nameAhead,
-            ) ?: if (transcribe && sources.isNotEmpty()) transcribed(videoId, durationMs) else null
+            )
         } finally {
             nameAhead?.cancel()
         }

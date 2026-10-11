@@ -1072,8 +1072,20 @@ object StreamResolver {
     suspend fun videoLoop(videoId: String, maxHeight: Int = 480): VideoLoop? {
         val now = System.currentTimeMillis()
         videoLoops[videoId]?.let { if (it.expiresAtMs - now > LOOP_MARGIN_MS) return it }
+        // The gate is shared with playback's own extraction, which a listener
+        // may be waiting on: a cover's loop only takes it when it is free,
+        // never queues in front of a track trying to start.
+        var held = false
+        for (attempt in 0 until LOOP_GATE_TRIES) {
+            if (extractionGate.tryLock()) {
+                held = true
+                break
+            }
+            delay(LOOP_GATE_WAIT_MS)
+        }
+        if (!held) return null
         val found = try {
-            extractionGate.withLock {
+            run {
                 withContext(Dispatchers.IO) {
                     val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
                     extractor.fetchPage()
@@ -1102,6 +1114,8 @@ object StreamResolver {
         } catch (e: LinkageError) {
             TrackLog.w(TAG, "no video loop for $videoId: ${e.javaClass.name}")
             null
+        } finally {
+            extractionGate.unlock()
         } ?: return null
         if (videoLoops.size >= 64) videoLoops.clear()
         videoLoops[videoId] = found
@@ -1111,6 +1125,8 @@ object StreamResolver {
     /** 480p and 360p: H.264, then VP9, then AV1. */
     private val LOOP_ITAGS = listOf(135, 134, 244, 243, 397, 396)
     private const val LOOP_MARGIN_MS = 20L * 60 * 1000
+    private const val LOOP_GATE_TRIES = 20
+    private const val LOOP_GATE_WAIT_MS = 1_000L
     private const val DEFAULT_LOOP_LIFETIME_MS = 5L * 60 * 60 * 1000
 
     // ---- Cache --------------------------------------------------------------

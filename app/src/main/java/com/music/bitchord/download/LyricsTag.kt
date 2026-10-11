@@ -104,7 +104,15 @@ internal object LyricsTag {
         // not blank either, so the length check below would let it through.
         if (found.lines.none { it.text.isNotBlank() }) return null
 
-        val lrc = found.lines.toLrc()
+        // Timed lyrics say where they came from, so playing the file later
+        // knows whether they are the record's (to be put on a cover video's
+        // clock) or already the video's own.
+        val header = if (found.lines.any { it.timeMs > 0 }) {
+            com.music.bitchord.data.lyrics.EmbeddedLyrics.sourceHeader(found.source)
+        } else {
+            ""
+        }
+        val lrc = found.lines.toLrc().let { if (it.isBlank()) it else header + it }
         if (lrc.length > MAX_LRC_CHARS) {
             // Every byte of this is about to be copied into a file the user
             // keeps, and the size is decided by a third party's response body.
@@ -119,7 +127,7 @@ internal object LyricsTag {
         // than sharing the budget and pushing the portable field out.
         val enhanced = found.lines.toEnhancedLrc().takeIf {
             it.isNotBlank() && it.length <= MAX_LRC_CHARS * 2
-        }
+        }?.let { header + it }
         Log.d(
             TAG,
             "embedding ${found.source.label} lyrics for ${track.videoId}" +

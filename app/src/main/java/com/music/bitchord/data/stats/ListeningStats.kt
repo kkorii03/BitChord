@@ -503,15 +503,7 @@ object ListeningStats {
                 .sortedWith(compareByDescending<TrackEntry> { it.ms }.thenByDescending { it.plays })
                 .map {
                     RankedSong(
-                        song = Song(
-                            videoId = it.id,
-                            title = it.title,
-                            artist = it.artist,
-                            thumbnailUrl = it.art,
-                            artistId = it.artistId,
-                            albumId = it.albumId,
-                            albumName = it.album,
-                        ),
+                        song = it.asSong(),
                         ms = it.ms,
                         plays = it.plays,
                     )
@@ -686,6 +678,23 @@ data class TrackEntry(
     var plays: Int = 0,
     var last: Long = 0L,
 ) {
+    /**
+     * The entry as a playable row. A cover was recorded as it was shown —
+     * its song, and "원곡자 · 가수 커버" — so it is marked a video again: that
+     * byline is what [com.music.bitchord.data.cover.CoverTitles] reads a
+     * cover back from, for its lyrics, timing and moving cover.
+     */
+    fun asSong(): Song = Song(
+        videoId = id,
+        title = title,
+        artist = artist,
+        thumbnailUrl = art,
+        artistId = artistId,
+        albumId = albumId,
+        albumName = album,
+        isVideo = artist.endsWith(" 커버"),
+    )
+
     fun absorb(other: TrackEntry) {
         ms += other.ms
         plays += other.plays

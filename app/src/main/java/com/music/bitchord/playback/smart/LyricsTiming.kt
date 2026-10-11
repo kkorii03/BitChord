@@ -100,8 +100,10 @@ object LyricsTiming {
      * for: the video's own captions. YouTube Music's and SimpMusic's lyrics
      * are asked for by video too, but they are the song's lyrics, timed to
      * the record — on a cover they run as early or late as any other source.
+     * What Gemini wrote down off the video is timed to the video too.
      */
-    fun timedToVideo(source: LyricsSource?): Boolean = source == LyricsSource.YOUTUBE_TRANSCRIPT
+    fun timedToVideo(source: LyricsSource?): Boolean =
+        source == LyricsSource.YOUTUBE_TRANSCRIPT || source == LyricsSource.GEMINI_TRANSCRIPT
 
     /** Fires the video id whose timing just changed, for screens showing it. */
     val changes: SharedFlow<String> get() = _changes
