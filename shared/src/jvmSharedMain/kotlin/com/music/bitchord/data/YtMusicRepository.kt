@@ -73,7 +73,28 @@ object YtMusicRepository {
 
     /** Extra Play shelves are independently fetchable so each can appear as soon as it arrives. */
     suspend fun homeSupplement(browseId: String): Result<List<HomeShelf>> = call("home:$browseId") {
-        shelvesOf(browseId)
+        val shelves = shelvesOf(browseId)
+        if (browseId == "FEmusic_explore") contentCountrySongs(shelves) else shelves
+    }
+
+    /**
+     * Explore's song shelf ("인기곡") follows the account's own country, not
+     * the gl a request carries: an account registered in India and used in
+     * Korea is shown India's trending songs whatever the content country
+     * says. The charts page does take a country, so that shelf's songs are
+     * taken from the content country's chart instead — the shelf as it was if
+     * the chart doesn't answer.
+     */
+    private suspend fun contentCountrySongs(shelves: List<HomeShelf>): List<HomeShelf> {
+        val country = Innertube.contentCountry()?.takeIf { it.isNotBlank() } ?: return shelves
+        fun songs(shelf: HomeShelf) = shelf.items.isNotEmpty() && shelf.items.count { it.videoId != null } * 2 > shelf.items.size
+        val index = shelves.indexOfFirst(::songs)
+        if (index < 0) return shelves
+        val chart = runCatching { InnertubeParser.parseHome(Innertube.charts(country)) }.getOrNull().orEmpty()
+            .firstOrNull { songs(it) && it.items.size >= 5 } ?: return shelves
+        return shelves.toMutableList().apply {
+            set(index, shelves[index].copy(items = chart.items, moreBrowseId = chart.moreBrowseId, moreParams = chart.moreParams))
+        }
     }
 
     val HOME_SUPPLEMENT_BROWSE_IDS = listOf(
