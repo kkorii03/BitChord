@@ -95,6 +95,10 @@ fun GeminiKeyAlert(
     /** The same alert for another service's key (Deepgram). */
     title: String = stringResource(R.string.gemini_api_key),
     description: String = stringResource(R.string.gemini_api_key_description),
+    /** A line under the field: the key being checked, or why it wasn't taken. */
+    status: String? = null,
+    /** While true (the key is being checked), Save waits. */
+    busy: Boolean = false,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
@@ -114,15 +118,18 @@ fun GeminiKeyAlert(
                 placeholder = title,
                 isPassword = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onSave() }),
+                keyboardActions = KeyboardActions(onDone = { if (!busy) onSave() }),
             )
+            if (status != null) {
+                AlertMessage(text = status, modifier = Modifier.padding(top = 10.dp))
+            }
         }
         AlertRule()
         AlertAction(
             label = stringResource(R.string.save),
             emphasised = true,
             onClick = onSave,
-            enabled = value.isNotBlank(),
+            enabled = value.isNotBlank() && !busy,
         )
         if (hasSavedKey) {
             AlertRule()

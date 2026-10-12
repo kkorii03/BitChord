@@ -1199,4 +1199,8 @@
     <string name="deepgram_subtitle_rejected">Deepgram rejected this key. Check it or enter a new one.</string>
     <string name="deepgram_subtitle_bundled">Built-in key · Deepgram → Whisper → Gemini</string>
     <string name="deepgram_subtitle_ready">Your key · Deepgram → Whisper → Gemini</string>
+    <string name="deepgram_key_checking">Checking the key with Deepgram…</string>
+    <string name="deepgram_key_ok">Deepgram accepted the key</string>
+    <string name="deepgram_key_bad">Deepgram rejected this key. Check it and try again.</string>
+    <string name="deepgram_key_unverified">Saved, but the key could not be checked (no connection)</string>
 </resources>

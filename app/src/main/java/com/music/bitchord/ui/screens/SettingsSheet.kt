@@ -1177,7 +1177,7 @@ fun SettingsScreen(
                                 AppSettings.deepgramKeyIsBundled -> R.string.deepgram_subtitle_bundled
                                 else -> R.string.deepgram_subtitle_ready
                             },
-                        ),
+                        ) + if (deepgramApiKey.length >= 8) " (••••${deepgramApiKey.takeLast(4)})" else "",
                         trailing = { Chevron() },
                         onClick = onDeepgramKey,
                     )

@@ -164,7 +164,13 @@ object LyricsTranslation {
 
     // Tried in order: when a model is unknown to the key's project or its free
     // quota is used up, the next one usually still answers.
-    private val GEMINI_MODELS = listOf("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+    // Each model has its own per-minute quota on a free key, and a song start
+    // asks several things at once (this song, the next, original names) — so
+    // more of them to fall through before Google Translate. Unknown ones 404
+    // and are skipped at no cost.
+    private val GEMINI_MODELS = listOf(
+        "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash",
+    )
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
     private val geminiClient by lazy {
@@ -1373,7 +1379,7 @@ object LyricsTranslation {
         }
     }
 
-    private val VIDEO_MODELS = listOf("gemini-3.5-flash") + GEMINI_MODELS
+    private val VIDEO_MODELS = (listOf("gemini-3.5-flash") + GEMINI_MODELS).distinct()
 
     /**
      * What Gemini listens to: the video's sound sent along (16 kHz WAV —

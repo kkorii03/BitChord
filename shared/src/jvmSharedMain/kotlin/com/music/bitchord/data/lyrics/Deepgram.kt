@@ -98,6 +98,35 @@ object Deepgram {
         }
     }
 
+    /**
+     * Whether Deepgram accepts [key]: true, false (turned away), or null when
+     * it couldn't be asked (offline). One cheap request listing the key's projects.
+     */
+    suspend fun verify(key: String): Boolean? {
+        val trimmed = key.trim()
+        if (trimmed.isEmpty()) return false
+        val request = Request.Builder()
+            .url("https://api.deepgram.com/v1/projects")
+            .header("Authorization", "Token $trimmed")
+            .get()
+            .build()
+        return try {
+            withContext(Dispatchers.IO) {
+                client.newCall(request).execute().use { response ->
+                    when {
+                        response.isSuccessful -> true
+                        response.code == 401 || response.code == 403 -> false
+                        else -> null
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** `results.channels[0].alternatives[0].words[]`: word, start, end (seconds). */
     internal fun parse(body: String): List<LyricsWordAlign.Heard>? = runCatching {
         val words = json.parseToJsonElement(body).jsonObject["results"]!!.jsonObject["channels"]!!.jsonArray[0]

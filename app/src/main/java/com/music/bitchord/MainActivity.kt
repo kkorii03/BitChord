@@ -4941,20 +4941,48 @@ private fun BitChordApp(
         if (showDeepgramKey) {
             BackHandler { showDeepgramKey = false }
             val savedKey by AppSettings.deepgramApiKey.collectAsStateWithLifecycle()
-            // The built-in key is never shown back: the field starts empty for it.
-            var keyInput by remember { mutableStateOf(if (AppSettings.deepgramKeyIsBundled) "" else savedKey) }
+            // The key in use, masked like Gemini's, so it is clear one is saved.
+            var keyInput by remember { mutableStateOf(savedKey) }
+            var keyStatus by remember { mutableStateOf<String?>(null) }
+            var checking by remember { mutableStateOf(false) }
+            val checkingText = stringResource(R.string.deepgram_key_checking)
+            val badText = stringResource(R.string.deepgram_key_bad)
+            val okText = stringResource(R.string.deepgram_key_ok)
+            val unverifiedText = stringResource(R.string.deepgram_key_unverified)
             GeminiKeyAlert(
                 hazeState = hazeState,
                 value = keyInput,
-                onValueChange = { keyInput = it },
+                onValueChange = {
+                    keyInput = it
+                    keyStatus = null
+                },
                 hasSavedKey = savedKey.isNotBlank(),
                 onSave = {
                     val key = keyInput.trim()
-                    if (key.isNotEmpty()) {
-                        AppSettings.setDeepgramApiKey(key)
-                        showDeepgramKey = false
+                    if (key.isNotEmpty() && !checking) {
+                        // Asked of Deepgram before it is kept: a wrong key says so here,
+                        // rather than as AI timing quietly falling back to Gemini.
+                        checking = true
+                        keyStatus = checkingText
+                        scope.launch {
+                            val accepted = com.music.bitchord.data.lyrics.Deepgram.verify(key)
+                            checking = false
+                            if (accepted == false) {
+                                keyStatus = badText
+                            } else {
+                                AppSettings.setDeepgramApiKey(key)
+                                showDeepgramKey = false
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (accepted == true) okText else unverifiedText,
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
                     }
                 },
+                status = keyStatus,
+                busy = checking,
                 onRemove = {
                     AppSettings.setDeepgramApiKey("")
                     showDeepgramKey = false
