@@ -137,10 +137,12 @@ internal object TranslationAhead {
             addAll(query.alternatives)
         }.distinct()
         try {
-            // Gemini at the same time as the measurement, not after it gives up:
-            // the next song then starts with an answer either way.
+            // AI only once the measurement has nothing — there is a whole song's
+            // time for it before this one starts, and most covers never need
+            // the upload — except the calibration few, asked alongside.
             val gemini = com.music.bitchord.data.lyrics.LyricsTranslation
-            val ahead = if (AppSettings.aiTimingAhead.value &&
+            val calibration = timing.calibrationSample(song.videoId)
+            val ahead = if (calibration && AppSettings.aiTimingAhead.value &&
                 (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 !timing.hasAi(context, song.videoId, found.lines) &&
                 !timing.aiAlreadyFailed(context, song.videoId, found.lines)
@@ -161,6 +163,14 @@ internal object TranslationAhead {
                 timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
             }
             ahead?.join()
+            if (!calibration && AppSettings.aiTimingAhead.value &&
+                (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
+                !timing.measuredTiming(context, song.videoId) &&
+                !timing.hasAi(context, song.videoId, found.lines) &&
+                !timing.aiAlreadyFailed(context, song.videoId, found.lines)
+            ) {
+                timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
+            }
             val untried = !timing.hasAi(context, song.videoId, found.lines) &&
                 !timing.aiAlreadyFailed(context, song.videoId, found.lines)
             if ((gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&

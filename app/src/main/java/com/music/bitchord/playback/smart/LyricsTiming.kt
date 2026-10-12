@@ -888,6 +888,23 @@ object LyricsTiming {
     const val ENGINE_WHISPER = "Whisper"
     const val ENGINE_GEMINI = "Gemini"
 
+    /**
+     * Whether the free measurement has already timed [videoId] (or found it
+     * needs nothing) — then an AI request would only spend an upload.
+     */
+    suspend fun measuredTiming(context: Context, videoId: String): Boolean =
+        store(context).get(videoId)?.let { it.autoVersion == AUTO_VERSION && (it.auto != null || it.autoNoChange) } == true
+
+    /**
+     * One video in [CALIBRATION_EVERY] still gets an AI answer alongside its
+     * measurement — the pairs [aiBias] learns each engine's lateness from —
+     * where every other one asks AI only once the measurement has nothing.
+     * Picked by id, so the same videos are the samples every time.
+     */
+    fun calibrationSample(videoId: String): Boolean = Math.floorMod(videoId.hashCode(), CALIBRATION_EVERY) == 0
+
+    private const val CALIBRATION_EVERY = 8
+
     private val ALL_ENGINES = listOf(ENGINE_DEEPGRAM, ENGINE_WHISPER, ENGINE_GEMINI)
     private val AHEAD_ENGINES = listOf(ENGINE_DEEPGRAM, ENGINE_GEMINI)
 

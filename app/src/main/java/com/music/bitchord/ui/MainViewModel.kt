@@ -718,11 +718,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             refreshTiming(generation, lines)
             if (!adjustable || !measure || !measureNow || !request.isVideo) return@launch
-            // Gemini asked alongside the measurement rather than after it gives
-            // up: if the measurement can't time this video, the answer is
-            // already in (or close) — and if it can, the two are compared to
-            // learn how late Gemini runs. The measurement still wins.
-            launch { aiAhead(context, request.videoId, lines) }
+            // AI after the free measurement, not alongside it: each request
+            // uploads the whole song (twice — Deepgram, then Gemini), and the
+            // measurement times most covers on its own. A few videos still ask
+            // alongside it, so how late each engine runs keeps being learned.
+            val calibration = LyricsTiming.calibrationSample(request.videoId)
+            if (calibration) launch { aiAhead(context, request.videoId, lines) }
             // The record is searched for under every name the lyrics know:
             // what they were found as first, then the video's own readings.
             val names = buildList {
@@ -756,6 +757,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (LyricsTiming.measured(context, request.videoId)) break
                 }
                 delay(REMEASURE_CHECK_MS)
+            }
+            if (!calibration && !LyricsTiming.measuredTiming(context, request.videoId)) {
+                aiAhead(context, request.videoId, lines)
+                refreshTiming(generation, lines)
             }
             autoAiIfNeeded(generation, lines)
         }
