@@ -361,7 +361,8 @@ private fun RecentSectionHeader(
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = title,
+                // "Recents" is the app's own key; shown in the listener's words.
+                text = localizeShelfTitle(title),
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,

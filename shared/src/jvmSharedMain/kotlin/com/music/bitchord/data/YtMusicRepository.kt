@@ -104,11 +104,38 @@ object YtMusicRepository {
         val country = Innertube.contentCountry()?.takeIf { it.isNotBlank() } ?: return null
         chartCache?.let { (c, at, shelf) -> if (c == country && System.currentTimeMillis() - at < 30 * 60_000L) return shelf }
         fun songs(shelf: HomeShelf) = shelf.items.isNotEmpty() && shelf.items.count { it.videoId != null } * 2 > shelf.items.size
-        val chart = runCatching { InnertubeParser.parseHome(Innertube.charts(country)) }.getOrNull().orEmpty()
-            .firstOrNull { songs(it) && it.items.size >= 5 } ?: return null
+        val page = runCatching { InnertubeParser.parseHome(Innertube.charts(country)) }.getOrNull().orEmpty()
+        // Some answers carry the songs themselves; signed in, the page is chart
+        // *playlists* ("한국 인기곡 Top100", "일간 인기 뮤직비디오 - 한국" …), so the
+        // top songs one is opened and its first rows taken.
+        val chart = page.firstOrNull { songs(it) && it.items.size >= 5 }
+            ?: chartPlaylistSongs(page)
+            ?: return null
         chartCache = Triple(country, System.currentTimeMillis(), chart)
         return chart
     }
+
+    private val TOP_SONGS_PLAYLIST = Regex("""(?i)인기곡\s*top|top\s*(?:100\s*)?songs|top songs""")
+    private val TOP_VIDEOS_PLAYLIST = Regex("""(?i)인기\s*뮤직\s*비디오|top\s*music\s*videos|급상승|trending""")
+
+    private suspend fun chartPlaylistSongs(page: List<HomeShelf>): HomeShelf? {
+        val playlists = page.flatMap { it.items }.filter { it.browseId != null && it.videoId == null }
+        val pick = playlists.firstOrNull { TOP_SONGS_PLAYLIST.containsMatchIn(it.title) && !it.title.contains("Shorts", true) }
+            ?: playlists.firstOrNull { TOP_VIDEOS_PLAYLIST.containsMatchIn(it.title) && !it.title.contains("Shorts", true) }
+            ?: return null
+        val browseId = pick.browseId!!.let { if (it.startsWith("VL") || !it.startsWith("PL")) it else "VL$it" }
+        val songs = runCatching { InnertubeParser.parsePlaylistShelf(Innertube.browse(browseId))?.songs }.getOrNull()
+            ?.take(CHART_SONGS)
+            ?.takeIf { it.size >= 5 }
+            ?: return null
+        return HomeShelf(
+            title = pick.title,
+            items = songs.map { ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl, videoId = it.videoId, browseId = null) },
+            moreBrowseId = browseId,
+        )
+    }
+
+    private const val CHART_SONGS = 20
 
     /**
      * Explore's song shelf ("인기곡") follows the account's own country, not
@@ -172,7 +199,9 @@ object YtMusicRepository {
         if (allSongs.isEmpty()) return null
         return HomeShelf(
             title = RECENT_TITLE,
-            items = allSongs.map {
+            // A cover reads as its song here too ("Someone like you" / "Adele · 오화요
+            // 커버"), as it does in the player, not as the upload's own title.
+            items = allSongs.map { com.music.bitchord.data.cover.CoverTitles.applyTo(it) }.map {
                 ShelfItem(
                     title = it.title,
                     subtitle = it.artist,
