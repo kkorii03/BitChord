@@ -1414,13 +1414,10 @@ object AudioCache {
                     // disk anyway, and a failed head here otherwise costs the
                     // whole switch its smart align while the swap goes ahead
                     // regardless.
-                    pull(
-                        videoId,
-                        Uri.parse("bitchord://watch?v=$videoId"),
-                        0,
-                        want,
-                        /* pinKey = */ false,
-                    )
+                    // Through [fetch], so an entry the player is streaming into
+                    // costs a probe rather than the whole track read onto the floor.
+                    val watch = Uri.parse("bitchord://watch?v=$videoId")
+                    fetch(keyFactory.buildCacheKey(DataSpec(watch)), watch, 0, want)
                 }
                 if (total > 0) recordContentLength(videoId, total)
                 // The keys this video has on disk were memoized before the round
@@ -1860,9 +1857,24 @@ object AudioCache {
         // time. A small probe reaches the same verdict for a fraction of
         // the cost, and only a probe that actually lands is worth following
         // with the rest of the range.
+        //
+        // The probe goes where the first missing byte is, not at [position]: a
+        // range whose start is already on disk — written by the player, which
+        // holds the entry while it streams — passed a probe at [position]
+        // without writing anything, and the whole track was then read onto the
+        // floor. Watched on a playing video: three head rounds, 5.3 MB each,
+        // nothing kept.
         if (length > LOCK_PROBE_BYTES) {
-            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey)
-            if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
+            val ready = cache.getCachedLength(cacheKey, position, length).coerceAtLeast(0L)
+            val hole = position + ready
+            val probe = minOf(LOCK_PROBE_BYTES, position + length - hole)
+            if (probe > 0) {
+                pull(cacheKey, uri, hole, probe, pinKey)
+                if (cache.getCachedBytes(cacheKey, hole, probe) < probe) {
+                    TrackLog.d(TAG, "read-ahead for $cacheKey not kept (entry in use): stopped after the probe", about = mediaIdIn(uri))
+                    return
+                }
+            }
         }
         pull(cacheKey, uri, position, length, pinKey)
     }

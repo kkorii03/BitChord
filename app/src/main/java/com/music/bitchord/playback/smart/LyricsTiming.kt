@@ -263,7 +263,13 @@ object LyricsTiming {
             lock.withLock {
                 if (!worthMeasuring(context, video.videoId)) return@async
                 val outcome = try {
-                    measureFresh(context, video, names, videoMs) { early -> keep(context, video.videoId, early) }
+                    measureFresh(context, video, names, videoMs) { early ->
+                        // A quick answer only where there is none yet: a second pass
+                        // (more of the video has arrived) must not trade an answer from
+                        // the whole record for one from its opening, even for a minute.
+                        val had = store(context).get(video.videoId)
+                        if (had?.autoVersion != AUTO_VERSION || had.auto == null) keep(context, video.videoId, early)
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (e: Exception) {
