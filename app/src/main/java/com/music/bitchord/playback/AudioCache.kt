@@ -1423,6 +1423,12 @@ object AudioCache {
                     )
                 }
                 if (total > 0) recordContentLength(videoId, total)
+                // The keys this video has on disk were memoized before the round
+                // wrote its own (the plain id, pinned): with substitution on the
+                // playing copy is "#alt", so the stale list held only that one and
+                // the head read as 0 bytes — "came up short" over a complete download,
+                // and no measurement ever started. Asked afresh now.
+                renditionKeys.remove(videoId)
                 val held = alignmentPrefixBytes(videoId)
                 if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
                     // The one line that says *this* fetch failed, as opposed to
