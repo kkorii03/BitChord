@@ -128,10 +128,14 @@ object CoverTitles {
         }
 
     fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? {
-        val raw = title.trim()
+        val tidy = normalize(title.trim())
+        val raw = tidy.text
         if (raw.isEmpty()) return null
         // The shapes that name the singer for certain: worth remembering who.
-        (readE(raw) ?: readC(raw, channel) ?: readF(raw) ?: readA(raw, channel, allowBareTag = false))?.let {
+        (
+            readE(raw) ?: readG(raw) ?: readC(raw, channel) ?: (if (tidy.live) readLive(raw) else null) ?: readF(raw)
+                ?: readA(raw, channel, allowBareTag = false) ?: readCredit(raw)
+            )?.let {
             runCatching { onSingerSeen(it.singer) }
             return it
         }
@@ -272,6 +276,108 @@ object CoverTitles {
         return byline
     }
 
+    // ---- Clip titles, tidied ------------------------------------------------
+
+    private class Tidy(val text: String, val live: Boolean)
+
+    /**
+     * Clippers dress a title up: "[4K] … ㅣ가수(Romaji) 「Live Cover」 [ENG SUB]",
+     * "[26.05.29] 곡명 / …", "… LIVE COVERㅣ오화요 클립ㅣ허니즈", "… | 가사 | …".
+     * The dressing goes, the separators become " | " and every way of writing
+     * the cover tag becomes plain "Cover", so the shapes below see what an
+     * official channel would have written. Whether it said "Live Cover" is
+     * kept: "X - Y Live Cover" names the singer first.
+     */
+    private fun normalize(title: String): Tidy {
+        val live = LIVE_WORD.containsMatchIn(title)
+        var text = BAR.replace(title, " | ")
+        while (true) {
+            val next = TRAILING_TAG.replace(LEADING_TAG.replace(text, ""), "").trim()
+            if (next == text) break
+            text = next
+        }
+        text = DECORATED_COVER.replace(text, " Cover")
+        text = LIVE_COVER.replace(text, "Cover")
+        text = JUNK_SEGMENT.replace(text, "")
+        text = AFTER_COVER.replace(text, "$1")
+        return Tidy(text.replace(Regex("\\s{2,}"), " ").trim(), live)
+    }
+
+    /** "ㅣ" (a lone vowel, never a word on its own), "｜", "│" and a spaced lower-case "l" used as bars. */
+    private val BAR = Regex("""\s*[ㅣ｜│]\s*|\s+l\s+""")
+    private val LIVE_WORD = Regex("""(?i)live\s*cover|라이브\s*커버""")
+    private val LEADING_TAG = Regex(
+        """(?i)^\s*[\[【(]\s*(?:4k|8k|hd|fhd|uhd|live\s*clip|live|mv|m/v|lyrics?|가사|\d{2,4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2})\s*[\]】)]\s*""",
+    )
+    private val TRAILING_TAG = Regex(
+        """(?i)\s*[\[【(]\s*(?:eng\s*sub|kor\s*sub|engsub|sub|가사(?:\s*/\s*해석)?|해석|lyrics?|4k|hd)\s*[\]】)]\s*$""",
+    )
+    private val DECORATED_COVER = Regex("""(?i)\s*[「【]\s*(?:live\s+)?cover\s*[」】]|\s*[(\[]\s*live\s+cover\s*[)\]]""")
+    private val LIVE_COVER = Regex("""(?i)(?<![a-z])live\s+cover(?![a-z])|라이브\s*커버""")
+    private val JUNK_SEGMENT = Regex("""(?i)\s*\|\s*(?:가사|lyrics?|가사\s*/\s*해석|해석)\s*(?=\||$)""")
+    private val AFTER_COVER = Regex("""(?i)((?<![a-z])cover(?:ed)?|(?<![가-힣])커버)\.?\s*\|.*$""")
+
+    /** "X - Y Live Cover" (no "by", no channel to go on): a live clip names its singer first. */
+    private fun readLive(raw: String): Cover? {
+        val tail = TRAILING_COVER_WORD.find(raw) ?: return null
+        val head = raw.substring(0, tail.range.first).trimEnd()
+        if (splitTopLevelSlash(head) != null || splitTopLevelPipe(head) != null) return null
+        val (left, right) = splitTopLevelDash(head) ?: splitTopLevelDash(head, unspaced = true) ?: return null
+        val singer = cleanName(left)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        return songCover(right, singer)
+    }
+
+    private val ANY_COVER_WORD = Regex("""(?i)\s*(?<![a-z])cover(?:ed)?(?![a-z])\.?|\s*(?<![가-힣])커버(?![가-힣])""")
+
+    /** "[오화요] Ohwayo - 지금부터 (원곡 : Hebi) Cover": the singer in brackets up front. */
+    private val LEADING_SINGER_TAG = Regex("""^[\[【]\s*([^\[\]【】\d][^\[\]【】]{0,24}?)\s*[\]】]\s*(.+)$""")
+
+    private fun readG(raw: String): Cover? {
+        val match = LEADING_SINGER_TAG.find(raw) ?: return null
+        val singer = cleanName(match.groupValues[1])?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        // What follows the first bar is the clipper's tags: "… ㅣ오화요 클립ㅣ허니즈".
+        var rest = match.groupValues[2].substringBefore(" | ").trim()
+        if (!TRAILING_COVER_WORD.containsMatchIn(rest) && !ORIGINAL_CREDIT.containsMatchIn(rest) && !ANY_COVER_WORD.containsMatchIn(rest)) {
+            return null
+        }
+        // The word itself, wherever it fell — "곡명 Cover (원곡 : X)" keeps its credit.
+        rest = ANY_COVER_WORD.replace(rest, "").trim().ifEmpty { return null }
+        val dash = splitTopLevelDash(rest)
+        // The singer's name again, romanised, before the song: "Ohwayo - …".
+        if (dash != null && !hasHangul(dash.first) && !hasKanaOrHan(dash.first) && dash.first.split(' ').size <= 2) {
+            return songCover(dash.second, singer)
+        }
+        return if (dash != null) headCover(rest, singer) else songCover(rest, singer)
+    }
+
+    /** "조별하 & 오화요 - All For You | 원곡: 서인국 정은지": a credited original makes it a cover. */
+    private fun readCredit(raw: String): Cover? {
+        val match = ORIGINAL_CREDIT.find(raw) ?: return null
+        val artist = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] }) ?: return null
+        val head = raw.removeRange(match.range).trim().trimEnd('|', '/', ' ')
+        val (left, right) = splitTopLevelDash(head) ?: return null
+        val singer = cleanName(left)?.takeUnless { isVersionWord(it) } ?: return null
+        val title = cleanTitle(right) ?: return null
+        return Cover(title = title, originalArtist = artist, singer = singer)
+    }
+
+    /** The last " | " outside any bracket: "곡명 - 원곡자 | 부른사람 Cover". */
+    private fun splitTopLevelPipe(text: String): Pair<String, String>? {
+        var depth = 0
+        var at = -1
+        for (i in text.indices) {
+            when (text[i]) {
+                '(', '[', '（', '【', '{', '「', '『' -> depth++
+                ')', ']', '）', '】', '}', '」', '』' -> if (depth > 0) depth--
+                '|' -> if (depth == 0) at = i
+            }
+        }
+        if (at < 0) return null
+        val left = text.substring(0, at).trim()
+        val right = text.substring(at + 1).trim()
+        return if (left.isNotEmpty() && right.isNotEmpty()) left to right else null
+    }
+
     // ---- Shapes -------------------------------------------------------------
 
     private fun readA(raw: String, channel: String, allowBareTag: Boolean = true): Cover? {
@@ -304,8 +410,11 @@ object CoverTitles {
         val head = raw.substring(0, tail.range.first).trimEnd()
         // "곡명(원곡자) / 오화요Cover": after a slash, the name is who sings —
         // on any channel ("아오쿠모 린 Cover" on a fan's account).
-        splitTopLevelSlash(head)?.let { (song, name) ->
-            val singer = cleanName(name)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
+        // "곡명 - 원곡자 | 부른사람 Cover" (a bar, from a clip or the singer's own channel) the same way.
+        (splitTopLevelSlash(head) ?: splitTopLevelPipe(head))?.let { (song, name) ->
+            // "ㅣ(Akane Lize) Cover": a name wholly in brackets is still the name.
+            val bare = name.trim().removeSurrounding("(", ")").removeSurrounding("（", "）")
+            val singer = cleanName(bare)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
             if (singer != null) songFirst(song, singer)?.let { return it }
         }
         // "Cover" at the end makes a dash without spaces a split too
@@ -426,10 +535,20 @@ object CoverTitles {
                 val inner = rest.removeRange(group.range).trim()
                 when {
                     inner.isEmpty() -> Unit
-                    credit.isEmpty() || isGenericCredit(credit) -> rest = inner
+                    // "(『명조』 OST)", "(최애의 아이 OST)": where it is from, not whose.
+                    credit.isEmpty() || isGenericCredit(credit) || OST.containsMatchIn(credit) -> rest = inner
                     isVersionWord(credit) || isDescriptor(credit) || isTranslation(inner, credit) -> Unit
                     else -> {
-                        artist = cleanName(credit)
+                        // "[恋風邪にのせて - Vaundy]": the original title and the
+                        // artist together — the artist is the side in Latin
+                        // letters against kana, or else the first.
+                        val pair = splitTopLevelDash(credit)
+                        artist = if (pair == null) {
+                            cleanName(credit)
+                        } else {
+                            val (a, b) = pair
+                            cleanName(if (hasKanaOrHan(a) && !hasKanaOrHan(b)) b else a)
+                        }
                         rest = inner
                     }
                 }
@@ -445,11 +564,15 @@ object CoverTitles {
     /** The bracket gives [name] in the other script — a reading or a translation, not a person. */
     private fun isTranslation(name: String, bracket: String): Boolean =
         (hasKanaOrHan(name) && !hasHangul(name) && hasHangul(bracket) && !hasKanaOrHan(bracket)) ||
-            (hasHangul(name) && hasKanaOrHan(bracket) && !hasHangul(bracket))
+            (hasHangul(name) && hasKanaOrHan(bracket) && !hasHangul(bracket)) ||
+            // "An Unaware Drunk (酔いどれ知らず)": a phrase in hiragana is a title, not a name.
+            (!hasKanaOrHan(name) && !bracket.contains(" - ") && bracket.count { it in '぀'..'ゟ' } >= 3 && bracket.length >= 6)
 
     private val GENERIC_CREDIT = Regex(
         """(?i)^(?:vocaloid|보컬로이드|보카로|utau|cevio|synth\s*v|synthesizer\s*v|歌ってみた|cover|커버|노래)$""",
     )
+
+    private val OST = Regex("""(?i)\bost\b|o\.s\.t""")
 
     /** A voicebank or a word, not whose song it is. */
     private fun isGenericCredit(text: String): Boolean = GENERIC_CREDIT.matches(text.trim())
@@ -580,6 +703,9 @@ object CoverTitles {
         val dashName = title.length > 1 && title[0] == '-' && title[1].isLetterOrDigit()
         title = title.trim(' ', '-', '–', '/', '|', ',', '"', '\'', '“', '”', '「', '」', '『', '』')
         if (dashName && title.isNotEmpty()) title = "-$title"
+        // "여우의 별자리 「심월과 달의 노래」": a quote the title opens, it closes.
+        if (title.count { it == '「' } > title.count { it == '」' }) title += "」"
+        if (title.count { it == '『' } > title.count { it == '』' }) title += "』"
         return title.takeIf { it.isNotEmpty() }
     }
 

@@ -117,6 +117,33 @@ class LyricsMatchingTest {
     }
 
     @Test
+    fun clipperTitlesAreRead() {
+        // Fan clip channels' dressing: bars of all kinds, 「COVER」, Live Cover, [4K]/[ENG SUB], dates, tags after the word.
+        fun check(title: String, channel: String, song: String, original: String?, singer: String) {
+            val c = assertNotNull(CoverTitles.read(title, channel, null), title)
+            assertEquals(song, c.title, title)
+            assertEquals(original, c.originalArtist, title)
+            assertEquals(singer, c.singer, title)
+        }
+        check("Ref:rain - Aimerㅣ아라하시 타비(Arahashi Tabi) 「COVER」", "아라하시 타비 ARAHASHI TABI", "Ref:rain", "Aimer", "아라하시 타비")
+        check("[오화요] Ohwayo - 지금부터 (원곡 : Hebi) LIVE COVERㅣ오화요 키리누키ㅣ허니즈", "레몬크림소스", "지금부터", "Hebi", "오화요")
+        check("[오화요] Ohwayo - 나만 몰랐던 이야기 (원곡 : 아이유) LIVE COVER l 허니즈ㅣ오화요 다시보기", "레몬크림소스", "나만 몰랐던 이야기", "아이유", "오화요")
+        check("아카네 리제 - 抜錨(출항/발묘) Live Cover", "피엔나야 클립따줘", "抜錨(출항/발묘)", null, "아카네 리제")
+        check("오화요 - 역광 Live Cover [가사/해석]", "오화요 노래 클립 저장소", "역광", null, "오화요")
+        check("[26.05.29] Crescendo / 유즈하 리코 x 아라하시 타비 cover", "리코 노래 아카이브", "Crescendo", null, "유즈하 리코 x 아라하시 타비")
+        check("[4K] Animal Farm (BIBI) / Akane Lize Live Cover [ENG SUB]", "아카네 리제 AKANE LIZE", "Animal Farm", "BIBI", "Akane Lize")
+        check("Drowning(WOODZ)ㅣ(Akane Lize) 【Cover】", "아카네 리제 AKANE LIZE", "Drowning", "WOODZ", "Akane Lize")
+        check("하나코 나나 - IF YOU ( BIGBANG ) Live Cover. [가사]", "어오세 저장소", "IF YOU", "BIGBANG", "하나코 나나")
+        check(
+            "[Live Clip] 조별하 & 오화요 - All For You | 가사 | 원곡: 서인국 정은지 (응답하라 1997 OST)", "dawnscent",
+            "All For You", "서인국 정은지", "조별하 & 오화요",
+        )
+        check("Carried on a Love Cold [恋風邪にのせて - Vaundy] | Arahashi Tabi Cover", "아라하시 타비 ARAHASHI TABI", "Carried on a Love Cold", "Vaundy", "Arahashi Tabi")
+        // Not covers: a clip about the singer, a lyrics video of their own song.
+        assertEquals(null, CoverTitles.read("듣다보니 이상함을 느껴버린 타비", "1분 별클립", null))
+    }
+
+    @Test
     fun slashAndBracketCoverTitlesAreRead() {
         // "오화요Cover": the word touching the name, a slash before it, the original in brackets.
         val house = assertNotNull(
