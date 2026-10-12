@@ -356,6 +356,7 @@ object LyricsTiming {
         }
         // The video is the record itself: nothing to move.
         if (candidates.any { it.videoId == video.videoId }) {
+            CoverOriginals.remember(video.videoId, candidates.first { it.videoId == video.videoId })
             return Measured.Done(null, complete = true, noChange = true, note = "비디오가 원곡과 같음")
         }
 
@@ -387,6 +388,7 @@ object LyricsTiming {
                         earlyGate.withLock {
                             if (earlySent) return@withLock
                             earlySent = true
+                            CoverOriginals.remember(video.videoId, original)
                             early(
                                 Measured.Done(
                                     firstResult, complete = false, videoBytes = copy.cachedPrefix,
@@ -404,6 +406,8 @@ object LyricsTiming {
         // Nothing to measure against came down: worth another go later.
         if (tried.none { it.reached }) return Measured.Retry
         val best = tried.filter { it.result != null }.minByOrNull { it.result!!.chance }
+        // Lined up note for note: this is the record, so the cover is shown under its name.
+        best?.let { CoverOriginals.remember(video.videoId, it.original) }
         val recordPartial = best?.partial ?: tried.any { it.partial }
         val found = best?.result
             ?: return Measured.Done(null, complete, copy.cachedPrefix, clip.durationSeconds, note = note, recordPartial = recordPartial)

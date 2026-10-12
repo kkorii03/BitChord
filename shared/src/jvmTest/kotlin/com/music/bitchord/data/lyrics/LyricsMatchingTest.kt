@@ -125,6 +125,20 @@ class LyricsMatchingTest {
         assertEquals("I really want to stay at your house", house.title)
         assertEquals("Rosa Walton", house.originalArtist)
         assertEquals("오화요", house.singer)
+        // Once its record is known, a cover is shown under the record's spelling.
+        val typo = com.music.bitchord.data.model.Song(
+            videoId = "nSkTw6Z4hKY", title = "Shape of you(Edsheren) / 오화요Cover", artist = "오화요 노래주머니",
+            thumbnailUrl = null, isVideo = true,
+        )
+        try {
+            CoverTitles.knownOriginal = { id -> ("Shape of You" to "Ed Sheeran").takeIf { id == "nSkTw6Z4hKY" } }
+            val fixed = assertNotNull(CoverTitles.read(typo))
+            assertEquals("Shape of You", fixed.title)
+            assertEquals("Ed Sheeran", fixed.originalArtist)
+            assertEquals("오화요", fixed.singer)
+        } finally {
+            CoverTitles.knownOriginal = { null }
+        }
         // No spaces round the slash, lower-case "cover".
         val two = assertNotNull(CoverTitles.read("Just The Two Of Us(URBAN ZAKAPA)/오화요cover", "오화요 노래주머니", null))
         assertEquals("Just The Two Of Us", two.title)

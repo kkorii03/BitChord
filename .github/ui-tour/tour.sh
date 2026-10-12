@@ -11,7 +11,8 @@ APK=$(ls app/build/outputs/apk/dev/debug/*x86_64*.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && APK=$(ls app/build/outputs/apk/dev/debug/*.apk | head -1)
 echo "APK: $APK"
 
-adb shell "setprop persist.sys.locale ko-KR; setprop ctl.restart zygote"
+adb root; sleep 3; adb wait-for-device
+adb shell "setprop persist.sys.locale ko-KR; setprop persist.sys.language ko; setprop persist.sys.country KR; setprop ctl.restart zygote"
 sleep 20
 adb wait-for-device
 for i in $(seq 1 60); do [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ] && break; sleep 3; done

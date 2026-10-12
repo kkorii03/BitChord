@@ -101,13 +101,31 @@ object CoverTitles {
 
     private val ANY_GROUP = Regex("""\s*[(\[（【][^()\[\]（）【】]*[)\]）】]""")
 
+    /**
+     * The catalogue's own (title, artist) for a cover video whose original
+     * recording has been found and measured against — "Shape of You" / "Ed
+     * Sheeran" where the upload wrote "Shape of you(Edsheren)". Set by the app.
+     */
+    @Volatile
+    var knownOriginal: (videoId: String) -> Pair<String, String>? = { null }
+
     /** The cover a song plays as, or null for anything that is not one. */
     fun read(song: Song): Cover? =
         // A row that lost its video flag on the way — history and Recents
         // shelves often draw an upload with a square thumbnail — is still a
         // cover when its title says so outright. Only the shapes that can't be
         // an ordinary track are read for it.
-        read(song.title, song.artist, song.artistId, unambiguousOnly = !song.isVideo)
+        read(song.title, song.artist, song.artistId, unambiguousOnly = !song.isVideo)?.let { cover ->
+            // Spelled the way the record is, once the record is known: covers
+            // are titled by hand, typos and capitals and all.
+            val known = runCatching { knownOriginal(song.videoId) }.getOrNull()
+            if (known == null) cover
+            else cover.copy(
+                title = known.first.ifBlank { cover.title },
+                originalArtist = known.second.ifBlank { cover.originalArtist.orEmpty() }.ifBlank { null },
+                orderUnsure = false,
+            )
+        }
 
     fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? {
         val raw = title.trim()
