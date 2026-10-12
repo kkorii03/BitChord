@@ -701,11 +701,31 @@ object Innertube {
         /** The catalogue to answer from; "ko"/"KR" lists Korean releases under their Korean names. */
         hl: String = "en",
         gl: String = "US",
-    ): JsonObject =
-        postMusicAnonymous("search", hl, gl) {
+    ): JsonObject {
+        val anonymous = postMusicAnonymous("search", hl, gl) {
             put("query", query)
             params?.let { put("params", it) }
         }
+        // In Korea YouTube Music answers a signed-out search with no songs or
+        // videos at all — an empty result, every time, whatever hl/gl/client
+        // is asked for (the filter chips don't even offer "Songs"). That left
+        // every lookup made through here — the original behind a cover, a
+        // song's original-language name, an official video — empty for a
+        // listener there. Signed in, the same search answers; so when the
+        // anonymous one comes back without a single item and there is a
+        // session, it is asked again with it.
+        if (cookie == null || anonymous.toString().contains("musicResponsiveListItemRenderer")) return anonymous
+        return try {
+            postMusic("search") {
+                put("query", query)
+                params?.let { put("params", it) }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            anonymous
+        }
+    }
 
     /** The stats endpoints a player response nominates for one playback. */
     data class PlaybackTracking(
