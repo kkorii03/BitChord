@@ -28,7 +28,9 @@ object AndroidStreamHooks {
         // from everything, chatter only from the paths still being tuned, each
         // line cut short (a search response can run to pages).
         TrackLog.echo = { level, tag, message, error ->
-            if (BuildConfig.DEBUG || level != 'D' || tag in RELEASE_DEBUG_TAGS) {
+            // `adb shell setprop log.tag.BitChord DEBUG` opens a tag's chatter on a
+            // release build too, for a phone being diagnosed over USB.
+            if (BuildConfig.DEBUG || level != 'D' || tag in RELEASE_DEBUG_TAGS || Log.isLoggable(tag.take(23), Log.DEBUG)) {
                 val text = if (BuildConfig.DEBUG || message.length <= RELEASE_LINE_CHARS) message else message.take(RELEASE_LINE_CHARS) + "…"
                 when (level) {
                     'D' -> Log.d(tag, text, error)
