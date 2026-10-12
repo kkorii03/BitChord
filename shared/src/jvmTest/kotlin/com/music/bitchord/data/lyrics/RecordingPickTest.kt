@@ -26,6 +26,17 @@ class RecordingPickTest {
     }
 
     @Test
+    fun theArtistsOwnRecordBeatsANamesakeWithTheExactTitle() {
+        // From the listener's playlist: "i hate you, i love you(gnash) / 오화요Cover".
+        val rows = listOf(
+            row("x", "I Hate You, I Love You", "Teesha, Young One", "3:50"),
+            row("y", "I Hate You I Love You", "Mark Miralles & Patrick Hizon", "3:44"),
+            row("g", "i hate u, i love u (feat. Olivia O'brien)", "gnash", "4:11"),
+        )
+        assertEquals("g", pick("i hate you, i love you", "gnash", rows, videoMs = 229_000L).first())
+    }
+
+    @Test
     fun theWrongArtistDoesNotHideTheRightTitle() {
         val rows = listOf(
             row("a", "がらくた - JUNK - Garakuta - JUNK", "Kenshi Yonezu"),

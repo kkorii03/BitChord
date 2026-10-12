@@ -107,16 +107,30 @@ object RecordingPick {
         val wantedTitles = titles.flatMap(::readings).toSet()
         val wantedArtists = artists.flatMap(::artistReadings).toSet()
         val askedVersion = titles.any { versionWord(it) }
-        return rows
+        val scored = rows
             .asSequence()
             .filter { !it.isVideo }
             .distinctBy { it.videoId }
             .mapIndexedNotNull { order, row -> score(row, order, wantedTitles, wantedArtists, askedVersion, videoMs)?.let { row to it } }
+            .toList()
+        // When some row is by the artist asked for, a namesake by someone else
+        // is not the record however exactly its title matches: "I Hate You I
+        // Love You" by a stranger outranked gnash's "i hate u, i love u", and
+        // only two candidates are measured.
+        val artistSeen = scored.any { (row, _) -> artistMatches(row, wantedArtists) }
+        return scored
+            .map { (row, score) -> row to if (artistSeen && !artistMatches(row, wantedArtists)) score - OTHER_ARTIST_PENALTY else score }
             .sortedByDescending { it.second }
             .map { it.first }
             .take(max)
-            .toList()
     }
+
+    private fun artistMatches(row: Song, artists: Set<String>): Boolean {
+        val rowArtists = artistReadings(row.artist)
+        return rowArtists.any { it in artists } || rowArtists.any { r -> artists.any { a -> contains(r, a) } }
+    }
+
+    private const val OTHER_ARTIST_PENALTY = 100
 
     private fun score(
         row: Song,
