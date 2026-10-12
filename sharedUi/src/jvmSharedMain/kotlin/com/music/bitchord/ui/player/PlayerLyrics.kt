@@ -108,6 +108,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -232,6 +233,13 @@ private const val BACKING_FADE_LEAD = 1.6f
  * lead's glow inset so the two read as one line rather than two rows.
  */
 private val SUB_LYRIC_FONT_SIZE = 20.sp
+
+/** Phrase-based word breaking: Korean keeps its words whole across a wrap (Android 13+). */
+private val LYRIC_LINE_BREAK = LineBreak(
+    strategy = LineBreak.Strategy.HighQuality,
+    strictness = LineBreak.Strictness.Strict,
+    wordBreak = LineBreak.WordBreak.Phrase,
+)
 private val SUB_LYRIC_LINE_HEIGHT = 25.sp
 private val SUB_BACKING_FONT_SIZE = 16.sp
 private val SUB_BACKING_LINE_HEIGHT = 21.sp
@@ -2015,7 +2023,11 @@ internal fun LyricsPanel(
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
                     )
-                }
+                }.copy(
+                    // Korean wraps at the spaces between words, as Apple Music
+                    // sets it, not between any two syllables ("알 / 면서도").
+                    lineBreak = LYRIC_LINE_BREAK,
+                )
                 // The stack sits fractionally back and the playing line comes
                 // forward to meet you, rather than the playing line swelling
                 // past the others — a smaller move, and one that doesn't push
