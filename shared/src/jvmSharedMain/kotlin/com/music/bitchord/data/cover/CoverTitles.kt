@@ -692,16 +692,23 @@ object CoverTitles {
             if (stripped == name) break
             name = stripped
         }
-        name = name.trim(' ', '(', ')', '[', ']', '-', '–', '·', ',', '"', '\'', '“', '”')
+        name = unquote(name.trim(' ', '(', ')', '[', ']', '-', '–', '·', ',', '"', '“', '”'))
         return name.takeIf { it.isNotEmpty() && it.length <= 60 }
     }
+
+    /**
+     * Single quotes come off only when they wrap the whole text: an apostrophe
+     * ending a word is part of it ("Star Walkin'").
+     */
+    private fun unquote(text: String): String =
+        if (text.length >= 2 && text.first() == '\'' && text.last() == '\'') text.substring(1, text.length - 1).trim() else text.trimStart('\'')
 
     private fun cleanTitle(text: String): String? {
         var title = text.trim()
         title = COVER_TAG.replace(title, " ").trim()
         // A dash touching the first letter is part of the name: "-ERROR".
         val dashName = title.length > 1 && title[0] == '-' && title[1].isLetterOrDigit()
-        title = title.trim(' ', '-', '–', '/', '|', ',', '"', '\'', '“', '”', '「', '」', '『', '』')
+        title = unquote(title.trim(' ', '-', '–', '/', '|', ',', '"', '“', '”', '「', '」', '『', '』'))
         if (dashName && title.isNotEmpty()) title = "-$title"
         // "여우의 별자리 「심월과 달의 노래」": a quote the title opens, it closes.
         if (title.count { it == '「' } > title.count { it == '」' }) title += "」"
