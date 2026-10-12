@@ -1,0 +1,55 @@
+name: Lab bundle (shared code + deps)
+
+# The shared module's classes, test classes and runtime jars in one artifact,
+# so the timing lab can run on a machine that can't afford a Gradle build
+# (and, unlike the runners, can fetch YouTube audio).
+on:
+  push:
+    branches: ['lab-bundle']
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Build and collect
+        shell: bash
+        run: |
+          chmod +x gradlew
+          cat > /tmp/cp.gradle <<'EOF'
+          allprojects {
+            tasks.register("printJvmTestCp") {
+              doLast {
+                def c = project.configurations.findByName("jvmTestRuntimeClasspath")
+                if (c != null) new File(rootDir, "cp.txt").text = c.files.join("\n")
+              }
+            }
+          }
+          EOF
+          ./gradlew -I /tmp/cp.gradle :shared:jvmTestClasses :shared:printJvmTestCp --console=plain
+          mkdir -p bundle/lib bundle/classes
+          while read -r f; do
+            [ -f "$f" ] && cp "$f" bundle/lib/
+            [ -d "$f" ] && cp -r "$f"/. bundle/classes/
+          done < cp.txt
+          cp -r shared/build/classes/kotlin/jvm/main/. bundle/classes/ 2>/dev/null || true
+          cp -r shared/build/classes/kotlin/jvm/test/. bundle/classes/ 2>/dev/null || true
+          cp -r shared/build/processedResources/jvm/main/. bundle/classes/ 2>/dev/null || true
+          du -sh bundle; ls bundle/lib | wc -l
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-bundle
+          path: bundle/
