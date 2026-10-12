@@ -364,7 +364,12 @@ object LyricsTiming {
         // still on its way, rather than once it has arrived.
         candidates
             .filter { it.localUri == null && kept(context, it.videoId) == null }
-            .forEach { AudioCache.requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(it.videoId))) }
+            .forEach {
+                AudioCache.keepForTiming(it.videoId)
+                AudioCache.requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(it.videoId)))
+            }
+        // The video too: when it is the next song being prepared, nothing plays it yet.
+        AudioCache.keepForTiming(video.videoId)
 
         // The video, as much as has arrived (it is usually the track playing,
         // and the player is the one fetching it), read once for every candidate
@@ -453,6 +458,7 @@ object LyricsTiming {
             return Tried(original, result, reached = true, partial = false, note = "$name: $verdict (저장된 원곡, ${seconds(System.currentTimeMillis() - began)})")
         }
         if (original.localUri == null) {
+            AudioCache.keepForTiming(original.videoId)
             val uri = Uri.parse(AutomixAnalysisSource.opusUri(original.videoId))
             val head = withTimeoutOrNull(HEAD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisHead(uri, HEAD_TIMEOUT_MS) } == true
             if (!head) return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 받지 못함")

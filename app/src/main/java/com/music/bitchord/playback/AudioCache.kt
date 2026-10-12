@@ -712,6 +712,29 @@ object AudioCache {
      * Analysis results are kept in their own store, so the analysis-only
      * audio has done its job by then.
      */
+    /**
+     * Recordings fetched for lyric timing — a cover's original, the next video
+     * — that no queue holds. They are "analysis only" to the sweep below, which
+     * deleted them at the next track change, usually before the measurement had
+     * read them: the original was fetched and gone, every time ("원곡을 받지 못함"),
+     * which is why video lyrics were so rarely timed. Held [TIMING_KEEP_MS].
+     */
+    private val timingKeep = LinkedHashMap<String, Long>()
+
+    fun keepForTiming(videoId: String) = synchronized(timingKeep) {
+        timingKeep.remove(videoId)
+        timingKeep[videoId] = SystemClock.elapsedRealtime()
+        while (timingKeep.size > TIMING_KEEP_MAX) timingKeep.remove(timingKeep.keys.first())
+    }
+
+    private fun keptForTiming(videoId: String): Boolean = synchronized(timingKeep) {
+        val at = timingKeep[videoId] ?: return false
+        SystemClock.elapsedRealtime() - at < TIMING_KEEP_MS
+    }
+
+    private const val TIMING_KEEP_MS = 15 * 60_000L
+    private const val TIMING_KEEP_MAX = 16
+
     fun dropForeignEntries(keep: Set<String>) {
         if (!::cache.isInitialized) return
         scope.launch {
@@ -724,7 +747,7 @@ object AudioCache {
                     meta.get(META_PLAYED, null as String?) == null
                 if (!foreign && !analysisOnly) return@forEach
                 val mediaId = meta.get(META_MEDIA_ID, null as String?)
-                if (mediaId != null && mediaId in keep) return@forEach
+                if (mediaId != null && (mediaId in keep || keptForTiming(mediaId))) return@forEach
                 runCatching { cache.removeResource(key) }
                     .onSuccess {
                         dropped++

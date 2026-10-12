@@ -157,6 +157,7 @@ internal object TranslationAhead {
             if (timing.worthMeasuring(context, song.videoId)) {
                 // Its audio coming down now, not when it starts playing, so
                 // the measurement has something to read before then.
+                com.music.bitchord.playback.AudioCache.keepForTiming(song.videoId)
                 com.music.bitchord.playback.AudioCache.requestAnalysisHead(
                     android.net.Uri.parse(com.music.bitchord.playback.smart.AutomixAnalysisSource.opusUri(song.videoId)),
                 )

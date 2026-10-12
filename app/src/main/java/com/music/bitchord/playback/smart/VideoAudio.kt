@@ -42,6 +42,7 @@ object VideoAudio {
     suspend fun wav(context: Context, videoId: String): ByteArray? = withContext(Dispatchers.IO) {
         synchronized(recent) { recent[videoId] }?.let { return@withContext it }
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
+        AudioCache.keepForTiming(videoId)
         if (!AudioCache.awaitAnalysisTrack(opus, FETCH_TIMEOUT_MS)) return@withContext null
         val copy = VersionAudioAligner.renditionToMeasure(videoId)
         if (copy == null || !copy.isComplete) return@withContext null
