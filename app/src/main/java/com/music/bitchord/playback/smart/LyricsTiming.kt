@@ -379,18 +379,24 @@ object LyricsTiming {
         mark = lap("비디오 대기", mark)
         val complete = copy.isComplete || video.localUri != null
         val job = currentCoroutineContext()[Job]
-        val clip = withContext(analysis) { videoFeatures(context, video, copy.key, job) } ?: return Measured.Retry
-        lap("비디오 분석", mark)
-        val videoNote = "비디오 ${clip.durationSeconds.roundToInt()}초" + if (complete) "" else " (받는 중)"
+        // The video's opening first: decoding all of it before any answer was the
+        // slowest step (two minutes on a slow device). The rest is read on in the
+        // background — from where the opening stopped — for the whole-record pass.
+        val opening = withContext(analysis) { videoFeatures(context, video, copy.key, job, VIDEO_OPENING_SECONDS) }
+            ?: return Measured.Retry
+        lap("비디오 앞부분 분석", mark)
+        val openingIsAll = opening.durationSeconds < VIDEO_OPENING_SECONDS - 5
+        val earlyNote = "비디오 앞 ${opening.durationSeconds.roundToInt()}초"
 
         // Every candidate at once; the first to line up on its opening is kept
         // and shown straight away, while all of them go on to the whole record.
         val earlyGate = Mutex()
         var earlySent = false
-        val tried = coroutineScope {
+        val (tried, clip) = coroutineScope {
+            val full = async(analysis) { if (openingIsAll) opening else videoFeatures(context, video, copy.key, job) ?: opening }
             candidates.map { original ->
                 async {
-                    tryRecording(context, original, video, clip, complete, job) { firstResult, firstNote ->
+                    tryRecording(context, original, video, opening, openingIsAll && complete, full, complete, job) { firstResult, firstNote ->
                         earlyGate.withLock {
                             if (earlySent) return@withLock
                             earlySent = true
@@ -398,15 +404,16 @@ object LyricsTiming {
                             early(
                                 Measured.Done(
                                     firstResult, complete = false, videoBytes = copy.cachedPrefix,
-                                    videoSeconds = clip.durationSeconds, recordPartial = true,
-                                    note = "$firstNote\n$times · $videoNote (원곡 앞부분으로 먼저 맞춤)",
+                                    videoSeconds = opening.durationSeconds, recordPartial = true,
+                                    note = "$firstNote\n$times · $earlyNote (원곡 앞부분으로 먼저 맞춤)",
                                 ),
                             )
                         }
                     }
                 }
-            }.awaitAll()
+            }.awaitAll() to full.await()
         }
+        val videoNote = "비디오 ${clip.durationSeconds.roundToInt()}초" + if (complete) "" else " (받는 중)"
         val note = (tried.map { it.note } + "$times · $videoNote · 전체 ${seconds(System.currentTimeMillis() - began)}")
             .joinToString("\n")
         // Nothing to measure against came down: worth another go later.
@@ -425,35 +432,41 @@ object LyricsTiming {
     }
 
     /**
-     * [original] against [clip]: at once if its profiles are kept, otherwise
-     * on its opening as soon as that much is on disk (handing a match to
-     * [first]) and then on all of it.
+     * [original] against the video: its opening against the video's [opening]
+     * first (handing a match to [first]), then all of it against the [full] video.
      */
     private suspend fun tryRecording(
         context: Context,
         original: Song,
         video: Song,
-        clip: ChromaAlignment.Features,
+        /** The video's opening — what the first, quick answer is made from. */
+        opening: ChromaAlignment.Features,
+        openingComplete: Boolean,
+        /** All of the video that is on disk, read on in the background. */
+        full: kotlinx.coroutines.Deferred<ChromaAlignment.Features>,
         complete: Boolean,
         job: Job?,
         first: suspend (ChromaAlignment.Result, String) -> Unit,
     ): Tried {
         val began = System.currentTimeMillis()
         val name = "'${original.title}' / '${original.artist}'"
-        suspend fun aligned(record: ChromaAlignment.Features): Pair<ChromaAlignment.Result?, String> =
-            withContext(analysis) {
-                val result = ChromaAlignment.align(record, clip, videoComplete = complete)
+        suspend fun aligned(record: ChromaAlignment.Features, whole: Boolean = true): Pair<ChromaAlignment.Result?, String> {
+            val clip = if (whole) full.await() else opening
+            return withContext(analysis) {
+                val result = ChromaAlignment.align(record, clip, videoComplete = if (whole) complete else openingComplete)
                 result to ChromaAlignment.lastVerdict
             }
+        }
         fun log(verdict: String, record: ChromaAlignment.Features, stage: String) = TrackLog.d(
             TAG,
             "chroma $name (${original.videoId}) -> ${video.videoId} [$stage]: $verdict " +
-                "(record ${record.durationSeconds.roundToInt()} s, video ${clip.durationSeconds.roundToInt()} s" +
-                (if (complete) "" else " so far") + ")",
+                "(record ${record.durationSeconds.roundToInt()} s" + (if (complete) "" else ", video so far") + ")",
             video.videoId,
         )
 
         kept(context, original.videoId)?.let { record ->
+            // A record already known: an answer from the video's opening at once, then the whole.
+            aligned(record, whole = false).first?.let { quick -> first(quick, "$name: 저장된 원곡, 비디오 앞부분") }
             val (result, verdict) = aligned(record)
             log(verdict, record, "kept")
             return Tried(original, result, reached = true, partial = false, note = "$name: $verdict (저장된 원곡, ${seconds(System.currentTimeMillis() - began)})")
@@ -473,11 +486,11 @@ object LyricsTiming {
                 // measurement to be dropped; its first ~70 s decode in a quarter of
                 // the time, and the rest only refines the answer.
                 val until = if (alreadyWhole) OPENING_SECONDS else MAX_SECONDS
-                withContext(analysis) { recordFeatures(context, original, job, until) }?.let { opening ->
-                    val (result, verdict) = aligned(opening)
-                    log(verdict, opening, "opening")
+                withContext(analysis) { recordFeatures(context, original, job, until) }?.let { start ->
+                    val (result, verdict) = aligned(start, whole = false)
+                    log(verdict, start, "opening")
                     if (result != null) {
-                        first(result, "$name: $verdict (원곡 앞 ${opening.durationSeconds.roundToInt()}초, ${seconds(System.currentTimeMillis() - began)})")
+                        first(result, "$name: $verdict (원곡 앞 ${start.durationSeconds.roundToInt()}초, ${seconds(System.currentTimeMillis() - began)})")
                     }
                 }
                 withTimeoutOrNull(RECORD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisTrack(uri, RECORD_TIMEOUT_MS) }
@@ -698,6 +711,9 @@ object LyricsTiming {
 
     /** The record's opening read first when all of it is already on disk. */
     private const val OPENING_SECONDS = 75.0
+
+    /** The video's opening read first: room for an intro before the record's [OPENING_SECONDS]. */
+    private const val VIDEO_OPENING_SECONDS = 150.0
 
     /**
      * Measurements outlive whoever asked: the lyrics screen and the next-song
