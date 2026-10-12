@@ -65,7 +65,7 @@ object YtMusicRepository {
      */
     suspend fun home(): Result<HomeFeed> = call("home") {
         val home = Innertube.browse("FEmusic_home")
-        HomeFeed(InnertubeParser.parseHome(home), InnertubeParser.continuationToken(home))
+        HomeFeed(contentCountryCharts(InnertubeParser.parseHome(home)), InnertubeParser.continuationToken(home))
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */
@@ -73,8 +73,41 @@ object YtMusicRepository {
 
     /** Extra Play shelves are independently fetchable so each can appear as soon as it arrives. */
     suspend fun homeSupplement(browseId: String): Result<List<HomeShelf>> = call("home:$browseId") {
-        val shelves = shelvesOf(browseId)
+        val shelves = contentCountryCharts(shelvesOf(browseId))
         if (browseId == "FEmusic_explore") contentCountrySongs(shelves) else shelves
+    }
+
+    /**
+     * Every chart-like song shelf — "인기곡", "인기 급상승", "Trending" — on Home,
+     * its later pages or a supplement, filled from the content country's
+     * chart: the feed itself picks them by the account's registered country.
+     */
+    private suspend fun contentCountryCharts(shelves: List<HomeShelf>): List<HomeShelf> {
+        if (shelves.none { TRENDING_TITLE.matches(it.title) }) return shelves
+        val chart = contentCountryChart() ?: return shelves
+        return shelves.map { shelf ->
+            if (TRENDING_TITLE.matches(shelf.title)) {
+                shelf.copy(items = chart.items, moreBrowseId = chart.moreBrowseId, moreParams = chart.moreParams)
+            } else {
+                shelf
+            }
+        }
+    }
+
+    private val TRENDING_TITLE = Regex("""(?i)^\s*(?:인기곡|인기\s*급상승(?:\s*곡)?|급상승|trending(?:\s+(?:songs|now))?|top\s+songs)\s*$""")
+
+    @Volatile
+    private var chartCache: Triple<String, Long, HomeShelf>? = null
+
+    /** The content country's top song shelf, kept half an hour (Home and its pages all ask). */
+    private suspend fun contentCountryChart(): HomeShelf? {
+        val country = Innertube.contentCountry()?.takeIf { it.isNotBlank() } ?: return null
+        chartCache?.let { (c, at, shelf) -> if (c == country && System.currentTimeMillis() - at < 30 * 60_000L) return shelf }
+        fun songs(shelf: HomeShelf) = shelf.items.isNotEmpty() && shelf.items.count { it.videoId != null } * 2 > shelf.items.size
+        val chart = runCatching { InnertubeParser.parseHome(Innertube.charts(country)) }.getOrNull().orEmpty()
+            .firstOrNull { songs(it) && it.items.size >= 5 } ?: return null
+        chartCache = Triple(country, System.currentTimeMillis(), chart)
+        return chart
     }
 
     /**
@@ -90,8 +123,8 @@ object YtMusicRepository {
         fun songs(shelf: HomeShelf) = shelf.items.isNotEmpty() && shelf.items.count { it.videoId != null } * 2 > shelf.items.size
         val index = shelves.indexOfFirst(::songs)
         if (index < 0) return shelves
-        val chart = runCatching { InnertubeParser.parseHome(Innertube.charts(country)) }.getOrNull().orEmpty()
-            .firstOrNull { songs(it) && it.items.size >= 5 } ?: return shelves
+        if (country.isBlank()) return shelves
+        val chart = contentCountryChart() ?: return shelves
         return shelves.toMutableList().apply {
             set(index, shelves[index].copy(items = chart.items, moreBrowseId = chart.moreBrowseId, moreParams = chart.moreParams))
         }
@@ -111,7 +144,7 @@ object YtMusicRepository {
     suspend fun moreHome(token: String): Result<HomeFeed> = call("home:more") {
         val response = Innertube.browseContinuation(token)
         HomeFeed(
-            shelves = InnertubeParser.parseHomeContinuation(response),
+            shelves = contentCountryCharts(InnertubeParser.parseHomeContinuation(response)),
             continuation = InnertubeParser.continuationToken(response),
         )
     }
