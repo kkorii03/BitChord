@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">BitChord</string>
     <string name="playback_channel_name">지금 재생 중</string>
     <string name="download_channel_name">다운로드</string>
     <string name="download_channel_description">음악 폴더에 저장 중인 노래</string>
@@ -841,6 +842,7 @@
     <string name="listen_together_server_online">온라인 · %1$dms</string>
     <string name="listen_together_server_online_fallback">온라인(기본 서버로 대체) · %1$dms</string>
     <string name="listen_together_server_offline">현재 연결할 수 없음</string>
+    <string name="listen_together_server_offline_dash">—</string>
     <string name="listen_together_server_checking">확인 중…</string>
     <string name="listen_together_server_unknown">탭하여 확인</string>
     <string name="listen_together_custom_server">내 서버 사용</string>
