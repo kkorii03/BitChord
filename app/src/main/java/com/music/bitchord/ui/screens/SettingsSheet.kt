@@ -274,6 +274,8 @@ fun SettingsScreen(
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val skipNonMusicParts by AppSettings.skipNonMusicParts.collectAsStateWithLifecycle()
+    val skipSponsorParts by AppSettings.skipSponsorParts.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
@@ -627,6 +629,36 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
                 )
+            }
+            val skipNonMusicPartsTitle = stringResource(R.string.skip_non_music_parts)
+            row(skipNonMusicPartsTitle, "sponsor", "skip", "intro", "outro", "건너뛰기") {
+                SettingsRow(
+                    icon = Icons.Rounded.MusicOff,
+                    title = skipNonMusicPartsTitle,
+                    subtitle = stringResource(R.string.skip_non_music_parts_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = skipNonMusicParts,
+                            onCheckedChange = AppSettings::setSkipNonMusicParts,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSkipNonMusicParts(!skipNonMusicParts) },
+                )
+            }
+            if (skipNonMusicParts) {
+                val skipSponsorPartsTitle = stringResource(R.string.skip_sponsor_parts)
+                row(skipSponsorPartsTitle, "sponsor", "self promo", "intro", "outro", divided = false) {
+                    SettingsSubRow(
+                        title = skipSponsorPartsTitle,
+                        subtitle = stringResource(R.string.skip_sponsor_parts_subtitle),
+                        checked = skipSponsorParts,
+                        onCheckedChange = AppSettings::setSkipSponsorParts,
+                    )
+                }
             }
             val outputPrecisionTitle = stringResource(R.string.output_precision)
             row(outputPrecisionTitle, "pcm", "bit depth", "sample rate", "dac") {

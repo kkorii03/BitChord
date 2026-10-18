@@ -256,6 +256,11 @@
     <string name="prefer_music_only_subtitle">뮤직비디오의 경우, 카탈로그 오디오 버전을 찾아 불러오는 동안 비디오 정보를 표시합니다.</string>
     <string name="smart_version_alignment">스마트 오디오 정렬</string>
     <string name="smart_version_alignment_subtitle">오디오 파형을 분석하여 정확히 대응하는 재생 지점을 맞춥니다.</string>
+    <string name="skip_non_music_parts">음악 아닌 구간 건너뛰기</string>
+    <string name="skip_non_music_parts_subtitle">SponsorBlock 공개 데이터로 커버 영상의 인사·잡담 구간을 건너뜁니다</string>
+    <string name="skip_sponsor_parts">스폰서 구간도 건너뛰기</string>
+    <string name="skip_sponsor_parts_subtitle">광고·자기홍보·인트로·아웃트로</string>
+    <string name="skip_segment_done">음악 아닌 구간을 건너뛰었어요</string>
     <string name="equalizer">EQ</string>
     <string name="equalizer_subtitle">톤, 7밴드 및 밸런스</string>
     <string name="equalizer_footer">시스템으로 전달되기 전에 BitChord 내에서 사운드를 조절합니다.</string>

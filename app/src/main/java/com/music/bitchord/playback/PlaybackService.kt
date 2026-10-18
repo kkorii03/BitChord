@@ -13,6 +13,7 @@ import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import com.music.bitchord.data.TelemetryProvenance
 import kotlinx.coroutines.sync.Mutex
@@ -45,6 +46,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.PlayerMessage
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
@@ -272,6 +274,12 @@ private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 
 /** How long a song plays before the one after it has its lyrics translated. */
 private const val TRANSLATION_AHEAD_DELAY_MS = 12_000L
+
+/**
+ * How long after our own jump out of a segment a seek still reads as ours
+ * rather than as the listener's — see the seek handling in [PlaybackService].
+ */
+private const val OWN_SKIP_SETTLE_MS = 1_000L
 
 private fun Song.canStartStation(): Boolean =
     videoId.isNotBlank() &&
@@ -827,6 +835,31 @@ class PlaybackService : MediaLibraryService() {
     private var lyricsTickerJob: Job? = null
 
     /**
+     * SponsorBlock's segments for the track now playing — see [SkipSegments].
+     * Empty until the lookup lands, and for tracks with none.
+     */
+    private var skipSegments: List<SkipSegment> = emptyList()
+
+    /** Which video [skipSegments] belongs to, so a message never reads the last track's. */
+    private var skipSegmentsVideoId: String? = null
+
+    /** Segments already jumped out of, or deliberately left alone, this playback. */
+    private val skippedSegmentIds = mutableSetOf<String>()
+
+    /** The in-flight lookup. Playback never waits for it. */
+    private var skipSegmentsJob: Job? = null
+
+    private val skipSegmentMessages = mutableListOf<PlayerMessage>()
+
+    /** When the listener last seeked by hand, and where that landing was. */
+    private var lastManualSeekAtMs = 0L
+    private var lastManualSeekPositionMs = 0L
+
+    /** Where our own jump landed, so its seek is not mistaken for a manual one. */
+    private var skipSeekAtMs = 0L
+    private var skipSeekTargetMs = -1L
+
+    /**
      * Everything the service books against the player it is currently on.
      *
      * A field rather than an anonymous object registered once, because the
@@ -909,6 +942,8 @@ class PlaybackService : MediaLibraryService() {
             if (isPlaying) {
                 pushDiscordPresence(exoPlayer)
                 startLyricsTicker()
+                checkSkipSegments()
+                scheduleSkipSegmentMessages()
             } else {
                 clearDiscordPresence()
                 stopLyricsTicker()
@@ -953,9 +988,25 @@ class PlaybackService : MediaLibraryService() {
         ) {
             val exoPlayer = player ?: return
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                // Remember where the listener put the playhead. A jump into a
+                // SponsorBlock segment made by hand is left alone for a moment
+                // rather than pulled straight back out — see [checkSkipSegments].
+                // Our own jump out of a segment also arrives here and is not
+                // the listener asking for anything.
+                val now = SystemClock.elapsedRealtime()
+                val ours = skipSeekTargetMs >= 0L &&
+                    now - skipSeekAtMs < OWN_SKIP_SETTLE_MS &&
+                    abs(newPosition.positionMs - skipSeekTargetMs) < OWN_SKIP_SETTLE_MS
+                if (ours) {
+                    skipSeekTargetMs = -1L
+                } else {
+                    lastManualSeekAtMs = now
+                    lastManualSeekPositionMs = newPosition.positionMs
+                }
                 if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
                 updateLyricSubtitle()
             }
+            scheduleSkipSegmentMessages()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -3081,6 +3132,7 @@ class PlaybackService : MediaLibraryService() {
         publishWidgetState()
         loadLyricsForCurrentTrack()
         if (exoPlayer.isPlaying) startLyricsTicker()
+        loadSkipSegmentsForCurrentTrack()
     }
 
     /** The background hunt for a better copy of whatever is playing. */
@@ -6562,6 +6614,9 @@ class PlaybackService : MediaLibraryService() {
         serviceLyricsJob?.cancel()
         serviceLyricsJob = null
         serviceLyrics = null
+        skipSegmentsJob?.cancel()
+        skipSegmentsJob = null
+        cancelSkipSegmentMessages()
         cancelPrefetch()
         trackAnalyzer.release()
         loudnessRetryJob?.cancel()
@@ -6764,6 +6819,124 @@ class PlaybackService : MediaLibraryService() {
         lyricsTickerJob?.cancel()
         lyricsTickerJob = null
         updateLyricSubtitle()
+    }
+
+    /**
+     * Asks SponsorBlock about whatever just became current, and forgets the
+     * previous track's answer. Off the main thread and never in front of
+     * playback: the track is already running by the time anything lands.
+     */
+    private fun loadSkipSegmentsForCurrentTrack() {
+        skipSegmentsJob?.cancel()
+        skipSegmentsJob = null
+        cancelSkipSegmentMessages()
+        skipSegments = emptyList()
+        skipSegmentsVideoId = null
+        skippedSegmentIds.clear()
+        lastManualSeekAtMs = 0L
+        lastManualSeekPositionMs = 0L
+        skipSeekTargetMs = -1L
+        val exoPlayer = player ?: return
+        val videoId = exoPlayer.currentMediaItem?.mediaId ?: return
+        if (!AppSettings.skipNonMusicParts.value) return
+        if (!isYouTubeVideoId(videoId)) return
+        fetchSkipSegments(videoId)
+    }
+
+    private fun fetchSkipSegments(videoId: String) {
+        // Claimed before the request goes out, so nothing asks again while it is
+        // in flight — and does not retry a failed lookup for the same track
+        // either. The next track is a fresh ask.
+        skipSegmentsVideoId = videoId
+        skipSegmentsJob = scope.launch(Dispatchers.IO) {
+            val found = SkipSegments.segmentsFor(videoId)
+            withContext(Dispatchers.Main) {
+                if (player?.currentMediaItem?.mediaId != videoId) return@withContext
+                skipSegments = found
+                checkSkipSegments()
+                scheduleSkipSegmentMessages()
+            }
+        }
+    }
+
+    private fun scheduleSkipSegmentMessages() {
+        cancelSkipSegmentMessages()
+        val exoPlayer = player ?: return
+        if (!AppSettings.skipNonMusicParts.value) return
+        val videoId = exoPlayer.currentMediaItem?.mediaId ?: return
+        if (!isYouTubeVideoId(videoId)) return
+        if (skipSegmentsVideoId != videoId) return
+        if (skipSegments.isEmpty()) return
+        val positionMs = exoPlayer.currentPosition
+        val durationMs = exoPlayer.duration.takeIf { it > 0 } ?: 0L
+        val categories = skipCategories(AppSettings.skipSponsorParts.value)
+        val mediaItemIndex = exoPlayer.currentMediaItemIndex
+        skipSegments
+            .asSequence()
+            .filter { it.category in categories && it.id !in skippedSegmentIds }
+            .filter { it.startMs > positionMs }
+            .filter { !isTooMuchOfTheVideo(it, durationMs) }
+            .forEach { segment ->
+                val message = exoPlayer.createMessage { _, _ -> checkSkipSegments() }
+                    .setPosition(mediaItemIndex, segment.startMs)
+                    .setLooper(Looper.getMainLooper())
+                    .setDeleteAfterDelivery(true)
+                    .send()
+                skipSegmentMessages += message
+            }
+    }
+
+    private fun cancelSkipSegmentMessages() {
+        skipSegmentMessages.forEach { runCatching { it.cancel() } }
+        skipSegmentMessages.clear()
+    }
+
+    /**
+     * Jumps the playhead out of a SponsorBlock segment when its message fires.
+     *
+     * This is an ordinary seek: lyrics follow the playhead and no lyric offset is
+     * touched — [com.music.bitchord.playback.PlaybackPosition.seeks] already tells
+     * the lyric clock a jump happened.
+     */
+    private fun checkSkipSegments() {
+        val exoPlayer = player ?: return
+        if (!exoPlayer.isPlaying) return
+        if (!AppSettings.skipNonMusicParts.value) return
+        // A party's playhead belongs to whoever is hosting it; a local jump
+        // would only be corrected back out on the next reconcile.
+        if (ListenTogether.state.value.controlsLocked) return
+        val videoId = exoPlayer.currentMediaItem?.mediaId ?: return
+        if (!isYouTubeVideoId(videoId)) return
+        if (skipSegmentsVideoId != videoId) {
+            // Switched on after this track started: ask now, or it would never
+            // be asked for this one.
+            if (skipSegmentsJob?.isActive != true) fetchSkipSegments(videoId)
+            return
+        }
+        if (skipSegments.isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+        val action = decideSkip(
+            segments = skipSegments,
+            positionMs = exoPlayer.currentPosition,
+            durationMs = exoPlayer.duration.takeIf { it > 0 } ?: 0L,
+            categories = skipCategories(AppSettings.skipSponsorParts.value),
+            skippedIds = skippedSegmentIds,
+            lastManualSeekAtMs = lastManualSeekAtMs,
+            lastManualSeekPositionMs = lastManualSeekPositionMs,
+            nowMs = now,
+        )
+        when (action) {
+            is SkipAction.None -> Unit
+            is SkipAction.Leave -> skippedSegmentIds += action.segment.id
+            is SkipAction.Skip -> {
+                skippedSegmentIds += action.segment.id
+                skipSeekAtMs = now
+                skipSeekTargetMs = action.segment.endMs
+                exoPlayer.seekTo(exoPlayer.currentMediaItemIndex, action.segment.endMs)
+                Toast.makeText(applicationContext, R.string.skip_segment_done, Toast.LENGTH_SHORT)
+                    .show()
+            }
+        }
     }
 
     private fun updateLyricSubtitle() {

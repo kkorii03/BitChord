@@ -414,6 +414,21 @@ object AppSettings {
      */
     val preferMusicOnly = MutableStateFlow(false)
 
+    /**
+     * Jumps over the parts of a YouTube video that are not the song — the
+     * greeting a cover opens with, the channel plug it ends on — using
+     * SponsorBlock's public submissions. On by default, since a VTuber cover
+     * that opens with thirty seconds of talking is the thing this is for.
+     */
+    val skipNonMusicParts = MutableStateFlow(true)
+
+    /**
+     * Widens [skipNonMusicParts] to sponsorship reads, self-promotion, intros
+     * and outros. Off by default: those are ordinary parts of a video, and a
+     * listener who wanted them gone can say so.
+     */
+    val skipSponsorParts = MutableStateFlow(false)
+
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
 
@@ -952,6 +967,8 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
+        skipSponsorParts.value = prefs.getBoolean(KEY_SKIP_SPONSOR_PARTS, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
@@ -1395,6 +1412,16 @@ object AppSettings {
     fun setPreferMusicOnly(value: Boolean) {
         preferMusicOnly.value = value
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setSkipNonMusicParts(value: Boolean) {
+        skipNonMusicParts.value = value
+        prefs.edit().putBoolean(KEY_SKIP_NON_MUSIC_PARTS, value).apply()
+    }
+
+    fun setSkipSponsorParts(value: Boolean) {
+        skipSponsorParts.value = value
+        prefs.edit().putBoolean(KEY_SKIP_SPONSOR_PARTS, value).apply()
     }
 
     fun setSmartVersionAlignment(value: Boolean) {
@@ -2258,6 +2285,8 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_SKIP_NON_MUSIC_PARTS = "skip_non_music_parts"
+    private const val KEY_SKIP_SPONSOR_PARTS = "skip_sponsor_parts"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"

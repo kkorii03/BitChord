@@ -263,6 +263,11 @@
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
     <string name="smart_version_alignment">Smart audio alignment</string>
     <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
+    <string name="skip_non_music_parts">Skip non-music parts</string>
+    <string name="skip_non_music_parts_subtitle">Skips greetings and chatting in cover videos using public SponsorBlock data</string>
+    <string name="skip_sponsor_parts">Also skip sponsor parts</string>
+    <string name="skip_sponsor_parts_subtitle">Sponsorship reads, self-promotion, intros and outros</string>
+    <string name="skip_segment_done">Skipped a non-music part</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>

@@ -133,6 +133,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         SearchHistory.init(this)
         LastPlayed.init(this)
         com.music.bitchord.playback.PartyPersonalQueueStash.init(this)
+        // SponsorBlock's cache of the segments each video has, read by
+        // PlaybackService when a track starts — see
+        // [com.music.bitchord.playback.SkipSegments].
+        com.music.bitchord.playback.SkipSegments.init(this)
         // Which tracks the listener has reverted to YouTube's own upload. Read
         // by [Song.toMediaItem], so it has to be open before the restart
         // snapshot below is turned back into queue items.
