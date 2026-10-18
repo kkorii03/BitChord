@@ -327,8 +327,14 @@ class MainActivity : AppCompatActivity() {
         // the request already standing by the time BitChordApp first reads it.
         // A recreation replays the task's original intent, and that intent may
         // still carry a widget's extra; the request was served the first time
-        // and coming back to the app must not raise the player again.
-        PlayerDeepLink.consume(intent, recreating = savedInstanceState != null)
+        // and coming back to the app must not raise the player again. A task
+        // picked out of Recents is the other replay: it starts from the old
+        // intent without saved state, so its history flag is checked too.
+        PlayerDeepLink.consume(
+            intent,
+            recreating = savedInstanceState != null,
+            launchedFromHistory = intent.isLaunchedFromHistory(),
+        )
         JamInviteLink.consume(intent)
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
@@ -424,11 +430,24 @@ class MainActivity : AppCompatActivity() {
         // Replaces what getIntent() returns, so the extra this consumes is the
         // one that just arrived and not the one the task was started with.
         setIntent(intent)
-        PlayerDeepLink.consume(intent)
+        PlayerDeepLink.consume(
+            intent,
+            launchedFromHistory = intent.isLaunchedFromHistory(),
+        )
         JamInviteLink.consume(intent)
         MusicLink.consume(intent)
     }
 }
+
+/**
+ * Whether the system relaunched this activity from the recents history rather
+ * than starting it afresh. Such a launch re-delivers the task's original
+ * intent — for a task that a widget started, that means its open-player extra
+ * comes back — and it does so with no saved state, so `savedInstanceState`
+ * alone cannot tell it apart from a real widget tap.
+ */
+private fun Intent.isLaunchedFromHistory(): Boolean =
+    flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

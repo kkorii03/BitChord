@@ -101,7 +101,7 @@ class YouTubeFallbackFeedTest {
     }
 
     @Test
-    fun `shelves keep the Music Home order and drop repeats`() {
+    fun `shelves lead with Recents then Quick picks and drop repeats`() {
         val ordered = YouTubeFallbackFeed.orderedShelves(
             quickPicks = shelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, "q"),
             listenAgain = shelf(YouTubeFallbackFeed.RECENT_TITLE, "l"),
@@ -116,8 +116,8 @@ class YouTubeFallbackFeedTest {
 
         assertEquals(
             listOf(
-                YouTubeFallbackFeed.QUICK_PICKS_TITLE,
                 YouTubeFallbackFeed.RECENT_TITLE,
+                YouTubeFallbackFeed.QUICK_PICKS_TITLE,
                 YouTubeFallbackFeed.MY_MIXES_TITLE,
                 YouTubeFallbackFeed.LIKED_TITLE,
                 "YouTube home",
@@ -125,8 +125,10 @@ class YouTubeFallbackFeedTest {
             ),
             ordered.map { it.title },
         )
+        // Recents keeps the leading slot the UI's toggle rides on.
+        assertEquals(listOf("l"), ordered.first().items.map { it.videoId })
         // The stale YouTube copy lost to the built Quick picks.
-        assertEquals(listOf("q"), ordered.first().items.map { it.videoId })
+        assertEquals(listOf("q"), ordered[1].items.map { it.videoId })
     }
 
     @Test

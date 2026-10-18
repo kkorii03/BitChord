@@ -23,6 +23,9 @@ object PlayerDeepLink {
     /** Set on the widget's artwork intent. Nothing else sets it. */
     const val EXTRA_OPEN_PLAYER = "bitchord.openPlayer"
 
+    /** Marks an intent this process has already read, so a replay cannot re-arm it. */
+    private const val EXTRA_CONSUMED = "bitchord.playerDeepLinkConsumed"
+
     private val _pending = MutableStateFlow(false)
 
     /** Whether a request is outstanding. Cleared by [handled]. */
@@ -40,9 +43,19 @@ object PlayerDeepLink {
      * served once and must stay spent. [recreating] is
      * `savedInstanceState != null`, which is exactly the case where the intent
      * is being replayed rather than newly delivered.
+     *
+     * [launchedFromHistory] is the second replay path, one `savedInstanceState`
+     * does not catch: after the activity has finished, picking the app out of
+     * Recents (or an OEM launcher re-sending the task's base intent) starts a
+     * new instance from the old intent with no saved state. Android flags that
+     * launch with [Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY] on the delivered
+     * intent, which is what separates it from a real widget tap.
      */
-    fun shouldExpandOnIntent(requested: Boolean, recreating: Boolean): Boolean =
-        requested && !recreating
+    fun shouldExpandOnIntent(
+        requested: Boolean,
+        recreating: Boolean,
+        launchedFromHistory: Boolean,
+    ): Boolean = requested && !recreating && !launchedFromHistory
 
     /**
      * Reads an incoming intent, and reports whether it asked for the player.
@@ -52,17 +65,27 @@ object PlayerDeepLink {
      * extra is taken off the intent either way, so a stale one cannot be read
      * again by a later call.
      */
-    fun consume(intent: Intent?, recreating: Boolean = false): Boolean {
-        val requested = intent?.getBooleanExtra(EXTRA_OPEN_PLAYER, false) == true
+    fun consume(
+        intent: Intent?,
+        recreating: Boolean = false,
+        launchedFromHistory: Boolean = false,
+    ): Boolean {
+        val alreadyConsumed = intent?.getBooleanExtra(EXTRA_CONSUMED, false) == true
+        val requested =
+            !alreadyConsumed && intent?.getBooleanExtra(EXTRA_OPEN_PLAYER, false) == true
         // Cleared off the intent as well. A singleTask activity keeps the intent
         // that launched it, and getIntent() returns the same one after every
         // configuration change — left in place, a widget tap would reopen the
         // sheet each time the device changed theme or font size.
         intent?.removeExtra(EXTRA_OPEN_PLAYER)
+        // A marker as well as the removal: a replayed intent restored from the
+        // task can carry its extras again, and this object may outlive the
+        // activity that first read it.
+        intent?.putExtra(EXTRA_CONSUMED, true)
         // Replaces rather than accumulates: the latest intent is the only
         // request that can still be outstanding, and an activity that is
         // starting fresh must not inherit one from a previous instance.
-        _pending.value = shouldExpandOnIntent(requested, recreating)
+        _pending.value = shouldExpandOnIntent(requested, recreating, launchedFromHistory)
         return _pending.value
     }
 

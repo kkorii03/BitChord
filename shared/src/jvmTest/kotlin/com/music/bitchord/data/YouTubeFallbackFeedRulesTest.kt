@@ -83,14 +83,14 @@ class YouTubeFallbackFeedRulesTest {
 
         assertEquals(
             listOf(
-                YouTubeFallbackFeed.QUICK_PICKS_TITLE,
                 YouTubeFallbackFeed.RECENT_TITLE,
+                YouTubeFallbackFeed.QUICK_PICKS_TITLE,
                 "YouTube home",
             ),
             ordered.map { it.title },
         )
-        assertEquals(listOf("built"), ordered.first().items.map { it.videoId })
-        assertEquals(listOf("recent"), ordered[1].items.map { it.videoId })
+        assertEquals(listOf("recent"), ordered.first().items.map { it.videoId })
+        assertEquals(listOf("built"), ordered[1].items.map { it.videoId })
     }
 
     @Test

@@ -6,7 +6,7 @@ import com.music.bitchord.data.model.HomeShelf
  * The pure rules behind the youtube.com Home built for a gated listener.
  *
  * The feed is meant to read like the YouTube Music Home the same account would
- * have had with Premium: a short Quick picks radio first, the local recents,
+ * have had with Premium: the local recents first, a short Quick picks radio,
  * the account's seeded mixes, its liked collection, and only then YouTube's
  * own home and Music-channel shelves. Ordering and seed selection are separate
  * from the network so they can be tested without a player or a request.
@@ -154,6 +154,12 @@ internal object YouTubeFallbackFeed {
      * The gated Home in the order a Premium listener expects, dropping empty
      * shelves and any later shelf whose title would repeat an earlier one
      * (YouTube's own home may carry a stale Quick picks or Listen again).
+     *
+     * Recents leads: the listener's own play history is the first thing they
+     * look for, and the shelf's list/grid toggle belongs at the top. Quick
+     * picks follows it, then the seeded mixes, Liked Music, and YouTube's own
+     * home and Music-channel shelves. A YouTube copy of either built shelf is
+     * dropped by the same title de-duplication.
      */
     fun orderedShelves(
         quickPicks: HomeShelf?,
@@ -172,8 +178,8 @@ internal object YouTubeFallbackFeed {
             out += shelf
         }
 
-        add(quickPicks)
         add(listenAgain)
+        add(quickPicks)
         add(myMixes)
         add(liked)
         youtubeHome.forEach(::add)

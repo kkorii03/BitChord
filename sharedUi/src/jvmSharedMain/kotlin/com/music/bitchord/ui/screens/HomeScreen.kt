@@ -97,6 +97,21 @@ private val HOME_TITLE_LIFT = 28.dp
 private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
 
+/** The app's own Recents key, whichever index the feed puts it at. */
+private fun isRecentsShelf(shelf: HomeShelf): Boolean =
+    shelf.title.trim().equals(RECENTS_TITLE, ignoreCase = true)
+
+/**
+ * YouTube Music's Quick picks, in the feed's own words whichever language
+ * built the shelf. It is always the compact paged list, never a hero card.
+ */
+private fun isQuickPicksShelf(shelf: HomeShelf): Boolean =
+    when (shelf.title.trim().lowercase(Locale.ROOT)) {
+        "quick picks", "빠른 선곡", "クイック ミックス",
+        "lựa chọn nhanh", "chọn nhanh đài phát" -> true
+        else -> false
+    }
+
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
     if (videoId == null) return false
@@ -253,8 +268,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
-            if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
-                RecentShelf(
+            when {
+                // Recents keeps its pager and toggle wherever the feed puts it
+                // — leading it is the norm, but an empty or reordered feed must
+                // not turn it into ordinary cards.
+                isRecentsShelf(shelf) -> RecentShelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
@@ -263,16 +281,23 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     viewType = recentsViewType,
                     onViewTypeToggle = onRecentsViewTypeToggle,
                 )
-            } else if (index == 0 && firstIsHero) {
-                HeroShelf(
+                // Quick picks is a song list, not a card shelf: the same
+                // four-rows-per-column pager as Recents, without the toggle.
+                isQuickPicksShelf(shelf) -> QuickPicksShelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                 )
-            } else {
-                Shelf(
+                index == 0 && firstIsHero -> HeroShelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                    currentSong = currentSong,
+                    isPlaying = isPlaying,
+                )
+                else -> Shelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
@@ -303,27 +328,13 @@ private fun RecentShelf(
             onViewTypeToggle = onViewTypeToggle,
         )
         if (viewType == LibraryViewType.LIST) {
-            BoxWithConstraints {
-                val columnWidth = trackColumnWidth(maxWidth)
-                ShelfRow(
-                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
-                        Column(Modifier.width(columnWidth)) {
-                            column.forEach { item ->
-                                RecentTrackRow(
-                                    item = item,
-                                    onClick = { onItemClick(item) },
-                                    onLongPress = onItemLongPress?.let { { it(item) } },
-                                    isCurrent = item.matchesCurrentlyPlaying(currentSong),
-                                    isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            TrackColumns(
+                shelf = shelf,
+                onItemClick = onItemClick,
+                onItemLongPress = onItemLongPress,
+                currentSong = currentSong,
+                isPlaying = isPlaying,
+            )
         } else {
             BoxWithConstraints {
                 val cardWidth = heroCardWidth(maxWidth)
@@ -337,6 +348,63 @@ private fun RecentShelf(
                             onClick = { onItemClick(item) },
                             onLongPress = onItemLongPress?.let { { it(item) } },
                             modifier = Modifier.width(cardWidth),
+                            isCurrent = item.matchesCurrentlyPlaying(currentSong),
+                            isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Quick picks as YouTube Music draws it: the compact paged song list Recents
+ * uses in list mode (four rows per column), without the list/grid switch —
+ * this shelf is always a song list, never a grid of cards or a hero row.
+ */
+@Composable
+private fun QuickPicksShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+    currentSong: Song?,
+    isPlaying: Boolean,
+) {
+    Column(Modifier.padding(bottom = 26.dp)) {
+        SectionHeader(shelf.title, shelf.subtitle)
+        TrackColumns(
+            shelf = shelf,
+            onItemClick = onItemClick,
+            onItemLongPress = onItemLongPress,
+            currentSong = currentSong,
+            isPlaying = isPlaying,
+        )
+    }
+}
+
+/** One page of columns, [RECENT_TRACKS_PER_COLUMN] songs to each. */
+@Composable
+private fun TrackColumns(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+    currentSong: Song?,
+    isPlaying: Boolean,
+) {
+    BoxWithConstraints {
+        val columnWidth = trackColumnWidth(maxWidth)
+        ShelfRow(
+            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                Column(Modifier.width(columnWidth)) {
+                    column.forEach { item ->
+                        RecentTrackRow(
+                            item = item,
+                            onClick = { onItemClick(item) },
+                            onLongPress = onItemLongPress?.let { { it(item) } },
                             isCurrent = item.matchesCurrentlyPlaying(currentSong),
                             isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
                         )
