@@ -3630,7 +3630,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     result = YtMusicRepository.account()
                 }
                 result.getOrNull()
-            }
+            } ?: if (session.hasSessionCookie) {
+                // Every identity endpoint refused, but the jar holds a
+                // complete Google login (the WebView itself is signed in).
+                // Keep it under a generic name instead of discarding it:
+                // without Premium in Korea Music answers account_menu 404,
+                // and that alone used to make sign-in impossible.
+                android.util.Log.w("BitChord", "account: no identity endpoint answered; keeping the login")
+                Account(name = "YouTube 계정", email = "", thumbnailUrl = null)
+            } else null
             if (account == null) {
                 restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)

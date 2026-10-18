@@ -549,7 +549,7 @@ object Innertube {
             header("User-Agent", WEB_USER_AGENT)
             header("Accept-Language", acceptLanguageHeader)
             header("Cookie", session)
-            sapisidFrom(session)?.let { header("Authorization", sapisidHash(it)) }
+            authorizationFor(session, MUSIC_ORIGIN)?.let { header("Authorization", it) }
         }.bodyAsText()
 
         // The one value that must not be guessed. A shell that says it is
@@ -764,6 +764,13 @@ object Innertube {
     suspend fun accountMenu(): JsonObject = postMusic("account/account_menu") {}
 
     /**
+     * youtube.com's own avatar menu for the same login. Music answers a gated
+     * Korean session's `account_menu` with 404 "Requested entity was not
+     * found", which used to throw away a sign-in whose cookies were fine.
+     */
+    suspend fun accountMenuYouTube(): JsonObject = postYouTube("account/account_menu") {}
+
+    /**
      * Every channel this session can act as, as Innertube's account switcher
      * lists them: the account's own channel first, then its brand channels.
      *
@@ -799,9 +806,7 @@ object Innertube {
                 cookie?.let { c ->
                     header("Cookie", c)
                     header("X-Goog-AuthUser", authUserFor(session))
-                    sapisidFrom(c)?.let {
-                        header("Authorization", sapisidHash(it, YOUTUBE_ORIGIN))
-                    }
+                    authorizationFor(c, YOUTUBE_ORIGIN)?.let { header("Authorization", it) }
                 }
             }.bodyAsText()
         }
@@ -1169,7 +1174,7 @@ object Innertube {
             header("Cookie", c)
             header("X-Goog-AuthUser", authUserFor(session))
             pageIdFor(session)?.let { header("X-Goog-PageId", it) }
-            sapisidFrom(c)?.let { header("Authorization", sapisidHash(it, origin)) }
+            authorizationFor(c, origin)?.let { header("Authorization", it) }
         }
     }
 
@@ -1468,7 +1473,7 @@ object Innertube {
             authUser = authUserFor(session),
             pageId = pageIdFor(session),
             // Lazy so an anonymous request never even hashes a credential.
-            authorization = { requestCookie?.let { c -> sapisidFrom(c)?.let { sapisidHash(it) } } },
+            authorization = { requestCookie?.let { c -> authorizationFor(c, MUSIC_ORIGIN) } },
         )
         val anonymousVisitor = if (anonymous) ensureAnonymousVisitorData() else null
         val visitor = if (anonymous) anonymousVisitor else visitorIdFor(endpoint, visitorData, anonymousVisitor)
@@ -1560,7 +1565,7 @@ object Innertube {
             cookie = cookie,
             authUser = authUserFor(session),
             pageId = pageIdFor(session),
-            authorization = { cookie?.let { c -> sapisidFrom(c)?.let { sapisidHash(it, YOUTUBE_ORIGIN) } } },
+            authorization = { cookie?.let { c -> authorizationFor(c, YOUTUBE_ORIGIN) } },
         )
         val visitor = visitorData ?: ensureVisitorData()
         val clientId = if (ios) IOS_CLIENT_ID else WEB_CLIENT_ID
@@ -1690,26 +1695,20 @@ object Innertube {
     }
 
     /**
-     * The API-signing secret out of a cookie header.
+     * The `Authorization` header youtube.com's own pages send for [cookieHeader].
      *
-     * Three names for one value, and all three have to be looked for. `SAPISID`
-     * is the one everybody documents, and it is also the one a cookie jar can
-     * be missing: on a third-party-cookie-partitioned or `__Host`-prefixed
-     * login, Google sets only the `__Secure-` forms. Any of them signs a
-     * request; the digest does not care which it came from.
-     *
-     * The cost of not looking was invisible and total. `AuthStore.isSignedIn`
-     * tests the cookie for the *substring* `SAPISID`, which `__Secure-3PAPISID`
-     * satisfies — so the app knew it was signed in, sent the cookie, and sent
-     * no `Authorization` header, which Google reads as a request from nobody.
-     * Every write and every history ping was silently anonymous for those
-     * users, while the UI showed them signed in.
-     *
-     * Order matters: the plain form first because it is what Google's own
-     * origin-scoped hash is documented against, then the third-party form, then
-     * the first-party one.
+     * One hash per signing cookie the jar holds: `SAPISIDHASH`, then
+     * `SAPISID1PHASH` (`__Secure-1PAPISID`) and `SAPISID3PHASH`
+     * (`__Secure-3PAPISID`). A current Google login can carry only the
+     * `__Secure-` forms; signing those with a lone `SAPISIDHASH` is answered
+     * 401 "missing required authentication credential" — what the S24 log
+     * showed for every youtube.com request after a fresh sign-in.
      */
-    private fun sapisidFrom(cookieHeader: String): String? {
+    internal fun authorizationFor(
+        cookieHeader: String,
+        origin: String,
+        timestamp: Long = nowSeconds(),
+    ): String? {
         val jar = cookieHeader.split(';')
             .mapNotNull { entry ->
                 val name = entry.substringBefore('=').trim()
@@ -1717,17 +1716,20 @@ object Innertube {
                 if (name.isEmpty() || value.isEmpty()) null else name to value
             }
             .toMap()
-        return SAPISID_NAMES.firstNotNullOfOrNull { jar[it] }
+        val plain = jar["SAPISID"] ?: jar["__Secure-3PAPISID"] ?: jar["__Secure-1PAPISID"] ?: return null
+        return buildList {
+            add(hashPart("SAPISIDHASH", plain, origin, timestamp))
+            jar["__Secure-1PAPISID"]?.let { add(hashPart("SAPISID1PHASH", it, origin, timestamp)) }
+            jar["__Secure-3PAPISID"]?.let { add(hashPart("SAPISID3PHASH", it, origin, timestamp)) }
+        }.joinToString(" ")
     }
 
-    private val SAPISID_NAMES =
-        listOf("SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID")
+    private fun nowSeconds(): Long = System.currentTimeMillis() / 1000
 
-    private fun sapisidHash(sapisid: String, origin: String = MUSIC_ORIGIN): String {
-        val timestamp = System.currentTimeMillis() / 1000
+    private fun hashPart(label: String, secret: String, origin: String, timestamp: Long): String {
         val digest = MessageDigest.getInstance("SHA-1")
-            .digest("$timestamp $sapisid $origin".toByteArray())
+            .digest("$timestamp $secret $origin".toByteArray())
             .joinToString("") { "%02x".format(Locale.ROOT, it) }
-        return "SAPISIDHASH ${timestamp}_$digest"
+        return "$label ${timestamp}_$digest"
     }
 }

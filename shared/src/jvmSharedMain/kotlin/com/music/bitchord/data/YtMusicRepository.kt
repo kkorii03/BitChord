@@ -683,7 +683,29 @@ object YtMusicRepository {
 
     /** Signed-in profile for the settings header. Null when signed out. */
     suspend fun account(): Result<Account> = call("account") {
-        InnertubeParser.parseAccount(Innertube.accountMenu())
+        // Music first, then youtube.com's own menu, then its account switcher:
+        // a gated Korean session (no Premium) is answered 404 by Music's
+        // account_menu even though the login is valid (S24 log, ko-53).
+        runCatching { InnertubeParser.parseAccount(Innertube.accountMenu()) }
+            .onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w(TAG, "account: music menu refused (${it.message?.take(60)}); trying youtube.com")
+            }
+            .getOrNull()
+            ?: runCatching { InnertubeParser.parseAccount(Innertube.accountMenuYouTube()) }
+                .onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    Log.w(TAG, "account: youtube.com menu refused (${it.message?.take(60)})")
+                }
+                .getOrNull()
+            ?: runCatching {
+                InnertubeParser.parseAccountChannels(Innertube.accountSwitcher())
+                    .let { list -> list.firstOrNull { it.activeOnWeb } ?: list.firstOrNull() }
+                    ?.let { Account(name = it.name, email = it.subtitle, thumbnailUrl = it.thumbnailUrl) }
+            }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w(TAG, "account: switcher refused (${it.message?.take(60)})")
+            }.getOrNull()
             ?: error("No account details")
     }
 
