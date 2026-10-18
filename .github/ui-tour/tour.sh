@@ -411,6 +411,11 @@ section_settings() {
   tap_tab library 2 "보관함|Library" "tab_library|nav_library|library_tab|library"
   sleep 2
   scroll_top
+  # Settings lives behind the top-right account button (content-desc
+  # '계정 전환'), not as a row on the Library page: open that menu first.
+  tap "계정 전환" first 3 || tap "Switch account" first 3 || true
+  sleep 2
+  shot settings-account-menu "Account menu (settings entry)"
   if tap "설정" first 5 || tap "Settings" first 3; then
     shot settings-top "Settings (top)"
     scroll_shots settings-scrolled 3 "Settings scrolled"
