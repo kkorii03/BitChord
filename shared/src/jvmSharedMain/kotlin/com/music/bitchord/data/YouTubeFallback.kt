@@ -38,8 +38,7 @@ internal object YouTubeFallback {
     private const val CHANNEL_CACHE_MS = 10L * 60 * 1000
     private const val LIKED_MUSIC = "VLLM"
     private const val LIKED_VIDEOS = "VLLL"
-    private const val RECENT_TITLE = "Recents"
-    private const val LIKED_TITLE = "Liked music"
+    private const val RECENT_TITLE = YouTubeFallbackFeed.LISTEN_AGAIN_TITLE
     private const val RECENT_LIMIT = 20
     /** Only this much of a youtube.com history page is judged and shown at once. */
     private const val HISTORY_LIMIT = 30
@@ -47,6 +46,8 @@ internal object YouTubeFallback {
     private const val HOME_COVER_LIMIT = 20
     private const val SHELF_COVER_LIMIT = 6
     private const val CATEGORY_PREFIX = "ytc:"
+    /** The built gated feed is reused by every tab switch inside this window. */
+    private const val HOME_CACHE_MS = 10L * 60 * 1000
 
     private val continuationTokens = ConcurrentHashMap<String, Boolean>()
 
@@ -54,17 +55,64 @@ internal object YouTubeFallback {
 
     private val likedLock = Mutex()
 
+    private val homeLock = Mutex()
+
     @Volatile
     private var channelCache: Pair<Long, List<HomeShelf>>? = null
 
     @Volatile
     private var likedCache: Pair<Long, YouTubeWebParser.PlaylistResult?>? = null
 
+    @Volatile
+    private var homeCache: Triple<String, Long, HomeFeed>? = null
+
     private const val LIKED_CACHE_MS = 5L * 60 * 1000
 
     // ---- Home ---------------------------------------------------------------
 
+    /**
+     * The gated Home, built once and reused by every tab switch for ten
+     * minutes. The order mirrors the Music Home a Premium listener had:
+     * Quick picks, Listen again, the account's mixes, Liked music, YouTube's
+     * own home shelves, then the Music channel last.
+     */
     suspend fun home(): HomeFeed {
+        cachedHome()?.let { return it }
+        return homeLock.withLock {
+            cachedHome()?.let { return@withLock it }
+            val feed = buildHome()
+            homeCache = Triple(Innertube.sessionKey(), System.currentTimeMillis(), feed)
+            feed
+        }
+    }
+
+    private fun cachedHome(now: Long = System.currentTimeMillis()): HomeFeed? {
+        val key = Innertube.sessionKey()
+        return homeCache?.let { (cachedKey, at, feed) ->
+            feed.takeIf { cachedKey == key && now - at < HOME_CACHE_MS }
+        }
+    }
+
+    private suspend fun buildHome(): HomeFeed {
+        val localPlays = LocalPlayHistory.recent(HISTORY_LIMIT)
+        val listenSongs = try {
+            mergedHistory(RECENT_LIMIT, localPlays)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Log.w(TAG, "Recently played failed: ${failure.message}")
+            emptyList()
+        }
+
+        val seed = YouTubeFallbackFeed.mostPlayed(localPlays)?.song
+            ?: listenSongs.firstOrNull()
+        val quickPicks = quickPicksShelf(seed, localPlays)
+        val listenAgain = listenSongs
+            .takeIf { it.isNotEmpty() }
+            ?.let { musicOnlyShelf(HomeShelf(RECENT_TITLE, it.map(::shelfItem))) }
+        val myMixes = mixShelf(localPlays)
+        val liked = likedShelf()
+
         val personal = runCatching {
             YouTubeWebParser.parseHome(
                 Innertube.browseYouTube("FEwhat_to_watch"),
@@ -72,18 +120,99 @@ internal object YouTubeFallback {
             )
         }.onFailure { Log.w(TAG, "YouTube home failed: ${it.message}") }
             .getOrNull()
-
-        val shelves = mutableListOf<HomeShelf>()
-        personal?.shelves?.let { shelves.addAll(it) }
-
-        val liked = if (Innertube.cookie != null) likedFirstPage() else null
-        if (liked != null && liked.songs.isNotEmpty()) {
-            shelves += HomeShelf(LIKED_TITLE, liked.songs.map(::shelfItem))
-        }
-
-        if (shelves.isEmpty()) shelves += channelShelves()
+        val personalShelves = personal?.shelves.orEmpty()
+            .map { musicOnlyShelf(it) }
         val continuation = personal?.continuation?.also(::rememberContinuation)
+
+        val shelves = YouTubeFallbackFeed.orderedShelves(
+            quickPicks = quickPicks,
+            listenAgain = listenAgain,
+            myMixes = myMixes,
+            liked = liked,
+            youtubeHome = personalShelves,
+            // The Music channel's own shelves are music by construction; only
+            // the mixed uploads above need per-row classification.
+            musicChannel = channelShelves(),
+        )
         return HomeFeed(shelves = enrichCovers(shelves), continuation = continuation)
+    }
+
+    /**
+     * YouTube's own `RD<videoId>` mix of the song most played recently, with
+     * anything played in the last hour removed.
+     */
+    private suspend fun quickPicksShelf(
+        seed: Song?,
+        localPlays: List<LocalPlay>,
+    ): HomeShelf? {
+        val videoId = seed?.videoId?.takeIf { it.isNotBlank() } ?: return null
+        val recentIds = YouTubeFallbackFeed.lastHourIds(localPlays, System.currentTimeMillis())
+        val songs = try {
+            radio(videoId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Log.w(TAG, "YouTube mix for Quick picks failed: ${failure.message}")
+            emptyList()
+        }.filterNot { it.videoId in recentIds }
+        if (songs.isEmpty()) return null
+        val music = YouTubeMusicClassifier.filterMusic(songs, songs.size)
+            .distinctBy { it.videoId }
+            .take(YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
+        if (music.isEmpty()) return null
+        return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, music.map(::shelfItem))
+    }
+
+    /**
+     * An RD mix card for each of the recent local history's top artists, with
+     * songs filling any shortfall, capped at [YouTubeFallbackFeed.MIX_LIMIT].
+     */
+    private fun mixShelf(localPlays: List<LocalPlay>): HomeShelf? {
+        val seeds = YouTubeFallbackFeed.mixSeeds(localPlays)
+        if (seeds.isEmpty()) return null
+        val items = seeds.map { seed ->
+            ShelfItem(
+                title = if (seed.artist.isBlank()) "${seed.title} 믹스" else "${seed.artist} 믹스",
+                subtitle = "믹스",
+                // The local record already holds the cover the listener saw;
+                // the UI crops it square when it is a video frame.
+                thumbnailUrl = seed.thumbnailUrl,
+                videoId = null,
+                browseId = "RD${seed.videoId}",
+            )
+        }
+        return HomeShelf(YouTubeFallbackFeed.MY_MIXES_TITLE, items)
+    }
+
+    private suspend fun likedShelf(): HomeShelf? {
+        val liked = (if (Innertube.cookie != null) likedFirstPage() else null) ?: return null
+        val music = YouTubeMusicClassifier.filterMusic(liked.songs, RECENT_LIMIT)
+            .distinctBy { it.videoId }
+            .take(RECENT_LIMIT)
+        if (music.isEmpty()) return null
+        return HomeShelf(YouTubeFallbackFeed.LIKED_TITLE, music.map(::shelfItem))
+    }
+
+    /** Drops rows [YouTubeMusicClassifier] states are not music, keeping collection cards. */
+    private suspend fun musicOnlyShelf(shelf: HomeShelf): HomeShelf {
+        val songIndexes = shelf.items.indices.filter { shelf.items[it].videoId != null }
+        if (songIndexes.isEmpty()) return shelf
+        val songs = songIndexes.map { index ->
+            val item = shelf.items[index]
+            Song(
+                videoId = item.videoId.orEmpty(),
+                title = item.title,
+                artist = item.subtitle,
+                thumbnailUrl = item.thumbnailUrl,
+            )
+        }
+        val kept = YouTubeMusicClassifier.filterMusic(songs, songs.size)
+            .mapTo(HashSet()) { it.videoId }
+        return shelf.copy(
+            items = shelf.items.filterIndexed { index, item ->
+                item.videoId == null || index !in songIndexes || item.videoId in kept
+            },
+        )
     }
 
     suspend fun moreHome(token: String): HomeFeed {
@@ -91,10 +220,15 @@ internal object YouTubeFallback {
             ?: return HomeFeed(emptyList(), null)
         val page = YouTubeWebParser.parseHome(root, musicOnly = true)
         page.continuation?.let(::rememberContinuation)
-        return HomeFeed(enrichCovers(page.shelves), page.continuation)
+        val shelves = page.shelves.map { musicOnlyShelf(it) }
+            .filter { it.items.isNotEmpty() }
+        return HomeFeed(enrichCovers(shelves), page.continuation)
     }
 
     suspend fun recentShelf(): HomeShelf? {
+        cachedHome()?.shelves
+            ?.firstOrNull { it.title.equals(RECENT_TITLE, ignoreCase = true) }
+            ?.let { return it }
         val songs = try {
             mergedHistory(RECENT_LIMIT)
         } catch (cancelled: CancellationException) {
@@ -118,8 +252,11 @@ internal object YouTubeFallback {
      */
     suspend fun history(): List<Song> = mergedHistory(HISTORY_LIMIT)
 
-    private suspend fun mergedHistory(limit: Int): List<Song> {
-        val local = RecentShelf.localSongs(LocalPlayHistory.recent(RECENT_LIMIT))
+    private suspend fun mergedHistory(
+        limit: Int,
+        localPlays: List<LocalPlay>? = null,
+    ): List<Song> {
+        val local = RecentShelf.localSongs(localPlays ?: LocalPlayHistory.recent(RECENT_LIMIT))
         if (local.size >= RecentShelf.LOCAL_ONLY_MINIMUM) return local
         val remote = try {
             youtubeHistory()
@@ -150,8 +287,13 @@ internal object YouTubeFallback {
         return YouTubeCoverResolver.enrich(music, HISTORY_LIMIT)
     }
 
-    suspend fun quickPicks(excludeSongIds: Set<String>): List<Song> =
-        home().shelves
+    suspend fun quickPicks(excludeSongIds: Set<String>): List<Song> {
+        val feed = home()
+        val quick = feed.shelves.firstOrNull {
+            it.title.equals(YouTubeFallbackFeed.QUICK_PICKS_TITLE, ignoreCase = true)
+        }
+        val shelves = if (quick != null) listOf(quick) else feed.shelves
+        return shelves
             .flatMap { it.items }
             .mapNotNull { item ->
                 val videoId = item.videoId ?: return@mapNotNull null
@@ -164,6 +306,8 @@ internal object YouTubeFallback {
                 )
             }
             .distinctBy { it.videoId }
+            .take(YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
+    }
 
     // ---- Explore ------------------------------------------------------------
 

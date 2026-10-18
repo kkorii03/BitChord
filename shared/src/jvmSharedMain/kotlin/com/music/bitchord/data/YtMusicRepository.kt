@@ -97,13 +97,23 @@ object YtMusicRepository {
 
     /** Recently played is rendered independently, at the top of the Play page. */
     suspend fun homeRecentlyPlayed(): Result<HomeShelf?> = call("home:recent") {
-        if (ensureGateKnown()) YouTubeFallback.recentShelf() else recentlyPlayed()
+        if (ensureGateKnown()) {
+            // The gated feed already places Listen again in its fixed order.
+            // Publishing it separately would prepend a duplicate and leave
+            // Quick picks behind it, so the feed owns that shelf here.
+            null
+        } else {
+            recentlyPlayed()
+        }
     }
 
     /** Extra Play shelves are independently fetchable so each can appear as soon as it arrives. */
     suspend fun homeSupplement(browseId: String): Result<List<HomeShelf>> = call("home:$browseId") {
         if (fallbackActive()) {
-            return@call if (browseId == "FEmusic_explore") YouTubeFallback.channelShelves() else emptyList()
+            // The gated feed already ends with the Music channel and owns the
+            // whole shelf order; a separately published supplement could land
+            // before it and put a channel shelf above Quick picks.
+            return@call emptyList()
         }
         val shelves = contentCountryCharts(shelvesOf(browseId))
         if (browseId == "FEmusic_explore") contentCountrySongs(shelves) else shelves
