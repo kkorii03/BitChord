@@ -4315,6 +4315,7 @@ private fun BitChordApp(
                 // whatever ids it's ever going to have.
                 resolvingLinks = fromPlayer && linksLoading,
                 showSleepTimer = fromPlayer,
+                showPlaybackSpeed = fromPlayer,
                 privateListening = privateListening,
                 onTogglePrivateListening = if (fromPlayer) {
                     { AppSettings.setPrivateListening(!privateListening) }

@@ -235,6 +235,10 @@
     <string name="switch_to_list_view">Switch to list view</string>
     <string name="audio_quality">Audio quality</string>
     <string name="playback">Playback</string>
+    <string name="playback_speed">Playback speed</string>
+    <string name="pitch">Pitch</string>
+    <string name="pitch_lower">Lower pitch</string>
+    <string name="pitch_upper">Raise pitch</string>
     <string name="appearance">Appearance</string>
     <string name="storage">Storage</string>
     <string name="your_data">Your data</string>

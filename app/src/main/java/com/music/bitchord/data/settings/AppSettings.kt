@@ -18,6 +18,7 @@ import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
+import com.music.bitchord.playback.PlaybackParametersMath
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
@@ -359,6 +360,7 @@ object AppSettings {
     val equalizerPreset = MutableStateFlow(EqualizerPreset.FLAT)
 
     val playbackSpeed = MutableStateFlow(1.0f)
+    val pitchSemitones = MutableStateFlow(0)
     val themeMode = MutableStateFlow(ThemeMode.DARK)
 
     /** Keep playing similar music once the queue runs out. */
@@ -994,6 +996,7 @@ object AppSettings {
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
+        pitchSemitones.value = PlaybackParametersMath.clampPitchSemitones(prefs.getInt(KEY_PITCH, 0))
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
         }.getOrDefault(ThemeMode.DARK)
@@ -1441,6 +1444,12 @@ object AppSettings {
     fun setPlaybackSpeed(value: Float) {
         playbackSpeed.value = value
         prefs.edit().putFloat(KEY_SPEED, value).apply()
+    }
+
+    fun setPitchSemitones(value: Int) {
+        val clamped = PlaybackParametersMath.clampPitchSemitones(value)
+        pitchSemitones.value = clamped
+        prefs.edit().putInt(KEY_PITCH, clamped).apply()
     }
 
     fun setShowNerdStats(value: Boolean) {
@@ -2411,6 +2420,7 @@ object AppSettings {
     private const val KEY_EQ_BALANCE = "equalizer_balance"
     private const val KEY_EQ_BANDS = "equalizer_bands"
     private const val KEY_SPEED = "playback_speed"
+    private const val KEY_PITCH = "playback_pitch_semitones"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_AUTOPLAY = "autoplay"
     private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"

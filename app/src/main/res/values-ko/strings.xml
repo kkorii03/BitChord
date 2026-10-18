@@ -228,6 +228,10 @@
     <string name="switch_to_list_view">목록 보기로 전환</string>
     <string name="audio_quality">오디오 품질</string>
     <string name="playback">재생</string>
+    <string name="playback_speed">재생 속도</string>
+    <string name="pitch">음 높이</string>
+    <string name="pitch_lower">음 높이 낮추기</string>
+    <string name="pitch_upper">음 높이 높이기</string>
     <string name="appearance">화면 표시</string>
     <string name="storage">저장 공간</string>
     <string name="your_data">나의 데이터</string>

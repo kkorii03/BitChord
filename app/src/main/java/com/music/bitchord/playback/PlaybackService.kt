@@ -2214,7 +2214,7 @@ class PlaybackService : MediaLibraryService() {
             // The listener's speed, not the active player's: straight after an
             // Advanced Automix blend the active player is still easing off its
             // beatmatch stretch, and copying that would keep it for good.
-            standbyPlayer.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            standbyPlayer.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
             standbyPlayer.volume = 0f
             standbyPlayer.setMediaItems(newItems, currentIndex, alignedStartPos)
             spareLoudness().track(mediaId, nextMediaIdOf(standbyPlayer))
@@ -5929,7 +5929,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun applySettings(player: ExoPlayer) {
         player.skipSilenceEnabled = AppSettings.skipSilence.value
-        player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+        player.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
         // Restore persisted shuffle and repeat states on startup. Assign both
         // values: Android can destroy and recreate the service while retaining
         // this process, so QueueShuffle's process-wide object may still hold
@@ -6297,9 +6297,12 @@ class PlaybackService : MediaLibraryService() {
             // raw value over it would drop the incoming track back to its own
             // tempo halfway through a blend. The controller re-reads the setting
             // when it restores the rate, so the change still lands.
-            AppSettings.playbackSpeed.collect { speed ->
+            combine(AppSettings.playbackSpeed, AppSettings.pitchSemitones) { speed, semitones ->
+                speed to semitones
+            }.collect { (speed, semitones) ->
                 if (crossfade?.isTransitioning() == true) return@collect
-                crossfade?.applyPlaybackSpeed(speed) ?: eachPlayer { it.setPlaybackSpeed(speed) }
+                crossfade?.applyPlaybackSpeed(speed, semitones)
+                    ?: eachPlayer { it.applyPlaybackSpeed(speed, semitones) }
             }
         }
         scope.launch {

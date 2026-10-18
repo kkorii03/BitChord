@@ -1274,4 +1274,8 @@
     <string name="private_listening">Incognito mode</string>
     <string name="private_listening_subtitle">Playback and searches won\'t appear in YouTube history, recommendations, or this device\'s history</string>
     <string name="private_listening_indicator">Incognito mode is on</string>
+    <string name="playback_speed">Playback speed</string>
+    <string name="pitch">Pitch</string>
+    <string name="pitch_lower">Lower pitch</string>
+    <string name="pitch_upper">Raise pitch</string>
 </resources>

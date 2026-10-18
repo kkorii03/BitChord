@@ -578,14 +578,14 @@ class CrossfadeController(
      */
     fun isTransitioning(): Boolean = phase != Phase.IDLE
 
-    /** Applies the listener's speed without exposing AudioTrack's parameter-change click. */
-    fun applyPlaybackSpeed(speed: Float) {
+    /** Applies the listener's speed and pitch without exposing AudioTrack's parameter-change click. */
+    fun applyPlaybackSpeed(speed: Float, pitchSemitones: Int = AppSettings.pitchSemitones.value) {
         if (isTransitioning()) return
         // User-controlled speed must track the slider immediately. A previous
         // gain-notch wrapper restarted for every slider emission and sounded
         // like repeated stalls while dragging.
         for (player in listOf(active(), standby()).distinct()) {
-            player.setPlaybackSpeed(speed)
+            player.applyPlaybackSpeed(speed, pitchSemitones)
         }
     }
 
@@ -1255,7 +1255,7 @@ class CrossfadeController(
         // Stacks on top of the listener's speed control rather than replacing
         // it, so a beatmatched transition and "play everything at 1.25x" don't
         // fight each other. Undone in [finish].
-        into.setPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
+        into.applyPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
         into.volume = 0f
         into.setMediaItems(items, nextIndex, incomingCueTimeMs)
         // Before `prepare`, so the standby's per-player audio state is right
@@ -1408,7 +1408,7 @@ class CrossfadeController(
         // on the incoming tempo.
         if (rampSteps > 0 && rampStep < rampSteps) {
             rampStep = rampSteps
-            out.setPlaybackSpeed((AppSettings.playbackSpeed.value * outgoingPlaybackRate).toFloat())
+            out.applyPlaybackSpeed((AppSettings.playbackSpeed.value * outgoingPlaybackRate).toFloat())
         }
         outgoingAnalysis = out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
         incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
@@ -1863,7 +1863,7 @@ class CrossfadeController(
         // the session: a hold left on it would pause every track at its end.
         player.pauseAtEndOfMediaItems = false
         player.volume = 1f
-        player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+        player.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
     }
 
     // ---- Numbers ------------------------------------------------------------
@@ -2395,7 +2395,7 @@ class CrossfadeController(
             // A pause mid-pulse ends it early; the next reading picks up the rest.
             if (now < nudgeUntil && into.isPlaying) return
             nudgeUntil = 0L
-            into.setPlaybackSpeed(incomingBaseSpeed())
+            into.applyPlaybackSpeed(incomingBaseSpeed())
             lockQuietUntil = now + LOCK_SETTLE_MS
             lockCount = 0
             return
@@ -2428,7 +2428,7 @@ class CrossfadeController(
             minOf(1f + NUDGE, (MAX_TOTAL_SPEED_UP / incomingPlaybackRate).toFloat())
         }
         if (factor <= 1f && median < 0) return
-        into.setPlaybackSpeed(base * factor)
+        into.applyPlaybackSpeed(base * factor)
         nudgeUntil = now + (abs(median) / (base * abs(factor - 1f)) * 1000).roundToLong().coerceIn(1L, MAX_NUDGE_MS)
     }
 
@@ -2515,7 +2515,7 @@ class CrossfadeController(
     private fun beginEase(player: ExoPlayer, rate: Double, analysis: TrackAnalysis) {
         val stretch = rate - 1.0
         if (abs(stretch) < EASE_DONE) {
-            player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            player.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
             return
         }
         val beat = when {
@@ -2574,7 +2574,7 @@ class CrossfadeController(
         if (due <= rampStep) return
         rampStep = due
         val rate = 1.0 + (outgoingPlaybackRate - 1.0) * due / rampSteps
-        out.setPlaybackSpeed((AppSettings.playbackSpeed.value * rate).toFloat())
+        out.applyPlaybackSpeed((AppSettings.playbackSpeed.value * rate).toFloat())
     }
 
     /** Beats a tempo change of [rate] takes at [TEMPO_STEP_PER_BEAT]; 0 for none. */
@@ -2593,7 +2593,7 @@ class CrossfadeController(
             softSpeedJob?.cancel()
             softSpeedJob = null
             player.volume = 1f
-            player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            player.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
         }
     }
 
@@ -2605,9 +2605,15 @@ class CrossfadeController(
      * competes with it. The incoming deck is configured while silent instead.
      */
     private fun setPlaybackSpeedClickless(player: ExoPlayer, target: Float) {
-        if (abs(player.playbackParameters.speed - target) < SPEED_CHANGE_EPSILON) return
+        val pitch = PlaybackParametersMath.pitchForSemitones(AppSettings.pitchSemitones.value)
+        val current = player.playbackParameters
+        if (abs(current.speed - target) < SPEED_CHANGE_EPSILON &&
+            abs(current.pitch - pitch) < SPEED_CHANGE_EPSILON
+        ) {
+            return
+        }
         if (!player.isPlaying || player !== active() || player.volume <= 0f) {
-            player.setPlaybackSpeed(target)
+            player.applyPlaybackSpeed(target)
             return
         }
         softSpeedJob?.cancel()
@@ -2618,7 +2624,7 @@ class CrossfadeController(
                     player.volume = level * (1f - step.toFloat() / SPEED_NOTCH_STEPS)
                     delay(SPEED_NOTCH_STEP_MS)
                 }
-                player.setPlaybackSpeed(target)
+                player.applyPlaybackSpeed(target)
                 delay(SPEED_NOTCH_HOLD_MS)
                 for (step in 1..SPEED_NOTCH_STEPS) {
                     player.volume = level * step.toFloat() / SPEED_NOTCH_STEPS

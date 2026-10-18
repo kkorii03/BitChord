@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
@@ -43,8 +44,10 @@ import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
@@ -76,6 +79,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -84,9 +88,11 @@ import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.playback.PlaybackParametersMath
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -148,6 +154,7 @@ fun SongActionsSheet(
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
+    showPlaybackSpeed: Boolean = false,
     /**
      * The player's quick incognito switch. Null outside the player, where the
      * switch belongs to Settings rather than to one row in a list.
@@ -206,6 +213,7 @@ fun SongActionsSheet(
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
+    var pickingPlaybackSpeed by remember { mutableStateOf(false) }
     val menu = presentation == SongActionsPresentation.Menu
     // Read from the thumbnail the row that opened this sheet was already
     // showing, not a larger copy of it: the tint is a blur and a handful of
@@ -391,6 +399,16 @@ fun SongActionsSheet(
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
         }
+        if (showPlaybackSpeed && !menu) {
+            val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
+            val semitones by AppSettings.pitchSemitones.collectAsStateWithLifecycle()
+            ActionRow(
+                icon = Icons.Rounded.Speed,
+                label = stringResource(R.string.playback_speed),
+                value = speedPitchLabel(speed, semitones),
+                accent = palette.accent,
+            ) { pickingPlaybackSpeed = true }
+        }
         onTogglePrivateListening?.let {
             ActionRow(
                 icon = Icons.Rounded.VisibilityOff,
@@ -434,6 +452,10 @@ fun SongActionsSheet(
     }
 
     TintedSheet(palette = palette, imageUrl = song.thumbnailUrl, modifier = modifier) {
+        if (pickingPlaybackSpeed) {
+            PlaybackSpeedPicker(palette = palette, onBack = { pickingPlaybackSpeed = false })
+            return@TintedSheet
+        }
         if (pickingSleepTimer) {
             SleepTimerPicker(palette = palette, onBack = { pickingSleepTimer = false })
             return@TintedSheet
@@ -717,6 +739,120 @@ private fun WebDavUploadRow(
         )
     }
 }
+
+private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
+@Composable
+private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
+    val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
+    val semitones by AppSettings.pitchSemitones.collectAsStateWithLifecycle()
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.back),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.playback_speed),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = speedPitchLabel(speed, semitones),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+
+        PLAYBACK_SPEEDS.forEach { option ->
+            SleepOption(
+                label = formatSpeed(option),
+                selected = speed == option,
+                accent = palette.accent,
+            ) {
+                AppSettings.setPlaybackSpeed(option)
+            }
+        }
+
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 22.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.pitch),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = formatSemitones(semitones),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = { AppSettings.setPitchSemitones(semitones - 1) },
+                enabled = semitones > PlaybackParametersMath.MIN_PITCH_SEMITONES,
+            ) {
+                Icon(
+                    Icons.Rounded.Remove,
+                    contentDescription = stringResource(R.string.pitch_lower),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            Text(
+                text = formatSemitones(semitones),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.width(42.dp),
+                textAlign = TextAlign.Center,
+            )
+            IconButton(
+                onClick = { AppSettings.setPitchSemitones(semitones + 1) },
+                enabled = semitones < PlaybackParametersMath.MAX_PITCH_SEMITONES,
+            ) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = stringResource(R.string.pitch_upper),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+        }
+
+        ActionRow(
+            icon = Icons.AutoMirrored.Rounded.Undo,
+            label = stringResource(R.string.reset_to_default),
+            accent = palette.accent,
+            enabled = semitones != 0,
+        ) { AppSettings.setPitchSemitones(0) }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+private fun speedPitchLabel(speed: Float, semitones: Int): String =
+    if (semitones == 0) formatSpeed(speed) else "${formatSpeed(speed)} · ${formatSemitones(semitones)}"
+
+private fun formatSpeed(speed: Float): String =
+    String.format(Locale.ROOT, "%.2f", speed).trimEnd('0').trimEnd('.') + "×"
+
+private fun formatSemitones(semitones: Int): String =
+    if (semitones > 0) "+$semitones" else "$semitones"
 
 /** End of track or a duration, plus a way out once one is running. */
 @Composable
