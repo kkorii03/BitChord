@@ -13,8 +13,14 @@ object LyricsWordAlign {
     data class Heard(val text: String, val startMs: Long, val endMs: Long)
 
 
-    /** Letters and digits only, lower case, compatibility forms folded: what two spellings share. */
-    private fun fold(text: String): String =
+    /**
+     * Letters and digits only, lower case, compatibility forms folded: what
+     * two spellings share.
+     *
+     * Shared with [withHeardWords], which lines a single line's words up
+     * against the same transcript by the same letters.
+     */
+    internal fun fold(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFKC).lowercase().filter { it.isLetterOrDigit() }
 
     private const val MATCH = 3

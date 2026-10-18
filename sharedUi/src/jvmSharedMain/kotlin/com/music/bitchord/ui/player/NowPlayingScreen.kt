@@ -1943,6 +1943,7 @@ fun NowPlayingScreen(
                                     lyricsUnavailable = lyricsUnavailable,
                                     loadingText = lyricsLoadingText,
                                     onClick = openLyrics,
+                                    heardWords = lyricsTiming.heardWords,
                                 )
                             }
                         } else {
@@ -2057,6 +2058,7 @@ fun NowPlayingScreen(
                             LyricsPanel(
                                 lines = lyrics.orEmpty(),
                                 subLines = lyricsTranslation.subLines,
+                                heardWords = lyricsTiming.heardWords,
                                 trackKey = song.videoId,
                                 playhead = lyricsPlayhead,
                                 looking = !lyricsUnavailable,
@@ -3370,6 +3372,7 @@ fun NowPlayingScreen(
                             LyricsPanel(
                                 lines = lyrics.orEmpty(),
                                 subLines = lyricsTranslation.subLines,
+                                heardWords = lyricsTiming.heardWords,
                                 trackKey = song.videoId,
                                 playhead = lyricsPlayhead,
                                 looking = !lyricsUnavailable,
@@ -3591,6 +3594,7 @@ fun NowPlayingScreen(
                     // the queue behind it the same way the "Up next" glyph
                     // closes lyrics behind the queue.
                     onClick = openLyrics,
+                    heardWords = lyricsTiming.heardWords,
                 )
             }
             if (!lyricsOpen && !syncedLyricsEnabled) {

@@ -9,6 +9,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.timedBy
@@ -101,6 +102,12 @@ object LyricsTiming {
         val aiBiasMs: Long = 0L,
         /** Who gave [base] when it is an AI answer — "Deepgram" or "Gemini". */
         val aiEngine: String? = null,
+        /**
+         * What the transcript heard for this video, already on the displayed
+         * lines' clock; empty unless the applied [base] is the AI answer the
+         * words came with. See [LyricsWordAlign.Heard] and `heardWords`.
+         */
+        val heardWords: List<LyricsWordAlign.Heard> = emptyList(),
     ) {
         val isEmpty: Boolean get() = base == null && manualMs == 0L
 
@@ -146,7 +153,26 @@ object LyricsTiming {
         val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed) else null
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
-        return Timing(base, entry.manualMs ?: 0L, bias, engine).takeUnless { it.isEmpty }
+        val timing = Timing(base, entry.manualMs ?: 0L, bias, engine)
+        // The transcript is kept on the video's own clock, and a displayed line
+        // is map(record) + extraMs; the words are already video time, so only
+        // [Timing.extraMs] is still missing. Read it here rather than bake it
+        // into the kept words: a correction by hand, or a newly learned engine
+        // lateness, must move the heard words with their line.
+        val heard = if (base?.byAi == true && entry.aiTextKey == textKey(lines)) {
+            val shift = timing.extraMs
+            entry.heardWords.map { word ->
+                val start = (word.s + shift).coerceAtLeast(0L)
+                LyricsWordAlign.Heard(
+                    text = word.t,
+                    startMs = start,
+                    endMs = maxOf(start, (word.e + shift).coerceAtLeast(0L)),
+                )
+            }
+        } else {
+            emptyList()
+        }
+        return timing.copy(heardWords = heard).takeUnless { it.isEmpty }
     }
 
     private fun baseOf(entry: Entry, lines: List<LyricLine>, measuredAllowed: Boolean = true): Adjustment? {
@@ -837,6 +863,9 @@ object LyricsTiming {
         // placed 3 of 25 lines, Whisper 22, within a tenth of a second).
         var engine = ENGINE_DEEPGRAM
         var adjustment: Adjustment.Mapped? = null
+        // The words behind the answer that is kept, so the panel can use their
+        // real per-word times instead of guessing them from the line's slot.
+        var acceptedHeard: List<LyricsWordAlign.Heard>? = null
         // Kept before the call, not after: a request that fails, times out or
         // is cancelled has still been paid for, and must not be made again for
         // these lyrics. [AiTimingPolicy] reads this to pick the next engine.
@@ -875,6 +904,7 @@ object LyricsTiming {
                 if (fitted != null) {
                     adjustment = fitted
                     engine = name
+                    acceptedHeard = heard
                     break
                 }
                 // A key Deepgram turned away is turned away for Whisper too.
@@ -915,6 +945,12 @@ object LyricsTiming {
                 aiShiftMs = null,
                 aiStarts = null,
                 aiFailedKey = null,
+                // The transcript words belong to this answer: another engine's
+                // answer (or Gemini's, which hears no words) replaces them, and
+                // old words for other lyrics must not outlive their answer.
+                heardWords = acceptedHeard.orEmpty()
+                    .take(MAX_HEARD_WORDS)
+                    .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
                 // A new answer to the same lyrics keeps whether it was wanted
                 // over the measurement; it's [placeWithAi] that says it is.
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
@@ -930,12 +966,23 @@ object LyricsTiming {
     /** Forgets the AI answer for [videoId] (and a correction made on top of it); the measurement applies again. */
     suspend fun clearAi(context: Context, videoId: String) {
         store(context).update(videoId) {
-            it.copy(aiTextKey = null, ai = null, aiShiftMs = null, aiStarts = null, manualMs = null, aiPreferred = false)
+            it.copy(
+                aiTextKey = null,
+                ai = null,
+                aiShiftMs = null,
+                aiStarts = null,
+                heardWords = emptyList(),
+                manualMs = null,
+                aiPreferred = false,
+            )
         }
         _changes.tryEmit(videoId)
     }
 
     private const val MIN_AI_LINES = 3
+
+    /** A transcript longer than this is cut: enough for any song, bounded on disk. */
+    private const val MAX_HEARD_WORDS = 4_000
 
     // ---- How late Gemini runs ----------------------------------------------------------
 
@@ -1110,6 +1157,14 @@ object LyricsTiming {
 
     // ---- Kept on disk --------------------------------------------------------
 
+    /**
+     * One word as the transcript heard it, kept compactly: the entry file holds
+     * thousands of videos, and a word list is the bulkiest thing a timing entry
+     * ever carries. Times are on the video's own clock, as heard.
+     */
+    @Serializable
+    private data class SavedWord(val t: String, val s: Long, val e: Long)
+
     /** A [LyricsTimeMap] with what was said about it. */
     @Serializable
     private data class SavedMap(
@@ -1176,6 +1231,8 @@ object LyricsTiming {
         val aiEngine: String? = null,
         /** The lyrics (text key) Whisper was last asked about, answered or not: asked once. */
         val whisperKey: Int? = null,
+        /** The words behind the AI answer, on the video's clock; see [timing]. */
+        val heardWords: List<SavedWord> = emptyList(),
         /** The lyrics the last automatic request was for, and the engines it has spent on them; see [AiTimingPolicy]. */
         val aiAttemptedKey: Int? = null,
         val aiAttemptedEngines: List<String> = emptyList(),

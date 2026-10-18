@@ -123,8 +123,10 @@ import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.translationLanguageName
 import com.music.bitchord.data.lyrics.withEstimatedWords
+import com.music.bitchord.data.lyrics.withHeardWords
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.Haptics
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -537,6 +539,8 @@ internal fun CurrentLyricStrip(
     lyricsUnavailable: Boolean,
     loadingText: String,
     onClick: () -> Unit,
+    /** Words a transcript heard for this video, on [lines]' clock; empty keeps the guess. */
+    heardWords: List<LyricsWordAlign.Heard> = emptyList(),
 ) {
     Box(
         modifier = Modifier
@@ -555,6 +559,7 @@ internal fun CurrentLyricStrip(
                 isPlaying = isPlaying,
                 durationMs = durationMs,
                 onClick = onClick,
+                heardWords = heardWords,
                 modifier = Modifier.fillMaxWidth(),
             )
         } else if (lyricsUnavailable) {
@@ -1607,6 +1612,11 @@ internal fun LyricsPanel(
      * under each original line. Null shows the originals alone.
      */
     subLines: List<LyricLine>? = null,
+    /**
+     * Words a transcript heard for this video, already on [lines]' clock — see
+     * `LyricsTiming.Timing.heardWords`. Empty falls back to the guessed sweep.
+     */
+    heardWords: List<LyricsWordAlign.Heard> = emptyList(),
     trackKey: String,
     playhead: LyricPlayhead,
     /** Whether a lookup for this track is still in flight. */
@@ -2246,9 +2256,17 @@ internal fun LyricsPanel(
                 // highlight still follows the singer letter by letter instead of
                 // lighting the whole line at once. Display-only: the rows, the
                 // scroll and the focus keep reading the provider's own [line].
+                //
+                // Where AI timing heard the words, their own times are real and
+                // win; only a line the transcript did not really hear falls back
+                // to the estimate.
                 val nextStamp = lines.getOrNull(index + 1)?.timeMs
-                val shown = remember(line, nextStamp, isSynced) {
-                    if (isSynced) line.withEstimatedWords(nextStamp) else line
+                val shown = remember(line, nextStamp, isSynced, heardWords) {
+                    when {
+                        !isSynced -> line
+                        else -> line.withHeardWords(heardWords, nextStamp)
+                            ?: line.withEstimatedWords(nextStamp)
+                    }
                 }
                 Column(modifier = shape) {
                     PanelVoice(
@@ -2611,6 +2629,8 @@ private fun CurrentLyricLine(
     isPlaying: Boolean,
     durationMs: Long,
     onClick: () -> Unit,
+    /** Words a transcript heard for this video, on [lines]' clock; empty keeps the guess. */
+    heardWords: List<LyricsWordAlign.Heard> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
@@ -2720,10 +2740,13 @@ private fun CurrentLyricLine(
         ) { (lineIndex, lineItem, lineText) ->
             val itemInstrumental = lineItem == null || lineItem.isGap
             // A line-synced line gets guessed word timings too, so the strip
-            // follows the singer letter by letter like the panel does.
+            // follows the singer letter by letter like the panel does — with
+            // the transcript's real times where it heard the words.
             val nextStamp = lines.getOrNull(lineIndex + 1)?.timeMs
-            val swept = remember(lineItem, nextStamp) {
-                lineItem?.takeIf { !itemInstrumental }?.withEstimatedWords(nextStamp)?.takeIf { it.isWordSynced }
+            val swept = remember(lineItem, nextStamp, heardWords) {
+                lineItem?.takeIf { !itemInstrumental }
+                    ?.let { it.withHeardWords(heardWords, nextStamp) ?: it.withEstimatedWords(nextStamp) }
+                    ?.takeIf { it.isWordSynced }
             }
             if (swept != null) {
                 SweptLyricLine(

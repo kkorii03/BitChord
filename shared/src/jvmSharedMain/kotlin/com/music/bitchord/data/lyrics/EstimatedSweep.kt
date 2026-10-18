@@ -140,6 +140,16 @@ private fun String.sweepWeight(): Double {
     return if (beat && weight <= 0.0) 1.0 else weight
 }
 
+/**
+ * The beats [tokens] would be given by [withEstimatedWords], so words a
+ * transcript did not cover can be spread through the room between the ones it
+ * did — see [withHeardWords].
+ */
+internal fun sweepWeights(tokens: List<String>): List<Double> = tokens.map { it.sweepWeight() }
+
+/** The pause [sweepWeights] leaves between two words, in the same unit as one syllable. */
+internal const val SWEEP_GAP_WEIGHT: Double = GAP_WEIGHT
+
 /** Scripts whose characters are syllables already: one beat each. */
 private fun Char.isSyllableBlock(): Boolean =
     this in '가'..'힯' || this in 'ᄀ'..'ᇿ' || this in '㄰'..'㆏' ||

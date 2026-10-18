@@ -836,6 +836,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 manualMs = timing?.manualMs ?: 0L,
                 note = note,
                 aiEngine = timing?.aiEngine,
+                // Empty unless the answer showing is the transcript's, and
+                // already shifted onto the same clock as [LyricsTiming.apply].
+                heardWords = timing?.heardWords.orEmpty(),
             )
         }
     }

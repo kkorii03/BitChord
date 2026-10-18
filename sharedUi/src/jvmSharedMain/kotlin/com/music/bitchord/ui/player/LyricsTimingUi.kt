@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.player
 
+import com.music.bitchord.data.lyrics.LyricsWordAlign
+
 /**
  * Whether the lyrics on screen were moved onto the video's own clock, and how
  * — for the AI timing button, the line under the lyrics and the sync drawer.
@@ -29,4 +31,10 @@ data class LyricsTimingUi(
     val videoOwn: Boolean = false,
     /** Who gave the AI answer: "Deepgram" or "Gemini" — shown beside it. */
     val aiEngine: String? = null,
+    /**
+     * The words the transcript heard for this video, on the displayed lyric
+     * clock: the panel lights each word at its real time instead of guessing.
+     * Empty when no transcript answer applies — see `LyricsTiming.Timing.heardWords`.
+     */
+    val heardWords: List<LyricsWordAlign.Heard> = emptyList(),
 )
