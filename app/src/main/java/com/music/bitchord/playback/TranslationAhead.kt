@@ -23,10 +23,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Lyric translations made before anyone taps the button.
  *
- *  - [nextTrack]: while a song plays, the next one's lyrics are looked up and
- *    translated, so its translate button answers at once. The lyrics land in
- *    [LyricsRepository]'s memo, which is what makes the player show the very
- *    lines the translation was made from.
+ *  - [nextTrack]: while a song plays, the next one's lyrics are looked up —
+ *    and, only on unmetered power (see [TranslationAheadPolicy]), timed and
+ *    translated too. The lyrics land in [LyricsRepository]'s memo, which is
+ *    what makes the player show the very lines the translation was made from.
+ *  - [trackStarted]: the same heavy pass for the track that has just become
+ *    current, for the cases where doing it during the previous one was not
+ *    worth the data or the battery.
  *  - [downloaded]: a downloaded song's lyrics are read back out of its file and
  *    translated, and the answer is kept for good beside the download — so the
  *    translation is there offline, like the lyrics themselves.
@@ -48,6 +51,29 @@ internal object TranslationAhead {
     @Volatile
     private var nextId: String? = null
 
+    @Volatile
+    private var currentJob: Job? = null
+
+    @Volatile
+    private var currentId: String? = null
+
+    /**
+     * Tracks whose timing/translation pass has already been started, so the
+     * same song is not prepared twice when it was prefetched ahead and then
+     * starts playing. Bounded: a long session only needs the recent few.
+     */
+    private val prepared = ArrayDeque<String>()
+
+    private fun markPrepared(videoId: String) {
+        synchronized(prepared) {
+            if (videoId in prepared) return
+            prepared.addLast(videoId)
+            while (prepared.size > PREPARED_IDS_KEPT) prepared.removeFirst()
+        }
+    }
+
+    private fun wasPrepared(videoId: String): Boolean = synchronized(prepared) { videoId in prepared }
+
     /** The language the translate button would ask for, worked out the way the player does. */
     fun targetLanguage(context: Context): String {
         val chosen = AppSettings.translationLanguage.value.trim()
@@ -59,13 +85,15 @@ internal object TranslationAhead {
 
     /**
      * Called as a track starts with what plays after it, or null at the end of
-     * the queue. Gets the next track ready so it opens with everything in
-     * place: its lyrics always (they land in [LyricsRepository]'s memo, which
-     * the player then answers from at once), its translation when the
-     * translate button or auto-translate would ask for one, and its lyrics
-     * moved onto the video's own clock.
+     * the queue.
+     *
+     * [allowHeavy] is the policy's [TranslationAheadPolicy.Plan.FULL]: only
+     * then are timing and translation fetched for a song that has not started
+     * yet. Otherwise this is a lyrics-only lookup, which is the cheap part and
+     * the one the player needs instantly when the track opens. See
+     * [TranslationAheadPolicy] for when the heavy pass is allowed ahead.
      */
-    fun nextTrack(context: Context, next: Song?) {
+    fun nextTrack(context: Context, next: Song?, allowHeavy: Boolean) {
         if (next == null || !AppSettings.syncedLyrics.value) {
             nextJob?.cancel()
             nextId = null
@@ -76,28 +104,64 @@ internal object TranslationAhead {
         nextJob?.cancel()
         nextId = next.videoId
         val app = context.applicationContext
-        nextJob = scope.launch {
-            // A download carries its own lyrics: nothing to look up or time.
-            next.localUri?.let { uri ->
-                val embedded = EmbeddedLyrics.forUri(app, uri)
-                if (embedded != null) {
-                    if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
-                        translate(next.videoId, embedded, targetLanguage(app), keep = true)
-                    }
-                    return@launch
+        nextJob = scope.launch { prepare(app, next, allowHeavy) }
+    }
+
+    /**
+     * The track actually started: make the pass that was deferred while it was
+     * still only the next song — timing, and translation when the user asked
+     * for it. Lyrics were already fetched by [nextTrack] (or are fetched here
+     * if AutoPlay skipped that), so this is normally the memoised answer.
+     *
+     * On power saving the heavy part stays deferred ([AppSettings.heavyWorkAllowed]);
+     * the player's own pass picks it up when charging, exactly as before.
+     */
+    fun trackStarted(context: Context, song: Song?) {
+        if (song == null || !AppSettings.syncedLyrics.value) {
+            currentJob?.cancel()
+            currentId = null
+            return
+        }
+        if (song.videoId == currentId && currentJob?.isActive == true) return
+        currentJob?.cancel()
+        currentId = song.videoId
+        val app = context.applicationContext
+        currentJob = scope.launch {
+            prepare(app, song, allowHeavy = AppSettings.heavyWorkAllowed)
+        }
+    }
+
+    private suspend fun prepare(
+        app: Context,
+        song: Song,
+        allowHeavy: Boolean,
+    ) {
+        // A download carries its own lyrics: nothing to look up or time.
+        song.localUri?.let { uri ->
+            val embedded = EmbeddedLyrics.forUri(app, uri)
+            if (embedded != null) {
+                if (allowHeavy &&
+                    (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value)
+                ) {
+                    translate(song.videoId, embedded, targetLanguage(app), keep = true)
+                    markPrepared(song.videoId)
                 }
-            }
-            val found = lookUp(next) ?: return@launch
-            val lines = found.lines.takeIf { lines -> lines.any { it.text.isNotBlank() } } ?: return@launch
-            // The timing alongside the translation rather than after it, and
-            // outside [nextJob]: this song is about to be the one playing, and
-            // the next nextTrack — the moment it starts — must not throw away
-            // a measurement half done for it.
-            startTiming(app, next, found)
-            if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
-                translate(next.videoId, lines, targetLanguage(app), keep = next.localUri != null)
+                return
             }
         }
+        val found = lookUp(song, transcribe = allowHeavy && song.localUri == null) ?: return
+        val lines = found.lines.takeIf { lines -> lines.any { it.text.isNotBlank() } } ?: return
+        if (!allowHeavy) return
+        if (wasPrepared(song.videoId)) return
+        // The timing alongside the translation rather than after it, and
+        // outside the job that owns the lookup: this song is about to be the
+        // one playing, and the next nextTrack — the moment it starts — must not
+        // throw away a measurement half done for it.
+        startTiming(app, song, found)
+        if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
+            translate(song.videoId, lines, targetLanguage(app), keep = song.localUri != null)
+        }
+        markPrepared(song.videoId)
     }
 
     /** Timing jobs still running: this song's, the one before (now usually playing). */
@@ -113,6 +177,9 @@ internal object TranslationAhead {
     }
 
     private const val MAX_TIMING_JOBS = 2
+
+    /** Recent prepared ids, enough for a queue behind the one playing. */
+    private const val PREPARED_IDS_KEPT = 12
 
     /**
      * Times the next video's lyrics to it — see
@@ -204,7 +271,7 @@ internal object TranslationAhead {
         }
     }
 
-    private suspend fun lookUp(song: Song): LyricsRepository.Result? {
+    private suspend fun lookUp(song: Song, transcribe: Boolean): LyricsRepository.Result? {
         val sources = AppSettings.lyricsSources.value
         val durationMs = song.durationMillis()
         // The player matches with a known length; a lookup without one may
@@ -226,7 +293,7 @@ internal object TranslationAhead {
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
-                    transcribe = song.localUri == null,
+                    transcribe = transcribe,
                 )
             }
         } catch (cancelled: CancellationException) {

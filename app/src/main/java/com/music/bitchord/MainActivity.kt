@@ -2673,6 +2673,7 @@ private fun BitChordApp(
                                     null
                                 },
                                 contentPadding = listPadding,
+                                isPlaying = player.isPlaying,
                             )
                         }
                     } else if (key == "replay") {
@@ -3291,6 +3292,7 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             links = libraryLinks(),
                             deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
+                            isPlaying = player.isPlaying,
                         )
                     }
                 }

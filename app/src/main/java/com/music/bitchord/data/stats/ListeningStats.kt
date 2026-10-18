@@ -89,6 +89,15 @@ object ListeningStats {
     private val writeLock = Mutex()
 
     /**
+     * Routine writes are at most one every two minutes. Playback samples every
+     * few seconds; the month file is up to six hundred tracks, and rewriting it
+     * at that rate is flash wear for numbers nobody reads at that resolution.
+     * Forced writes (pause, track end, service stop, and every read of the
+     * summary) are not throttled.
+     */
+    private val writeThrottle = WriteThrottle(MIN_WRITE_INTERVAL_MS)
+
+    /**
      * Bumped by every completed write and every import, so [summary] can tell
      * whether the answer it already has is still the answer.
      */
@@ -209,15 +218,25 @@ object ListeningStats {
      *
      * Called on a cadence rather than on every sample: the numbers are worth
      * losing a few seconds of, and a music player has better uses for its disk
-     * than re-serialising a month every time a track ticks over.
+     * than re-serialising a month every time a track ticks over. The routine
+     * path is throttled to [MIN_WRITE_INTERVAL_MS]; [force] is for a pause or
+     * a stop, where losing the tail would actually matter.
      */
-    fun flush() {
-        pending()?.let { (key, snapshot) -> writer.launch { write(key, snapshot) } }
+    fun flush(force: Boolean = false) {
+        if (!force && !writeThrottle.shouldWrite(System.currentTimeMillis())) return
+        val now = System.currentTimeMillis()
+        pending()?.let { (key, snapshot) ->
+            writeThrottle.wrote(now)
+            writer.launch { write(key, snapshot) }
+        }
     }
 
     /** As [flush], for a caller that is about to read back what it wrote. */
     private suspend fun flushAndAwait() {
-        pending()?.let { (key, snapshot) -> writer.launch { write(key, snapshot) }.join() }
+        pending()?.let { (key, snapshot) ->
+            writeThrottle.wrote(System.currentTimeMillis())
+            writer.launch { write(key, snapshot) }.join()
+        }
     }
 
     /** The open month as bytes-to-be, or null when nothing has changed. */
@@ -649,6 +668,9 @@ object ListeningStats {
 
     private const val TAG = "BitChordListening"
     private const val DIRECTORY = "listening"
+
+    /** At most one routine month write per two minutes of playback. */
+    private const val MIN_WRITE_INTERVAL_MS = 2L * 60L * 1000L
 
     /** How far down the artist chart a page opening will send lookups for. */
     private const val ARTISTS_TO_RESOLVE = 15

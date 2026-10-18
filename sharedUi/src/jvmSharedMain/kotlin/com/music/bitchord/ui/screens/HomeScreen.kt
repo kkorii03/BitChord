@@ -936,7 +936,12 @@ internal fun NewShelfCard(
  * copies of the same box.
  */
 @Composable
-private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector) {
+private fun ServiceCard(
+    colors: List<Color>,
+    trackKey: String,
+    icon: ImageVector,
+    isPlaying: Boolean,
+) {
     val palette = remember { MeshPalette(colors) }
     Box(
         modifier = Modifier
@@ -948,7 +953,12 @@ private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector
         MeshGradientBackground(
             palette = palette,
             trackKey = trackKey,
-            continuous = true,
+            // A shelf card only orbits while audio is playing and the app is
+            // on screen (the mesh itself stops off-screen). Paused, the
+            // settled frame is the same picture minus the constant re-blur,
+            // and even the one-shot drift is skipped: a still card is still.
+            continuous = isPlaying,
+            animated = isPlaying,
             blurRadius = 24.dp,
         )
         Icon(
@@ -990,7 +1000,8 @@ internal fun ShelfCard(
                     MeshGradientBackground(
                         palette = palette,
                         trackKey = "local:downloads",
-                        continuous = true,
+                        continuous = isPlaying,
+                        animated = isPlaying,
                         blurRadius = 24.dp,
                     )
                     Icon(
@@ -1005,21 +1016,25 @@ internal fun ShelfCard(
                 colors = listOf(Color(0xFF134E5E), Color(0xFF71B280)),
                 trackKey = "local:all",
                 icon = Icons.Rounded.LibraryMusic,
+                isPlaying = isPlaying,
             )
             "local:cache" -> ServiceCard(
                 colors = listOf(Color(0xFF42275A), Color(0xFF734B6D)),
                 trackKey = "local:cache",
                 icon = Icons.Rounded.Cached,
+                isPlaying = isPlaying,
             )
             "local:webdav" -> ServiceCard(
                 colors = listOf(Color(0xFF3A1C71), Color(0xFFD76D77)),
                 trackKey = "local:webdav",
                 icon = Icons.Rounded.Folder,
+                isPlaying = isPlaying,
             )
             "local:smb" -> ServiceCard(
                 colors = listOf(Color(0xFF0F2027), Color(0xFF2C5364)),
                 trackKey = "local:smb",
                 icon = Icons.Rounded.Storage,
+                isPlaying = isPlaying,
             )
             else -> {
                 Box(

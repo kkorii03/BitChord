@@ -116,6 +116,8 @@ fun LibraryScreen(
     deviceItems: List<ShelfItem>,
     /** The big "Library" heading; the desktop's pages carry none. */
     showTitle: Boolean = true,
+    /** Whether audio is playing, for the shelf cards' continuous mesh motion. */
+    isPlaying: Boolean = false,
 ) {
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
     val onDevice = stringResource(Res.string.on_device)
@@ -152,6 +154,7 @@ fun LibraryScreen(
                         onItemClick = onShelfItemClick,
                         onItemLongPress = onShelfItemLongPress,
                         onShowAll = { onShowAll(onDeviceShelf) },
+                        isPlaying = isPlaying,
                     )
                 }
             }
@@ -165,6 +168,7 @@ fun LibraryScreen(
                         onNewPlaylist = onNewPlaylist,
                         onImportSpotifyPlaylist = onImportSpotifyPlaylist,
                         onShowAll = { onShowAll(emptyPlaylists) },
+                        isPlaying = isPlaying,
                     )
                 }
                 item {
@@ -197,6 +201,7 @@ fun LibraryScreen(
                                 onNewPlaylist = onNewPlaylist,
                                 onImportSpotifyPlaylist = onImportSpotifyPlaylist,
                                 onShowAll = { onShowAll(emptyPlaylists) },
+                                isPlaying = isPlaying,
                             )
                         }
                     }
@@ -212,6 +217,7 @@ fun LibraryScreen(
                                     onImportSpotifyPlaylist = onImportSpotifyPlaylist,
                                     onShowAll = { onShowAll(pinnedFirst) },
                                     pinnedPlaylists = pinnedPlaylists,
+                                    isPlaying = isPlaying,
                                 )
                             } else {
                                 LibraryGridShelf(
@@ -219,6 +225,7 @@ fun LibraryScreen(
                                     onItemClick = onShelfItemClick,
                                     onItemLongPress = onShelfItemLongPress,
                                     onShowAll = { onShowAll(shelf) },
+                                    isPlaying = isPlaying,
                                 )
                             }
                         }
@@ -311,6 +318,7 @@ private fun PlaylistShelf(
     onImportSpotifyPlaylist: (() -> Unit)? = null,
     onShowAll: () -> Unit,
     pinnedPlaylists: List<String> = emptyList(),
+    isPlaying: Boolean = false,
 ) {
     LibraryGridShelf(
         shelf = shelf,
@@ -318,6 +326,7 @@ private fun PlaylistShelf(
         onItemLongPress = onItemLongPress,
         onShowAll = onShowAll,
         pinnedPlaylists = pinnedPlaylists,
+        isPlaying = isPlaying,
         leadingCard = {
             Row(horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING)) {
                 NewShelfCard(
@@ -361,6 +370,7 @@ internal fun LibraryGridShelf(
     onShowAll: () -> Unit,
     leadingCard: (@Composable () -> Unit)? = null,
     pinnedPlaylists: List<String> = emptyList(),
+    isPlaying: Boolean = false,
 ) {
     val leadingCount = if (leadingCard != null) 1 else 0
     val visibleItems = shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
@@ -381,6 +391,7 @@ internal fun LibraryGridShelf(
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
                     isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                    isPlaying = isPlaying,
                 )
             }
         }
@@ -400,6 +411,7 @@ fun LibraryGridPage(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     onNewPlaylist: (() -> Unit)? = null,
+    isPlaying: Boolean = false,
 ) {
     // Re-read live rather than trusting [shelf] to already be sorted: this page
     // is opened from a snapshot (see `libraryShowAll` in MainActivity), and a
@@ -439,6 +451,7 @@ fun LibraryGridPage(
                     onLongPress = { onItemLongPress(item) },
                     modifier = Modifier.fillMaxWidth(),
                     isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
+                    isPlaying = isPlaying,
                 )
             }
         }

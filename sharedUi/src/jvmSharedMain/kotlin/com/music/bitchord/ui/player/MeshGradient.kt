@@ -33,6 +33,7 @@ import com.music.bitchord.ui.graphics.toImageBitmap
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.ui.graphics.ColorUtils
+import com.music.bitchord.ui.rememberIsForeground
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
@@ -106,6 +107,7 @@ fun MeshGradientBackground(
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    val foreground = rememberIsForeground()
     val still = reduceAnimation || lowPower
 
     val tuned = (palette.colors.ifEmpty { FallbackColors } + FallbackColors)
@@ -123,8 +125,13 @@ fun MeshGradientBackground(
     // Read in the draw lambda, not here: an Animatable read during draw
     // invalidates only the drawing, leaving composition out of the loop.
     val phase = remember { Animatable(0f) }
-    LaunchedEffect(trackKey, still, continuous, animated) {
+    LaunchedEffect(trackKey, still, continuous, animated, foreground) {
         when {
+            // No viewer: leave the last frame drawn and stop the animation.
+            // This is what lets a shelf card keep `continuous` for the moment
+            // the app comes back without re-blurring the layer in the
+            // background, where nothing can see it.
+            !foreground -> Unit
             !animated || still -> phase.snapTo(0f)
             // A full turn at a time, restarted rather than looped with an
             // infinite spec: the blobs' speeds are irrational multiples of each

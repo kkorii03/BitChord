@@ -120,7 +120,8 @@ object ListeningRecorder {
         playCounted = false
         completionCounted = false
         samplesSinceFlush = 0
-        ListeningStats.flush()
+        // A pause or a stop is the one moment the tail must reach disk.
+        ListeningStats.flush(force = true)
     }
 
     /**
@@ -212,8 +213,8 @@ object ListeningRecorder {
     /** Past four minutes, half a track is more listening than anyone disputes. */
     private const val PLAY_CEILING_MS = 4 * 60 * 1000L
 
-    /** Six ticks — about half a minute of listening between disk writes. */
-    private const val FLUSH_EVERY = 6
+    /** Two minutes of listening between routine disk writes. */
+    private const val FLUSH_EVERY = 24
 
     /** What a YouTube video id looks like, and nothing else this app plays does. */
     private const val YOUTUBE_ID_LENGTH = 11

@@ -1,8 +1,10 @@
 package com.music.bitchord.playback
 
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
@@ -14,6 +16,7 @@ import android.widget.Toast
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import com.music.bitchord.data.TelemetryProvenance
 import kotlinx.coroutines.sync.Mutex
@@ -33,6 +36,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.core.net.toUri
+import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
@@ -112,6 +116,9 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.LikeState
@@ -275,6 +282,18 @@ private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 
 /** How long a song plays before the one after it has its lyrics translated. */
 private const val TRANSLATION_AHEAD_DELAY_MS = 12_000L
+
+/**
+ * The controller that draws the media notification. It is always attached
+ * while the service has a session, and it never draws lyric subtitles, so it
+ * does not count as a reason to keep the lyric ticker awake with the screen
+ * off.
+ */
+private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+
+/** A car / cast / other surface that may draw the subtitle. */
+private fun MediaSession.ControllerInfo.showsMediaMetadata(): Boolean =
+    packageName != SYSTEM_UI_PACKAGE
 
 /**
  * How long after our own jump out of a segment a seek still reads as ours
@@ -736,6 +755,37 @@ class PlaybackService : MediaLibraryService() {
     private val localBitrateCache = ConcurrentHashMap<String, Int>()
 
     /**
+     * One thread for the sampler's bookkeeping (listening record, recent
+     * position) so that disk, prefs and JSON never run on the main thread and
+     * still arrive in the order the ticks were taken. A single thread rather
+     * than [Dispatchers.IO] because ordering is the point: a sample landing
+     * after the pause that closed the track would resurrect it.
+     */
+    private val progressWork: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "bitchord-progress").apply { isDaemon = true }
+    }
+
+    private fun postProgressWork(block: () -> Unit) {
+        runCatching { progressWork.execute { block() } }
+    }
+
+    /** Last format the nerd-stats card was built from, so the sampler can skip a rebuild. */
+    private var lastNerdStatsKey: Any? = null
+
+    /**
+     * The screen turning back on is the only event that can make lyric metadata
+     * wanted again after [lyricMetadataWanted] stopped the ticker while off.
+     */
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON -> startLyricsTicker()
+                Intent.ACTION_SCREEN_OFF -> if (!lyricMetadataWanted()) stopLyricsTicker()
+            }
+        }
+    }
+
+    /**
      * The stream resolver the player's own data source runs, kept so a Cast
      * receiver can be handed the URL it would have produced — see
      * [resolveForCast]. Null until [onCreate] has built it.
@@ -842,6 +892,7 @@ class PlaybackService : MediaLibraryService() {
 
     private var serviceLyricsJob: Job? = null
     private var translationAheadJob: Job? = null
+    private var currentTranslationAheadJob: Job? = null
     private var serviceLyrics: List<LyricLine>? = null
     private var lastPublishedSubtitle: String? = null
     private var lyricsTickerJob: Job? = null
@@ -930,8 +981,9 @@ class PlaybackService : MediaLibraryService() {
             // The listening record has to be told a pause happened, not merely
             // stop being told about play: its sampler measures the gap between
             // ticks, and an unclosed one across a pause is an afternoon on the
-            // lock screen arriving as an afternoon of listening.
-            if (!isPlaying) ListeningRecorder.onStopped()
+            // lock screen arriving as an afternoon of listening. Queued on the
+            // same single thread as the samples, after them.
+            if (!isPlaying) postProgressWork { ListeningRecorder.onStopped() }
 
             // ListenBrainz: "now playing" on play/resume too, not just on
             // transition — a track started from idle or resumed from pause
@@ -960,6 +1012,15 @@ class PlaybackService : MediaLibraryService() {
                 clearDiscordPresence()
                 stopLyricsTicker()
             }
+        }
+
+        /**
+         * A speed change moves every future line boundary in wall-clock time,
+         * so the pending wake-up is recomputed rather than left on the old
+         * rate's timing.
+         */
+        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+            if (player?.isPlaying == true) startLyricsTicker()
         }
 
         /**
@@ -1016,7 +1077,10 @@ class PlaybackService : MediaLibraryService() {
                     lastManualSeekPositionMs = newPosition.positionMs
                 }
                 if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
-                updateLyricSubtitle()
+                // A seek moved the playhead, so the line that is current now
+                // and the next boundary after it are both new. Paused, there is
+                // no next boundary to wait for — just the one subtitle update.
+                if (exoPlayer.isPlaying) startLyricsTicker() else updateLyricSubtitle()
             }
             scheduleSkipSegmentMessages()
         }
@@ -1334,9 +1398,24 @@ class PlaybackService : MediaLibraryService() {
         // its id was still recorded as answered. Both are documented where the
         // state lives.
         NerdStats.forgetLastSession()
+        lastNerdStatsKey = null
         localBitrateCache.clear()
         QualityUpgrade.forgetLastSession()
         com.music.bitchord.lockscreen.LockScreenLyrics.attach(this) { player?.currentMediaItem != null }
+        // The lyric ticker is off while the screen is off and nothing is
+        // showing lines; this is what tells it the screen came back.
+        runCatching {
+            val screenFilter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }
+            ContextCompat.registerReceiver(
+                this,
+                screenStateReceiver,
+                screenFilter,
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+        }.onFailure { Log.w("BitChord", "screen state receiver: ${it.message}") }
         headphoneResume.attach()
 
         setMediaNotificationProvider(
@@ -3116,8 +3195,9 @@ class PlaybackService : MediaLibraryService() {
         // And the local record, which needs the transition even when the track
         // id doesn't change: repeat-one plays the same song again, and without
         // this the second play through is a continuation of the first and is
-        // never counted.
-        ListeningRecorder.onStopped()
+        // never counted. On the sampler's own thread, after the ticks it has
+        // already queued for the outgoing track.
+        postProgressWork { ListeningRecorder.onStopped() }
         val newSong = mediaItem?.toSong()
         val durationMs = exoPlayer.duration.takeIf { it > 0 }
         if (exoPlayer.isPlaying) {
@@ -5235,6 +5315,24 @@ class PlaybackService : MediaLibraryService() {
         val player = player ?: return
         val format = player.audioFormat
         val mediaId = player.currentMediaItem?.mediaId
+        // The sampler calls this every five seconds because the renderer can
+        // settle on its format after the track change. Only a changed format
+        // (or a bitrate measured for this item) can change the card, so the
+        // snapshot is built then, not on every tick.
+        val formatKey = listOf(
+            mediaId,
+            format?.sampleMimeType,
+            format?.containerMimeType,
+            format?.codecs,
+            format?.bitrate,
+            format?.averageBitrate,
+            format?.sampleRate,
+            format?.channelCount,
+            format?.pcmEncoding,
+            mediaId?.let { localBitrateCache[it] },
+        )
+        if (formatKey == lastNerdStatsKey) return
+        lastNerdStatsKey = formatKey
         val measured = format?.measure()
         // DSD reaches the renderer already decimated to PCM (DsdExtractor), so
         // its sample mime is `audio/raw`; the extractor leaves `dsd64` and the
@@ -5333,10 +5431,11 @@ class PlaybackService : MediaLibraryService() {
     /** Persist index and position without touching or serializing queue contents. */
     private fun savePlaybackState(player: ExoPlayer) {
         if (player.mediaItemCount == 0) return
-        LastPlayed.savePlaybackState(
-            index = player.currentMediaItemIndex - persistedQueueStart,
-            positionMs = player.currentPosition,
-        )
+        // The player is read here, on its own thread; the prefs write itself is
+        // queued on the sampler thread like the rest of the periodic work.
+        val index = player.currentMediaItemIndex - persistedQueueStart
+        val positionMs = player.currentPosition
+        postProgressWork { LastPlayed.savePlaybackState(index = index, positionMs = positionMs) }
     }
 
     /** Restore the bounded queue without preparing or resolving a stream. */
@@ -5533,24 +5632,25 @@ class PlaybackService : MediaLibraryService() {
                     // which counts wall-clock time between ticks rather than
                     // reading the position. This loop is the only place in the app
                     // that ticks exactly while audio is coming out, which is what
-                    // makes it the right place to count from.
-                    player.currentMediaItem?.toSong()?.let {
-                        ListeningRecorder.onSample(it, player.duration)
+                    // makes it the right place to count from. The record and the
+                    // month file it feeds are disk/JSON work, so they run on the
+                    // sampler's own thread, in tick order.
+                    player.currentMediaItem?.toSong()?.let { song ->
+                        val durationMs = player.duration
+                        postProgressWork { ListeningRecorder.onSample(song, durationMs) }
                     }
                     // Only two primitive preference values. Queue JSON is
                     // written from onTimelineChanged, never from this loop.
                     savePlaybackState(player)
                     // The renderer can settle on its format a moment after the
                     // track change, which no callback of ours follows up on.
+                    // Cheap to call: it returns before building a snapshot if
+                    // the renderer's format has not changed since the last one.
                     publishNerdStats()
-                    // The backstop for the second look. The callbacks that
-                    // start it fire at moments a track may not be resolved
-                    // yet — the resolve happens on the loader thread when the
-                    // source is opened, which for a track skipped to directly
-                    // is after its own transition has been and gone. Cheap to
-                    // repeat: it returns immediately unless the track is
-                    // pending and nothing is already looking.
-                    lookForBetterCopy(player)
+                    // The second look happens on the track change and on
+                    // play/resume. It used to be repeated here as a backstop,
+                    // which meant walking the upgrade maps for every five
+                    // seconds of every track.
                 }
                 delay(PROGRESS_SAMPLE_MS)
             }
@@ -6643,6 +6743,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onDestroy() {
         com.music.bitchord.lockscreen.LockScreenLyrics.detach(this)
         headphoneResume.detach()
+        runCatching { unregisterReceiver(screenStateReceiver) }
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.
@@ -6662,6 +6763,10 @@ class PlaybackService : MediaLibraryService() {
         lyricsTickerJob = null
         serviceLyricsJob?.cancel()
         serviceLyricsJob = null
+        translationAheadJob?.cancel()
+        translationAheadJob = null
+        currentTranslationAheadJob?.cancel()
+        currentTranslationAheadJob = null
         serviceLyrics = null
         skipSegmentsJob?.cancel()
         skipSegmentsJob = null
@@ -6700,8 +6805,16 @@ class PlaybackService : MediaLibraryService() {
         scrobbleManager?.destroy()
         scrobbleManager = null
         // Last chance to get the current track's minutes onto disk: the scope is
-        // cancelled a few lines down and the sampler goes with it.
+        // cancelled a few lines down and the sampler goes with it. The sampler
+        // thread is drained first so the final tick and this stop arrive in
+        // order, then it is closed.
+        progressWork.shutdown()
+        runCatching { progressWork.awaitTermination(2, TimeUnit.SECONDS) }
         ListeningRecorder.onStopped()
+        // And the taste file: a backgrounded app writes on ProcessLifecycle
+        // ON_STOP, but a service stopped while still in the foreground has no
+        // such callback.
+        TasteSignals.flush()
         // Discord, on the same terms as the ListenBrainz submit above: the
         // service scope is cancelled a few lines down, and a presence left up
         // would advertise a track that stopped when the process did — until
@@ -6741,20 +6854,54 @@ class PlaybackService : MediaLibraryService() {
      * Hands the next song in the queue to [TranslationAhead] once this one has
      * settled in. Read late rather than now: autoplay fills the queue a moment
      * after a transition, and a song added to play next counts too.
+     *
+     * Lyrics are always worth fetching ahead; timing and translation only on
+     * unmetered power (see [TranslationAheadPolicy]). A slot AutoPlay may
+     * replace is not prepared at all, and the heavy pass for the track that is
+     * actually playing is made when it starts — [scheduleCurrentTranslationAhead].
      */
     private fun scheduleTranslationAhead() {
         translationAheadJob?.cancel()
+        translationAheadJob = null
+        val (next, fromAutoplay) = upcomingSong() ?: return
+        val plan = TranslationAheadPolicy.plan(
+            metered = AppSettings.meteredConnection.value,
+            lowPower = AppSettings.lowPower.value,
+            charging = AppSettings.charging.value,
+            autoplayUncertain = fromAutoplay,
+        )
+        if (plan == TranslationAheadPolicy.Plan.NONE) return
         translationAheadJob = scope.launch(Dispatchers.Main) {
             delay(TRANSLATION_AHEAD_DELAY_MS)
-            TranslationAhead.nextTrack(this@PlaybackService, upcomingSong())
+            TranslationAhead.nextTrack(
+                this@PlaybackService,
+                next,
+                allowHeavy = plan == TranslationAheadPolicy.Plan.FULL,
+            )
         }
     }
 
-    private fun upcomingSong(): Song? {
+    /**
+     * The pass for the track now playing, when the ahead look did not make it:
+     * timing and translation start once the song is actually current rather
+     * than during the previous one. Skipped when that look already prepared it.
+     */
+    private fun scheduleCurrentTranslationAhead(song: Song) {
+        currentTranslationAheadJob?.cancel()
+        currentTranslationAheadJob = scope.launch(Dispatchers.Main) {
+            delay(TRANSLATION_AHEAD_DELAY_MS)
+            TranslationAhead.trackStarted(this@PlaybackService, song)
+        }
+    }
+
+    /** The next song and whether it is an AutoPlay suggestion that may be replaced. */
+    private fun upcomingSong(): Pair<Song, Boolean>? {
         val exoPlayer = player ?: return null
         val index = exoPlayer.nextMediaItemIndex
         if (index == C.INDEX_UNSET || index !in 0 until exoPlayer.mediaItemCount) return null
-        return runCatching { exoPlayer.getMediaItemAt(index).toSong() }.getOrNull()
+        val item = exoPlayer.getMediaItemAt(index)
+        val song = runCatching { item.toSong() }.getOrNull() ?: return null
+        return song to item.fromAutoplay
     }
 
     private fun loadLyricsForCurrentTrack() {
@@ -6765,6 +6912,8 @@ class PlaybackService : MediaLibraryService() {
             stopLyricsTicker()
             return
         }
+        scheduleCurrentTranslationAhead(currentSong)
+
 
         if (!AppSettings.syncedLyrics.value) {
             serviceLyrics = null
@@ -6772,6 +6921,12 @@ class PlaybackService : MediaLibraryService() {
             stopLyricsTicker()
             return
         }
+
+        // The old track's lines must not be read against the new playhead while
+        // the lookup is in flight; the ticker would advance into the wrong
+        // song's lyrics until publish() replaces them.
+        serviceLyrics = null
+        lastPublishedSubtitle = null
 
         // The catalogue's length stands in until the player has its own, as it
         // does for the lyrics screen: the same length finds the same lines, and
@@ -6841,7 +6996,9 @@ class PlaybackService : MediaLibraryService() {
                     serviceLyrics = shown
                     com.music.bitchord.lockscreen.NowPlayingLyrics.publish(currentSong.videoId, shown)
                     if (player?.isPlaying == true) {
-                        updateLyricSubtitle()
+                        // The ticker may have started before the lines existed,
+                        // and a re-timing changes where the next boundary is.
+                        startLyricsTicker()
                     }
                 }
             }
@@ -6854,14 +7011,62 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /**
+     * Keeps the MediaSession subtitle on the current lyric line — the one the
+     * lock screen, a car and a Bluetooth display read.
+     *
+     * One wake-up per line, not a poll. The delay is computed from the playhead,
+     * the line list and the playback rate (see [LyricSubtitleScheduler]); a
+     * seek, a pause, a speed change or a track change cancels and re-arms it,
+     * so nothing wakes between two boundaries.
+     *
+     * With the screen off there is no lyric consumer in the foreground, and the
+     * lock-screen lyrics activity draws from [com.music.bitchord.lockscreen.NowPlayingLyrics]
+     * rather than from this subtitle. In that case the ticker is left off
+     * unless the lock-screen feature is on or another controller (car, cast
+     * display) is attached; [screenStateReceiver] re-arms it when the screen
+     * comes back.
+     */
     private fun startLyricsTicker() {
-        if (lyricsTickerJob?.isActive == true) return
+        lyricsTickerJob?.cancel()
+        lyricsTickerJob = null
+        val exoPlayer = player ?: return
+        if (!exoPlayer.isPlaying) return
+        if (!lyricMetadataWanted()) return
         lyricsTickerJob = scope.launch(Dispatchers.Main) {
+            updateLyricSubtitle()
             while (isActive) {
+                val activePlayer = player ?: break
+                if (!activePlayer.isPlaying || !lyricMetadataWanted()) break
+                val lines = serviceLyrics ?: break
+                val nextDelay = LyricSubtitleScheduler.delayUntilNextLine(
+                    lineStartsMs = lines.map { it.timeMs },
+                    positionMs = activePlayer.currentPosition,
+                    speed = activePlayer.playbackParameters.speed,
+                ) ?: break
+                delay(nextDelay)
+                if (!isActive) break
                 updateLyricSubtitle()
-                delay(500L)
             }
         }
+    }
+
+    /**
+     * Whether a subtitle update has anywhere to go.
+     *
+     * Synced lyrics off means no line subtitle by definition. Otherwise the app
+     * being interactive, the lock-screen lyrics feature, or a controller other
+     * than this app is what would show it. The last check is what keeps a car
+     * connected with the screen off working; without any of the three the
+     * ticker stays off and the per-line wake-ups stop.
+     */
+    private fun lyricMetadataWanted(): Boolean {
+        if (!AppSettings.syncedLyrics.value) return false
+        if (AppSettings.lockScreenLyrics.value) return true
+        val interactive = getSystemService(PowerManager::class.java)?.isInteractive != false
+        if (interactive) return true
+        return mediaSession?.connectedControllers
+            ?.any { it.packageName != packageName && it.showsMediaMetadata() } == true
     }
 
     private fun stopLyricsTicker() {

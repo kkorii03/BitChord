@@ -3856,6 +3856,7 @@ fun BitChordDesktopApp() {
                                 modifier = Modifier.weight(1f),
                                 onNewPlaylist = { overlays.playlistDialog = true }
                                     .takeIf { libraryShowAll?.title == PLAYLISTS_SHELF },
+                                isPlaying = playback.isPlaying,
                             )
                         }
                         destination == DesktopDestination.LIBRARY -> LibraryScreen(
@@ -3900,6 +3901,7 @@ fun BitChordDesktopApp() {
                             links = libraryLinks,
                             deviceItems = libraryDeviceItems,
                             showTitle = false,
+                            isPlaying = playback.isPlaying,
                         )
                         destination == DesktopDestination.HISTORY -> DesktopHistoryPage(
                             // The account's history when there is one, and what

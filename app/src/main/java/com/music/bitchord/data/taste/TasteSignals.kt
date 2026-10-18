@@ -2,6 +2,9 @@ package com.music.bitchord.data.taste
 
 import android.content.Context
 import android.util.Log
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
@@ -116,6 +119,17 @@ object TasteSignals {
                 loaded = true
             }
         }
+        // A 30 s debounce is gentler than the old 1.5 s, but leaving the app
+        // must not throw away what it was still waiting to write. ON_STOP is
+        // called after the activity's stop delay, which is exactly the moment
+        // "in the background" becomes true.
+        runCatching {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(
+                object : DefaultLifecycleObserver {
+                    override fun onStop(owner: LifecycleOwner) = flush()
+                },
+            )
+        }.onFailure { Log.w(TAG, "Could not watch app background state", it) }
     }
 
     // ── Recording ───────────────────────────────────────────────────────────
@@ -303,38 +317,48 @@ object TasteSignals {
 
     // ── Disk ────────────────────────────────────────────────────────────────
 
-    /** Writes whatever has changed. Safe to call from any thread. */
+    /**
+     * Writes whatever has changed. Safe to call from any thread: the snapshot
+     * and the JSON pass both happen on the writer coroutine, never on the
+     * caller's (which may be the main thread in the ON_STOP callback).
+     */
     fun flush() {
         if (!ready()) return
+        writer.launch { writeSnapshot() }
+    }
+
+    private suspend fun writeSnapshot(): Unit = writeLock.withLock {
         // Encoded while the lock is held rather than handing the live maps to
         // the writer: counters are mutated from the playback thread and a
-        // snapshot sharing them could be read half updated. The encoding itself
-        // happens on the debounce coroutine, which is an IO thread.
+        // snapshot sharing them could be read half updated. This runs on the
+        // writer coroutine, which is an IO thread.
         val encoded = synchronized(lock) {
-            if (!dirty || !loaded) return
-            dirty = false
-            pruneLocked()
-            json.encodeToString(
-                StoredSignals.serializer(),
-                StoredSignals(
-                    tracks = tracks.values.toList(),
-                    artists = artists.values.toList(),
-                    coverSingers = coverSingers.values.toList(),
-                ),
-            )
-        }
-        writer.launch {
-            writeLock.withLock {
-                runCatching {
-                    file.parentFile?.mkdirs()
-                    val temporary = File(file.path + ".tmp")
-                    temporary.writeText(encoded)
-                    if (!temporary.renameTo(file)) {
-                        if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
-                    }
-                }.onFailure { Log.w(TAG, "Could not write taste signals", it) }
+            if (!dirty || !loaded) {
+                null
+            } else {
+                dirty = false
+                pruneLocked()
+                json.encodeToString(
+                    StoredSignals.serializer(),
+                    StoredSignals(
+                        tracks = tracks.values.toList(),
+                        artists = artists.values.toList(),
+                        coverSingers = coverSingers.values.toList(),
+                    ),
+                )
             }
-        }
+        } ?: return@withLock
+        runCatching {
+            file.parentFile?.mkdirs()
+            // Written aside and renamed, so a kill mid-write leaves the
+            // previous file rather than a truncated one.
+            val temporary = File(file.path + ".tmp")
+            temporary.writeText(encoded)
+            if (!temporary.renameTo(file)) {
+                if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
+            }
+        }.onFailure { Log.w(TAG, "Could not write taste signals", it) }
+        Unit
     }
 
     /**
@@ -451,8 +475,8 @@ object TasteSignals {
     /** Milliseconds under which leaving a track is a skip: 30 s, or a quarter of a short song. */
     private const val SKIP_FLOOR_MS = 30_000L
 
-    /** About a dozen seconds of listening between writes. */
-    private const val WRITE_DEBOUNCE_MS = 1_500L
+    /** Half a minute: a skip burst is a handful of events, not a stopwatch. */
+    private const val WRITE_DEBOUNCE_MS = 30_000L
 
     private const val SESSION_COMPLETED = 5
     private const val SESSION_SKIPPED = 3
