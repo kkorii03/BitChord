@@ -55,6 +55,10 @@ import java.util.Locale
  *
  * Authenticated requests are signed with Google's SAPISIDHASH scheme derived
  * from the stored cookie; no long-lived token is ever minted or stored.
+ *
+ * Search and its suggestions are the deliberate exception: every one is sent
+ * without the account (see [isAnonymousRequest]), because YouTube records a
+ * signed-in search in the listener's history even when the app asked.
  */
 object Innertube {
     /**
@@ -165,6 +169,21 @@ object Innertube {
     private var visitorDataIsSessionBound = false
 
     /**
+     * A visitor id that belongs to no account, for [isAnonymousRequest] calls.
+     *
+     * [visitorData] is deliberately the signed-in shell's id once a login
+     * happens, which is exactly what must not travel with a search: Google can
+     * tie that id to the account, so an otherwise credential-free search would
+     * still be attributable to the listener. This one is minted from the
+     * unauthenticated bootstrap in [fetchVisitorData] and never replaced by a
+     * session-bound value.
+     */
+    @Volatile
+    private var anonymousVisitorData: String? = null
+
+    private val anonymousVisitorLock = Mutex()
+
+    /**
      * A visitor id for this session, minting one if there isn't one yet.
      *
      * @param refresh discard the current id and take a fresh one — worth doing
@@ -183,6 +202,25 @@ object Innertube {
                 }
             }
         return visitorData
+    }
+
+    /**
+     * A visitor id minted without the session, for requests that must not be
+     * attributable to the listener.
+     *
+     * Kept apart from [visitorData] rather than reset when a login happens: an
+     * anonymous request must never borrow the signed-in shell's id, and the
+     * anonymous id stays anonymous no matter how many sign-ins follow.
+     */
+    private suspend fun ensureAnonymousVisitorData(): String? {
+        anonymousVisitorData?.let { return it }
+        return anonymousVisitorLock.withLock {
+            anonymousVisitorData?.let { return@withLock it }
+            runCatching { fetchVisitorData() }
+                .onFailure { Log.w(TAG, "could not mint an anonymous visitor id: ${it.message}") }
+                .getOrNull()
+                ?.also { anonymousVisitorData = it }
+        }
     }
 
     /**
@@ -643,13 +681,18 @@ object Innertube {
         put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
+    /**
+     * A search page. Never sent as the listener's account — see
+     * [isAnonymousRequest] and [postMusic]'s endpoint check — so no query the
+     * app or the listener runs here reaches YouTube's search history.
+     */
     suspend fun search(query: String, params: String? = null): JsonObject =
         postMusic("search") {
             put("query", query)
             params?.let { put("params", it) }
         }
 
-    /** The next page of a filtered search result. */
+    /** The next page of a filtered search result; anonymous by the same rule. */
     suspend fun searchContinuation(token: String): JsonObject = postMusic(
         endpoint = "search",
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
@@ -665,6 +708,9 @@ object Innertube {
      * far cheaper than one: the response is a few hundred bytes of text with
      * no shelves, thumbnails or playback endpoints in it, which is what makes
      * it affordable per keystroke where a search is not.
+     *
+     * Account-free like [search] — every half-typed query would otherwise be
+     * recorded against the listener as one they searched for.
      */
     suspend fun searchSuggestions(input: String): JsonObject =
         postMusic("music/get_search_suggestions") {
@@ -673,26 +719,22 @@ object Innertube {
 
     /**
      * Live media results for the typeahead phase — same shape as [search] but
-     * deliberately unauthenticated so YouTube Music does not log each debounced
-     * keystroke to the account's server-side search history.
-     *
-     * The regular [search] endpoint records every call against the signed-in
-     * account, which turns a slow typist's intermediate queries ("P", "Pe",
-     * "Perf…") into polluting history entries.  By omitting the session cookie
-     * here we still get full search results (tracks, artists, albums) but they
-     * land as anonymous lookups that don't touch the user's account history.
+     * unauthenticated, so YouTube Music does not log each debounced keystroke
+     * to the account's server-side search history.
      */
     suspend fun searchTypeahead(query: String): JsonObject =
-        postMusicAnonymous("search") {
+        postMusic("search") {
             put("query", query)
         }
 
     /**
-     * A filtered search made the same anonymous way as [searchTypeahead], for
-     * lookups the app makes on its own behalf — finding the original-language
-     * name of a song whose lyrics could not be found — which have no business
-     * in the listener's search history. Answers in English for the US
-     * catalogue, so names come back as the release prints them rather than
+     * A filtered search for lookups the app makes on its own behalf — finding
+     * the original-language name of a song whose lyrics could not be found,
+     * the original behind a cover — answered the same anonymous way as
+     * [search], never with the listener's account.
+     *
+     * Answers in English for the US catalogue unless the caller says
+     * otherwise, so names come back as the release prints them rather than
      * localised.
      */
     suspend fun searchAnonymous(
@@ -701,30 +743,9 @@ object Innertube {
         /** The catalogue to answer from; "ko"/"KR" lists Korean releases under their Korean names. */
         hl: String = "en",
         gl: String = "US",
-    ): JsonObject {
-        val anonymous = postMusicAnonymous("search", hl, gl) {
-            put("query", query)
-            params?.let { put("params", it) }
-        }
-        // In Korea YouTube Music answers a signed-out search with no songs or
-        // videos at all — an empty result, every time, whatever hl/gl/client
-        // is asked for (the filter chips don't even offer "Songs"). That left
-        // every lookup made through here — the original behind a cover, a
-        // song's original-language name, an official video — empty for a
-        // listener there. Signed in, the same search answers; so when the
-        // anonymous one comes back without a single item and there is a
-        // session, it is asked again with it.
-        if (cookie == null || anonymous.toString().contains("musicResponsiveListItemRenderer")) return anonymous
-        return try {
-            postMusic("search") {
-                put("query", query)
-                params?.let { put("params", it) }
-            }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            anonymous
-        }
+    ): JsonObject = postMusic("search", hl = hl, gl = gl) {
+        put("query", query)
+        params?.let { put("params", it) }
     }
 
     /** The stats endpoints a player response nominates for one playback. */
@@ -1161,23 +1182,46 @@ object Innertube {
 
     // ---- Request plumbing ---------------------------------------------------
 
+    /**
+     * The one request path.
+     *
+     * Whether the listener's account travels with a request is decided here
+     * from the endpoint alone, not by each caller: [isAnonymousRequest]
+     * endpoints carry no Cookie, Authorization, X-Goog-AuthUser, X-Goog-PageId,
+     * `onBehalfOfUser` or session-bound visitor id. Everything else (Home,
+     * Library, likes, playlists, stats pings) keeps the session as before.
+     */
     private suspend fun postMusic(
         endpoint: String,
         query: Map<String, String> = emptyMap(),
+        hl: String = currentLanguage,
+        gl: String = currentCountry,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
-        // This is the common authenticated request path: Home, Library,
-        // likes, playlists, account menus and all their continuations pass
-        // through it. Waiting here makes restoration process-wide rather than
-        // a special case implemented by whichever screen happened to open.
-        if (cookie != null) ensureSessionScope()
-        val session = scope
+        val anonymous = isAnonymousRequest(endpoint)
+        // The common authenticated path: Home, Library, likes, playlists,
+        // account menus and all their continuations pass through it. Waiting
+        // here makes restoration process-wide rather than a special case
+        // implemented by whichever screen happened to open. Anonymous search
+        // never waits for — or looks at — the account's scope.
+        if (!anonymous && cookie != null) ensureSessionScope()
+        val session = if (anonymous) null else scope
+        val credentials = accountHeadersFor(
+            endpoint = endpoint,
+            cookie = cookie,
+            authUser = authUserFor(session),
+            pageId = pageIdFor(session),
+            // Lazy so an anonymous request never even hashes a credential.
+            authorization = { cookie?.let { c -> sapisidFrom(c)?.let { sapisidHash(it) } } },
+        )
+        val anonymousVisitor = if (anonymous) ensureAnonymousVisitorData() else null
+        val visitor = visitorIdFor(endpoint, visitorData, anonymousVisitor)
         val clientVersion = webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
                 parameter("prettyPrint", "false")
-                parameter("hl", currentLanguage)
+                parameter("hl", hl)
                 header("Accept-Language", acceptLanguageHeader)
                 query.forEach { (key, value) -> parameter(key, value) }
                 header("X-Origin", MUSIC_ORIGIN)
@@ -1188,75 +1232,8 @@ object Innertube {
                 // id is minted on the first call and reused for the session.
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                cookie?.let { c ->
-                    header("Cookie", c)
-                    // Which account in the jar, and which brand channel of it.
-                    // Both were fixed at "the first one" before — see
-                    // [SessionScope].
-                    header("X-Goog-AuthUser", authUserFor(session))
-                    pageIdFor(session)?.let { header("X-Goog-PageId", it) }
-                    sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
-                }
-                setBody(
-                    buildJsonObject {
-                        putJsonObject("context") {
-                            putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
-                                put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
-                                put("gl", currentCountry)
-                                visitorData?.let { put("visitorData", it) }
-                            }
-                            putJsonObject("user") {
-                                put("lockedSafetyMode", false)
-                                // Only ever a value read back from a shell that
-                                // said it was signed in: Google answers an
-                                // `onBehalfOfUser` it cannot tie to the cookie
-                                // with 401, so a guess here would take the
-                                // whole app down rather than just history.
-                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
-                            }
-                            putJsonObject("request") { put("useSsl", true) }
-                        }
-                        bodyExtras()
-                    },
-                )
-            }.body<JsonObject>()
-        }
-
-        if (visitorData == null) {
-            visitorData = response["responseContext"]?.jsonObject
-                ?.get("visitorData")?.jsonPrimitive?.content
-        }
-        return response
-    }
-
-    /**
-     * Like [postMusic] but deliberately strips the session cookie so YouTube
-     * Music does not record the call against any account.
-     *
-     * Used for typeahead lookups where intermediate keystrokes must remain
-     * anonymous — see [searchTypeahead].
-     */
-    private suspend fun postMusicAnonymous(
-        endpoint: String,
-        hl: String = "en",
-        gl: String = "US",
-        bodyExtras: JsonObjectBuilder.() -> Unit,
-    ): JsonObject {
-        val clientVersion = webRemixVersion
-        return withRetry {
-            client.post("$MUSIC_BASE/$endpoint") {
-                contentType(ContentType.Application.Json)
-                parameter("prettyPrint", "false")
-                header("X-Origin", MUSIC_ORIGIN)
-                header("Origin", MUSIC_ORIGIN)
-                header("Referer", "$MUSIC_ORIGIN/")
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
-                header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                // No Cookie / Authorization headers — anonymous request.
+                visitor?.let { header("X-Goog-Visitor-Id", it) }
+                credentials.forEach { (name, value) -> header(name, value) }
                 setBody(
                     buildJsonObject {
                         putJsonObject("context") {
@@ -1265,11 +1242,18 @@ object Innertube {
                                 put("clientVersion", clientVersion)
                                 put("hl", hl)
                                 put("gl", gl)
-                                visitorData?.let { put("visitorData", it) }
+                                visitor?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
-                                // No onBehalfOfUser — no account context.
+                                // Only ever a value read back from a shell that
+                                // said it was signed in: Google answers an
+                                // `onBehalfOfUser` it cannot tie to the cookie
+                                // with 401, so a guess here would take the
+                                // whole app down rather than just history. An
+                                // anonymous request names no account at all.
+                                dataSyncIdForRequest(endpoint, dataSyncIdFor(session))
+                                    ?.let { put("onBehalfOfUser", it) }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }
@@ -1277,6 +1261,75 @@ object Innertube {
                     },
                 )
             }.body<JsonObject>()
+        }
+
+        val responseVisitorData = response["responseContext"]?.jsonObject
+            ?.get("visitorData")?.jsonPrimitive?.content
+        if (anonymous) {
+            // A visitor id handed out on an unauthenticated request is safe to
+            // reuse for later ones; it never becomes the account's id.
+            if (anonymousVisitorData == null) anonymousVisitorData = responseVisitorData
+        } else if (visitorData == null) {
+            visitorData = responseVisitorData
+        }
+        return response
+    }
+
+    /**
+     * Whether [endpoint] is answered without the listener's account.
+     *
+     * Search and its suggestions are asked on the app's behalf as often as the
+     * listener's — the original behind a cover, a song's other-language name,
+     * typeahead keystrokes, chroma/timing candidates — and YouTube treats every
+     * one made with a session as a search the listener performed, writing it
+     * into their history and shaping recommendations around it. So none of
+     * them may carry credentials.
+     *
+     * Decided by endpoint rather than by caller so a future search route
+     * cannot reintroduce the problem by calling the request builder directly.
+     */
+    internal fun isAnonymousRequest(endpoint: String): Boolean =
+        endpoint == "search" || endpoint == "music/get_search_suggestions"
+
+    /**
+     * The visitor id a request may carry: the account-free one for a search,
+     * the session's one for everything else.
+     *
+     * [sessionVisitorData] is the signed-in shell's id, and sending it with a
+     * credential-free search would hand Google the account association the
+     * missing cookie was meant to remove.
+     */
+    internal fun visitorIdFor(
+        endpoint: String,
+        sessionVisitorData: String?,
+        anonymousVisitorData: String?,
+    ): String? = if (isAnonymousRequest(endpoint)) anonymousVisitorData else sessionVisitorData
+
+    /** The `onBehalfOfUser` a request may name — never one for a search. */
+    internal fun dataSyncIdForRequest(endpoint: String, dataSyncId: String?): String? =
+        dataSyncId.takeUnless { isAnonymousRequest(endpoint) }
+
+    /**
+     * The account-specific headers a request to [endpoint] may carry, as a
+     * pure decision so it can be tested without a socket.
+     *
+     * Empty for an anonymous request even when a cookie is present; that is
+     * the whole privacy guarantee. [authorization] is lazy so an anonymous
+     * request never even computes a SAPISID hash.
+     */
+    internal fun accountHeadersFor(
+        endpoint: String,
+        cookie: String?,
+        authUser: String,
+        pageId: String?,
+        authorization: () -> String?,
+    ): Map<String, String> {
+        if (cookie == null || isAnonymousRequest(endpoint)) return emptyMap()
+        return buildMap {
+            put("Cookie", cookie)
+            put("X-Goog-AuthUser", authUser)
+            pageId?.let { put("X-Goog-PageId", it) }
+            authorization()?.let { put("Authorization", it) }
         }
     }
 

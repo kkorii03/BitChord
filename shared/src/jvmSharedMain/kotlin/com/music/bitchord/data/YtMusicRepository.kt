@@ -392,6 +392,10 @@ object YtMusicRepository {
      * Fetches only the first search page. Publishing it immediately keeps the
      * search responsive; the UI asks [searchContinuation] for later pages as
      * the listener reaches the end of the list.
+     *
+     * Account-free like every search: [Innertube.search] deliberately does not
+     * send the session, so a query the listener or the app runs never lands in
+     * their YouTube search history.
      */
     suspend fun searchPage(query: String, filter: SearchFilter): Result<SearchPage> =
         call("search:${filter.name}") {
@@ -442,11 +446,11 @@ object YtMusicRepository {
      * cards alongside text completions. Uses the ALL filter to get mixed
      * results quickly; callers may want to limit how many they display.
      *
-     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
-     * session cookie so YouTube Music does not log each debounced keystroke
+     * Deliberately unauthenticated: [Innertube.searchTypeahead] sends no
+     * session at all, so YouTube Music does not log each debounced keystroke
      * to the account's server-side search history. Confirmed searches (Enter /
-     * IME Search / tapping a suggestion) still use the normal authenticated
-     * [searchPage] path and are recorded properly.
+     * IME Search / tapping a suggestion) go through [searchPage], which is
+     * anonymous for the same reason.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
