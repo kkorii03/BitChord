@@ -15,7 +15,7 @@ class LocalPlaylistBackupTest {
     private fun playlist(id: String, vararg videoIds: String) = LocalPlaylist(
         id = id,
         title = "Playlist $id",
-        songs = videoIds.map { Song(videoId = it, title = "Song $it", artist = "Artist") },
+        songs = videoIds.map { Song(videoId = it, title = "Song $it", artist = "Artist", thumbnailUrl = null) },
     )
 
     @Test
