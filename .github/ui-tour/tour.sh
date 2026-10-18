@@ -32,8 +32,19 @@ adb install -r -g "$APK"
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS || true
 adb shell cmd locale set-app-locales $PKG --locales ko-KR || true
 adb logcat -c
+# Debug-only switches (inert in release): reproduce the Korea-without-Premium
+# home the listener sees (music gate forced) and give it a listening history
+# to build Recents / Listen again / Quick picks from. The first launch seeds
+# and persists both; the second builds the home from them.
+if [ "${TOUR_GATED:-1}" = "1" ]; then
+  adb shell am start -n $PKG/com.music.bitchord.MainActivity \
+    --ez bitchord.debug.forceMusicGate true --ez bitchord.debug.seedHistory true
+  sleep 20
+  adb shell am force-stop $PKG
+  sleep 2
+fi
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
-sleep 25
+sleep 30
 
 n=0
 # Geometry for the bottom-tab coordinate fallback (4 equal slots).
@@ -602,12 +613,20 @@ run_section() {
   return 0
 }
 
-run_section section_home home
-run_section section_explore explore
-run_section section_library library
-run_section section_settings settings
-run_section section_search search
-run_section section_now_playing now-playing
+# Quick mode: only the screens a home/explore/artwork change can affect.
+if [ "${TOUR_QUICK:-0}" = "1" ]; then
+  run_section section_home home
+  run_section section_explore explore
+  run_section section_search search
+  run_section section_now_playing now-playing
+else
+  run_section section_home home
+  run_section section_explore explore
+  run_section section_library library
+  run_section section_settings settings
+  run_section section_search search
+  run_section section_now_playing now-playing
+fi
 
 adb logcat -d > "$OUT/logcat.txt"
 # Why playback did not start, if it did not (bot check, 403, source error...).

@@ -6,6 +6,15 @@ on:
   push:
     branches: ['ui-tour']
   workflow_dispatch:
+    inputs:
+      quick:
+        description: 'Only home, explore, search and now playing'
+        type: boolean
+        default: true
+      gated:
+        description: 'Force the Korea-without-Premium home (debug switch)'
+        type: boolean
+        default: true
 
 jobs:
   tour:
@@ -36,6 +45,9 @@ jobs:
 
       - name: Tour
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TOUR_QUICK: ${{ (github.event_name != 'workflow_dispatch' || inputs.quick) && '1' || '0' }}
+          TOUR_GATED: ${{ (github.event_name != 'workflow_dispatch' || inputs.gated) && '1' || '0' }}
         with:
           api-level: 34
           arch: x86_64
