@@ -6,6 +6,7 @@ import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.ChartsPage
@@ -441,12 +442,26 @@ object YtMusicRepository {
      */
     suspend fun searchPage(query: String, filter: SearchFilter): Result<SearchPage> =
         call("search:${filter.name}") {
-            InnertubeParser.parseSearchPage(
-                Innertube.search(query, filter.params),
-                includeVideos = filter == SearchFilter.VIDEOS,
-            ).let { page ->
-                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+            val music = runCatching {
+                InnertubeParser.parseSearchPage(
+                    Innertube.search(query, filter.params),
+                    includeVideos = filter == SearchFilter.VIDEOS,
+                ).let { page ->
+                    SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+                }
             }
+            // From a Korean IP without Premium the Songs filter answers with no
+            // rows (and the gated session may refuse outright); the same tracks
+            // come back from an anonymous youtube.com search. See YouTubeWebSearch.
+            val wantsTracks = filter == SearchFilter.SONGS || filter == SearchFilter.VIDEOS
+            val page = music.getOrNull()
+            if (wantsTracks && (page == null || page.rows.isEmpty())) {
+                val songs = YouTubeWebSearch.songs(query)
+                if (songs.isNotEmpty()) {
+                    return@call SearchPage(songs.map { SearchResult.Track(it) }.distinctBy { it.identityKey() }, null)
+                }
+            }
+            music.getOrThrow()
         }
 
     /** Fetches the next page of a search only when the result list needs it. */

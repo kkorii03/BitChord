@@ -660,9 +660,24 @@ object Innertube {
     // ---- Public API ---------------------------------------------------------
 
     suspend fun browse(browseId: String, params: String? = null): JsonObject {
-        val response = postMusic("browse") {
-            put("browseId", browseId)
-            params?.let { put("params", it) }
+        val response = try {
+            postMusic("browse") {
+                put("browseId", browseId)
+                params?.let { put("params", it) }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Signed in from Korea without Premium, Music's own pages are not
+            // answered empty but refused outright (401/403) — the phone showed
+            // "YouTube Music에서 요청을 거부했습니다". That is the same gate the
+            // empty-home check looks for, so it switches the session to the
+            // youtube.com fallback instead of leaving Home on an error.
+            val message = e.message.orEmpty()
+            if (browseId.startsWith("FEmusic") && ("401" in message || "403" in message)) {
+                MusicGateFallback.markGated("music browse $browseId refused: ${message.take(60)}")
+            }
+            throw e
         }
         MusicGateFallback.observeBrowse(browseId, response)
         return response
