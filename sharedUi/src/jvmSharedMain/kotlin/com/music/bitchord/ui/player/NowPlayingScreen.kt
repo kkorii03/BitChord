@@ -1978,6 +1978,7 @@ fun NowPlayingScreen(
                                 signedIn = signedIn,
                                 likeStatus = likeStatus,
                                 showRevertCue = showRevertCue,
+                                running = isPlaying,
                                 onToggleLike = onToggleLike,
                                 onOpenMenu = onOpenMenu,
                                 onOpenAlbum = onOpenAlbum,
