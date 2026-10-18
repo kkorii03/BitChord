@@ -491,6 +491,10 @@ object StreamResolver {
         requireM4a: Boolean = false,
     ): Stream? {
         val skip = mutableSetOf<String>()
+        // In a gated region WEB_REMIX is the identity that answers UNPLAYABLE
+        // for every track. InnerTubeX already walks its own catalog, but
+        // excluding the profile by name when it is known saves the dead ask.
+        if (MusicGateFallback.isActive()) skip += "WEB_REMIX"
         repeat(INNERTUBEX_ATTEMPTS) {
             val found = try {
                 InnerTubeXResolver.extract(videoId, maxKbps, skip, requireM4a)
@@ -498,6 +502,16 @@ object StreamResolver {
                 throw e
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+                // A Premium refusal from a web client says this network is
+                // gated, not that this track is. The fallback decides the rest
+                // of the session from here; the media walk itself keeps the
+                // other clients in its own catalog.
+                MusicGateFallback.observePremiumFailure(e.message)
+                if (MusicGateFallback.isActive() && "WEB_REMIX" !in skip) {
+                    // One more walk, now with the gated web profile excluded.
+                    skip += "WEB_REMIX"
+                    return@repeat
+                }
                 return null
             } ?: return null
             val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
@@ -953,7 +967,14 @@ object StreamResolver {
         is GeographicRestrictionException -> "이 국가에서는 이용할 수 없는 트랙입니다"
         is UnsupportedContentInCountryException -> "이 국가에서는 이용할 수 없는 트랙입니다"
         is PaidContentException -> "유료 콘텐츠 트랙입니다"
-        is YoutubeMusicPremiumContentException -> "YouTube Music Premium이 필요한 트랙입니다"
+        is YoutubeMusicPremiumContentException -> {
+            // This is the class NewPipe throws when the web player is served
+            // the Korea/no-Premium gate. Remembering it lets the rest of the
+            // session use the youtube.com fallback instead of retrying a
+            // refusal that will read the same on every track.
+            MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException")
+            "YouTube Music Premium이 필요한 트랙입니다"
+        }
         is PrivateContentException -> "비공개 트랙입니다"
         is AccountTerminatedException -> "이 트랙의 채널이 해지되었습니다"
         is SoundCloudGoPlusContentException -> "SoundCloud Go+가 필요한 트랙입니다"

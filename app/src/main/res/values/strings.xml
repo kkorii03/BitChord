@@ -868,6 +868,7 @@
     <string name="listen_as">Listen as</string>
     <string name="default_youtube_profile">YouTube Music default profile</string>
     <string name="account_profiles_help">A Google account can have Personal and Brand profiles. Each has its own library, likes and history.</string>
+    <string name="music_gate_fallback" translatable="false">YouTube Music is restricted in this region, so browsing and playback use YouTube.</string>
     <string name="choose_profile">Choose a profile</string>
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>

@@ -5,6 +5,7 @@ import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.ChartsPage
@@ -64,15 +65,37 @@ object YtMusicRepository {
      * it's empty and there's nothing more to fetch.
      */
     suspend fun home(): Result<HomeFeed> = call("home") {
-        val home = Innertube.browse("FEmusic_home")
-        HomeFeed(contentCountryCharts(InnertubeParser.parseHome(home)), InnertubeParser.continuationToken(home))
+        if (Innertube.cookie != null) runCatching { Innertube.ensureSessionScope() }
+        val key = Innertube.sessionKey()
+        // A GATED verdict older than a day gets exactly one re-check, here,
+        // because Home is the first page every launch touches.
+        if (MusicGateFallback.shouldTryMusic(key)) {
+            val home = try {
+                Innertube.browse("FEmusic_home")
+            } catch (failure: Exception) {
+                if (MusicGateFallback.isActive(key)) return@call YouTubeFallback.home()
+                throw failure
+            }
+            if (!MusicGateFallback.isActive(key)) {
+                return@call HomeFeed(
+                    contentCountryCharts(InnertubeParser.parseHome(home)),
+                    InnertubeParser.continuationToken(home),
+                )
+            }
+        }
+        YouTubeFallback.home()
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */
-    suspend fun homeRecentlyPlayed(): Result<HomeShelf?> = call("home:recent") { recentlyPlayed() }
+    suspend fun homeRecentlyPlayed(): Result<HomeShelf?> = call("home:recent") {
+        if (ensureGateKnown()) YouTubeFallback.recentShelf() else recentlyPlayed()
+    }
 
     /** Extra Play shelves are independently fetchable so each can appear as soon as it arrives. */
     suspend fun homeSupplement(browseId: String): Result<List<HomeShelf>> = call("home:$browseId") {
+        if (fallbackActive()) {
+            return@call if (browseId == "FEmusic_explore") YouTubeFallback.channelShelves() else emptyList()
+        }
         val shelves = contentCountryCharts(shelvesOf(browseId))
         if (browseId == "FEmusic_explore") contentCountrySongs(shelves) else shelves
     }
@@ -169,6 +192,13 @@ object YtMusicRepository {
      * FEmusic_new_releases are one-shot and don't participate.
      */
     suspend fun moreHome(token: String): Result<HomeFeed> = call("home:more") {
+        if (fallbackActive()) {
+            return@call if (YouTubeFallback.isContinuation(token)) {
+                YouTubeFallback.moreHome(token)
+            } else {
+                HomeFeed(emptyList(), null)
+            }
+        }
         val response = Innertube.browseContinuation(token)
         HomeFeed(
             shelves = contentCountryCharts(InnertubeParser.parseHomeContinuation(response)),
@@ -234,10 +264,13 @@ object YtMusicRepository {
      * a shelf on the home page and stops at [RECENT_LIMIT] so it stays a shelf,
      * whereas this is the page you open when twenty is not enough.
      */
-    suspend fun history(): Result<List<Song>> = call("history") { fetchHistory() }
+    suspend fun history(): Result<List<Song>> = call("history") {
+        if (ensureGateKnown()) YouTubeFallback.history() else fetchHistory()
+    }
 
     /** Account listening history for the Recents feed. */
     suspend fun recents(): Result<List<Song>> = call("recents") {
+        if (ensureGateKnown()) return@call YouTubeFallback.history()
         if (Innertube.cookie != null) {
             val history = runCatching { fetchHistory() }.getOrDefault(emptyList())
             if (history.isNotEmpty()) return@call history
@@ -249,6 +282,7 @@ object YtMusicRepository {
      * Recommended discovery tracks for Quick Picks, strictly excluding listening history and recents.
      */
     suspend fun quickPicks(excludeSongIds: Set<String> = emptySet()): Result<List<Song>> = call("quickPicks") {
+        if (ensureGateKnown()) return@call YouTubeFallback.quickPicks(excludeSongIds)
         val homeRaw = runCatching { Innertube.browse("FEmusic_home") }.getOrNull()
         val shelves = if (homeRaw != null) InnertubeParser.parseHome(homeRaw) else emptyList()
 
@@ -344,6 +378,7 @@ object YtMusicRepository {
 
     /** The server-defined mood and genre categories used by Explore. */
     suspend fun moodAndGenres(): Result<List<MoodGenreSection>> = call("moods-and-genres") {
+        if (ensureGateKnown()) return@call YouTubeFallback.exploreSections()
         MoodLabels.tidy(
             InnertubeParser.parseMoodAndGenres(Innertube.browse("FEmusic_moods_and_genres")),
             Innertube.currentLanguage,
@@ -352,6 +387,7 @@ object YtMusicRepository {
 
     /** The charts page for [country] (a code the page offered), or the content country's. */
     suspend fun charts(country: String?): Result<ChartsPage> = call("charts:${country.orEmpty()}") {
+        if (ensureGateKnown()) return@call YouTubeFallback.charts()
         val response = Innertube.charts(country)
         val (shown, countries) = InnertubeParser.parseChartCountries(response)
         ChartsPage(
@@ -367,6 +403,12 @@ object YtMusicRepository {
      * user taps a category whose cover has already appeared.
      */
     suspend fun moodGenreShelves(browseId: String, params: String?): Result<List<HomeShelf>> {
+        val gated = withContext(Dispatchers.IO) { fallbackActive() }
+        if (gated || browseId.startsWith("ytc:")) {
+            return withContext(Dispatchers.IO) {
+                Result.success(YouTubeFallback.categoryShelves(browseId))
+            }
+        }
         val key = "$browseId:${params.orEmpty()}"
         moodGenreShelfCache[key]?.let { return Result.success(it) }
         return call("mood-genre:$browseId") {
@@ -647,6 +689,7 @@ object YtMusicRepository {
      * no saved albums) is dropped rather than failing the whole page.
      */
     suspend fun library(): Result<LibraryPage> = call("library") {
+        if (ensureGateKnown()) return@call YouTubeFallback.library()
         coroutineScope {
             // Liked Music is read one page at a time. The first page is what
             // the Library tab needs to fill and is published straight away;
@@ -721,6 +764,7 @@ object YtMusicRepository {
      * seed track itself comes back first, so callers filter what they have.
      */
     suspend fun radio(videoId: String): Result<List<Song>> = call("radio:$videoId") {
+        if (ensureGateKnown()) return@call YouTubeFallback.radio(videoId)
         InnertubeParser.parseWatchQueue(Innertube.next(videoId))
     }
 
@@ -809,6 +853,14 @@ object YtMusicRepository {
      * being read — see [moreSongs].
      */
     suspend fun browseSongs(browseId: String): Result<SongPage> = call("browse:$browseId") {
+        if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
+            val result = YouTubeFallback.playlistPage(browseId)
+            return@call SongPage(
+                songs = result.songs,
+                continuation = result.continuation,
+                header = result.header,
+            )
+        }
         val response = Innertube.browse(browseId)
         val page = if (browseId.startsWith("MPREb")) {
             albumPageOf(response)
@@ -842,6 +894,14 @@ object YtMusicRepository {
 
     /** The page [SongPage.continuation] points at. */
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {
+        if (fallbackActive() && YouTubeFallback.isContinuation(token)) {
+            val result = YouTubeFallback.morePlaylist(token)
+            return@call SongPage(
+                songs = result.songs,
+                continuation = result.continuation,
+                header = result.header,
+            )
+        }
         pageOf(Innertube.browseContinuation(token))
     }
 
@@ -909,6 +969,9 @@ object YtMusicRepository {
      * anything a screen is waiting on, use [browseSongs] and [moreSongs].
      */
     private suspend fun songsPaged(browseId: String): List<Song> {
+        if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
+            return YouTubeFallback.allSongs(browseId)
+        }
         val out = LinkedHashMap<String, Song>()
         var response = Innertube.browse(browseId)
         if (browseId.startsWith("MPREb")) {
@@ -1010,7 +1073,10 @@ object YtMusicRepository {
     }
 
     suspend fun rate(videoId: String, status: LikeStatus): Result<Unit> =
-        call("rate:$videoId") { Innertube.rate(videoId, status) }
+        call("rate:$videoId") {
+            if (fallbackActive()) Innertube.rateYouTube(videoId, status)
+            else Innertube.rate(videoId, status)
+        }
 
     /** Adds or removes a track from the library; [token] says which. */
     suspend fun setLibraryStatus(token: String): Result<Unit> =
@@ -1046,6 +1112,9 @@ object YtMusicRepository {
      * library-feed response.
      */
     suspend fun userPlaylists(): Result<List<UserPlaylist>> = call("playlists") {
+        if (ensureGateKnown()) {
+            return@call YouTubeFallback.userPlaylists(YouTubeFallback.libraryPlaylistItems())
+        }
         InnertubeParser.parseUserPlaylists(libraryItemsPaged(LIBRARY_PLAYLISTS))
     }
 
@@ -1053,6 +1122,7 @@ object YtMusicRepository {
      * All playlists in user library (including Liked Music and saved playlists).
      */
     suspend fun libraryPlaylists(): Result<List<ShelfItem>> = call("libraryPlaylists") {
+        if (ensureGateKnown()) return@call YouTubeFallback.libraryPlaylistItems()
         InnertubeParser.parseLibraryItems(Innertube.browse(LIBRARY_PLAYLISTS))
     }
 
@@ -1175,6 +1245,43 @@ object YtMusicRepository {
             page.copy(songs = resolvedSongs, sections = fullShelves)
         }
     }
+
+    /**
+     * Whether the Music gate is active, settling an UNKNOWN verdict first.
+     *
+     * Called by entry points that can be the first thing opened in a process
+     * (Explore, Library, a shared link). It costs one browse only while the
+     * verdict is unknown; after that the persisted answer decides.
+     */
+    private suspend fun ensureGateKnown(): Boolean {
+        ensureSessionForGate()
+        val key = Innertube.sessionKey()
+        if (MusicGateFallback.state(key) == MusicGateFallback.State.UNKNOWN ||
+            MusicGateFallback.needsRecheck(key)
+        ) {
+            runCatching { Innertube.browse("FEmusic_home") }
+        }
+        return MusicGateFallback.isActive(key)
+    }
+
+    /**
+     * Resolves the account identity before reading the persisted verdict.
+     *
+     * Without this a restored cookie is keyed by its hash until the shell
+     * answers, and the verdict saved under the account's `dataSyncId` would be
+     * missed for the first request of every process.
+     */
+    private suspend fun ensureSessionForGate() {
+        if (Innertube.cookie != null) runCatching { Innertube.ensureSessionScope() }
+    }
+
+    private suspend fun fallbackActive(): Boolean {
+        ensureSessionForGate()
+        return MusicGateFallback.isActive()
+    }
+
+    private fun isYouTubePlaylistId(browseId: String): Boolean =
+        browseId.startsWith("VL") || browseId.startsWith("RD")
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {

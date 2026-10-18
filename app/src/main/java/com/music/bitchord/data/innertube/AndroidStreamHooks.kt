@@ -65,6 +65,12 @@ object AndroidStreamHooks {
     fun initInnerTubeX(context: Context) {
         val app = context.applicationContext
         val prefs = app.getSharedPreferences("innertubex_player_config", Context.MODE_PRIVATE)
+        val gatePrefs = app.getSharedPreferences("music_gate_fallback", Context.MODE_PRIVATE)
+        MusicGateFallback.init(object : MusicGateFallback.Store {
+            override fun getString(key: String): String? = gatePrefs.getString(key, null)
+            override fun putString(key: String, value: String) =
+                gatePrefs.edit().putString(key, value).apply()
+        })
         // BotGuard PoTokens minted in a hidden WebView; what WEB_REMIX needs for age-restricted tracks.
         val webViewSupported by lazy { runCatching { CookieManager.getInstance() }.isSuccess }
         val poTokens = PoTokenGenerator(

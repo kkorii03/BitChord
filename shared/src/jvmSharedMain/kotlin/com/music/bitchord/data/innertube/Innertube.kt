@@ -107,7 +107,29 @@ object Innertube {
 
     private const val MUSIC_BASE = "https://music.youtube.com/youtubei/v1"
     private const val MUSIC_ORIGIN = "https://music.youtube.com"
+    private const val YOUTUBE_BASE = "https://www.youtube.com/youtubei/v1"
     private const val YOUTUBE_ORIGIN = "https://www.youtube.com"
+
+    /** The public web-client key every youtube.com page embeds; not an account credential. */
+    private const val WEB_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+    private const val WEB_CLIENT_ID = "1"
+    private const val WEB_VERSION = "2.20260708.00.00"
+
+    /**
+     * The iOS client, used only for [playbackTracking] when the Music gate is
+     * active: youtube.com's WEB player refuses anonymous and gated sessions,
+     * while IOS answers and still carries the `playbackTracking` block the
+     * account's history is written through.
+     */
+    private const val IOS_CLIENT_ID = "5"
+    private const val IOS_CLIENT_VERSION = "21.29.1"
+    private const val IOS_USER_AGENT =
+        "com.google.ios.youtube/21.29.1 (iPhone16,2; U; CPU iOS 18_5 like Mac OS X;)"
+
+    private const val IOS_DEVICE_MAKE = "Apple"
+    private const val IOS_DEVICE_MODEL = "iPhone16,2"
+    private const val IOS_OS_NAME = "iPhone"
+    private const val IOS_OS_VERSION = "18.5.0.22F76"
 
     /**
      * Fallback WEB_REMIX version, used until [SessionScope] reads the live one
@@ -137,6 +159,7 @@ object Innertube {
                 channelOverride = null
             }
             field = value
+            MusicGateFallback.onSessionChanged()
         }
 
     /**
@@ -345,6 +368,7 @@ object Innertube {
             "acting as channel pageId=${pageId ?: "none"} authUser=${authUser ?: "as-is"} " +
                 "(override=${channelOverride != null})",
         )
+        MusicGateFallback.onSessionChanged()
     }
 
     /**
@@ -392,6 +416,29 @@ object Innertube {
             visitorDataIsSessionBound = true
         }
         Log.d(TAG, "adopted page scope: pageId=${pageId ?: "none"} authUser=${authUser ?: "0"}")
+        MusicGateFallback.onSessionChanged()
+    }
+
+    /**
+     * The identity the music-gate verdict belongs to.
+     *
+     * A channel override wins because the same Google login can act as several
+     * listeners, and one of them being gated says nothing about another. Before
+     * the shell has answered, the cookie is hashed so the entry still cannot
+     * leak across accounts; an anonymous session has one shared entry.
+     */
+    internal fun sessionKey(): String {
+        val chosen = channelOverride
+        val id = chosen?.dataSyncId?.takeIf { it.isNotBlank() }
+            ?: chosen?.pageId?.takeIf { it.isNotBlank() }
+            ?: scope?.dataSyncId?.takeIf { it.isNotBlank() }
+            ?: scope?.pageId?.takeIf { it.isNotBlank() }
+        if (id != null) return "u:$id"
+        val current = cookie ?: return "anonymous"
+        return "c:" + MessageDigest.getInstance("SHA-256")
+            .digest(current.toByteArray())
+            .joinToString("") { "%02x".format(Locale.ROOT, it) }
+            .take(16)
     }
 
     /** The brand channel to send, chosen one first. */
@@ -612,11 +659,62 @@ object Innertube {
 
     // ---- Public API ---------------------------------------------------------
 
-    suspend fun browse(browseId: String, params: String? = null): JsonObject =
-        postMusic("browse") {
+    suspend fun browse(browseId: String, params: String? = null): JsonObject {
+        val response = postMusic("browse") {
             put("browseId", browseId)
             params?.let { put("params", it) }
         }
+        MusicGateFallback.observeBrowse(browseId, response)
+        return response
+    }
+
+    // ---- youtube.com WEB fallback -------------------------------------------
+    //
+    // Same endpoints, same cookie, different origin and client. Used only when
+    // [MusicGateFallback] says music.youtube.com is gated, or to read a
+    // playback-tracking block the gated Music player will not issue.
+
+    suspend fun browseYouTube(browseId: String, params: String? = null): JsonObject =
+        postYouTube("browse") {
+            put("browseId", browseId)
+            params?.let { put("params", it) }
+        }
+
+    suspend fun browseYouTubeContinuation(token: String): JsonObject = postYouTube(
+        endpoint = "browse",
+        query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
+    ) {
+        put("continuation", token)
+    }
+
+    /**
+     * The watch queue for [videoId], or for a standalone mix when the id is
+     * null. A `RD` + seed id is YouTube's own Mix, personalised by the
+     * signed-in account's cookies.
+     */
+    suspend fun nextYouTube(videoId: String?, playlistId: String): JsonObject =
+        postYouTube("next") {
+            videoId?.let { put("videoId", it) }
+            put("playlistId", playlistId)
+        }
+
+    /** A thumbs up/down sent to youtube.com; the same endpoints Music shares. */
+    suspend fun rateYouTube(videoId: String, status: LikeStatus) {
+        requireSession()
+        val endpoint = when (status) {
+            LikeStatus.LIKE -> "like/like"
+            LikeStatus.DISLIKE -> "like/dislike"
+            LikeStatus.INDIFFERENT -> "like/removelike"
+        }
+        val response = postYouTube(endpoint) {
+            putJsonObject("target") { put("videoId", videoId) }
+        }
+        response["error"]?.let { error ->
+            val message = error.jsonObject["message"]?.jsonPrimitive?.contentOrNull
+            error("YouTube refused the rating: ${message ?: error}")
+        }
+        Log.d(TAG, "$endpoint $videoId -> ${findString(response, "text") ?: "no confirmation"}")
+    }
 
     /**
      * YouTube Music's charts page for [country] — a code from the page's own
@@ -788,6 +886,11 @@ object Innertube {
         val atrUrl: String?,
         /** How far in [atrUrl] is due, per the response's own schedule. */
         val atrAfterSeconds: Long,
+        /** The origin the player response came from; the pings have to match it. */
+        val origin: String = MUSIC_ORIGIN,
+        /** The client the tracking URLs belong to (`WEB_REMIX`, `IOS`, …). */
+        val clientName: String = "WEB_REMIX",
+        val clientVersion: String = WEB_REMIX_VERSION,
     )
 
     /**
@@ -817,6 +920,9 @@ object Innertube {
     suspend fun playbackTracking(videoId: String, signatureTimestamp: Int?): PlaybackTracking? {
         if (cookie == null) return null
         ensureSessionScope()
+        // A gated listener has no Music player to ask; IOS on youtube.com still
+        // answers and still carries the history-tracking block.
+        if (MusicGateFallback.isActive()) return youtubePlaybackTracking(videoId, signatureTimestamp)
         val response = postMusic("player") {
             put("videoId", videoId)
             put("contentCheckOk", true)
@@ -831,6 +937,8 @@ object Innertube {
                 }
             }
         }
+        MusicGateFallback.observePlayer(response)
+        if (MusicGateFallback.isActive()) return youtubePlaybackTracking(videoId, signatureTimestamp)
         val tracking = response["playbackTracking"]?.jsonObject
         if (tracking == null) {
             val playability = response["playabilityStatus"]?.jsonObject
@@ -851,7 +959,60 @@ object Innertube {
             atrAfterSeconds = tracking["atrUrl"]?.jsonObject
                 ?.get("elapsedMediaTimeSeconds")?.jsonPrimitive?.contentOrNull
                 ?.toLongOrNull() ?: DEFAULT_ATR_SECONDS,
+            origin = MUSIC_ORIGIN,
+            clientName = "WEB_REMIX",
+            clientVersion = webRemixVersion,
         )
+    }
+
+    /**
+     * The same block from youtube.com's own player.
+     *
+     * IOS first: it answers a gated Korean session where WEB is refused, and
+     * its `playbackTracking` URLs write to the same account history the Music
+     * client used to write. WEB is the second attempt for deployments where
+     * IOS is the one being refused.
+     */
+    private suspend fun youtubePlaybackTracking(
+        videoId: String,
+        signatureTimestamp: Int?,
+    ): PlaybackTracking? {
+        for (ios in listOf(true, false)) {
+            val response = runCatching {
+                postYouTube(
+                    endpoint = "player",
+                    ios = ios,
+                ) {
+                    put("videoId", videoId)
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
+                    putJsonObject("playbackContext") {
+                        putJsonObject("contentPlaybackContext") {
+                            put("html5Preference", "HTML5_PREF_WANTS")
+                            put("referer", "$YOUTUBE_ORIGIN/watch?v=$videoId")
+                            signatureTimestamp?.let { put("signatureTimestamp", it) }
+                        }
+                    }
+                }
+            }.onFailure {
+                Log.w(TAG, "youtube.com player ${if (ios) "IOS" else "WEB"} failed for $videoId: ${it.message}")
+            }.getOrNull() ?: continue
+            MusicGateFallback.observePlayer(response)
+            val tracking = response["playbackTracking"]?.jsonObject ?: continue
+            val playbackUrl = tracking.trackingUrl("videostatsPlaybackUrl") ?: continue
+            return PlaybackTracking(
+                playbackUrl = playbackUrl,
+                watchtimeUrl = tracking.trackingUrl("videostatsWatchtimeUrl"),
+                atrUrl = tracking.trackingUrl("atrUrl"),
+                atrAfterSeconds = tracking["atrUrl"]?.jsonObject
+                    ?.get("elapsedMediaTimeSeconds")?.jsonPrimitive?.contentOrNull
+                    ?.toLongOrNull() ?: DEFAULT_ATR_SECONDS,
+                origin = YOUTUBE_ORIGIN,
+                clientName = if (ios) "IOS" else "WEB",
+                clientVersion = if (ios) IOS_CLIENT_VERSION else WEB_VERSION,
+            )
+        }
+        return null
     }
 
     /** What YouTube Music itself schedules `atr` for, when it doesn't say. */
@@ -871,7 +1032,13 @@ object Innertube {
      * the same thing, it is an ambiguous request whose resolution is Google's
      * to decide.
      */
-    suspend fun pingPlayback(baseUrl: String, cpn: String) = pingStats(baseUrl, cpn) {}
+    suspend fun pingPlayback(
+        baseUrl: String,
+        cpn: String,
+        origin: String = MUSIC_ORIGIN,
+        clientName: String = "WEB_REMIX",
+        clientVersion: String = WEB_REMIX_VERSION,
+    ) = pingStats(baseUrl, cpn, origin, clientName, clientVersion) {}
 
     /**
      * The follow-up ping reporting how much of the track was actually heard.
@@ -882,8 +1049,16 @@ object Innertube {
      * @param final whether this is the last report for the play, which is what
      *   lets Google close the play out rather than leave it looking abandoned.
      */
-    suspend fun pingWatchtime(baseUrl: String, cpn: String, seconds: Long, final: Boolean = false) =
-        pingStats(baseUrl, cpn) {
+    suspend fun pingWatchtime(
+        baseUrl: String,
+        cpn: String,
+        seconds: Long,
+        final: Boolean = false,
+        origin: String = MUSIC_ORIGIN,
+        clientName: String = "WEB_REMIX",
+        clientVersion: String = WEB_REMIX_VERSION,
+    ) =
+        pingStats(baseUrl, cpn, origin, clientName, clientVersion) {
             parameter("st", "0")
             parameter("et", seconds.toString())
             // Where the playhead is, as distinct from how much was watched.
@@ -902,14 +1077,19 @@ object Innertube {
      * play that started from a play that happened. Its base URL already carries
      * `ver`, `c` and `cver`, so unlike the others it is sent as-is.
      */
-    suspend fun pingAtr(baseUrl: String, cpn: String): Int {
+    suspend fun pingAtr(
+        baseUrl: String,
+        cpn: String,
+        origin: String = MUSIC_ORIGIN,
+        clientName: String = "WEB_REMIX",
+    ): Int {
         // Playback can outlive the Activity that restored the session. Ensure
         // the selected profile's headers exist before this first history ping.
         if (cookie != null) ensureSessionScope()
         val session = scope
         return client.get(baseUrl) {
             parameter("cpn", cpn)
-            statsHeaders(session)
+            statsHeaders(session, origin, userAgentFor(clientName))
         }.status.value
     }
 
@@ -917,28 +1097,42 @@ object Innertube {
     private suspend fun pingStats(
         baseUrl: String,
         cpn: String,
+        origin: String,
+        clientName: String,
+        clientVersion: String,
         extras: HttpRequestBuilder.() -> Unit,
     ): Int {
         if (cookie != null) ensureSessionScope()
         val session = scope
+        val ios = clientName == "IOS"
         return client.get(baseUrl) {
             parameter("ver", "2")
-            parameter("c", "WEB_REMIX")
-            parameter("cver", webRemixVersion)
+            parameter("c", clientName)
+            parameter("cver", if (clientVersion.isBlank()) webRemixVersion else clientVersion)
             parameter("cpn", cpn)
-            // What the web client says about itself. Cheap, and the pings are
+            // What the client says about itself. Cheap, and the pings are
             // weighted by how much they look like a real session.
             parameter("cplayer", "UNIPLAYER")
-            parameter("cbr", "Chrome")
-            parameter("cbrver", "141.0.0.0")
-            parameter("cos", "Windows")
-            parameter("cosver", "10.0")
+            if (ios) {
+                parameter("cbr", "iPhone")
+                parameter("cbrver", "18.5")
+                parameter("cos", "iPhone")
+                parameter("cosver", "18.5")
+            } else {
+                parameter("cbr", "Chrome")
+                parameter("cbrver", "141.0.0.0")
+                parameter("cos", "Windows")
+                parameter("cosver", "10.0")
+            }
             parameter("hl", "en_US")
             parameter("cr", "US")
             extras()
-            statsHeaders(session)
+            statsHeaders(session, origin, userAgentFor(clientName))
         }.status.value
     }
+
+    private fun userAgentFor(clientName: String): String =
+        if (clientName == "IOS") IOS_USER_AGENT else WEB_USER_AGENT
 
     /**
      * The three headers the tracking block asks for by name — `USER_AUTH`,
@@ -946,17 +1140,21 @@ object Innertube {
      * player response; sending fewer is what makes a ping land somewhere other
      * than the listener's own history.
      */
-    private fun HttpRequestBuilder.statsHeaders(session: SessionScope?) {
-        header("X-Origin", MUSIC_ORIGIN)
-        header("Origin", MUSIC_ORIGIN)
-        header("Referer", "$MUSIC_ORIGIN/")
-        header("User-Agent", WEB_USER_AGENT)
+    private fun HttpRequestBuilder.statsHeaders(
+        session: SessionScope?,
+        origin: String,
+        userAgent: String,
+    ) {
+        header("X-Origin", origin)
+        header("Origin", origin)
+        header("Referer", "$origin/")
+        header("User-Agent", userAgent)
         visitorData?.let { header("X-Goog-Visitor-Id", it) }
         cookie?.let { c ->
             header("Cookie", c)
             header("X-Goog-AuthUser", authUserFor(session))
             pageIdFor(session)?.let { header("X-Goog-PageId", it) }
-            sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
+            sapisidFrom(c)?.let { header("Authorization", sapisidHash(it, origin)) }
         }
     }
 
@@ -1303,6 +1501,86 @@ object Innertube {
             if (anonymousVisitorData == null) anonymousVisitorData = responseVisitorData
         } else if (visitorData == null) {
             visitorData = responseVisitorData
+        }
+        return response
+    }
+
+    /**
+     * The one youtube.com request path, for the no-Premium fallback and the
+     * history tracking block.
+     *
+     * It deliberately mirrors [postMusic] rather than generalising it: the two
+     * clients differ in origin, signed origin, client name/version, API key and
+     * device context, and every one of those is something Google compares.
+     */
+    private suspend fun postYouTube(
+        endpoint: String,
+        query: Map<String, String> = emptyMap(),
+        hl: String = currentLanguage,
+        gl: String = currentCountry,
+        ios: Boolean = false,
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject {
+        if (cookie != null) ensureSessionScope()
+        val session = scope
+        val credentials = accountHeadersFor(
+            endpoint = endpoint,
+            cookie = cookie,
+            authUser = authUserFor(session),
+            pageId = pageIdFor(session),
+            authorization = { cookie?.let { c -> sapisidFrom(c)?.let { sapisidHash(it, YOUTUBE_ORIGIN) } } },
+        )
+        val visitor = visitorData ?: ensureVisitorData()
+        val clientId = if (ios) IOS_CLIENT_ID else WEB_CLIENT_ID
+        val clientVersion = if (ios) IOS_CLIENT_VERSION else WEB_VERSION
+        val userAgent = if (ios) IOS_USER_AGENT else WEB_USER_AGENT
+        val response = withRetry {
+            client.post("$YOUTUBE_BASE/$endpoint") {
+                contentType(ContentType.Application.Json)
+                parameter("prettyPrint", "false")
+                parameter("key", WEB_API_KEY)
+                parameter("hl", hl)
+                header("Accept-Language", acceptLanguageHeader)
+                query.forEach { (key, value) -> parameter(key, value) }
+                header("X-Origin", YOUTUBE_ORIGIN)
+                header("Origin", YOUTUBE_ORIGIN)
+                header("Referer", "$YOUTUBE_ORIGIN/")
+                header("X-YouTube-Client-Name", clientId)
+                header("X-YouTube-Client-Version", clientVersion)
+                header("User-Agent", userAgent)
+                visitor?.let { header("X-Goog-Visitor-Id", it) }
+                credentials.forEach { (name, value) -> header(name, value) }
+                setBody(
+                    buildJsonObject {
+                        putJsonObject("context") {
+                            putJsonObject("client") {
+                                put("clientName", if (ios) "IOS" else "WEB")
+                                put("clientVersion", clientVersion)
+                                put("hl", hl)
+                                put("gl", gl)
+                                visitor?.let { put("visitorData", it) }
+                                if (ios) {
+                                    put("deviceMake", IOS_DEVICE_MAKE)
+                                    put("deviceModel", IOS_DEVICE_MODEL)
+                                    put("osName", IOS_OS_NAME)
+                                    put("osVersion", IOS_OS_VERSION)
+                                    put("userAgent", IOS_USER_AGENT)
+                                }
+                            }
+                            putJsonObject("user") {
+                                put("lockedSafetyMode", false)
+                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                            }
+                            putJsonObject("request") { put("useSsl", true) }
+                        }
+                        bodyExtras()
+                    },
+                )
+            }.body<JsonObject>()
+        }
+        if (visitorData == null) {
+            visitorData = response["responseContext"]?.jsonObject
+                ?.get("visitorData")?.jsonPrimitive?.content
         }
         return response
     }

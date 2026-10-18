@@ -843,6 +843,7 @@
     <string name="listen_as">청취 계정</string>
     <string name="default_youtube_profile">YouTube Music 기본 프로필</string>
     <string name="account_profiles_help">Google 계정에는 개인 프로필과 브랜드 프로필이 있을 수 있습니다. 각 프로필에는 별도의 보관함, 좋아요 및 기록이 있습니다.</string>
+    <string name="music_gate_fallback">이 지역에서는 YouTube Music 서비스가 제한되어 YouTube 기반으로 동작합니다</string>
     <string name="choose_profile">프로필 선택</string>
     <string name="use_this_profile">이 프로필 사용</string>
     <string name="switch_profile_hint">아바타로 전환한 다음 이 프로필을 사용하십시오.</string>

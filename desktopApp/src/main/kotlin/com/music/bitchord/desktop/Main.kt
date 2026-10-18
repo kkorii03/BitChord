@@ -5,6 +5,7 @@ import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -52,6 +53,7 @@ fun main() {
             available = { DesktopPoTokenWebView.available },
         ).asTokenProvider(),
     )
+    MusicGateFallback.init(DesktopMusicGateStore)
     // The public "apps open right now" count; see Presence.
     DesktopPresence.install()
     desktopMain()

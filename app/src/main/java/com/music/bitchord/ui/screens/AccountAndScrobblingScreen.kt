@@ -24,6 +24,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -32,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
 import kotlin.math.roundToInt
@@ -67,6 +69,9 @@ fun AccountAndScrobblingScreen(
     val discordUsername by AppSettings.discordUsername.collectAsStateWithLifecycle()
     val discordRpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
+    val musicGated by MusicGateFallback.active.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { MusicGateFallback.refreshActive() }
 
     Column(
         modifier = modifier
@@ -105,6 +110,15 @@ fun AccountAndScrobblingScreen(
                 FullWidthDivider()
                 DestructiveRow(label = stringResource(R.string.sign_out), onClick = onSignOut)
             }
+        }
+
+        if (musicGated) {
+            Text(
+                text = stringResource(R.string.music_gate_fallback),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 2.dp),
+            )
         }
 
         SettingsGroup(

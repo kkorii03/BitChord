@@ -36,7 +36,7 @@ internal object DesktopPlaybackTracker {
     private class Session(
         val videoId: String,
         val cpn: String,
-        val tracking: Tracking,
+        val tracking: Innertube.PlaybackTracking,
     ) {
         var reportedSeconds = 0L
 
@@ -44,14 +44,6 @@ internal object DesktopPlaybackTracker {
         var flushingTo = 0L
         var atrSent = false
     }
-
-    /** The stats endpoints a player response nominates for one playback. */
-    private class Tracking(
-        val playbackUrl: String,
-        val watchtimeUrl: String?,
-        val atrUrl: String?,
-        val atrAfterSeconds: Long,
-    )
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val lock = Mutex()
@@ -98,8 +90,15 @@ internal object DesktopPlaybackTracker {
             current.atrSent = true
             current.tracking.atrUrl?.let { url ->
                 scope.launch {
-                    runCatching { Innertube.pingAtr(url, current.cpn) }
-                        .onFailure { DesktopTrackLog.log("history: atr ping failed — ${it.message}") }
+                    runCatching {
+                        Innertube.pingAtr(
+                            url,
+                            current.cpn,
+                            current.tracking.origin,
+                            current.tracking.clientName,
+                        )
+                    }
+                        .onFailure { DesktopTrackLog.log("history: atr ping failed: ${it.message}") }
                 }
             }
         }
@@ -162,7 +161,13 @@ internal object DesktopPlaybackTracker {
             return@withLock true
         }
         val fresh = Session(videoId, Innertube.newCpn(), tracking)
-        val status = Innertube.pingPlayback(tracking.playbackUrl, fresh.cpn)
+        val status = Innertube.pingPlayback(
+            tracking.playbackUrl,
+            fresh.cpn,
+            tracking.origin,
+            tracking.clientName,
+            tracking.clientVersion,
+        )
         session = fresh
         DesktopTrackLog.log("history: entry created for '$videoId' (HTTP $status)")
         true
@@ -175,7 +180,15 @@ internal object DesktopPlaybackTracker {
         if (!final && positionSeconds <= target.reportedSeconds) return
         target.flushingTo = maxOf(target.flushingTo, positionSeconds)
         lock.withLock {
-            val status = Innertube.pingWatchtime(url, target.cpn, positionSeconds, final)
+            val status = Innertube.pingWatchtime(
+                url,
+                target.cpn,
+                positionSeconds,
+                final,
+                target.tracking.origin,
+                target.tracking.clientName,
+                target.tracking.clientVersion,
+            )
             target.reportedSeconds = maxOf(target.reportedSeconds, positionSeconds)
             DesktopTrackLog.log(
                 "history: ${positionSeconds}s reported for '${target.videoId}'" +
@@ -185,18 +198,13 @@ internal object DesktopPlaybackTracker {
     }
 
     /** The tracking block of the session's own player response — the phone's request, shared. */
-    private suspend fun trackingFor(videoId: String, signatureTimestamp: Int): Tracking? {
+    private suspend fun trackingFor(videoId: String, signatureTimestamp: Int): Innertube.PlaybackTracking? {
         val tracking = runCatching { Innertube.playbackTracking(videoId, signatureTimestamp) }.getOrNull()
         if (tracking == null) {
             DesktopTrackLog.log("history: no tracking block for '$videoId'")
             return null
         }
-        return Tracking(
-            playbackUrl = tracking.playbackUrl,
-            watchtimeUrl = tracking.watchtimeUrl,
-            atrUrl = tracking.atrUrl,
-            atrAfterSeconds = tracking.atrAfterSeconds,
-        )
+        return tracking
     }
 
 }

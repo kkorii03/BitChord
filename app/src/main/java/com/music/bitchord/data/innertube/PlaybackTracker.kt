@@ -162,7 +162,14 @@ object PlaybackTracker {
             val atrUrl = current.tracking.atrUrl
             if (atrUrl != null) {
                 scope.launch(TrackLog.about(videoId)) {
-                    runCatching { Innertube.pingAtr(atrUrl, current.cpn) }
+                    runCatching {
+                        Innertube.pingAtr(
+                            atrUrl,
+                            current.cpn,
+                            current.tracking.origin,
+                            current.tracking.clientName,
+                        )
+                    }
                         .onFailure { TrackLog.w(TAG, "atr ping failed for $videoId: ${it.message}") }
                 }
             }
@@ -251,7 +258,13 @@ object PlaybackTracker {
             return@withLock true
         }
         val fresh = Session(videoId, Innertube.newCpn(), tracking)
-        val status = Innertube.pingPlayback(tracking.playbackUrl, fresh.cpn)
+        val status = Innertube.pingPlayback(
+            tracking.playbackUrl,
+            fresh.cpn,
+            tracking.origin,
+            tracking.clientName,
+            tracking.clientVersion,
+        )
         session = fresh
         _registeredPlays.value++
         TrackLog.d(TAG, "history entry created for $videoId (HTTP $status)")
@@ -265,7 +278,15 @@ object PlaybackTracker {
         if (!final && positionSeconds <= target.reportedSeconds) return
         target.flushingTo = maxOf(target.flushingTo, positionSeconds)
         lock.withLock {
-            val status = Innertube.pingWatchtime(url, target.cpn, positionSeconds, final)
+            val status = Innertube.pingWatchtime(
+                url,
+                target.cpn,
+                positionSeconds,
+                final,
+                target.tracking.origin,
+                target.tracking.clientName,
+                target.tracking.clientVersion,
+            )
             target.reportedSeconds = maxOf(target.reportedSeconds, positionSeconds)
             TrackLog.d(
                 TAG,
