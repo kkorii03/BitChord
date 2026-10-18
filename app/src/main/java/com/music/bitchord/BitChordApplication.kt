@@ -91,6 +91,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // Cheap here (it only records paths and starts its own warm-up job), and
         // it has to be ready before the first resolution, which can be the
         // restored queue playing the moment the service starts.
+        // The music-gate override is a debug-build tool; tell the shared gate
+        // before it reads its persisted flag so a release build ignores one.
+        com.music.bitchord.data.innertube.MusicGateFallback
+            .setDebugOverridesAllowed(BuildConfig.DEBUG)
         AndroidStreamHooks.initInnerTubeX(this)
         // Its own directory: canvas clips are looping video, not audio, and
         // belong in a cache AudioCache's own limit and eviction policy were

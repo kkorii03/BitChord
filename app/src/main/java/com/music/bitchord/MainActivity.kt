@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -116,6 +117,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.WebSessionMode
@@ -129,6 +131,7 @@ import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnertubeParser
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LikeStatus
@@ -149,6 +152,7 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
+import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.ui.components.AccountProfileSelector
 import com.music.bitchord.ui.components.SpotifyImportAlert
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
@@ -315,6 +319,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -338,6 +343,7 @@ class MainActivity : AppCompatActivity() {
         JamInviteLink.consume(intent)
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
+        applyDebugLaunchSwitches(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -436,6 +442,37 @@ class MainActivity : AppCompatActivity() {
         )
         JamInviteLink.consume(intent)
         MusicLink.consume(intent)
+        applyDebugLaunchSwitches(intent)
+    }
+
+    /**
+     * The emulator tour's two switches, read only by a debug build.
+     *
+     * `forceMusicGate` reproduces the Korea-without-Premium Home on a network
+     * that would answer YouTube Music normally; `seedHistory` gives that Home
+     * a local listening record on a fresh install. Both are no-ops in release.
+     */
+    private fun applyDebugLaunchSwitches(intent: Intent) {
+        if (!BuildConfig.DEBUG) return
+        if (intent.hasExtra(EXTRA_FORCE_MUSIC_GATE)) {
+            val forced = intent.getBooleanExtra(EXTRA_FORCE_MUSIC_GATE, false)
+            MusicGateFallback.forceForTesting(forced)
+            if (forced) Log.d(DEBUG_TAG, "debug: music gate forced")
+        }
+        if (intent.getBooleanExtra(EXTRA_SEED_HISTORY, false)) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val seeded = runCatching { ListeningStats.seedIfEmpty() }
+                    .onFailure { Log.w(DEBUG_TAG, "debug: seed failed: ${it.message}") }
+                    .getOrDefault(0)
+                Log.d(DEBUG_TAG, "debug: seeded $seeded plays")
+            }
+        }
+    }
+
+    private companion object {
+        const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
+        const val EXTRA_SEED_HISTORY = "bitchord.debug.seedHistory"
+        const val DEBUG_TAG = "BitChord"
     }
 }
 

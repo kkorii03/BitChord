@@ -36,6 +36,7 @@ object MusicGateFallback {
 
     private const val TAG = "BitChord"
     private const val STORE_KEY = "music_gate_fallback_v1"
+    private const val FORCE_KEY = "music_gate_force_v1"
 
     /** How long a GATED verdict is trusted before one request re-checks it. */
     const val RECHECK_MS = 24L * 60 * 60 * 1000
@@ -65,7 +66,31 @@ object MusicGateFallback {
     @Volatile
     private var loaded = false
 
+    /**
+     * The debug-only override, persisted beside the verdicts.
+     *
+     * It makes every identity read as gated, which is how the emulator tour
+     * reproduces the Korea-without-Premium Home from a network that would
+     * otherwise answer YouTube Music normally. Only a debug build is allowed
+     * to turn it on (see [setDebugOverridesAllowed]); a release build ignores
+     * a flag left behind by one.
+     */
+    @Volatile
+    private var forced = false
+
+    @Volatile
+    private var debugOverridesAllowed = true
+
     private val json = Json { ignoreUnknownKeys = true }
+
+    /**
+     * Whether [forceForTesting] may take effect. The application sets this to
+     * `BuildConfig.DEBUG` before [init], so a release build can never be forced
+     * by a flag a debug build wrote into the same preferences.
+     */
+    fun setDebugOverridesAllowed(allowed: Boolean) {
+        debugOverridesAllowed = allowed
+    }
 
     /** Call once at startup, before the first request. */
     @Synchronized
@@ -73,20 +98,27 @@ object MusicGateFallback {
         this.store = store
         if (loaded) return
         loaded = true
-        val raw = runCatching { store.getString(STORE_KEY) }.getOrNull() ?: return
-        runCatching {
-            val root = json.parseToJsonElement(raw).jsonObject
-            root["entries"]?.jsonObject?.forEach { (key, value) ->
-                val objectValue = value as? JsonObject ?: return@forEach
-                val state = when (objectValue.string("state")) {
-                    "GATED" -> State.GATED
-                    "OPEN" -> State.OPEN
-                    else -> State.UNKNOWN
+        forced = debugOverridesAllowed &&
+            runCatching { store.getString(FORCE_KEY) == "true" }.getOrDefault(false)
+        if (!debugOverridesAllowed) {
+            runCatching { store.putString(FORCE_KEY, "false") }
+        }
+        val raw = runCatching { store.getString(STORE_KEY) }.getOrNull()
+        if (raw != null) {
+            runCatching {
+                val root = json.parseToJsonElement(raw).jsonObject
+                root["entries"]?.jsonObject?.forEach { (key, value) ->
+                    val objectValue = value as? JsonObject ?: return@forEach
+                    val state = when (objectValue.string("state")) {
+                        "GATED" -> State.GATED
+                        "OPEN" -> State.OPEN
+                        else -> State.UNKNOWN
+                    }
+                    val at = objectValue.string("at")?.toLongOrNull() ?: 0L
+                    entries[key] = Entry(state, at)
                 }
-                val at = objectValue.string("at")?.toLongOrNull() ?: 0L
-                entries[key] = Entry(state, at)
-            }
-        }.onFailure { Log.w(TAG, "could not read the music-gate state: ${it.message}") }
+            }.onFailure { Log.w(TAG, "could not read the music-gate state: ${it.message}") }
+        }
         refreshActive()
     }
 
@@ -104,9 +136,27 @@ object MusicGateFallback {
     /** The identity gate state belongs to; anonymous has one shared entry. */
     fun currentKey(): String = Innertube.sessionKey()
 
-    fun state(key: String = currentKey()): State = entries[key]?.state ?: State.UNKNOWN
+    fun state(key: String = currentKey()): State =
+        if (forced) State.GATED else (entries[key]?.state ?: State.UNKNOWN)
 
     fun isActive(key: String = currentKey()): Boolean = state(key) == State.GATED
+
+    /**
+     * Makes every identity read as gated, or gives the real verdicts back.
+     *
+     * Debug builds only — the application allows it through
+     * [setDebugOverridesAllowed], and the flag is persisted so the emulator
+     * tour can force the gate on one launch and read the same Home after the
+     * restart it performs.
+     */
+    @Synchronized
+    fun forceForTesting(on: Boolean) {
+        if (on && !debugOverridesAllowed) return
+        forced = on
+        runCatching { store?.putString(FORCE_KEY, on.toString()) }
+            .onFailure { Log.w(TAG, "could not save the music-gate override: ${it.message}") }
+        refreshActive()
+    }
 
     /**
      * Whether asking music.youtube.com is still worthwhile.
@@ -116,12 +166,14 @@ object MusicGateFallback {
      * a network change is noticed within a day without anything polling.
      */
     fun shouldTryMusic(key: String = currentKey(), now: Long = System.currentTimeMillis()): Boolean {
+        if (forced) return false
         val entry = entries[key] ?: return true
         return entry.state != State.GATED || now - entry.checkedAt >= RECHECK_MS
     }
 
     /** True when a stored GATED verdict has aged past its once-a-day re-check. */
     fun needsRecheck(key: String = currentKey(), now: Long = System.currentTimeMillis()): Boolean {
+        if (forced) return false
         val entry = entries[key] ?: return false
         return entry.state == State.GATED && now - entry.checkedAt >= RECHECK_MS
     }
@@ -356,6 +408,8 @@ object MusicGateFallback {
         entries.clear()
         store = null
         loaded = false
+        forced = false
+        debugOverridesAllowed = true
         _active.value = false
     }
 }

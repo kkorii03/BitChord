@@ -95,6 +95,42 @@ class MusicGateFallbackTest {
         assertTrue(MusicGateFallback.isActive("anonymous"))
     }
 
+    @Test
+    fun `a forced gate covers every identity and survives a restart`() {
+        val store = MemoryStore()
+        MusicGateFallback.init(store)
+        MusicGateFallback.forceForTesting(true)
+
+        for (key in listOf("anonymous", "u:first", "u:second")) {
+            assertTrue(MusicGateFallback.isActive(key))
+            assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state(key))
+            assertFalse(MusicGateFallback.shouldTryMusic(key))
+        }
+
+        MusicGateFallback.resetForTest()
+        MusicGateFallback.init(store)
+
+        assertTrue(MusicGateFallback.isActive("u:anything"))
+        assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state("u:anything"))
+        assertFalse(MusicGateFallback.shouldTryMusic("u:anything"))
+    }
+
+    @Test
+    fun `a release build ignores and clears a forced flag`() {
+        val store = MemoryStore()
+        MusicGateFallback.init(store)
+        MusicGateFallback.forceForTesting(true)
+
+        MusicGateFallback.resetForTest()
+        MusicGateFallback.setDebugOverridesAllowed(false)
+        MusicGateFallback.init(store)
+
+        assertFalse(MusicGateFallback.isActive("anonymous"))
+        assertEquals(MusicGateFallback.State.UNKNOWN, MusicGateFallback.state("anonymous"))
+        assertTrue(MusicGateFallback.shouldTryMusic("anonymous"))
+        assertEquals("false", store.values["music_gate_force_v1"])
+    }
+
     private fun json(text: String) = Json.parseToJsonElement(text).jsonObject
 
     private companion object {

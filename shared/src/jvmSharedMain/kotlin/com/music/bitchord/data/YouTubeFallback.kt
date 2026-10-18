@@ -302,6 +302,9 @@ internal object YouTubeFallback {
      * here would be a request per Home load.
      */
     private suspend fun firstLibraryPage(): List<ShelfItem> {
+        // The library is the account's own; without a cookie youtube.com has
+        // nothing to answer for it. Home still builds — this shelf is skipped.
+        if (Innertube.cookie == null) return emptyList()
         for (browseId in listOf("FElibrary", "FEplaylist_aggregation")) {
             val root = try {
                 Innertube.browseYouTube(browseId)
@@ -695,6 +698,8 @@ internal object YouTubeFallback {
     }
 
     suspend fun libraryPlaylistItems(): List<ShelfItem> {
+        // Same account-owned feed as [firstLibraryPage]; skip it signed out.
+        if (Innertube.cookie == null) return emptyList()
         var root: JsonObject? = null
         for (browseId in listOf("FElibrary", "FEplaylist_aggregation")) {
             val candidate = runCatching { Innertube.browseYouTube(browseId) }
@@ -788,6 +793,9 @@ internal object YouTubeFallback {
         ).songs
 
     private suspend fun likedFirstPage(): YouTubeWebParser.PlaylistResult? {
+        // Liked music is per-account too; a signed-out tour skips it rather
+        // than asking youtube.com a question it cannot answer.
+        if (Innertube.cookie == null) return null
         val now = System.currentTimeMillis()
         likedCache?.let { (at, page) -> if (now - at < LIKED_CACHE_MS) return page }
         return likedLock.withLock {

@@ -9,6 +9,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.normalizedArtistName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -133,20 +134,28 @@ object ListeningStats {
     // ── Writing ─────────────────────────────────────────────────────────────
 
     /**
-     * Adds [playedMs] of [song] to the current month.
+     * Adds [playedMs] of [song] to the month [atMs] falls in.
      *
      * [countsAsPlay] separates the two things a listener means by "played". The
      * minutes are what actually came out of the speaker and are added on every
      * sample; a *play* is a whole listen and is counted once, by whoever is
      * watching the track rather than here — see [ListeningRecorder], which holds
      * the same threshold the scrobbler uses.
+     *
+     * [atMs] exists for the debug seed, which has to place plays in the months
+     * the emulator tour is meant to show. Ordinary callers leave it at the
+     * current time.
      */
-    fun record(song: Song, playedMs: Long, countsAsPlay: Boolean) {
+    fun record(
+        song: Song,
+        playedMs: Long,
+        countsAsPlay: Boolean,
+        atMs: Long = System.currentTimeMillis(),
+    ) {
         if (!ready) return
         if (playedMs <= 0 && !countsAsPlay) return
         if (song.videoId.isBlank()) return
-        val now = System.currentTimeMillis()
-        val at = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault())
+        val at = Instant.ofEpochMilli(atMs).atZone(ZoneId.systemDefault())
         synchronized(lock) {
             val bucket = bucketFor(YearMonth.from(at))
             val track = bucket.tracks.getOrPut(song.videoId) {
@@ -161,7 +170,7 @@ object ListeningStats {
                 )
             }
             track.ms += playedMs
-            track.last = now
+            track.last = atMs
             // Filled in as it becomes known: a track queued from search reaches
             // the player with no album, and the lookup that finds one lands
             // while it is already playing. The entry was created without it.
@@ -215,6 +224,42 @@ object ListeningStats {
             bucket.days[day] = (bucket.days[day] ?: 0L) + playedMs
             dirty = true
         }
+    }
+
+    /**
+     * Records [plays] at the times they happened, then waits for every touched
+     * month to reach disk.
+     *
+     * The debug tour force-stops the app between seeding and the launch whose
+     * screenshots matter, so a write still queued behind the force-stop would
+     * be a Home with no Recents on the second launch.
+     */
+    internal suspend fun seedHistorical(plays: List<SeedPlay>): Int = withContext(Dispatchers.IO) {
+        if (!ready || plays.isEmpty()) return@withContext 0
+        // Oldest first, so each month is opened once and retired in order.
+        // The whole run holds the bucket lock: the startup warm-up opens the
+        // current month on its own coroutine, and letting it interleave would
+        // retire a half-written older month.
+        synchronized(lock) {
+            plays.sortedBy { it.playedAtMs }.forEach { play ->
+                record(play.song, play.playedMs, play.countsAsPlay, play.playedAtMs)
+            }
+        }
+        flushAndAwait()
+        awaitWriter()
+        plays.size
+    }
+
+    /** Seeds the tour's history only when this device has not listened yet. */
+    internal suspend fun seedIfEmpty(nowMs: Long = System.currentTimeMillis()): Int {
+        if (!ready) return 0
+        if (recentTracks(1).isNotEmpty()) return 0
+        return seedHistorical(ListeningStatsSeed.plan(nowMs))
+    }
+
+    /** Joins month writes [bucketFor] queued while the seed rolled over. */
+    private suspend fun awaitWriter() {
+        writer.coroutineContext[Job]?.children?.toList()?.forEach { it.join() }
     }
 
     /**
