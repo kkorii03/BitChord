@@ -125,6 +125,7 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
+import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -763,6 +764,9 @@ private fun BitChordApp(
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
     val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
+    // Gemini writing the playing track's lyrics down, when no source had them:
+    // the panel says so instead of sitting on its skeleton for a minute.
+    val lyricsTranscribingVideos by LyricsRepository.transcribing.collectAsStateWithLifecycle()
     val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
@@ -2420,6 +2424,7 @@ private fun BitChordApp(
             lyricsProviderStates = lyricsProviderStates,
             onSelectLyricsProvider = viewModel::selectLyricsProvider,
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
+            lyricsTranscribing = displayedSong.videoId in lyricsTranscribingVideos,
             lyricsOffsetOpen = showLyricsOffset,
             onDismissLyricsOffset = { showLyricsOffset = false },
             lyricsTiming = lyricsTiming,

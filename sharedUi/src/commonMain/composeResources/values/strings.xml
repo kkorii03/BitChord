@@ -91,6 +91,7 @@
     <string name="lyrics_romanized">Romanized pronunciation</string>
     <string name="lyrics_saved_with_download">Lyrics saved with this download</string>
     <string name="lyrics_share_pick_limit">Card is full</string>
+    <string name="lyrics_transcribing">Writing down the lyrics…</string>
     <string name="lyrics_translated_to">Translated to %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
     <string name="medium_quality">Medium Quality</string>

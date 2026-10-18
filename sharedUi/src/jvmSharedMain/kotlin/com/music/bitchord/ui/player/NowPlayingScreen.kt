@@ -724,6 +724,12 @@ fun NowPlayingScreen(
     lyricsProviderStates: Map<LyricsSource, LyricsProviderState>,
     onSelectLyricsProvider: (LyricsSource) -> Unit,
     lyricsUnavailable: Boolean,
+    /**
+     * Whether Gemini is writing this track's lyrics down right now. Nothing
+     * else has them, and the listen takes a minute, so the panel says what is
+     * happening under its skeleton instead of looking stuck.
+     */
+    lyricsTranscribing: Boolean = false,
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
     /**
@@ -951,7 +957,10 @@ fun NowPlayingScreen(
         if (opening) closeLyrics()
     }
     val lyricsLoadingLines = stringArrayResource(Res.array.lyrics_loading_lines)
-    val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
+    val transcribingText = stringResource(Res.string.lyrics_transcribing)
+    val lyricsLoadingText = remember(song.videoId, lyricsTranscribing, transcribingText) {
+        if (lyricsTranscribing) transcribingText else lyricsLoadingLines.random()
+    }
     val lyricsTranslation = rememberLyricsTranslation(
         trackId = song.videoId,
         lyrics = lyrics,
@@ -2051,6 +2060,7 @@ fun NowPlayingScreen(
                                 trackKey = song.videoId,
                                 playhead = lyricsPlayhead,
                                 looking = !lyricsUnavailable,
+                                transcribing = lyricsTranscribing,
                                 isPlaying = isPlaying && position.advancing,
                                 onSeekToLine = seekToLyric,
                                 controlsOpen = true,
@@ -3363,6 +3373,7 @@ fun NowPlayingScreen(
                                 trackKey = song.videoId,
                                 playhead = lyricsPlayhead,
                                 looking = !lyricsUnavailable,
+                                transcribing = lyricsTranscribing,
                                 isPlaying = isPlaying && position.advancing,
                                 active = lyricsPanelVisible,
                                 onSeekToLine = seekToLyric,

@@ -38,6 +38,10 @@ import com.music.bitchord.data.model.Song
  *  - K: `부른사람 - 곡명` / `곡명 - 부른사람` with no "Cover" at all — read
  *    only for a singer already seen on a cover ([knownSingers]), and not on
  *    that singer's own channel, where it is their own song.
+ *  - L: `곡명 - 부른사람&다른사람 (피아노 ver.)` — a duet cover, the song
+ *    first and an arrangement tag after the singers. The same shape is a
+ *    duet's own song given a piano version, so one of the names has to be a
+ *    singer already seen on a cover ([knownSingers]).
  *
  * Anything else is left as it is. When a title could still be a cover read the
  * B way, [lyricsQueries] tries both readings so the lyrics are found either way
@@ -151,6 +155,7 @@ object CoverTitles {
         val undated = DATE_TAG.replace(raw, "").trim()
         // Before B: a known singer on the right of the dash would read the wrong way round as B.
         readKnown(undated, channel)?.let { return it }
+        readDuet(undated, channel)?.let { return it }
         val designated = channelId != null && channelId in designatedChannels()
         if (dated || designated) readB(undated)?.let { return it }
         return null
@@ -548,6 +553,35 @@ object CoverTitles {
             return songCover(songSide(left, heading), singer)
         }
         return null
+    }
+
+    /**
+     * "piano.ver", "Version", "버전" — the word that makes a bracket an
+     * arrangement tag rather than a featured artist or a credit.
+     */
+    private val VERSION_TAG = Regex("""(?i)\bver\.?(?![a-z])|\bversion\b|버전""")
+
+    /**
+     * L: `곡명 - 부른사람&다른사람 (피아노 ver.)` — a duet cover, the song first
+     * and an arrangement tag after the singers. The same shape is a duet's own
+     * song given a piano version ("Song - A & B (Piano Ver.)"), so it is read
+     * only when one of the names is a singer already seen on a cover.
+     */
+    private fun readDuet(raw: String, channel: String): Cover? {
+        val keys = knownSingerKeys()
+        if (keys.isEmpty()) return null
+        val (song, right) = splitTopLevelDash(raw) ?: return null
+        val group = TRAILING_GROUP.find(right) ?: return null
+        // "(오리고기 piano.ver)" says how it was played, not whose song it is.
+        if (!VERSION_TAG.containsMatchIn(group.groupValues[1])) return null
+        val namesText = right.removeRange(group.range).trim()
+        if (!namesText.contains('&')) return null
+        if (isChannelName(namesText, channel)) return null
+        val names = namesText.split('&').mapNotNull { cleanName(it) }
+        if (names.size < 2) return null
+        if (names.none { compactName(it) in keys }) return null
+        val title = cleanTitle(song) ?: return null
+        return Cover(title = title, originalArtist = null, singer = namesText)
     }
 
     @Volatile

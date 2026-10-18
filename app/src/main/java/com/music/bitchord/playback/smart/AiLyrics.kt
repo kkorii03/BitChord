@@ -42,10 +42,18 @@ object AiLyrics {
         if (!AppSettings.aiLyrics.value || !LyricsTranslation.geminiKeyUsable) return null
         if (durationMs > MAX_DURATION_MS || videoId in failedThisSession || videoId in silent()) return null
         TrackLog.d(TAG, "no lyrics anywhere; asking Gemini to write them down", videoId)
-        // The sound already on the phone when it is all there: heard in
-        // seconds, where Gemini fetching the video itself takes a minute.
-        val audio = context?.let { runCatching { VideoAudio.wav(it, videoId) }.getOrNull() }
-        val lines = LyricsTranslation.transcribeVideo(videoId, durationMs, audio)
+        // The panel is told from here, not from the player's own lookup: the
+        // lookup came back empty long ago and only this knows the listening
+        // has actually started (it is skipped when off or already refused).
+        LyricsRepository.markTranscribing(videoId, true)
+        val lines = try {
+            // The sound already on the phone when it is all there: heard in
+            // seconds, where Gemini fetching the video itself takes a minute.
+            val audio = context?.let { runCatching { VideoAudio.wav(it, videoId) }.getOrNull() }
+            LyricsTranslation.transcribeVideo(videoId, durationMs, audio)
+        } finally {
+            LyricsRepository.markTranscribing(videoId, false)
+        }
         when {
             lines == null -> {
                 failedThisSession += videoId

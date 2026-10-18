@@ -7,6 +7,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
@@ -416,8 +420,28 @@ object LyricsRepository {
     @Volatile
     var transcriber: (suspend (videoId: String, durationMs: Long) -> List<LyricLine>?)? = null
 
+    /**
+     * Videos the app is having lyrics written down for right now — filled in
+     * by [transcriber]'s implementation as it starts and stops listening.
+     *
+     * The player shows a skeleton from the moment a lookup starts, and a video
+     * with no lyrics anywhere spends another minute in Gemini before anything
+     * comes back. Without this the panel kept drawing placeholder lines for
+     * all of it and looked stuck; the UI reads this to say what is actually
+     * happening. A set rather than a Boolean because a prefetch and the
+     * playing track can be listened to at once, and only the track on screen
+     * should be reported.
+     */
+    private val _transcribing = MutableStateFlow<Set<String>>(emptySet())
+    val transcribing: StateFlow<Set<String>> = _transcribing.asStateFlow()
+
+    /** Called by the app's [transcriber] as it starts and stops writing [videoId] down. */
+    fun markTranscribing(videoId: String, running: Boolean) {
+        _transcribing.update { if (running) it + videoId else it - videoId }
+    }
+
     /** Transcriptions running, by video: the player, the lock screen and the next-song preparation share one. */
-    private val transcribing = ConcurrentHashMap<String, Deferred<Result?>>()
+    private val transcriptionRuns = ConcurrentHashMap<String, Deferred<Result?>>()
 
     /** What was heard this session, by video — kept on disk too, under each question that led to it. */
     private val heard = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
@@ -444,9 +468,9 @@ object LyricsRepository {
             lines?.takeIf { it.isNotEmpty() }?.let { Result(LyricsSource.GEMINI_TRANSCRIPT, it) }
                 ?.also { synchronized(heard) { heard[videoId] = it } }
         }
-        val running = transcribing.putIfAbsent(videoId, fresh) ?: fresh
+        val running = transcriptionRuns.putIfAbsent(videoId, fresh) ?: fresh
         if (running === fresh) {
-            fresh.invokeOnCompletion { transcribing.remove(videoId, fresh) }
+            fresh.invokeOnCompletion { transcriptionRuns.remove(videoId, fresh) }
             fresh.start()
         }
         return running.await()

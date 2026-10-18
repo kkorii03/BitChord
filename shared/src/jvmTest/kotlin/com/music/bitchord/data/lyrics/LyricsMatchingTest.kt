@@ -375,6 +375,18 @@ class LyricsMatchingTest {
             assertEquals(null, everything.originalArtist)
             assertEquals("오화요", everything.singer)
             assertClean(everything.title)
+
+            // A duet cover, song first, the two singers joined with "&" and
+            // the channel's piano arrangement last in brackets: the bracket is
+            // how it was played, not part of the song, and the channel that
+            // uploaded it (오리고기 ORIGOGI) is not one of the singers.
+            val jane = assertNotNull(
+                CoverTitles.read("JANE DOE - 오화요&아야 (오리고기 piano.ver)", "오리고기 ORIGOGI", null),
+            )
+            assertEquals("JANE DOE", jane.title)
+            assertEquals(null, jane.originalArtist)
+            assertEquals("오화요&아야", jane.singer)
+            assertClean(jane.title)
         } finally {
             CoverTitles.knownSingers = before
         }

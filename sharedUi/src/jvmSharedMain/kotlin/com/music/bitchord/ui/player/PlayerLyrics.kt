@@ -1495,7 +1495,7 @@ private fun Modifier.lyricParticles(
  * as it took to find out that it did.
  */
 @Composable
-private fun LyricsSkeleton(modifier: Modifier = Modifier) {
+private fun LyricsSkeleton(modifier: Modifier = Modifier, topPadding: Dp = 40.dp) {
     val sweep = rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -1508,7 +1508,9 @@ private fun LyricsSkeleton(modifier: Modifier = Modifier) {
         // No gutter of its own: the list this stands in for bleeds out to the
         // panel's full width and puts the gutter back as content padding, so
         // the words land level with the panel's own edge and so does this.
-        modifier.padding(top = 40.dp),
+        // [topPadding] is taken back when a status line sits above it, so the
+        // two together still start where a first lyric would.
+        modifier.padding(top = topPadding),
     ) {
         // Every bar sweeps against the width of the column rather than its own,
         // so one band crosses the whole page. Measured per bar, a short row
@@ -1609,6 +1611,13 @@ internal fun LyricsPanel(
     playhead: LyricPlayhead,
     /** Whether a lookup for this track is still in flight. */
     looking: Boolean,
+    /**
+     * Whether the app is writing the lyrics down off the video right now —
+     * see [com.music.bitchord.data.lyrics.LyricsRepository.transcribing]. The
+     * skeleton stays, with a short line saying what it is waiting for; without
+     * it the panel looked stuck for the minute a video takes to listen to.
+     */
+    transcribing: Boolean = false,
     isPlaying: Boolean,
     /** False while the panel is retained offscreen solely as a warm layout. */
     active: Boolean = true,
@@ -1820,7 +1829,29 @@ internal fun LyricsPanel(
         // "None" is a finding, and it is only worth reporting once the lookup
         // has actually come back with it.
         if (looking) {
-            LyricsSkeleton(empty)
+            if (transcribing) {
+                // The placeholder bars stay — they are the shape the words will
+                // fill — but a page of them alone reads as a panel that has
+                // stopped. One calm line where the first lyric will land says
+                // what the wait is for, in the same grey as the other statuses.
+                Column(empty) {
+                    Text(
+                        text = stringResource(Res.string.lyrics_transcribing),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = 0.55f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(
+                            top = 40.dp,
+                            start = PLAYER_GUTTER,
+                            end = PLAYER_GUTTER,
+                        ),
+                    )
+                    LyricsSkeleton(topPadding = 18.dp)
+                }
+            } else {
+                LyricsSkeleton(empty)
+            }
         } else {
             Box(empty, contentAlignment = Alignment.Center) {
                 Text(
