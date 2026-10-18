@@ -72,7 +72,8 @@ class TastePoolTest {
         assertEquals(listOf("seed-1", "session-1", "session-2"), ids(pool))
         assertEquals(2, pool.counts[CandidateSource.RADIO_SESSION])
         assertEquals(CandidateSource.RADIO_SESSION, pool.candidates[1].source)
-        assertEquals(1, pool.candidates[1].sourceRank)
+        // Rank within its own source: the session radio's first track.
+        assertEquals(0, pool.candidates[1].sourceRank)
     }
 
     @Test
