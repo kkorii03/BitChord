@@ -426,6 +426,35 @@ data class HomeFeed(
     val continuation: String?,
 )
 
+/** The result of [mergeHomeShelves]: the page to show and the titles carried over from it. */
+data class HomeShelfMerge(
+    val shelves: List<HomeShelf>,
+    val kept: List<String>,
+)
+
+/**
+ * A refresh answers with less than the first load: no supplements, and the
+ * youtube.com fallback can come back short when one of its requests fails.
+ * That must not shrink the page, so shelves the new answer did not return
+ * (by title, ignoring case and surrounding whitespace) stay after the fresh
+ * ones in their previous order. An empty fresh shelf also counts as no answer:
+ * it never replaces a populated one with the same title.
+ */
+fun mergeHomeShelves(previous: List<HomeShelf>, fetched: List<HomeShelf>): HomeShelfMerge {
+    fun key(shelf: HomeShelf) = shelf.title.trim().lowercase()
+    val fresh = mutableListOf<HomeShelf>()
+    val answered = HashSet<String>()
+    fetched.forEach { shelf ->
+        val title = key(shelf)
+        if (title.isEmpty() || shelf.items.isEmpty()) return@forEach
+        if (answered.add(title)) fresh += shelf
+    }
+    val carried = previous
+        .filter { key(it) !in answered }
+        .distinctBy { key(it) }
+    return HomeShelfMerge(fresh + carried, carried.map { it.title })
+}
+
 /** One server-defined group of the buttons shown on Explore. */
 /** YouTube Music's charts for one country, and the countries it offers. */
 data class ChartsPage(

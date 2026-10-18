@@ -38,6 +38,7 @@ import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.mergeHomeShelves
 import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
@@ -61,6 +62,7 @@ import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -2038,25 +2040,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _refreshing = MutableStateFlow(emptySet<Feed>())
     val refreshing: StateFlow<Set<Feed>> = _refreshing.asStateFlow()
 
+    /** The refresh in flight for each feed; a pull while one runs joins it. */
+    private val refreshJobs = ConcurrentHashMap<Feed, Job>()
+    private val refreshLock = Any()
+
     /**
      * Re-fetches [feed] in place. Unlike the `load*` entry points this leaves
      * the current content on screen rather than dropping back to the loading
      * state — a refresh that swapped the page for a spinner would be a worse
      * experience than the stale content it replaces.
+     *
+     * A second pull while the same feed is already refreshing joins that
+     * request instead of starting another one, so two answers cannot race to
+     * replace each other.
      */
     fun refresh(feed: Feed) {
-        if (feed in _refreshing.value) return
         if (feed == Feed.LIBRARY && !_signedIn.value) return
         val identity = listenerKey()
-        _refreshing.value = _refreshing.value + feed
-        viewModelScope.launch {
-            when (feed) {
-                Feed.HOME -> refreshHome(identity)
-                Feed.EXPLORE -> fetchExplore()
-                Feed.LIBRARY -> fetchLibrary(identity)
+        var started: Job? = null
+        synchronized(refreshLock) {
+            if (refreshJobs[feed]?.isCompleted == false) return
+            _refreshing.value = _refreshing.value + feed
+            val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    when (feed) {
+                        Feed.HOME -> refreshHome(identity)
+                        Feed.EXPLORE -> fetchExplore()
+                        Feed.LIBRARY -> fetchLibrary(identity)
+                    }
+                } finally {
+                    _refreshing.value = _refreshing.value - feed
+                    coroutineContext[Job]?.let { refreshJobs.remove(feed, it) }
+                }
             }
-            _refreshing.value = _refreshing.value - feed
+            refreshJobs[feed] = job
+            started = job
         }
+        started?.start()
     }
 
     fun loadExplore() {
@@ -2266,19 +2286,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
     }
 
-    /** Refreshes the core feed without blanking the current Play page first. */
+    /**
+     * Refreshes the core feed without blanking the current Play page first.
+     *
+     * A refresh is smaller than the first load (no supplements) and the
+     * youtube.com fallback can answer short when one of its requests fails, so
+     * the answer is merged with what is already on screen: shelves it did not
+     * return stay instead of disappearing until the next full load. The
+     * continuation belongs to the previous feed, so it is dropped before the
+     * fetch and only the new page's token is kept; a [loadMoreHome] already in
+     * flight is discarded by the generation bump.
+     */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
+        val generation = homeLoadGeneration.incrementAndGet()
+        homeContinuation = null
+        _homeLoadingMore.value = false
+        // Any fan-out of a load this refresh superseded can no longer settle
+        // (its generation check now fails), so their counters are reset here.
+        _homePendingShelves.value = 0
+        _homeRecentlyPlayedLoading.value = false
+        val previous = (_home.value as? UiState.Success)?.data.orEmpty()
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         YtMusicRepository.home().onSuccess { feed ->
-            if (identity != listenerKey()) return@onSuccess
+            if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+            val merge = mergeHomeShelves(previous, feed.shelves.withoutRepeatsOf(emptyList()))
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
-            val shelves = feed.shelves.withoutRepeatsOf(emptyList())
-                .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-            if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
+            homeSeenTitles.addAll(merge.shelves.map { it.title.lowercase(Locale.ROOT) })
+            if (merge.shelves.isNotEmpty()) _home.value = UiState.Success(merge.shelves)
+            if (merge.kept.isNotEmpty()) {
+                com.music.bitchord.data.DebugLog.i(
+                    "BitChord",
+                    "home refresh kept ${merge.kept.size} shelf(s) the fetch did not return: " +
+                        merge.kept.joinToString(", "),
+                )
+            }
+        }.onFailure { failure ->
+            if (isCurrentHomeLoad(identity, generation) && previous.isNotEmpty()) {
+                com.music.bitchord.data.DebugLog.w(
+                    "BitChord",
+                    "home refresh failed (${failure.message}); kept ${previous.size} shelf(s): " +
+                        previous.joinToString(", ") { it.title },
+                )
+            }
         }
         recent?.await()?.onSuccess { shelf ->
-            if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+            if (isCurrentHomeLoad(identity, generation)) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
         }
     }
 
@@ -2286,15 +2339,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Called as the Home list nears its end. A no-op while a page is already
      * in flight, once the feed is exhausted, or before the first page has
      * loaded — [homeContinuation] covers all three by construction.
+     *
+     * The generation is captured with the token: a page that lands after a
+     * refresh (whose token this no longer is) is not appended.
      */
     fun loadMoreHome() {
         val token = homeContinuation ?: return
         if (_homeLoadingMore.value) return
         val identity = listenerKey()
+        val generation = homeLoadGeneration.get()
         _homeLoadingMore.value = true
         viewModelScope.launch {
             YtMusicRepository.moreHome(token).onSuccess { feed ->
-                if (identity == listenerKey()) {
+                if (isCurrentHomeLoad(identity, generation)) {
                     val existing = (_home.value as? UiState.Success)?.data ?: emptyList()
                     val added = feed.shelves.withoutRepeatsOf(existing)
                         .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
@@ -2305,7 +2362,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
                 }
             }
-            if (identity == listenerKey()) _homeLoadingMore.value = false
+            if (isCurrentHomeLoad(identity, generation)) _homeLoadingMore.value = false
         }
     }
 
