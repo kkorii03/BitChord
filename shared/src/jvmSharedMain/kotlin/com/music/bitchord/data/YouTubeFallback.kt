@@ -1,6 +1,8 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.charts.ChartType
+import com.music.bitchord.data.charts.ChartsApi
 import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.YouTubeWebParser
@@ -156,8 +158,18 @@ internal object YouTubeFallback {
         return emptyList()
     }
 
-    suspend fun charts(): ChartsPage =
-        ChartsPage(country = null, countries = emptyList(), shelves = channelShelves())
+    suspend fun charts(country: String? = null): ChartsPage {
+        val shelves = ChartType.entries.mapNotNull { type ->
+            ChartsApi.entries(country, type)
+                .takeIf { it.isNotEmpty() }
+                ?.let { entries -> HomeShelf(type.shelfTitle, entries.map { it.shelfItem() }) }
+        }
+        return ChartsPage(
+            country = ChartsApi.displayCountry(country),
+            countries = ChartsApi.countries,
+            shelves = shelves.ifEmpty { channelShelves() },
+        )
+    }
 
     /** The Music channel's shelves, shared by Home, Explore and the charts card. */
     suspend fun channelShelves(): List<HomeShelf> {

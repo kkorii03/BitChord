@@ -396,13 +396,20 @@ object YtMusicRepository {
 
     /** The charts page for [country] (a code the page offered), or the content country's. */
     suspend fun charts(country: String?): Result<ChartsPage> = call("charts:${country.orEmpty()}") {
-        if (ensureGateKnown()) return@call YouTubeFallback.charts()
+        if (ensureGateKnown()) return@call YouTubeFallback.charts(country)
         val response = Innertube.charts(country)
         val (shown, countries) = InnertubeParser.parseChartCountries(response)
+        val shelves = InnertubeParser.parseHome(response)
+        // A gate can begin between the verdict check and this call; an empty
+        // Music chart is the same symptom the fallback exists to answer.
+        if (shelves.isEmpty()) {
+            val fallback = YouTubeFallback.charts(country)
+            if (fallback.shelves.isNotEmpty()) return@call fallback
+        }
         ChartsPage(
             country = shown ?: country,
             countries = countries,
-            shelves = InnertubeParser.parseHome(response),
+            shelves = shelves,
         )
     }
 
