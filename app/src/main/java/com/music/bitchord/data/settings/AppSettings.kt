@@ -155,13 +155,15 @@ object AppSettings {
     private lateinit var authStore: AuthStore
 
     /**
-     * Quality ceilings, one per kind of connection — the point of the split is
-     * that Wi-Fi can stay on Lossless while mobile data is capped. Both
-     * default to Lossless; the mobile plan is the user's to budget, not ours
-     * to assume.
+     * Quality ceilings, one per kind of connection ??the point of the split is
+     * that Wi-Fi can stay on Lossless while mobile data is capped. Wi-Fi
+     * defaults to Lossless; cellular defaults to [AudioQuality.HIGH], matching
+     * the high-efficiency default the streaming services use on a metered
+     * plan. Existing installs keep whatever ceiling they already have ??
+     * [migrateCellularQualityDefault] pins the old Lossless default for them.
      */
     val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
-    val audioQualityCellular = MutableStateFlow(AudioQuality.LOSSLESS)
+    val audioQualityCellular = MutableStateFlow(AudioQuality.HIGH)
 
     /** Allowed duration difference when replacing a playing stream with one from a source. */
     val upgradeLengthSlackSeconds = MutableStateFlow(DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS)
@@ -916,9 +918,10 @@ object AppSettings {
     }
 
     private fun readAll() {
+        migrateCellularQualityDefault()
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
-        audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
+        audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR, AudioQuality.HIGH)
         upgradeLengthSlackSeconds.value = prefs.getInt(
             KEY_UPGRADE_LENGTH_SLACK_SECONDS,
             DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS,
@@ -1139,6 +1142,25 @@ object AppSettings {
     }
 
     /**
+     * Pins the cellular ceiling for installs that predate the High default.
+     *
+     * The setting was never written out unless the listener changed it, so an
+     * absent key means one of two different things: a fresh install, or an
+     * existing one that has been on Lossless all along. An existing settings
+     * file has at least one key in it by the time this runs, a fresh one has
+     * none, and the two are answered separately: the old default is written
+     * down for the existing install (so it keeps hearing exactly what it
+     * heard), and the new one for the fresh one (so the next launch does not
+     * mistake it for an upgrade). Only runs while the key is absent, so a
+     * listener's own choice is never overwritten.
+     */
+    private fun migrateCellularQualityDefault() {
+        if (prefs.contains(KEY_QUALITY_CELLULAR)) return
+        val quality = cellularQualityDefault(existingInstall = prefs.all.isNotEmpty())
+        prefs.edit().putString(KEY_QUALITY_CELLULAR, quality.name).apply()
+    }
+
+    /**
      * A ceiling saved when there was only one applies to both connections.
      * Someone who picked Low to protect a data plan would not thank us for
      * quietly putting Wi-Fi *and* mobile back on High.
@@ -1152,9 +1174,9 @@ object AppSettings {
             .apply()
     }
 
-    private fun readQuality(key: String): AudioQuality {
-        val stored = prefs.getString(key, null) ?: return AudioQuality.LOSSLESS
-        return runCatching { AudioQuality.valueOf(stored) }.getOrDefault(AudioQuality.LOSSLESS)
+    private fun readQuality(key: String, default: AudioQuality = AudioQuality.LOSSLESS): AudioQuality {
+        val stored = prefs.getString(key, null) ?: return default
+        return runCatching { AudioQuality.valueOf(stored) }.getOrDefault(default)
     }
 
     /**
@@ -2413,6 +2435,19 @@ object AppSettings {
     private const val KEY_DISCORD_INFO_DISMISSED = "discord_info_dismissed"
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
 }
+
+/**
+ * The cellular ceiling an install gets when it has never stored one.
+ *
+ * The old default was Lossless and was only written down when the listener
+ * changed it, so "no stored key" means either a fresh install (which gets the
+ * new [AudioQuality.HIGH] default) or an existing install that has always been
+ * on Lossless (which keeps it). Whether any settings at all have been written
+ * tells the two apart: [migrateCellularQualityDefault] is the only caller and
+ * runs before this launch writes anything.
+ */
+internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
+    if (existingInstall) AudioQuality.LOSSLESS else AudioQuality.HIGH
 
 
 

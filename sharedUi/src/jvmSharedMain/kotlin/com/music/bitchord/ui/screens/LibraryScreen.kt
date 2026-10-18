@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -208,7 +209,11 @@ fun LibraryScreen(
                     shelves.forEach { shelf ->
                         item(key = "shelf:${shelf.title}") {
                             if (shelf.title == PLAYLISTS) {
-                                val pinnedFirst = shelf.pinnedFirst(pinnedPlaylists)
+                                // Pure, but it copies the shelf's item list and
+                                // the page recomposes on every host emission.
+                                val pinnedFirst = remember(shelf, pinnedPlaylists) {
+                                    shelf.pinnedFirst(pinnedPlaylists)
+                                }
                                 PlaylistShelf(
                                     shelf = pinnedFirst,
                                     onItemClick = onShelfItemClick,
@@ -422,7 +427,9 @@ fun LibraryGridPage(
     // Pinning wins over the default order, but an explicit sort is a stronger,
     // more deliberate signal than a pin and is left to reorder the whole grid,
     // pinned cards included.
-    val sortedShelf = shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    val sortedShelf = remember(shelf, pinnedPlaylists, librarySort) {
+        shelf.pinnedFirst(pinnedPlaylists).sortedForLibrary(librarySort)
+    }
     BoxWithConstraints(modifier.fillMaxSize()) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         LazyVerticalGrid(

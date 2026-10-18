@@ -106,10 +106,16 @@ fun ExploreScreen(
                     }
                     is UiState.Success -> {
                         // Moods and genres read as one grid; the server's
-                        // grouping only decides the order.
-                        val rows = state.data.flatMap(MoodGenreSection::items)
-                            .distinctBy { it.browseId to it.params }
-                            .chunked(columns)
+                        // grouping only decides the order. Remembered on the
+                        // answer and the column count: the flatten/distinct/
+                        // chunk pass is pure, but this list scope is rebuilt
+                        // whenever the page recomposes and the sections are a
+                        // few hundred items deep.
+                        val rows = remember(state.data, columns) {
+                            state.data.flatMap(MoodGenreSection::items)
+                                .distinctBy { it.browseId to it.params }
+                                .chunked(columns)
+                        }
                         items(rows, key = { row -> row.first().let { "${it.browseId}|${it.params}" } }) { row ->
                             MoodGenreRow(row = row, columns = columns, onCategoryClick = onCategoryClick)
                         }

@@ -12,12 +12,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalGraphicsContext
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /**
@@ -79,6 +83,13 @@ object LongPressOrigin {
  * hold, into a layer that is turned into a bitmap and released. The recording
  * sits inside the click's own ripple, so the picture is of the item and not of
  * the press highlight over it.
+ *
+ * The layer is recorded at [MAX_CAPTURE_PX] on its long edge at most. The
+ * bitmap is a transient lift for a menu that already sizes it to the item's
+ * own bounds, and `toImageBitmap` rasterises the whole layer in one synchronous
+ * readback; a full-width row on a 3x display is the largest thing that can be
+ * held, and halving what that costs is invisible on a card that is on screen
+ * for the length of a menu opening.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -113,8 +124,23 @@ fun Modifier.longPressMenuClickable(
             capture.handled = request
             val item = capture.pending ?: return@drawWithContent
             capture.pending = null
+            val scaleFactor = (MAX_CAPTURE_PX / maxOf(size.width, size.height, 1f)).coerceAtMost(1f)
+            val captureSize = IntSize(
+                (size.width * scaleFactor).roundToInt().coerceAtLeast(1),
+                (size.height * scaleFactor).roundToInt().coerceAtLeast(1),
+            )
             val layer = graphicsContext.createGraphicsLayer()
-            layer.record { this@drawWithContent.drawContent() }
+            // Recorded at the reduced size *and* scaled, so shrinking the
+            // readback does not crop the content recorded at full size.
+            layer.record(size = captureSize) {
+                if (scaleFactor < 1f) {
+                    scale(scaleFactor, scaleFactor, pivot = Offset.Zero) {
+                        this@drawWithContent.drawContent()
+                    }
+                } else {
+                    this@drawWithContent.drawContent()
+                }
+            }
             scope.launch {
                 try {
                     item.image = layer.toImageBitmap()
@@ -132,3 +158,6 @@ private class HoldCapture {
     var requests by mutableIntStateOf(0)
     var handled = 0
 }
+
+/** Longest edge of the held-item bitmap, in pixels. See [longPressMenuClickable]. */
+private const val MAX_CAPTURE_PX = 1024f

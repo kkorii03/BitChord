@@ -266,6 +266,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     fun request(trackId: String, uri: Uri, durationSeconds: Double) {
         if (trackId.isBlank()) return
+        // Nothing shorter than [MIN_ANALYSIS_SECONDS] is mixed, and the
+        // whole-track pass costs a decode plus two model runs: a 30-second
+        // clip would be over before the pass that describes it could land.
+        if (!trackLongEnoughToAnalyse(durationSeconds)) return
         // Before anything else this would spend: [analysisUriFor] alone can put
         // a catalogue match on the network for a track the party will never
         // mix. See [stopped].

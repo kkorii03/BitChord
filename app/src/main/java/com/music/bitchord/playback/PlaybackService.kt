@@ -5767,7 +5767,7 @@ class PlaybackService : MediaLibraryService() {
             /* bufferForPlaybackMs = */ START_PLAYBACK_MS,
             /* bufferForPlaybackAfterRebufferMs = */ RESUME_PLAYBACK_MS,
         )
-        .setTargetBufferBytes(FAR_BUFFER_BYTES)
+        .setTargetBufferBytes(bufferCeilingBytes(AppSettings.meteredConnection.value))
         .setBackBuffer(/* backBufferDurationMs = */ BACK_BUFFER_MS, /* retainBackBufferFromKeyframe = */ true)
         .build()
 
@@ -8702,12 +8702,10 @@ class PlaybackService : MediaLibraryService() {
         /** Past any song, so the byte ceiling is what stops loading. */
         const val FAR_BUFFER_MS = 15 * 60 * 1000
 
-        /** ~6 minutes at 160kbps: a whole track, for all but the longest. */
-        const val FAR_BUFFER_BYTES = 8 * 1024 * 1024
-
         /**
          * A short nudge backwards, and no more: this shares the byte ceiling
-         * above with the read-ahead it would otherwise starve.
+         * chosen by [bufferCeilingBytes] with the read-ahead it would otherwise
+         * starve.
          */
         const val BACK_BUFFER_MS = 30 * 1000
 
