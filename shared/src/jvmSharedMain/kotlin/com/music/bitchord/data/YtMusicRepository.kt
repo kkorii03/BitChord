@@ -433,7 +433,7 @@ object YtMusicRepository {
      */
     suspend fun moodGenreShelves(browseId: String, params: String?): Result<List<HomeShelf>> {
         val gated = withContext(Dispatchers.IO) { fallbackActive() }
-        if (gated || browseId.startsWith("ytc:")) {
+        if (gated || browseId.startsWith("ytc:") || browseId.startsWith("ytq:")) {
             return withContext(Dispatchers.IO) {
                 Result.success(YouTubeFallback.categoryShelves(browseId))
             }
@@ -446,12 +446,18 @@ object YtMusicRepository {
     }
 
     /** A category card borrows the first real cover from the playlists it opens. */
-    suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> =
-        moodGenreShelves(browseId, params).map { shelves ->
+    suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> {
+        // Curated Explore tiles are fetched only when opened; their artwork is
+        // whatever an earlier open already put in memory, never a new request.
+        if (browseId.startsWith(ExploreCategories.BROWSE_PREFIX)) {
+            return Result.success(YouTubeFallback.cachedCategoryThumbnail(browseId))
+        }
+        return moodGenreShelves(browseId, params).map { shelves ->
             shelves.asSequence().flatMap { it.items.asSequence() }
                 .mapNotNull(ShelfItem::thumbnailUrl)
                 .firstOrNull()
         }
+    }
 
     /** One page of a search response, with the token for its next page if present. */
     data class SearchPage(

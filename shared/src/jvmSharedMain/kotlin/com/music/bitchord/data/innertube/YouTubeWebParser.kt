@@ -101,6 +101,38 @@ internal object YouTubeWebParser {
         itemsIn(root, musicOnly = false, videosOnly = false)
             .filter { it.browseId != null }
 
+    /**
+     * Playlist cards from a playlist-filtered youtube.com search: only the two
+     * playlist shapes, so video rows and album cards that share a page cannot
+     * leak in. Browse ids are `VL…`, the same form a playlist page opens with.
+     */
+    fun parsePlaylistResults(root: JsonObject): List<ShelfItem> {
+        val out = LinkedHashMap<String, ShelfItem>()
+        fun add(item: ShelfItem?) {
+            val browseId = item?.browseId ?: return
+            if (!browseId.startsWith("VL")) return
+            out.putIfAbsent(browseId, item)
+        }
+        fun visit(element: JsonElement?) {
+            when (element) {
+                is JsonObject -> element.forEach { (key, value) ->
+                    when (key) {
+                        "lockupViewModel" -> (value as? JsonObject)
+                            ?.takeIf { it.string("contentType") == "LOCKUP_CONTENT_TYPE_PLAYLIST" }
+                            ?.let { add(lockupItem(it, musicOnly = false)) }
+                        "playlistRenderer", "compactPlaylistRenderer", "gridPlaylistRenderer" ->
+                            (value as? JsonObject)?.let { add(playlistItem(it, musicOnly = false)) }
+                        else -> visit(value)
+                    }
+                }
+                is JsonArray -> element.forEach(::visit)
+                else -> Unit
+            }
+        }
+        visit(root)
+        return out.values.toList()
+    }
+
     fun continuationToken(root: JsonElement): String? {
         findFirst(root, "continuationItemRenderer")
             ?.findObject("continuationEndpoint")

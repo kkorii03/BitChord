@@ -2,6 +2,7 @@ package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -38,6 +39,9 @@ internal object YouTubeWebSearch {
     /** YouTube's own "Videos" search filter. */
     private const val VIDEOS_FILTER = "EgIQAQ%3D%3D"
 
+    /** YouTube's own "Playlists" search filter. */
+    private const val PLAYLISTS_FILTER = "EgIQAw%3D%3D"
+
     private val json = Json { ignoreUnknownKeys = true }
 
     private val client by lazy {
@@ -48,6 +52,17 @@ internal object YouTubeWebSearch {
     }
 
     fun songs(query: String): List<Song> {
+        val root = response(query, VIDEOS_FILTER) ?: return emptyList()
+        return YouTubeWebParser.parseHistory(root)
+    }
+
+    /** Playlist cards for [query] from the playlists filter, anonymous like [songs]. */
+    fun playlists(query: String): List<ShelfItem> {
+        val root = response(query, PLAYLISTS_FILTER) ?: return emptyList()
+        return YouTubeWebParser.parsePlaylistResults(root)
+    }
+
+    private fun response(query: String, params: String): JsonObject? {
         val body = buildJsonObject {
             putJsonObject("context") {
                 putJsonObject("client") {
@@ -58,7 +73,7 @@ internal object YouTubeWebSearch {
                 }
             }
             put("query", query)
-            put("params", java.net.URLDecoder.decode(VIDEOS_FILTER, "UTF-8"))
+            put("params", java.net.URLDecoder.decode(params, "UTF-8"))
         }
         val request = okhttp3.Request.Builder()
             .url(SEARCH_URL)
@@ -68,12 +83,12 @@ internal object YouTubeWebSearch {
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
         val text = try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    TrackLog.w(TAG, "youtube search HTTP ${response.code}")
-                    return emptyList()
+            client.newCall(request).execute().use { reply ->
+                if (!reply.isSuccessful) {
+                    TrackLog.w(TAG, "youtube search HTTP ${reply.code}")
+                    return null
                 }
-                response.body?.string()
+                reply.body?.string()
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -81,16 +96,28 @@ internal object YouTubeWebSearch {
             // Search is a fallback for a filter Music refused; a transport or
             // read failure here is "no result", not a failed search page.
             TrackLog.w(TAG, "youtube search failed: ${failure.message}")
-            return emptyList()
-        } ?: return emptyList()
-        return parseResponse(text)
+            return null
+        } ?: return null
+        return runCatching { json.parseToJsonElement(text) as? JsonObject }
+            .onFailure {
+                if (it is CancellationException) throw it
+                TrackLog.w(TAG, "youtube search parse failed: ${it.message}")
+            }
+            .getOrNull()
     }
 
     /** Reads a search response; a shape surprise is no rows, never a thrown page. */
     internal fun parseResponse(text: String): List<Song> =
+        parse(text, YouTubeWebParser::parseHistory)
+
+    /** Reads a playlists-filter response the same forgiving way. */
+    internal fun parsePlaylistResponse(text: String): List<ShelfItem> =
+        parse(text, YouTubeWebParser::parsePlaylistResults)
+
+    private fun <T> parse(text: String, read: (JsonObject) -> List<T>): List<T> =
         runCatching {
             val root = json.parseToJsonElement(text) as? JsonObject ?: return@runCatching emptyList()
-            YouTubeWebParser.parseHistory(root)
+            read(root)
         }.onFailure {
             if (it is CancellationException) throw it
             TrackLog.w(TAG, "youtube search parse failed: ${it.message}")

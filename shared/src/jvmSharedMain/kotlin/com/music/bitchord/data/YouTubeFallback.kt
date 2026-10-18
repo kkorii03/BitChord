@@ -6,6 +6,7 @@ import com.music.bitchord.data.charts.ChartsApi
 import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.YouTubeWebParser
+import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.model.ChartsPage
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
@@ -48,6 +49,10 @@ internal object YouTubeFallback {
     private const val CATEGORY_PREFIX = "ytc:"
     /** The built gated feed is reused by every tab switch inside this window. */
     private const val HOME_CACHE_MS = 10L * 60 * 1000
+    /** A curated category's search result is reused for this long. */
+    private const val CATEGORY_CACHE_MS = 6L * 60 * 60 * 1000
+    /** How many rows each curated category shelf keeps from one search page. */
+    private const val CATEGORY_LIMIT = 20
 
     private val continuationTokens = ConcurrentHashMap<String, Boolean>()
 
@@ -56,6 +61,11 @@ internal object YouTubeFallback {
     private val likedLock = Mutex()
 
     private val homeLock = Mutex()
+
+    private val categoryLock = Mutex()
+
+    /** Curated [ExploreCategories] tiles, keyed by their `ytq:` browse id. */
+    private val categoryCache = ConcurrentHashMap<String, Pair<Long, List<HomeShelf>>>()
 
     @Volatile
     private var channelCache: Pair<Long, List<HomeShelf>>? = null
@@ -331,8 +341,28 @@ internal object YouTubeFallback {
 
     // ---- Explore ------------------------------------------------------------
 
-    suspend fun exploreSections(): List<MoodGenreSection> =
-        channelShelves().mapIndexedNotNull { index, shelf ->
+    /**
+     * Explore's grid: the curated [ExploreCategories] sections first, then the
+     * Music channel's own shelves as single tiles. Static on purpose — a tile's
+     * search only runs when it is opened, and a tile borrows its cover from an
+     * already-cached result rather than fetching one.
+     */
+    suspend fun exploreSections(): List<MoodGenreSection> {
+        val curated = ExploreCategories.sections.map { (sectionTitle, categories) ->
+            MoodGenreSection(
+                title = sectionTitle,
+                items = categories.map { category ->
+                    val browseId = ExploreCategories.browseId(category)
+                    MoodGenre(
+                        title = category.title,
+                        browseId = browseId,
+                        params = null,
+                        thumbnailUrl = cachedCategoryThumbnail(browseId),
+                    )
+                },
+            )
+        }
+        val channel = channelShelves().mapIndexedNotNull { index, shelf ->
             val first = shelf.items.firstOrNull() ?: return@mapIndexedNotNull null
             MoodGenreSection(
                 title = shelf.title,
@@ -346,8 +376,11 @@ internal object YouTubeFallback {
                 ),
             )
         }
+        return curated + channel
+    }
 
     suspend fun categoryShelves(browseId: String): List<HomeShelf> {
+        ExploreCategories.find(browseId)?.let { return curatedCategoryShelves(it) }
         if (browseId.startsWith(CATEGORY_PREFIX)) {
             val index = browseId.removePrefix(CATEGORY_PREFIX).toIntOrNull()
                 ?: return emptyList()
@@ -355,6 +388,74 @@ internal object YouTubeFallback {
         }
         if (browseId == MUSIC_CHANNEL) return channelShelves()
         return emptyList()
+    }
+
+    /**
+     * One curated category, from an anonymous youtube.com search: a playlists
+     * shelf and a songs shelf. The result is cached for [CATEGORY_CACHE_MS];
+     * an empty answer is not cached so a later tap can try again.
+     */
+    private suspend fun curatedCategoryShelves(category: ExploreCategory): List<HomeShelf> {
+        val browseId = ExploreCategories.browseId(category)
+        cachedCategory(browseId)?.let { return it }
+        return categoryLock.withLock {
+            cachedCategory(browseId)?.let { return@withLock it }
+            val playlists = runCatching { YouTubeWebSearch.playlists(category.query) }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    Log.w(TAG, "YouTube playlist search failed: ${it.message}")
+                }
+                .getOrDefault(emptyList())
+                .distinctBy { it.browseId }
+                .take(CATEGORY_LIMIT)
+            val songs = runCatching { YouTubeWebSearch.songs(category.query) }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    Log.w(TAG, "YouTube song search failed: ${it.message}")
+                }
+                .getOrDefault(emptyList())
+                .let(::cheapMusicOnly)
+                .distinctBy { it.videoId }
+                .take(CATEGORY_LIMIT)
+            val shelves = ArrayList<HomeShelf>(2)
+            if (playlists.isNotEmpty()) shelves += HomeShelf("재생목록", playlists)
+            if (songs.isNotEmpty()) shelves += HomeShelf("노래", songs.map(::shelfItem))
+            val result = shelves.toList()
+            if (result.isNotEmpty()) {
+                categoryCache[browseId] = System.currentTimeMillis() to result
+            }
+            result
+        }
+    }
+
+    private fun cachedCategory(
+        browseId: String,
+        now: Long = System.currentTimeMillis(),
+    ): List<HomeShelf>? = categoryCache[browseId]
+        ?.takeIf { (at, _) -> now - at < CATEGORY_CACHE_MS }
+        ?.second
+
+    /** A tile's cover, but only from a result already in memory — never a fetch. */
+    internal fun cachedCategoryThumbnail(
+        browseId: String,
+        now: Long = System.currentTimeMillis(),
+    ): String? = cachedCategory(browseId, now)
+        ?.firstNotNullOfOrNull { shelf ->
+            shelf.items.firstNotNullOfOrNull { it.thumbnailUrl }
+        }
+
+    /**
+     * Drops rows the classifier already knows are not music, using only its
+     * free rules and its cache. No player lookups: a search for a music query
+     * should not spend a request per row deciding what it already returned.
+     */
+    private fun cheapMusicOnly(songs: List<Song>): List<Song> = songs.filter { song ->
+        when (YouTubeMusicClassifier.ruleVerdict(song.title, song.artist, song.albumName)) {
+            YouTubeMusicClassifier.Verdict.MUSIC -> true
+            // No free verdict: keep the row unless the cache already says it is not music.
+            else -> YouTubeMusicClassifier.cached(song.videoId) !=
+                YouTubeMusicClassifier.Verdict.NOT_MUSIC
+        }
     }
 
     suspend fun charts(country: String? = null): ChartsPage {
