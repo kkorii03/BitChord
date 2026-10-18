@@ -134,8 +134,10 @@ internal object YouTubeFallback {
                 Innertube.browseYouTube("FEwhat_to_watch"),
                 musicOnly = true,
             )
-        }.onFailure { Log.w(TAG, "YouTube home failed: ${it.message}") }
-            .getOrNull()
+        }.onFailure {
+            if (it is CancellationException) throw it
+            Log.w(TAG, "YouTube home failed: ${it.message}")
+        }.getOrNull()
         val personalShelves = personal?.shelves.orEmpty()
             .map { musicOnlyShelf(it) }
         val continuation = personal?.continuation?.also(::rememberContinuation)
@@ -232,7 +234,9 @@ internal object YouTubeFallback {
     }
 
     suspend fun moreHome(token: String): HomeFeed {
-        val root = runCatching { Innertube.browseYouTubeContinuation(token) }.getOrNull()
+        val root = runCatching { Innertube.browseYouTubeContinuation(token) }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
             ?: return HomeFeed(emptyList(), null)
         val page = YouTubeWebParser.parseHome(root, musicOnly = true)
         page.continuation?.let(::rememberContinuation)
@@ -381,8 +385,10 @@ internal object YouTubeFallback {
                     Innertube.browseYouTube(MUSIC_CHANNEL),
                     musicOnly = false,
                 ).shelves
-            }.onFailure { Log.w(TAG, "YouTube Music channel failed: ${it.message}") }
-                .getOrDefault(emptyList())
+            }.onFailure {
+                if (it is CancellationException) throw it
+                Log.w(TAG, "YouTube Music channel failed: ${it.message}")
+            }.getOrDefault(emptyList())
             channelCache = System.currentTimeMillis() to shelves
             shelves
         }
@@ -397,7 +403,9 @@ internal object YouTubeFallback {
         if (likedSongs.isNotEmpty()) {
             LikeState.seedLiked(likedSongs.mapTo(HashSet()) { it.videoId })
         }
-        val playlists = runCatching { libraryPlaylistItems() }.getOrDefault(emptyList())
+        val playlists = runCatching { libraryPlaylistItems() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(emptyList())
         val shelves = if (playlists.isEmpty()) {
             emptyList()
         } else {
@@ -414,7 +422,9 @@ internal object YouTubeFallback {
     suspend fun libraryPlaylistItems(): List<ShelfItem> {
         var root: JsonObject? = null
         for (browseId in listOf("FElibrary", "FEplaylist_aggregation")) {
-            val candidate = runCatching { Innertube.browseYouTube(browseId) }.getOrNull() ?: continue
+            val candidate = runCatching { Innertube.browseYouTube(browseId) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull() ?: continue
             val items = YouTubeWebParser.parseLibraryItems(candidate)
             if (items.isNotEmpty()) {
                 root = candidate
@@ -436,7 +446,9 @@ internal object YouTubeFallback {
         var page = 1
         while (token != null && page++ <= YtMusicRepository.MAX_PAGES) {
             rememberContinuation(token)
-            val next = runCatching { Innertube.browseYouTubeContinuation(token) }.getOrNull() ?: break
+            val next = runCatching { Innertube.browseYouTubeContinuation(token) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull() ?: break
             add(YouTubeWebParser.parseLibraryItems(next))
             token = YouTubeWebParser.continuationToken(next)
         }
@@ -486,7 +498,9 @@ internal object YouTubeFallback {
         var pages = 1
         var token = page.continuation
         while (token != null && pages++ <= YtMusicRepository.MAX_PAGES) {
-            page = runCatching { morePlaylist(token) }.getOrNull() ?: break
+            page = runCatching { morePlaylist(token) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull() ?: break
             page.songs.forEach { out.putIfAbsent(it.videoId, it) }
             token = page.continuation
         }
@@ -504,7 +518,9 @@ internal object YouTubeFallback {
         return likedLock.withLock {
             likedCache?.let { (at, page) -> if (now - at < LIKED_CACHE_MS) return@withLock page }
             for (id in listOf(LIKED_MUSIC, LIKED_VIDEOS)) {
-                val root = runCatching { Innertube.browseYouTube(id) }.getOrNull() ?: continue
+                val root = runCatching { Innertube.browseYouTube(id) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull() ?: continue
                 val page = YouTubeWebParser.parsePlaylist(root)
                 if (page.songs.isEmpty()) continue
                 page.continuation?.let(::rememberContinuation)

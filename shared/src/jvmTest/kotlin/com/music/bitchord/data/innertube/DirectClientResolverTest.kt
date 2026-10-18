@@ -57,4 +57,30 @@ class DirectClientResolverTest {
         """.trimIndent()
         assertNull(DirectClientResolver.pickAudio(parse(ciphered), maxKbps = 160, client = "ANDROID"))
     }
+
+    @Test
+    fun malformedFormatRowsAreSkippedWithoutThrowing() {
+        val mixed = """
+            {"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[
+              null,
+              "not a format",
+              {"mimeType":5,"bitrate":"high","url":42},
+              {"mimeType":"audio/webm; codecs=\"opus\"","bitrate":152000,"url":"https://a/251"}]}}
+        """.trimIndent()
+
+        val found = DirectClientResolver.pickAudio(parse(mixed), maxKbps = 160, client = "IOS")!!
+        assertEquals("https://a/251", found.url)
+    }
+
+    @Test
+    fun unexpectedRootShapesAreNoAnswer() {
+        val flatStatus = """{"playabilityStatus":"OK","streamingData":{"adaptiveFormats":[]}}"""
+        assertNull(DirectClientResolver.pickAudio(parse(flatStatus), maxKbps = 160, client = "IOS"))
+
+        val flatFormats = """
+            {"playabilityStatus":{"status":"OK"},"streamingData":[
+              {"mimeType":"audio/webm","bitrate":152000,"url":"https://a/251"}]}
+        """.trimIndent()
+        assertNull(DirectClientResolver.pickAudio(parse(flatFormats), maxKbps = 160, client = "IOS"))
+    }
 }

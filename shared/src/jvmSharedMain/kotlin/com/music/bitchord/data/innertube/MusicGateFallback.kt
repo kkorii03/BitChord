@@ -150,6 +150,7 @@ object MusicGateFallback {
     }
 
     /** Records that a re-check happened even when it could not answer either way. */
+    @Synchronized
     fun touch(key: String = currentKey(), now: Long = System.currentTimeMillis()) {
         entries.computeIfAbsent(key) { Entry(State.UNKNOWN, now) }.checkedAt = now
         persist()

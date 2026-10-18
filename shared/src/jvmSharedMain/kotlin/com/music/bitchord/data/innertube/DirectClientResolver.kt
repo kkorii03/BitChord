@@ -2,15 +2,15 @@ package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
@@ -93,7 +93,10 @@ internal object DirectClientResolver {
     fun candidates(videoId: String, maxKbps: Int): Sequence<Found> = sequence {
         for (spec in SPECS) {
             val found = runCatching { ask(spec, videoId, maxKbps) }
-                .onFailure { TrackLog.w(TAG, "direct ${spec.name} failed for $videoId: ${it.message}") }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    TrackLog.w(TAG, "direct ${spec.name} failed for $videoId: ${it.message}")
+                }
                 .getOrNull()
             if (found != null) yield(found)
         }
@@ -138,19 +141,21 @@ internal object DirectClientResolver {
 
     /** The best direct (unciphered) audio format under [maxKbps]; pure, so it can be tested. */
     internal fun pickAudio(root: JsonObject, maxKbps: Int, client: String, videoId: String = ""): Found? {
-        val status = root["playabilityStatus"]?.jsonObject?.get("status")?.jsonPrimitive?.contentOrNull
+        val playability = root["playabilityStatus"] as? JsonObject
+        val status = (playability?.get("status") as? JsonPrimitive)?.contentOrNull
         if (status != "OK") {
-            val reason = root["playabilityStatus"]?.jsonObject?.get("reason")?.jsonPrimitive?.contentOrNull
+            val reason = (playability?.get("reason") as? JsonPrimitive)?.contentOrNull
             TrackLog.w(TAG, "direct $client $status for $videoId: ${reason.orEmpty().take(80)}")
             return null
         }
-        val formats = root["streamingData"]?.jsonObject?.get("adaptiveFormats")?.jsonArray ?: return null
+        val formats = ((root["streamingData"] as? JsonObject)?.get("adaptiveFormats") as? JsonArray)
+            ?: return null
         val audio = formats.mapNotNull { element ->
-            val f = element.jsonObject
-            val mime = f["mimeType"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val f = element as? JsonObject ?: return@mapNotNull null
+            val mime = (f["mimeType"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
             if (!mime.startsWith("audio/")) return@mapNotNull null
             val url = (f["url"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
-            val bitrate = f["bitrate"]?.jsonPrimitive?.intOrNull ?: 0
+            val bitrate = (f["bitrate"] as? JsonPrimitive)?.intOrNull ?: 0
             Found(url, bitrate / 1000, mime.substringBefore(';').trim(), client)
         }
         if (audio.isEmpty()) return null
