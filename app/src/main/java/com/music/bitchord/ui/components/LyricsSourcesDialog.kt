@@ -9,7 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -95,7 +95,7 @@ fun LyricsSourcesDialog(
     var showPaxSenixKeyDialog by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(ALERT_CORNER)
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(SCRIM_COLOR)
@@ -106,9 +106,15 @@ fun LyricsSourcesDialog(
             ),
         contentAlignment = Alignment.Center,
     ) {
+        // The card never grows past the window, however many provider rows are
+        // added or however short the screen is. The list takes what the header
+        // and the footer rows leave (see its weight below), so nothing ever
+        // lands on top of anything else.
+        val cardMaxHeight = maxHeight - 32.dp
         Column(
             modifier = Modifier
                 .width(ALERT_WIDTH)
+                .heightIn(max = cardMaxHeight)
                 .clip(shape)
                 .then(
                     if (reduceDynamicBlur) {
@@ -155,15 +161,17 @@ fun LyricsSourcesDialog(
                 )
             }
 
-            // Capped and scrolled rather than laid out at full height: there
-            // are enough providers now that the card ran off both ends of a
-            // phone, taking Reset and Done with it. Still a plain Column
-            // inside — the drag measures itself against a fixed row pitch and
-            // a lazy list would recycle the row being dragged out from under
-            // the finger. The cap and its scroll state live inside
+            // The card is capped at the window above, and this list takes
+            // whatever the header and the footer rows leave (its weight) and
+            // scrolls inside that — so the footer can never end up drawn over
+            // the last row, and Reset and Done stay on screen. Still a plain
+            // Column inside — the drag measures itself against a fixed row
+            // pitch and a lazy list would recycle the row being dragged out
+            // from under the finger. The cap and its scroll state live inside
             // [ReorderableSourceList] itself, since the edge auto-scroll needs
             // both.
             ReorderableSourceList(
+                modifier = Modifier.weight(1f, fill = false),
                 order = savedOrder,
                 selected = selected,
                 onReorder = AppSettings::setLyricsSourceOrder,
@@ -181,12 +189,12 @@ fun LyricsSourcesDialog(
             )
 
             AlertRule()
-            AlertAction(
-                label = stringResource(
-                    if (paxSenixApiKey.isBlank()) R.string.paxsenix_api_key_missing
-                    else R.string.paxsenix_api_key_configured,
+            SourceKeyRow(
+                title = stringResource(R.string.paxsenix_api_key),
+                secondary = stringResource(
+                    if (paxSenixApiKey.isBlank()) R.string.paxsenix_api_key_status_missing
+                    else R.string.paxsenix_api_key_status_configured,
                 ),
-                emphasised = false,
                 onClick = { showPaxSenixKeyDialog = true },
             )
             AlertRule()
@@ -290,6 +298,45 @@ private fun SyllableSyncToggle(checked: Boolean, onToggle: () -> Unit) {
 }
 
 /**
+ * A footer row set like a row of the list above it — the same title and
+ * secondary text, on the same gutter — rather than as a full-bleed alert
+ * action, which set it a size too large and left it running under the list.
+ */
+@Composable
+private fun SourceKeyRow(title: String, secondary: String, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (pressed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f) else Color.Transparent,
+            )
+            .clickable(
+                indication = null,
+                interactionSource = interactionSource,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = secondary,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
  * The checkable, drag-reorderable list of sources.
  *
  * Reordering is entirely local until a drag ends — [liveOrder] tracks the
@@ -313,6 +360,7 @@ private fun SyllableSyncToggle(checked: Boolean, onToggle: () -> Unit) {
  */
 @Composable
 private fun ReorderableSourceList(
+    modifier: Modifier = Modifier,
     order: List<LyricsSource>,
     selected: Set<LyricsSource>,
     onReorder: (List<LyricsSource>) -> Unit,
@@ -427,7 +475,7 @@ private fun ReorderableSourceList(
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .heightIn(max = SOURCES_MAX_HEIGHT)
             // Measured outside [verticalScroll] on purpose: inside it, this
             // would report the full, unclipped height of every row stacked up

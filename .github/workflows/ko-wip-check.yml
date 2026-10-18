@@ -36,7 +36,7 @@ jobs:
         run: |
           set +e -o pipefail
           chmod +x gradlew
-          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*' --tests 'com.music.bitchord.data.innertube.InnertubeSearchPrivacyTest' --console=plain 2>&1 | tee test.log
+          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*' --tests 'com.music.bitchord.data.innertube.InnertubeSearchPrivacyTest' :sharedUi:jvmTest --tests 'com.music.bitchord.ui.LyricsProviderStateTest' --console=plain 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           for f in shared/build/test-results/jvmTest/*.xml; do
             [ -f "$f" ] || continue

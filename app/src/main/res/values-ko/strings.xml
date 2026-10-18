@@ -561,6 +561,8 @@
     <string name="paxsenix_api_key">PaxSenix API 키</string>
     <string name="paxsenix_api_key_configured">PaxSenix API 키 — 설정됨</string>
     <string name="paxsenix_api_key_missing">PaxSenix API 키 — 선택 사항, 설정 안 됨</string>
+    <string name="paxsenix_api_key_status_configured">설정됨</string>
+    <string name="paxsenix_api_key_status_missing">선택 사항, 설정 안 됨</string>
     <string name="max_delay">최대 지연 시간</string>
     <string name="max_delay_subtitle">최대 스크로블 지연 시간(초)</string>
     <string name="min_song_duration">최소 노래 길이</string>

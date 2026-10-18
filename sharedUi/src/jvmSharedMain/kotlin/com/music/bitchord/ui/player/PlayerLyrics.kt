@@ -107,7 +107,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -132,6 +131,7 @@ import com.music.bitchord.ui.haptics.Haptics
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.theme.PhraseLineBreak
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
@@ -237,12 +237,6 @@ private const val BACKING_FADE_LEAD = 1.6f
  */
 private val SUB_LYRIC_FONT_SIZE = 20.sp
 
-/** Phrase-based word breaking: Korean keeps its words whole across a wrap (Android 13+). */
-private val LYRIC_LINE_BREAK = LineBreak(
-    strategy = LineBreak.Strategy.HighQuality,
-    strictness = LineBreak.Strictness.Strict,
-    wordBreak = LineBreak.WordBreak.Phrase,
-)
 private val SUB_LYRIC_LINE_HEIGHT = 25.sp
 private val SUB_BACKING_FONT_SIZE = 16.sp
 private val SUB_BACKING_LINE_HEIGHT = 21.sp
@@ -2099,7 +2093,7 @@ internal fun LyricsPanel(
                 }.copy(
                     // Korean wraps at the spaces between words, as Apple Music
                     // sets it, not between any two syllables ("알 / 면서도").
-                    lineBreak = LYRIC_LINE_BREAK,
+                    lineBreak = PhraseLineBreak,
                 )
                 // The stack sits fractionally back and the playing line comes
                 // forward to meet you, rather than the playing line swelling

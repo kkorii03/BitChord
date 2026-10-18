@@ -15,7 +15,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.R
 
@@ -60,20 +59,9 @@ val SFProDisplay = FontFamily(
     Font(R.font.sf_pro_display_heavy, FontWeight.W800),
 )
 
-/**
- * Korean wraps between words rather than inside them.
- *
- * Android 13+ is where `LineBreak.WordBreak.Phrase` is honoured; older
- * versions ignore the setting and keep their previous behaviour, so this is
- * safe to apply to the whole scale. The lyrics set the same rule on their own
- * text ([com.music.bitchord.ui.player.PlayerLyrics]).
- */
-private val PhraseLineBreak = LineBreak(
-    strategy = LineBreak.Strategy.HighQuality,
-    strictness = LineBreak.Strictness.Strict,
-    wordBreak = LineBreak.WordBreak.Phrase,
-)
-
+// Korean wraps between words rather than inside them — see [PhraseLineBreak],
+// which the lyrics and the desktop's type also read.
+//
 // Heavy, tight typography — the backbone of the Apple Music look.
 private val BitChordTypography = Typography(
     displayLarge = TextStyle(fontWeight = FontWeight.W800, fontSize = 34.sp, letterSpacing = (-0.8).sp),

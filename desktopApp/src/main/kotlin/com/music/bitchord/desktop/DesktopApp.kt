@@ -241,7 +241,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -293,6 +292,7 @@ import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.theme.PhraseLineBreak
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
@@ -438,11 +438,7 @@ internal fun desktopTypography(): Typography {
         composeFont(Res.font.sf_pro_display_bold, FontWeight.W700),
         composeFont(Res.font.sf_pro_display_heavy, FontWeight.W800),
     )
-    val lineBreak = LineBreak(
-        strategy = LineBreak.Strategy.HighQuality,
-        strictness = LineBreak.Strictness.Strict,
-        wordBreak = LineBreak.WordBreak.Phrase,
-    )
+    val lineBreak = PhraseLineBreak
     val defaults = Typography()
     return defaults.copy(
         displayLarge = defaults.displayLarge.copy(lineBreak = lineBreak, fontFamily = sfProDisplay, fontWeight = FontWeight.W800, fontSize = 34.sp, letterSpacing = (-0.8).sp),
