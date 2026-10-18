@@ -1,5 +1,6 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.model.ShelfItem
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
@@ -66,6 +67,149 @@ class YouTubeWebParserTest {
         val items = YouTubeWebParser.parseLibraryItems(json(LIBRARY))
         assertNotNull(items.firstOrNull { it.browseId == "VLPLown123" })
         assertTrue(items.none { it.videoId != null })
+    }
+
+    @Test
+    fun `a protocol relative lockup thumbnail becomes an absolute webp url`() {
+        val item = parseShelf(
+            """
+            {"lockupViewModel":{
+              "contentId":"PLrelative",
+              "contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+                {"url":"//i.ytimg.com/vi/aaaaaaaaaaa/hqdefault.webp?sqp=abc&rs=1","width":480,"height":360}
+              ]}}},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Relative Cover"}}}
+            }}
+            """,
+        ).single()
+
+        assertEquals(
+            "https://i.ytimg.com/vi/aaaaaaaaaaa/hqdefault.webp?sqp=abc&rs=1",
+            item.thumbnailUrl,
+        )
+    }
+
+    @Test
+    fun `collection lockups read primary, stacked and legacy thumbnails`() {
+        val items = parseShelf(
+            """
+            {"lockupViewModel":{
+              "contentId":"PLcollection",
+              "contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "contentImage":{"collectionThumbnailViewModel":{"primaryThumbnail":{
+                "thumbnailViewModel":{"image":{"sources":[
+                  {"url":"https://i.ytimg.com/vi/bbbbbbbbbbb/hqdefault.jpg"}
+                ]}}
+              }}},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Collection Cover"}}}
+            }}
+            """,
+            """
+            {"lockupViewModel":{
+              "contentId":"PLstacked",
+              "contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "contentImage":{"collectionThumbnailViewModel":{"stackedThumbnailViewModel":{
+                "primaryThumbnail":{"thumbnailViewModel":{"image":{"sources":[
+                  {"url":"https://i.ytimg.com/vi/ccccccccccc/hqdefault.jpg"}
+                ]}}}
+              }}},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Stacked Cover"}}}
+            }}
+            """,
+            """
+            {"lockupViewModel":{
+              "contentId":"PLlegacy",
+              "contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "contentImage":{"collectionThumbnailViewModel":{"primaryThumbnail":{
+                "thumbnail":{"thumbnails":[
+                  {"url":"https://i.ytimg.com/vi/eeeeeeeeeee/hqdefault.jpg"}
+                ]}
+              }}},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Legacy Cover"}}}
+            }}
+            """,
+        )
+
+        assertEquals(
+            listOf(
+                "https://i.ytimg.com/vi/bbbbbbbbbbb/hqdefault.jpg",
+                "https://i.ytimg.com/vi/ccccccccccc/hqdefault.jpg",
+                "https://i.ytimg.com/vi/eeeeeeeeeee/hqdefault.jpg",
+            ),
+            items.map { it.thumbnailUrl },
+        )
+    }
+
+    @Test
+    fun `a source without a url does not hide the valid image`() {
+        val item = parseShelf(
+            """
+            {"lockupViewModel":{
+              "contentId":"PLsources",
+              "contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+                {"url":"https://i.ytimg.com/vi/fffffffffff/hqdefault.jpg","width":480,"height":360},
+                {"width":120,"height":90}
+              ]}}},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Source Cover"}}}
+            }}
+            """,
+        ).single()
+
+        assertEquals("https://i.ytimg.com/vi/fffffffffff/hqdefault.jpg", item.thumbnailUrl)
+    }
+
+    @Test
+    fun `a playlist without an image falls back to its first video`() {
+        val item = parseShelf(
+            """
+            {"lockupViewModel":{
+              "contentId":"PLnoimage",
+              "contentType":"LOCKUP_CONTENT_TYPE_PLAYLIST",
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"No Cover"}}},
+              "rendererContext":{"commandContext":{"onTap":{"innertubeCommand":{
+                "watchEndpoint":{"videoId":"ddddddddddd","playlistId":"PLnoimage"}
+              }}}}
+            }}
+            """,
+        ).single()
+
+        assertEquals("https://i.ytimg.com/vi/ddddddddddd/hqdefault.jpg", item.thumbnailUrl)
+    }
+
+    @Test
+    fun `an album lockup keeps its image and browse id`() {
+        val item = parseShelf(
+            """
+            {"lockupViewModel":{
+              "contentId":"OLAK5uy_album",
+              "contentType":"LOCKUP_CONTENT_TYPE_ALBUM",
+              "contentImage":{"collectionThumbnailViewModel":{"primaryThumbnail":{
+                "thumbnailViewModel":{"image":{"sources":[
+                  {"url":"https://i.ytimg.com/vi/ggggggggggg/hqdefault.jpg"}
+                ]}}
+              }}},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"An Album"}}}
+            }}
+            """,
+        ).single()
+
+        assertEquals("https://i.ytimg.com/vi/ggggggggggg/hqdefault.jpg", item.thumbnailUrl)
+        assertEquals("VLOLAK5uy_album", item.browseId)
+    }
+
+    private fun parseShelf(vararg lockups: String): List<ShelfItem> {
+        val items = lockups.joinToString(",") { """{"richItemRenderer":{"content":$it}}""" }
+        val root = json(
+            """
+            {"contents":{"richGridRenderer":{"contents":[{"richShelfRenderer":{
+              "title":{"runs":[{"text":"오늘의 핫리스트"}]},
+              "content":{"richGridRenderer":{"contents":[$items]}}
+            }}]}}}
+            """,
+        )
+        return YouTubeWebParser.parseHome(root, musicOnly = false).shelves.single().items
     }
 
     private fun json(text: String) = Json.parseToJsonElement(text).jsonObject

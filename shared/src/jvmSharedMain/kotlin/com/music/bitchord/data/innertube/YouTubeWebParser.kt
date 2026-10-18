@@ -291,7 +291,7 @@ internal object YouTubeWebParser {
         }
         val channel = parts.firstOrNull()?.firstOrNull()
         val subtitle = parts.flatMap { it }.distinct().take(3).joinToString(" · ")
-        val thumbnail = lockup.findObject("contentImage")?.let(::lockupThumbnail)
+        val thumbnail = lockupThumbnail(lockup, contentId)
         val badges = collectObjects(lockup, "thumbnailBadgeViewModel")
         val badgeTexts = badges.mapNotNull { it.string("text") }
         val iconNames = badges.mapNotNull {
@@ -319,29 +319,92 @@ internal object YouTubeWebParser {
                     browseId = null,
                 )
             }
-            "LOCKUP_CONTENT_TYPE_PLAYLIST", "LOCKUP_CONTENT_TYPE_STATION" -> {
+            "LOCKUP_CONTENT_TYPE_PLAYLIST", "LOCKUP_CONTENT_TYPE_STATION", "LOCKUP_CONTENT_TYPE_ALBUM" -> {
                 if (musicOnly && !isStation) return null
                 ShelfItem(
                     title = title,
                     subtitle = subtitle,
                     thumbnailUrl = thumbnail,
                     videoId = null,
-                    browseId = playlistsBrowseId(contentId),
+                    browseId = if (contentType == "LOCKUP_CONTENT_TYPE_ALBUM") {
+                        albumBrowseId(contentId)
+                    } else {
+                        playlistsBrowseId(contentId)
+                    },
                 )
             }
             else -> null
         }
     }
 
-    private fun lockupThumbnail(contentImage: JsonObject): String? =
+    private fun lockupThumbnail(
+        lockup: JsonObject,
+        contentId: String,
+    ): String? {
+        lockup.findObject("contentImage")
+            ?.let(::lockupImageUrl)
+            ?.let { return it }
+        val videoId = contentId.takeIf(::isVideoId) ?: firstVideoId(lockup)
+        return videoId?.let(::videoThumbnailUrl)
+    }
+
+    private fun lockupImageUrl(contentImage: JsonObject): String? {
         contentImage.findObject("thumbnailViewModel")
-            ?.findObject("image")
-            ?.imageUrl()
-            ?: contentImage.findObject("collectionThumbnailViewModel")
-                ?.findObject("primaryThumbnail")
-                ?.findObject("thumbnailViewModel")
-                ?.findObject("image")
-                ?.imageUrl()
+            ?.let(::thumbnailViewModelUrl)
+            ?.let { return it }
+        val collection = contentImage.findObject("collectionThumbnailViewModel")
+        if (collection != null) {
+            for (key in listOf("primaryThumbnail", "secondaryThumbnail")) {
+                val thumbnail = collection.findObject(key) ?: continue
+                thumbnail.findObject("thumbnailViewModel")
+                    ?.let(::thumbnailViewModelUrl)
+                    ?.let { return it }
+                thumbnailViewModelUrl(thumbnail)?.let { return it }
+            }
+            val stacked = collection.findObject("stackedThumbnailViewModel")
+                ?: collection.findObject("stackThumbnailViewModel")
+            stacked?.findObject("primaryThumbnail")?.let { thumbnail ->
+                thumbnail.findObject("thumbnailViewModel")
+                    ?.let(::thumbnailViewModelUrl)
+                    ?.let { return it }
+                thumbnailViewModelUrl(thumbnail)?.let { return it }
+            }
+        }
+        contentImage.findObject("thumbnail")
+            ?.let(::thumbnailViewModelUrl)
+            ?.let { return it }
+        return contentImage.imageUrl()
+    }
+
+    private fun thumbnailViewModelUrl(model: JsonObject): String? =
+        model.findObject("image")?.imageUrl()
+            ?: model.findObject("thumbnail")?.imageUrl()
+            ?: model.imageUrl()
+
+    private fun firstVideoId(lockup: JsonObject): String? =
+        firstVideoIdKey(lockup) ?: firstVideoIdInUrl(lockup)
+
+    private fun firstVideoIdKey(element: JsonElement?): String? = when (element) {
+        is JsonObject -> (element["videoId"] as? JsonPrimitive)
+            ?.contentOrNull
+            ?.trim()
+            ?.takeIf(::isVideoId)
+            ?: element.values.firstNotNullOfOrNull(::firstVideoIdKey)
+        is JsonArray -> element.firstNotNullOfOrNull(::firstVideoIdKey)
+        else -> null
+    }
+
+    private fun firstVideoIdInUrl(element: JsonElement?): String? = when (element) {
+        is JsonObject -> element.values.firstNotNullOfOrNull(::firstVideoIdInUrl)
+        is JsonArray -> element.firstNotNullOfOrNull(::firstVideoIdInUrl)
+        is JsonPrimitive -> element.contentOrNull
+            ?.let { VIDEO_ID_IN_URL.find(it)?.groupValues?.getOrNull(1) }
+            ?.takeIf(::isVideoId)
+        else -> null
+    }
+
+    private fun videoThumbnailUrl(videoId: String): String =
+        "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
 
     private fun videoItem(video: JsonObject, musicOnly: Boolean): ShelfItem? {
         val videoId = video.string("videoId") ?: return null
@@ -468,11 +531,61 @@ internal object YouTubeWebParser {
     private val MINUTES = Regex("""(\d+)\s*minute""", RegexOption.IGNORE_CASE)
     private val SECONDS = Regex("""(\d+)\s*second""", RegexOption.IGNORE_CASE)
 
+    private val VIDEO_ID = Regex("""[A-Za-z0-9_-]{11}""")
+    private val VIDEO_ID_IN_URL = Regex(
+        """(?:[?&]v=|youtu\.be/|/embed/|/vi/)([A-Za-z0-9_-]{11})""",
+    )
+
     private const val FOR_YOU = "For you"
 
     private fun playlistsBrowseId(id: String): String = when {
         id.startsWith("VL") || id.startsWith("UC") || id.startsWith("RD") -> id
         else -> "VL$id"
+    }
+
+    private fun albumBrowseId(id: String): String = when {
+        id.startsWith("VL") || id.startsWith("MPRE") -> id
+        else -> playlistsBrowseId(id)
+    }
+
+    private fun isVideoId(value: String): Boolean = VIDEO_ID.matches(value)
+
+    private fun normalizeImageUrl(raw: String?): String? {
+        val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val absolute = when {
+            value.startsWith("//") -> "https:$value"
+            value.startsWith("/") -> "https://www.youtube.com$value"
+            else -> value
+        }
+        return absolute.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+    }
+
+    private fun JsonArray.lastImageUrl(): String? =
+        mapNotNull {
+            (it as? JsonObject)?.string("url")?.let(::normalizeImageUrl)
+        }.lastOrNull()
+
+    private fun collectImageUrls(element: JsonElement?): List<String> {
+        val out = mutableListOf<String>()
+        fun visit(value: JsonElement?) {
+            when (value) {
+                is JsonObject -> value.forEach { (key, child) ->
+                    if ((key == "sources" || key == "thumbnails") && child is JsonArray) {
+                        child.forEach { source ->
+                            (source as? JsonObject)?.string("url")
+                                ?.let(::normalizeImageUrl)
+                                ?.let(out::add)
+                        }
+                    } else {
+                        visit(child)
+                    }
+                }
+                is JsonArray -> value.forEach(::visit)
+                else -> Unit
+            }
+        }
+        visit(element)
+        return out
     }
 
     private fun JsonObject.string(key: String): String? =
@@ -507,12 +620,12 @@ internal object YouTubeWebParser {
     }
 
     private fun JsonElement.thumbnails(): String? =
-        findArray("thumbnails")?.lastOrNull()
-            ?.let { (it as? JsonObject)?.string("url") }
+        findArray("thumbnails")?.lastImageUrl()
 
     private fun JsonElement.imageUrl(): String? =
-        thumbnails() ?: findArray("sources")?.lastOrNull()
-            ?.let { (it as? JsonObject)?.string("url") }
+        findArray("thumbnails")?.lastImageUrl()
+            ?: findArray("sources")?.lastImageUrl()
+            ?: collectImageUrls(this).lastOrNull()
 
     private fun findFirst(element: JsonElement?, key: String): JsonObject? = when (element) {
         is JsonObject -> {
