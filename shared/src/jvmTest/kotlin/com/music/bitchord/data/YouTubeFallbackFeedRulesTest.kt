@@ -74,7 +74,7 @@ class YouTubeFallbackFeedRulesTest {
             myMixes = null,
             liked = null,
             youtubeHome = listOf(
-                shelf("빠른 곡", "stale-quick"),
+                shelf("빠른 선곡", "stale-quick"),
                 shelf("다시 듣기", "stale-recent"),
                 shelf("YouTube home", "home"),
             ),

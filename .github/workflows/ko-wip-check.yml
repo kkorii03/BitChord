@@ -29,10 +29,26 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Lyrics tests
+      # Live lookups against Vibe/Bugs and friends: reported, never blocking.
+      # A Korean service's dawn maintenance (seen 04:00 KST) must not stop
+      # every unrelated change from passing.
+      - name: Live Korean lyrics (non-blocking)
+        continue-on-error: true
         shell: bash
         env:
           LIVE_KR_LYRICS: '1'
+        run: |
+          set +e -o pipefail
+          chmod +x gradlew
+          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.KoreanLyricsLiveTest' --tests 'com.music.bitchord.data.lyrics.LyricsLookupTimingLiveTest' --console=plain 2>&1 | tee live.log
+          status=${PIPESTATUS[0]}
+          timing=$(grep -ho "LOOKUP_MS [^<]*" shared/build/test-results/jvmTest/*.xml 2>/dev/null | sed 's/LOOKUP_MS //' | tr '\n' '|' || true)
+          [ -n "$timing" ] && echo "::notice title=timing::$timing" || true
+          grep -E "FAILED|AssertionError" live.log | head -10 | while IFS= read -r l; do echo "::warning title=live-lyrics::$l"; done || true
+          exit $status
+
+      - name: Lyrics tests
+        shell: bash
         run: |
           set +e -o pipefail
           chmod +x gradlew
