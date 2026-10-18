@@ -43,7 +43,7 @@ class TastePoolTest {
     fun `the seed radio is kept whole and favourites are capped at six`() {
         val radio = (1..12).map { song("radio-$it") }
         val library = (1..8).map { local("fav-$it") }
-        val taste = view(local.associate { it.videoId to listened(completes = 5.0) })
+        val taste = view(library.associate { it.videoId to listened(completes = 5.0) })
 
         val pool = TastePool.build(
             PoolSources(seedRadio = radio, local = library),
