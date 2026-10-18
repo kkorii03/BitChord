@@ -458,6 +458,53 @@ private fun WhileShown(shown: () -> Boolean, content: @Composable () -> Unit) {
 }
 
 /**
+ * The artwork mesh, with the Canvas frame read *here* rather than in
+ * [NowPlayingScreen]'s body.
+ *
+ * A playing clip hands over a new frame every [MESH_REFRESH_MS] so the backdrop
+ * can follow its grading. Read up in the screen, that three-second tick
+ * restarted the whole 3,000-line function; isolated in this composable only the
+ * backdrop is recomposed, and the mesh still reaches [ArtworkMeshBackdrop] as
+ * one immutable value. A portrait clip keeps the artwork mesh even when the
+ * user picked the legacy backdrop for ordinary artwork, hence [legacyMesh].
+ */
+@Composable
+private fun CanvasAwareArtworkMesh(
+    imageUrl: String?,
+    canvasFrame: State<ImageBitmap?>,
+    trackKey: String,
+    legacyMesh: Boolean,
+    seam: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val mesh = if (legacyMesh) {
+        null
+    } else {
+        key(trackKey) { rememberArtworkMesh(imageUrl, canvasFrame.value, ART_PX) }
+    }
+    ArtworkMeshBackdrop(mesh = mesh, seam = seam, modifier = modifier)
+}
+
+/**
+ * The legacy backdrop's palette, for the same reason as
+ * [CanvasAwareArtworkMesh]: a new Canvas frame recolours this layer alone
+ * rather than re-running the player around it.
+ */
+@Composable
+private fun CanvasAwareMeshGradient(
+    imageUrl: String?,
+    canvasFrame: State<ImageBitmap?>,
+    trackKey: String,
+    modifier: Modifier = Modifier,
+) {
+    MeshGradientBackground(
+        palette = rememberArtworkColors(imageUrl, canvasFrame.value),
+        trackKey = trackKey,
+        modifier = modifier,
+    )
+}
+
+/**
  * Whether the full-bleed artwork switch is worth listing in Settings for a
  * window this wide. Public so the settings sheet can leave the switch out
  * entirely where it would do nothing.
@@ -828,7 +875,11 @@ fun NowPlayingScreen(
     // snapping open mid-loop. A different clip resets them with itself.
     val canvasRenderedState = remember(canvas?.url) { mutableStateOf(false) }
     var canvasRendered by canvasRenderedState
-    var canvasFrame by remember(canvas?.url) { mutableStateOf<ImageBitmap?>(null) }
+    // Kept as state rather than read here: the backdrop that tints off it is a
+    // small composable of its own (see [CanvasAwareArtworkMesh] and
+    // [CanvasAwareMeshGradient]), so a new frame every three seconds redraws
+    // those layers instead of re-running this whole screen.
+    val canvasFrame = remember(canvas?.url) { mutableStateOf<ImageBitmap?>(null) }
     // Spotify's phone presentation starts with the full control deck over its
     // video. It leaves on a Canvas tap, or after the optional idle timeout.
     var spotifyCanvasControlsOpen by remember(canvas?.url) { mutableStateOf(true) }
@@ -1344,10 +1395,6 @@ fun NowPlayingScreen(
     LaunchedEffect(spotifyCanvasPresentation, mixing) {
         if (spotifyCanvasPresentation && mixing) spotifyCanvasControlsOpen = true
     }
-    // Portrait clips always use the existing artwork mesh, even if the user
-    // selected the legacy backdrop for ordinary artwork.
-    val artMesh = if (legacyMesh && !canvasFirstPortrait) null else
-        key(song.videoId) { rememberArtworkMesh(remoteArt, canvasFrame, ART_PX) }
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this:
     // the sleeve goes from banner to thumbnail as one movement, rather than the
@@ -2146,19 +2193,22 @@ fun NowPlayingScreen(
             // are not anchored to anything on screen — they fill the player and
             // the artwork simply sits on top of them. Keyed on the track, so
             // they drift when the player opens and on every skip, then rest.
-            // Position ticks recompose this screen twice a second and must not
-            // drag a full-screen blur along with them, which is why the palette
-            // is passed as one immutable value.
-            MeshGradientBackground(
-                palette = rememberArtworkColors(remoteArt, canvasFrame),
+            CanvasAwareMeshGradient(
+                imageUrl = remoteArt,
+                canvasFrame = canvasFrame,
                 trackKey = song.videoId,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
         } else if ((!tabletArtworkBackdrop || lowPower) && !spotifyCanvasPresentation) {
             // Saving power on a tablet skips the full-cover blur it would
             // otherwise use, and this mesh stands in for it.
-            ArtworkMeshBackdrop(
-                mesh = artMesh,
+            CanvasAwareArtworkMesh(
+                imageUrl = remoteArt,
+                canvasFrame = canvasFrame,
+                trackKey = song.videoId,
+                // Portrait clips always use the existing artwork mesh, even if
+                // the user selected the legacy backdrop for ordinary artwork.
+                legacyMesh = legacyMesh && !canvasFirstPortrait,
                 seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight else 0.dp,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
@@ -2207,7 +2257,7 @@ fun NowPlayingScreen(
                     onFrameCaptured = {
                         if (!clipFullscreen && !tabletArtworkBackdrop &&
                             !lyricsOpen && !queueOpen && !queueDragging
-                        ) canvasFrame = it
+                        ) canvasFrame.value = it
                     },
                     // The full-screen Spotify video has no mesh to re-tint.
                     // Keeping this null also removes the old three-second GPU
@@ -3093,7 +3143,7 @@ fun NowPlayingScreen(
                                 onRenderedChanged = { canvasRendered = it },
                                 onFrameCaptured = {
                                     if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
-                                        canvasFrame = it
+                                        canvasFrame.value = it
                                     }
                                 },
                                 refreshFrameEveryMs = if (

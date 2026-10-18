@@ -2720,7 +2720,10 @@ private fun BitChordApp(
                     } else if (key == "discord") {
                         DiscordScreen(
                             song = player.song,
-                            positionMs = player.position.positionMs,
+                            // The object, not its value: the preview reads the
+                            // playhead where it draws it, so this page is not
+                            // rebuilt twice a second. See [PlaybackPosition].
+                            position = player.position,
                             durationMs = player.durationMs,
                             onOpenLogin = { showDiscordLogin = true },
                             onOpenDialog = { discordDialog = it },

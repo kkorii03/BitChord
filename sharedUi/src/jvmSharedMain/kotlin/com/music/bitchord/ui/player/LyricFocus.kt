@@ -1,15 +1,13 @@
 package com.music.bitchord.ui.player
 
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricLineIndex
 
-/** Keep every unfinished vocal visible, including overlaps spanning more than two rows. */
-internal fun activeLyricRows(lines: List<LyricLine>, positionMs: Long): List<Int> {
-    val latest = lines.indexOfLast { it.timeMs <= positionMs }
-    if (latest < 0) return emptyList()
-    return (0..latest).filter { index ->
-        val line = lines[index]
-        index == latest || (!line.isGap &&
-            (line.hasKnownEnd || line.background?.hasKnownEnd == true) &&
-            line.timeMs <= positionMs && positionMs < line.endMs)
-    }
-}
+/**
+ * Keep every unfinished vocal visible, including overlaps spanning more than two rows.
+ *
+ * One-shot answer for callers with no index at hand; the panel keeps a
+ * [LyricLineIndex] across frames so the clock ticks do not rescan the list.
+ */
+internal fun activeLyricRows(lines: List<LyricLine>, positionMs: Long): List<Int> =
+    LyricLineIndex(lines).activeRows(positionMs)

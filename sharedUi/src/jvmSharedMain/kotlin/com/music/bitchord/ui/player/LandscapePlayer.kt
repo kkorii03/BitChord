@@ -411,6 +411,8 @@ internal fun LandscapeCredits(
     likeStatus: LikeStatus,
     /** The menu glyph is briefly the undo arrow after a quality upgrade. */
     showRevertCue: Boolean,
+    /** Whether playback is running; a paused line has no reason to crawl. */
+    running: Boolean,
     onToggleLike: () -> Unit,
     onOpenMenu: () -> Unit,
     onOpenAlbum: (String) -> Unit,
@@ -431,6 +433,7 @@ internal fun LandscapeCredits(
                     text = song.title,
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
+                    running = running,
                     onOverflowChange = { titleOverflowing = it },
                     leading = if (song.isExplicit == true) {
                         { ExplicitBadge(Color.White) }
@@ -450,6 +453,7 @@ internal fun LandscapeCredits(
                     // A title that's also scrolling gets to go first — starting
                     // together reads as clutter, so the artist waits a beat.
                     startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
+                    running = running,
                     onOpenArtist = onOpenArtist,
                 )
             }

@@ -7,7 +7,6 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -122,6 +121,7 @@ import com.music.bitchord.data.lyrics.isGeniusSectionHeader
 import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricLineIndex
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.translationLanguageName
@@ -312,7 +312,14 @@ private val GAP_ROW_SPACING = 16.dp
  * further out, which is most of the list.
  */
 private val LINE_FALLOFF_ALPHA = floatArrayOf(1f, 0.8f, 0.7f, 0.58f, 0.46f)
-private val LINE_FALLOFF_BLUR = arrayOf(0.dp, 1.dp, 1.dp, 1.7.dp, 2.4.dp)
+/**
+ * The blur on the same ladder, quantised to three radii.
+ *
+ * A blur is a RenderEffect and an offscreen layer, and an animated radius
+ * rebuilt both on every frame of a hand-over. Whole steps cost the same look
+ * with a layer that is reused for as long as its radius is.
+ */
+private val LINE_FALLOFF_BLUR = arrayOf(0.dp, 1.dp, 1.dp, 2.dp, 2.dp)
 
 /**
  * The shape of the page the lyrics are going to fill.
@@ -410,12 +417,11 @@ private class ScrollRun(val id: Int, val delta: Float, val durationMs: Int) {
  * held breath in one song and half a verse in another, and neither the snap
  * nor the drift is what you want to be reading against.
  */
-private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
-    val current = lines.indexOfLast { it.timeMs <= positionMs }
+private fun scrollLead(lines: List<LyricLine>, current: Int): Long {
     // Before the first line's own timestamp there is no current line to
-    // measure a run-up from. [indexOfLast] answers -1 there, and the guard
-    // below does not catch it: `current + 1` is 0, which is a perfectly real
-    // line, so the elvis never fires and `lines[current]` indexes at -1.
+    // measure a run-up from. [current] is -1 there, and the guard below does
+    // not catch it: `current + 1` is 0, which is a perfectly real line, so the
+    // elvis never fires and `lines[current]` indexes at -1.
     //
     // Only reachable while the playhead is genuinely before the first lyric —
     // a track paused at 0:00 whose words start a few seconds in, which is
@@ -1661,11 +1667,24 @@ internal fun LyricsPanel(
     // panel into lanes for it would just be a narrower panel.
     val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } }
 
-    val activeRows by remember(lines, isSynced) {
+    // The clock moves every frame; the line it picks out does not. These
+    // indexes answer the lookup from a binary search and a backwards walk over
+    // the vocals still unfinished, so a tick is a handful of comparisons rather
+    // than a scan and a full-list allocation. Kept apart because the lead line
+    // asks at a different position from the rows, and one shared scratch buffer
+    // would make the two evict each other every frame. See [LyricLineIndex].
+    val rowIndex = remember(lines) { LyricLineIndex(lines) }
+    val leadIndex = remember(lines) { LyricLineIndex(lines) }
+
+    val activeRows by remember(lines, isSynced, rowIndex) {
         derivedStateOf {
-            if (!isSynced) emptyList() else activeLyricRows(lines, clock.longValue)
+            if (!isSynced) emptyList() else rowIndex.activeRows(clock.longValue)
         }
     }
+    // Rows ask "am I active" one by one, so membership is a set lookup keyed on
+    // the row list rather than a scan; it is rebuilt only when the answer
+    // itself changes.
+    val activeRowSet = remember(activeRows) { activeRows.toHashSet() }
     // The uppermost unfinished vocal owns the scroll anchor until its end,
     // even as later rows begin their own independent highlight animations.
     val scrollLine = activeRows.firstOrNull() ?: -1
@@ -1676,13 +1695,14 @@ internal fun LyricsPanel(
     //
     // Kept apart from [scrollLine] on purpose: this leads, and the sweep must
     // not. Everything lit by the clock still goes through the real one.
-    val leadLine by remember(lines, isSynced) {
+    val leadLine by remember(lines, isSynced, leadIndex) {
         derivedStateOf {
             if (!isSynced) {
                 -1
             } else {
                 val now = clock.longValue
-                activeLyricRows(lines, now + scrollLead(lines, now)).firstOrNull() ?: -1
+                val lead = scrollLead(lines, leadIndex.lineAt(now))
+                leadIndex.activeRows(now + lead).firstOrNull() ?: -1
             }
         }
     }
@@ -1819,7 +1839,7 @@ internal fun LyricsPanel(
                 // given the run-up's own duration and curve instead of the
                 // list's default spring.
                 visible != null -> {
-                    val span = scrollLead(lines, clock.longValue).toInt()
+                    val span = scrollLead(lines, rowIndex.lineAt(clock.longValue)).toInt()
                     run = ScrollRun(run.id + 1, visible.offset.toFloat(), span)
                     // The same curve the rows catch up on. Two different
                     // curves and a row with no delay at all still trails the
@@ -1901,7 +1921,14 @@ internal fun LyricsPanel(
         ),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        itemsIndexed(lines) { index, line ->
+        // Index in the key as well as the stamp: two cuts of the same song can
+        // repeat a line's text and time, and slot identity must still be
+        // unique. A re-timed list keeps every row's state where the row itself
+        // is, rather than handing it to whichever line lands on that slot.
+        itemsIndexed(
+            items = lines,
+            key = { index, line -> "${index}_${line.timeMs}" },
+        ) { index, line ->
             if (!isSynced && isGeniusSectionHeader(line.text)) {
                 val sectionTitle = line.text.removePrefix("[").removeSuffix("]").trim()
                 Column(
@@ -1942,21 +1969,20 @@ internal fun LyricsPanel(
             // read as dim while it was still being sung.
             val offset = if (scrollLine < 0) 0 else index - scrollLine
             val distance = abs(offset)
-            val isActive = isSynced && index in activeRows
+            val isActive = isSynced && index in activeRowSet
             // Symmetric either side of the playing line, and shallow: the two
             // rows around it stay readable so you can follow back over what was
             // just sung as well as ahead, and everything past that recedes to
             // the same floor rather than fading to nothing.
             val step = distance.coerceAtMost(LINE_FALLOFF_ALPHA.lastIndex)
-            val blur by animateDpAsState(
-                targetValue = when {
-                    !isSynced || reduceDynamicBlur || lowPower || !lyricsBlur ||
-                        browsing || isActive -> 0.dp
-                    else -> LINE_FALLOFF_BLUR[step]
-                },
-                animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
-                label = "lyricBlur",
-            )
+            // A step rather than a tween: a radius that changes every frame
+            // rebuilds the offscreen layer and its RenderEffect with it. The
+            // alpha beside it still eases, and that is what the eye follows.
+            val blur = when {
+                !isSynced || reduceDynamicBlur || reduceAnimation || lowPower || !lyricsBlur ||
+                    browsing || isActive -> 0.dp
+                else -> LINE_FALLOFF_BLUR[step]
+            }
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
                     !isSynced -> 0.95f
@@ -2681,8 +2707,9 @@ private fun CurrentLyricLine(
 
     val clock = rememberLyricClock(trackKey, playhead, isPlaying)
 
-    val index by remember(lines) {
-        derivedStateOf { lines.indexOfLast { it.timeMs <= clock.longValue } }
+    val rowIndex = remember(lines) { LyricLineIndex(lines) }
+    val index by remember(lines, rowIndex) {
+        derivedStateOf { rowIndex.lineAt(clock.longValue) }
     }
     val current = lines.getOrNull(index)
     // Before the first line, and through instrumental breaks, show the note.

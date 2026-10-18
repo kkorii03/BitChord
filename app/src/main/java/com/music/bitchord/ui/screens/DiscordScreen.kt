@@ -63,6 +63,7 @@ import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.ui.components.ChoiceAlert
 import com.music.bitchord.ui.components.DiscordTokenAlert
 import com.music.bitchord.ui.components.TextValueAlert
@@ -157,7 +158,8 @@ private fun DiscordActivityKind.localizedVerb(): String =
 @Composable
 fun DiscordScreen(
     song: Song?,
-    positionMs: Long,
+    /** Read only by the preview's progress line, so the page does not recompose on every tick. */
+    position: PlaybackPosition,
     durationMs: Long,
     onOpenLogin: () -> Unit,
     onOpenDialog: (DiscordDialog) -> Unit,
@@ -401,7 +403,7 @@ fun DiscordScreen(
         ) {
             RichPresencePreview(
                 song = song,
-                positionMs = positionMs,
+                position = position,
                 durationMs = durationMs,
                 heading = activityName.ifEmpty { appName() },
                 verb = kindOf(activityType).localizedVerb(),
@@ -570,7 +572,7 @@ private fun NoticeCard(text: String, onDismiss: () -> Unit) {
 @Composable
 private fun RichPresencePreview(
     song: Song?,
-    positionMs: Long,
+    position: PlaybackPosition,
     durationMs: Long,
     heading: String,
     verb: String,
@@ -643,7 +645,7 @@ private fun RichPresencePreview(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                ProgressLine(positionMs = positionMs, durationMs = durationMs)
+                ProgressLine(position = position, durationMs = durationMs)
             }
         }
 
@@ -710,7 +712,8 @@ private fun PresenceButton(label: String, enabled: Boolean, onClick: () -> Unit)
  * into a picture of somewhere else.
  */
 @Composable
-private fun ProgressLine(positionMs: Long, durationMs: Long) {
+private fun ProgressLine(position: PlaybackPosition, durationMs: Long) {
+    val positionMs = position.positionMs
     val fraction = if (durationMs > 0) {
         (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
     } else {

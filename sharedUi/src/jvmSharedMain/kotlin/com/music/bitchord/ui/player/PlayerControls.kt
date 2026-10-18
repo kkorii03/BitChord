@@ -1209,6 +1209,11 @@ internal const val MARQUEE_ARTIST_STAGGER_MS = 3_000L
  *
  * With [enabled] false the line is a plain ellipsised one — no copies, no
  * animation, nothing left running off screen.
+ *
+ * [running] stops the crawl without changing the layout: a paused player, or a
+ * reduced-motion / low-power session, keeps the two copies where they are
+ * instead of snapping the text back to an ellipsis. It resumes from the start
+ * of the line when the song plays again.
  */
 @Composable
 internal fun MarqueeText(
@@ -1218,11 +1223,17 @@ internal fun MarqueeText(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     startDelayMillis: Long = 0L,
+    running: Boolean = true,
     leading: (@Composable () -> Unit)? = null,
     onOverflowChange: (Boolean) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    // A paused player, reduced motion or a low-power session leaves the copies
+    // where they are; nothing needs to move for a line nobody is hearing.
+    val crawling = running && !reduceAnimation && !lowPower
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (leading != null) {
             leading()
@@ -1256,9 +1267,9 @@ internal fun MarqueeText(
             }
 
             val offsetX = remember { Animatable(0f) }
-            LaunchedEffect(text, travelPx, startDelayMillis) {
+            LaunchedEffect(text, travelPx, startDelayMillis, crawling) {
                 offsetX.snapTo(0f)
-                if (travelPx <= 0) return@LaunchedEffect
+                if (travelPx <= 0 || !crawling) return@LaunchedEffect
                 val pxPerMs = with(density) { MARQUEE_DP_PER_SEC.dp.toPx() } / 1000f
                 val scrollMs = (travelPx / pxPerMs).roundToInt().coerceAtLeast(400)
                 delay(startDelayMillis)
@@ -1343,10 +1354,14 @@ internal fun ArtistCreditsMarquee(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     startDelayMillis: Long = 0L,
+    running: Boolean = true,
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val segments = remember(text, credits) { creditSegments(text, credits) }
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    val crawling = running && !reduceAnimation && !lowPower
 
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (!enabled) {
@@ -1369,9 +1384,9 @@ internal fun ArtistCreditsMarquee(
             }
 
             val offsetX = remember { Animatable(0f) }
-            LaunchedEffect(text, travelPx, startDelayMillis) {
+            LaunchedEffect(text, travelPx, startDelayMillis, crawling) {
                 offsetX.snapTo(0f)
-                if (travelPx <= 0) return@LaunchedEffect
+                if (travelPx <= 0 || !crawling) return@LaunchedEffect
                 val pxPerMs = with(density) { MARQUEE_DP_PER_SEC.dp.toPx() } / 1000f
                 val scrollMs = (travelPx / pxPerMs).roundToInt().coerceAtLeast(400)
                 delay(startDelayMillis)
