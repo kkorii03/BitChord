@@ -19,7 +19,7 @@ internal object YouTubeFallbackFeed {
     /** The app's own recents key, shared with the UI's shelf-title localiser. */
     const val RECENT_TITLE = "Recents"
 
-    /** YouTube's own recents title, still de-duplicated against [RECENT_TITLE]. */
+    /** The old account row's title: the artists and playlists listened to most. */
     const val LISTEN_AGAIN_TITLE = "Listen again"
 
     /** No existing resource key: the task's plain Korean title. */
@@ -68,10 +68,38 @@ internal object YouTubeFallbackFeed {
         plays: List<LocalPlay>,
         now: Long,
         windowMs: Long = LAST_HOUR_MS,
+    ): Set<String> = recentIds(plays, now, windowMs)
+
+    /** Video ids played within [windowMs] of [now]. */
+    fun recentIds(
+        plays: List<LocalPlay>,
+        now: Long,
+        windowMs: Long,
     ): Set<String> = plays.asSequence()
         .filter { it.song.videoId.isNotBlank() }
         .filter { now - it.playedAtMs < windowMs }
         .mapTo(HashSet()) { it.song.videoId }
+
+    /**
+     * The ids of the most played songs in [plays], newest breaking a tie.
+     *
+     * The local recent list is already distinct by video id, so in practice
+     * this is the newest [limit] songs; counting as well keeps the rule honest
+     * for a source that reports repeat plays.
+     */
+    fun topPlayedIds(plays: List<LocalPlay>, limit: Int): Set<String> {
+        if (limit <= 0) return emptySet()
+        return plays.asSequence()
+            .filter { it.song.videoId.isNotBlank() }
+            .groupBy { it.song.videoId }
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, List<LocalPlay>>> { it.value.size }
+                    .thenByDescending { entry -> entry.value.maxOf { it.playedAtMs } },
+            )
+            .take(limit)
+            .mapTo(LinkedHashSet()) { it.key }
+    }
 
     /**
      * The most played recent song, newest play breaking a tie.
@@ -156,14 +184,16 @@ internal object YouTubeFallbackFeed {
      * (YouTube's own home may carry a stale Quick picks or Listen again).
      *
      * Recents leads: the listener's own play history is the first thing they
-     * look for, and the shelf's list/grid toggle belongs at the top. Quick
-     * picks follows it, then the seeded mixes, Liked Music, and YouTube's own
-     * home and Music-channel shelves. A YouTube copy of either built shelf is
-     * dropped by the same title de-duplication.
+     * look for, and the shelf's list/grid toggle belongs at the top. The
+     * artist/playlist Listen again row follows it, then Quick picks, the seeded
+     * mixes, Liked Music, and YouTube's own home and Music-channel shelves. A
+     * YouTube copy of either built shelf is dropped by the same title
+     * de-duplication.
      */
     fun orderedShelves(
-        quickPicks: HomeShelf?,
+        recents: HomeShelf?,
         listenAgain: HomeShelf?,
+        quickPicks: HomeShelf?,
         myMixes: HomeShelf?,
         liked: HomeShelf?,
         youtubeHome: List<HomeShelf>,
@@ -178,6 +208,7 @@ internal object YouTubeFallbackFeed {
             out += shelf
         }
 
+        add(recents)
         add(listenAgain)
         add(quickPicks)
         add(myMixes)
@@ -187,11 +218,43 @@ internal object YouTubeFallbackFeed {
         return out
     }
 
-    /** Recognises YouTube's own translations of the three built shelves. */
+    /**
+     * Removes every song id that a higher shelf already shows.
+     *
+     * [shelves] is in display order, which is also the priority order: Recents,
+     * Listen again, Quick picks, the mixes, Liked, then YouTube's own shelves.
+     * Collection cards (no video id) are left alone, and a shelf that is left
+     * with no rows is dropped rather than drawn as an empty heading.
+     */
+    fun dedupeShelves(shelves: List<HomeShelf>): List<HomeShelf> {
+        val seen = HashSet<String>()
+        return shelves.mapNotNull { shelf ->
+            val items = shelf.items.filter { item ->
+                val id = item.videoId?.takeIf { it.isNotBlank() } ?: return@filter true
+                seen.add(id)
+            }
+            when {
+                shelf.items.isEmpty() -> null
+                items.isEmpty() -> null
+                items.size == shelf.items.size -> shelf
+                else -> shelf.copy(items = items)
+            }
+        }
+    }
+
+    /**
+     * Recognises YouTube's own translations of the built shelves.
+     *
+     * Recents and Listen again are *not* aliases any more: the gated Home draws
+     * them as two different rows, the first the listener's own plays and the
+     * second their artists and playlists. YouTube's own Listen again therefore
+     * loses only to the built Listen again row.
+     */
     private fun titleKey(title: String): String = when (title.trim().lowercase()) {
         "quick picks", "빠른 선곡", "クイック ミックス",
         "lựa chọn nhanh", "chọn nhanh đài phát" -> "quick picks"
-        "listen again", "다시 듣기", "もう一度聴く", "nghe lại", "recents" -> "listen again"
+        "recents", "recently played", "최근 재생", "gần đây", "最近" -> "recents"
+        "listen again", "다시 듣기", "もう一度聴く", "nghe lại" -> "listen again"
         "mixed for you", "my mix", "내 믹스", "나를 위한 믹스", "ミックス", "dành riêng cho bạn" -> "my mixes"
         "liked music", "좋아요 표시한 음악" -> "liked"
         else -> title.trim().lowercase()

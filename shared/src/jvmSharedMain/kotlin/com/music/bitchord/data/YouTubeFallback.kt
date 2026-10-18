@@ -41,6 +41,23 @@ internal object YouTubeFallback {
     private const val LIKED_VIDEOS = "VLLL"
     private const val RECENT_TITLE = YouTubeFallbackFeed.RECENT_TITLE
     private const val RECENT_LIMIT = 20
+    /** Listen again keeps the old shelf's twelve cards. */
+    private const val LISTEN_AGAIN_LIMIT = 12
+    private const val LISTEN_AGAIN_DAYS = 90
+    private const val LISTEN_AGAIN_MIN_PLAYS = 3
+    private const val LISTEN_AGAIN_ARTISTS = 12
+    private const val LISTEN_AGAIN_PLAYLISTS = 6
+    /** How many of the library's playlists are opened to score their contents. */
+    private const val PLAYLIST_CHECK_LIMIT = 6
+    /** The recent songs a library playlist is scored against. */
+    private const val PLAYLIST_TOP_SONGS = 20
+    /** New artist searches per Home build; a cached page is free. */
+    private const val ARTIST_LOOKUP_LIMIT = 6
+    /** The rediscovery half of Quick picks, and how old a last play must be. */
+    private const val REDISCOVER_LIMIT = YouTubeFallbackFeed.QUICK_PICKS_LIMIT
+    private const val REDISCOVER_DAYS = HomeFallbackRules.DEFAULT_REDISCOVER_DAYS
+    /** Quick picks must not repeat anything played inside a day. */
+    private const val QUICK_PICKS_WINDOW_MS = 24L * 60L * 60L * 1000L
     /** Only this much of a youtube.com history page is judged and shown at once. */
     private const val HISTORY_LIMIT = 30
     /** Square-cover lookups for the home feed, spread over its first shelves. */
@@ -83,8 +100,9 @@ internal object YouTubeFallback {
     /**
      * The gated Home, built once and reused by every tab switch for ten
      * minutes. The order mirrors the Music Home a Premium listener had:
-     * Quick picks, Listen again, the account's mixes, Liked music, YouTube's
-     * own home shelves, then the Music channel last.
+     * Recents, Listen again (artists and playlists), Quick picks, the account's
+     * mixes, Liked music, YouTube's own home shelves, then the Music channel
+     * last.
      *
      * [force] is only for a pull-to-refresh: it skips the cached feed and
      * replaces it with the one just built. First loads, tab switches and
@@ -121,7 +139,7 @@ internal object YouTubeFallback {
 
     private suspend fun buildHome(): HomeFeed {
         val localPlays = LocalPlayHistory.recent(HISTORY_LIMIT)
-        val listenSongs = try {
+        val recentSongs = try {
             mergedHistory(RECENT_LIMIT, localPlays)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -130,12 +148,18 @@ internal object YouTubeFallback {
             emptyList()
         }
 
-        val seed = YouTubeFallbackFeed.mostPlayed(localPlays)?.song
-            ?: listenSongs.firstOrNull()
-        val quickPicks = quickPicksShelf(seed, localPlays)
-        val listenAgain = listenSongs
+        val recents = recentSongs
             .takeIf { it.isNotEmpty() }
             ?.let { musicOnlyShelf(HomeShelf(RECENT_TITLE, it.map(::shelfItem))) }
+        val recentsIds = recents?.items.orEmpty()
+            .mapNotNullTo(HashSet<String>()) { it.videoId }
+        val quickPicks = quickPicksShelf(
+            localPlays = localPlays,
+            seed = YouTubeFallbackFeed.mostPlayed(localPlays)?.song
+                ?: recentSongs.firstOrNull(),
+            excludedIds = recentsIds,
+        )
+        val listenAgain = listenAgainShelf(localPlays)
         val myMixes = mixShelf(localPlays)
         val liked = likedShelf()
 
@@ -153,8 +177,9 @@ internal object YouTubeFallback {
         val continuation = personal?.continuation?.also(::rememberContinuation)
 
         val shelves = YouTubeFallbackFeed.orderedShelves(
-            quickPicks = quickPicks,
+            recents = recents,
             listenAgain = listenAgain,
+            quickPicks = quickPicks,
             myMixes = myMixes,
             liked = liked,
             youtubeHome = personalShelves,
@@ -162,33 +187,182 @@ internal object YouTubeFallback {
             // the mixed uploads above need per-row classification.
             musicChannel = channelShelves(),
         )
-        return HomeFeed(shelves = enrichCovers(shelves), continuation = continuation)
+        return HomeFeed(
+            shelves = enrichCovers(YouTubeFallbackFeed.dedupeShelves(shelves)),
+            continuation = continuation,
+        )
     }
 
     /**
-     * YouTube's own `RD<videoId>` mix of the song most played recently, with
-     * anything played in the last hour removed.
+     * The old account shelf: the artists most listened to in the last ninety
+     * days, interleaved with the library playlists that hold the songs played
+     * most recently. Each artist card opens their page; the account name is the
+     * strapline, as it was under YouTube Music's own row.
      */
-    private suspend fun quickPicksShelf(
-        seed: Song?,
-        localPlays: List<LocalPlay>,
-    ): HomeShelf? {
-        val videoId = seed?.videoId?.takeIf { it.isNotBlank() } ?: return null
-        val recentIds = YouTubeFallbackFeed.lastHourIds(localPlays, System.currentTimeMillis())
-        val songs = try {
-            radio(videoId)
+    private suspend fun listenAgainShelf(localPlays: List<LocalPlay>): HomeShelf? {
+        if (localPlays.isEmpty()) return null
+        val artists = LocalPlayHistory.topArtists(LISTEN_AGAIN_DAYS, LISTEN_AGAIN_MIN_PLAYS)
+            .take(LISTEN_AGAIN_ARTISTS)
+        var lookups = ARTIST_LOOKUP_LIMIT
+        val artistItems = ArrayList<ShelfItem>()
+        for (artist in artists) {
+            val item = artistItem(artist, allowLookup = lookups > 0) ?: continue
+            if (item.lookedUp) lookups--
+            artistItems += item.item
+        }
+        val playlists = listenAgainPlaylists(localPlays)
+        val items = HomeFallbackRules.interleave(artistItems, playlists, LISTEN_AGAIN_LIMIT)
+        if (items.isEmpty()) return null
+        return HomeShelf(
+            title = YouTubeFallbackFeed.LISTEN_AGAIN_TITLE,
+            items = items,
+            subtitle = LocalPlayHistory.accountName().orEmpty(),
+        )
+    }
+
+    /** An artist card, from the stored id first, then the persistent cache. */
+    private suspend fun artistItem(artist: LocalArtist, allowLookup: Boolean): ArtistItem? {
+        val storedId = artist.artistId?.takeIf { it.isNotBlank() }
+        if (storedId != null) {
+            return ArtistItem(artistShelfItem(artist, storedId, artist.thumbnailUrl), false)
+        }
+        YouTubeArtistResolver.cached(artist.name)?.let { hit ->
+            return ArtistItem(artistShelfItem(artist, hit.browseId, hit.thumbnailUrl), false)
+        }
+        if (!allowLookup) return null
+        val hit = YouTubeArtistResolver.resolve(artist.name) ?: return null
+        return ArtistItem(
+            artistShelfItem(artist, hit.browseId, hit.thumbnailUrl),
+            lookedUp = true,
+        )
+    }
+
+    private fun artistShelfItem(
+        artist: LocalArtist,
+        browseId: String,
+        thumbnailUrl: String?,
+    ): ShelfItem = ShelfItem(
+        title = artist.name,
+        subtitle = "아티스트",
+        thumbnailUrl = thumbnailUrl ?: artist.thumbnailUrl,
+        videoId = null,
+        browseId = browseId,
+    )
+
+    private class ArtistItem(val item: ShelfItem, val lookedUp: Boolean)
+
+    /**
+     * Library playlists scored by how many of the recently played songs they
+     * hold, best first. Only the first page of each is read: the row is a
+     * shortcut into the collection, not an index of it.
+     */
+    private suspend fun listenAgainPlaylists(localPlays: List<LocalPlay>): List<ShelfItem> {
+        val wanted = YouTubeFallbackFeed.topPlayedIds(localPlays, PLAYLIST_TOP_SONGS)
+        if (wanted.isEmpty()) return emptyList()
+        val candidates = try {
+            firstLibraryPage()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            Log.w(TAG, "YouTube mix for Quick picks failed: ${failure.message}")
+            Log.w(TAG, "Library playlists failed: ${failure.message}")
             emptyList()
-        }.filterNot { it.videoId in recentIds }
-        if (songs.isEmpty()) return null
-        val music = YouTubeMusicClassifier.filterMusic(songs, songs.size)
+        }.mapNotNull { item ->
+            val browseId = item.browseId ?: return@mapNotNull null
+            if (!browseId.startsWith("VL")) return@mapNotNull null
+            val playlistId = browseId.removePrefix("VL")
+            if (playlistId.startsWith("RD") || browseId == "VLLM" || browseId == "VLLL") {
+                return@mapNotNull null
+            }
+            item
+        }.distinctBy { it.browseId }
+            .take(PLAYLIST_CHECK_LIMIT)
+
+        return candidates.mapNotNull { item ->
+            val browseId = item.browseId ?: return@mapNotNull null
+            val page = try {
+                playlistPage(browseId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Log.w(TAG, "Playlist $browseId failed: ${failure.message}")
+                return@mapNotNull null
+            }
+            val matches = page.songs.count { it.videoId in wanted }
+            if (matches <= 0) null else item to matches
+        }.sortedByDescending { it.second }
+            .take(LISTEN_AGAIN_PLAYLISTS)
+            .map { it.first }
+    }
+
+    /**
+     * The first page of the library, without following its continuation.
+     *
+     * [libraryPlaylistItems] pages the whole library because the Library tab
+     * wants every playlist; scoring a home row does not, and each extra page
+     * here would be a request per Home load.
+     */
+    private suspend fun firstLibraryPage(): List<ShelfItem> {
+        for (browseId in listOf("FElibrary", "FEplaylist_aggregation")) {
+            val root = try {
+                Innertube.browseYouTube(browseId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                continue
+            }
+            val items = YouTubeWebParser.parseLibraryItems(root)
+            if (items.isNotEmpty()) return items
+        }
+        return emptyList()
+    }
+
+    /**
+     * Quick picks: rediscoveries interleaved with a fresh RD mix of the song
+     * played most recently, without repeating Recents or anything from the last
+     * day.
+     */
+    private suspend fun quickPicksShelf(
+        localPlays: List<LocalPlay>,
+        seed: Song?,
+        excludedIds: Set<String>,
+    ): HomeShelf? {
+        val now = System.currentTimeMillis()
+        val hidden = excludedIds + YouTubeFallbackFeed.recentIds(
+            localPlays,
+            now,
+            QUICK_PICKS_WINDOW_MS,
+        )
+        val rediscovered = LocalPlayHistory.rediscover(REDISCOVER_LIMIT, REDISCOVER_DAYS)
+            .asSequence()
+            .map { it.song }
+            .filter { it.videoId.isNotBlank() && it.videoId !in hidden }
             .distinctBy { it.videoId }
+            .toList()
+
+        val rediscoveredIds = rediscovered.mapTo(HashSet()) { it.videoId }
+        val mixed = seed?.videoId?.takeIf { it.isNotBlank() }?.let { videoId ->
+            try {
+                radio(videoId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Log.w(TAG, "YouTube mix for Quick picks failed: ${failure.message}")
+                emptyList()
+            }
+        }.orEmpty()
+            .filterNot { it.videoId.isBlank() || it.videoId in hidden || it.videoId in rediscoveredIds }
+            .distinctBy { it.videoId }
+            .let { YouTubeMusicClassifier.filterMusic(it, it.size) }
+
+        val songs = HomeFallbackRules.interleave(
+            rediscovered,
+            mixed,
+            YouTubeFallbackFeed.QUICK_PICKS_LIMIT,
+        ).distinctBy { it.videoId }
             .take(YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
-        if (music.isEmpty()) return null
-        return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, music.map(::shelfItem))
+        if (songs.isEmpty()) return null
+        val covered = YouTubeCoverResolver.enrich(songs, YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
+        return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, covered.map(::shelfItem))
     }
 
     /**

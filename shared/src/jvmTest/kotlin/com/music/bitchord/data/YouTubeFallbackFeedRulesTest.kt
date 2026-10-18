@@ -69,8 +69,9 @@ class YouTubeFallbackFeedRulesTest {
     @Test
     fun `translated built titles still lose to the built shelf`() {
         val ordered = YouTubeFallbackFeed.orderedShelves(
+            recents = shelf(YouTubeFallbackFeed.RECENT_TITLE, "recent"),
+            listenAgain = shelf(YouTubeFallbackFeed.LISTEN_AGAIN_TITLE, "built-listen"),
             quickPicks = shelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, "built"),
-            listenAgain = shelf(YouTubeFallbackFeed.RECENT_TITLE, "recent"),
             myMixes = null,
             liked = null,
             youtubeHome = listOf(
@@ -84,7 +85,35 @@ class YouTubeFallbackFeedRulesTest {
         assertEquals(
             listOf(
                 YouTubeFallbackFeed.RECENT_TITLE,
+                YouTubeFallbackFeed.LISTEN_AGAIN_TITLE,
                 YouTubeFallbackFeed.QUICK_PICKS_TITLE,
+                "YouTube home",
+            ),
+            ordered.map { it.title },
+        )
+        assertEquals(listOf("recent"), ordered.first().items.map { it.videoId })
+        assertEquals(listOf("built"), ordered[2].items.map { it.videoId })
+    }
+
+    @Test
+    fun `a YouTube copy of Listen again loses to the built one`() {
+        val ordered = YouTubeFallbackFeed.orderedShelves(
+            recents = shelf(YouTubeFallbackFeed.RECENT_TITLE, "recent"),
+            listenAgain = shelf(YouTubeFallbackFeed.LISTEN_AGAIN_TITLE, "built"),
+            quickPicks = null,
+            myMixes = null,
+            liked = null,
+            youtubeHome = listOf(
+                shelf("다시 듣기", "stale"),
+                shelf("YouTube home", "home"),
+            ),
+            musicChannel = emptyList(),
+        )
+
+        assertEquals(
+            listOf(
+                YouTubeFallbackFeed.RECENT_TITLE,
+                YouTubeFallbackFeed.LISTEN_AGAIN_TITLE,
                 "YouTube home",
             ),
             ordered.map { it.title },
@@ -94,31 +123,11 @@ class YouTubeFallbackFeedRulesTest {
     }
 
     @Test
-    fun `a YouTube Listen again shelf loses to the built Recents shelf`() {
-        val ordered = YouTubeFallbackFeed.orderedShelves(
-            quickPicks = null,
-            listenAgain = shelf(YouTubeFallbackFeed.RECENT_TITLE, "built"),
-            myMixes = null,
-            liked = null,
-            youtubeHome = listOf(
-                shelf(YouTubeFallbackFeed.LISTEN_AGAIN_TITLE, "stale"),
-                shelf("YouTube home", "home"),
-            ),
-            musicChannel = emptyList(),
-        )
-
-        assertEquals(
-            listOf(YouTubeFallbackFeed.RECENT_TITLE, "YouTube home"),
-            ordered.map { it.title },
-        )
-        assertEquals(listOf("built"), ordered.first().items.map { it.videoId })
-    }
-
-    @Test
     fun `a shelf without a title is dropped rather than occupying a slot`() {
         val ordered = YouTubeFallbackFeed.orderedShelves(
-            quickPicks = null,
+            recents = null,
             listenAgain = null,
+            quickPicks = null,
             myMixes = null,
             liked = null,
             youtubeHome = listOf(shelf("   ", "blank"), shelf("YouTube home", "home")),

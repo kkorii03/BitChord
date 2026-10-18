@@ -2,7 +2,11 @@ package com.music.bitchord.data.stats
 
 import android.content.Context
 import android.util.Log
+import com.music.bitchord.data.HomeFallbackRules
+import com.music.bitchord.data.LocalArtist
+import com.music.bitchord.data.LocalPlay
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.normalizedArtistName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -350,6 +354,71 @@ object ListeningStats {
             .sortedByDescending { it.last }
             .distinctBy { it.id }
             .take(limit)
+    }
+
+    /**
+     * The artists with at least [minPlays] whole plays in the last [days] days,
+     * most played first.
+     *
+     * Months are the bucket keys, so the window reaches back to the first whole
+     * month inside it: a 90-day look on the 20th starts at the month holding
+     * that day, not at the same day of the month, which is the granularity this
+     * store has. Artists are folded by their lead name, matching the chart the
+     * Replay pages draw.
+     */
+    suspend fun topArtists(days: Int, minPlays: Int): List<LocalArtist> =
+        withContext(Dispatchers.IO) {
+            if (days <= 0 || minPlays <= 0) return@withContext emptyList()
+            flushAndAwait()
+            val today = LocalDate.now()
+            val from = YearMonth.from(today.minusDays(days.toLong()))
+            val until = YearMonth.from(today)
+            val merged = LinkedHashMap<String, NameEntry>()
+            months().filter { !it.isBefore(from) && !it.isAfter(until) }
+                .forEach { month ->
+                    read(month.toString())?.artists?.forEach { stored ->
+                        val name = primaryArtist(stored.name) ?: stored.name
+                        val key = normalizedArtistName(name)
+                        if (key.isEmpty()) return@forEach
+                        val entry = stored.copy(name = name)
+                        merged.merge(key, entry) { a, b -> a.also { it.absorb(b) } }
+                    }
+                }
+            merged.values
+                .filter { it.plays >= minPlays }
+                .sortedWith(
+                    compareByDescending<NameEntry> { it.plays }
+                        .thenBy { normalizedArtistName(it.name) },
+                )
+                .map {
+                    LocalArtist(
+                        name = it.name,
+                        artistId = it.id,
+                        plays = it.plays,
+                        thumbnailUrl = it.art,
+                    )
+                }
+        }
+
+    /**
+     * Rediscoveries: the highest lifetime play counts whose last play is older
+     * than [olderThanDays] days, oldest last play first — see
+     * [HomeFallbackRules.rediscover] for the ranking itself.
+     */
+    suspend fun rediscover(limit: Int, olderThanDays: Int): List<LocalPlay> {
+        if (limit <= 0) return emptyList()
+        val totals = LinkedHashMap<String, TrackEntry>()
+        monthlyTracks().forEach { (_, tracks) ->
+            tracks.forEach { track ->
+                totals.merge(track.id, track.copy()) { a, b -> a.also { it.absorb(b) } }
+            }
+        }
+        return HomeFallbackRules.rediscover(
+            candidates = totals.values.map { LocalPlay(it.asSong(), it.last, it.plays) },
+            nowMs = System.currentTimeMillis(),
+            limit = limit,
+            olderThanDays = olderThanDays,
+        )
     }
 
     /** Every month with a file, oldest first. */

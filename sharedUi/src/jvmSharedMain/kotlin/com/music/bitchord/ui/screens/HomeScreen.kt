@@ -1107,12 +1107,19 @@ internal fun ShelfCard(
                 isPlaying = isPlaying,
             )
             else -> {
+                // An artist's channel (`UC…`) uses the app's existing round
+                // artist style; albums, playlists and songs stay square.
+                val artworkShape = if (item.browseId?.startsWith("UC") == true) {
+                    CircleShape
+                } else {
+                    RoundedCornerShape(LARGE_CARD_CORNER)
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(LARGE_CARD_CORNER))
-                        .thumbnailBorder(RoundedCornerShape(LARGE_CARD_CORNER))
+                        .clip(artworkShape)
+                        .thumbnailBorder(artworkShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
                     AsyncImage(

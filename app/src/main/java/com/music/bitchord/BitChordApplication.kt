@@ -155,6 +155,21 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         LocalPlayHistory.install(object : LocalPlayHistory.Source {
             override suspend fun recent(limit: Int): List<LocalPlay> =
                 ListeningStats.recentTracks(limit).map { LocalPlay(it.asSong(), it.last) }
+
+            override suspend fun topArtists(days: Int, minPlays: Int) =
+                ListeningStats.topArtists(days, minPlays)
+
+            override suspend fun rediscover(limit: Int, olderThanDays: Int) =
+                ListeningStats.rediscover(limit, olderThanDays)
+        })
+        // The strapline under the old Listen again shelf: the account the
+        // session is acting as, not a fresh network identity lookup.
+        LocalPlayHistory.installAccountName(LocalPlayHistory.AccountNameSource {
+            val session = authStore.activeSession
+            session?.profiles?.firstOrNull { it.profileId == session?.activeProfileId }
+                ?.name?.takeIf { it.isNotBlank() }
+                ?: session?.name?.takeIf { it.isNotBlank() }
+                ?: authStore.channelName?.takeIf { it.isNotBlank() }
         })
         // What the recommendation store has learned from this device's
         // listening and ratings. Opened beside the listening record, for the
