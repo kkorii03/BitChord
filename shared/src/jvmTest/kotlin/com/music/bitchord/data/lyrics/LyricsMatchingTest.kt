@@ -280,4 +280,132 @@ class LyricsMatchingTest {
         assertEquals("나나호시 관현악단", cover.originalArtist)
         assertEquals("가수", cover.singer)
     }
+
+    @Test
+    fun realCoverTitlesAcrossBracketsBarsAndNoiseAreRead() {
+        // The title as the player shows it: no clipper dressing left in it.
+        fun assertClean(title: String) {
+            assertTrue(title.isNotBlank(), title)
+            assertFalse(title.any { it in "【】「」『』ㅣ│▪" }, title)
+            assertFalse(title.contains("cover", ignoreCase = true), title)
+        }
+
+        // 【Covered by …】: the singer in a closing bracket, song first.
+        val drowning = assertNotNull(
+            CoverTitles.read("Drowning - WOODZ(우즈) 【Covered by 오화요 Ohwayo】", "오화요 Ohwayo", null),
+        )
+        assertEquals("Drowning", drowning.title)
+        assertEquals("WOODZ", drowning.originalArtist)
+        assertClean(drowning.title)
+
+        // "Artist - Song / cover by singer" on a cover channel.
+        val time = assertNotNull(CoverTitles.read("린 - 시간을 거슬러 / cover by 오화요(허니즈)", "젤리의 노래저장소", null))
+        assertEquals("시간을 거슬러", time.title)
+        assertEquals("린", time.originalArtist)
+        val love = assertNotNull(CoverTitles.read("다비치 - 이 사랑 /cover by 오화요(허니즈)", "젤리의 노래저장소", null))
+        assertEquals("이 사랑", love.title)
+        assertEquals("다비치", love.originalArtist)
+        val stardust = assertNotNull(CoverTitles.read("Aimer - Last Stardust /cover by  오화요(허니즈)", "젤리의 노래저장소", null))
+        assertEquals("Last Stardust", stardust.title)
+        assertEquals("Aimer", stardust.originalArtist)
+        assertClean(stardust.title)
+
+        // "Song(Artist) / singerCover": the original in brackets.
+        val rain = assertNotNull(CoverTitles.read("비가 오는 날엔(BEAST) / 오화요Cover", "오화요 노래주머니", null))
+        assertEquals("비가 오는 날엔", rain.title)
+        assertEquals("BEAST", rain.originalArtist)
+        val hug = assertNotNull(CoverTitles.read("안아줘(정준일) / 오화요Cover", "오화요 노래주머니", null))
+        assertEquals("안아줘", hug.title)
+        assertEquals("정준일", hug.originalArtist)
+        val alright = assertNotNull(CoverTitles.read("I'm alright(soulights) / 오화요Cover", "오화요 노래주머니", null))
+        assertEquals("I'm alright", alright.title)
+        assertEquals("soulights", alright.originalArtist)
+
+        // "ㅣ" as a bar, original title in brackets, lower-case "cover".
+        val drunk = assertNotNull(
+            CoverTitles.read("취한 줄을 모르고 (酔いどれ知らず)ㅣ오화요 cover", "오화요 Ohwayo", null),
+        )
+        assertEquals("취한 줄을 모르고 (酔いどれ知らず)", drunk.title)
+        assertClean(drunk.title)
+
+        // "│" as a bar and an "원곡 : artist - song" credit repeating the title.
+        val friend = assertNotNull(
+            CoverTitles.read(
+                "오화요 - 친구라도 될 걸 그랬어│원곡 : 거미 - 친구라도 될 걸 그랬어",
+                "시럽 Syrup",
+                null,
+            ),
+        )
+        assertEquals("친구라도 될 걸 그랬어", friend.title)
+        assertEquals("거미", friend.originalArtist)
+        assertClean(friend.title)
+
+        // "한국어 ver." is how it was sung, not the song's name.
+        val tobacco = assertNotNull(CoverTitles.read("담배(타바코) 한국어 ver. / 로엘 COVER", "로엘Roel", null))
+        assertTrue(tobacco.title.contains("담배"), tobacco.title)
+        assertClean(tobacco.title)
+
+        // A singer already seen on covers, behind the clipper's own tags.
+        val before = CoverTitles.knownSingers
+        CoverTitles.knownSingers = { setOf("오화요") }
+        try {
+            val beautiful = assertNotNull(
+                CoverTitles.read(
+                    "허니즈 HONEYZ | [with. HONEYZ] 오화요 - Beautiful Things (Benson Boone)",
+                    "허니즈 HONEYZ",
+                    null,
+                ),
+            )
+            assertEquals("Beautiful Things", beautiful.title)
+            assertEquals("Benson Boone", beautiful.originalArtist)
+            assertEquals("오화요", beautiful.singer)
+            assertClean(beautiful.title)
+
+            // The singer first, the clip's own words after her, then the song:
+            // the channel (효신) uploaded it but is not who sings it, and the
+            // original's artist (거미) is not named anywhere in the title.
+            val everything = assertNotNull(
+                CoverTitles.read(
+                    "오화요 봉누도(GTA5) 엔딩 콘서트 - you are my everything▪허니즈",
+                    "효신",
+                    null,
+                ),
+            )
+            assertEquals("you are my everything", everything.title)
+            assertEquals(null, everything.originalArtist)
+            assertEquals("오화요", everything.singer)
+            assertClean(everything.title)
+        } finally {
+            CoverTitles.knownSingers = before
+        }
+
+        // Leading singer bracket with "커버" inside another bracket.
+        val gangji = assertNotNull(
+            CoverTitles.read(
+                "【강지】 내가 죽으려고 생각 한것은 한국어 커버 (僕が死のうと思ったのは korean cover)",
+                "강 지",
+                null,
+            ),
+        )
+        assertTrue(gangji.title.contains("내가 죽으려고"), gangji.title)
+        assertClean(gangji.title)
+
+        val blossom = assertNotNull(
+            CoverTitles.read(
+                "【꽃핀/Eng sub】 마음짓기 : 心做し (somehow : kokoro narashi korean cover)",
+                "꽃핀",
+                null,
+            ),
+        )
+        assertTrue(blossom.title.contains("마음짓기"), blossom.title)
+        assertClean(blossom.title)
+
+        // Unresolved: a lyrics channel's upload with no cover word at all is not
+        // a cover, so CoverTitles leaves it alone; the app still shows the raw
+        // "[가사/발음/해석]" title. Weaker assertion: it is not misread as one.
+        assertEquals(
+            null,
+            CoverTitles.read("tuki. - 만찬가(晩餐歌) [가사/발음/해석]", "지구의 가사집 [J-POP]", null),
+        )
+    }
 }

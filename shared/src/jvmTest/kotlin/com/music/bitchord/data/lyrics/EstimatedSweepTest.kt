@@ -96,6 +96,57 @@ class EstimatedSweepTest {
     }
 
     @Test
+    fun theSweepStopsABreathBeforeTheNextLine() {
+        val swept = line("사랑해 너를 정말", at = 1_000, next = 3_000)
+        assertEquals(2_700L, swept.words.last().endMs)
+    }
+
+    @Test
+    fun latinWordsAreCountedBySyllablesNotLetters() {
+        // "everything" is four beats, not ten letters: it gets a long stretch
+        // of the line while "my" gets one beat, and it is still held at the end.
+        val swept = line("you are my everything", at = 10_000, next = 12_000)
+        assertEquals(listOf("you", "are", "my", "everything"), swept.words.map { it.text })
+        val everything = swept.words.last()
+        val my = swept.words[2]
+        assertTrue(everything.endMs - everything.startMs >= 300, "final ${everything.endMs - everything.startMs}")
+        assertTrue(
+            everything.endMs - everything.startMs > (my.endMs - my.startMs) * 2,
+            "final ${everything.endMs - everything.startMs} vs my ${my.endMs - my.startMs}",
+        )
+        assertTrue(everything.endMs <= 11_700L, "end ${everything.endMs} over the breath")
+        assertEquals(11_700L, everything.endMs)
+    }
+
+    @Test
+    fun koreanSyllablesAreCountedWhole() {
+        val swept = line("사랑해 너를", at = 0, next = 2_000)
+        val first = swept.words[0]
+        val second = swept.words[1]
+        // Three syllables against two, plus the pause between them.
+        val beforeSecond = (second.startMs - first.startMs).toDouble()
+        val secondSpan = (second.endMs - second.startMs).toDouble()
+        assertTrue(beforeSecond / secondSpan in 1.2..1.8, "ratio ${beforeSecond / secondSpan}")
+        assertTrue(first.endMs - first.startMs > second.endMs - second.startMs)
+    }
+
+    @Test
+    fun aShortSlotStillGivesALongFinalWordRoom() {
+        // Evenly split this would give "정말" only ~190 ms of a 700 ms sweep.
+        val swept = line("사랑해 너를 정말", at = 0, next = 1_000)
+        val last = swept.words.last()
+        assertEquals("정말", last.text)
+        assertTrue(last.endMs - last.startMs >= 300, "final ${last.endMs - last.startMs}")
+        assertEquals(700L, last.endMs)
+        swept.words.forEach { word ->
+            assertTrue(word.startMs >= 0 && word.startMs <= word.endMs && word.endMs <= 700, "$word outside the slot")
+        }
+        swept.words.zipWithNext().forEach { (a, b) ->
+            assertTrue(a.startMs <= b.startMs, "${a.text} starts after ${b.text}")
+        }
+    }
+
+    @Test
     fun nextLineOnTheSameStampDoesNotCrash() {
         val swept = line("사랑해 너를", at = 7_000, next = 7_000)
         assertTrue(swept.words.isNotEmpty())
