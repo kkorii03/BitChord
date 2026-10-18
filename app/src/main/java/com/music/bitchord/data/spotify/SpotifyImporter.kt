@@ -20,6 +20,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import java.util.concurrent.atomic.AtomicInteger
@@ -28,7 +30,22 @@ import java.util.concurrent.atomic.AtomicInteger
 data class SpotifyImportTrack(
     val title: String,
     val artist: String,
+    /** Runtime in milliseconds when Spotify stated one; 0 when it did not. */
+    val durationMs: Int = 0,
+    /** Release name when Spotify stated one, used to separate catalogue collisions. */
+    val album: String? = null,
 )
+
+/** What [SpotifyImporter.resolveToSongs] matched, and how confident it was. */
+data class SpotifyMatchResult(
+    val songs: List<Song>,
+    val unmatched: List<SpotifyImportTrack>,
+    /** Tracks kept only because a search answered something, with no confident match. */
+    val looselyMatched: Int,
+)
+
+/** One track's chosen candidate; [loose] when only the first search hit was available. */
+internal data class SpotifyMatch(val song: Song?, val loose: Boolean)
 
 /** The result of fetching and resolving a Spotify playlist's tracks. */
 data class SpotifyImportResult(
@@ -130,7 +147,14 @@ object SpotifyImporter {
                     }
                     ?: ""
                 if (title.isNotBlank()) {
-                    tracks.add(SpotifyImportTrack(title = title.trim(), artist = subtitle.trim()))
+                    tracks.add(
+                        SpotifyImportTrack(
+                            title = title.trim(),
+                            artist = subtitle.trim(),
+                            durationMs = obj["duration"]?.jsonPrimitive?.intOrNull ?: 0,
+                            album = obj["album"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
+                        ),
+                    )
                 }
             }
 
@@ -167,7 +191,7 @@ object SpotifyImporter {
             ?.filterIsInstance<SearchResult.Track>()
             ?.map { it.song }
             .orEmpty()
-        return TrackMatcher.best(
+        return bestMatch(
             candidates,
             TrackMatcher.Target(
                 title = track.title,
@@ -175,7 +199,21 @@ object SpotifyImporter {
                 durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
                 album = track.album,
             ),
-        ) ?: candidates.firstOrNull()
+        ).song
+    }
+
+    /**
+     * The best candidate for a target, and whether it was only the search's
+     * first hit because nothing scored.
+     *
+     * Pure, so the choice can be tested without a search: the importer used to
+     * take that first hit unconditionally, which silently picked whichever
+     * recording the backend happened to rank first.
+     */
+    internal fun bestMatch(candidates: List<Song>, target: TrackMatcher.Target): SpotifyMatch {
+        TrackMatcher.best(candidates, target)?.let { return SpotifyMatch(it, loose = false) }
+        val first = candidates.firstOrNull() ?: return SpotifyMatch(null, loose = false)
+        return SpotifyMatch(first, loose = true)
     }
 
     /** Tracks the embed page lists before it cuts off. */
@@ -223,7 +261,17 @@ object SpotifyImporter {
                     ?.mapNotNull { it.jsonObject["profile"]?.jsonObject?.get("name")?.jsonPrimitive?.content }
                     ?.joinToString(", ")
                     .orEmpty()
-                out.add(SpotifyImportTrack(title = title, artist = artist))
+                out.add(
+                    SpotifyImportTrack(
+                        title = title,
+                        artist = artist,
+                        durationMs = data["duration"]?.jsonObject
+                            ?.get("totalMilliseconds")?.jsonPrimitive?.intOrNull ?: 0,
+                        album = data["albumOfTrack"]?.jsonObject
+                            ?.get("name")?.jsonPrimitive?.contentOrNull
+                            ?.trim()?.takeIf { it.isNotBlank() },
+                    ),
+                )
             }
             val total = content["totalCount"]?.jsonPrimitive?.content?.toIntOrNull() ?: break
             offset += items.size
@@ -239,35 +287,44 @@ object SpotifyImporter {
     suspend fun resolveToSongs(
         tracks: List<SpotifyImportTrack>,
         onProgress: (completed: Int, total: Int) -> Unit,
-    ): Pair<List<Song>, List<SpotifyImportTrack>> = coroutineScope {
+    ): SpotifyMatchResult = coroutineScope {
         val total = tracks.size
         val completedCount = AtomicInteger(0)
+        val looseCount = AtomicInteger(0)
         val semaphore = Semaphore(4) // Bounded concurrency for search queries
 
         val deferredResults = tracks.map { track ->
             async(Dispatchers.IO) {
                 semaphore.withPermit {
                     val query = "${track.title} ${track.artist}".trim()
-                    val searchResult = YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
-                    val matchedSong = searchResult?.filterIsInstance<SearchResult.Track>()
-                        ?.firstOrNull()?.song
+                    val candidates = YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
+                        ?.filterIsInstance<SearchResult.Track>()
+                        ?.map { it.song }
+                        .orEmpty()
+                    val match = bestMatch(
+                        candidates,
+                        TrackMatcher.Target(
+                            title = track.title,
+                            artist = track.artist,
+                            durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
+                            album = track.album,
+                        ),
+                    )
+                    if (match.loose) looseCount.incrementAndGet()
 
                     val done = completedCount.incrementAndGet()
                     onProgress(done, total)
 
-                    if (matchedSong != null) {
-                        Pair(matchedSong, null)
-                    } else {
-                        Pair(null, track)
-                    }
+                    Triple(match.song, if (match.song == null) track else null, match.loose)
                 }
             }
         }
 
         val results = deferredResults.awaitAll()
-        val songs = results.mapNotNull { it.first }
-        val unmatched = results.mapNotNull { it.second }
-
-        Pair(songs, unmatched)
+        SpotifyMatchResult(
+            songs = results.mapNotNull { it.first },
+            unmatched = results.mapNotNull { it.second },
+            looselyMatched = looseCount.get(),
+        )
     }
 }

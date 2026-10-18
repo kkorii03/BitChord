@@ -69,7 +69,11 @@ object DesktopLyricsClient {
         }
         val configured = enabledSources(persistence.lyricsSourceOrder(), persistence.lyricsEnabledSources())
             .mapNotNull(::lyricsSourceNamed)
-        val asked = only?.let(::lyricsSourceNamed)?.let(::listOf) ?: configured
+        val asked = only?.let(::lyricsSourceNamed)?.let { wanted ->
+            // A provider the listener disabled is never asked, even when a
+            // stale picker row still names it.
+            if (wanted in configured) listOf(wanted) else emptyList()
+        } ?: configured
         // Every source unticked is a state the listener can reach, and it means the same thing as
         // the feature being off.
         if (asked.isEmpty()) return Result.failure(IllegalStateException("No lyrics sources are enabled"))

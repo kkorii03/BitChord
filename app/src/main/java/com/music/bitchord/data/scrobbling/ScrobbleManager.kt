@@ -2,6 +2,7 @@ package com.music.bitchord.data.scrobbling
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -64,7 +65,7 @@ class ScrobbleManager(
     ) {
         scrobbleJob?.cancel()
         val resolvedDurationSeconds = durationMs?.toInt()?.div(1000)
-            ?: song.durationText?.let { parseDurationSeconds(it) }
+            ?: durationSeconds(song.durationText)
             ?: return
 
         if (resolvedDurationSeconds <= minSongDuration) return
@@ -102,8 +103,8 @@ class ScrobbleManager(
         scrobbleJob =
             scope.launch {
                 delay(scrobbleRemainingMillis)
-                val durationSeconds = song.durationText?.let { parseDurationSeconds(it) } ?: 0
-                scrobbleSong(song, durationSeconds)
+                val durationSec = durationSeconds(song.durationText) ?: 0
+                scrobbleSong(song, durationSec)
                 scrobbleJob = null
             }
     }
@@ -145,7 +146,7 @@ class ScrobbleManager(
                     artist = scrobbleArtist,
                     track = song.title,
                     album = song.albumName,
-                    duration = song.durationText?.let { parseDurationSeconds(it) },
+                    duration = durationSeconds(song.durationText),
                 ).onSuccess {
                     Log.d(TAG, "Updated now playing: ${song.title}")
                 }.onFailure { throwable ->
@@ -172,20 +173,17 @@ class ScrobbleManager(
         }
     }
 
-    /**
-     * Parse "M:SS" or "MM:SS" duration text to total seconds.
-     */
-    private fun parseDurationSeconds(text: String): Int {
-        val parts = text.split(":")
-        if (parts.size != 2) return 0
-        val minutes = parts[0].toIntOrNull() ?: return 0
-        val seconds = parts[1].toIntOrNull() ?: return 0
-        return minutes * 60 + seconds
-    }
-
     private fun String.forScrobble(): String = if (usePrimaryArtistOnly) primaryArtist() else this
 
     companion object {
         private const val TAG = "ScrobbleManager"
+
+        /**
+         * A row's display duration as whole seconds, or null when it states
+         * none. [durationMillis] reads `M:SS` and `H:MM:SS`, so an hour-plus
+         * track no longer parses to zero and stops being scrobbled.
+         */
+        internal fun durationSeconds(text: String?): Int? =
+            (text.durationMillis() / 1000L).toInt().takeIf { it > 0 }
     }
 }

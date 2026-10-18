@@ -2747,6 +2747,8 @@ fun BitChordDesktopApp() {
         DesktopPlayerSettings.smartTransitionWindow.value = playback.transitionWindow
         DesktopPlayerSettings.lyricsSourceOrder.value =
             DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn).mapNotNull(::lyricsSourceNamed)
+        DesktopPlayerSettings.enabledLyricsSources.value =
+            lyricsOn.mapNotNull(::lyricsSourceNamed).toSet()
         DesktopPlayerHost.volumeLevel.value = volume
         DesktopPlayerHost.onVolumeChange = {
             volume = it

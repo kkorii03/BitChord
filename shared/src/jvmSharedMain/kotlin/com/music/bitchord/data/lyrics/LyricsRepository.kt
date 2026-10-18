@@ -112,10 +112,11 @@ object LyricsRepository {
         /** Called from the provider job itself, including for lazily-started providers. */
         onSourceStarted: ((LyricsSource) -> Unit)? = null,
         /**
-         * Reports a completed provider attempt. A null result is a genuine miss;
-         * a cancelled race loser is deliberately not reported as one.
+         * Reports a completed provider attempt. A null result is a miss, and
+         * [LyricsFailure] says why — network, timeout, blocked or genuinely
+         * absent. A cancelled race loser is deliberately not reported as one.
          */
-        onSourceResult: ((LyricsSource, Result?) -> Unit)? = null,
+        onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)? = null,
         /** Lets callers turn a cancelled race loser back into "not fetched". */
         onSourceCancelled: ((LyricsSource) -> Unit)? = null,
         /**
@@ -189,7 +190,7 @@ object LyricsRepository {
         prioritizeSyllableSync: Boolean,
         isrc: String?,
         onSourceStarted: ((LyricsSource) -> Unit)?,
-        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
@@ -204,7 +205,7 @@ object LyricsRepository {
             videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
         )
         answers.get(key)?.let { kept ->
-            kept.result?.let { onSourceResult?.invoke(it.source, it) }
+            kept.result?.let { onSourceResult?.invoke(it.source, it, null) }
             return kept.result
         }
         // Heard before, on any earlier day: on the device already. Shown at
@@ -215,7 +216,7 @@ object LyricsRepository {
             val keptResult = kept?.result
             if (kept != null && keptResult != null) {
                 answers.put(key, Answer(keptResult))
-                onSourceResult?.invoke(keptResult.source, keptResult)
+                onSourceResult?.invoke(keptResult.source, keptResult, null)
                 if (LyricsDiskCache.worthCheckingAgain(kept)) {
                     checkAgain(key, videoId, keptResult) {
                         search(
@@ -263,7 +264,7 @@ object LyricsRepository {
             val result = lookup.await()
             // Joined at the very end, after the last provider had reported:
             // the answer itself is still news to this caller.
-            if (!listener.heard && result != null) onSourceResult?.invoke(result.source, result)
+            if (!listener.heard && result != null) onSourceResult?.invoke(result.source, result, null)
             return result
         } finally {
             lookup.leave(listener)
@@ -307,7 +308,7 @@ object LyricsRepository {
     /** One caller's provider callbacks. */
     private class Listener(
         val onStarted: ((LyricsSource) -> Unit)?,
-        val onResult: ((LyricsSource, Result?) -> Unit)?,
+        val onResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         val onCancelled: ((LyricsSource) -> Unit)?,
     ) {
         @Volatile var heard = false
@@ -327,7 +328,7 @@ object LyricsRepository {
         }
         private val listeners = ArrayList<Listener>()
         private val running = LinkedHashSet<LyricsSource>()
-        private val finished = LinkedHashMap<LyricsSource, Result?>()
+        private val finished = LinkedHashMap<LyricsSource, ProviderAnswer>()
 
         fun join(listener: Listener) {
             val (wasRunning, wasFinished) = synchronized(this) {
@@ -335,9 +336,9 @@ object LyricsRepository {
                 running.toList() to finished.toList()
             }
             wasRunning.forEach { listener.onStarted?.invoke(it) }
-            wasFinished.forEach { (source, result) ->
+            wasFinished.forEach { (source, answer) ->
                 listener.heard = true
-                listener.onResult?.invoke(source, result)
+                listener.onResult?.invoke(source, answer.result, answer.failure)
             }
         }
 
@@ -351,15 +352,15 @@ object LyricsRepository {
             now.forEach { it.onStarted?.invoke(source) }
         }
 
-        fun answered(source: LyricsSource, result: Result?) {
+        fun answered(source: LyricsSource, result: Result?, failure: LyricsFailure?) {
             val now = synchronized(this) {
                 running -= source
-                finished[source] = result
+                finished[source] = ProviderAnswer(result, failure)
                 listeners.toList()
             }
             now.forEach {
                 it.heard = true
-                it.onResult?.invoke(source, result)
+                it.onResult?.invoke(source, result, failure)
             }
         }
 
@@ -376,6 +377,9 @@ object LyricsRepository {
 
     /** A whole lookup's answer, a miss included, and when it was made. */
     private class Answer(val result: Result?, val at: Long = System.currentTimeMillis())
+
+    /** One provider's finished attempt: its answer, or why there is none. */
+    private data class ProviderAnswer(val result: Result?, val failure: LyricsFailure?)
 
     /**
      * Answers by question. A miss is kept for [MISS_KEPT_MS] only — a source
@@ -487,7 +491,7 @@ object LyricsRepository {
         prioritizeSyllableSync: Boolean,
         isrc: String?,
         onSourceStarted: ((LyricsSource) -> Unit)?,
-        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
@@ -523,7 +527,7 @@ object LyricsRepository {
         prioritizeSyllableSync: Boolean,
         isrc: String?,
         onSourceStarted: ((LyricsSource) -> Unit)?,
-        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
@@ -596,7 +600,7 @@ object LyricsRepository {
         prioritizeSyllableSync: Boolean,
         isrc: String?,
         onSourceStarted: ((LyricsSource) -> Unit)?,
-        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
     ): Result? {
         // The last few answers, so the next track's lyrics looked up ahead of
@@ -611,7 +615,7 @@ object LyricsRepository {
             sources.map { it.name }.sorted().forEach { append('\u0000').append(it) }
         }
         synchronized(recent) { recent[memoKey] }?.let { hit ->
-            onSourceResult?.invoke(hit.source, hit)
+            onSourceResult?.invoke(hit.source, hit, null)
             return hit
         }
         val found = lookUp(
@@ -662,7 +666,7 @@ object LyricsRepository {
         prioritizeSyllableSync: Boolean,
         isrc: String?,
         onSourceStarted: ((LyricsSource) -> Unit)?,
-        onSourceResult: ((LyricsSource, Result?) -> Unit)?,
+        onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
     ): Result? = coroutineScope {
         val sequence = (order + LyricsSource.offered)
@@ -704,18 +708,26 @@ object LyricsRepository {
                     val work = detached.async {
                         fetch(source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit, documents::get)
                     }
-                    val found = try {
+                    val lines = try {
                         withTimeoutOrNull(budgetMs(source)) { work.await() }
                     } finally {
                         work.cancel()
-                    }?.let { result(source, it) }
-                    onSourceResult?.invoke(source, found)
+                    }
+                    val found = lines?.let { result(source, it) }
+                    // A null body with a cancelled worker is the budget running
+                    // out, not the provider saying it has nothing.
+                    val failure = when {
+                        found != null -> null
+                        lines == null && work.isCancelled -> LyricsFailure.TIMEOUT
+                        else -> LyricsFailure.NOT_FOUND
+                    }
+                    onSourceResult?.invoke(source, found, failure)
                     found
                 } catch (cancelled: CancellationException) {
                     onSourceCancelled?.invoke(source)
                     throw cancelled
-                } catch (_: Exception) {
-                    onSourceResult?.invoke(source, null)
+                } catch (error: Exception) {
+                    onSourceResult?.invoke(source, null, LyricsFailure.from(error))
                     null
                 }
             }

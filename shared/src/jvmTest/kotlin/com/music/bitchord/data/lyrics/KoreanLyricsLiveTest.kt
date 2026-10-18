@@ -57,7 +57,7 @@ class LyricsLookupTimingLiveTest {
             LyricsRepository.lyrics(
                 "live-carousel-sources", "회전목마", "에피톤 프로젝트", 313_000L,
                 sources = sources, prioritizeSyllableSync = true,
-                onSourceResult = { source, result ->
+                onSourceResult = { source, result, _ ->
                     val ms = (System.nanoTime() - start) / 1_000_000
                     seen += "${source.name}=${ms}${if (result != null) "+" else "-"}"
                 },

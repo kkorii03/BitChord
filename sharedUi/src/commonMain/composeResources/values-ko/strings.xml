@@ -87,6 +87,9 @@
     <string name="lyrics_provider_found">가사 찾음 · 탭하여 사용</string>
     <string name="lyrics_provider_not_fetched">탭하여 가져오기</string>
     <string name="lyrics_provider_not_found">가사를 찾을 수 없음</string>
+    <string name="lyrics_provider_timeout">응답 시간 초과</string>
+    <string name="lyrics_provider_network_error">연결 오류</string>
+    <string name="lyrics_provider_blocked">제공처에서 차단됨</string>
     <string name="lyrics_romanization_unavailable">이 가사는 로마자 발음 표기를 사용할 수 없습니다.</string>
     <string name="lyrics_romanized">로마자 발음</string>
     <string name="lyrics_saved_with_download">다운로드와 함께 저장된 가사</string>

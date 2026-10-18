@@ -1040,6 +1040,7 @@
     <string name="spotify_import_local_fallback">YouTube Music에 생성할 수 없어 ‘%1$s’ 재생목록을 이 기기에 대신 저장했습니다.</string>
     <string name="spotify_import_done">‘%1$s’ 가져오기 완료</string>
     <string name="spotify_import_unmatched">%1$d곡을 YouTube Music에서 찾지 못했습니다.</string>
+    <string name="spotify_import_loose">%1$d곡은 대략적으로 매칭되었습니다.</string>
     <string name="local_playlist_subtitle">%1$d곡 · 이 기기</string>
     <string name="spotify_import_empty_playlist">이 재생목록에 노래가 없습니다.</string>
     <string name="spotify_library_subtitle">나의 Spotify 재생목록</string>

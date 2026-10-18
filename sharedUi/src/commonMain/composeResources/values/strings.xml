@@ -87,6 +87,9 @@
     <string name="lyrics_provider_found">Lyrics found · Tap to use</string>
     <string name="lyrics_provider_not_fetched">Tap to fetch</string>
     <string name="lyrics_provider_not_found">Lyrics not found</string>
+    <string name="lyrics_provider_timeout">Provider timed out</string>
+    <string name="lyrics_provider_network_error">Connection error</string>
+    <string name="lyrics_provider_blocked">Blocked by provider</string>
     <string name="lyrics_romanization_unavailable">Romanization is unavailable for these lyrics</string>
     <string name="lyrics_romanized">Romanized pronunciation</string>
     <string name="lyrics_saved_with_download">Lyrics saved with this download</string>

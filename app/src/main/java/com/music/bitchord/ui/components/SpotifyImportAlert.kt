@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -83,10 +84,19 @@ fun SpotifyImportAlert(
         scope.launch {
             try {
                 val (name, tracks) = SpotifyImporter.fetchPlaylistTracks(id)
-                val (songs, missed) = SpotifyImporter.resolveToSongs(tracks) { done, total ->
+                val matched = SpotifyImporter.resolveToSongs(tracks) { done, total ->
                     status = context.getString(R.string.spotify_import_matching, done, total)
                 }
+                val songs = matched.songs
+                val missed = matched.unmatched
                 if (songs.isEmpty()) error(context.getString(R.string.spotify_import_none))
+                if (matched.looselyMatched > 0) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.spotify_import_loose, matched.looselyMatched),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
                 onImported(name, privacy, songs)
                 if (missed.isEmpty()) onDismiss() else unmatched = missed
             } catch (e: CancellationException) {

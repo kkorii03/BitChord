@@ -36,7 +36,7 @@ jobs:
         run: |
           set +e -o pipefail
           chmod +x gradlew
-          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*' --tests 'com.music.bitchord.data.innertube.InnertubeSearchPrivacyTest' --console=plain 2>&1 | tee test.log
+          ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*' --tests 'com.music.bitchord.data.innertube.InnertubeSearchPrivacyTest' :sharedUi:jvmTest --tests 'com.music.bitchord.ui.LyricsProviderStateTest' --console=plain 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           for f in shared/build/test-results/jvmTest/*.xml; do
             [ -f "$f" ] || continue
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set +e -o pipefail
-          ./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.smart.AiTimingPolicyTest' --tests 'com.music.bitchord.playback.AnalysisHeadRetryTest' --tests 'com.music.bitchord.ui.player.CanvasFrameRefreshTest' --tests 'com.music.bitchord.data.settings.LowPowerModeTest' --tests 'com.music.bitchord.playback.SkipSegmentsTest' --tests 'com.music.bitchord.data.taste.*' --tests 'com.music.bitchord.data.stats.WriteThrottleTest' --tests 'com.music.bitchord.playback.LyricSubtitleSchedulerTest' --tests 'com.music.bitchord.playback.TranslationAheadPolicyTest' --tests 'com.music.bitchord.UpdateCheckScheduleTest' --tests 'com.music.bitchord.QueueEditTest' --tests 'com.music.bitchord.data.spotify.LocalPlaylistStoreTest' --tests '*LocalMediaFilterTest' --tests '*QueueShuffleTest' -Pbitchord.arm64Only=true --console=plain 2>&1 | tee apptest.log
+          ./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.smart.AiTimingPolicyTest' --tests 'com.music.bitchord.playback.AnalysisHeadRetryTest' --tests 'com.music.bitchord.ui.player.CanvasFrameRefreshTest' --tests 'com.music.bitchord.data.settings.LowPowerModeTest' --tests 'com.music.bitchord.playback.SkipSegmentsTest' --tests 'com.music.bitchord.data.taste.*' --tests 'com.music.bitchord.data.stats.WriteThrottleTest' --tests 'com.music.bitchord.playback.LyricSubtitleSchedulerTest' --tests 'com.music.bitchord.playback.TranslationAheadPolicyTest' --tests 'com.music.bitchord.UpdateCheckScheduleTest' --tests 'com.music.bitchord.QueueEditTest' --tests 'com.music.bitchord.data.spotify.LocalPlaylistStoreTest' --tests '*LocalMediaFilterTest' --tests '*QueueShuffleTest' --tests 'com.music.bitchord.ScrobbleDurationTest' --tests 'com.music.bitchord.SpotifyImportMatchTest' -Pbitchord.arm64Only=true --console=plain 2>&1 | tee apptest.log
           status=${PIPESTATUS[0]}
           for f in app/build/test-results/testProdDebugUnitTest/*.xml; do
             [ -f "$f" ] || continue

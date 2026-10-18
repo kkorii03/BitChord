@@ -481,8 +481,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 videoId, title, artist, durationMs, album, sources,
                 AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
                 onSourceStarted = { source -> providerStarted(generation, source) },
-                onSourceResult = { source, result ->
-                    providerFinished(generation, source, result)
+                onSourceResult = { source, result, failure ->
+                    providerFinished(generation, source, result, failure)
                 },
                 onSourceCancelled = { source -> providerCancelled(generation, source) },
                 isVideo = isVideo,
@@ -502,6 +502,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun selectLyricsProvider(source: LyricsSource) {
         val request = currentLyricsRequest ?: return
+        if (source.hidden || source !in AppSettings.lyricsSources.value) return
         when (_lyricsProviderStates.value[source]) {
             LyricsProviderState.FOUND -> {
                 selectedLyricsSource = source
@@ -511,7 +512,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Apply it as soon as the already-running automatic attempt completes.
                 selectedLyricsSource = source
             }
-            LyricsProviderState.NOT_FETCHED, null -> {
+            LyricsProviderState.NOT_FETCHED,
+            null,
+            LyricsProviderState.TIMEOUT,
+            LyricsProviderState.NETWORK_ERROR,
+            LyricsProviderState.BLOCKED,
+            -> {
                 selectedLyricsSource = source
                 fetchLyricsProvider(request, lyricsGeneration, source)
             }
@@ -524,6 +530,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         generation: Long,
         source: LyricsSource,
     ) {
+        // A provider the listener disabled in Settings is never fetched, even
+        // if a stale row or an old tap still names it.
+        if (source.hidden || source !in AppSettings.lyricsSources.value) return
         if (manualLyricsJobs[source]?.isActive == true) return
         manualLyricsJobs[source] = viewModelScope.launch {
             LyricsRepository.lyrics(
@@ -536,8 +545,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 order = listOf(source),
                 prioritizeSyllableSync = false,
                 onSourceStarted = { provider -> providerStarted(generation, provider) },
-                onSourceResult = { provider, result ->
-                    providerFinished(generation, provider, result)
+                onSourceResult = { provider, result, failure ->
+                    providerFinished(generation, provider, result, failure)
                 },
                 onSourceCancelled = { provider -> providerCancelled(generation, provider) },
                 alternatives = request.alternatives,
@@ -555,10 +564,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         generation: Long,
         source: LyricsSource,
         result: LyricsRepository.Result?,
+        failure: com.music.bitchord.data.lyrics.LyricsFailure? = null,
     ) {
         if (generation != lyricsGeneration) return
         if (result == null) {
-            _lyricsProviderStates.update { it + (source to LyricsProviderState.NOT_FOUND) }
+            _lyricsProviderStates.update {
+                it + (source to LyricsProviderState.fromFailure(failure))
+            }
             return
         }
         lyricsProviderResults[source] = result
@@ -604,7 +616,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     return
                 }
-                LyricsProviderState.NOT_FOUND -> continue
+                LyricsProviderState.NOT_FOUND,
+                LyricsProviderState.TIMEOUT,
+                LyricsProviderState.NETWORK_ERROR,
+                LyricsProviderState.BLOCKED,
+                -> continue
                 else -> blocked = true
             }
         }

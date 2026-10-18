@@ -61,7 +61,12 @@ internal fun LyricsProviderSheet(
     modifier: Modifier = Modifier,
 ) {
     val savedOrder by PlayerSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
-    val sources = remember(savedOrder) { LyricsSource.ordered(savedOrder) }
+    val enabledSources by PlayerSettings.enabledLyricsSources.collectAsStateWithLifecycle()
+    // A source the listener turned off in Settings is not a choice here: it is
+    // never listed and therefore can never be requested by hand either.
+    val sources = remember(savedOrder, enabledSources) {
+        LyricsSource.ordered(savedOrder).filter { it in enabledSources }
+    }
     var requestedSource by remember { mutableStateOf<LyricsSource?>(null) }
     LaunchedEffect(currentSource, requestedSource) {
         if (requestedSource != null && currentSource == requestedSource) onDismiss()
@@ -109,6 +114,9 @@ private fun LyricsProviderRow(
         current -> stringResource(Res.string.lyrics_provider_current)
         state == LyricsProviderState.FOUND -> stringResource(Res.string.lyrics_provider_found)
         state == LyricsProviderState.NOT_FOUND -> stringResource(Res.string.lyrics_provider_not_found)
+        state == LyricsProviderState.TIMEOUT -> stringResource(Res.string.lyrics_provider_timeout)
+        state == LyricsProviderState.NETWORK_ERROR -> stringResource(Res.string.lyrics_provider_network_error)
+        state == LyricsProviderState.BLOCKED -> stringResource(Res.string.lyrics_provider_blocked)
         state == LyricsProviderState.FETCHING -> stringResource(Res.string.lyrics_provider_fetching)
         else -> stringResource(Res.string.lyrics_provider_not_fetched)
     }
@@ -148,7 +156,7 @@ private fun LyricsProviderRow(
                     tint = Color.White.copy(alpha = if (current) 1f else 0.75f),
                     modifier = Modifier.size(21.dp),
                 )
-                state == LyricsProviderState.NOT_FOUND -> Icon(
+                state.isMiss -> Icon(
                     imageVector = Icons.Rounded.Close,
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.4f),

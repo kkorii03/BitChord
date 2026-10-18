@@ -196,6 +196,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
         persistence.int(KEY_LYRICS_OFFSET, 0).coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS),
     )
     override val lyricsSourceOrder = MutableStateFlow<List<LyricsSource>>(LyricsSource.offered)
+    override val enabledLyricsSources = MutableStateFlow(LyricsSource.offered.toSet())
 
     // A desktop is never on a metered link as far as this app can tell.
     override val meteredConnection = MutableStateFlow<Boolean?>(false)
