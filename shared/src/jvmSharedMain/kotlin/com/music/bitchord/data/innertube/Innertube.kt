@@ -703,6 +703,64 @@ object Innertube {
     }
 
     /**
+     * The category YouTube's own player metadata states for [videoId], read
+     * without the listener's account.
+     *
+     * The fallback history is a youtube.com feed, so it also contains ordinary
+     * uploads; the one cheap discriminator YouTube publishes for every video is
+     * `microformat.playerMicroformatRenderer.category` ("Music" for music
+     * videos, "Film & Animation" for the rest). Measured from Korea: the WEB
+     * player answers this metadata even when playability itself is refused, so
+     * no cookie and no visitor id are needed — and deliberately not sent,
+     * because classifying a history row must not attach the listener to a
+     * request they did not make.
+     *
+     * A short timeout is part of the contract: this is one background lookup
+     * per unknown history row, never something a page waits on for long.
+     */
+    suspend fun playerCategory(videoId: String): String? {
+        if (videoId.isBlank()) return null
+        val response = client.post("$YOUTUBE_BASE/player") {
+            contentType(ContentType.Application.Json)
+            parameter("prettyPrint", "false")
+            parameter("key", WEB_API_KEY)
+            parameter("hl", "en")
+            header("Accept-Language", acceptLanguageHeader)
+            header("X-Origin", YOUTUBE_ORIGIN)
+            header("Origin", YOUTUBE_ORIGIN)
+            header("Referer", "$YOUTUBE_ORIGIN/")
+            header("X-YouTube-Client-Name", WEB_CLIENT_ID)
+            header("X-YouTube-Client-Version", WEB_VERSION)
+            header("User-Agent", WEB_USER_AGENT)
+            timeout {
+                requestTimeoutMillis = 8_000
+                connectTimeoutMillis = 4_000
+                socketTimeoutMillis = 6_000
+            }
+            setBody(
+                buildJsonObject {
+                    putJsonObject("context") {
+                        putJsonObject("client") {
+                            put("clientName", "WEB")
+                            put("clientVersion", WEB_VERSION)
+                            put("hl", "en")
+                            put("gl", currentCountry)
+                        }
+                    }
+                    put("videoId", videoId)
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
+                },
+            )
+        }.body<JsonObject>()
+        return response["microformat"]?.jsonObject
+            ?.get("playerMicroformatRenderer")?.jsonObject
+            ?.get("category")?.jsonPrimitive?.contentOrNull
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * The watch queue for [videoId], or for a standalone mix when the id is
      * null. A `RD` + seed id is YouTube's own Mix, personalised by the
      * signed-in account's cookies.

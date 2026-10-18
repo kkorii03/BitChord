@@ -90,6 +90,17 @@ object MusicGateFallback {
         refreshActive()
     }
 
+    /**
+     * The same small key-value store, for the other persistent verdicts the
+     * youtube.com fallback keeps (the music classifier and square-cover cache).
+     *
+     * Sharing it rather than adding a second preferences file keeps all of the
+     * fallback's derived state in one place, and a store that has not been
+     * installed yet reads as "memory only", which is the safe answer for a
+     * cache.
+     */
+    internal fun sharedStore(): Store? = store
+
     /** The identity gate state belongs to; anonymous has one shared entry. */
     fun currentKey(): String = Innertube.sessionKey()
 

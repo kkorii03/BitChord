@@ -1,6 +1,7 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.YouTubeWebParser
 import com.music.bitchord.data.model.ChartsPage
@@ -37,6 +38,11 @@ internal object YouTubeFallback {
     private const val RECENT_TITLE = "Recents"
     private const val LIKED_TITLE = "Liked music"
     private const val RECENT_LIMIT = 20
+    /** Only this much of a youtube.com history page is judged and shown at once. */
+    private const val HISTORY_LIMIT = 30
+    /** Square-cover lookups for the home feed, spread over its first shelves. */
+    private const val HOME_COVER_LIMIT = 20
+    private const val SHELF_COVER_LIMIT = 6
     private const val CATEGORY_PREFIX = "ytc:"
 
     private val continuationTokens = ConcurrentHashMap<String, Boolean>()
@@ -74,7 +80,7 @@ internal object YouTubeFallback {
 
         if (shelves.isEmpty()) shelves += channelShelves()
         val continuation = personal?.continuation?.also(::rememberContinuation)
-        return HomeFeed(shelves = shelves, continuation = continuation)
+        return HomeFeed(shelves = enrichCovers(shelves), continuation = continuation)
     }
 
     suspend fun moreHome(token: String): HomeFeed {
@@ -82,7 +88,7 @@ internal object YouTubeFallback {
             ?: return HomeFeed(emptyList(), null)
         val page = YouTubeWebParser.parseHome(root, musicOnly = true)
         page.continuation?.let(::rememberContinuation)
-        return HomeFeed(page.shelves, page.continuation)
+        return HomeFeed(enrichCovers(page.shelves), page.continuation)
     }
 
     suspend fun recentShelf(): HomeShelf? {
@@ -93,8 +99,19 @@ internal object YouTubeFallback {
         return HomeShelf(RECENT_TITLE, songs.map(::shelfItem))
     }
 
-    suspend fun history(): List<Song> =
-        YouTubeWebParser.parseHistory(Innertube.browseYouTube("FEhistory"))
+    /**
+     * The account's youtube.com history, music rows only.
+     *
+     * `FEhistory` is every video ever watched, so the parser's badges are not
+     * enough on their own; [YouTubeMusicClassifier] settles the first page
+     * (cheap rules first, one anonymous category lookup for the rest) and the
+     * survivors get square covers. A failed lookup keeps the row.
+     */
+    suspend fun history(): List<Song> {
+        val parsed = YouTubeWebParser.parseHistory(Innertube.browseYouTube("FEhistory"))
+        val music = YouTubeMusicClassifier.filterMusic(parsed, HISTORY_LIMIT)
+        return YouTubeCoverResolver.enrich(music, HISTORY_LIMIT)
+    }
 
     suspend fun quickPicks(excludeSongIds: Set<String>): List<Song> =
         home().shelves
@@ -300,6 +317,46 @@ internal object YouTubeFallback {
         token ?: return
         if (continuationTokens.size > 128) continuationTokens.clear()
         continuationTokens[token] = true
+    }
+
+    // ---- Covers -------------------------------------------------------------
+
+    /**
+     * Swaps video thumbnails for square album covers on the part of the feed a
+     * listener is about to see. The budget is spread across shelves in page
+     * order so a long feed cannot turn into a library-wide lookup, and every
+     * item is returned even when no cover was found.
+     */
+    private suspend fun enrichCovers(shelves: List<HomeShelf>): List<HomeShelf> {
+        var budget = HOME_COVER_LIMIT
+        return shelves.map { shelf ->
+            if (budget <= 0) return@map shelf
+            val indexes = shelf.items.indices
+                .filter { index ->
+                    val item = shelf.items[index]
+                    item.videoId != null && YouTubeCoverResolver.isVideoThumbnail(item.thumbnailUrl)
+                }
+                .take(minOf(SHELF_COVER_LIMIT, budget))
+            if (indexes.isEmpty()) return@map shelf
+            val songs = indexes.map { index ->
+                val item = shelf.items[index]
+                Song(
+                    videoId = item.videoId.orEmpty(),
+                    title = item.title,
+                    artist = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                )
+            }
+            val byIndex = indexes
+                .zip(YouTubeCoverResolver.enrich(songs, songs.size))
+                .toMap()
+            budget -= indexes.size
+            shelf.copy(
+                items = shelf.items.mapIndexed { index, item ->
+                    byIndex[index]?.let { item.copy(thumbnailUrl = it.thumbnailUrl) } ?: item
+                },
+            )
+        }
     }
 
     private fun shelfItem(song: Song): ShelfItem = ShelfItem(
