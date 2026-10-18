@@ -169,10 +169,6 @@ private const val ARTIST_PHOTO_RATIO = 0.95f
 /** A release's sleeve, given a little more height than the artist photo. */
 private const val SLEEVE_RATIO = 0.92f
 
-/** The sleeve on a release page, as a fraction of the page width. */
-private const val SLEEVE_FRACTION = 0.80f
-
-private val SLEEVE_SHAPE = RoundedCornerShape(12.dp)
 private val PILL_SHAPE = RoundedCornerShape(12.dp)
 
 /**

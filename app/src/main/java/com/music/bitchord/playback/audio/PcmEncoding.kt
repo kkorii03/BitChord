@@ -29,12 +29,4 @@ enum class PcmEncoding(
         require(channelCount > 0) { "channelCount must be positive: $channelCount" }
         return bytesPerSample * channelCount
     }
-
-    /**
-     * Number of bytes required to store [frames] audio frames across [channelCount] channels.
-     */
-    fun totalBytes(frames: Int, channelCount: Int): Int {
-        require(frames >= 0) { "frames must be non-negative: $frames" }
-        return frames * bytesPerFrame(channelCount)
-    }
 }

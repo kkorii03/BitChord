@@ -48,8 +48,6 @@ data class SpineModule(
                 it.uppercase(Locale.ROOT).contains("FLAC")
         }
 
-    val hasHiRes: Boolean get() = tags.any { it.uppercase(Locale.ROOT).contains("HI-RES") }
-
     val isDolbyAtmos: Boolean
         get() = tags.any {
             it.uppercase(Locale.ROOT).contains("ATMOS") || it.uppercase(Locale.ROOT).contains("DOLBY")

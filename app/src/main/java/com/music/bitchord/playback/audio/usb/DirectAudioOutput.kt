@@ -53,22 +53,3 @@ interface DirectAudioOutput {
     /** Releases the USB interface and device connection. */
     fun release()
 }
-
-/**
- * Default safe direct audio output implementation that operates strictly as a probe
- * and fallback coordinator, ensuring zero destabilization of the AudioTrack path.
- */
-class DefaultDirectAudioOutput(
-    override val probeResult: DirectUsbProbeResult = DirectUsbProbeResult.notPresent(),
-) : DirectAudioOutput {
-
-    override val isActive: Boolean = false
-
-    override fun configure(sampleRate: Int, channelCount: Int, encoding: PcmEncoding): Boolean = false
-
-    override fun write(buffer: ByteBuffer): Int = 0
-
-    override fun flush() {}
-
-    override fun release() {}
-}

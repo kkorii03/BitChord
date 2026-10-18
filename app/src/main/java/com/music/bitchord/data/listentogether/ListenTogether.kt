@@ -403,16 +403,7 @@ object ListenTogether {
     private var activePartyServerBase: String? = null
     fun activePartyServerBase(): String? = activePartyServerBase
 
-    /** Whether idle operations are currently falling back to the default server. */
-    val isUsingDefaultFallback: Boolean
-        get() {
-            val configured = _customServer.value
-            return configured.isNotBlank() &&
-                effectiveIdleServerBase() == defaultServer &&
-                configured != defaultServer
-        }
-
-    /** Whether a party can be reached at all — a built-in or a custom address. */
+    /** Whether a party can be reached at all: a built-in or a custom address. */
     val hasServer: Boolean get() = effectiveIdleServerBase().isNotBlank()
 
     enum class Health { UNKNOWN, CHECKING, ONLINE, OFFLINE }

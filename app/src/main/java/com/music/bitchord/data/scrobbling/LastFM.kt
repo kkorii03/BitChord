@@ -20,7 +20,6 @@ import java.util.Locale
 
 object LastFM {
     const val DEFAULT_API_ENDPOINT = "https://ws.audioscrobbler.com/2.0/"
-    const val LIBREFM_API_ENDPOINT = "https://libre.fm/2.0/"
 
     @Serializable
     data class Session(val name: String, val key: String, val subscriber: Int)
@@ -123,15 +122,6 @@ object LastFM {
             )
         }
 
-    fun getAuthUrl(token: String): String {
-        val config = runtimeConfig
-        return if (config.endpoint == LIBREFM_API_ENDPOINT) {
-            "https://libre.fm/api/auth?api_key=${config.apiKey}&token=$token"
-        } else {
-            "https://www.last.fm/api/auth/?api_key=${config.apiKey}&token=$token"
-        }
-    }
-
     suspend fun getMobileSession(
         username: String,
         password: String,
@@ -221,8 +211,6 @@ object LastFM {
             )
     }
 
-    fun currentConfig(): RuntimeConfig = runtimeConfig
-
     fun isInitialized(): Boolean = runtimeConfig.apiKey.isNotEmpty() && runtimeConfig.secret.isNotEmpty()
 
     fun normalizeEndpoint(endpoint: String): String {
@@ -291,8 +279,4 @@ object LastFM {
         }
         return responseText
     }
-
-    const val DEFAULT_SCROBBLE_DELAY_PERCENT = 0.5f
-    const val DEFAULT_SCROBBLE_MIN_SONG_DURATION = 30
-    const val DEFAULT_SCROBBLE_DELAY_SECONDS = 180
 }

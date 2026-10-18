@@ -32,9 +32,6 @@ object SleepTimer {
     /** Durations offered in the picker. */
     val PRESETS = listOf(15, 30, 45, 60)
 
-    /** Whether any kind of timer is currently armed. */
-    val isRunning: Boolean get() = deadline.value != null || afterTrack.value
-
     fun start(minutes: Int) {
         afterTrack.value = false
         this.minutes.value = minutes

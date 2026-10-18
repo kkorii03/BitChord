@@ -1075,9 +1075,6 @@ class PartySync(
 
         /** Maximum upcoming tracks in a party queue excluding the currently playing one. */
         const val MAX_PARTY_UPCOMING_QUEUE = 25
-
-        /** The server's own ceiling; publishing more would only be truncated. */
-        const val MAX_PUBLISHED_QUEUE = 1 + MAX_PARTY_UPCOMING_QUEUE
     }
 }
 

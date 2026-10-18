@@ -726,7 +726,3 @@ internal fun InviteSheet(
         Spacer(Modifier.height(16.dp))
     }
 }
-
-/** @see ListenTogether.myAvatarUrl */
-@Composable
-internal fun rememberMyAvatar(): String? = ListenTogether.myAvatarUrl()
