@@ -75,10 +75,10 @@ object TastePool {
         val session = sources.sessionRadio.mapIndexedNotNull { index, song ->
             candidateOf(song, CandidateSource.RADIO_SESSION, index)
         }
-        val favourites = favouriteTracks(sources.local, taste, nowMs).mapIndexed { index, track ->
+        val favourites = favouriteTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
             candidateOf(track, CandidateSource.FAVOURITE, index)
         }
-        val rediscover = rediscoverTracks(sources.local, taste).mapIndexed { index, track ->
+        val rediscover = rediscoverTracks(sources.local, taste).mapIndexedNotNull { index, track ->
             candidateOf(track, CandidateSource.REDISCOVER, index)
         }
 
