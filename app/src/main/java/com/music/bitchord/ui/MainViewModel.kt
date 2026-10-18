@@ -1999,6 +1999,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val account = YtMusicRepository.account().getOrNull()
             if (identity != listenerKey()) return@launch
+            // A refused lookup (Korea, no Premium) keeps the header the
+            // sign-in already set rather than blanking it.
+            if (account == null) return@launch
             _account.value = account
             // A channel picked in the in-app browser arrives as ids and nothing
             // else — the page's `ytcfg` never says what the channel is called.
@@ -3630,13 +3633,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     result = YtMusicRepository.account()
                 }
                 result.getOrNull()
-            } ?: if (session.hasSessionCookie) {
+            } ?: if (mode == WebSessionMode.SIGN_IN && session.hasSessionCookie) {
                 // Every identity endpoint refused, but the jar holds a
                 // complete Google login (the WebView itself is signed in).
                 // Keep it under a generic name instead of discarding it:
                 // without Premium in Korea Music answers account_menu 404,
                 // and that alone used to make sign-in impossible.
-                android.util.Log.w("BitChord", "account: no identity endpoint answered; keeping the login")
+                com.music.bitchord.data.DebugLog.w("BitChord", "account: no identity endpoint answered; keeping the login")
                 Account(name = "YouTube 계정", email = "", thumbnailUrl = null)
             } else null
             if (account == null) {

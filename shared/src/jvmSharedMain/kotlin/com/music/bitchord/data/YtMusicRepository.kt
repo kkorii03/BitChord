@@ -701,7 +701,12 @@ object YtMusicRepository {
             ?: runCatching {
                 InnertubeParser.parseAccountChannels(Innertube.accountSwitcher())
                     .let { list -> list.firstOrNull { it.activeOnWeb } ?: list.firstOrNull() }
-                    ?.let { Account(name = it.name, email = it.subtitle, thumbnailUrl = it.thumbnailUrl) }
+                    ?.let {
+                        // The switcher's subtitle is usually an @handle, not
+                        // an email; the email field is used to dedupe accounts.
+                        val email = it.subtitle.takeIf { s -> '@' in s && !s.startsWith("@") }.orEmpty()
+                        Account(name = it.name, email = email, thumbnailUrl = it.thumbnailUrl)
+                    }
             }.onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it
                 Log.w(TAG, "account: switcher refused (${it.message?.take(60)})")
