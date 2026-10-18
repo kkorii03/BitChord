@@ -211,7 +211,15 @@ internal object ChartsParser {
             ChartEntry(
                 title = title,
                 subtitle = subtitleOf(entry, type),
-                videoId = if (type == ChartType.ARTISTS) null else videoIdOf(entry),
+                videoId = when (type) {
+                    ChartType.ARTISTS -> null
+                    // Measured 2026-10-19: a track carries its music video as
+                    // encryptedVideoId and the album audio as atvExternalVideoId
+                    // (YouTube Music's "song", square art); a video entry's id
+                    // is the video id itself.
+                    ChartType.TRACKS -> entry.string("atvExternalVideoId") ?: videoIdOf(entry)
+                    else -> videoIdOf(entry) ?: entry.string("id")
+                },
                 browseId = if (type == ChartType.ARTISTS) browseIdOf(entry) else null,
                 thumbnailUrl = thumbnailOf(entry),
             )
@@ -234,6 +242,7 @@ internal object ChartsParser {
 
     private fun browseIdOf(entry: JsonObject): String? =
         entry.string("browseId")
+            ?: entry.string("externalChannelId")
             ?: entry.string("channelId")
             ?: entry.findString("browseId")
             ?: entry.findString("channelId")
