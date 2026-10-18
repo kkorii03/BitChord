@@ -151,6 +151,8 @@ data class LyricLine(
     val alignment: LyricAlignment = LyricAlignment.Start,
     /** Display-only translation: drive its sweep and bloom from the original vocal. */
     val timingSource: LyricLine? = null,
+    /** [words] were guessed from the line's slot by [withEstimatedWords] for display, not stated by the provider. */
+    val wordsEstimated: Boolean = false,
 ) {
     val isGap: Boolean get() = text.isEmpty()
 
@@ -259,7 +261,7 @@ data class LyricLine(
      * distance is the line's own slot, and on a line-synced source it is
      * routinely ten seconds for a line sung over all ten of them.
      */
-    val hasKnownEnd: Boolean get() = words.isNotEmpty() || sungUntilMs != null
+    val hasKnownEnd: Boolean get() = (words.isNotEmpty() && !wordsEstimated) || sungUntilMs != null
 
     /**
      * When the last word finishes — or the line's own end where the provider
@@ -345,6 +347,7 @@ data class LyricLine(
      * once, on the first frame they are drawn.
      */
     val growingWords: List<GrowingWord> by lazy(LazyThreadSafetyMode.NONE) {
+        if (wordsEstimated) return@lazy emptyList()
         words.mapIndexedNotNull { index, word ->
             if (word.canGrow()) GrowingWord(index, word) else null
         }

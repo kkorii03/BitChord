@@ -124,6 +124,7 @@ import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.translationLanguageName
+import com.music.bitchord.data.lyrics.withEstimatedWords
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.Haptics
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -2209,9 +2210,18 @@ internal fun LyricsPanel(
                         label = "backingOpen",
                     )
                 }
+                // Line-synced sources only stamp where a line starts. Guess a
+                // pace for its words from the slot up to the next stamp, so the
+                // highlight still follows the singer letter by letter instead of
+                // lighting the whole line at once. Display-only: the rows, the
+                // scroll and the focus keep reading the provider's own [line].
+                val nextStamp = lines.getOrNull(index + 1)?.timeMs
+                val shown = remember(line, nextStamp, isSynced) {
+                    if (isSynced) line.withEstimatedWords(nextStamp) else line
+                }
                 Column(modifier = shape) {
                     PanelVoice(
-                        line = line,
+                        line = shown,
                         clock = clock,
                         style = style,
                         isActive = isActive,
@@ -2676,9 +2686,14 @@ private fun CurrentLyricLine(
             },
             label = "currentLyricTransition",
             modifier = Modifier.weight(1f, fill = false),
-        ) { (_, lineItem, lineText) ->
+        ) { (lineIndex, lineItem, lineText) ->
             val itemInstrumental = lineItem == null || lineItem.isGap
-            val swept = lineItem?.takeIf { !itemInstrumental && it.isWordSynced }
+            // A line-synced line gets guessed word timings too, so the strip
+            // follows the singer letter by letter like the panel does.
+            val nextStamp = lines.getOrNull(lineIndex + 1)?.timeMs
+            val swept = remember(lineItem, nextStamp) {
+                lineItem?.takeIf { !itemInstrumental }?.withEstimatedWords(nextStamp)?.takeIf { it.isWordSynced }
+            }
             if (swept != null) {
                 SweptLyricLine(
                     line = swept,
