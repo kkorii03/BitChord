@@ -102,6 +102,7 @@ import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.rememberIsForeground
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.listentogether.PartyMember
@@ -1190,6 +1191,23 @@ private const val MARQUEE_REST_MS = 5_000L
 internal const val MARQUEE_ARTIST_STAGGER_MS = 3_000L
 
 /**
+ * Whether a marquee may run this frame.
+ *
+ * Pulled out as a plain function so the rule is testable without a composition:
+ * a line crawls only when playback is running, the app is on screen, and the
+ * user has not asked for reduced motion or low power. The foreground term is
+ * the one the composition cannot supply on its own — the player stays composed
+ * with the screen off, and an endless crawl there keeps the frame clock and a
+ * layout pass awake for text nobody can see.
+ */
+internal fun marqueeShouldCrawl(
+    running: Boolean,
+    reduceAnimation: Boolean,
+    lowPower: Boolean,
+    foreground: Boolean,
+): Boolean = running && foreground && !reduceAnimation && !lowPower
+
+/**
  * A single line of text that scrolls in place, only when it is too long for
  * [modifier]'s width to show in full.
  *
@@ -1231,9 +1249,11 @@ internal fun MarqueeText(
     val textMeasurer = rememberTextMeasurer()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
-    // A paused player, reduced motion or a low-power session leaves the copies
-    // where they are; nothing needs to move for a line nobody is hearing.
-    val crawling = running && !reduceAnimation && !lowPower
+    val foreground = rememberIsForeground()
+    // A paused player, an off-screen app, reduced motion or a low-power session
+    // leaves the copies where they are; nothing needs to move for a line nobody
+    // is hearing or looking at.
+    val crawling = marqueeShouldCrawl(running, reduceAnimation, lowPower, foreground)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (leading != null) {
             leading()
@@ -1361,7 +1381,8 @@ internal fun ArtistCreditsMarquee(
     val segments = remember(text, credits) { creditSegments(text, credits) }
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
-    val crawling = running && !reduceAnimation && !lowPower
+    val foreground = rememberIsForeground()
+    val crawling = marqueeShouldCrawl(running, reduceAnimation, lowPower, foreground)
 
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         if (!enabled) {

@@ -5,6 +5,7 @@ import com.music.bitchord.ui.AppUiHost
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.stringResource
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -68,6 +69,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -653,9 +657,13 @@ val PlayingAccent = Color(0xFFFB4A62)
 
 @Composable
 fun SearchPlayingBars(modifier: Modifier = Modifier) {
+    // One transition for the three bars, and their heights are read in the draw
+    // lambda rather than in composition: this marker sits on every row of a
+    // playing list, and three transitions each invalidating composition per
+    // frame was recomposition for what is only a redraw.
+    val transition = rememberInfiniteTransition(label = "search playing bars")
     val heights = listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
-        val transition = rememberInfiniteTransition(label = "search playing bar $index")
-        val height by transition.animateFloat(
+        transition.animateFloat(
             initialValue = minimum,
             targetValue = 1f - (index * 0.12f),
             animationSpec = infiniteRepeatable(
@@ -669,7 +677,6 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
             ),
             label = "search bar height $index",
         )
-        height
     }
     // The plate is a fixed square so only the bars move, never the box around them.
     Box(
@@ -679,18 +686,17 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
             .background(Color.Black.copy(alpha = 0.52f)),
         contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier.height(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            heights.forEach { height ->
-                Box(
-                    Modifier
-                        .width(3.dp)
-                        .height(14.dp * height)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(Color.White),
+        Canvas(Modifier.width(13.dp).height(14.dp)) {
+            val barWidth = 3.dp.toPx()
+            val gap = 2.dp.toPx()
+            val radius = CornerRadius(2.dp.toPx())
+            heights.forEachIndexed { index, height ->
+                val barHeight = size.height * height.value
+                drawRoundRect(
+                    color = Color.White,
+                    topLeft = Offset(index * (barWidth + gap), size.height - barHeight),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = radius,
                 )
             }
         }

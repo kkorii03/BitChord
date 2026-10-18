@@ -146,6 +146,7 @@ import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.rememberIsForeground
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.lyrics.LyricLine
@@ -932,7 +933,13 @@ fun NowPlayingScreen(
     // queue are then composed offscreen on separate beats rather than all three
     // competing with the song change. Opening a panel early bypasses its wait.
     var playerPrewarmStage by remember(song.videoId) { mutableIntStateOf(0) }
-    LaunchedEffect(song.videoId) {
+    // Only while there is a viewer. A track started from the notification or a
+    // car head unit can change under a composed-but-stopped player, and there is
+    // no reason to decode a backdrop, lay out lyrics and build the queue for a
+    // screen nobody is looking at. Coming back re-runs this from stage 1.
+    val foreground = rememberIsForeground()
+    LaunchedEffect(song.videoId, foreground) {
+        if (!foreground) return@LaunchedEffect
         delay(600)
         playerPrewarmStage = 1 // 128px backdrop decode + CPU blur
         delay(650)
@@ -3340,6 +3347,7 @@ fun NowPlayingScreen(
                                     ),
                                     color = Color.White,
                                     enabled = scrolling,
+                                    running = isPlaying,
                                     leading = if (song.isExplicit == true) {
                                         { ExplicitBadge(color = Color.White) }
                                     } else {
@@ -3361,6 +3369,7 @@ fun NowPlayingScreen(
                                     ),
                                     color = Color.White.copy(alpha = 0.55f),
                                     enabled = scrolling,
+                                    running = isPlaying,
                                     // A title that's also scrolling gets to go first —
                                     // starting together reads as clutter, so the artist
                                     // waits a beat before it joins in.

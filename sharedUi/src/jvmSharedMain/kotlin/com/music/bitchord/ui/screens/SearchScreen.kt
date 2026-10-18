@@ -808,7 +808,7 @@ private fun RecentSearchEntityRow(
     ) {
         Box(Modifier.size(52.dp)) {
             AsyncImage(
-                model = entity.artworkUrl,
+                model = entity.artworkUrl.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)

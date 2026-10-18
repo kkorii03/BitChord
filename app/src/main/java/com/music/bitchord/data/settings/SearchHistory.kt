@@ -9,6 +9,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.startup.StartupWork
+import java.util.concurrent.Executors
 
 /**
  * What's been searched for lately, kept on this device only.
@@ -36,6 +37,18 @@ object SearchHistory {
     private var opened = false
 
     private val openLock = Any()
+
+    /**
+     * One thread for the encode and the preference write, in call order.
+     *
+     * Recording is a tap-time action on the main thread; the list is small but
+     * JSON-encoding it and handing it to SharedPreferences need not happen
+     * there. A single thread rather than a pool because two writes may land
+     * back to back (tap a suggestion, then another) and the last one has to win.
+     */
+    private val writer = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "search-history").apply { isDaemon = true }
+    }
 
     private val json = Json
     private val serializer = ListSerializer(SearchHistoryEntity.serializer())
@@ -108,7 +121,12 @@ object SearchHistory {
         open()
         _recent.value = value
         if (!this::prefs.isInitialized) return
-        prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, value)).apply()
+        // The flow is updated here so the recents list reacts immediately, but
+        // the JSON pass and the prefs write go to the writer thread. The single
+        // writer keeps two rapid records from being written out of order.
+        writer.execute {
+            prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, value)).apply()
+        }
     }
 
     private const val KEY_HISTORY = "search_history"

@@ -86,8 +86,12 @@ object ArtistFacts {
 
     private val requests = Channel<String>(Channel.UNLIMITED)
 
+    /** A write is due; conflated, so a burst of answers still becomes one write. */
+    private val saves = Channel<Unit>(Channel.CONFLATED)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    @Volatile
     private var dirty = false
 
     /**
@@ -107,13 +111,16 @@ object ArtistFacts {
             load()
             worker()
         }
-        // Writes are on a timer rather than one per answer. The cache holds
-        // every artist ever played, so rewriting it after each lookup meant a
-        // few hundred kilobytes per artist during a backfill — for a file that
-        // is only read once, at launch.
+        // Writes are debounced rather than one per answer. The cache holds every
+        // artist ever played, so rewriting it after each lookup meant a few
+        // hundred kilobytes per artist during a backfill — for a file that is
+        // only read once, at launch. A lookup now arms the write; a burst of
+        // answers still lands as one write, and a process that never learns a
+        // new artist never wakes up to save nothing.
         scope.launch {
             while (true) {
-                delay(SAVE_INTERVAL_MS)
+                saves.receive()
+                delay(SAVE_DEBOUNCE_MS)
                 save()
             }
         }
@@ -226,6 +233,7 @@ object ArtistFacts {
             cardAt = System.currentTimeMillis(),
         )
         dirty = true
+        saves.trySend(Unit)
     }
 
     private fun fetchGenres(name: String) {
@@ -254,6 +262,7 @@ object ArtistFacts {
         val entry = known[key(name)] ?: StoredArtist(key = key(name))
         known[key(name)] = entry.copy(genres = genres, genresAt = System.currentTimeMillis())
         dirty = true
+        saves.trySend(Unit)
     }
 
     /**
@@ -324,7 +333,7 @@ object ArtistFacts {
     private const val MAX_GENRES_PER_ARTIST = 2
     private const val MAX_ARTISTS = 4_000
     private const val REQUEST_SPACING_MS = 1_500L
-    private const val SAVE_INTERVAL_MS = 5_000L
+    private const val SAVE_DEBOUNCE_MS = 5_000L
     private const val RETRY_DAYS = 14L
 
     /**

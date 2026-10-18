@@ -96,6 +96,7 @@ import com.music.bitchord.data.listentogether.PartyActivity
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.ServerConnectionState
 import com.music.bitchord.data.listentogether.ServerUrlError
+import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -912,10 +913,16 @@ private fun InAParty(
 private fun NowPlayingInTheParty(state: ListenTogether.State) {
     val track = state.playback.track
     var positionMs by remember { mutableLongStateOf(0L) }
+    val foreground = rememberIsForeground()
 
-    LaunchedEffect(state.playback.seq, state.playback.isPlaying) {
+    // One reading is enough whenever the clock is not advancing or nobody is
+    // looking: a paused party and a screen in the background both show the same
+    // anchored position until the next server update. Only a live, playing
+    // party on screen needs the tick that keeps two phones' counters together.
+    LaunchedEffect(state.playback.seq, state.playback.isPlaying, foreground) {
         while (true) {
             positionMs = ListenTogether.partyPositionMs() ?: 0L
+            if (!state.playback.isPlaying || !foreground) break
             delay(250)
         }
     }
