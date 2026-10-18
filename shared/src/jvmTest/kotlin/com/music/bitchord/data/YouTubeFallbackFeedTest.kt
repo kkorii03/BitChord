@@ -104,7 +104,7 @@ class YouTubeFallbackFeedTest {
     fun `shelves keep the Music Home order and drop repeats`() {
         val ordered = YouTubeFallbackFeed.orderedShelves(
             quickPicks = shelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, "q"),
-            listenAgain = shelf(YouTubeFallbackFeed.LISTEN_AGAIN_TITLE, "l"),
+            listenAgain = shelf(YouTubeFallbackFeed.RECENT_TITLE, "l"),
             myMixes = shelf(YouTubeFallbackFeed.MY_MIXES_TITLE, "m"),
             liked = shelf(YouTubeFallbackFeed.LIKED_TITLE, "k"),
             youtubeHome = listOf(
@@ -117,7 +117,7 @@ class YouTubeFallbackFeedTest {
         assertEquals(
             listOf(
                 YouTubeFallbackFeed.QUICK_PICKS_TITLE,
-                YouTubeFallbackFeed.LISTEN_AGAIN_TITLE,
+                YouTubeFallbackFeed.RECENT_TITLE,
                 YouTubeFallbackFeed.MY_MIXES_TITLE,
                 YouTubeFallbackFeed.LIKED_TITLE,
                 "YouTube home",

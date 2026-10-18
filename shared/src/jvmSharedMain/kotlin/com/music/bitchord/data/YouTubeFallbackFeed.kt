@@ -16,7 +16,10 @@ internal object YouTubeFallbackFeed {
     /** Resolved to the listener's language by the UI's shelf-title localiser. */
     const val QUICK_PICKS_TITLE = "Quick picks"
 
-    /** Also resolved by the UI; the recents shelf under its Music name. */
+    /** The app's own recents key, shared with the UI's shelf-title localiser. */
+    const val RECENT_TITLE = "Recents"
+
+    /** YouTube's own recents title, still de-duplicated against [RECENT_TITLE]. */
     const val LISTEN_AGAIN_TITLE = "Listen again"
 
     /** No existing resource key: the task's plain Korean title. */
@@ -182,7 +185,7 @@ internal object YouTubeFallbackFeed {
     private fun titleKey(title: String): String = when (title.trim().lowercase()) {
         "quick picks", "빠른 선곡", "クイック ミックス",
         "lựa chọn nhanh", "chọn nhanh đài phát" -> "quick picks"
-        "listen again", "다시 듣기", "もう一度聴く", "nghe lại" -> "listen again"
+        "listen again", "다시 듣기", "もう一度聴く", "nghe lại", "recents" -> "listen again"
         "mixed for you", "my mix", "내 믹스", "나를 위한 믹스", "ミックス", "dành riêng cho bạn" -> "my mixes"
         "liked music", "좋아요 표시한 음악" -> "liked"
         else -> title.trim().lowercase()

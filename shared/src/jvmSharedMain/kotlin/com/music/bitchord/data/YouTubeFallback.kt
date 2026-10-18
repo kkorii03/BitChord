@@ -38,7 +38,7 @@ internal object YouTubeFallback {
     private const val CHANNEL_CACHE_MS = 10L * 60 * 1000
     private const val LIKED_MUSIC = "VLLM"
     private const val LIKED_VIDEOS = "VLLL"
-    private const val RECENT_TITLE = YouTubeFallbackFeed.LISTEN_AGAIN_TITLE
+    private const val RECENT_TITLE = YouTubeFallbackFeed.RECENT_TITLE
     private const val RECENT_LIMIT = 20
     /** Only this much of a youtube.com history page is judged and shown at once. */
     private const val HISTORY_LIMIT = 30
