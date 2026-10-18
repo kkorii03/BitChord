@@ -3,8 +3,15 @@ package com.music.bitchord.data.stats
 import android.content.Context
 import android.net.Uri
 import com.music.bitchord.BuildConfig
+import com.music.bitchord.data.LikeState
+import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
+import com.music.bitchord.data.spotify.LocalPlaylist
+import com.music.bitchord.data.spotify.LocalPlaylistStore
+import com.music.bitchord.data.spotify.PlaylistImportMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -23,10 +30,11 @@ import java.time.format.DateTimeFormatter
  *
  * ## What is in it
  *
- * Every preference except credentials (see [AppSettings.exportPrefs]), and every
- * month of listening. Not the audio cache, the downloads or the artwork: those
- * are megabytes that re-fetch themselves, and a backup that is mostly cache is
- * one nobody keeps.
+ * Every preference except credentials (see [AppSettings.exportPrefs]), every
+ * month of listening, the local playlists this device made, the liked and
+ * disliked rows it knows, and its search history. Not the audio cache, the
+ * downloads or the artwork: those are megabytes that re-fetch themselves, and a
+ * backup that is mostly cache is one nobody keeps.
  *
  * ## Typed values rather than a JSON object
  *
@@ -63,15 +71,25 @@ object Backup {
     suspend fun exportTo(context: Context, target: Uri): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val buckets = ListeningStats.exportAll()
+            val overrides = LikeState.overrides.value
             val file = BackupFile(
+                version = SCHEMA_VERSION,
                 versionName = BuildConfig.VERSION_NAME,
                 exportedAt = Instant.now().toString(),
-                settings = AppSettings.exportPrefs().mapNotNull { (key, value) ->
-                    PrefValue.of(value)?.let { key to it }
-                }.toMap(),
+                settings = AppSettings.exportPrefs()
+                    // The list has its own section below; keeping the raw pref
+                    // in here too would let two copies disagree after an edit.
+                    .filterKeys { it != SearchHistory.KEY_HISTORY }
+                    .mapNotNull { (key, value) ->
+                        PrefValue.of(value)?.let { key to it }
+                    }.toMap(),
                 listening = buckets,
+                localPlaylists = LocalPlaylistStore.exportAll().map { BackupPlaylist.from(it) },
+                likedVideoIds = overrides.filterValues { it == LikeStatus.LIKE }.keys.sorted(),
+                dislikedVideoIds = overrides.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
+                searchHistory = SearchHistory.export(),
             )
-            val text = json.encodeToString(BackupFile.serializer(), file)
+            val text = encode(file)
             context.contentResolver.openOutputStream(target, "wt")
                 ?.use { it.write(text.toByteArray()) }
                 ?: error("Couldn't open that file for writing")
@@ -80,23 +98,35 @@ object Backup {
     }
 
     /**
-     * Reads [source] and replaces this device's settings and listening with it.
+     * Reads [source] and replaces this device's settings, listening, search
+     * history and liked rows with it; [playlistMode] decides whether its local
+     * playlists replace this device's or are merged into them.
      *
-     * Validated before anything is written: a file that isn't one of ours, or is
-     * from a schema this build can't read, is refused whole. A half-applied
-     * import is worse than a refused one — it leaves settings from two devices
-     * mixed together with nothing to say which came from where.
+     * Validated before anything is written: a file that isn't one of ours, is
+     * from a schema this build can't read, or carries a malformed playlist row
+     * is refused whole. A half-applied import is worse than a refused one — it
+     * leaves settings from two devices mixed together with nothing to say which
+     * came from where.
+     *
+     * Schema 1 files predate the library sections. They still restore settings,
+     * listening and search history (which schema 1 carried in `settings`), and
+     * leave this device's local playlists, likes and dislikes untouched.
      */
-    suspend fun importFrom(context: Context, source: Uri): Result<Summary> = withContext(Dispatchers.IO) {
+    suspend fun importFrom(
+        context: Context,
+        source: Uri,
+        playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
+    ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
                 ?.use { it.readBytes().decodeToString() }
                 ?: error("파일을 열 수 없습니다")
-            val file = runCatching { json.decodeFromString(BackupFile.serializer(), text) }
-                .getOrElse { error("BitChord 백업 파일이 아닙니다") }
-            require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
-            require(file.version <= SCHEMA_VERSION) {
-                "더 최신 버전의 BitChord에서 만든 백업입니다"
+            val file = decode(text)
+            validate(file)
+            val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
+                file.localPlaylists.map { it.toLocalPlaylist() }
+            } else {
+                null
             }
 
             ListeningStats.importAll(file.listening)
@@ -104,12 +134,50 @@ object Backup {
             // Shares AppSettings' preference file, so it has already been
             // overwritten by the line above — it just doesn't know yet.
             SearchHistory.reload()
+            if (file.version >= LIBRARY_SCHEMA_VERSION) {
+                playlists?.let { LocalPlaylistStore.importAll(it, playlistMode) }
+                // Explicit rather than relying on the settings map: schema 2
+                // states the list itself, and an empty list is a real answer.
+                SearchHistory.replace(file.searchHistory)
+                file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
+                file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
+            }
             Summary(
                 months = file.listening.size,
                 settings = file.settings.size,
                 from = file.versionName,
                 at = file.exportedAt,
+                playlists = playlists?.size ?: 0,
+                liked = if (file.version >= LIBRARY_SCHEMA_VERSION) file.likedVideoIds.size else 0,
+                searchHistory = if (file.version >= LIBRARY_SCHEMA_VERSION) {
+                    file.searchHistory.size
+                } else {
+                    0
+                },
             )
+        }
+    }
+
+    internal fun encode(file: BackupFile): String =
+        json.encodeToString(BackupFile.serializer(), file)
+
+    internal fun decode(text: String): BackupFile =
+        runCatching { json.decodeFromString(BackupFile.serializer(), text) }
+            .getOrElse { error("BitChord 백업 파일이 아닙니다") }
+
+    /** Everything that can be checked before the first write. */
+    internal fun validate(file: BackupFile) {
+        require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
+        require(file.version <= SCHEMA_VERSION) {
+            "더 최신 버전의 BitChord에서 만든 백업입니다"
+        }
+        if (file.version >= LIBRARY_SCHEMA_VERSION) {
+            file.localPlaylists.forEach { playlist ->
+                require(playlist.id.isNotBlank()) { "백업의 로컬 재생목록에 id가 없습니다" }
+                playlist.songs.forEach { song ->
+                    require(song.videoId.isNotBlank()) { "백업의 곡에 videoId가 없습니다" }
+                }
+            }
         }
     }
 
@@ -119,6 +187,9 @@ object Backup {
         val settings: Int,
         val from: String,
         val at: String,
+        val playlists: Int = 0,
+        val liked: Int = 0,
+        val searchHistory: Int = 0,
     )
 
     private const val APP_TAG = "bitchord"
@@ -127,19 +198,130 @@ object Backup {
      * Bump when the shape below stops being readable by an older build. A file
      * from a *newer* schema is refused rather than partially read; one from an
      * older schema is read as-is, since every field has a default.
+     *
+     * 2 added local playlists, liked/disliked rows and an explicit search
+     * history list. A 1 file has none of those keys, so they arrive as empty
+     * lists and [importFrom] deliberately leaves the device's own library
+     * alone for it.
      */
-    private const val SCHEMA_VERSION = 1
+    private const val SCHEMA_VERSION = 2
+
+    /** The first schema that carries the library sections. */
+    private const val LIBRARY_SCHEMA_VERSION = 2
 
     @Serializable
     data class BackupFile(
         val app: String = APP_TAG,
-        val version: Int = SCHEMA_VERSION,
+        /**
+         * 1 is the oldest shape that ever shipped, so a file missing the key
+         * is treated as the cautious case rather than as a current one. Export
+         * writes [SCHEMA_VERSION] explicitly.
+         */
+        val version: Int = 1,
         /** Which build wrote it — for the reader, not for any logic here. */
         val versionName: String = "",
         val exportedAt: String = "",
         val settings: Map<String, PrefValue> = emptyMap(),
         val listening: List<StoredBucket> = emptyList(),
+        /** Local playlists, with their rows, in the order Library shows them. */
+        val localPlaylists: List<BackupPlaylist> = emptyList(),
+        /** Video ids this device is holding as liked, independent of the account. */
+        val likedVideoIds: List<String> = emptyList(),
+        /** Video ids this device is holding as disliked. */
+        val dislikedVideoIds: List<String> = emptyList(),
+        /** Newest first, the same order the search screen shows. */
+        val searchHistory: List<SearchHistoryEntity> = emptyList(),
     )
+
+    /** One local playlist, serializable independently of the on-disk format. */
+    @Serializable
+    data class BackupPlaylist(
+        val id: String,
+        val title: String,
+        val songs: List<BackupSong> = emptyList(),
+    ) {
+        fun toLocalPlaylist(): LocalPlaylist = LocalPlaylist(
+            id = id,
+            title = title,
+            songs = songs.map { it.toSong() },
+        )
+
+        companion object {
+            fun from(playlist: LocalPlaylist): BackupPlaylist = BackupPlaylist(
+                id = playlist.id,
+                title = playlist.title,
+                songs = playlist.songs.map { BackupSong.from(it) },
+            )
+        }
+    }
+
+    /**
+     * A playlist row's song fields.
+     *
+     * Wider than the on-disk playlist JSON because a backup may be the only
+     * copy of a row: an album name, a local file marker or a source quality
+     * cannot be re-fetched if it is dropped here. The fields that describe a
+     * queue position rather than a library row are intentionally absent.
+     */
+    @Serializable
+    data class BackupSong(
+        val videoId: String,
+        val title: String = "",
+        val artist: String = "",
+        val thumbnailUrl: String? = null,
+        val durationText: String? = null,
+        val artistId: String? = null,
+        val albumId: String? = null,
+        val albumName: String? = null,
+        val isVideo: Boolean = false,
+        val isVideoOrigin: Boolean = false,
+        val setVideoId: String? = null,
+        val localUri: String? = null,
+        val localPath: String? = null,
+        val downloadFormat: String? = null,
+        val sourceQuality: String? = null,
+        val isExplicit: Boolean? = null,
+    ) {
+        fun toSong(): Song = Song(
+            videoId = videoId,
+            title = title,
+            artist = artist,
+            thumbnailUrl = thumbnailUrl,
+            durationText = durationText,
+            artistId = artistId,
+            albumId = albumId,
+            albumName = albumName,
+            isVideo = isVideo,
+            isVideoOrigin = isVideoOrigin || isVideo,
+            setVideoId = setVideoId,
+            localUri = localUri,
+            localPath = localPath,
+            downloadFormat = downloadFormat,
+            sourceQuality = sourceQuality,
+            isExplicit = isExplicit,
+        )
+
+        companion object {
+            fun from(song: Song): BackupSong = BackupSong(
+                videoId = song.videoId,
+                title = song.title,
+                artist = song.artist,
+                thumbnailUrl = song.thumbnailUrl,
+                durationText = song.durationText,
+                artistId = song.artistId,
+                albumId = song.albumId,
+                albumName = song.albumName,
+                isVideo = song.isVideo,
+                isVideoOrigin = song.isVideoOrigin,
+                setVideoId = song.setVideoId,
+                localUri = song.localUri,
+                localPath = song.localPath,
+                downloadFormat = song.downloadFormat,
+                sourceQuality = song.sourceQuality,
+                isExplicit = song.isExplicit,
+            )
+        }
+    }
 
     /** One preference, with the type it has to be restored as. */
     @Serializable

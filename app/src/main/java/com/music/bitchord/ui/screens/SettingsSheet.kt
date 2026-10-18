@@ -153,6 +153,7 @@ import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.LowPowerMode
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.Backup
+import com.music.bitchord.data.spotify.PlaylistImportMode
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import kotlinx.coroutines.launch
@@ -328,6 +329,8 @@ fun SettingsScreen(
     var exportStatus by remember { mutableStateOf<String?>(null) }
     var importStatus by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
+    /** The file chosen, waiting for the replace-or-merge choice. */
+    var pendingImport by remember { mutableStateOf<Uri?>(null) }
     var confirmClearSongCache by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
@@ -377,10 +380,29 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocument(),
     ) { source ->
         if (source == null) return@rememberLauncherForActivityResult
+        // Which file is separate from how its playlists should be applied, and
+        // the second question is the one the user has to answer.
+        pendingImport = source
+    }
+    val applyImport: (Uri, PlaylistImportMode) -> Unit = { source, mode ->
+        pendingImport = null
         backupScope.launch {
-            importStatus = Backup.importFrom(context, source).fold(
-                onSuccess = {
-                    context.getString(R.string.import_succeeded, context.countOfMonths(it.months), it.from)
+            importStatus = Backup.importFrom(context, source, mode).fold(
+                onSuccess = { summary ->
+                    if (summary.playlists > 0) {
+                        context.getString(
+                            R.string.import_succeeded_with_library,
+                            context.countOfMonths(summary.months),
+                            summary.from,
+                            summary.playlists,
+                        )
+                    } else {
+                        context.getString(
+                            R.string.import_succeeded,
+                            context.countOfMonths(summary.months),
+                            summary.from,
+                        )
+                    }
                 },
                 onFailure = {
                     context.getString(R.string.import_failed, it.message ?: context.getString(R.string.unknown_error))
@@ -1906,6 +1928,30 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { confirmImport = false }) {
                     Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    // The file is already chosen; the remaining question is only what happens
+    // to the local playlists already on this device. Settings, listening and
+    // search history are replaced either way.
+    pendingImport?.let { source ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text(stringResource(R.string.import_playlists_title)) },
+            text = { Text(stringResource(R.string.import_playlists_choice)) },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = { pendingImport = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(onClick = { applyImport(source, PlaylistImportMode.REPLACE) }) {
+                        Text(stringResource(R.string.import_playlists_replace))
+                    }
+                    TextButton(onClick = { applyImport(source, PlaylistImportMode.MERGE) }) {
+                        Text(stringResource(R.string.import_playlists_merge))
+                    }
                 }
             },
         )

@@ -23,6 +23,15 @@ data class LocalPlaylist(
     val browseId: String get() = "local:playlist:$id"
 }
 
+/** How a restored backup treats the local playlists already on this device. */
+enum class PlaylistImportMode {
+    /** Throw this device's local playlists away and use the backup's list. */
+    REPLACE,
+
+    /** Keep this device's rows and add only the backup rows that are new. */
+    MERGE,
+}
+
 object LocalPlaylistStore {
     private const val PREF_NAME = "bitchord_local_playlists"
     private const val KEY_PLAYLISTS = "playlists_json"
@@ -101,6 +110,27 @@ object LocalPlaylistStore {
         return _playlists.value.firstOrNull { it.id == cleanId || it.id == id || it.browseId == id }
     }
 
+    /** The rows a backup should carry. */
+    fun exportAll(): List<LocalPlaylist> = _playlists.value
+
+    /**
+     * Applies restored [incoming] rows with [mode], returning how many rows the
+     * store holds afterwards.
+     *
+     * Matching is by [LocalPlaylist.id], which survives an export/import round
+     * trip. That is what makes importing the same file twice a no-op in MERGE
+     * mode: every row already present is recognised instead of appended again.
+     */
+    fun importAll(incoming: List<LocalPlaylist>, mode: PlaylistImportMode): Int {
+        val next = when (mode) {
+            PlaylistImportMode.REPLACE -> replacePlaylists(incoming)
+            PlaylistImportMode.MERGE -> mergePlaylists(_playlists.value, incoming)
+        }
+        _playlists.value = next
+        persist(next)
+        return next.size
+    }
+
     private fun persist(list: List<LocalPlaylist>) {
         if (!this::prefs.isInitialized) return
         runCatching {
@@ -121,6 +151,13 @@ object LocalPlaylistStore {
                     sObj.put("albumId", song.albumId)
                     sObj.put("albumName", song.albumName)
                     sObj.put("isVideo", song.isVideo)
+                    sObj.put("isVideoOrigin", song.isVideoOrigin)
+                    sObj.put("setVideoId", song.setVideoId)
+                    sObj.put("localUri", song.localUri)
+                    sObj.put("localPath", song.localPath)
+                    sObj.put("downloadFormat", song.downloadFormat)
+                    sObj.put("sourceQuality", song.sourceQuality)
+                    sObj.put("isExplicit", song.isExplicit)
                     songsArray.put(sObj)
                 }
                 pObj.put("songs", songsArray)
@@ -129,6 +166,27 @@ object LocalPlaylistStore {
             prefs.edit().putString(KEY_PLAYLISTS, jsonArray.toString()).apply()
         }
     }
+}
+
+/**
+ * The pure merge behind [LocalPlaylistStore.importAll].
+ *
+ * Current rows keep their place; incoming rows follow in file order, and an
+ * id that is already present is skipped. Importing the same backup a second
+ * time therefore changes nothing.
+ */
+internal fun mergePlaylists(
+    current: List<LocalPlaylist>,
+    incoming: List<LocalPlaylist>,
+): List<LocalPlaylist> {
+    val seen = HashSet<String>(current.size + incoming.size)
+    return (current + incoming).filter { seen.add(it.id) }
+}
+
+/** The pure replace behind [LocalPlaylistStore.importAll]; duplicates in the file collapse. */
+internal fun replacePlaylists(incoming: List<LocalPlaylist>): List<LocalPlaylist> {
+    val seen = HashSet<String>(incoming.size)
+    return incoming.filter { seen.add(it.id) }
 }
 
 /** What [parsePlaylists] could read out of a stored playlist file. */
@@ -188,17 +246,27 @@ private fun parsePlaylist(obj: JsonObject): ParsedPlaylist {
     return ParsedPlaylist(LocalPlaylist(id, title, songs), damaged)
 }
 
-private fun parseSong(obj: JsonObject): Song = Song(
-    videoId = obj.requiredString("videoId"),
-    title = obj.stringOrNull("title").orEmpty(),
-    artist = obj.stringOrNull("artist").orEmpty(),
-    thumbnailUrl = obj.stringOrNull("thumbnailUrl"),
-    durationText = obj.stringOrNull("durationText"),
-    artistId = obj.stringOrNull("artistId"),
-    albumId = obj.stringOrNull("albumId"),
-    albumName = obj.stringOrNull("albumName"),
-    isVideo = (obj["isVideo"] as? JsonPrimitive)?.booleanOrNull == true,
-)
+private fun parseSong(obj: JsonObject): Song {
+    val isVideo = (obj["isVideo"] as? JsonPrimitive)?.booleanOrNull == true
+    return Song(
+        videoId = obj.requiredString("videoId"),
+        title = obj.stringOrNull("title").orEmpty(),
+        artist = obj.stringOrNull("artist").orEmpty(),
+        thumbnailUrl = obj.stringOrNull("thumbnailUrl"),
+        durationText = obj.stringOrNull("durationText"),
+        artistId = obj.stringOrNull("artistId"),
+        albumId = obj.stringOrNull("albumId"),
+        albumName = obj.stringOrNull("albumName"),
+        isVideo = isVideo,
+        isVideoOrigin = (obj["isVideoOrigin"] as? JsonPrimitive)?.booleanOrNull ?: isVideo,
+        setVideoId = obj.stringOrNull("setVideoId"),
+        localUri = obj.stringOrNull("localUri"),
+        localPath = obj.stringOrNull("localPath"),
+        downloadFormat = obj.stringOrNull("downloadFormat"),
+        sourceQuality = obj.stringOrNull("sourceQuality"),
+        isExplicit = (obj["isExplicit"] as? JsonPrimitive)?.booleanOrNull,
+    )
+}
 
 private fun JsonObject.requiredString(key: String): String =
     stringOrNull(key) ?: error("missing $key")

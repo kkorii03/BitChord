@@ -201,9 +201,9 @@
     <string name="replay_subtitle">Your top songs, artists, albums and genres</string>
     <string name="work_out_genres">Work out genres</string>
     <string name="export_data">Export data</string>
-    <string name="export_data_subtitle">Settings and listening history, as one JSON file</string>
+    <string name="export_data_subtitle">Settings, playlists, search history and listening history, as one JSON file</string>
     <string name="import_data">Import data</string>
-    <string name="import_data_subtitle">Replaces the settings and history on this device</string>
+    <string name="import_data_subtitle">Replaces settings, history and playlists on this device</string>
     <string name="import_backup_title">Import a backup?</string>
     <string name="choose_file">Choose file</string>
     <string name="top_artists">Top artists</string>
@@ -849,7 +849,12 @@
     <string name="export_succeeded">Exported settings and %1$s</string>
     <string name="export_failed">Export failed: %1$s</string>
     <string name="import_succeeded">Imported %1$s from v%2$s</string>
+    <string name="import_succeeded_with_library">Imported %1$s and %3$d local playlists from v%2$s</string>
     <string name="import_failed">Import failed: %1$s</string>
+    <string name="import_playlists_title">Import local playlists</string>
+    <string name="import_playlists_choice">Settings, listening history and search history are replaced either way. Choose whether this file\'s local playlists replace the ones on this device, or are merged into them without duplicates.</string>
+    <string name="import_playlists_replace">Replace</string>
+    <string name="import_playlists_merge">Merge</string>
     <string name="unknown_error">unknown error</string>
     <string name="no_listening_history">no listening history</string>
     <plurals name="listening_month_count">

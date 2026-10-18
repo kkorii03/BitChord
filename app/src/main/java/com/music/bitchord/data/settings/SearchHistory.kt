@@ -94,6 +94,33 @@ object SearchHistory {
         load()
     }
 
+    /** The rows a backup should carry, newest first. */
+    fun export(): List<SearchHistoryEntity> {
+        // A backup can be the first caller after launch; opening here keeps an
+        // export from writing an empty list while the stored one is unread.
+        open()
+        return _recent.value
+    }
+
+    /**
+     * Replaces the list with [entries] and writes it immediately.
+     *
+     * Used by backup import rather than [record]: an import is one explicit
+     * action, and the caller's success message should not run ahead of a
+     * queued write. Duplicate ids are collapsed and the list is capped the
+     * same way [record] caps it.
+     */
+    fun replace(entries: List<SearchHistoryEntity>) {
+        open()
+        val seen = HashSet<String>(entries.size)
+        val trimmed = entries
+            .filter { seen.add(it.id.lowercase()) }
+            .take(MAX_ENTRIES)
+        _recent.value = trimmed
+        if (!this::prefs.isInitialized) return
+        prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, trimmed)).apply()
+    }
+
     private fun load() {
         _recent.value = runCatching {
             json.decodeFromString(serializer, prefs.getString(KEY_HISTORY, null) ?: "[]")
@@ -132,5 +159,5 @@ object SearchHistory {
         }
     }
 
-    private const val KEY_HISTORY = "search_history"
+    internal const val KEY_HISTORY = "search_history"
 }
