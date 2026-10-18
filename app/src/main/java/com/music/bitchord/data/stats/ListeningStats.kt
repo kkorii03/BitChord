@@ -334,6 +334,24 @@ object ListeningStats {
         months().mapNotNull { month -> read(month.toString())?.let { month to it.tracks } }
     }
 
+    /**
+     * The most recently played tracks across every month, newest first and one
+     * row per video id.
+     *
+     * [TrackEntry.last] is the play time that orders this: the monthly buckets
+     * exist for the Replay's arithmetic, not to imply that a track heard last
+     * month is newer than one heard this morning. The open month is flushed by
+     * [monthlyTracks] first, so a track that just played is already here.
+     */
+    suspend fun recentTracks(limit: Int = RECENT_LIMIT): List<TrackEntry> {
+        if (limit <= 0) return emptyList()
+        return monthlyTracks()
+            .flatMap { it.second }
+            .sortedByDescending { it.last }
+            .distinctBy { it.id }
+            .take(limit)
+    }
+
     /** Every month with a file, oldest first. */
     fun months(): List<YearMonth> {
         if (!ready) return emptyList()
@@ -677,6 +695,9 @@ object ListeningStats {
 
     /** Three years, which is longer than "all time" means to most people. */
     private const val KEEP_MONTHS = 36
+
+    /** How many recent tracks a shelf asks this store for. */
+    private const val RECENT_LIMIT = 20
 
     /**
      * Per-month caps. Generous enough that nobody reaches them by listening,

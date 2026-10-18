@@ -12,6 +12,8 @@ import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.DebugLog
+import com.music.bitchord.data.LocalPlay
+import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.appcompat.app.AppCompatDelegate
@@ -148,6 +150,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // PlaybackService because the Replay page reads it from the UI side and
         // both live in this process — one owner, one directory.
         ListeningStats.init(this)
+        // The same record, handed to the shared youtube.com fallback so its
+        // Recently played shelf prefers what this device played as music.
+        LocalPlayHistory.install(object : LocalPlayHistory.Source {
+            override suspend fun recent(limit: Int): List<LocalPlay> =
+                ListeningStats.recentTracks(limit).map { LocalPlay(it.asSong(), it.last) }
+        })
         // What the recommendation store has learned from this device's
         // listening and ratings. Opened beside the listening record, for the
         // same reason: both the UI and PlaybackService live in this process.

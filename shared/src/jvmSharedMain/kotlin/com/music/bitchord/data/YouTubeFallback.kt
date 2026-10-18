@@ -15,6 +15,7 @@ import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -94,11 +95,45 @@ internal object YouTubeFallback {
     }
 
     suspend fun recentShelf(): HomeShelf? {
-        val songs = runCatching { history() }.getOrDefault(emptyList())
-            .distinctBy { it.videoId }
-            .take(RECENT_LIMIT)
+        val songs = try {
+            mergedHistory(RECENT_LIMIT)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Log.w(TAG, "Recently played failed: ${failure.message}")
+            emptyList()
+        }
         if (songs.isEmpty()) return null
         return HomeShelf(RECENT_TITLE, songs.map(::shelfItem))
+    }
+
+    /**
+     * The account's listening history, local first.
+     *
+     * The device's own record is what the listener played as music, so it leads
+     * the page in the order they played it. youtube.com's `FEhistory` only fills
+     * what is still missing while that record is short
+     * ([RecentShelf.LOCAL_ONLY_MINIMUM]), because it mixes in everything watched
+     * in the YouTube app.
+     */
+    suspend fun history(): List<Song> = mergedHistory(HISTORY_LIMIT)
+
+    private suspend fun mergedHistory(limit: Int): List<Song> {
+        val local = RecentShelf.localSongs(LocalPlayHistory.recent(RECENT_LIMIT))
+        if (local.size >= RecentShelf.LOCAL_ONLY_MINIMUM) return local
+        val remote = try {
+            youtubeHistory()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // Local plays are still a useful history when youtube.com cannot
+            // answer; only an empty page has nothing to show and should surface
+            // the failure.
+            if (local.isEmpty()) throw failure
+            Log.w(TAG, "YouTube history unavailable: ${failure.message}")
+            emptyList()
+        }
+        return RecentShelf.merge(local, remote, limit)
     }
 
     /**
@@ -109,7 +144,7 @@ internal object YouTubeFallback {
      * (cheap rules first, one anonymous category lookup for the rest) and the
      * survivors get square covers. A failed lookup keeps the row.
      */
-    suspend fun history(): List<Song> {
+    private suspend fun youtubeHistory(): List<Song> {
         val parsed = YouTubeWebParser.parseHistory(Innertube.browseYouTube("FEhistory"))
         val music = YouTubeMusicClassifier.filterMusic(parsed, HISTORY_LIMIT)
         return YouTubeCoverResolver.enrich(music, HISTORY_LIMIT)

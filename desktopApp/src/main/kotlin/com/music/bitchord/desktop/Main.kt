@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import androidx.compose.runtime.CompositionLocalProvider
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.data.DebugLog
+import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.MusicGateFallback
@@ -54,6 +55,11 @@ fun main() {
         ).asTokenProvider(),
     )
     MusicGateFallback.init(DesktopMusicGateStore)
+    // The desktop's own listening record, so the gated Recently played shelf
+    // prefers music this device played over youtube.com's mixed watch history.
+    LocalPlayHistory.install(object : LocalPlayHistory.Source {
+        override suspend fun recent(limit: Int) = DesktopListeningStats.recent(limit)
+    })
     // The public "apps open right now" count; see Presence.
     DesktopPresence.install()
     desktopMain()

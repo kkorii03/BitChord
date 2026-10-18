@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.LocalPlay
 import com.music.bitchord.data.model.Song
 import java.nio.charset.StandardCharsets
 import java.time.Instant
@@ -15,6 +16,8 @@ data class DesktopReplayEntry(
     val song: Song,
     val listenedMs: Long,
     val plays: Int,
+    /** When this track was last played; 0 on rows written before it was kept. */
+    val lastPlayedAt: Long = 0L,
 )
 
 /** A charted artist, album or genre — counted by name, with whatever the credit carried. */
@@ -101,6 +104,7 @@ object DesktopListeningStats {
                 song = mergeSong(previous?.song, song),
                 listenedMs = (previous?.listenedMs ?: 0L) + playedMs.coerceAtLeast(0L),
                 plays = (previous?.plays ?: 0) + if (countsAsPlay) 1 else 0,
+                lastPlayedAt = System.currentTimeMillis(),
             )
             val added = playedMs.coerceAtLeast(0L)
             bucket.hours[at.hour] += added
@@ -112,6 +116,21 @@ object DesktopListeningStats {
 
     fun summary(period: DesktopReplayPeriod = DesktopReplayPeriod.ALL_TIME): DesktopReplaySummary =
         synchronized(lock) { summarise(read(), period, LocalDate.now()) }
+
+    /**
+     * The most recently played tracks across every month, newest first and one
+     * row per video id, for the shared Recently played shelf. Covers are the
+     * ones stored with the play, i.e. what the player showed.
+     */
+    fun recent(limit: Int): List<LocalPlay> = synchronized(lock) {
+        if (limit <= 0) return@synchronized emptyList()
+        read()
+            .flatMap { it.tracks.values }
+            .sortedByDescending { it.lastPlayedAt }
+            .distinctBy { it.song.videoId }
+            .take(limit)
+            .map { LocalPlay(it.song, it.lastPlayedAt) }
+    }
 
     /** Everything recorded, thrown away. */
     fun clear() = synchronized(lock) {
@@ -278,6 +297,7 @@ object DesktopListeningStats {
                     ),
                     listenedMs = fields.getOrElse(9) { "" }.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
                     plays = fields.getOrElse(10) { "" }.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                    lastPlayedAt = fields.getOrElse(11) { "" }.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
                 )
             }
             ROW_HOUR -> {
@@ -303,6 +323,7 @@ object DesktopListeningStats {
         entry.song.durationText.orEmpty(),
         entry.listenedMs.toString(),
         entry.plays.toString(),
+        entry.lastPlayedAt.toString(),
     ).joinToString("|", transform = ::encodeField)
 
     private fun encodeHour(month: String, hour: Int, ms: Long) =
