@@ -424,8 +424,14 @@ object StreamResolver {
 
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
+        // In Korea without Premium the clients InnerTubeX leads with are the
+        // refused ones; the anonymous IOS/ANDROID request is what plays there,
+        // so it goes first once the gate is known, and last for everyone else.
+        val gated = MusicGateFallback.isActive()
         val stream = try {
-            timed("$videoId InnerTubeX") { innerTubeXStream(videoId) }
+            (if (gated) timed("$videoId direct") { directStream(videoId) } else null)
+                ?: timed("$videoId InnerTubeX") { innerTubeXStream(videoId) }
+                ?: (if (!gated) timed("$videoId direct") { directStream(videoId) } else null)
                 ?: run {
                     TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                     timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
@@ -521,6 +527,22 @@ object StreamResolver {
             }
             TrackLog.w(TAG, "InnerTubeX ${found.profileId} minted an unusable URL for $videoId: $verdict")
             skip += found.profileId
+        }
+        return null
+    }
+
+    /**
+     * A probed stream from [DirectClientResolver]'s anonymous IOS/ANDROID
+     * request, or null. Each candidate is probed with the same headers the
+     * real fetch will send, so a URL that would 403 mid-track is skipped here.
+     */
+    private fun directStream(videoId: String, maxKbps: Int = maxKbps()): Stream? {
+        for (found in DirectClientResolver.candidates(videoId, maxKbps)) {
+            if (probe(found.url) == Probe.OK) {
+                TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
+                return Stream(found.url, found.kbps, found.mimeType)
+            }
+            TrackLog.w(TAG, "direct ${found.client} URL for $videoId failed the probe")
         }
         return null
     }
