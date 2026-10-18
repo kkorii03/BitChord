@@ -283,6 +283,22 @@ object Innertube {
         val clientVersion: String?,
     )
 
+    /**
+     * The identity in force, for callers that captured only a cookie.
+     *
+     * A login completed on a page with no `ytcfg` — YouTube's Premium paywall,
+     * a mobile home page — has no page identity to adopt. The caller resolves
+     * the desktop shell first with [ensureSessionScope], then reads back what
+     * it found so the profile it saves names the right channel.
+     */
+    data class ResolvedSession(
+        val pageId: String?,
+        val dataSyncId: String?,
+        val authUser: String,
+        val visitorData: String?,
+        val clientVersion: String?,
+    )
+
     @Volatile
     private var scope: SessionScope? = null
 
@@ -455,6 +471,22 @@ object Innertube {
         if (cookie == null) return
         scopeLock.withLock { scope = null }
         ensureSessionScope()
+    }
+
+    /**
+     * The identity currently resolved from the cookie, or null if none is yet.
+     *
+     * See [ResolvedSession]. The returned visitor id is the session-bound one
+     * when the shell supplied it.
+     */
+    fun currentSession(): ResolvedSession? = scope?.let {
+        ResolvedSession(
+            pageId = it.pageId,
+            dataSyncId = it.dataSyncId,
+            authUser = it.authUser,
+            visitorData = visitorData,
+            clientVersion = it.clientVersion,
+        )
     }
 
     /**

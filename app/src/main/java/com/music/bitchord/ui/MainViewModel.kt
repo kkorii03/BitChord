@@ -3571,7 +3571,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         mode: WebSessionMode,
         onComplete: (Boolean) -> Unit = {},
     ) {
-        if (!session.loggedIn) {
+        // A page without ytcfg is not a failed login: the cookie jar can be
+        // complete while the WebView sits on YouTube's Premium paywall or a
+        // plain home page. Only a jar with no signing secret is unusable.
+        if (!session.loggedIn && !session.hasSessionCookie) {
             onComplete(false)
             return
         }
@@ -3583,15 +3586,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // signedIn=true; a half-finished channel chooser therefore became
             // a durable broken "Personal" account.
             Innertube.cookie = session.cookie
-            Innertube.adoptSessionScope(
-                pageId = session.pageId,
-                dataSyncId = session.dataSyncId,
-                authUser = session.authUser,
-                visitorData = session.visitorData,
-                clientVersion = session.clientVersion,
-                loggedIn = true,
-            )
-            Innertube.selectChannel(session.pageId, session.dataSyncId, session.authUser)
+            // A page that published a signed-in ytcfg is authoritative: it is
+            // the only thing that knows which brand channel the listener has
+            // selected. A paywall or plain home page is just a landing over a
+            // valid jar, so the desktop shell is asked with those cookies and
+            // the answer is used below.
+            val pageHasIdentity = session.loggedIn &&
+                (session.pageId != null || session.dataSyncId != null)
+            if (pageHasIdentity) {
+                Innertube.adoptSessionScope(
+                    pageId = session.pageId,
+                    dataSyncId = session.dataSyncId,
+                    authUser = session.authUser,
+                    visitorData = session.visitorData,
+                    clientVersion = session.clientVersion,
+                    loggedIn = true,
+                )
+            } else {
+                Innertube.ensureSessionScope()
+                if (Innertube.currentSession() == null && session.loggedIn) {
+                    // The shell could not be read; keep the page's own visitor
+                    // and client version rather than discarding a real login.
+                    Innertube.adoptSessionScope(
+                        pageId = session.pageId,
+                        dataSyncId = session.dataSyncId,
+                        authUser = session.authUser,
+                        visitorData = session.visitorData,
+                        clientVersion = session.clientVersion,
+                        loggedIn = true,
+                    )
+                }
+            }
+            val resolved = if (pageHasIdentity) null else Innertube.currentSession()
+            val pageId = session.pageId ?: resolved?.pageId
+            val dataSyncId = session.dataSyncId ?: resolved?.dataSyncId
+            val authUser = session.authUser ?: resolved?.authUser
+            Innertube.selectChannel(pageId, dataSyncId, authUser)
 
             val account = withTimeoutOrNull(20_000L) {
                 var result = YtMusicRepository.account()
@@ -3623,16 +3653,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val previous = authStore.sessions.firstOrNull { it.accountId == accountId }
-            val selectedProfileId = profileId(session.pageId, session.dataSyncId, account.name)
+            val selectedProfileId = profileId(pageId, dataSyncId, account.name)
             val profile = YouTubeProfile(
                 profileId = selectedProfileId,
                 name = account.name,
                 handle = account.email,
                 avatar = account.thumbnailUrl,
-                pageId = session.pageId,
-                dataSyncId = session.dataSyncId,
-                authUser = session.authUser,
-                isBrandAccount = session.pageId != null,
+                pageId = pageId,
+                dataSyncId = dataSyncId,
+                authUser = authUser,
+                isBrandAccount = pageId != null,
             )
             val hasRealIdentity = profile.pageId != null || profile.dataSyncId != null
             val profiles = previous?.profiles.orEmpty().filterNot { known ->

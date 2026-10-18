@@ -22,11 +22,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 
 private const val MUSIC_ORIGIN = "https://music.youtube.com"
-
-private const val LOGIN_URL =
-    "https://accounts.google.com/ServiceLogin" +
-        "?ltmpl=music&service=youtube&passive=true" +
-    "&continue=https%3A%2F%2Fmusic.youtube.com%2F"
+private const val YOUTUBE_ORIGIN = "https://www.youtube.com"
 
 private const val TAG = "BitChord"
 
@@ -35,14 +31,21 @@ private const val TAG = "BitChord"
  * it listens as.
  *
  * [WebSessionMode.SIGN_IN] loads the standard Google web login with
- * `continue=music.youtube.com`. The user authenticates directly against
- * accounts.google.com (2FA, passkeys etc. all work — it's the real page). When
- * Google redirects back to music.youtube.com the listener confirms the profile
- * shown by the live page. This deliberately leaves a multiple-channel account
- * enough time to choose its Personal or Brand identity before anything is
- * saved. The browser's local Google cookies are cleared on the way in without
- * visiting Google's logout endpoint, so adding an account cannot invalidate a
- * previously saved session.
+ * `continue=` a desktop youtube.com URL, announced as desktop Chrome. The user
+ * authenticates directly against accounts.google.com (2FA, passkeys etc. all
+ * work — it's the real page). Completion is read from the cookie jar, not from
+ * the page: Google replaces the mobile music site with a Premium paywall for
+ * some accounts (Korea, non-Premium), and that page has no signed-in `ytcfg`
+ * even though Google has already signed the account in. Waiting for
+ * music.youtube.com to render the identity therefore never finished.
+ *
+ * The listener still confirms the profile explicitly. This deliberately leaves
+ * a multiple-channel account enough time to choose its Personal or Brand
+ * identity before anything is saved, and [captureFrom] falls back to the
+ * desktop shell via [com.music.bitchord.data.innertube.Innertube] when the
+ * page cannot report one. The browser's local Google cookies are cleared on
+ * the way in without visiting Google's logout endpoint, so adding an account
+ * cannot invalidate a previously saved session.
  *
  * [WebSessionMode.SWITCH_CHANNEL] keeps those cookies and opens YouTube Music
  * itself, so the listener can use the avatar menu's own Accounts list — the one
@@ -95,40 +98,58 @@ fun YtMusicLoginScreen(
             WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                // Desktop Chrome, not the WebView's own mobile string: the
+                // mobile Music site is what Google paywalls for free accounts.
+                settings.userAgentString = YouTubeWebLogin.DESKTOP_USER_AGENT
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        // Reaching the Music origin only enables confirmation.
+                        // The cookie jar decides whether the login is done,
+                        // not the page. A paywall, youtube.com's home page and
+                        // m.youtube.com are all valid landings once the auth
+                        // cookies are there; the old check accepted none of
+                        // them because it waited for music.youtube.com itself.
+                        val signedIn = authCookieHeader() != null
                         // A multi-channel login can still be waiting for the
-                        // listener to choose an identity on this very page.
-                        // Capturing automatically here is the race that used to
-                        // create a fake "Personal" profile and close too soon.
-                        currentOnPageReady(url?.startsWith(MUSIC_ORIGIN) == true)
+                        // listener to choose an identity on a Music page, so
+                        // reaching that origin remains enough to enable
+                        // confirmation there as well.
+                        currentOnPageReady(
+                            signedIn ||
+                                (mode == WebSessionMode.SWITCH_CHANNEL &&
+                                    url?.startsWith(MUSIC_ORIGIN) == true),
+                        )
                     }
                 }
 
                 webView = this
-                loadUrl(if (mode == WebSessionMode.SIGN_IN) LOGIN_URL else "$MUSIC_ORIGIN/")
+                loadUrl(
+                    if (mode == WebSessionMode.SIGN_IN) YouTubeWebLogin.loginUrl()
+                    else "$MUSIC_ORIGIN/",
+                )
             }
         },
     )
 }
 
 /**
- * Takes the session from [view], if it is holding one.
+ * Takes the session from the WebView's cookie jar, with whatever identity the
+ * page could add.
  *
- * @return whether there was one to take. False means the cookie jar has no
- *   signing secret in it yet — the page is mid-login, or is not a YouTube page
- *   at all — and the caller should leave the screen open rather than saving
- *   something that cannot sign a request. See [AuthStore.hasApiSid].
+ * The jar is the requirement: if it holds a signing secret the login is done,
+ * even when the page in front of the listener is YouTube's Premium paywall or
+ * a mobile home page with no `ytcfg`. In that case the capture carries the
+ * cookie alone and the caller reads the identity from the desktop shell with
+ * the app's own client. [onUnavailable] means the jar is still mid-login and
+ * has no request-signing cookie yet; the screen should stay open.
  */
 private fun captureFrom(
     view: WebView,
     onCaptured: (CapturedSession) -> Unit,
     onUnavailable: () -> Unit,
 ) {
-    val cookies = CookieManager.getInstance().getCookie(MUSIC_ORIGIN)
-    if (cookies == null || !AuthStore.hasApiSid(cookies)) {
+    val cookies = authCookieHeader()
+    if (cookies == null) {
         onUnavailable()
         return
     }
@@ -143,8 +164,21 @@ private fun captureFrom(
             it is JsonPrimitive && it.content == "true"
         }
         if (config == null || !loggedIn) {
-            Log.w(TAG, "confirmation requested before the page exposed a signed-in identity")
-            onUnavailable()
+            // A paywall or a plain YouTube page. The account is signed in —
+            // the jar says so — and the identity is fetched from the desktop
+            // music shell in MainViewModel.onWebSession instead.
+            Log.d(TAG, "captured a session without a page identity; using the cookie jar")
+            onCaptured(
+                CapturedSession(
+                    cookie = cookies,
+                    pageId = null,
+                    dataSyncId = null,
+                    authUser = null,
+                    visitorData = null,
+                    clientVersion = null,
+                    loggedIn = false,
+                ),
+            )
             return@evaluateJavascript
         }
         val pageId = config.string("pageId")
@@ -162,6 +196,26 @@ private fun captureFrom(
             ),
         )
     }
+}
+
+/**
+ * The WebView's cookie jar as one header, or null until it is a complete
+ * login.
+ *
+ * Both YouTube origins are read because the desktop landing and the music
+ * origin can expose slightly different sets; the cookie domain is shared, so
+ * the first value wins on a duplicate name.
+ */
+private fun authCookieHeader(): String? {
+    val manager = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
+    val header = listOf(MUSIC_ORIGIN, YOUTUBE_ORIGIN)
+        .mapNotNull { manager.getCookie(it) }
+        .flatMap { it.split(';') }
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinctBy { it.substringBefore('=').trim() }
+        .joinToString("; ")
+    return header.takeIf { YouTubeWebLogin.isSessionComplete(it) }
 }
 
 /**

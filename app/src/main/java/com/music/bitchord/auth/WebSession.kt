@@ -28,8 +28,9 @@ enum class WebSessionMode {
  * it there is what lets "switch to the channel I want, then save" work.
  *
  * Individual identity fields are nullable because a personal viewer need not
- * have a channel. The capture itself is accepted only from a page whose config
- * says it is signed in, and the API verifies it before it is persisted.
+ * have a channel. The capture is accepted from a complete cookie jar even when
+ * the page exposed no identity, and the API verifies it before it is
+ * persisted.
  */
 data class CapturedSession(
     val cookie: String,
@@ -41,9 +42,19 @@ data class CapturedSession(
     val authUser: String?,
     val visitorData: String?,
     val clientVersion: String?,
-    /** Whether the page reported itself signed in at all. */
+    /**
+     * Whether the page itself reported a signed-in `ytcfg`.
+     *
+     * False is not a failure: the cookie jar can be a complete Google login
+     * while the page in front of the listener is a Premium paywall or a plain
+     * YouTube home page. The identity is then read from the desktop shell by
+     * the app's own client, using [cookie].
+     */
     val loggedIn: Boolean,
-)
+) {
+    /** Whether [cookie] alone is a complete, request-signing YouTube login. */
+    val hasSessionCookie: Boolean get() = YouTubeWebLogin.isSessionComplete(cookie)
+}
 
 /**
  * The WebView's own cookie jar, which is not the app's.
