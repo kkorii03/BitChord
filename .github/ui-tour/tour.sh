@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # Installs the dev build on the emulator in Korean, walks the main screens and
 # saves a screenshot (+ UI hierarchy) of each into shots/. Never fails the job.
+#
+# Playback is opened by watch URL rather than by typing the query through the
+# Korean IME (the IME turns Latin input into jamo). Before every lyrics screen
+# the media session is checked, playback is nudged with media keys and the
+# position is waited on; a 4-frame burst then shows the letter-by-letter sweep.
 set -x
 OUT=shots
 mkdir -p "$OUT"
 PKG=com.dev.bitchord
+# Dance Monkey cover: same path a shared YouTube Music link takes, so no IME.
+MAIN_VIDEO=US2I6tSRjcE
+# Estimated timestamp of the first lyric line; the sweep is visible past it.
+FIRST_LINE_MS=30000
 
 APK=$(ls app/build/outputs/apk/dev/debug/*x86_64*.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && APK=$(ls app/build/outputs/apk/dev/debug/*universal*.apk 2>/dev/null | head -1)
@@ -29,6 +38,12 @@ shot() {
   n=$((n + 1)); name=$(printf "%02d-%s" "$n" "$1")
   adb exec-out screencap -p > "$OUT/$name.png"
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$OUT/$name.xml" >/dev/null 2>&1
+}
+
+# Screenshot only, no UI dump, so burst frames stay ~700 ms apart.
+burst_shot() {
+  n=$((n + 1)); name=$(printf "%02d-%s" "$n" "$1")
+  adb exec-out screencap -p > "$OUT/$name.png"
 }
 
 # Centre of the first node whose text or content-desc matches $1 (exact, then
@@ -67,6 +82,100 @@ tap() {
 
 swipe_up() { adb shell input swipe 540 1700 540 600 400; sleep 3; }
 
+# The BitChord session's PlaybackState line, e.g.
+#   state=PlaybackState {state=PLAYING(3), position=12345, speed=1.0, ...}
+session_line() {
+  adb shell dumpsys media_session 2>/dev/null | awk '
+    /BitChordPlayback/ { found = 1 }
+    found && /state=PlaybackState/ { print; exit }
+  '
+}
+
+# Fills LAST_STATE / LAST_POS and echoes a readable line (step output).
+LAST_STATE=UNKNOWN
+LAST_POS=0
+read_state() {
+  local line inner field
+  line=$(session_line)
+  inner=${line#*PlaybackState}
+  [ "$inner" = "$line" ] && inner=$line
+  # Split the fields on commas so "buffered position=" never wins over
+  # "position=". The state field prints either PLAYING or PLAYING(3).
+  field=$(echo "$inner" | tr ',' '\n' | sed -n 's/^[[:space:]]*{*state=\([^,]*\).*/\1/p' | head -1)
+  case "$field" in
+    *PLAYING*) LAST_STATE=PLAYING ;;
+    *BUFFERING*) LAST_STATE=BUFFERING ;;
+    *PAUSED*) LAST_STATE=PAUSED ;;
+    *STOPPED*) LAST_STATE=STOPPED ;;
+    *NONE*) LAST_STATE=NONE ;;
+    '') LAST_STATE=UNKNOWN ;;
+    *) LAST_STATE=$field ;;
+  esac
+  LAST_POS=$(echo "$inner" | tr ',' '\n' | sed -n 's/^[[:space:]]*position=\(-\{0,1\}[0-9][0-9]*\).*/\1/p' | head -1)
+  case "$LAST_POS" in ''|*[!0-9-]*) LAST_POS=0 ;; esac
+  echo "media_session: state=$LAST_STATE position=${LAST_POS}ms"
+}
+
+# Force playback to run: press play while paused, and if the clock still does
+# not move, skip once (a different stream may resolve where this one failed).
+# Returns 0 only once the position has actually increased. Never aborts.
+ensure_playing() {
+  local i prev=-1
+  for i in 1 2 3 4 5 6 7 8; do
+    read_state
+    if [ "$LAST_STATE" = "PLAYING" ] && [ "$prev" -ge 0 ] && [ "$LAST_POS" -gt "$prev" ]; then
+      echo "playback confirmed: state=PLAYING position=${LAST_POS}ms"
+      return 0
+    fi
+    prev=$LAST_POS
+    [ "$LAST_STATE" = "PLAYING" ] || adb shell input keyevent 126
+    sleep 2
+  done
+  echo "playback not progressing (state=$LAST_STATE position=${LAST_POS}ms); trying MEDIA_PLAY + next track"
+  adb shell input keyevent 126
+  sleep 3
+  adb shell input keyevent 87
+  prev=-1
+  for i in 1 2 3 4 5 6; do
+    sleep 2
+    read_state
+    if [ "$LAST_STATE" = "PLAYING" ] && [ "$prev" -ge 0 ] && [ "$LAST_POS" -gt "$prev" ]; then
+      echo "playback confirmed after skip: position=${LAST_POS}ms"
+      return 0
+    fi
+    prev=$LAST_POS
+    [ "$LAST_STATE" = "PLAYING" ] || adb shell input keyevent 126
+  done
+  echo "WARN: playback never started (state=$LAST_STATE position=${LAST_POS}ms)"
+  return 1
+}
+
+# Wait until the playback clock passes $1 ms. Best effort.
+wait_position() {
+  local target=$1 i
+  for i in $(seq 1 22); do
+    read_state
+    if [ "$LAST_POS" -ge "$target" ]; then
+      echo "playback reached ${LAST_POS}ms (target ${target}ms)"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "WARN: playback stuck at ${LAST_POS}ms (target ${target}ms); sweep may not be visible"
+  return 1
+}
+
+# Four frames ~700 ms apart plus the media session dump beside them.
+sweep_burst() {
+  local base=$1 i
+  for i in 1 2 3 4; do
+    burst_shot "$base-sweep-$i"
+    sleep 0.7
+  done
+  adb shell dumpsys media_session > "$OUT/$base-media-session.txt" 2>&1 || true
+  echo "saved $OUT/$base-media-session.txt"
+}
+
 shot home
 swipe_up; shot home-scrolled
 swipe_up; shot home-scrolled-2
@@ -83,16 +192,32 @@ except Exception:
     pass
 PY
 )
+# With no default IME the field receives hardware key events as plain Latin;
+# the Korean IME would otherwise compose them into jamo.
+ime=$(adb shell settings get secure default_input_method | tr -d '\r')
+case "$ime" in ''|null) ime= ;; esac
+adb shell settings put secure default_input_method ''
+sleep 1
 [ -n "$field" ] && adb shell input tap $field
 sleep 2
 adb shell input text "Dance%sMonkey"
+sleep 1
 adb shell input keyevent 66
-sleep 10; shot search-results
+sleep 2
+[ -n "$ime" ] && adb shell settings put secure default_input_method "$ime"
+sleep 8; shot search-results
 
-tap "Dance Monkey" first 15; shot playing
-tap "Dance Monkey" last 6; shot player
+# Open the song the way a shared link would (no typing, no result-list tap).
+adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
+sleep 30; shot playing
+tap "Dance Monkey" last 4; tap "Rolling" last 4; shot player
 adb shell input swipe 540 1200 540 400 400; sleep 3; shot player-below
-tap "가사" first 8; shot lyrics
+tap "가사" first 10; tap "Lyrics" first 6
+ensure_playing
+shot lyrics
+wait_position "$FIRST_LINE_MS"
+shot lyrics-later
+sweep_burst lyrics
 adb shell input keyevent 4; sleep 3
 adb shell input keyevent 4; sleep 3
 
@@ -108,10 +233,16 @@ for v in US2I6tSRjcE qQNbfxDLxq0; do
   adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$v" $PKG
   sleep 30; shot "video-$v-mini"
   tap "Dance Monkey" last 4; tap "Rolling" last 4; shot "video-$v-player"
-  tap "가사" first 10; tap "Lyrics" first 6; shot "video-$v-lyrics"
-  sleep 40; shot "video-$v-lyrics-later"
+  tap "가사" first 10; tap "Lyrics" first 6
+  ensure_playing
+  shot "video-$v-lyrics"
+  wait_position "$FIRST_LINE_MS"
+  shot "video-$v-lyrics-later"
+  sweep_burst "video-$v-lyrics"
   adb shell input keyevent 4; sleep 2; adb shell input keyevent 4; sleep 2
 done
 adb logcat -d > "$OUT/logcat.txt"
+# Why playback did not start, if it did not (bot check, 403, source error...).
+adb logcat -d | grep -E 'playback failed|resolve failed|SignInConfirmNotBot|ExoPlaybackException|Playback error' > "$OUT/playback-errors.txt" 2>/dev/null || true
 ls -la "$OUT"
 exit 0
