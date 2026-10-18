@@ -3428,6 +3428,14 @@ private fun BitChordApp(
                 } else {
                     MaterialTheme.colorScheme.background
                 }
+                // Root tabs are the only pages whose large in-page heading is
+                // owned by the page itself: every overlay and pushed detail
+                // supplies a back affordance and keeps the bar's title hidden.
+                val rootTabChrome = detail == null && detailActiveShelf == null &&
+                    selectedMoodGenre == null && libraryShowAll == null && !showSpotify &&
+                    !showSettings && settingsSubScreen == null && !showAccountScrobbling &&
+                    !showSources && !showListenTogether && !showEqualizer && !showDiscord &&
+                    !showHistory && !showReplay
                 // This is the bottom floor itself turned upside down, not a
                 // separately maintained approximation. Both edges therefore
                 // share the same curve, height and page-aware colour — including
@@ -3481,6 +3489,9 @@ private fun BitChordApp(
                     // circles over the shared gradient — no full-width pane.
                     transparentBackdrop = true,
                     artworkPageChrome = true,
+                    // Home, Explore and Library hand their large heading a
+                    // compact successor; Search's field already fills the bar.
+                    showCollapsedTitle = rootTabChrome && selectedTab != TAB_SEARCH,
                     backButtonHazeState = hazeState,
                     trailingTitle = if (detail != null && detailActiveShelf != null) detail.title else null,
                     // Search has no large in-list header to hand the title back to —

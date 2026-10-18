@@ -148,7 +148,7 @@ private fun String.sweepWeight(): Double {
 internal fun sweepWeights(tokens: List<String>): List<Double> = tokens.map { it.sweepWeight() }
 
 /** The pause [sweepWeights] leaves between two words, in the same unit as one syllable. */
-internal const val SWEEP_GAP_WEIGHT: Double = GAP_WEIGHT
+internal const val SWEEP_GAP_WEIGHT: Double = 0.25
 
 /** Scripts whose characters are syllables already: one beat each. */
 private fun Char.isSyllableBlock(): Boolean =
@@ -161,7 +161,7 @@ private const val LATIN_VOWELS = "aeiouy"
 private const val DIGIT_WEIGHT = 0.5
 
 /** The pause between two guessed words, in the same unit as one syllable. */
-private const val GAP_WEIGHT = 0.25
+private const val GAP_WEIGHT = SWEEP_GAP_WEIGHT
 
 /** Slowest plausible singing per unit, so a line before an instrumental does not crawl through the break. */
 private const val MAX_MS_PER_UNIT = 550.0

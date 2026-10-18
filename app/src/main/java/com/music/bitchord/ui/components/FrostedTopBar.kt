@@ -6,6 +6,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -52,7 +53,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -141,8 +144,10 @@ fun topBarContentPadding(): Dp = topBarHeight() + TopBarContentGap
  * The app mounts it with [transparentBackdrop] and [artworkPageChrome] on every
  * page, in either material: no full-width pane, just floating circles over the
  * shared top gradient — liquid glass when that is on, the navbar's blur when it
- * is not. The bounded-pane path ([TopBarBlur] underneath, lower hairline, solid
- * fill under Reduce dynamic blur) is kept for previews only.
+ * is not. Root tabs additionally opt into [showCollapsedTitle], which fades a
+ * dimmed bar in behind those circles once the page's own large heading scrolls
+ * under them. The bounded-pane path ([TopBarBlur] underneath, lower hairline,
+ * solid fill under Reduce dynamic blur) is kept for previews only.
  *
  * Apple Music behaviour: the big in-list header owns the title at rest;
  * once the list scrolls, the small centered title fades in.
@@ -156,6 +161,13 @@ fun FrostedTopBar(
     transparentBackdrop: Boolean = false,
     /** Circular back surface and no collapsing title, for artwork-led pages. */
     artworkPageChrome: Boolean = false,
+    /**
+     * Lets a page with floating chrome still hand its large in-page heading a
+     * compact successor: once [scrolled], a dimmed bar fades in behind the
+     * status bar and the controls, and [title] fades in centred. Root tabs pass
+     * true; pushed artwork pages keep their own heading.
+     */
+    showCollapsedTitle: Boolean = false,
     /** Source sampled by floating top-bar surfaces when liquid glass is off. */
     backButtonHazeState: HazeState? = null,
     trailingTitle: String? = null,
@@ -173,13 +185,35 @@ fun FrostedTopBar(
     actions: @Composable () -> Unit = {},
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val useFloatingChrome = artworkPageChrome ||
         (LocalLiquidGlassEnabled.current && isGlassSupported())
+    // The bar owns the small title on a root tab; previews and ordinary bars
+    // keep the old behaviour of drawing it whenever they are not artwork chrome.
+    val collapsingTitle = showCollapsedTitle || !artworkPageChrome
     val titleAlpha by animateFloatAsState(
         targetValue = if (scrolled || trailingTitle != null) 1f else 0f,
-        animationSpec = tween(220),
+        animationSpec = if (reduceAnimation) snap() else tween(220),
         label = "topBarTitleAlpha",
     )
+    // The bar's backdrop: the theme's surface at nearly full strength over the
+    // status bar and the controls, ramping out over the last few dp so it has
+    // no bottom seam. The surface follows the theme, which keeps the system's
+    // status glyphs legible in light mode and reads as the requested dark
+    // scrim in the app's black theme. Driven by [scrolled], so it fades in only
+    // once the large in-page heading has started under the bar.
+    val statusInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val barBottom = statusInset + TopBarContentHeight
+    val scrimFade = 12.dp
+    val scrimColor = MaterialTheme.colorScheme.surface
+    val scrimHold = if (barBottom > scrimFade) (barBottom - scrimFade).value / barBottom.value else 0f
+    val scrimBrush = remember(scrimColor, scrimHold) {
+        Brush.verticalGradient(
+            0f to scrimColor.copy(alpha = 0.85f),
+            scrimHold to scrimColor.copy(alpha = 0.82f),
+            1f to Color.Transparent,
+        )
+    }
     // Every bounded bar uses the same hairline, whether its pane is blurred or
     // solid. A transparent artwork page has no pane edge for a line to mark.
     val dividerColor by animateColorAsState(
@@ -200,6 +234,17 @@ fun FrostedTopBar(
                 if (reduceDynamicBlur && !transparentBackdrop) {
                     Modifier.background(MaterialTheme.colorScheme.surface)
                 } else Modifier,
+            )
+            .then(
+                if (collapsingTitle) {
+                    Modifier.drawWithContent {
+                        // Read in the draw phase: the fade animates without
+                        // recomposing the bar (or the page under it) per frame.
+                        val alpha = titleAlpha
+                        if (alpha > 0f) drawRect(brush = scrimBrush, alpha = alpha)
+                        drawContent()
+                    }
+                } else Modifier,
             ),
     ) {
         Box(
@@ -208,12 +253,10 @@ fun FrostedTopBar(
                 .statusBarsPadding()
                 .height(TopBarContentHeight),
         ) {
-            /* Temporarily hidden: keep the scrolling center-title implementation
-             * intact so it can be restored without rebuilding its transitions.
-             *
-            // Artwork pages keep their large in-page heading and never create a
-            // duplicate title in the status bar, including in accessibility.
-            if (!artworkPageChrome) {
+            // Root tabs hand the title to their large in-page heading at rest;
+            // it fades into the bar once that heading scrolls under it. Pushed
+            // pages with an artwork header keep their own heading instead.
+            if (collapsingTitle) {
                 AnimatedContent(
                     targetState = trailingTitle,
                     transitionSpec = {
@@ -275,7 +318,6 @@ fun FrostedTopBar(
                     }
                 }
             }
-             */
             // On a pushed page the back affordance is always visible, since
             // there is no large in-list header to fall back on.
             if (onBack != null) {
