@@ -7,6 +7,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import com.music.bitchord.startup.StartupWork
 import java.io.File
 
 /**
@@ -40,11 +41,35 @@ object CanvasCache {
      */
     private const val CACHE_LIMIT_BYTES = 150L * 1024 * 1024
 
-    private lateinit var cache: SimpleCache
+    private var appContext: Context? = null
+
+    @Volatile
+    private var opened: SimpleCache? = null
+
+    private val openLock = Any()
+
+    /**
+     * The one cache for this process, opened when something first needs it.
+     *
+     * A SimpleCache can only be opened once per process and opening one is a
+     * database round trip, so [init] only records where it lives and asks the
+     * startup thread to open it. A canvas that somehow arrives first opens it
+     * here instead; both paths are serialised by [openLock].
+     */
+    private val cache: SimpleCache
+        get() = opened ?: synchronized(openLock) {
+            opened ?: open().also { opened = it }
+        }
 
     /** Opened once per process, alongside [com.music.bitchord.playback.AudioCache.init]. */
     fun init(context: Context) {
-        cache = SimpleCache(
+        appContext = context.applicationContext
+        StartupWork.background("canvas-cache") { cache }
+    }
+
+    private fun open(): SimpleCache {
+        val context = checkNotNull(appContext) { "CanvasCache.init has not run" }
+        return SimpleCache(
             File(context.cacheDir, "canvas"),
             LeastRecentlyUsedCacheEvictor(CACHE_LIMIT_BYTES),
             StandaloneDatabaseProvider(context),

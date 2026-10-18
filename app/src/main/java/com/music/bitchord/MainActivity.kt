@@ -688,6 +688,15 @@ private fun BitChordApp(
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
     val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
 
+    // One line, once: how long from process start to real Home content. See
+    // StartupTrace for where the other end of that measurement is. Keyed on a
+    // flag rather than the state itself so a long shelf list is not compared
+    // against the previous one on every recomposition.
+    val homeHasContent = homeState is UiState.Success
+    LaunchedEffect(homeHasContent) {
+        if (homeHasContent) com.music.bitchord.startup.StartupTrace.firstHomeContent()
+    }
+
     // The top bar's icon is the quiet, always-there nudge; this is the
     // once-per-launch popup version of the same news. `updateDialogShown`
     // rides out configuration changes on rememberSaveable so a rotation
@@ -1033,6 +1042,9 @@ private fun BitChordApp(
         // Likewise for Library: a playlist created or a song liked since it
         // was last fetched is a change to exactly this page.
         if (currentFeed == MainViewModel.Feed.LIBRARY) viewModel.onLibraryShown()
+        // Explore is no longer fetched during init; selecting its tab is what
+        // asks for its page the first time.
+        if (currentFeed == MainViewModel.Feed.EXPLORE) viewModel.onExploreShown()
     }
 
     val currentPull = when (currentFeed) {
@@ -1969,6 +1981,7 @@ private fun BitChordApp(
     // track, which is not a release however many of them are asked for one at a
     // time.
     val startDownload: (List<Song>, DownloadTarget?) -> Unit = { requested, from ->
+        Downloads.ensureOpen()
         val saved = Downloads.saved.value
         // Already on disk, and already queued or running: neither needs asking
         // again. What's left is what a tap on "Download" actually means.

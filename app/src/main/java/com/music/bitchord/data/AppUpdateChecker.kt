@@ -50,6 +50,41 @@ object AppUpdateChecker {
     private val _available = MutableStateFlow<UpdateInfo?>(null)
     val available = _available.asStateFlow()
 
+    /** How often the launch-time checks may ask GitHub. */
+    private const val CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000
+
+    private const val KEY_LAST_CHECK = "ko_update_checked_at"
+
+    /**
+     * Whether the launch-time check is due, given when it was last attempted
+     * (0 for never).
+     *
+     * Pure so the once-a-day decision can be tested without a network or a
+     * device. A clock that has moved backwards counts as due rather than
+     * silencing the check for however far it moved.
+     */
+    internal fun checkIsDue(lastAttemptMs: Long, nowMs: Long): Boolean {
+        if (lastAttemptMs <= 0L) return true
+        if (nowMs < lastAttemptMs) return true
+        return nowMs - lastAttemptMs >= CHECK_INTERVAL_MS
+    }
+
+    /**
+     * The launch-time checks, at most once a day.
+     *
+     * These used to run on every cold start. The attempt is recorded before the
+     * request so a failed round trip is still an attempt: retrying it on every
+     * launch is exactly what the interval is here to stop.
+     */
+    suspend fun checkDaily(context: Context) = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (!checkIsDue(prefs.getLong(KEY_LAST_CHECK, 0L), now)) return@withContext
+        prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
+        check()
+        noticeUpstream(context)
+    }
+
     /** Where this update's APK download currently stands, for the dialog's progress row. */
     sealed interface DownloadState {
         data object Idle : DownloadState

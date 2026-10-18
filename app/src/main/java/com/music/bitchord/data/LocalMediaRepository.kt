@@ -203,6 +203,7 @@ object LocalMediaRepository {
         // PlaybackTracker recognise it as a video worth registering a play
         // for — a content URI fails its id check on purpose, since most rows
         // here really are just local files with nothing to sync.
+        Downloads.ensureOpen()
         val videoIdByUri = Downloads.saved.value.entries.associate { (id, uri) -> uri to id }
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,

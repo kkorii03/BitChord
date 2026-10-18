@@ -33,10 +33,10 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.startup.StartupTrace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlin.concurrent.thread
 
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
 
@@ -80,23 +80,26 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
-        // Opened off the main thread, alongside everything below: none of these
+        // Opened off the main thread, alongside the stores below: none of these
         // reads a setting or the session, and between them they are the slowest
         // opens at startup — SourceRegistry's encrypted store most of all.
         // Started only once [AuthStore] exists, because both encrypted stores
         // share one keystore master key and a first launch must not have two
-        // threads racing to create it. Joined before onCreate returns, so
-        // nothing that runs after startup can see any of them half open.
-        val backgroundInit = thread(name = "startup-init") {
-            SourceRegistry.init(this)
-            AndroidStreamHooks.initInnerTubeX(this)
-            // Its own directory: canvas clips are looping video, not audio, and
-            // belong in a cache AudioCache's own limit and eviction policy were
-            // never sized for. See CanvasCache's doc for why this one exists at
-            // all — it is the fix for canvas clips re-fetching the same few
-            // seconds of video from the network on every loop.
-            CanvasCache.init(this)
-        }
+        // threads racing to create it. Nothing here is joined: a store that is
+        // asked for before its open finished opens itself on the asking thread
+        // (see StartupWork), and the startup thread is serial so a first launch
+        // still never has two Keystore creations running at once.
+        SourceRegistry.init(this)
+        // Cheap here (it only records paths and starts its own warm-up job), and
+        // it has to be ready before the first resolution, which can be the
+        // restored queue playing the moment the service starts.
+        AndroidStreamHooks.initInnerTubeX(this)
+        // Its own directory: canvas clips are looping video, not audio, and
+        // belong in a cache AudioCache's own limit and eviction policy were
+        // never sized for. See CanvasCache's doc for why this one exists at
+        // all — it is the fix for canvas clips re-fetching the same few
+        // seconds of video from the network on every loop.
+        CanvasCache.init(this)
         // Migration-safe: an old single cookie becomes the first encrypted
         // session, while newer installs restore the profile the listener chose.
         val restoredSession = authStore.activeSession
@@ -182,7 +185,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         initLastfm()
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
-        backgroundInit.join()
+        StartupTrace.applicationCreated()
     }
 
     /**

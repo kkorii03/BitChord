@@ -14,6 +14,7 @@ import com.music.bitchord.data.sources.addon.DetectedFormat
 import com.music.bitchord.data.sources.addon.SourceFormats
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.audio.LosslessOutput
+import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlinx.serialization.Serializable
@@ -90,6 +91,15 @@ object SourceRegistry {
 
     private lateinit var prefs: SharedPreferences
 
+    /** Where the encrypted store is opened from, once [init] has been told. */
+    private var appContext: Context? = null
+
+    /** Set once [open] has finished, so the startup open and an early caller run it once. */
+    @Volatile
+    private var opened = false
+
+    private val openLock = Any()
+
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Every configured source, enabled or not. */
@@ -105,23 +115,46 @@ object SourceRegistry {
     private var instances: Map<String, MusicSource> = emptyMap()
 
     fun init(context: Context) {
-        // Same repair and degradation as AuthStore; see EncryptedPrefs.
-        prefs = EncryptedPrefs.open(context, "bitchord_sources", "bitchord_sources_plain")
+        appContext = context.applicationContext
+        // The Keystore round trip is the slowest open at startup and nothing on
+        // the first screen reads a source, so it happens on the startup thread
+        // rather than here. [open] is what a caller that gets there first runs.
+        StartupWork.background("source-registry") { open() }
+    }
 
-        val stored = prefs.getString(KEY_SOURCES, null)?.let(::decodeStored) ?: emptyList()
-        val jioOptInMigrationDone = prefs.getBoolean(KEY_JIOSAAVN_OPT_IN_V1, false)
-        val after = sourcesForInit(stored, forceJioSaavnOff = !jioOptInMigrationDone)
+    /**
+     * Opens the encrypted store and publishes what it held, once per process.
+     *
+     * Called by [init] on the startup thread, and directly by any accessor that
+     * runs before that has finished — playback resolution starts on ExoPlayer's
+     * loader thread the moment a restored queue is handed over, so it must be
+     * able to wait rather than see an empty registry and skip the user's addons.
+     * A caller on the main thread before the first frame would pay the old cost
+     * here; in practice the startup thread has finished by then.
+     */
+    private fun open() {
+        synchronized(openLock) {
+            if (opened) return
+            val context = appContext ?: return
+            // Same repair and degradation as AuthStore; see EncryptedPrefs.
+            prefs = EncryptedPrefs.open(context, "bitchord_sources", "bitchord_sources_plain")
 
-        // Publish state and the migration marker in one preferences edit. If a
-        // process dies after recording the marker but before recording the
-        // disabled source, the next launch would otherwise believe the forced
-        // opt-out had already happened and silently restore the old on state.
-        publish(after, persist = false)
-        if (after != stored || !jioOptInMigrationDone) {
-            prefs.edit()
-                .putString(KEY_SOURCES, json.encodeToString(ListSerializer(SourceConfig.serializer()), after))
-                .putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true)
-                .apply()
+            val stored = prefs.getString(KEY_SOURCES, null)?.let(::decodeStored) ?: emptyList()
+            val jioOptInMigrationDone = prefs.getBoolean(KEY_JIOSAAVN_OPT_IN_V1, false)
+            val after = sourcesForInit(stored, forceJioSaavnOff = !jioOptInMigrationDone)
+
+            // Publish state and the migration marker in one preferences edit. If a
+            // process dies after recording the marker but before recording the
+            // disabled source, the next launch would otherwise believe the forced
+            // opt-out had already happened and silently restore the old on state.
+            publish(after, persist = false)
+            if (after != stored || !jioOptInMigrationDone) {
+                prefs.edit()
+                    .putString(KEY_SOURCES, json.encodeToString(ListSerializer(SourceConfig.serializer()), after))
+                    .putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true)
+                    .apply()
+            }
+            opened = true
         }
     }
 
@@ -183,14 +216,16 @@ object SourceRegistry {
      * stream is budgeted further by [activeForPlayback]; downloads deliberately
      * apply no connection-quality ceiling — see [SourceResolver.forDownload].
      */
-    fun active(): List<MusicSource> =
-        enabledConfigs(configs.value)
+    fun active(): List<MusicSource> {
+        open()
+        return enabledConfigs(configs.value)
             // Not in the walk at all while it would be refused anyway: an addon
-            // that asked for a lossless output costs nothing — not even a timed
-            // out search — while there isn't one. See [SourceConfig.checkValidLossless].
+            // that asked for a lossless output costs nothing ??not even a timed
+            // out search ??while there isn't one. See [SourceConfig.checkValidLossless].
             .filterNot { it.awaitsLosslessOutput }
             .sortedBy { it.kind.rank }
             .mapNotNull { instances[it.id] }
+    }
 
     /**
      * [active], minus the addons whose manifest said `allowDownloads: 0`. A
@@ -243,9 +278,15 @@ object SourceRegistry {
         return active().filter { ceiling.permits(it.kind) }
     }
 
-    fun instance(configId: String): MusicSource? = instances[configId]
+    fun instance(configId: String): MusicSource? {
+        open()
+        return instances[configId]
+    }
 
-    fun config(configId: String): SourceConfig? = configs.value.firstOrNull { it.id == configId }
+    fun config(configId: String): SourceConfig? {
+        open()
+        return configs.value.firstOrNull { it.id == configId }
+    }
 
     /**
      * Drops completed addon track answers for an explicit quality retry.
@@ -258,6 +299,7 @@ object SourceRegistry {
      * duplicate work already on the wire.
      */
     fun clearCompletedAddonTrackCalls() {
+        open()
         instances.values
             .filterIsInstance<AddonSource>()
             .forEach(AddonSource::clearCompletedTrackCalls)
@@ -265,12 +307,16 @@ object SourceRegistry {
 
     // ── Editing ─────────────────────────────────────────────────────────
 
-    fun add(config: SourceConfig) = publish(configs.value + config.tidied())
+    fun add(config: SourceConfig) {
+        open()
+        publish(configs.value + config.tidied())
+    }
 
-    fun update(config: SourceConfig) =
-        config.tidied().let { tidied ->
-            publish(configs.value.map { if (it.id == tidied.id) tidied else it })
-        }
+    fun update(config: SourceConfig) {
+        open()
+        val tidied = config.tidied()
+        publish(configs.value.map { if (it.id == tidied.id) tidied else it })
+    }
 
     /**
      * The config as it should be stored, rather than as it was typed.
@@ -287,6 +333,7 @@ object SourceRegistry {
         if (kind == SourceKind.ADDON) copy(baseUrl = AddonClient.normalizeBase(baseUrl)) else this
 
     fun remove(configId: String) {
+        open()
         val target = config(configId) ?: return
         if (target.kind in BUILT_IN_KINDS) return
         publish(configs.value.filterNot { it.id == configId })
@@ -304,6 +351,7 @@ object SourceRegistry {
      * see [SourcesScreen][com.music.bitchord.ui.screens.SourcesScreen].
      */
     fun setEnabled(configId: String, enabled: Boolean) {
+        open()
         if (!enabled && config(configId)?.kind == SourceKind.YOUTUBE) return
         publish(configs.value.map { if (it.id == configId) it.copy(enabled = enabled) else it })
     }
@@ -325,6 +373,7 @@ object SourceRegistry {
      * its rank is decided by its kind and is not the user's to set.
      */
     fun reorderAddons(orderedIds: List<String>) {
+        open()
         val addons = configs.value.filter { it.kind.isUserAdded }
         if (addons.size < 2) return
         val byId = addons.associateBy { it.id }
@@ -416,6 +465,7 @@ object SourceRegistry {
      * refuse itself.
      */
     fun duplicateOf(url: String, exceptId: String? = null): SourceConfig? {
+        open()
         val wanted = canonicalUrl(url)
         if (wanted.isEmpty()) return null
         return configs.value.firstOrNull { it.id != exceptId && canonicalUrl(it.baseUrl) == wanted }

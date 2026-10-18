@@ -79,6 +79,7 @@ internal object LikedAutoDownload {
     }
 
     private fun alreadyHandled(videoId: String): Boolean {
+        Downloads.ensureOpen()
         if (Downloads.saved.value.containsKey(videoId)) return true
         val state = Downloads.active.value[videoId]
         return state is DownloadState.Queued || state is DownloadState.Running

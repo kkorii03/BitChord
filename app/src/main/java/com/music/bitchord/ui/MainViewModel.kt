@@ -142,6 +142,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _explore = MutableStateFlow<UiState<List<MoodGenreSection>>>(UiState.Loading)
     val explore: StateFlow<UiState<List<MoodGenreSection>>> = _explore.asStateFlow()
 
+    /** The load in flight, so a tab that is shown while it runs does not ask twice. */
+    private var exploreLoadJob: Job? = null
+
     private val _selectedMoodGenre = MutableStateFlow<MoodGenre?>(null)
     val selectedMoodGenre: StateFlow<MoodGenre?> = _selectedMoodGenre.asStateFlow()
 
@@ -993,6 +996,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _library = MutableStateFlow<UiState<LibraryPage>>(UiState.Loading)
     val library: StateFlow<UiState<LibraryPage>> = _library.asStateFlow()
+
+    /** The load in flight, so a tab that is shown while it runs does not ask twice. */
+    private var libraryLoadJob: Job? = null
 
     /** In-memory cache is partitioned by account and profile; it is never shared. */
     private data class ListenerSnapshot(
@@ -1854,6 +1860,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Call when the library tab becomes visible. */
     fun onLibraryShown() {
         loadPlaylists()
+        if (_signedIn.value && _library.value is UiState.Loading && libraryLoadJob?.isActive != true) loadLibrary()
         if (!libraryStale) return
         libraryStale = false
         if (_library.value is UiState.Success) refresh(Feed.LIBRARY)
@@ -1874,11 +1881,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
         loadHome()
-        loadExplore()
-        if (_signedIn.value) {
-            loadLibrary()
-            loadAccount()
-            loadPlaylists()
+        // Explore, Library and the account menus are none of them on the first
+        // screen, and each one starts network work. Load them from the tab that
+        // shows them (onExploreShown/onLibraryShown) or, if the listener never
+        // goes there, once startup has settled ? so opening the app is not
+        // four feeds racing the first frame.
+        viewModelScope.launch {
+            delay(STARTUP_DEFER_MS)
+            if (_explore.value is UiState.Loading && exploreLoadJob?.isActive != true) loadExplore()
+            if (_signedIn.value) {
+                if (_library.value is UiState.Loading && libraryLoadJob?.isActive != true) loadLibrary()
+                loadAccount()
+                loadPlaylists()
+            }
         }
         viewModelScope.launch {
             // drop(1): the current value is just the count so far, not a play.
@@ -1924,10 +1939,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
-            // downloaded it — see AppUpdateChecker.clearCache.
+            // downloaded it ??see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())
-            AppUpdateChecker.check()
-            AppUpdateChecker.noticeUpstream(getApplication())
+            // The GitHub round trip is not part of opening the app: let the
+            // first screen settle, and ask at most once a day rather than on
+            // every cold start.
+            delay(STARTUP_DEFER_MS)
+            AppUpdateChecker.checkDaily(getApplication())
         }
     }
 
@@ -1947,6 +1965,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         homeStale = false
         // A first load already in flight will pick the new play up by itself.
         if (_home.value is UiState.Success) refresh(Feed.HOME)
+    }
+
+    /**
+     * Call when the explore tab becomes visible.
+     *
+     * Its page is no longer fetched during init, so this is what makes the tab
+     * show itself the first time. A page already loaded (or failing, which the
+     * screen offers a retry for) is left alone.
+     */
+    fun onExploreShown() {
+        if (_explore.value is UiState.Loading && exploreLoadJob?.isActive != true) loadExplore()
     }
 
     private fun loadAccount() {
@@ -2013,7 +2042,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadExplore() {
         _explore.value = UiState.Loading
-        viewModelScope.launch { fetchExplore() }
+        exploreLoadJob?.cancel()
+        exploreLoadJob = viewModelScope.launch { fetchExplore() }
     }
 
     private suspend fun fetchExplore() {
@@ -2264,7 +2294,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!_signedIn.value) return
         val identity = listenerKey()
         _library.value = UiState.Loading
-        viewModelScope.launch { fetchLibrary(identity) }
+        libraryLoadJob?.cancel()
+        libraryLoadJob = viewModelScope.launch { fetchLibrary(identity) }
     }
 
     private suspend fun fetchLibrary(identity: String?) {
@@ -2835,6 +2866,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** How long startup has to settle before the non-start tabs are fetched. */
+        private const val STARTUP_DEFER_MS = 2_000L
+
         /** How many Spotify tracks are looked up on YouTube Music at once. */
         private const val SPOTIFY_MATCH_PARALLELISM = 6
 
@@ -3292,6 +3326,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun downloadedCopyOf(browseId: String): List<Song> {
         val bare = browseId.removePrefix("VL")
+        Downloads.ensureOpen()
         val id = Downloads.collections.value.keys.firstOrNull { it.removePrefix("VL") == bare } ?: return emptyList()
         return Downloads.getCollectionSongs(getApplication(), id)
     }

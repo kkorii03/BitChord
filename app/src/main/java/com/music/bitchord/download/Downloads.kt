@@ -16,6 +16,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -72,8 +73,17 @@ object Downloads {
     private const val TAG = "BitChord"
     private const val KEY_SAVED_METADATA = "downloaded_tracks_metadata"
     private const val KEY_SAVED_COLLECTIONS = "downloaded_collections"
-
     private lateinit var prefs: SharedPreferences
+
+    /** Where the settings file is opened from, once [init] has been told. */
+    private var appContext: Context? = null
+
+    /** Set once [open] has finished, so the startup open and an early caller run it once. */
+    @Volatile
+    private var opened = false
+
+    private val openLock = Any()
+
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = MapSerializer(String.serializer(), String.serializer())
     private val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
@@ -144,16 +154,47 @@ object Downloads {
     private val running = LinkedHashMap<String, Job?>()
 
     fun init(context: Context) {
-        prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
-        _saved.value = runCatching {
-            json.decodeFromString(serializer, prefs.getString(KEY_SAVED, null) ?: "{}")
-        }.getOrDefault(emptyMap())
-        _savedMetadata.value = runCatching {
-            json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
-        }.getOrDefault(emptyMap())
-        _collections.value = runCatching {
-            json.decodeFromString(collectionSerializer, prefs.getString(KEY_SAVED_COLLECTIONS, null) ?: "{}")
-        }.getOrDefault(emptyMap())
+        appContext = context.applicationContext
+        // Three JSON maps that grow with the listener's Downloads folder. None
+        // of them is needed for the first frame, so they are parsed on the
+        // startup thread; a caller that gets here first runs [open] itself.
+        StartupWork.background("downloads") { open() }
+    }
+
+    /**
+     * Opens the record now if the startup thread has not got to it yet.
+     *
+     * Only needed by callers that read [saved] or [collections] as a value
+     * rather than collecting them: a collector picks the loaded map up when it
+     * arrives, a one-off read would keep the empty one it saw first.
+     */
+    fun ensureOpen() = open()
+
+    /**
+     * Opens the record and publishes what it held, once per process.
+     *
+     * The flows are the normal way to read it, and go on serving an empty map
+     * only until this has run. Callers that read the maps directly go through
+     * here first so a menu opened in the first moments of a cold start does not
+     * show a downloaded track as "Download" and, worse, so a write cannot land
+     * while the record is still being read in and then be overwritten by it.
+     */
+    private fun open() {
+        synchronized(openLock) {
+            if (opened) return
+            val context = appContext ?: return
+            prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+            _saved.value = runCatching {
+                json.decodeFromString(serializer, prefs.getString(KEY_SAVED, null) ?: "{}")
+            }.getOrDefault(emptyMap())
+            _savedMetadata.value = runCatching {
+                json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
+            }.getOrDefault(emptyMap())
+            _collections.value = runCatching {
+                json.decodeFromString(collectionSerializer, prefs.getString(KEY_SAVED_COLLECTIONS, null) ?: "{}")
+            }.getOrDefault(emptyMap())
+            opened = true
+        }
     }
 
     // ---- Asking -------------------------------------------------------------
@@ -242,6 +283,7 @@ object Downloads {
      * Touches the filesystem, so call it off the main thread.
      */
     suspend fun savedUri(context: Context, videoId: String): Uri? = withContext(Dispatchers.IO) {
+        open()
         val recorded = _saved.value[videoId] ?: return@withContext null
         val uri = recorded.toUri()
         if (DownloadStore.exists(context, uri)) return@withContext uri
@@ -291,6 +333,7 @@ object Downloads {
      * again on the next play.
      */
     fun verifiedSavedUri(videoId: String): String? {
+        open()
         val recorded = _saved.value[videoId] ?: return null
         if (!isMissingLocalFile(recorded)) return recorded
         Log.d(TAG, "$videoId was downloaded but the file is gone; forgetting it")
@@ -300,6 +343,7 @@ object Downloads {
 
     /** Delete the file saved for [videoId] and forget it. */
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
+        open()
         val uri = _saved.value[videoId]?.toUri() ?: return@withContext false
         val deleted = DownloadStore.delete(context, uri)
         forget(videoId)
@@ -325,6 +369,7 @@ object Downloads {
      * *not* established the file is missing has no business calling it.
      */
     fun forgetMissing(videoId: String) {
+        open()
         if (videoId !in _saved.value) return
         Log.d(TAG, "$videoId could not be opened; forgetting the download")
         forget(videoId)
@@ -395,6 +440,7 @@ object Downloads {
 
     /** Drop a release from the record without touching the files under it. */
     fun forgetCollection(id: String) {
+        open()
         if (id !in _collections.value) return
         recordCollections { it - id }
     }
@@ -408,6 +454,7 @@ object Downloads {
      * where a single track only ever offers [delete].
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
+        open()
         val record = _collections.value[id] ?: return false
         var any = false
         record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
@@ -461,10 +508,12 @@ object Downloads {
      * songs: the rule is worth stating on a known folder rather than only on
      * whatever this process happens to have recorded.
      */
-    fun savedReleases(onDisk: Map<String, String> = _saved.value): List<SavedCollection> {
+    fun savedReleases(onDisk: Map<String, String>? = null): List<SavedCollection> {
+        open()
+        val current = onDisk ?: _saved.value
         if (_collections.value.isEmpty()) return emptyList()
         return _collections.value.values
-            .filter { record -> record.videoIds.any { it in onDisk } }
+            .filter { record -> record.videoIds.any { it in current } }
             .sortedBy { it.title.lowercase(Locale.ROOT) }
     }
 
@@ -485,7 +534,9 @@ object Downloads {
      * listed first, which is not necessarily the id the release named.
      */
     fun collectionsAmong(songs: List<Song>): List<DownloadedCollection> {
-        if (songs.isEmpty() || _collections.value.isEmpty()) return emptyList()
+        if (songs.isEmpty()) return emptyList()
+        open()
+        if (_collections.value.isEmpty()) return emptyList()
         val byId = songs.associateBy { it.videoId }
         val byUri = songs.mapNotNull { song -> song.localUri?.let { it to song } }.toMap()
         val uris = _saved.value
@@ -511,6 +562,7 @@ object Downloads {
     }
 
     private fun recordCollections(update: (Map<String, SavedCollection>) -> Map<String, SavedCollection>) {
+        open()
         synchronized(collectionLock) {
             val map = update(_collections.value)
             _collections.value = map
@@ -611,6 +663,7 @@ object Downloads {
         saved: (Map<String, String>) -> Map<String, String>,
         meta: (Map<String, SavedSongMetadata>) -> Map<String, SavedSongMetadata>,
     ) {
+        open()
         val savedMap = _saved.updateAndGet(saved)
         val metaMap = _savedMetadata.updateAndGet(meta)
         if (!::prefs.isInitialized) return
@@ -626,6 +679,7 @@ object Downloads {
 
     /** Returns all downloaded songs whose files still exist on disk. */
     suspend fun getDownloadedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
+        open()
         val metaMap = _savedMetadata.value
         val result = mutableListOf<Song>()
         val seenUris = mutableSetOf<String>()
@@ -707,6 +761,7 @@ object Downloads {
      */
     suspend fun getCollectionSongs(context: Context, collectionId: String): List<Song> =
         withContext(Dispatchers.IO) {
+            open()
             val record = _collections.value[collectionId] ?: return@withContext emptyList()
             val metadata = _savedMetadata.value
             val saved = _saved.value

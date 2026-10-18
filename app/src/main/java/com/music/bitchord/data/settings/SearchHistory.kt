@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.startup.StartupWork
 
 /**
  * What's been searched for lately, kept on this device only.
@@ -26,17 +27,45 @@ object SearchHistory {
     private const val MAX_ENTRIES = 20
 
     private lateinit var prefs: SharedPreferences
+
+    /** Where the settings file is opened from, once [init] has been told. */
+    private var appContext: Context? = null
+
+    /** Set once [open] has finished, so the startup open and an early caller run it once. */
+    @Volatile
+    private var opened = false
+
+    private val openLock = Any()
+
     private val json = Json
     private val serializer = ListSerializer(SearchHistoryEntity.serializer())
 
     private val _recent = MutableStateFlow<List<SearchHistoryEntity>>(emptyList())
 
-    /** Most recent first. */
+    /**
+     * Most recent first.
+     *
+     * Served from memory so a collector can subscribe before [open] has run:
+     * the loaded list is published into this same flow when it arrives.
+     */
     val recent: StateFlow<List<SearchHistoryEntity>> = _recent.asStateFlow()
 
     fun init(context: Context) {
-        prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
-        reload()
+        appContext = context.applicationContext
+        // The search screen is not on the first screen. This shares the file
+        // AppSettings already opened, so only the decode moves off the launch
+        // path; a caller that gets there first runs [open] itself.
+        StartupWork.background("search-history") { open() }
+    }
+
+    private fun open() {
+        synchronized(openLock) {
+            if (opened) return
+            val context = appContext ?: return
+            prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+            load()
+            opened = true
+        }
     }
 
     /**
@@ -47,7 +76,12 @@ object SearchHistory {
      * would otherwise go on serving the list the old device had.
      */
     fun reload() {
+        open()
         if (!this::prefs.isInitialized) return
+        load()
+    }
+
+    private fun load() {
         _recent.value = runCatching {
             json.decodeFromString(serializer, prefs.getString(KEY_HISTORY, null) ?: "[]")
         }.getOrDefault(emptyList())
@@ -58,18 +92,22 @@ object SearchHistory {
      * Matching is by id so re-tapping an existing entity updates its timestamp.
      */
     fun record(entity: SearchHistoryEntity) {
+        open()
         val deduped = _recent.value.filterNot { it.id.equals(entity.id, ignoreCase = true) }
         save((listOf(entity) + deduped).take(MAX_ENTRIES))
     }
 
     fun remove(id: String) {
+        open()
         save(_recent.value.filterNot { it.id.equals(id, ignoreCase = true) })
     }
 
     fun clear() = save(emptyList())
 
     private fun save(value: List<SearchHistoryEntity>) {
+        open()
         _recent.value = value
+        if (!this::prefs.isInitialized) return
         prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, value)).apply()
     }
 
