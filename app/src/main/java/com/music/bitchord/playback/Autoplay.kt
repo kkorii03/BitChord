@@ -13,6 +13,7 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.taste.CandidateSource
 import com.music.bitchord.data.taste.PoolSources
 import com.music.bitchord.data.taste.Recommender
+import com.music.bitchord.data.taste.SimilarCandidates
 import com.music.bitchord.data.taste.TastePool
 import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.taste.asSong
@@ -146,7 +147,12 @@ suspend fun loadAutoplayTracks(
  * The network budget is two radio calls: the one the caller already made and
  * at most one more for the session track. That second call is skipped in low
  * power, where it is the cheapest thing to give up — the local sources still
- * contribute.
+ * contribute. On a cache miss the collaborative-filtering source adds one
+ * ListenBrainz seed lookup, one similar-recordings call and at most four
+ * anonymous YouTube searches; that whole fetch happens at most once per fifteen
+ * minutes and only for an artist it has not just answered for, so the other
+ * top-ups in between reuse it and cost nothing. The answer is cached per seed
+ * for a week. None of it runs in low power or offline.
  */
 private suspend fun rankedExtensions(
     existing: List<Song>,
@@ -159,11 +165,13 @@ private suspend fun rankedExtensions(
     val now = System.currentTimeMillis()
     val taste = TasteSignals.taste(now)
     val local = TasteSignals.localTracks()
+    val similar = SimilarCandidates.candidatesFor(seedSong, now)
     val pool = TastePool.build(
         PoolSources(
             seedRadio = seedRadio,
             sessionRadio = sessionRadio,
             local = local,
+            similar = similar,
         ),
         taste = taste,
         nowMs = now,
@@ -182,6 +190,7 @@ private suspend fun rankedExtensions(
         "TASTE top-up seed=${pool.counts[CandidateSource.RADIO_SEED] ?: 0}" +
             " session=${pool.counts[CandidateSource.RADIO_SESSION] ?: 0}" +
             " favourite=${pool.counts[CandidateSource.FAVOURITE] ?: 0}" +
+            " similar=${pool.counts[CandidateSource.SIMILAR] ?: 0}" +
             " rediscover=${pool.counts[CandidateSource.REDISCOVER] ?: 0}" +
             " hardDropped=$dropped ranked=${ranked.size}",
         about = seedSong.videoId,
@@ -190,7 +199,7 @@ private suspend fun rankedExtensions(
     // The ranker speaks in candidates; the queue needs the playable row each
     // one came from, and a local favourite has to be rebuilt from its stored
     // metadata because only the store knows it.
-    val known = (seedRadio + sessionRadio).associateBy { it.videoId }.toMutableMap()
+    val known = (seedRadio + sessionRadio + similar).associateBy { it.videoId }.toMutableMap()
     local.forEach { known.putIfAbsent(it.videoId, it.asSong()) }
     val ordered = ranked.mapNotNull { known[it.videoId] }
     return QueueBuilder.extend(existing, ordered, limit)

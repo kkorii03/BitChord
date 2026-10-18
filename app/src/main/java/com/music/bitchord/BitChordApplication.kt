@@ -153,6 +153,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // listening and ratings. Opened beside the listening record, for the
         // same reason: both the UI and PlaybackService live in this process.
         com.music.bitchord.data.taste.TasteSignals.init(this)
+        // The seven-day per-seed cache behind ListenBrainz's similar tracks,
+        // read only by the AutoPlay top-up that is already off the main thread.
+        com.music.bitchord.data.taste.SimilarCandidates.init(this)
         // After AppSettings, whose switch decides whether half of it runs.
         ArtistFacts.init(this)
         // One cache directory can only be opened once per process, and

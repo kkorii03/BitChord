@@ -20,6 +20,13 @@ enum class CandidateSource {
 
     /** A track the listener has not heard in a long time, offered again. */
     REDISCOVER,
+
+    /**
+     * A track people with similar taste also listen to, from ListenBrainz's
+     * open collaborative-filtering data. It is weaker than a saved favourite
+     * but stronger than a track that merely came back from the radio.
+     */
+    SIMILAR,
 }
 
 /** A track worth offering, with the facts the ranking needs. */
@@ -113,8 +120,9 @@ data class SessionContext(
  * ## The score, and why each term is there
  *
  * - **Prior by source.** A favourite and the seed of a station are stronger
- *   signals than a track that merely came back from the radio. Ranking inside a
- *   source falls away with its position.
+ *   signals than a track that merely came back from the radio; a collaborative-
+ *   filtering suggestion sits between those two. Ranking inside a source falls
+ *   away with its position.
  * - **Affinity** is `log1p(completes + 2 * likes) - 0.5 * log1p(skips)`. Likes
  *   count double because a like is a deliberate statement where a completion may
  *   only be a listener who did not reach for the phone. The logarithm keeps one
@@ -257,6 +265,7 @@ object Recommender {
             CandidateSource.RADIO_SESSION -> 0.8
             CandidateSource.FAVOURITE -> 1.2
             CandidateSource.REDISCOVER -> 0.5
+            CandidateSource.SIMILAR -> 1.0
         }
         return base - SOURCE_RANK_STEP * sourceRank.coerceAtLeast(0)
     }

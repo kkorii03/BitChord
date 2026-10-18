@@ -169,6 +169,36 @@ class TastePoolTest {
     }
 
     @Test
+    fun `similar rows are their own source and keep their rank`() {
+        val pool = TastePool.build(
+            PoolSources(similar = listOf(song("sim-1"), song("sim-2"))),
+            view(),
+            now,
+        )
+
+        assertEquals(listOf("sim-1", "sim-2"), ids(pool))
+        assertEquals(2, pool.counts[CandidateSource.SIMILAR])
+        assertEquals(CandidateSource.SIMILAR, pool.candidates.first().source)
+        assertEquals(0, pool.candidates.first().sourceRank)
+        assertEquals(1, pool.candidates[1].sourceRank)
+    }
+
+    @Test
+    fun `a favourite also suggested by the data set stays a favourite`() {
+        val pool = TastePool.build(
+            PoolSources(
+                local = listOf(local("shared")),
+                similar = listOf(song("shared")),
+            ),
+            view(mapOf("shared" to TrackTaste(plays = 4.0, completes = 3.0))),
+            now,
+        )
+
+        assertEquals(1, pool.candidates.size)
+        assertEquals(CandidateSource.FAVOURITE, pool.candidates.single().source)
+    }
+
+    @Test
     fun `a local row is rebuilt as a playable song`() {
         val plain = local("plain").asSong()
         val cover = local("cover", singer = "Jane").asSong()

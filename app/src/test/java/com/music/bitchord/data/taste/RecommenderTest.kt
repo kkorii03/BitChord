@@ -198,6 +198,22 @@ class RecommenderTest {
     }
 
     @Test
+    fun `similar sits between the session radio and a favourite`() {
+        val ranked = Recommender.rank(
+            listOf(
+                candidate("session", "A", source = CandidateSource.RADIO_SESSION),
+                candidate("similar", "B", source = CandidateSource.SIMILAR),
+                candidate("favourite", "C", source = CandidateSource.FAVOURITE),
+            ),
+            view(),
+            SessionContext(),
+            now,
+            Random(0),
+        )
+        assertEquals(listOf("favourite", "similar", "session"), ids(ranked))
+    }
+
+    @Test
     fun `the same inputs and seed give the same order`() {
         val taste = view(
             artists = mapOf(

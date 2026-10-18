@@ -29,6 +29,12 @@ data class PoolSources(
 
     /** The listener's own tracks, read locally from the taste store. */
     val local: List<LocalTrack> = emptyList(),
+
+    /**
+     * Tracks ListenBrainz's collaborative filtering offered for the seed,
+     * already resolved to playable YouTube Music rows.
+     */
+    val similar: List<Song> = emptyList(),
 )
 
 /**
@@ -81,10 +87,16 @@ object TastePool {
         val rediscover = rediscoverTracks(sources.local, taste).mapIndexedNotNull { index, track ->
             candidateOf(track, CandidateSource.REDISCOVER, index)
         }
+        val similar = sources.similar.mapIndexedNotNull { index, song ->
+            candidateOf(song, CandidateSource.SIMILAR, index)
+        }
 
-        // Seed first, then the session's, then what the listener already owns:
-        // a duplicate keeps the strongest statement of intent.
-        val merged = (seed + session + favourites + rediscover).distinctBy { it.videoId }
+        // Seed first, then the session's, then the listener's own favourites,
+        // then collaborative filtering, then rediscovery: a duplicate keeps the
+        // strongest statement of intent. A favourite the data set also suggests
+        // is kept as a favourite.
+        val merged = (seed + session + favourites + similar + rediscover)
+            .distinctBy { it.videoId }
         val counts = CandidateSource.entries.associateWith { source ->
             merged.count { it.source == source }
         }
