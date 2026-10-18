@@ -13,28 +13,15 @@ import java.net.URLEncoder
 object YouTubeWebLogin {
 
     /**
-     * A desktop Chrome user agent.
-     *
-     * Google serves the free YouTube Music desktop web player to a desktop
-     * browser in regions where the *mobile* Music site is replaced by a
-     * "Get Music Premium" paywall. The WebView is there to obtain a Google
-     * session, not to render the mobile app, so it should not announce itself
-     * as one.
-     */
-    const val DESKTOP_USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
-
-    /**
      * Where a completed sign-in lands.
      *
-     * A desktop youtube.com URL rather than music.youtube.com: the mobile
+     * A plain youtube.com URL rather than music.youtube.com: the mobile
      * Music page is the one Google paywalls for non-Premium accounts, and the
      * paywall publishes no signed-in `ytcfg` for the completion step to read.
      * The identity is fetched afterwards with [Innertube] and the same cookies.
      */
     const val CONTINUE_URL =
-        "https://www.youtube.com/?app=desktop&persist_app=1&noapp=1"
+        "https://www.youtube.com/"
 
     /** The Google login page, told to return to [continueUrl] when it is done. */
     fun loginUrl(continueUrl: String = CONTINUE_URL): String =

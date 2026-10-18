@@ -98,9 +98,11 @@ fun YtMusicLoginScreen(
             WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                // Desktop Chrome, not the WebView's own mobile string: the
-                // mobile Music site is what Google paywalls for free accounts.
-                settings.userAgentString = YouTubeWebLogin.DESKTOP_USER_AGENT
+                // The WebView's own user agent, deliberately: posing as desktop
+                // Chrome made Google refuse the sign-in outright ("로그인할 수
+                // 없음 - 브라우저 또는 앱이 안전하지 않을 수 있습니다", seen on the
+                // S24). The Premium paywall is avoided by where the login
+                // continues to (youtube.com, not music.youtube.com) instead.
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
@@ -153,6 +155,8 @@ private fun captureFrom(
         onUnavailable()
         return
     }
+    // Names only: never the values, which are the credential itself.
+    Log.d(TAG, "stored session cookie names: ${cookieNames(cookies)}")
     // Flushed here rather than left to the WebView's own schedule: the screen
     // is usually closing in the next frame, and a cookie jar written after
     // that is a jar the next sign-in reads instead of this one.
@@ -203,12 +207,13 @@ private fun captureFrom(
  * login.
  *
  * Both YouTube origins are read because the desktop landing and the music
- * origin can expose slightly different sets; the cookie domain is shared, so
- * the first value wins on a duplicate name.
+ * origin can expose slightly different sets; the cookie domain is shared.
+ * `www.youtube.com` is read first so its value wins on a duplicate name: the
+ * app's own requests go to youtube.com, and that is the jar they need to match.
  */
 private fun authCookieHeader(): String? {
     val manager = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
-    val header = listOf(MUSIC_ORIGIN, YOUTUBE_ORIGIN)
+    val header = listOf(YOUTUBE_ORIGIN, MUSIC_ORIGIN)
         .mapNotNull { manager.getCookie(it) }
         .flatMap { it.split(';') }
         .map { it.trim() }
@@ -217,6 +222,16 @@ private fun authCookieHeader(): String? {
         .joinToString("; ")
     return header.takeIf { YouTubeWebLogin.isSessionComplete(it) }
 }
+
+/** The cookie names in [header], sorted, for a log line that carries no values. */
+private fun cookieNames(header: String): String = header
+    .split(';')
+    .map { it.substringBefore('=').trim() }
+    .filter { it.isNotEmpty() }
+    .distinct()
+    .sorted()
+    .joinToString(", ")
+    .ifEmpty { "(none)" }
 
 /**
  * The identity of the page as the page itself has it.

@@ -39,9 +39,9 @@ class YouTubeLoginUrlTest {
     }
 
     @Test
-    fun `the login user agent is desktop Chrome`() {
-        assertTrue(YouTubeWebLogin.DESKTOP_USER_AGENT.contains("Windows NT"))
-        assertFalse(YouTubeWebLogin.DESKTOP_USER_AGENT.contains("Android"))
-        assertFalse(YouTubeWebLogin.DESKTOP_USER_AGENT.contains("Mobile"))
+    fun `completion does not force the desktop site`() {
+        // Google refuses a sign-in from a WebView posing as desktop Chrome, so
+        // the WebView keeps its own UA and nothing here asks for desktop.
+        assertFalse(YouTubeWebLogin.CONTINUE_URL.contains("app=desktop"))
     }
 }

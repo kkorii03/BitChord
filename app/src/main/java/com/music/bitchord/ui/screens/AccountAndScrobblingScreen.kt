@@ -2,6 +2,7 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.material3.HorizontalDivider
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.spotify_logo
@@ -138,10 +139,16 @@ fun AccountAndScrobblingScreen(
                 subtitle = stringResource(R.string.export_diagnostic_log_subtitle),
                 onClick = {
                     scope.launch {
-                        val uri = DiagnosticsExport.write(context, signedIn) ?: return@launch
+                        val saved = DiagnosticsExport.write(context, signedIn) ?: return@launch
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.diagnostic_log_saved, saved.fileName),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        if (saved.inDownloads) return@launch
                         val send = Intent(Intent.ACTION_SEND)
                             .setType("text/plain")
-                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .putExtra(Intent.EXTRA_STREAM, saved.uri)
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         context.startActivity(
                             Intent.createChooser(send, context.getString(R.string.export_diagnostic_log)),
