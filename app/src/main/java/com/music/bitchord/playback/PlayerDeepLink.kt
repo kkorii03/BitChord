@@ -28,16 +28,42 @@ object PlayerDeepLink {
     /** Whether a request is outstanding. Cleared by [handled]. */
     val pending: StateFlow<Boolean> = _pending.asStateFlow()
 
-    /** Reads an incoming intent, and reports whether it asked for the player. */
-    fun consume(intent: Intent?): Boolean {
-        if (intent == null || !intent.getBooleanExtra(EXTRA_OPEN_PLAYER, false)) return false
+    /**
+     * Whether a launch intent should raise the player.
+     *
+     * A request only counts when it arrives on a *fresh* launch. A singleTask
+     * activity keeps the intent that started its task and hands it back to
+     * `onCreate` on every recreation (a theme change, the system reclaiming the
+     * activity while it is in the background, a task restored from Recents).
+     * Re-applying the widget's extra there raised the sheet by itself when the
+     * listener merely came back to the app — the request had already been
+     * served once and must stay spent. [recreating] is
+     * `savedInstanceState != null`, which is exactly the case where the intent
+     * is being replayed rather than newly delivered.
+     */
+    fun shouldExpandOnIntent(requested: Boolean, recreating: Boolean): Boolean =
+        requested && !recreating
+
+    /**
+     * Reads an incoming intent, and reports whether it asked for the player.
+     *
+     * [recreating] must be true when this is [MainActivity][com.music.bitchord.MainActivity]'s
+     * `onCreate` running from saved state; see [shouldExpandOnIntent]. The
+     * extra is taken off the intent either way, so a stale one cannot be read
+     * again by a later call.
+     */
+    fun consume(intent: Intent?, recreating: Boolean = false): Boolean {
+        val requested = intent?.getBooleanExtra(EXTRA_OPEN_PLAYER, false) == true
         // Cleared off the intent as well. A singleTask activity keeps the intent
         // that launched it, and getIntent() returns the same one after every
         // configuration change — left in place, a widget tap would reopen the
         // sheet each time the device changed theme or font size.
-        intent.removeExtra(EXTRA_OPEN_PLAYER)
-        _pending.value = true
-        return true
+        intent?.removeExtra(EXTRA_OPEN_PLAYER)
+        // Replaces rather than accumulates: the latest intent is the only
+        // request that can still be outstanding, and an activity that is
+        // starting fresh must not inherit one from a previous instance.
+        _pending.value = shouldExpandOnIntent(requested, recreating)
+        return _pending.value
     }
 
     /**

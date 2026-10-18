@@ -325,7 +325,10 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         // Before the composition, so a cold launch from a widget's artwork has
         // the request already standing by the time BitChordApp first reads it.
-        PlayerDeepLink.consume(intent)
+        // A recreation replays the task's original intent, and that intent may
+        // still carry a widget's extra; the request was served the first time
+        // and coming back to the app must not raise the player again.
+        PlayerDeepLink.consume(intent, recreating = savedInstanceState != null)
         JamInviteLink.consume(intent)
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
