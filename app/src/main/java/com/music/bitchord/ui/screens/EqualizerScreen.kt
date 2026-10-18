@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -153,7 +154,7 @@ fun EqualizerScreen(
         )
         Column(modifier = Modifier.graphicsLayer { alpha = settingsAlpha }) {
             Spacer(Modifier.height(18.dp))
-            SegmentedControl(
+            SettingsSegmentedControl(
                 options = EqualizerMode.entries.map { it.localizedLabel() },
                 selectedIndex = EqualizerMode.entries.indexOf(mode),
                 onSelect = { AppSettings.setEqualizerMode(EqualizerMode.entries[it]) },
@@ -813,7 +814,7 @@ private fun BalanceControl(
 @Composable
 private fun PresetSheet(selected: EqualizerPreset, onSelect: (EqualizerPreset) -> Unit) {
     val haptics = rememberHaptics()
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
         Text(
             text = stringResource(R.string.equalizer_preset),
             style = MaterialTheme.typography.titleLarge,

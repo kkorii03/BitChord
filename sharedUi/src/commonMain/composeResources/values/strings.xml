@@ -134,6 +134,7 @@
     <string name="this_phone">This phone</string>
     <string name="albums">Albums</string>
     <string name="artists">Artists</string>
+    <string name="songs">Songs</string>
     <string name="card_plays_format">%1$s plays</string>
     <string name="card_songs_format">%1$s songs</string>
     <string name="card_views_format">%1$s views</string>
@@ -158,6 +159,7 @@
     <string name="saved_to_youtube_music">Saved to YouTube Music</string>
     <string name="search">Search</string>
     <string name="search_empty">Search millions of songs on YouTube Music.</string>
+    <string name="search_top_result">Top result</string>
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
     <string name="search_library_empty">Search the songs in your Local Music folder.</string>
     <string name="search_library_hint">Songs, Artists and Albums</string>

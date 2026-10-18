@@ -55,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -152,6 +153,7 @@ fun topBarContentPadding(): Dp = topBarHeight() + TopBarContentGap
  * Apple Music behaviour: the big in-list header owns the title at rest;
  * once the list scrolls, the small centered title fades in.
  */
+@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun FrostedTopBar(
     title: String,
@@ -196,24 +198,37 @@ fun FrostedTopBar(
         animationSpec = if (reduceAnimation) snap() else tween(220),
         label = "topBarTitleAlpha",
     )
-    // The bar's backdrop: the theme's surface at nearly full strength over the
-    // status bar and the controls, ramping out over the last few dp so it has
-    // no bottom seam. The surface follows the theme, which keeps the system's
-    // status glyphs legible in light mode and reads as the requested dark
-    // scrim in the app's black theme. Driven by [scrolled], so it fades in only
-    // once the large in-page heading has started under the bar.
+    // The bar's backdrop: the theme's background at nearly full strength over
+    // the status bar and the controls, ramping out over the last few dp so it
+    // has no hard bottom seam — the hairline below marks the edge instead. At
+    // 0.94 the list text behind no longer reads through the bar and collide
+    // with the centred title; with the source blurred underneath it, the last
+    // few percent that does show reads as Apple's material rather than as
+    // letters. Driven by [scrolled], so it fades in only once the large
+    // in-page heading has started under the bar.
     val statusInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val barBottom = statusInset + TopBarContentHeight
-    val scrimFade = 12.dp
-    val scrimColor = MaterialTheme.colorScheme.surface
+    val scrimFade = 6.dp
+    val scrimColor = MaterialTheme.colorScheme.background
     val scrimHold = if (barBottom > scrimFade) (barBottom - scrimFade).value / barBottom.value else 0f
     val scrimBrush = remember(scrimColor, scrimHold) {
         Brush.verticalGradient(
-            0f to scrimColor.copy(alpha = 0.85f),
-            scrimHold to scrimColor.copy(alpha = 0.82f),
+            0f to scrimColor.copy(alpha = 0.94f),
+            scrimHold to scrimColor.copy(alpha = 0.94f),
             1f to Color.Transparent,
         )
     }
+    // The line that gives the bar a bottom edge once it is up. On the
+    // transparent material it is the only edge there is; it fades in with the
+    // scrim so the bar does not appear to have a border while at rest.
+    val hairlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+    // Real backdrop blur, where the platform can render one. The page under
+    // this bar is already a Haze source (MainActivity mounts it around every
+    // page), so all that is needed is an effect over the bar while it is up.
+    // Reduce dynamic blur, a missing source and pre-API-31 devices all fall
+    // back to the scrim alone, which is what the effect exists to approximate.
+    val blurBackdrop = collapsingTitle && scrolled && backButtonHazeState != null &&
+        !reduceDynamicBlur && isGlassSupported()
     // Every bounded bar uses the same hairline, whether its pane is blurred or
     // solid. A transparent artwork page has no pane edge for a line to mark.
     val dividerColor by animateColorAsState(
@@ -236,12 +251,34 @@ fun FrostedTopBar(
                 } else Modifier,
             )
             .then(
+                if (blurBackdrop) {
+                    // Composed only while the bar is up, at full strength: the
+                    // scrim above it is what fades, so the blur does not have
+                    // to be re-evaluated per frame while that happens.
+                    Modifier.optimizedHazeEffect(
+                        state = backButtonHazeState!!,
+                        style = HazeMaterials.regular(scrimColor),
+                    )
+                } else Modifier,
+            )
+            .then(
                 if (collapsingTitle) {
                     Modifier.drawWithContent {
                         // Read in the draw phase: the fade animates without
                         // recomposing the bar (or the page under it) per frame.
                         val alpha = titleAlpha
-                        if (alpha > 0f) drawRect(brush = scrimBrush, alpha = alpha)
+                        if (alpha > 0f) {
+                            drawRect(brush = scrimBrush, alpha = alpha)
+                            val thickness = 0.5.dp.toPx()
+                            val edge = size.height - thickness / 2f
+                            drawLine(
+                                color = hairlineColor,
+                                start = Offset(0f, edge),
+                                end = Offset(size.width, edge),
+                                strokeWidth = thickness,
+                                alpha = alpha,
+                            )
+                        }
                         drawContent()
                     }
                 } else Modifier,

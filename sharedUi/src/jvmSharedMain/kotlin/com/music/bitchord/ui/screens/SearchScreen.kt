@@ -37,7 +37,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
@@ -156,6 +155,14 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    // Resolved here rather than inside the list builder: section headings are
+    // our own labels for the result kinds, never YouTube's shelf titles, so
+    // they follow the app's language like every other string on the page.
+    val songsLabel = stringResource(Res.string.songs)
+    val artistsLabel = stringResource(Res.string.artists)
+    val albumsLabel = stringResource(Res.string.albums)
+    val playlistsLabel = stringResource(Res.string.playlists)
+    val moreLabel = stringResource(Res.string.more)
     // Tapping the search tab from the nav bar sets focusRequested;
     // respond by focusing the field and opening the keyboard.
     LaunchedEffect(focusRequested) {
@@ -304,7 +311,15 @@ fun SearchScreen(
                             )
                         }
                     }
-                    searchSections(results.data, filter).forEach { section ->
+                    searchSections(
+                        rows = results.data,
+                        filter = filter,
+                        songsLabel = songsLabel,
+                        artistsLabel = artistsLabel,
+                        albumsLabel = albumsLabel,
+                        playlistsLabel = playlistsLabel,
+                        moreLabel = moreLabel,
+                    ).forEach { section ->
                         section.title?.let { title ->
                             item(key = "search-section:$title") {
                                 Text(
@@ -374,15 +389,28 @@ fun SearchScreen(
 
 private data class SearchSection(val title: String?, val rows: List<SearchResult>)
 
-/** The unfiltered page is useful only when its mixed result types are readable at a glance. */
-private fun searchSections(rows: List<SearchResult>, filter: SearchFilter): List<SearchSection> {
+/**
+ * The unfiltered page is useful only when its mixed result types are readable
+ * at a glance. The headings name our own result kinds — they are not taken
+ * from YouTube, which is why they can be localised — and the caller passes the
+ * strings already resolved for the app's current language.
+ */
+private fun searchSections(
+    rows: List<SearchResult>,
+    filter: SearchFilter,
+    songsLabel: String,
+    artistsLabel: String,
+    albumsLabel: String,
+    playlistsLabel: String,
+    moreLabel: String,
+): List<SearchSection> {
     if (filter != SearchFilter.ALL) return listOf(SearchSection(null, rows))
     return listOf(
-        SearchSection("Songs", rows.filterIsInstance<SearchResult.Track>()),
-        SearchSection("Artists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ARTIST }),
-        SearchSection("Albums", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ALBUM }),
-        SearchSection("Playlists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.PLAYLIST }),
-        SearchSection("More", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.OTHER }),
+        SearchSection(songsLabel, rows.filterIsInstance<SearchResult.Track>()),
+        SearchSection(artistsLabel, rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ARTIST }),
+        SearchSection(albumsLabel, rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ALBUM }),
+        SearchSection(playlistsLabel, rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.PLAYLIST }),
+        SearchSection(moreLabel, rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.OTHER }),
     ).filter { it.rows.isNotEmpty() }
 }
 
@@ -452,7 +480,7 @@ private fun TopResultCard(
             .contextClick(onLongPress),
     ) {
         Text(
-            text = "상위 검색 결과",
+            text = stringResource(Res.string.search_top_result),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )

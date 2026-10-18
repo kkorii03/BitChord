@@ -64,10 +64,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -109,6 +105,7 @@ import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
+import com.music.bitchord.ui.components.SegmentedControl
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.TopBarContentGap
@@ -313,45 +310,21 @@ fun LocalMusicScreen(
         )
 
         // ── Tab row ──────────────────────────────────────────────────────────
-        TabRow(
-            selectedTabIndex = selectedTab,
-            containerColor = MaterialTheme.colorScheme.background,
-            contentColor = MaterialTheme.colorScheme.primary,
-            indicator = { tabPositions ->
-                TabRowDefaults.SecondaryIndicator(
-                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
-                    color = MaterialTheme.colorScheme.primary,
-                )
+        // Apple's segmented control rather than an underlined Material tab
+        // row: these three narrow the folder's contents, they don't navigate.
+        SegmentedControl(
+            options = listOf(
+                stringResource(R.string.songs),
+                stringResource(R.string.artists),
+                stringResource(R.string.albums),
+            ),
+            selectedIndex = selectedTab,
+            onSelect = { index ->
+                selectedTab = index
+                leaveDrillDown()
             },
-        ) {
-            LocalTab(
-                icon = Icons.Rounded.MusicNote,
-                label = stringResource(R.string.songs),
-                selected = selectedTab == LOCAL_TAB_SONGS,
-                onClick = {
-                    selectedTab = LOCAL_TAB_SONGS
-                    leaveDrillDown()
-                },
-            )
-            LocalTab(
-                icon = Icons.Rounded.Person,
-                label = stringResource(R.string.artists),
-                selected = selectedTab == LOCAL_TAB_ARTISTS,
-                onClick = {
-                    selectedTab = LOCAL_TAB_ARTISTS
-                    leaveDrillDown()
-                },
-            )
-            LocalTab(
-                icon = Icons.Rounded.Album,
-                label = stringResource(R.string.albums),
-                selected = selectedTab == LOCAL_TAB_ALBUMS,
-                onClick = {
-                    selectedTab = LOCAL_TAB_ALBUMS
-                    leaveDrillDown()
-                },
-            )
-        }
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+        )
 
         // ── Content ──────────────────────────────────────────────────────────
         AnimatedContent(
@@ -1690,40 +1663,6 @@ private fun DownloadSelectionBar(
             Text(stringResource(R.string.delete), color = Color(0xFFFF453A))
         }
         TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
-    }
-}
-
-@Composable
-private fun LocalTab(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    // Fired here rather than at each of the three call sites, so Songs, Artists
-    // and Albums can't drift apart — and the Downloads folder, which is this
-    // same screen, gets it for free. Silent on the tab that's already showing.
-    val haptics = rememberHaptics()
-    Tab(
-        selected = selected,
-        onClick = {
-            if (!selected) haptics.play(Haptic.Select)
-            onClick()
-        },
-        selectedContentColor = MaterialTheme.colorScheme.primary,
-        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    ) {
-        Row(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-            )
-        }
     }
 }
 

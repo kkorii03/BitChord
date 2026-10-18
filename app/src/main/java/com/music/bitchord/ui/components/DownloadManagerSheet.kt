@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -197,7 +198,7 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     // Newest ask last, the order the queue will actually reach them in.
     val items = remember(session.items) { session.items.sortedBy { it.sequence } }
 
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth().navigationBarsPadding()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

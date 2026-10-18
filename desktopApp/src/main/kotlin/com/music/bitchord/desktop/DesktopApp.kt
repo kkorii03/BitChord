@@ -13,6 +13,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateListOf
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.SegmentedControl
 import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.replay.ReplayCreditCard
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -172,8 +173,6 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
@@ -5167,11 +5166,11 @@ private fun DesktopLocalMusicPage(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent) {
-                listOf("Songs", "Artists", "Albums").forEachIndexed { index, label ->
-                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(label) })
-                }
-            }
+            SegmentedControl(
+                options = listOf("Songs", "Artists", "Albums"),
+                selectedIndex = selectedTab,
+                onSelect = { selectedTab = it },
+            )
             Spacer(Modifier.height(8.dp))
             if (songs.isEmpty()) {
                 DesktopEmptyPage(emptyIcon, emptyTitle, emptyDescription)

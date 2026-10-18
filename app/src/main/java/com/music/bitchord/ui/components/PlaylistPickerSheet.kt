@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -109,7 +110,7 @@ fun PlaylistPickerSheet(
         return
     }
 
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth().navigationBarsPadding()) {
         if (song != null) {
             SheetTrackHeader(song)
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
@@ -267,6 +268,7 @@ private fun NewPlaylistForm(
     Column(
         modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .imePadding(),
     ) {
         Row(
@@ -409,6 +411,7 @@ internal fun RenamePlaylistForm(
     Column(
         modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .imePadding(),
     ) {
         Row(

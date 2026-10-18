@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -539,6 +540,12 @@ private fun TintedSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
+                    // The sheet's surface runs to the bottom of the window, but
+                    // its last row has to stay above the gesture bar's home
+                    // indicator. Padding inside the scrolling column keeps the
+                    // tint full-bleed while the content (and therefore the
+                    // scroll range) stops clear of the system bar.
+                    .navigationBarsPadding()
                     .verticalScroll(rememberScrollState()),
                 content = content,
             )

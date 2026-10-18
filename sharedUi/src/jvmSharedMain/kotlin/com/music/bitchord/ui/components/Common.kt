@@ -18,7 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
@@ -604,10 +604,11 @@ private fun SongRowContent(
 }
 
 /**
- * The ⋮ at the end of a row. Its circle is a touch target nobody sees, so it
- * hangs [ROW_MORE_OUTSET] into the page gutter: the dots end at the row's
- * content edge, mirroring the artwork on the left, rather than a whole
- * button's width short of it — and the row's text gets that width back.
+ * The horizontal ellipsis at the end of a row, the same overflow glyph the
+ * player carries. Its circle is a touch target nobody sees, so it hangs
+ * [ROW_MORE_OUTSET] into the page gutter: the dots end at the row's content
+ * edge, mirroring the artwork on the left, rather than a whole button's width
+ * short of it — and the row's text gets that width back.
  */
 @Composable
 fun RowMoreButton(
@@ -625,7 +626,7 @@ fun RowMoreButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            Icons.Rounded.MoreVert,
+            Icons.Rounded.MoreHoriz,
             contentDescription = stringResource(Res.string.more),
             tint = tint,
             modifier = Modifier.size(iconSize),

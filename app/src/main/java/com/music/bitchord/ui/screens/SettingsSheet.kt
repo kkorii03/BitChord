@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -695,7 +696,7 @@ fun SettingsScreen(
                         append(AudioOutputStatus.encodingLabel(outputStatus))
                     },
                 )
-                SegmentedControl(
+                SettingsSegmentedControl(
                     options = OutputPcmMode.entries.map(OutputPcmMode::label),
                     selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
                     onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
@@ -880,7 +881,7 @@ fun SettingsScreen(
             val themeTitle = stringResource(R.string.theme)
             row(themeTitle, "dark mode", "light mode") {
                 SettingsRow(icon = Icons.Rounded.Brightness4, title = themeTitle)
-                SegmentedControl(
+                SettingsSegmentedControl(
                     options = ThemeMode.entries.map { it.localizedLabel() },
                     selectedIndex = ThemeMode.entries.indexOf(theme),
                     onSelect = { AppSettings.setThemeMode(ThemeMode.entries[it]) },
@@ -913,7 +914,7 @@ fun SettingsScreen(
                     title = lowPowerTitle,
                     subtitle = stringResource(R.string.low_power_mode_subtitle),
                 )
-                SegmentedControl(
+                SettingsSegmentedControl(
                     options = LowPowerMode.entries.map { it.localizedLabel() },
                     selectedIndex = LowPowerMode.entries.indexOf(lowPowerMode),
                     onSelect = { AppSettings.setLowPowerMode(LowPowerMode.entries[it]) },
@@ -1390,7 +1391,7 @@ fun SettingsScreen(
                         icon = BitChordIcons.FrameRate,
                         title = refreshRateTitle,
                     )
-                    SegmentedControl(
+                    SettingsSegmentedControl(
                         options = supportedRefreshRates.map { "$it Hz" },
                         selectedIndex = supportedRefreshRates.indexOf(selectedPerformanceRefreshRate),
                         onSelect = { index ->
@@ -2248,7 +2249,7 @@ private fun QualitySheet(
     onSelect: (AudioQuality) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
         Row(
             modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2324,7 +2325,7 @@ private fun AutomixPerformanceSheet(
     onSelect: (AutomixPerformanceMode) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
         Row(
             modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2409,7 +2410,7 @@ private fun DownloadQualitySheet(
     onSelect: (DownloadQuality) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
         Row(
             modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2895,7 +2896,7 @@ internal fun DestructiveRow(
 
 /** Sliding pill selector, for the handful of settings with two or three states. */
 @Composable
-internal fun SegmentedControl(
+internal fun SettingsSegmentedControl(
     options: List<String>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,

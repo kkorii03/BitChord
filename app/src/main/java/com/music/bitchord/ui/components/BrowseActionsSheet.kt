@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -205,7 +206,12 @@ fun BrowseActionsSheet(
         Column(
             modifier
                 .fillMaxWidth()
-                .then(if (menu) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                // Scrolls in both presentations: the sheet can carry every
+                // optional row at once, and the popup is already height-capped
+                // by HeldContextMenu. Its own insets keep the last row above
+                // the gesture bar.
+                .verticalScroll(rememberScrollState())
+                .then(if (menu) Modifier else Modifier.navigationBarsPadding()),
         ) {
             if (!menu) {
                 BrowseSheetHeader(target)

@@ -245,7 +245,7 @@ import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
-import com.music.bitchord.ui.screens.SegmentedControl
+import com.music.bitchord.ui.screens.SettingsSegmentedControl
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.sharedui.resources.Res as SharedRes
 import com.music.bitchord.sharedui.resources.search_hint
@@ -3230,7 +3230,7 @@ private fun BitChordApp(
                             // The settings page's own two-state selector, so the
                             // app has one look for "pick one of these".
                             sourceSwitcher = {
-                                SegmentedControl(
+                                SettingsSegmentedControl(
                                     options = listOf(
                                         stringResource(R.string.search_source_youtube),
                                         stringResource(R.string.library),

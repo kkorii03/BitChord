@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -355,6 +356,9 @@ fun ListenTogetherScreen(
             sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.background,
         ) {
+            // The party sheets end in a button or a spacer at the window edge;
+            // without this the gesture bar's pill sits over whatever is last.
+            Box(Modifier.fillMaxWidth().navigationBarsPadding()) {
             when (open) {
                 PartySheet.Create -> CreatePartySheet(
                     avatarUrl = ListenTogether.myAvatarUrl(),
@@ -467,6 +471,7 @@ fun ListenTogetherScreen(
                         ).show()
                     },
                 )
+            }
             }
         }
     }
