@@ -722,7 +722,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // uploads the whole song (twice — Deepgram, then Gemini), and the
             // measurement times most covers on its own. A few videos still ask
             // alongside it, so how late each engine runs keeps being learned.
-            val calibration = LyricsTiming.calibrationSample(request.videoId)
+            // Each video is sampled at most once ever, so a replay or a lyrics
+            // re-delivery does not buy the same sample again.
+            var calibration = LyricsTiming.calibrationSample(request.videoId) &&
+                AppSettings.aiTimingAhead.value &&
+                (LyricsTranslation.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
+                LyricsTiming.wantsAi(context, request.videoId, lines)
+            if (calibration && !LyricsTiming.claimCalibrationSample(context, request.videoId)) {
+                calibration = false
+            }
             if (calibration) launch { aiAhead(context, request.videoId, lines) }
             // The record is searched for under every name the lyrics know:
             // what they were found as first, then the video's own readings.
@@ -835,7 +843,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
         if (!AppSettings.aiTimingAhead.value) return
         if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
-        if (LyricsTiming.hasAi(context, videoId, lines) || LyricsTiming.aiAlreadyFailed(context, videoId, lines)) return
+        if (!LyricsTiming.wantsAi(context, videoId, lines)) return
         runCatching { LyricsTiming.placeWithAi(context, videoId, lines, automatic = true) }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
@@ -855,10 +863,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
         val context = getApplication<Application>()
         if (!LyricsTiming.measurementGaveUp(context, request.videoId)) return
-        // Nothing yet, or only a quicker engine's answer Whisper may better.
-        val untried = !LyricsTiming.hasAi(context, request.videoId, lines) &&
-            !LyricsTiming.aiAlreadyFailed(context, request.videoId, lines)
-        if (!LyricsTiming.wantsWhisper(context, request.videoId, lines) && !(untried && AppSettings.autoLyricsTiming.value)) return
+        // One policy decides what is left to spend: an accepted answer, an
+        // engine already paid for these lyrics, or Whisper once it is due.
+        if (!LyricsTiming.wantsAi(context, request.videoId, lines)) return
         runAiTiming(generation, lines, automatic = true)
     }
 

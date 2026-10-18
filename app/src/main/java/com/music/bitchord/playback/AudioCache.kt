@@ -249,6 +249,7 @@ object AudioCache {
         analysisHeads.clear()
         analysisHeadsInFlight.clear()
         analysisHeadWant.clear()
+        stalledAnalysisHeads.clear()
         renditionKeys.clear()
         scope.launch {
             cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
@@ -350,7 +351,10 @@ object AudioCache {
                 // Deleting the bytes is only half of it. The head fetch runs once
                 // per track per session, so without this the entry it just made
                 // room for is never refilled and the discard buys nothing.
-                uri.getQueryParameter("v")?.let(analysisHeads::remove)
+                uri.getQueryParameter("v")?.let {
+                    analysisHeads.remove(it)
+                    stalledAnalysisHeads.remove(it)
+                }
             }
             .onFailure {
                 TrackLog.d(TAG, "undecodable rendition $key still in use: ${it.message}", about = about)
@@ -754,6 +758,7 @@ object AudioCache {
                         mediaId?.let { id ->
                             analysisHeads.remove(id)
                             analysisHeadWant.remove(id)
+                            stalledAnalysisHeads.remove(id)
                             renditionKeys.remove(id)
                         }
                     }
@@ -1145,6 +1150,16 @@ object AudioCache {
     private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * Video ids whose last round ended without adding a byte. The round is
+     * sized from the real length and fetches one range of one resolve, so the
+     * next attempt would be the same request against the same refusal — see
+     * [analysisHeadShouldRetry]. Kept for the session; a discarded rendition
+     * or a wipe clears it, and playback growing the copy makes
+     * [alignmentHeadComplete] true regardless.
+     */
+    private val stalledAnalysisHeads = ConcurrentHashMap.newKeySet<String>()
+
+    /**
      * How many bytes each track's last round asked for — the only way for
      * [awaitAnalysisHead] to tell a finished head from one the round left
      * part-written. See [alignmentHeadComplete].
@@ -1242,8 +1257,9 @@ object AudioCache {
      * second while looking like it worked, so the wait pulls again instead.
      *
      * @return whether the opening is fully on disk, `false` once no further
-     *   round can improve on it — the deadline passed, or
-     *   [MAX_ALIGNMENT_HEAD_ROUNDS] rounds all came up short.
+     *   round can improve on it — the deadline passed,
+     *   [MAX_ALIGNMENT_HEAD_ROUNDS] rounds all came up short, or a round added
+     *   no bytes (the next identical request would fail the same way).
      */
     suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean {
         if (!::cache.isInitialized) return false
@@ -1251,10 +1267,14 @@ object AudioCache {
         if (alignmentHeadComplete(videoId)) return true
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         // A previous round that wrote nothing would otherwise block retries
-        // for the rest of the session.
-        if (videoId !in analysisHeadsInFlight) {
+        // for the rest of the session — but one that ended with no progress is
+        // not worth a second identical fetch either; see [stalledAnalysisHeads].
+        if (videoId !in analysisHeadsInFlight && videoId !in stalledAnalysisHeads) {
             analysisHeads.remove(videoId)
         }
+        // What a further round has to beat to be worth starting: taken before
+        // the round is started so its own bytes cannot count as progress.
+        var lastHeld = alignmentPrefixBytes(videoId)
         requestAnalysisHead(opus)
         var rounds = 1
         var askedAt = SystemClock.elapsedRealtime()
@@ -1275,8 +1295,17 @@ object AudioCache {
                     // measurement can act on, so the round may try again, and
                     // each retry runs [clearPartialHead] first — which is what
                     // keeps a part-written entry from splicing two encodings.
-                    // [MAX_ALIGNMENT_HEAD_ROUNDS] still bounds how often.
-                    if (alignmentPrefixBytes(videoId) < MIN_ALIGNMENT_PREFIX_BYTES) {
+                    // [MAX_ALIGNMENT_HEAD_ROUNDS] still bounds how often, and
+                    // a round that added nothing is not repeated at all: the
+                    // same resolve and range would fail the same way, which is
+                    // how one track logged three "came up short: held=0" lines
+                    // in two seconds.
+                    val held = alignmentPrefixBytes(videoId)
+                    if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
+                        if (!analysisHeadShouldRetry(lastHeld, held, rounds, MAX_ALIGNMENT_HEAD_ROUNDS, MIN_ALIGNMENT_PREFIX_BYTES)) {
+                            return false
+                        }
+                        lastHeld = held
                         analysisHeads.remove(videoId)
                         requestAnalysisHead(opus)
                         rounds++
@@ -1389,6 +1418,10 @@ object AudioCache {
                         "held=${alignmentPrefixBytes(videoId)}",
                     videoId,
                 )
+                // What this round has to beat; a round that ends no higher is
+                // the same request against the same refusal and is not worth
+                // starting again in this session.
+                val before = alignmentPrefixBytes(videoId)
                 if (!clearPartialHead(videoId, want)) {
                     TrackLog.w(TAG, "analysis head round for $videoId skipped: partial is held elsewhere", videoId)
                     return@launch
@@ -1428,6 +1461,7 @@ object AudioCache {
                 renditionKeys.remove(videoId)
                 val held = alignmentPrefixBytes(videoId)
                 if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
+                    if (held <= before) stalledAnalysisHeads.add(videoId) else stalledAnalysisHeads.remove(videoId)
                     // The one line that says *this* fetch failed, as opposed to
                     // the read-ahead chatter around it: every cause below
                     // already logs its own message at debug, but nothing said
@@ -1439,6 +1473,8 @@ object AudioCache {
                             "(cause in the read-ahead lines around this one)",
                         videoId,
                     )
+                } else {
+                    stalledAnalysisHeads.remove(videoId)
                 }
             } finally {
                 analysisHeadsInFlight.remove(videoId)

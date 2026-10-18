@@ -62,3 +62,19 @@ jobs:
           grep -E "^w: .*(LyricsTiming|ChromaAlignment|LyricsTimeMap|LyricsOffsetSheet|AudioDecoder|TranslationAhead)" compile.log | head -20 | while IFS= read -r l; do echo "::warning title=kotlin::$l"; done || true
           grep -E "Task :app:compileProdReleaseKotlin|BUILD (SUCCESSFUL|FAILED)" compile.log | while IFS= read -r l; do echo "::notice title=compile::$l"; done || true
           exit $status
+
+      # The app module's own pure-logic tests for playback (timing policy,
+      # retries). Only this package: the rest of app/src/test is not kept green.
+      - name: App playback tests
+        shell: bash
+        run: |
+          set +e -o pipefail
+          ./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.*' -Pbitchord.arm64Only=true --console=plain 2>&1 | tee apptest.log
+          status=${PIPESTATUS[0]}
+          for f in app/build/test-results/testProdDebugUnitTest/*.xml; do
+            [ -f "$f" ] || continue
+            line=$(grep -o '<testsuite [^>]*>' "$f" | head -1 || true)
+            echo "::notice title=app-tests::$(basename "$f") $(echo "$line" | grep -oE '(tests|failures|errors|skipped)="[0-9]+"' | tr '\n' ' ')"
+          done
+          grep -E "^e: |FAILED|AssertionError|expected:" apptest.log | head -30 | while IFS= read -r l; do echo "::error title=app-test::$l"; done || true
+          exit $status

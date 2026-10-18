@@ -740,9 +740,14 @@ object LyricsTiming {
 
     // ---- AI ----------------------------------------------------------------------------
 
-    /** Whether an AI answer is kept for [videoId] and these [lines]. */
+    /**
+     * Whether an accepted AI answer is kept for [videoId] and these [lines] —
+     * not merely whether it is what applies right now. The measurement wins
+     * [baseOf] whenever both exist, so asking "is the base AI?" made a paid
+     * answer invisible and the next caller bought it again.
+     */
     suspend fun hasAi(context: Context, videoId: String, lines: List<LyricLine>): Boolean =
-        store(context).get(videoId)?.let { baseOf(it, lines)?.byAi } == true
+        store(context).get(videoId)?.let { AiTimingPolicy.isAccepted(knowledge(it), textKey(lines)) } == true
 
     /** Whether the automatic AI fallback already tried these [lines] for [videoId] and got nothing. */
     suspend fun aiAlreadyFailed(context: Context, videoId: String, lines: List<LyricLine>): Boolean =
@@ -764,20 +769,32 @@ object LyricsTiming {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) return null
         val key = textKey(lines)
+        // One decision for every automatic caller, made from what is kept —
+        // the screen, the next-song preparation and the calibration sample
+        // used to each guard on their own and each miss a case.
+        val entry = store(context).get(videoId)
         // Whisper is slow and paid for by the minute, so an automatic request
         // gets it only once the measurement has given up — while the free
         // measurement may still time the video, the quick engines answer ahead.
-        val entry = store(context).get(videoId)
-        val engines = when {
-            !automatic -> ALL_ENGINES
-            !measurementGaveUp(context, videoId) -> AHEAD_ENGINES
-            // Already answered by Gemini: Whisper alone, to do better.
-            entry?.aiTextKey == key && entry.ai != null && entry.aiEngine != ENGINE_WHISPER -> listOf(ENGINE_WHISPER)
-            else -> ALL_ENGINES
+        val engines = if (automatic) {
+            AiTimingPolicy.nextEngines(
+                knowledge(entry),
+                key,
+                manual = false,
+                measurementGaveUp = measurementGaveUp(context, videoId),
+            )
+        } else {
+            AiTimingPolicy.ALL_ENGINES
         }
-        // One request per video, lyrics and engines, whoever asks — the
-        // button, the song starting, the next-song preparation.
-        val flight = "$videoId:$key:${engines.joinToString(",")}"
+        // Paid for and agreed, or already spent on these lyrics: reuse it
+        // without decoding the audio again or paying an engine twice.
+        if (engines.isEmpty()) return entry?.let { aiOf(it, lines) }
+        // One request per video, lyrics and kind, whoever asks — the button,
+        // the song starting, the next-song preparation. The engines are no
+        // longer part of the key: two callers that read the cache a moment
+        // apart could ask for different sets and both decode the audio. A
+        // manual tap is kept apart so it can still force a fresh answer.
+        val flight = if (automatic) "$videoId:$key" else "$videoId:$key:manual"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             askAi(context, videoId, lines, sung, key, engines)
         }
@@ -820,12 +837,25 @@ object LyricsTiming {
         // placed 3 of 25 lines, Whisper 22, within a tenth of a second).
         var engine = ENGINE_DEEPGRAM
         var adjustment: Adjustment.Mapped? = null
+        // Kept before the call, not after: a request that fails, times out or
+        // is cancelled has still been paid for, and must not be made again for
+        // these lyrics. [AiTimingPolicy] reads this to pick the next engine.
+        suspend fun noteAttempt(name: String) {
+            store(context).update(videoId) { entry ->
+                val sameLyrics = entry.aiAttemptedKey == key
+                entry.copy(
+                    aiAttemptedKey = key,
+                    aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + name).distinct(),
+                )
+            }
+        }
         if (audio != null && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
             for ((model, name) in listOf(
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA to ENGINE_DEEPGRAM,
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_WHISPER,
             ).filter { it.second in engines }) {
+                noteAttempt(name)
                 if (name == ENGINE_WHISPER) store(context).update(videoId) { it.copy(whisperKey = key) }
                 val asked = System.currentTimeMillis()
                 val heard = com.music.bitchord.data.lyrics.Deepgram.words(audio, language, model)
@@ -854,6 +884,7 @@ object LyricsTiming {
         // Gemini when Deepgram isn't set up, had no audio to hear, or heard too little.
         var answer: List<Long?>? = null
         if (adjustment == null && ENGINE_GEMINI in engines) {
+            noteAttempt(ENGINE_GEMINI)
             engine = ENGINE_GEMINI
             answer = LyricsTranslation.placeLinesInVideo(
                 videoId,
@@ -957,9 +988,9 @@ object LyricsTiming {
         return bias
     }
 
-    const val ENGINE_DEEPGRAM = "Deepgram"
-    const val ENGINE_WHISPER = "Whisper"
-    const val ENGINE_GEMINI = "Gemini"
+    const val ENGINE_DEEPGRAM = AiTimingPolicy.DEEPGRAM
+    const val ENGINE_WHISPER = AiTimingPolicy.WHISPER
+    const val ENGINE_GEMINI = AiTimingPolicy.GEMINI
 
     /**
      * Whether the free measurement has already timed [videoId] (or found it
@@ -973,30 +1004,56 @@ object LyricsTiming {
      * measurement — the pairs [aiBias] learns each engine's lateness from —
      * where every other one asks AI only once the measurement has nothing.
      * Picked by id, so the same videos are the samples every time.
+     *
+     * This is only the id rule; [claimCalibrationSample] is what must be
+     * called before asking, so a video is sampled once ever rather than once
+     * per playback or lyrics delivery.
      */
     fun calibrationSample(videoId: String): Boolean = Math.floorMod(videoId.hashCode(), CALIBRATION_EVERY) == 0
 
-    private const val CALIBRATION_EVERY = 8
-
-    private val ALL_ENGINES = listOf(ENGINE_DEEPGRAM, ENGINE_WHISPER, ENGINE_GEMINI)
-    private val AHEAD_ENGINES = listOf(ENGINE_DEEPGRAM, ENGINE_GEMINI)
-
     /**
-     * Whether an automatic request could still do better for [videoId]: the
-     * measurement gave up, and Whisper hasn't heard these lyrics yet while
-     * what is kept (if anything) is a quicker engine's answer.
+     * Claims [videoId]'s one calibration sample, remembered in the kept entry
+     * like every other timing fact. True for the caller that got it, false
+     * once it has been taken — by this session or an earlier one. Without
+     * this a calibration video asked Gemini, Deepgram and Whisper again on
+     * every lyrics delivery and screen open, and the saved pair (when the
+     * measurement had nothing to compare) was never marked at all.
      */
-    suspend fun wantsWhisper(context: Context, videoId: String, lines: List<LyricLine>): Boolean {
-        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
-        val entry = store(context).get(videoId) ?: return false
-        if (!measurementGaveUp(context, videoId)) return false
-        val key = textKey(lines)
-        if (entry.whisperKey == key) return false
-        return !(entry.aiTextKey == key && entry.aiEngine == ENGINE_WHISPER)
+    suspend fun claimCalibrationSample(context: Context, videoId: String): Boolean {
+        if (!calibrationSample(videoId)) return false
+        if (store(context).get(videoId)?.calibrationSampled == true) return false
+        var claimed = false
+        store(context).update(videoId) { entry ->
+            if (entry.calibrationSampled) {
+                entry
+            } else {
+                claimed = true
+                entry.copy(calibrationSampled = true)
+            }
+        }
+        return claimed
     }
 
+    private const val CALIBRATION_EVERY = 8
+
+    /**
+     * Whether an automatic request still has an engine worth spending on
+     * these lyrics — the one question every automatic caller should ask.
+     * Callers used to combine [hasAi], [aiAlreadyFailed] and "wants Whisper"
+     * themselves; those answers disagreed with each other and with what the
+     * cache actually holds, so an accepted 100% answer could still be sent to
+     * Whisper a minute later.
+     */
+    suspend fun wantsAi(context: Context, videoId: String, lines: List<LyricLine>): Boolean =
+        AiTimingPolicy.shouldAskAgain(
+            knowledge(store(context).get(videoId)),
+            textKey(lines),
+            manual = false,
+            measurementGaveUp = measurementGaveUp(context, videoId),
+        )
+
     /** Deepgram's answer is used only when this much of the song agrees with its line; Gemini otherwise. */
-    private const val MIN_DEEPGRAM_MATCH = 35
+    private val MIN_DEEPGRAM_MATCH = AiTimingPolicy.MIN_ACCEPTED_MATCH
 
     private const val BIAS_PREFS = "lyrics_timing"
     private const val BIAS_KEY = "ai_bias_samples"
@@ -1037,6 +1094,19 @@ object LyricsTiming {
 
     /** Ties an AI answer to the words it was made for: other lyrics, other answer. */
     private fun textKey(lines: List<LyricLine>): Int = lines.joinToString("\n") { it.text }.hashCode()
+
+    /** The kept entry as the pure ask-again rule sees it; a missing entry is an empty one. */
+    private fun knowledge(entry: Entry?): AiTimingKnowledge = entry?.let {
+        AiTimingKnowledge(
+            answerKey = it.aiTextKey,
+            answerEngine = it.aiEngine,
+            answerMatch = it.ai?.match,
+            failedKey = it.aiFailedKey,
+            attemptedKey = it.aiAttemptedKey,
+            attemptedEngines = it.aiAttemptedEngines.toSet(),
+            whisperKey = it.whisperKey,
+        )
+    } ?: AiTimingKnowledge()
 
     // ---- Kept on disk --------------------------------------------------------
 
@@ -1106,6 +1176,11 @@ object LyricsTiming {
         val aiEngine: String? = null,
         /** The lyrics (text key) Whisper was last asked about, answered or not: asked once. */
         val whisperKey: Int? = null,
+        /** The lyrics the last automatic request was for, and the engines it has spent on them; see [AiTimingPolicy]. */
+        val aiAttemptedKey: Int? = null,
+        val aiAttemptedEngines: List<String> = emptyList(),
+        /** This video's once-ever calibration sample has been claimed; see [claimCalibrationSample]. */
+        val calibrationSampled: Boolean = false,
     )
 
     @Serializable

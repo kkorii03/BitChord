@@ -141,12 +141,16 @@ internal object TranslationAhead {
             // time for it before this one starts, and most covers never need
             // the upload — except the calibration few, asked alongside.
             val gemini = com.music.bitchord.data.lyrics.LyricsTranslation
-            val calibration = timing.calibrationSample(song.videoId)
-            val ahead = if (calibration && AppSettings.aiTimingAhead.value &&
+            // The calibration few are asked alongside; each video at most once
+            // ever, or every lyrics delivery would pay for the same sample.
+            var calibration = timing.calibrationSample(song.videoId) &&
+                AppSettings.aiTimingAhead.value &&
                 (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
-                !timing.hasAi(context, song.videoId, found.lines) &&
-                !timing.aiAlreadyFailed(context, song.videoId, found.lines)
-            ) {
+                timing.wantsAi(context, song.videoId, found.lines)
+            if (calibration && !timing.claimCalibrationSample(context, song.videoId)) {
+                calibration = false
+            }
+            val ahead = if (calibration) {
                 scope.launch {
                     runCatching { timing.placeWithAi(context, song.videoId, found.lines, automatic = true) }
                         .onFailure { if (it is CancellationException) throw it }
@@ -167,18 +171,14 @@ internal object TranslationAhead {
             if (!calibration && AppSettings.aiTimingAhead.value &&
                 (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 !timing.measuredTiming(context, song.videoId) &&
-                !timing.hasAi(context, song.videoId, found.lines) &&
-                !timing.aiAlreadyFailed(context, song.videoId, found.lines)
+                timing.wantsAi(context, song.videoId, found.lines)
             ) {
                 timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
             }
-            val untried = !timing.hasAi(context, song.videoId, found.lines) &&
-                !timing.aiAlreadyFailed(context, song.videoId, found.lines)
             if ((gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 timing.measurementGaveUp(context, song.videoId) &&
-                ((untried && AppSettings.autoLyricsTiming.value) ||
-                    ((AppSettings.autoLyricsTiming.value || AppSettings.aiTimingAhead.value) &&
-                        timing.wantsWhisper(context, song.videoId, found.lines)))
+                (AppSettings.autoLyricsTiming.value || AppSettings.aiTimingAhead.value) &&
+                timing.wantsAi(context, song.videoId, found.lines)
             ) {
                 timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
             }
