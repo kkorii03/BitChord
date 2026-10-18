@@ -356,6 +356,36 @@ data class Account(
 )
 
 /**
+ * The name a session keeps when no identity endpoint could name the account.
+ * Korea without Premium is answered 404 by Music's own account menu, so this
+ * placeholder is the only identity a valid cookie may produce.
+ */
+const val GENERIC_ACCOUNT_NAME = "YouTube 계정"
+
+/**
+ * Folds a freshly looked-up [new] identity into what was already stored as
+ * [old], field by field.
+ *
+ * Not every endpoint reports every field: youtube.com's account menu can omit
+ * the email, leaving the account switcher's handle or nothing at all. An empty
+ * answer is silence, not a correction, so it never replaces a value already
+ * known — in particular the email that account de-duplication matches on.
+ * Likewise a placeholder [GENERIC_ACCOUNT_NAME] must not overwrite a real name;
+ * a real name still upgrades a placeholder.
+ */
+fun mergeAccountIdentity(old: Account, new: Account): Account = Account(
+    name = when {
+        new.name.isBlank() -> old.name
+        new.name == GENERIC_ACCOUNT_NAME && old.name.isNotBlank() &&
+            old.name != GENERIC_ACCOUNT_NAME -> old.name
+        else -> new.name
+    },
+    email = new.email.takeIf { it.isNotBlank() } ?: old.email,
+    thumbnailUrl = new.thumbnailUrl?.takeIf { it.isNotBlank() } ?: old.thumbnailUrl,
+    handle = new.handle?.takeIf { it.isNotBlank() } ?: old.handle,
+)
+
+/**
  * One identity the signed-in session can act as: the Google account's own
  * channel, plus any brand channel it owns.
  *

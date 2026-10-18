@@ -35,6 +35,8 @@ import com.music.bitchord.auth.CapturedSession
 import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
+import com.music.bitchord.data.model.GENERIC_ACCOUNT_NAME
+import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
@@ -2002,24 +2004,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // A refused lookup (Korea, no Premium) keeps the header the
             // sign-in already set rather than blanking it.
             if (account == null) return@launch
-            _account.value = account
+            val mergedAccount = mergeAccountIdentity(
+                _account.value ?: Account(name = "", email = "", thumbnailUrl = null),
+                account,
+            )
+            _account.value = mergedAccount
             // A channel picked in the in-app browser arrives as ids and nothing
             // else — the page's `ytcfg` never says what the channel is called.
             // The account menu, asked *as* that channel, answers with its name,
             // which is what the settings row needs to show. It also fills in the
             // generic sign-in header once youtube.com can name the account.
-            if (_selectedChannelKey.value != null) _selectedChannelName.value = account.name
+            if (_selectedChannelKey.value != null) _selectedChannelName.value = mergedAccount.name
             val accountId = _activeAccountId.value ?: return@launch
             val profileId = _activeProfileId.value ?: return@launch
             val session = authStore.sessions.firstOrNull { it.accountId == accountId } ?: return@launch
-            val handle = account.handle?.takeIf { it.isNotBlank() } ?: account.email
+            val profile = session.profiles.firstOrNull { it.profileId == profileId }
+            val mergedSession = mergeAccountIdentity(
+                Account(name = session.name, email = session.email, thumbnailUrl = null),
+                account,
+            )
+            val mergedProfile = mergeAccountIdentity(
+                profile?.let { Account(it.name, "", it.avatar, it.handle) }
+                    ?: Account(name = "", email = "", thumbnailUrl = null),
+                account.copy(handle = account.handle?.takeIf { it.isNotBlank() } ?: account.email),
+            )
             val updated = session.copy(
-                name = account.name,
-                email = account.email,
-                profiles = session.profiles.map { profile ->
-                    if (profile.profileId == profileId) profile.copy(
-                        name = account.name, handle = handle, avatar = account.thumbnailUrl,
-                    ) else profile
+                name = mergedSession.name,
+                email = mergedSession.email,
+                profiles = session.profiles.map { saved ->
+                    if (saved.profileId == profileId) saved.copy(
+                        name = mergedProfile.name,
+                        handle = mergedProfile.handle.orEmpty(),
+                        avatar = mergedProfile.thumbnailUrl,
+                    ) else saved
                 },
             )
             if (updated != session) {
@@ -3637,7 +3654,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // without Premium in Korea Music answers account_menu 404,
                 // and that alone used to make sign-in impossible.
                 com.music.bitchord.data.DebugLog.w("BitChord", "account: no identity endpoint answered; keeping the login")
-                Account(name = "YouTube 계정", email = "", thumbnailUrl = null)
+                Account(name = GENERIC_ACCOUNT_NAME, email = "", thumbnailUrl = null)
             } else null
             if (account == null) {
                 restoreActiveSession(oldAccountId, oldProfileId)
@@ -3661,12 +3678,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val previous = authStore.sessions.firstOrNull { it.accountId == accountId }
-            val selectedProfileId = profileId(pageId, dataSyncId, account.name)
+            // A field the page could not report is silence, not a correction:
+            // keep the identity already stored under this account rather than
+            // replacing a real email, handle, name or avatar with an empty one.
+            val mergedSession = mergeAccountIdentity(
+                Account(
+                    name = previous?.name.orEmpty(),
+                    email = previous?.email.orEmpty(),
+                    thumbnailUrl = null,
+                ),
+                account,
+            )
+            val selectedProfileId = profileId(pageId, dataSyncId, mergedSession.name)
+            val previousProfile = previous?.profiles?.firstOrNull { it.profileId == selectedProfileId }
+            val mergedProfile = mergeAccountIdentity(
+                previousProfile?.let { Account(it.name, "", it.avatar, it.handle) }
+                    ?: Account(name = "", email = "", thumbnailUrl = null),
+                account.copy(handle = account.handle?.takeIf { it.isNotBlank() } ?: account.email),
+            )
             val profile = YouTubeProfile(
                 profileId = selectedProfileId,
-                name = account.name,
-                handle = account.handle?.takeIf { it.isNotBlank() } ?: account.email,
-                avatar = account.thumbnailUrl,
+                name = mergedProfile.name,
+                handle = mergedProfile.handle.orEmpty(),
+                avatar = mergedProfile.thumbnailUrl,
                 pageId = pageId,
                 dataSyncId = dataSyncId,
                 authUser = authUser,
@@ -3680,8 +3714,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val stored = GoogleAccountSession(
                 accountId = accountId,
                 cookie = session.cookie,
-                name = account.name,
-                email = account.email,
+                name = mergedSession.name,
+                email = mergedSession.email,
                 profiles = profiles,
                 activeProfileId = profile.profileId,
             )
@@ -3694,8 +3728,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _activeAccountId.value = accountId
             _activeProfileId.value = profile.profileId
             _selectedChannelKey.value = profile.profileId
-            _selectedChannelName.value = account.name
-            _account.value = account
+            _selectedChannelName.value = mergedProfile.name
+            _account.value = mergeAccountIdentity(
+                Account(
+                    name = previous?.name.orEmpty(),
+                    email = previous?.email.orEmpty(),
+                    thumbnailUrl = previousProfile?.avatar,
+                    handle = previousProfile?.handle,
+                ),
+                account,
+            )
             _channels.value = emptyList()
             _signedIn.value = true
 
