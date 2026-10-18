@@ -78,34 +78,34 @@ object TrackLog {
     // reads it (see the class doc), so a release build skips straight to
     // record(), which is what Copy Log actually depends on.
 
-    fun d(tag: String, message: String, about: String? = working.get()) {
-        echo?.invoke('D', tag, message, null)
-        record('D', message, about)
-    }
+    fun d(tag: String, message: String, about: String? = working.get()) =
+        write('D', tag, message, null, about)
 
-    fun i(tag: String, message: String, about: String? = working.get()) {
-        echo?.invoke('I', tag, message, null)
-        record('I', message, about)
-    }
+    fun i(tag: String, message: String, about: String? = working.get()) =
+        write('I', tag, message, null, about)
 
-    fun w(tag: String, message: String, about: String? = working.get()) {
-        echo?.invoke('W', tag, message, null)
-        record('W', message, about)
-    }
+    fun w(tag: String, message: String, about: String? = working.get()) =
+        write('W', tag, message, null, about)
 
-    fun w(tag: String, message: String, error: Throwable, about: String? = working.get()) {
-        echo?.invoke('W', tag, message, error)
-        record('W', "$message\n${error.stackTraceToString()}", about)
-    }
+    fun w(tag: String, message: String, error: Throwable, about: String? = working.get()) =
+        write('W', tag, message, error, about)
 
-    fun e(tag: String, message: String, about: String? = working.get()) {
-        echo?.invoke('E', tag, message, null)
-        record('E', message, about)
-    }
+    fun e(tag: String, message: String, about: String? = working.get()) =
+        write('E', tag, message, null, about)
 
-    fun e(tag: String, message: String, error: Throwable, about: String? = working.get()) {
-        echo?.invoke('E', tag, message, error)
-        record('E', "$message\n${error.stackTraceToString()}", about)
+    fun e(tag: String, message: String, error: Throwable, about: String? = working.get()) =
+        write('E', tag, message, error, about)
+
+    /** Records a line from another logger (the phone's [DebugLog] sink). */
+    fun write(
+        level: Char,
+        tag: String,
+        message: String,
+        error: Throwable?,
+        about: String? = working.get(),
+    ) {
+        echo?.invoke(level, tag, message, error)
+        record(level, tag, if (error == null) message else "$message\n${error.stackTraceToString()}", about)
     }
 
     // ── Whose line is it ────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ object TrackLog {
      */
     fun about(id: String?): CoroutineContext = working.asContextElement(id)
 
-    private class Line(val at: Long, val level: Char, val text: String, val track: String?)
+    private class Line(val at: Long, val level: Char, val tag: String, val text: String, val track: String?)
 
     private val lines = ArrayDeque<Line>()
 
@@ -143,21 +143,32 @@ object TrackLog {
      * Bounded by bytes rather than by line count: one `callExport result` line
      * carrying a search response is worth several hundred ordinary lines, and a
      * limit that counts them the same either wastes memory or throws away the
-     * history that matters.
+     * history that matters. A line count bound sits alongside it so an export
+     * stays around the last few thousand entries even when every line is short.
      */
-    private fun record(level: Char, message: String, about: String?) {
+    private fun record(level: Char, tag: String, message: String, about: String?) {
         val text = if (message.length > MAX_LINE_CHARS) {
             message.take(MAX_LINE_CHARS) + "…(${message.length - MAX_LINE_CHARS} more)"
         } else {
             message
         }
         synchronized(lines) {
-            lines.addLast(Line(System.currentTimeMillis(), level, text, about))
+            lines.addLast(Line(System.currentTimeMillis(), level, tag, text, about))
             held += text.length
-            while (held > MAX_HELD_CHARS && lines.isNotEmpty()) {
+            while ((held > MAX_HELD_CHARS || lines.size > MAX_LINES) && lines.isNotEmpty()) {
                 held -= lines.removeFirst().text.length
             }
         }
+    }
+
+    /**
+     * Everything still held, oldest first, as `HH:mm:ss.SSS LEVEL/Tag message`.
+     * Used by the diagnostic log export; the per-track view stays in [forTrack].
+     */
+    fun everything(): List<String> {
+        val snapshot = synchronized(lines) { lines.toList() }
+        val clock = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+        return snapshot.map { "${clock.format(Date(it.at))} ${it.level}/${it.tag} ${it.text}" }
     }
 
     // ── Reading ─────────────────────────────────────────────────────────────
@@ -276,6 +287,9 @@ object TrackLog {
 
     /** Roughly the last few tracks' worth, and small enough to hold without thinking about it. */
     private const val MAX_HELD_CHARS = 512_000
+
+    /** Around 3,000 lines, however short they are. */
+    private const val MAX_LINES = 3_000
 
     /** Enough for a stack trace or a search response's opening; not a whole catalogue page. */
     private const val MAX_LINE_CHARS = 2_000

@@ -116,8 +116,10 @@ object MusicGateFallback {
     }
 
     fun markOpen(key: String = currentKey(), now: Long = System.currentTimeMillis()) {
-        if (entries[key]?.state == State.OPEN) return
+        val changed = entries[key]?.state != State.OPEN
+        if (!changed) return
         update(key, State.OPEN, now)
+        Log.d(TAG, "music gate: YouTube Music usable for ${mask(key)}")
     }
 
     fun markGated(
@@ -327,6 +329,15 @@ object MusicGateFallback {
     /** Enough of an identity to read in a log line, not enough to be a credential. */
     private fun mask(key: String): String =
         if (key == "anonymous") "anonymous" else "…${key.takeLast(6)}"
+
+    /** The stored verdicts, keys masked the same way its own log lines are. */
+    fun describe(now: Long = System.currentTimeMillis()): List<String> =
+        entries.entries
+            .sortedBy { it.key }
+            .map { (key, entry) ->
+                val age = if (entry.checkedAt <= 0) "never" else "${(now - entry.checkedAt) / 60_000L}m ago"
+                "${mask(key)} ${entry.state} checked=$age"
+            }
 
     /** Tests reset the singleton between cases. */
     internal fun resetForTest() {

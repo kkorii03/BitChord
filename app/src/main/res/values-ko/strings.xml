@@ -1152,4 +1152,7 @@
     <string name="proxy_error_host_missing">호스트를 입력하십시오</string>
     <string name="proxy_error_host_invalid">호스트 형식이 올바르지 않습니다</string>
     <string name="proxy_error_port_invalid">포트는 1~65535 사이여야 합니다</string>
+    <string name="diagnostics">진단</string>
+    <string name="export_diagnostic_log">진단 로그 내보내기</string>
+    <string name="export_diagnostic_log_subtitle">재생·홈·검색 문제를 알려 줄 때 이 파일을 보내 주세요</string>
 </resources>

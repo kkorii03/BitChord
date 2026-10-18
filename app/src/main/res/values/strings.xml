@@ -1249,4 +1249,7 @@
     <string name="proxy_error_host_missing">Enter a host</string>
     <string name="proxy_error_host_invalid">That host is not valid</string>
     <string name="proxy_error_port_invalid">The port must be between 1 and 65535</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="export_diagnostic_log">Export diagnostic log</string>
+    <string name="export_diagnostic_log_subtitle">Send this file when reporting playback, home or search problems.</string>
 </resources>

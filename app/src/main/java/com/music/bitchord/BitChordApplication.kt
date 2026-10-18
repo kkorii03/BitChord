@@ -12,6 +12,7 @@ import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.DebugLog
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.ui.player.AndroidPlayerHost
@@ -48,17 +49,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         AndroidStreamHooks.installEarly()
         PlayerPlatform.install(AndroidPlayerHost(this))
         com.music.bitchord.ui.AppUi.install(com.music.bitchord.ui.AndroidAppUiHost)
-        // The shared data layer (lyrics, the YouTube Music client) logs to
-        // logcat on debug builds only, as the app's own DebugLog always has.
-        if (BuildConfig.DEBUG) {
-            DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
-                when (level) {
-                    'D' -> android.util.Log.d(tag, message, error)
-                    'I' -> android.util.Log.i(tag, message, error)
-                    'W' -> android.util.Log.w(tag, message, error)
-                    else -> android.util.Log.e(tag, message, error)
-                }
-            }
+        // The shared data layer (lyrics, the YouTube Music client) logs through
+        // DebugLog. Route it into TrackLog's ring buffer on every build, so the
+        // diagnostic export can show what actually happened on a release phone;
+        // TrackLog's own echo decides what still reaches logcat.
+        DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
+            TrackLog.write(level, tag, message, error)
         }
         // The per-app language picker, which YouTube Music's `hl` follows.
         Innertube.appLanguage = { AppCompatDelegate.getApplicationLocales().get(0)?.language }

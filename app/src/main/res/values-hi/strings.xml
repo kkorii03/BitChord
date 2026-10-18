@@ -1290,4 +1290,7 @@
     <string name="spotify_library_subtitle">आपकी Spotify प्लेलिस्ट</string>
     <string name="spotify_sign_in">Spotify से साइन इन करें</string>
     <string name="spotify_track_unavailable">वह गाना YouTube Music पर नहीं मिला</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="export_diagnostic_log">Export diagnostic log</string>
+    <string name="export_diagnostic_log_subtitle">Send this file when reporting playback, home or search problems.</string>
 </resources>

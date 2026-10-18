@@ -1056,7 +1056,7 @@ object StreamResolver {
                 ?: error("트랙 사용 불가: 오디오 스트림 없음")
             TrackLog.d(
                 TAG,
-                "NewPipe picked ${stream.format?.name} @ ${stream.averageBitrate}kbps " +
+                "resolved $videoId via NewPipe ${stream.format?.name} @ ${stream.averageBitrate}kbps " +
                     "(extraction held the gate ${MonotonicClock.nowMs() - waited}ms)",
             )
             // stream.content is already playable, not raw: YoutubeStreamExtractor

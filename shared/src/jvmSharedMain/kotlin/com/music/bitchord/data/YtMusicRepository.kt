@@ -74,16 +74,24 @@ object YtMusicRepository {
             val home = try {
                 Innertube.browse("FEmusic_home")
             } catch (failure: Exception) {
-                if (MusicGateFallback.isActive(key)) return@call YouTubeFallback.home()
+                if (MusicGateFallback.isActive(key)) {
+                    Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
+                    return@call YouTubeFallback.home()
+                }
                 throw failure
             }
             if (!MusicGateFallback.isActive(key)) {
+                Log.d(TAG, "home: music.youtube.com (gate ${MusicGateFallback.state(key)})")
                 return@call HomeFeed(
                     contentCountryCharts(InnertubeParser.parseHome(home)),
                     InnertubeParser.continuationToken(home),
                 )
             }
         }
+        Log.d(
+            TAG,
+            "home: youtube.com fallback (gate ${MusicGateFallback.state(key)})",
+        )
         YouTubeFallback.home()
     }
 
@@ -456,6 +464,11 @@ object YtMusicRepository {
             val wantsTracks = filter == SearchFilter.SONGS || filter == SearchFilter.VIDEOS
             val page = music.getOrNull()
             if (wantsTracks && (page == null || page.rows.isEmpty())) {
+                Log.w(
+                    TAG,
+                    "search: youtube.com fallback for '${query.take(80)}' " +
+                        "(music ${if (page == null) "failed" else "returned no rows"})",
+                )
                 val songs = YouTubeWebSearch.songs(query)
                 if (songs.isNotEmpty()) {
                     return@call SearchPage(songs.map { SearchResult.Track(it) }.distinctBy { it.identityKey() }, null)

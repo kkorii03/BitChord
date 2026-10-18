@@ -1443,7 +1443,14 @@ object Innertube {
         gl: String = currentCountry,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
-        val anonymous = isAnonymousRequest(endpoint)
+        // In Korea without Premium the signed-in Music session is refused
+        // (401/403) on every page, while the same catalog pages — albums,
+        // artists, playlists — answer an anonymous request (measured
+        // 2026-10-18). Once the gate is known, Music is read signed out; the
+        // account's own feeds come from youtube.com instead (YouTubeFallback).
+        // Account writes keep the session so they fail visibly, not silently.
+        val anonymous = isAnonymousRequest(endpoint) ||
+            (MusicGateFallback.isActive() && !isAccountWrite(endpoint))
         // The common authenticated path: Home, Library, likes, playlists,
         // account menus and all their continuations pass through it. Waiting
         // here makes restoration process-wide rather than a special case
@@ -1451,16 +1458,20 @@ object Innertube {
         // never waits for — or looks at — the account's scope.
         if (!anonymous && cookie != null) ensureSessionScope()
         val session = if (anonymous) null else scope
+        // [anonymous] is wider than the per-endpoint rule in [accountHeadersFor]
+        // and [visitorIdFor] (a gated session reads every Music page signed
+        // out), so it decides here: no cookie and the account-free visitor id.
+        val requestCookie = if (anonymous) null else cookie
         val credentials = accountHeadersFor(
             endpoint = endpoint,
-            cookie = cookie,
+            cookie = requestCookie,
             authUser = authUserFor(session),
             pageId = pageIdFor(session),
             // Lazy so an anonymous request never even hashes a credential.
-            authorization = { cookie?.let { c -> sapisidFrom(c)?.let { sapisidHash(it) } } },
+            authorization = { requestCookie?.let { c -> sapisidFrom(c)?.let { sapisidHash(it) } } },
         )
         val anonymousVisitor = if (anonymous) ensureAnonymousVisitorData() else null
-        val visitor = visitorIdFor(endpoint, visitorData, anonymousVisitor)
+        val visitor = if (anonymous) anonymousVisitor else visitorIdFor(endpoint, visitorData, anonymousVisitor)
         val clientVersion = webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
@@ -1536,7 +1547,13 @@ object Innertube {
         ios: Boolean = false,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
-        if (cookie != null) ensureSessionScope()
+        // The session scope is read from the Music shell, which a gated Korean
+        // session is refused; youtube.com does not need it to answer, so a
+        // failure here must not take the fallback down with it.
+        if (cookie != null) {
+            runCatching { ensureSessionScope() }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        }
         val session = scope
         val credentials = accountHeadersFor(
             endpoint = endpoint,
@@ -1615,6 +1632,12 @@ object Innertube {
      */
     internal fun isAnonymousRequest(endpoint: String): Boolean =
         endpoint == "search" || endpoint == "music/get_search_suggestions"
+
+    /** Endpoints that change the account; never sent signed out. */
+    internal fun isAccountWrite(endpoint: String): Boolean =
+        endpoint.startsWith("like/") || endpoint.startsWith("playlist/") ||
+            endpoint.startsWith("browse/edit_playlist") || endpoint.startsWith("account/") ||
+            endpoint.startsWith("subscription/") || endpoint.startsWith("feedback")
 
     /**
      * The visitor id a request may carry: the account-free one for a search,

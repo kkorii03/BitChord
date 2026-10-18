@@ -1330,4 +1330,7 @@
     <string name="spotify_library_subtitle">Twoje playlisty Spotify</string>
     <string name="spotify_sign_in">Zaloguj się przez Spotify</string>
     <string name="spotify_track_unavailable">Nie znaleziono tego utworu w YouTube Music</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="export_diagnostic_log">Export diagnostic log</string>
+    <string name="export_diagnostic_log_subtitle">Send this file when reporting playback, home or search problems.</string>
 </resources>

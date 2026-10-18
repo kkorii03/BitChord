@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import android.content.Intent
 import androidx.compose.material3.HorizontalDivider
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.spotify_logo
@@ -14,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -26,16 +28,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.data.DiagnosticsExport
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable
@@ -70,6 +76,8 @@ fun AccountAndScrobblingScreen(
     val discordRpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
     val musicGated by MusicGateFallback.active.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { MusicGateFallback.refreshActive() }
 
@@ -122,6 +130,26 @@ fun AccountAndScrobblingScreen(
         }
 
         ProxySettingsSection()
+
+        SettingsGroup(header = stringResource(R.string.diagnostics)) {
+            SettingsRow(
+                icon = Icons.Rounded.BugReport,
+                title = stringResource(R.string.export_diagnostic_log),
+                subtitle = stringResource(R.string.export_diagnostic_log_subtitle),
+                onClick = {
+                    scope.launch {
+                        val uri = DiagnosticsExport.write(context, signedIn) ?: return@launch
+                        val send = Intent(Intent.ACTION_SEND)
+                            .setType("text/plain")
+                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        context.startActivity(
+                            Intent.createChooser(send, context.getString(R.string.export_diagnostic_log)),
+                        )
+                    }
+                },
+            )
+        }
 
         SettingsGroup(
             header = stringResource(R.string.spotify),
