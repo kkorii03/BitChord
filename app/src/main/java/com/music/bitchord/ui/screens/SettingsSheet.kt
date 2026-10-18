@@ -2,7 +2,6 @@ package com.music.bitchord.ui.screens
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioFormat
 import android.media.audiofx.AudioEffect
 import android.net.Uri
 import android.provider.Settings
@@ -807,18 +806,11 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.AutoMirrored.Rounded.VolumeOff,
                     title = skipSilenceTitle,
-                    // Silence skipping is Media3's own processor, and
-                    // `DefaultAudioSink.configure` appends that processor list
-                    // only on its 16-bit branch — the float branch gets the
-                    // format converter and nothing else. So on a float track
-                    // this switch really does nothing, and the row says so
-                    // rather than letting someone toggle it and wonder. The
-                    // equaliser is unaffected: it runs upstream of that sink.
-                    subtitle = if (outputStatus.actualEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                        stringResource(R.string.skip_silence_float_subtitle)
-                    } else {
-                        stringResource(R.string.skip_silence_subtitle)
-                    },
+                    // The low-level Media3 processor only runs on its 16-bit
+                    // branch, so the precision sink now trims float and direct
+                    // output itself before the DSP chain. The switch is live on
+                    // both paths; only the implementation differs.
+                    subtitle = stringResource(R.string.skip_silence_subtitle),
                     trailing = {
                         Switch(
                             checked = skipSilence,

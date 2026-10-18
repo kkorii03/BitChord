@@ -87,6 +87,7 @@ import com.music.bitchord.playback.cast.CastPlayback
 import com.music.bitchord.playback.cast.CastSink
 import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
+import com.music.bitchord.playback.audio.SilenceSkipper
 import com.music.bitchord.playback.dsd.DsdExtractorsFactory
 import com.music.bitchord.playback.audio.DirectAudioProbe
 import com.music.bitchord.playback.audio.OutputNegotiator
@@ -8725,7 +8726,7 @@ class PlaybackService : MediaLibraryService() {
         const val STREAM_CHUNK_BYTES = 1L * 1024 * 1024
 
         /** Shortest gap "skip silence" is allowed to touch. */
-        const val MIN_SILENCE_US = 1_000_000L
+        const val MIN_SILENCE_US = SilenceSkipper.MIN_SILENCE_US
 
         /** Past any song, so the byte ceiling is what stops loading. */
         const val FAR_BUFFER_MS = 15 * 60 * 1000

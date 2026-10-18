@@ -41,6 +41,7 @@ class PrecisionAudioSinkTest {
         var handleBufferCallCount: Int = 0
         var lastPresentationTimeUs: Long = C.TIME_UNSET
         var lastEncodedAccessUnitCount: Int = 0
+        var lastOutputStreamOffsetUs: Long = C.TIME_UNSET
 
         var formatSupportReturn: Int = AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
         var supportsFormatReturn: Boolean = true
@@ -66,6 +67,10 @@ class PrecisionAudioSinkTest {
             formatSupportPredicate?.invoke(format) ?: formatSupportReturn
 
         override fun getCurrentPositionUs(sourceEnded: Boolean): Long = 0L
+
+        override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
+            lastOutputStreamOffsetUs = outputStreamOffsetUs
+        }
 
         override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
             this.configuredConfig = audioSinkConfig
@@ -424,6 +429,63 @@ class PrecisionAudioSinkTest {
         )
         assertEquals(2, fakeDelegate.handleBufferCallCount)
         assertEquals(expected, fakeDelegate.lastPresentationTimeUs)
+    }
+
+    /**
+     * The float branch has no Media3 silence processor, so the sink trims the
+     * block itself and folds the cut into the delegate's output stream offset.
+     */
+    @Test
+    fun `float output trims silence and advances the stream offset`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, enableFloatOutput = true)
+        val format = Format.Builder()
+            .setSampleMimeType(MimeTypes.AUDIO_RAW)
+            .setPcmEncoding(C.ENCODING_PCM_16BIT)
+            .setChannelCount(2)
+            .setSampleRate(8_000)
+            .build()
+        sink.configure(AudioSink.AudioSinkConfig.Builder(format).build())
+        sink.setOutputStreamOffsetUs(1_000_000L)
+        sink.setSkipSilenceEnabled(true)
+
+        // Three seconds of digital silence at 8 kHz; the minimum run is one second.
+        val frames = 24_000
+        val input = ByteBuffer.allocateDirect(frames * 2 * 2).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(frames * 2) { input.putShort(0) }
+        input.flip()
+
+        assertTrue(sink.handleBuffer(input, 0L, 1))
+        assertTrue(fakeDelegate.lastOutputStreamOffsetUs > 1_000_000L)
+        assertTrue(
+            "the cut should move the offset by most of the input duration",
+            fakeDelegate.lastOutputStreamOffsetUs >= 1_000_000L + 2_000_000L,
+        )
+    }
+
+    /** On the PCM16 precision route Media3 still owns silence skipping. */
+    @Test
+    fun `PCM16 output leaves silence skipping to the delegate`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, enableFloatOutput = false)
+        val format = Format.Builder()
+            .setSampleMimeType(MimeTypes.AUDIO_RAW)
+            .setPcmEncoding(C.ENCODING_PCM_16BIT)
+            .setChannelCount(2)
+            .setSampleRate(8_000)
+            .build()
+        sink.configure(AudioSink.AudioSinkConfig.Builder(format).build())
+        sink.setOutputStreamOffsetUs(1_000_000L)
+        sink.setSkipSilenceEnabled(true)
+
+        val frames = 24_000
+        val input = ByteBuffer.allocateDirect(frames * 2 * 2).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(frames * 2) { input.putShort(0) }
+        input.flip()
+
+        assertTrue(sink.handleBuffer(input, 0L, 1))
+        assertEquals(1_000_000L, fakeDelegate.lastOutputStreamOffsetUs)
+        assertEquals(6, fakeDelegate.handleBufferCallCount)
     }
 
     /** Switched on, the chain is reached and does colour the audio. */

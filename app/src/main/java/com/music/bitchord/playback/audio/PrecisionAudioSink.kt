@@ -99,6 +99,19 @@ class PrecisionAudioSink(
     /** Sample rate of the configured format, for timestamping split sub-blocks. */
     private var configuredSampleRate: Int = 0
 
+    /**
+     * Float-domain trimmer for the paths where Media3's own silence processor is
+     * absent — float output, and direct output that bypasses the delegate. It
+     * runs before [dspChain] so the in-place DSP stages see the compacted frames.
+     */
+    private val silenceSkipper = SilenceSkipper()
+
+    /** The renderer's unadjusted offset for the current output stream. */
+    private var outputStreamOffsetUs: Long = C.TIME_UNSET
+
+    /** Frames skipped since the current output stream began, for position accounting. */
+    private var skippedFramesForStream: Long = 0L
+
     private var audioBlock: AudioBlock = AudioBlock(
         channelCount = AudioBlock.DEFAULT_CHANNELS,
         capacityFrames = DEFAULT_CAPACITY_FRAMES,
@@ -121,6 +134,7 @@ class PrecisionAudioSink(
      */
     private var timestampedInputTimeUs: Long = C.TIME_UNSET
     private var framesEmittedForInput: Long = 0L
+    private var accessUnitsReportedForInput: Boolean = false
 
     /**
      * Whether audio has flowed since the last flush — which is what tells a
@@ -149,6 +163,10 @@ class PrecisionAudioSink(
 
                 // 1. Configure the Float32 DSP chain
                 dspChain.configure(sampleRate, channelCount)
+                silenceSkipper.configure(sampleRate, channelCount)
+                silenceSkipper.reset()
+                outputStreamOffsetUs = C.TIME_UNSET
+                skippedFramesForStream = 0L
 
                 // 2. Ensure internal buffers are sized for max frames and channel count
                 ensureBuffers(channelCount)
@@ -309,6 +327,7 @@ class PrecisionAudioSink(
         if (presentationTimeUs != timestampedInputTimeUs) {
             timestampedInputTimeUs = presentationTimeUs
             framesEmittedForInput = 0L
+            accessUnitsReportedForInput = false
         }
         while (inputBuffer.remaining() >= bytesPerFrame) {
             val availableFrames = inputBuffer.remaining() / bytesPerFrame
@@ -341,8 +360,56 @@ class PrecisionAudioSink(
                 }
             }
 
+            var outputFrameOffset = 0
+            if (shouldSkipSilence()) {
+                val skippedBefore = silenceSkipper.skippedFrames
+                silenceSkipper.process(audioBlock)
+                outputFrameOffset = silenceSkipper.firstOutputFrameOffset
+                val skipped = silenceSkipper.skippedFrames - skippedBefore
+                if (skipped > 0L) {
+                    skippedFramesForStream += skipped
+                    if (outputStreamOffsetUs != C.TIME_UNSET) {
+                        // Keep the delegate's frame position mapped onto media time:
+                        // it writes the compacted frames but is told the media
+                        // timestamps of the input they replaced.
+                        super.setOutputStreamOffsetUs(
+                            SilenceSkipOffset.adjustedOutputStreamOffsetUs(
+                                outputStreamOffsetUs = outputStreamOffsetUs,
+                                skippedFrames = skippedFramesForStream,
+                                sampleRate = configuredSampleRate,
+                            ),
+                        )
+                    }
+                }
+            }
+
             // Process normalized Float32 samples through custom DSP chain
             dspChain.process(audioBlock)
+
+            val blockTimeUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput)
+            // A replayed tail from an earlier block begins after this block's
+            // first input frame, so the emitted block needs a later timestamp.
+            val outputTimeUs = if (
+                outputFrameOffset != 0 &&
+                blockTimeUs != C.TIME_UNSET &&
+                configuredSampleRate > 0
+            ) {
+                blockTimeUs + Util.sampleCountToDurationUs(outputFrameOffset.toLong(), configuredSampleRate)
+            } else {
+                blockTimeUs
+            }
+            if (outputTimeUs != C.TIME_UNSET && configuredSampleRate > 0) {
+                processedEndUs = outputTimeUs +
+                    Util.sampleCountToDurationUs(audioBlock.frameCount.toLong(), configuredSampleRate)
+            }
+            // The access-unit count describes the whole decoder buffer, so it is
+            // reported once, on the first piece of it that carries samples.
+            val blockAccessUnits = if (accessUnitsReportedForInput) 0 else encodedAccessUnitCount
+            framesEmittedForInput += decodedFrames
+
+            // A whole sub-block can be trimmed away. Do not hand the delegate an
+            // empty buffer; the media clock above has already moved past it.
+            if (audioBlock.frameCount == 0) continue
 
             // Encode processed samples to target PCM output buffer (Float32 or PCM16)
             outputByteBuffer.clear()
@@ -353,20 +420,13 @@ class PrecisionAudioSink(
             )
             outputByteBuffer.flip()
 
-            val blockTimeUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput)
-            if (blockTimeUs != C.TIME_UNSET && configuredSampleRate > 0) {
-                processedEndUs = blockTimeUs + Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
-            }
-            // The access-unit count describes the whole decoder buffer, so it is
-            // reported once, on the first piece of it.
-            val blockAccessUnits = if (framesEmittedForInput == 0L) encodedAccessUnitCount else 0
-            pendingPresentationTimeUs = blockTimeUs
+            accessUnitsReportedForInput = true
+            pendingPresentationTimeUs = outputTimeUs
             pendingAccessUnitCount = blockAccessUnits
-            framesEmittedForInput += decodedFrames
 
             val consumed = delegate.handleBuffer(
                 outputByteBuffer,
-                blockTimeUs,
+                outputTimeUs,
                 blockAccessUnits,
             )
 
@@ -400,9 +460,38 @@ class PrecisionAudioSink(
      * first, is not.
      */
     override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
+        this.outputStreamOffsetUs = outputStreamOffsetUs
+        skippedFramesForStream = 0L
+        silenceSkipper.reset()
         if (streaming) dspChain.onStreamBoundary()
         super.setOutputStreamOffsetUs(outputStreamOffsetUs)
     }
+
+    /**
+     * Drives the float-domain skipper from the same flag as Media3's processor.
+     *
+     * The delegate is still told about the flag: on its 16-bit branch it owns
+     * silence skipping, and this sink must not run a second skipper there.
+     */
+    override fun setSkipSilenceEnabled(skipSilenceEnabled: Boolean) {
+        silenceSkipper.enabled = skipSilenceEnabled
+        if (!skipSilenceEnabled) silenceSkipper.reset()
+        super.setSkipSilenceEnabled(skipSilenceEnabled)
+    }
+
+    override fun getSkipSilenceEnabled(): Boolean = silenceSkipper.enabled
+
+    /**
+     * True only on the paths where the delegate's processor cannot run: float
+     * output, or a direct output that writes the frames itself. On a PCM16
+     * precision route Media3 already skips silence, so running this too would
+     * cut twice.
+     */
+    private fun shouldSkipSilence(): Boolean =
+        silenceSkipper.enabled &&
+            isPrecisionActive &&
+            configuredSampleRate > 0 &&
+            (targetOutputEncoding == PcmEncoding.PCM_FLOAT || directAudioOutput?.isActive == true)
 
     /**
      * Passed straight through, noting on the way how far the DSP chain is
@@ -431,10 +520,18 @@ class PrecisionAudioSink(
         pendingAccessUnitCount = 0
         timestampedInputTimeUs = C.TIME_UNSET
         framesEmittedForInput = 0L
+        accessUnitsReportedForInput = false
+        silenceSkipper.reset()
+        skippedFramesForStream = 0L
         if (isPrecisionActive) {
             dspChain.flush()
         }
         delegate.flush()
+        // Rebase the delegate's position clock after clearing the cut total; the
+        // renderer's unadjusted offset is the one that belongs to the new stream.
+        if (outputStreamOffsetUs != C.TIME_UNSET) {
+            super.setOutputStreamOffsetUs(outputStreamOffsetUs)
+        }
     }
 
     override fun reset() {
@@ -449,6 +546,10 @@ class PrecisionAudioSink(
         pendingAccessUnitCount = 0
         timestampedInputTimeUs = C.TIME_UNSET
         framesEmittedForInput = 0L
+        accessUnitsReportedForInput = false
+        silenceSkipper.reset()
+        skippedFramesForStream = 0L
+        outputStreamOffsetUs = C.TIME_UNSET
         if (isPrecisionActive) {
             dspChain.reset()
         }
