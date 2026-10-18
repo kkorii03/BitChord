@@ -271,6 +271,8 @@
     <string name="animated_cover_art_subtitle">Phát video vòng lặp mà một số bản phát hành cung cấp thay vì ảnh tĩnh</string>
     <string name="miscellaneous_footer">Khi bật, việc đóng ứng dụng khỏi màn hình ứng dụng gần đây cũng sẽ dừng phát nhạc.</string>
     <string name="dont_repeat_songs_subtitle">Tự động phát sẽ không gợi ý bài hát đã phát hoặc đã được gợi ý trong phiên này</string>
+    <string name="personalised_autoplay">Tự động phát được cá nhân hóa</string>
+    <string name="personalised_autoplay_subtitle">Sắp xếp radio YouTube theo lượt thích, lượt bỏ qua và lịch sử nghe gần đây</string>
     <string name="download_quality_subtitle">%1$s mỗi bài, bất kể loại kết nối</string>
     <string name="filter_non_music_audio">Lọc âm thanh không phải nhạc</string>
     <string name="filter_non_music_audio_subtitle">Ẩn các đoạn âm thanh dưới 30 giây, tệp WAV, ghi âm giọng nói, bản thu âm và âm thanh hệ thống</string>

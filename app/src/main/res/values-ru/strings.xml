@@ -249,6 +249,8 @@
     <string name="full_screen_cover_art_subtitle">Растягивает обложку до краёв плеера вместо квадратного варианта</string>
     <string name="animated_cover_art_subtitle">Воспроизводит зацикленное видео, которое есть у некоторых релизов вместо неподвижной обложки</string>
     <string name="dont_repeat_songs_subtitle">Автовоспроизведение не будет предлагать уже сыгранную или предложенную в этой сессии песню</string>
+    <string name="personalised_autoplay">Персонализированное автовоспроизведение</string>
+    <string name="personalised_autoplay_subtitle">Упорядочивает радио YouTube с учётом ваших лайков, пропусков и недавнего прослушивания</string>
     <string name="download_quality_subtitle">%1$s за трек, независимо от соединения</string>
     <string name="filter_non_music_audio">Фильтровать немузыкальное аудио</string>
     <string name="filter_non_music_audio_subtitle">Скрывает клипы короче 30 секунд, файлы WAV, голосовые заметки, записи и системные звуки</string>

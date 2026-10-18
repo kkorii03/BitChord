@@ -1,15 +1,24 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.data.taste.CandidateSource
+import com.music.bitchord.data.taste.PoolSources
+import com.music.bitchord.data.taste.Recommender
+import com.music.bitchord.data.taste.TastePool
+import com.music.bitchord.data.taste.TasteSignals
+import com.music.bitchord.data.taste.asSong
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlinx.coroutines.CancellationException
+import java.util.Random
 
 /** Most AutoPlay-suggested tracks kept queued ahead of the current one at once. */
 const val MAX_QUEUED_AUTOPLAY = 10
@@ -95,15 +104,28 @@ suspend fun youtubeSeedFor(song: Song): String? {
  * Loads, de-duplicates and resolves one AutoPlay batch. The playback service is
  * the only caller for the AutoPlay toggle; the player UI's explicit radio start
  * uses this same helper for its initial station batch.
+ *
+ * With personalised autoplay on, YouTube's radio is one of several sources and
+ * its order is no longer the answer — see [rankedExtensions]. Off, the watch
+ * queue is queued exactly as YouTube returned it, which is the behaviour this
+ * helper had before taste was recorded at all.
+ *
+ * @param sessionSong the most recently completed track, when the caller knows
+ *   it. Its radio is the second — and last — network fetch of a top-up.
  */
 suspend fun loadAutoplayTracks(
     existing: List<Song>,
     seedSong: Song,
     limit: Int = MAX_QUEUED_AUTOPLAY,
+    sessionSong: Song? = null,
 ): Result<List<Song>> {
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
     val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
-    val extra = QueueBuilder.extend(existing, related, limit)
+    val extra = if (AppSettings.personalisedAutoplay.value) {
+        rankedExtensions(existing, seedSong, sessionSong, related, limit)
+    } else {
+        QueueBuilder.extend(existing, related, limit)
+    }
     if (extra.isEmpty()) return Result.success(emptyList())
 
     return Result.success(extra.map {
@@ -114,4 +136,73 @@ suspend fun loadAutoplayTracks(
             playbackSourceId = seedSong.playbackSourceId,
         ).asQueueEntry(QueueTier.AUTOPLAY)
     })
+}
+
+/**
+ * The personalised half of a top-up: build a pool from the seed's radio, the
+ * last completed track's radio and the listener's own library, rank it, then
+ * let [QueueBuilder] do its usual de-duplication and per-artist caps.
+ *
+ * The network budget is two radio calls: the one the caller already made and
+ * at most one more for the session track. That second call is skipped in low
+ * power, where it is the cheapest thing to give up — the local sources still
+ * contribute.
+ */
+private suspend fun rankedExtensions(
+    existing: List<Song>,
+    seedSong: Song,
+    sessionSong: Song?,
+    seedRadio: List<Song>,
+    limit: Int,
+): List<Song> {
+    val sessionRadio = sessionRadioFor(seedSong, sessionSong)
+    val now = System.currentTimeMillis()
+    val taste = TasteSignals.taste(now)
+    val local = TasteSignals.localTracks()
+    val pool = TastePool.build(
+        PoolSources(
+            seedRadio = seedRadio,
+            sessionRadio = sessionRadio,
+            local = local,
+        ),
+        taste = taste,
+        nowMs = now,
+    )
+    var dropped = 0
+    val ranked = Recommender.rank(
+        candidates = pool.candidates,
+        taste = taste,
+        session = TasteSignals.sessionContext(),
+        nowMs = now,
+        random = Random(),
+        onDropped = { dropped++ },
+    )
+    TrackLog.d(
+        "BitChord",
+        "TASTE top-up seed=${pool.counts[CandidateSource.RADIO_SEED] ?: 0}" +
+            " session=${pool.counts[CandidateSource.RADIO_SESSION] ?: 0}" +
+            " favourite=${pool.counts[CandidateSource.FAVOURITE] ?: 0}" +
+            " rediscover=${pool.counts[CandidateSource.REDISCOVER] ?: 0}" +
+            " hardDropped=$dropped ranked=${ranked.size}",
+        about = seedSong.videoId,
+    )
+
+    // The ranker speaks in candidates; the queue needs the playable row each
+    // one came from, and a local favourite has to be rebuilt from its stored
+    // metadata because only the store knows it.
+    val known = (seedRadio + sessionRadio).associateBy { it.videoId }.toMutableMap()
+    local.forEach { known.putIfAbsent(it.videoId, it.asSong()) }
+    val ordered = ranked.mapNotNull { known[it.videoId] }
+    return QueueBuilder.extend(existing, ordered, limit)
+}
+
+/** The last completed track's radio, or empty when it would repeat the seed. */
+private suspend fun sessionRadioFor(seedSong: Song, sessionSong: Song?): List<Song> {
+    if (sessionSong == null) return emptyList()
+    // The same recording is the same statement of intent; don't pay for its
+    // radio twice just because the upload ids differ.
+    if (QueueBuilder.isSameRecording(sessionSong, seedSong)) return emptyList()
+    if (!AppSettings.heavyWorkAllowed) return emptyList()
+    val seed = youtubeSeedFor(sessionSong) ?: return emptyList()
+    return YtMusicRepository.radio(seed).getOrNull().orEmpty()
 }

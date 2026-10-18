@@ -237,6 +237,7 @@ fun SettingsScreen(
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
     val resumeOnHeadphones by AppSettings.resumeOnHeadphones.collectAsStateWithLifecycle()
+    val personalisedAutoplay by AppSettings.personalisedAutoplay.collectAsStateWithLifecycle()
     // Read again whenever the page comes back, which is how a grant made in
     // the system's own screen shows up here.
     val settingsForeground = com.music.bitchord.ui.rememberIsForeground()
@@ -609,6 +610,25 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setResumeOnHeadphones(!resumeOnHeadphones) },
+                )
+            }
+            val personalisedAutoplayTitle = stringResource(R.string.personalised_autoplay)
+            row(personalisedAutoplayTitle, "autoplay", "radio", "recommend", "추천") {
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = personalisedAutoplayTitle,
+                    subtitle = stringResource(R.string.personalised_autoplay_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = personalisedAutoplay,
+                            onCheckedChange = AppSettings::setPersonalisedAutoplay,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setPersonalisedAutoplay(!personalisedAutoplay) },
                 )
             }
             val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)

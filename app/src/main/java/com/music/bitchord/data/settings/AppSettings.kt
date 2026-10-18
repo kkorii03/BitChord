@@ -348,6 +348,17 @@ object AppSettings {
     /** Keep playing similar music once the queue runs out. */
     val autoplay = MutableStateFlow(true)
 
+    /**
+     * Rank AutoPlay's radio with the listener's own taste — likes, skips and
+     * recent listening — instead of taking YouTube's order as it comes.
+     *
+     * On by default: the station is still built from YouTube's radio, so this
+     * reorders that batch rather than replacing it, and with nothing recorded
+     * yet there is little for the ranking to say. Off restores the plain watch
+     * queue exactly, for anyone who wants it.
+     */
+    val personalisedAutoplay = MutableStateFlow(true)
+
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
 
@@ -942,6 +953,7 @@ object AppSettings {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
         }.getOrDefault(ThemeMode.DARK)
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
+        personalisedAutoplay.value = prefs.getBoolean(KEY_PERSONALISED_AUTOPLAY, true)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
@@ -1194,6 +1206,11 @@ object AppSettings {
     fun setAutoplay(value: Boolean) {
         autoplay.value = value
         prefs.edit().putBoolean(KEY_AUTOPLAY, value).apply()
+    }
+
+    fun setPersonalisedAutoplay(value: Boolean) {
+        personalisedAutoplay.value = value
+        prefs.edit().putBoolean(KEY_PERSONALISED_AUTOPLAY, value).apply()
     }
 
     fun setShuffleEnabled(value: Boolean) {
@@ -2271,6 +2288,7 @@ object AppSettings {
     private const val KEY_SPEED = "playback_speed"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"

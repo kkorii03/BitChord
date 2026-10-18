@@ -264,6 +264,8 @@
     <string name="full_screen_cover_art_subtitle">Kapağı kare bir kılıf yerine oynatıcının kenarlarına kadar uzatır</string>
     <string name="animated_cover_art_subtitle">Bazı sürümlerin geldiği döngülü videoyu sabit bir kılıf yerine oynatır</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay bu oturumda zaten çalınmış veya önerilmiş bir şarkıyı önermez</string>
+    <string name="personalised_autoplay">Kişiselleştirilmiş otomatik oynatma</string>
+    <string name="personalised_autoplay_subtitle">YouTube radyosunu beğenilerinize, atlamalarınıza ve son dinlemelerinize göre sıralar</string>
     <string name="download_quality_subtitle">Bağlantı ne olursa olsun parça başına %1$s</string>
     <string name="filter_non_music_audio">Müzik olmayan sesleri filtrele</string>
     <string name="filter_non_music_audio_subtitle">30 saniyeden kısa klipleri, WAV dosyalarını, sesli notları, kayıtları ve sistem seslerini gizler</string>

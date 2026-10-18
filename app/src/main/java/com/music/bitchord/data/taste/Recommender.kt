@@ -12,7 +12,7 @@ enum class CandidateSource {
     /** The track the station was seeded on — the strongest statement of intent. */
     RADIO_SEED,
 
-    /** Another track from the seed's own radio batch. */
+    /** A track from the radio built on the last completed track, not on the seed. */
     RADIO_SESSION,
 
     /** Something the listener saved: a library row is an explicit preference. */
@@ -173,10 +173,16 @@ object Recommender {
         session: SessionContext,
         nowMs: Long,
         random: Random,
+        /** Told about each row a hard rule removed, so a caller can say why the pool shrank. */
+        onDropped: ((Candidate) -> Unit)? = null,
     ): List<Candidate> {
         val scored = candidates
             .asSequence()
-            .filter { !isDropped(it, taste, nowMs) }
+            .filter { candidate ->
+                val dropped = isDropped(candidate, taste, nowMs)
+                if (dropped) onDropped?.invoke(candidate)
+                !dropped
+            }
             .map { Scored(it, score(it, taste, session, nowMs)) }
             .sortedWith(compareByDescending<Scored> { it.score }.thenBy { it.candidate.videoId })
             // One row per track, whatever the source repeated.
@@ -223,12 +229,12 @@ object Recommender {
         val singer = candidate.coverSinger?.let { taste.coverSingers[TasteView.key(it)] }
         val singerAffinity = singer?.let { affinity(it) } ?: 0.0
         val track = taste.tracks[candidate.videoId]
-        val trackAffinity = track?.let { affinity(it) } ?: 0.0
+        val trackPreference = track?.let { trackAffinity(it) } ?: 0.0
 
         var score = prior(candidate.source, candidate.sourceRank)
         score += ARTIST_WEIGHT * artistAffinity
         score += COVER_SINGER_WEIGHT * singerAffinity
-        score += TRACK_WEIGHT * trackAffinity
+        score += TRACK_WEIGHT * trackPreference
         score -= TRACK_SKIP_WEIGHT * (track?.let { skipPenalty(it) } ?: 0.0)
         score -= ARTIST_SKIP_WEIGHT * artistSkip
         score -= recencyPenalty(track, nowMs)
@@ -258,7 +264,11 @@ object Recommender {
     private fun affinity(taste: ArtistTaste): Double =
         ln(1.0 + taste.completes + 2.0 * taste.likes) - 0.5 * ln(1.0 + taste.skips)
 
-    private fun affinity(taste: TrackTaste): Double =
+    /**
+     * A track's affinity by the same arithmetic the score uses, so the local
+     * pool ranks the listener's own songs the way the station will.
+     */
+    fun trackAffinity(taste: TrackTaste): Double =
         ln(1.0 + taste.completes + 2.0 * taste.likes) - 0.5 * ln(1.0 + taste.skips)
 
     private fun skipPenalty(taste: ArtistTaste): Double = ln(1.0 + taste.skips)

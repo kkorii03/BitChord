@@ -113,8 +113,13 @@ object QueueBuilder {
         return left.isNotEmpty() && right.isNotEmpty() && left.any { it in right }
     }
 
-    /** The title with every bracketed note and any " - …" tail taken off. */
-    private fun baseTitle(raw: String): String =
+    /**
+     * The title with every bracketed note and any " - …" tail taken off.
+     *
+     * Public so the taste pool can name a candidate the same way the queue
+     * does, and two takes of one song compare equal there too.
+     */
+    fun baseTitle(raw: String): String =
         normalisedTitle(raw.replace(BRACKETED_NOTE, " ").substringBefore(" - "))
 
     private val BRACKETED_NOTE = Regex("""\([^)]*\)|\[[^]]*]""")

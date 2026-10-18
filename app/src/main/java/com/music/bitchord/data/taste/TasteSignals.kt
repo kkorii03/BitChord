@@ -274,6 +274,33 @@ object TasteSignals {
         )
     }
 
+    /**
+     * What every track this store knows looks like as a queue row.
+     *
+     * The counters stay in [taste]; this offers only the facts a local
+     * candidate needs, and nothing before the file has been read, so an early
+     * top-up cannot mistake "not loaded yet" for "listener has no songs".
+     *
+     * Rows whose id is a file URI are left out: the store never kept the URI
+     * separately, so rebuilding one would produce a song the player cannot
+     * open. YouTube and configured-source ids are playable by id alone.
+     */
+    fun localTracks(): List<LocalTrack> = synchronized(lock) {
+        if (!ready()) {
+            emptyList()
+        } else {
+            tracks.values.mapNotNull {
+                if (it.id.contains("://")) return@mapNotNull null
+                LocalTrack(
+                    videoId = it.id,
+                    title = it.title,
+                    artist = it.artist,
+                    coverSinger = it.coverSinger,
+                )
+            }
+        }
+    }
+
     // ── Disk ────────────────────────────────────────────────────────────────
 
     /** Writes whatever has changed. Safe to call from any thread. */

@@ -829,6 +829,17 @@ class PlaybackService : MediaLibraryService() {
      */
     private val sessionSongHistory = mutableListOf<Song>()
 
+    /**
+     * The track that most recently reached its end, if any.
+     *
+     * Kept for AutoPlay's second radio seed: the station that follows what the
+     * listener actually finished is a better statement of where they are than
+     * the current track alone. Never persisted — a fresh process starts with
+     * nothing completed. A track the listener skipped past is not set here,
+     * because a skip is the opposite of a completion.
+     */
+    private var lastCompletedSong: Song? = null
+
     private var serviceLyricsJob: Job? = null
     private var translationAheadJob: Job? = null
     private var serviceLyrics: List<LyricLine>? = null
@@ -1980,6 +1991,7 @@ class PlaybackService : MediaLibraryService() {
                 existing = listOf(radioSeed),
                 seedSong = radioSeed,
                 limit = INITIAL_STATION_TRACKS,
+                sessionSong = lastCompletedSong,
             ).getOrElse {
                 TrackLog.w(
                     "BitChord",
@@ -2568,7 +2580,7 @@ class PlaybackService : MediaLibraryService() {
                 } else {
                     queueSongs
                 }
-                val result = loadAutoplayTracks(existing, current, remaining)
+                val result = loadAutoplayTracks(existing, current, remaining, lastCompletedSong)
                 val resolved = result.getOrElse {
                     TrackLog.w(
                         "BitChord",
@@ -3123,6 +3135,8 @@ class PlaybackService : MediaLibraryService() {
         if (prevSong != null && ended && prevStart > 0L) {
             submitListenBrainzFinished(prevSong, prevStart, listenBrainzDurationMs)
         }
+        // AutoPlay's session seed: only a track that ran to its end counts.
+        if (prevSong != null && ended) lastCompletedSong = prevSong
         listenBrainzSong = newSong
         listenBrainzStartMs = if (exoPlayer.isPlaying) System.currentTimeMillis() else 0L
         listenBrainzDurationMs = durationMs

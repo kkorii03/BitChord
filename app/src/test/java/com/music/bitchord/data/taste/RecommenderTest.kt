@@ -149,9 +149,18 @@ class RecommenderTest {
         val candidates = (1..40).map { candidate("known-$it", "Known $it") } +
             (1..40).map { candidate("new-$it", "New $it") }
         val ranked = Recommender.rank(candidates, taste, SessionContext(), now, Random(12_345))
-        val unknown = ranked.count { it.videoId.startsWith("new-") }
         assertEquals(80, ranked.size)
-        assertTrue("exploration share was $unknown/80", unknown in 10..30)
+        // Half the pool is unknown and every candidate survives, so the whole
+        // 80 rows are 40 known + 40 new by arithmetic rather than by chance.
+        // Epsilon governs the rows emitted while both pools still have tracks,
+        // so the quarter has to be measured at the opening of the output.
+        val unknown = ids(ranked).take(24).count { it.startsWith("new-") }
+        assertTrue("early exploration share was $unknown/24", unknown in 4..8)
+        // Explorers are taken by score, so they surface in ranked order.
+        assertEquals(
+            (1..40).map { "new-$it" }.sorted(),
+            ids(ranked).filter { it.startsWith("new-") },
+        )
     }
 
     @Test

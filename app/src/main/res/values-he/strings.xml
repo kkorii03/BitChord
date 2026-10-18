@@ -240,6 +240,8 @@
     <string name="full_screen_cover_art_subtitle">מותח את העטיפה עד לקצוות הנגן במקום עטיפה מרובעת</string>
     <string name="animated_cover_art_subtitle">מנגן את סרטון הלופ שמגיע עם חלק מההוצאות במקום עטיפה סטטית</string>
     <string name="dont_repeat_songs_subtitle">ההשמעה האוטומטית לא תציע שיר שכבר הושמע או הוצע בהפעלה הנוכחית</string>
+    <string name="personalised_autoplay">הפעלה אוטומטית מותאמת אישית</string>
+    <string name="personalised_autoplay_subtitle">מסדר את רדיו YouTube לפי לייקים, דילוגים והאזנה לאחרונה</string>
     <string name="download_quality_subtitle">%1$s לרצועה, ללא קשר לחיבור</string>
     <string name="filter_non_music_audio">סנן שמע שאינו מוזיקה</string>
     <string name="filter_non_music_audio_subtitle">מסתיר קטעים קצרים מ-30 שניות, קבצי WAV, הודעות קוליות, הקלטות וצלילי מערכת</string>

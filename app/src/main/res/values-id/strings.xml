@@ -234,6 +234,8 @@
     <string name="full_screen_cover_art_subtitle">Membuat sampul memenuhi tepi pemutar alih-alih berbentuk persegi</string>
     <string name="animated_cover_art_subtitle">Memutar video berulang yang disertakan beberapa rilisan alih-alih sampul diam</string>
     <string name="dont_repeat_songs_subtitle">Putar Otomatis tidak akan menyarankan lagu yang sudah diputar atau disarankan dalam sesi ini</string>
+    <string name="personalised_autoplay">Pemutaran otomatis yang dipersonalisasi</string>
+    <string name="personalised_autoplay_subtitle">Mengurutkan radio YouTube sesuai sukaan, lewatan, dan riwayat mendengar terbaru Anda</string>
     <string name="download_quality_subtitle">%1$s per trek, apa pun koneksinya</string>
     <string name="filter_non_music_audio">Filter audio non-musik</string>
     <string name="filter_non_music_audio_subtitle">Menyembunyikan klip di bawah 30 detik, file WAV, catatan suara, rekaman, dan suara sistem</string>
