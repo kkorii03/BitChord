@@ -184,6 +184,7 @@ internal fun AndroidCanvasArtworkPlayer(
     val currentAlignPortraitTop by rememberUpdatedState(alignPortraitTop)
     val currentPortraitRevealBounds by rememberUpdatedState(portraitRevealBounds)
     val currentPresentationAlpha by rememberUpdatedState(presentationAlpha)
+    val currentFrameCapturePx by rememberUpdatedState(frameCapturePx)
     val reportAspect by rememberUpdatedState(onAspectRatioChanged)
 
     val player = remember {
@@ -309,6 +310,7 @@ internal fun AndroidCanvasArtworkPlayer(
     }
 
     val reportRendered by rememberUpdatedState(onRenderedChanged)
+    val reportFrame by rememberUpdatedState(onFrameCaptured)
     LaunchedEffect(rendered) {
         reportRendered(rendered)
         if (!rendered) return@LaunchedEffect
@@ -317,10 +319,10 @@ internal fun AndroidCanvasArtworkPlayer(
         // can still catch the previous, empty buffer.
         withFrameMillis { }
         val view = textureView ?: return@LaunchedEffect
-        val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+        val bitmap = view.captureAt(currentFrameCapturePx, clipAspect, contentMode, alignPortraitTop)
         if (bitmap != null) {
             Log.d(TAG, "frame captured after rendered=true, size=${bitmap.width}x${bitmap.height}")
-            onFrameCaptured(bitmap.asImageBitmap())
+            reportFrame(bitmap.asImageBitmap())
         } else {
             Log.w(TAG, "frame capture returned null after rendered=true")
         }
@@ -331,17 +333,36 @@ internal fun AndroidCanvasArtworkPlayer(
     // folded into the one above: that one is keyed on [rendered] so it fires
     // again on every fade-in, and this one only needs to start once a fade-in
     // has actually happened and then keep going for as long as it holds.
-    LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx, clipAspect, contentMode, alignPortraitTop) {
+    //
+    // Its inputs are the keys, so a recomposition that changes one of them
+    // restarts this effect — and cancels the old loop before the new one
+    // starts. A paused or hidden surface leaves the effect returning
+    // immediately rather than sleeping through a delay it has no work for.
+    // The capture's own parameters are read through [rememberUpdatedState]
+    // instead: a clip reporting its aspect or a surface being re-laid out is
+    // not a reason to cancel the timer and start it again from zero.
+    val refreshFrames = shouldRefreshFrames(
+        refreshFrameEveryMs = refreshFrameEveryMs,
+        rendered = rendered,
+        foreground = foreground,
+        pausedForTransition = pausedForTransition,
+    )
+    LaunchedEffect(refreshFrames, refreshFrameEveryMs) {
         val interval = refreshFrameEveryMs ?: return@LaunchedEffect
+        if (!refreshFrames) return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$interval")
-        if (!rendered) return@LaunchedEffect
         while (isActive) {
             delay(interval)
             val view = textureView ?: continue
-            val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+            val bitmap = view.captureAt(
+                currentFrameCapturePx,
+                clipAspect,
+                currentContentMode,
+                currentAlignPortraitTop,
+            )
             if (bitmap != null) {
                 Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}")
-                onFrameCaptured(bitmap.asImageBitmap())
+                reportFrame(bitmap.asImageBitmap())
             } else {
                 Log.w(TAG, "periodic frame capture returned null")
             }
@@ -567,6 +588,27 @@ private fun TextureView.captureAt(
  * the GPU is not an event. Every consumer reduces this to a handful of colours.
  */
 private const val FRAME_CAPTURE_PX = 128
+
+/**
+ * Whether [onFrameCaptured][AndroidCanvasArtworkPlayer] should be following the
+ * clip at all.
+ *
+ * A frame is only worth reading back while there is a surface the viewer can
+ * actually see: one that has painted a frame, in a composition the app has on
+ * screen, that is not in the middle of a caller-driven transition. Keying the
+ * refresh effect on this is what stops the loop — and the decoder behind it —
+ * for a backgrounded app, a locked screen, or a clip a panel is covering.
+ */
+internal fun shouldRefreshFrames(
+    refreshFrameEveryMs: Long?,
+    rendered: Boolean,
+    foreground: Boolean,
+    pausedForTransition: Boolean,
+): Boolean = refreshFrameEveryMs != null &&
+    refreshFrameEveryMs > 0L &&
+    rendered &&
+    foreground &&
+    !pausedForTransition
 
 /**
  * A TextureView stretches its content to its own bounds. Compensate with a

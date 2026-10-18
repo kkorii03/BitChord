@@ -250,6 +250,13 @@ fun DetailScreen(
     onAddSuggested: (Song) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    /**
+     * Whether this page's hero is actually on screen. False under the raised
+     * player, which is a window of its own and leaves this page composed: a
+     * clip left running here would decode a second copy of the same video into
+     * a surface nobody can see.
+     */
+    canvasVisible: Boolean = true,
     listState: LazyListState = rememberLazyListState(),
     activeShelf: HomeShelf? = null,
     onActiveShelfChange: (HomeShelf?) -> Unit = {},
@@ -431,6 +438,7 @@ fun DetailScreen(
                     page = page,
                     palette = palette,
                     canvas = canvas,
+                    canvasVisible = canvasVisible,
                     artHeight = artHeight,
                     listState = listState,
                     heroUrl = appleArt?.heroUrl,
@@ -1132,6 +1140,7 @@ private fun PageBackground(
     page: DetailPage,
     palette: ArtworkPalette,
     canvas: CanvasArtwork?,
+    canvasVisible: Boolean,
     artHeight: Dp,
     listState: LazyListState,
     heroUrl: String? = null,
@@ -1163,13 +1172,18 @@ private fun PageBackground(
             // Above the still art but below the scrim, so the scrim that
             // settles the header into the page still sits over it. Always
             // running: unlike the player's sleeve there is no transport here
-            // to follow, and the page is only up while it's being read.
-            canvas?.let { clip ->
-                CanvasArtworkPlayer(
-                    canvas = clip,
-                    isPlaying = true,
-                    modifier = Modifier.matchParentSize(),
-                )
+            // to follow, and the page is only up while it's being read — save
+            // for the player sheet over it, which is why [canvasVisible] can
+            // take the clip out entirely rather than leave it decoding behind
+            // a window nobody sees through.
+            if (canvasVisible) {
+                canvas?.let { clip ->
+                    CanvasArtworkPlayer(
+                        canvas = clip,
+                        isPlaying = true,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
             }
 
             // The same sleeve, blurred and faded in over the lower half, so the

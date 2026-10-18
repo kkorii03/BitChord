@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           set +e -o pipefail
-          ./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.*' -Pbitchord.arm64Only=true --console=plain 2>&1 | tee apptest.log
+          ./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.*' --tests 'com.music.bitchord.ui.player.CanvasFrameRefreshTest' -Pbitchord.arm64Only=true --console=plain 2>&1 | tee apptest.log
           status=${PIPESTATUS[0]}
           for f in app/build/test-results/testProdDebugUnitTest/*.xml; do
             [ -f "$f" ] || continue

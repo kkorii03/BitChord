@@ -2919,6 +2919,12 @@ private fun BitChordApp(
                             page = page,
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
+                            // The player sheet is its own window over this
+                            // page, so this composition survives underneath
+                            // it. Take the hero clip out while it is raised
+                            // rather than decode a second copy of the video
+                            // behind an opaque surface.
+                            canvasVisible = !(showNowPlaying && playerSong != null),
                             listState = pageDetailListState,
                             activeShelf = detailActiveShelf,
                             onActiveShelfChange = { detailActiveShelf = it },
