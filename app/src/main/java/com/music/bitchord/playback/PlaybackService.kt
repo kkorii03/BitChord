@@ -121,6 +121,7 @@ import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.discord.discordAudioQualityLine
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.stats.ListeningRecorder
+import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.LikeStatus
@@ -1091,6 +1092,11 @@ class PlaybackService : MediaLibraryService() {
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
                 // The queue ran dry, so no transition will ever close the last
+                // track out. The recommendation store hears the same fact: a
+                // track that reached its end was completed, even if the
+                // sampler never saw four fifths of it.
+                exoPlayer.currentMediaItem?.toSong()?.let(ListeningRecorder::onEnded)
+                // The queue ran dry, so no transition will ever close the last
                 // track out. Without this its history entry keeps whatever
                 // watchtime the 30-second sampler happened to have reported and
                 // is never marked finished — so the one play most likely to be
@@ -1783,7 +1789,29 @@ class PlaybackService : MediaLibraryService() {
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         cast = castPlayback,
-    ) { lastPublishedSubtitle }
+        getSubtitle = { lastPublishedSubtitle },
+        onUserAdvance = ::noteTasteSkip,
+    )
+
+    /**
+     * Records a listener leaving a track, for the recommendation store.
+     *
+     * Called only from [SessionPlayer]'s skip commands, which is the one path
+     * every surface a listener can press goes through — the app, the
+     * notification, a headset and Android Auto. An automatic advance, a
+     * repeat, a crossfade handoff and [recoverFrom]'s retry all move the
+     * underlying player directly, so none of them is mistaken for a skip.
+     * [TasteSignals.onUserAdvance] decides whether the playhead was early
+     * enough to count.
+     */
+    private fun noteTasteSkip(surface: Player) {
+        val item = surface.currentMediaItem ?: return
+        TasteSignals.onUserAdvance(
+            item.toSong(),
+            surface.currentPosition,
+            surface.duration.takeIf { it > 0L },
+        )
+    }
 
     /**
      * The stream a Cast receiver can open for [item], or null when there is none
@@ -2747,6 +2775,13 @@ class PlaybackService : MediaLibraryService() {
         favoriteActionJob = scope.launch {
             YtMusicRepository.rate(videoId, target)
                 .onSuccess {
+                    // The listener's decision, now that YouTube accepted it —
+                    // the optimistic like and its rollback are UI, not taste.
+                    TasteSignals.onRated(
+                        videoId,
+                        player?.currentMediaItem?.takeIf { it.mediaId == videoId }?.toSong(),
+                        target,
+                    )
                     if (target == LikeStatus.LIKE) {
                         val playing = player?.currentMediaItem
                             ?.takeIf { it.mediaId == videoId }
@@ -7021,6 +7056,8 @@ class PlaybackService : MediaLibraryService() {
         /** What plays on a Cast receiver, whose clock this reports while it is the speaker. */
         private val cast: CastPlayback,
         private val getSubtitle: () -> String?,
+        /** The listener moved off the current track through this surface — see [noteTasteSkip]. */
+        private val onUserAdvance: (Player) -> Unit,
     ) : ForwardingPlayer(player), CastSink {
 
         // The listeners registered through this wrapper, kept so the receiver's
@@ -7415,6 +7452,7 @@ class PlaybackService : MediaLibraryService() {
                 cast.seekTo(positionMs)
                 return
             }
+            if (mediaItemIndex != currentMediaItemIndex) onUserAdvance(this)
             val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
             if (skipped == null) {
                 wrappedPlayer.seekTo(mediaItemIndex, positionMs)
@@ -7464,6 +7502,11 @@ class PlaybackService : MediaLibraryService() {
                 castPrevious()
                 return
             }
+            // Back on the first item, or far enough in for Media3 to restart,
+            // does not leave the track — so it is not a skip.
+            if (hasPreviousMediaItem() && currentPosition <= maxSeekToPreviousPosition) {
+                onUserAdvance(this)
+            }
             wrappedPlayer.seekToPrevious()
         }
 
@@ -7471,6 +7514,7 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
+            onUserAdvance(this)
             wrappedPlayer.seekToNextMediaItem()
         }
 
@@ -7478,6 +7522,7 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
+            onUserAdvance(this)
             wrappedPlayer.seekToNext()
         }
     }

@@ -3,6 +3,7 @@ package com.music.bitchord.data.stats
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.taste.TasteSignals
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,6 +48,7 @@ object ListeningRecorder {
     private var lastSampleAt: Long = 0L
     private var playedThisTrack: Long = 0L
     private var playCounted = false
+    private var completionCounted = false
     private var samplesSinceFlush = 0
 
     /**
@@ -66,6 +68,7 @@ object ListeningRecorder {
             lastSampleAt = now
             playedThisTrack = 0L
             playCounted = false
+            completionCounted = false
             return
         }
         val step = (now - lastSampleAt).coerceIn(0L, MAX_STEP_MS)
@@ -82,7 +85,20 @@ object ListeningRecorder {
         val counts = !playCounted && playedThisTrack >= threshold
         if (counts) playCounted = true
 
-        ListeningStats.record(enriched(song), step, counts)
+        val record = enriched(song)
+        ListeningStats.record(record, step, counts)
+
+        // The recommendation store reads the same two events the listening
+        // record does, at the moment they are already decided here: a play is
+        // the same threshold, and a completion is four fifths of the track —
+        // close enough to "to the end" that a listener who stops at the outro
+        // is not filed as having walked away. Neither runs per sample: the
+        // flags keep each event to once per playthrough.
+        if (counts) TasteSignals.onPlayed(record)
+        if (!completionCounted && length > 0L && playedThisTrack >= length * 4 / 5) {
+            completionCounted = true
+            TasteSignals.onCompleted(record)
+        }
 
         if (++samplesSinceFlush >= FLUSH_EVERY) {
             samplesSinceFlush = 0
@@ -102,8 +118,24 @@ object ListeningRecorder {
         currentId = null
         playedThisTrack = 0L
         playCounted = false
+        completionCounted = false
         samplesSinceFlush = 0
         ListeningStats.flush()
+    }
+
+    /**
+     * The queue ran out, which is the one way a track can reach its end
+     * without the sampler having seen 80% of it — a song shorter than a couple
+     * of sample intervals, or one whose last tick arrived early.
+     *
+     * Only closes out the track the sampler is still on; anything else ended
+     * through a transition which has already been accounted for.
+     */
+    @Synchronized
+    fun onEnded(song: Song) {
+        if (song.videoId != currentId || completionCounted) return
+        completionCounted = true
+        TasteSignals.onCompleted(enriched(song))
     }
 
     // ── Filling in what the queue didn't carry ──────────────────────────────

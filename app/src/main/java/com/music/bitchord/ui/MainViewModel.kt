@@ -1089,6 +1089,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             YtMusicRepository.rate(videoId, status).fold(
                 onSuccess = {
+                    // The same event the notification reports: a rating the
+                    // listener made, recorded once YouTube has accepted it.
+                    com.music.bitchord.data.taste.TasteSignals.onRated(
+                        videoId,
+                        knownSong(videoId),
+                        status,
+                    )
                     // Liked Music is now out of date either way.
                     libraryStale = true
                     if (status != LikeStatus.LIKE) dropFromLikedLists(videoId)

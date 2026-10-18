@@ -149,6 +149,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // PlaybackService because the Replay page reads it from the UI side and
         // both live in this process — one owner, one directory.
         ListeningStats.init(this)
+        // What the recommendation store has learned from this device's
+        // listening and ratings. Opened beside the listening record, for the
+        // same reason: both the UI and PlaybackService live in this process.
+        com.music.bitchord.data.taste.TasteSignals.init(this)
         // After AppSettings, whose switch decides whether half of it runs.
         ArtistFacts.init(this)
         // One cache directory can only be opened once per process, and
