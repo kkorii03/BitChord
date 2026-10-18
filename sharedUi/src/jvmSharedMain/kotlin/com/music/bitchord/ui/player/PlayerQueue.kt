@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -743,6 +744,7 @@ private fun InlineQueueRow(
         AsyncImage(
             model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
             contentDescription = null,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(6.dp))

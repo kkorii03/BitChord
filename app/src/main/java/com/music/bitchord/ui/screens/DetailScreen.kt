@@ -1761,6 +1761,7 @@ private fun CompactSongRow(
             AsyncImage(
                 model = song.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(48.dp)
                     .clip(RoundedCornerShape(SMALL_ART_CORNER))
@@ -1820,6 +1821,7 @@ private fun SuggestedSongRow(
             AsyncImage(
                 model = song.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(52.dp)
                     .clip(RoundedCornerShape(SMALL_ART_CORNER))
@@ -1938,6 +1940,7 @@ private fun TopReleaseCard(
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
             contentDescription = null,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(88.dp)
                 .clip(coverShape)
@@ -2017,6 +2020,7 @@ private fun SectionCard(
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
             contentDescription = null,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)

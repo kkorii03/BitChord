@@ -2,6 +2,7 @@ package com.music.bitchord.data
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.cover.CoverTitles
+import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
@@ -978,6 +979,15 @@ object YtMusicRepository {
             description = metadata.description,
         )
     }
+
+    /**
+     * Swaps the first [limit] video frames in a page's rows for square album
+     * covers, using [YouTubeCoverResolver]'s existing cache and concurrency
+     * cap. Called after a detail page is already on screen, so a cover lookup
+     * never holds the first paint.
+     */
+    suspend fun enrichDetailCovers(songs: List<Song>, limit: Int = 20): List<Song> =
+        YouTubeCoverResolver.enrich(songs, limit)
 
     /** The page [SongPage.continuation] points at. */
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {

@@ -48,6 +48,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -414,6 +415,7 @@ fun MiniPlayer(
             AsyncImage(
                 model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(40.dp)
                     .playerDockArt(dock, ART_CORNER)

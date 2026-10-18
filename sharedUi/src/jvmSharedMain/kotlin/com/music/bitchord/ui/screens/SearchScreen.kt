@@ -55,6 +55,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -492,6 +493,7 @@ private fun TopResultCard(
             AsyncImage(
                 model = song.thumbnailUrl?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(72.dp)
                     .clip(RoundedCornerShape(artworkCorner(72.dp)))
@@ -717,6 +719,7 @@ private fun TypeaheadSongRow(
             AsyncImage(
                 model = song.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(52.dp)
                     .clip(RoundedCornerShape(SMALL_ART_CORNER))
@@ -822,6 +825,7 @@ private fun RecentSearchEntityRow(
             AsyncImage(
                 model = entity.artworkUrl.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(52.dp)
                     .clip(RoundedCornerShape(SMALL_ART_CORNER))
@@ -881,6 +885,7 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
             contentDescription = null,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(52.dp)
                 .clip(

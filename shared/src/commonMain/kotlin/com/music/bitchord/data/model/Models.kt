@@ -1,5 +1,7 @@
 package com.music.bitchord.data.model
 
+import com.music.bitchord.data.cover.squareFriendlyThumbnail
+
 /** Tier of an item in the playback queue. */
 enum class QueueTier {
     /** Explicitly queued by user ("Play Next", "Add to Queue", or preserved user queue). */
@@ -260,7 +262,8 @@ fun String?.durationMillis(): Long {
 }
 
 /** As [Song.artworkAt], for artwork that isn't a track's. */
-fun String?.artworkAt(px: Int): String? = this?.replace(SIZE_HINT, "w$px-h$px")
+fun String?.artworkAt(px: Int): String? =
+    squareFriendlyThumbnail(this)?.replace(SIZE_HINT, "w$px-h$px")
 
 private val SIZE_HINT = Regex("""w\d+-h\d+""")
 

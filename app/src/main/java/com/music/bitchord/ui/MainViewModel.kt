@@ -3060,6 +3060,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var credit: String? = null
             /** Set when the track list carries on past its first response. */
             var more: String? = null
+            /** Whether this page came from a remote playlist/album listing. */
+            var remoteListing = false
             /** Tracks YouTube offers to round the playlist out — see [DetailPage.suggestedSongs]. */
             var suggested: List<Song> = emptyList()
             /** Whether this release is already saved — see [DetailPage.library]. */
@@ -3172,6 +3174,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             if (page.songs.isEmpty()) {
                                 UiState.Error(text(R.string.no_tracks_here))
                             } else {
+                                remoteListing = true
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
                                 library = page.library
@@ -3204,6 +3207,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 } else {
                     it
+                }
+            }
+            // The rows are already on screen. Their video frames are square-
+            // cropped in the meantime, and the first visible page's worth is
+            // swapped for real album art without holding the first paint.
+            val visible = (state as? UiState.Success<List<Song>>)?.data.orEmpty()
+            if (remoteListing && visible.isNotEmpty()) {
+                launch {
+                    val enriched = YtMusicRepository.enrichDetailCovers(visible)
+                    if (enriched != visible) {
+                        _detailStack.value = _detailStack.value.map { page ->
+                            if (page.browseId != browseId) return@map page
+                            val current = (page.songs as? UiState.Success<List<Song>>)?.data
+                                ?: return@map page
+                            page.copy(
+                                songs = UiState.Success(
+                                    current.mapIndexed { index, song ->
+                                        enriched.getOrNull(index) ?: song
+                                    },
+                                ),
+                            )
+                        }
+                    }
                 }
             }
             // Only once the first page is on screen: [fillIn] appends to it,
