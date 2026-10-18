@@ -75,21 +75,37 @@ internal object YouTubeFallback {
      * minutes. The order mirrors the Music Home a Premium listener had:
      * Quick picks, Listen again, the account's mixes, Liked music, YouTube's
      * own home shelves, then the Music channel last.
+     *
+     * [force] is only for a pull-to-refresh: it skips the cached feed and
+     * replaces it with the one just built. First loads, tab switches and
+     * returning to the screen keep the cache.
      */
-    suspend fun home(): HomeFeed {
-        cachedHome()?.let { return it }
+    suspend fun home(force: Boolean = false): HomeFeed {
+        cachedHome(force = force)?.let { return it }
         return homeLock.withLock {
-            cachedHome()?.let { return@withLock it }
+            cachedHome(force = force)?.let { return@withLock it }
             val feed = buildHome()
             homeCache = Triple(Innertube.sessionKey(), System.currentTimeMillis(), feed)
             feed
         }
     }
 
-    private fun cachedHome(now: Long = System.currentTimeMillis()): HomeFeed? {
+    private fun cachedHome(
+        now: Long = System.currentTimeMillis(),
+        force: Boolean = false,
+    ): HomeFeed? {
         val key = Innertube.sessionKey()
         return homeCache?.let { (cachedKey, at, feed) ->
-            feed.takeIf { cachedKey == key && now - at < HOME_CACHE_MS }
+            feed.takeIf {
+                YouTubeFallbackFeed.shouldUseCachedHome(
+                    force = force,
+                    cachedKey = cachedKey,
+                    sessionKey = key,
+                    cachedAtMs = at,
+                    nowMs = now,
+                    maxAgeMs = HOME_CACHE_MS,
+                )
+            }
         }
     }
 

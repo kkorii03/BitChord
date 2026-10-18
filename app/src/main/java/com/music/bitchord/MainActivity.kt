@@ -3096,7 +3096,7 @@ private fun BitChordApp(
                             onItemLongPress = onShelfLongPress,
                             onRetry = viewModel::loadHome,
                             refreshing = MainViewModel.Feed.HOME in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME) },
+                            onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME, force = true) },
                             pullState = homePull,
                             contentPadding = listPadding,
                             onLoadMore = viewModel::loadMoreHome,

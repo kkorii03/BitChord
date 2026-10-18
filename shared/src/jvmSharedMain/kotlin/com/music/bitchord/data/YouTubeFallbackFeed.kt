@@ -33,6 +33,25 @@ internal object YouTubeFallbackFeed {
 
     const val LAST_HOUR_MS = 60L * 60L * 1000L
 
+    /**
+     * Whether the cached gated Home can answer a request instead of rebuilding.
+     *
+     * [force] is the pull-to-refresh bypass: it always rebuilds, even while a
+     * fresh feed is held. Otherwise the entry is used only for the same
+     * signed-in session and only inside [maxAgeMs].
+     */
+    fun shouldUseCachedHome(
+        force: Boolean,
+        cachedKey: String?,
+        sessionKey: String,
+        cachedAtMs: Long,
+        nowMs: Long,
+        maxAgeMs: Long,
+    ): Boolean = !force &&
+        cachedKey != null &&
+        cachedKey == sessionKey &&
+        nowMs - cachedAtMs < maxAgeMs
+
     /** A song that seeds one `RD<videoId>` mix card. */
     data class MixSeed(
         val videoId: String,

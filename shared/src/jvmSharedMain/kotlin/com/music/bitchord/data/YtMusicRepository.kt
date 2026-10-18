@@ -64,8 +64,11 @@ object YtMusicRepository {
      * signed in, it keeps paging into mood mixes and more personalised
      * shelves the same way the official app does as you scroll; signed out
      * it's empty and there's nothing more to fetch.
+     *
+     * [force] bypasses the gated youtube.com feed cache; only a
+     * pull-to-refresh passes it. Nothing at this layer caches "home".
      */
-    suspend fun home(): Result<HomeFeed> = call("home") {
+    suspend fun home(force: Boolean = false): Result<HomeFeed> = call("home") {
         if (Innertube.cookie != null) runCatching { Innertube.ensureSessionScope() }
         val key = Innertube.sessionKey()
         // A GATED verdict older than a day gets exactly one re-check, here,
@@ -76,7 +79,7 @@ object YtMusicRepository {
             } catch (failure: Exception) {
                 if (MusicGateFallback.isActive(key)) {
                     Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
-                    return@call YouTubeFallback.home()
+                    return@call YouTubeFallback.home(force)
                 }
                 throw failure
             }
@@ -92,7 +95,7 @@ object YtMusicRepository {
             TAG,
             "home: youtube.com fallback (gate ${MusicGateFallback.state(key)})",
         )
-        YouTubeFallback.home()
+        YouTubeFallback.home(force)
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */

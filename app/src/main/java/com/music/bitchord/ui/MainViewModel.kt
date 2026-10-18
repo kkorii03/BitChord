@@ -2053,7 +2053,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * request instead of starting another one, so two answers cannot race to
      * replace each other.
      */
-    fun refresh(feed: Feed) {
+    fun refresh(feed: Feed, force: Boolean = false) {
         if (feed == Feed.LIBRARY && !_signedIn.value) return
         val identity = listenerKey()
         var started: Job? = null
@@ -2063,7 +2063,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     when (feed) {
-                        Feed.HOME -> refreshHome(identity)
+                        Feed.HOME -> refreshHome(identity, force)
                         Feed.EXPLORE -> fetchExplore()
                         Feed.LIBRARY -> fetchLibrary(identity)
                     }
@@ -2295,8 +2295,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * continuation belongs to the previous feed, so it is dropped before the
      * fetch and only the new page's token is kept; a [loadMoreHome] already in
      * flight is discarded by the generation bump.
+     *
+     * [force] is set by pull-to-refresh only. The automatic refresh when the
+     * tab is shown again leaves it false, so the ten-minute gated feed cache
+     * still answers there.
      */
-    private suspend fun refreshHome(identity: String?) = coroutineScope {
+    private suspend fun refreshHome(identity: String?, force: Boolean = false) = coroutineScope {
         val generation = homeLoadGeneration.incrementAndGet()
         homeContinuation = null
         _homeLoadingMore.value = false
@@ -2306,7 +2310,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _homeRecentlyPlayedLoading.value = false
         val previous = (_home.value as? UiState.Success)?.data.orEmpty()
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
-        YtMusicRepository.home().onSuccess { feed ->
+        YtMusicRepository.home(force = force).onSuccess { feed ->
             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
             val merge = mergeHomeShelves(previous, feed.shelves.withoutRepeatsOf(emptyList()))
             homeContinuation = feed.continuation
