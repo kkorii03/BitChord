@@ -127,6 +127,10 @@ class SilenceSkipper(
                     write = if (runStartedInBlock) {
                         minOf(runStartWrite + keptFrames, write)
                     } else {
+                        // Rewinding past the start of the block discards frames
+                        // already copied, so no output has been produced yet and
+                        // the offset must be taken from the replayed tail.
+                        hasOutput = false
                         0
                     }
                     skipping = true
