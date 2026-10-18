@@ -633,7 +633,17 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
                 value = stringResource(R.string.delete),
                 tint = palette.accent,
                 accent = palette.accent,
-            ) { scope.launch { Downloads.delete(context, song.videoId) } }
+            ) {
+                scope.launch {
+                    if (!Downloads.delete(context, song.videoId)) {
+                        android.widget.Toast.makeText(
+                            context,
+                            R.string.download_delete_failed,
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
         } else if (!isOffline) {
             ActionRow(
                 icon = Icons.Rounded.Download,

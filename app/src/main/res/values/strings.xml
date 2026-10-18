@@ -1215,4 +1215,8 @@
     <string name="deepgram_key_ok">Deepgram accepted the key</string>
     <string name="deepgram_key_bad">Deepgram rejected this key. Check it and try again.</string>
     <string name="deepgram_key_unverified">Saved, but the key could not be checked (no connection)</string>
+    <string name="playback_unplayable_skipped">Can\'t play this track. Skipping to the next one.</string>
+    <string name="playback_error">Playback failed</string>
+    <string name="download_delete_failed">Couldn\'t delete this download.</string>
+    <string name="download_delete_partial_failed">Some tracks couldn\'t be deleted; the rest were kept.</string>
 </resources>

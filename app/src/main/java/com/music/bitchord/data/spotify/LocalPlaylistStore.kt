@@ -2,9 +2,16 @@ package com.music.bitchord.data.spotify
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,6 +27,17 @@ object LocalPlaylistStore {
     private const val PREF_NAME = "bitchord_local_playlists"
     private const val KEY_PLAYLISTS = "playlists_json"
 
+    /**
+     * The raw text this file held before a load had to skip a damaged row.
+     *
+     * Kept beside the live key rather than on disk because it is the same
+     * small string, and because the next save rewrites the live key from what
+     * was parsed — losing the row that could not be.
+     */
+    private const val KEY_PLAYLISTS_BACKUP = "playlists_json.bak"
+
+    private const val TAG = "BitChord"
+
     private lateinit var prefs: SharedPreferences
 
     private val _playlists = MutableStateFlow<List<LocalPlaylist>>(emptyList())
@@ -33,34 +51,23 @@ object LocalPlaylistStore {
     private fun load() {
         if (!this::prefs.isInitialized) return
         val raw = prefs.getString(KEY_PLAYLISTS, null) ?: return
-        runCatching {
-            val list = mutableListOf<LocalPlaylist>()
-            val jsonArray = JSONArray(raw)
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val id = obj.getString("id")
-                val title = obj.getString("title")
-                val songsArray = obj.getJSONArray("songs")
-                val songs = mutableListOf<Song>()
-                for (j in 0 until songsArray.length()) {
-                    val sObj = songsArray.getJSONObject(j)
-                    val song = Song(
-                        videoId = sObj.optString("videoId", ""),
-                        title = sObj.optString("title", ""),
-                        artist = sObj.optString("artist", ""),
-                        thumbnailUrl = sObj.optString("thumbnailUrl", null).takeIf { !it.isNullOrBlank() && it != "null" },
-                        durationText = sObj.optString("durationText", null).takeIf { !it.isNullOrBlank() && it != "null" },
-                        artistId = sObj.optString("artistId", null).takeIf { !it.isNullOrBlank() && it != "null" },
-                        albumId = sObj.optString("albumId", null).takeIf { !it.isNullOrBlank() && it != "null" },
-                        albumName = sObj.optString("albumName", null).takeIf { !it.isNullOrBlank() && it != "null" },
-                        isVideo = sObj.optBoolean("isVideo", false),
-                    )
-                    songs.add(song)
-                }
-                list.add(LocalPlaylist(id, title, songs))
-            }
-            _playlists.value = list
+        val parsed = parsePlaylists(raw)
+        if (parsed == null) {
+            // Not even an array: keep the text aside and leave the live value
+            // alone rather than start empty and overwrite it on the next save.
+            backup(raw)
+            Log.w(TAG, "local playlists are unreadable; kept the original as a backup")
+            return
         }
+        if (parsed.damaged) {
+            backup(raw)
+            Log.w(TAG, "skipped damaged local playlist rows; kept the original as a backup")
+        }
+        _playlists.value = parsed.playlists
+    }
+
+    private fun backup(raw: String) {
+        prefs.edit().putString(KEY_PLAYLISTS_BACKUP, raw).apply()
     }
 
     fun savePlaylist(title: String, songs: List<Song>): LocalPlaylist {
@@ -123,3 +130,86 @@ object LocalPlaylistStore {
         }
     }
 }
+
+/** What [parsePlaylists] could read out of a stored playlist file. */
+internal class ParsedPlaylists(
+    val playlists: List<LocalPlaylist>,
+    /**
+     * True when at least one entry, or one of its songs, could not be read and
+     * was left out — the caller keeps a copy of the original text so that row
+     * is never lost to the next save.
+     */
+    val damaged: Boolean,
+)
+
+/**
+ * Reads the stored playlist array one entry at a time.
+ *
+ * This used to be one `runCatching` around the whole loop: a single malformed
+ * object — a missing title, a `songs` value that is not an array — threw out of
+ * the loop, left `_playlists` empty, and the next save wrote that emptiness
+ * back. One bad row cost every playlist. A bad row now costs only itself.
+ *
+ * Returns null when [raw] is not an array at all, which is a different answer:
+ * the whole file is unreadable rather than one row in it being damaged.
+ *
+ * Parsed with `kotlinx.serialization` rather than `org.json` so the same code
+ * runs — and is tested — on the JVM, where the Android `org.json` stubs return
+ * nothing.
+ */
+internal fun parsePlaylists(raw: String): ParsedPlaylists? {
+    val array = runCatching { Json.parseToJsonElement(raw) as? JsonArray }.getOrNull() ?: return null
+    val playlists = mutableListOf<LocalPlaylist>()
+    var damaged = false
+    array.forEach { element ->
+        val entry = runCatching { parsePlaylist(element.jsonObject) }.getOrNull()
+        if (entry == null) {
+            damaged = true
+        } else {
+            playlists.add(entry.playlist)
+            if (entry.damaged) damaged = true
+        }
+    }
+    return ParsedPlaylists(playlists, damaged)
+}
+
+private class ParsedPlaylist(val playlist: LocalPlaylist, val damaged: Boolean)
+
+private fun parsePlaylist(obj: JsonObject): ParsedPlaylist {
+    val id = obj.requiredString("id")
+    val title = obj.requiredString("title")
+    val songsArray = obj["songs"] as? JsonArray ?: error("songs is not an array")
+    var damaged = false
+    val songs = mutableListOf<Song>()
+    songsArray.forEach { element ->
+        val song = runCatching { parseSong(element.jsonObject) }.getOrNull()
+        if (song == null) damaged = true else songs.add(song)
+    }
+    return ParsedPlaylist(LocalPlaylist(id, title, songs), damaged)
+}
+
+private fun parseSong(obj: JsonObject): Song = Song(
+    videoId = obj.requiredString("videoId"),
+    title = obj.stringOrNull("title").orEmpty(),
+    artist = obj.stringOrNull("artist").orEmpty(),
+    thumbnailUrl = obj.stringOrNull("thumbnailUrl"),
+    durationText = obj.stringOrNull("durationText"),
+    artistId = obj.stringOrNull("artistId"),
+    albumId = obj.stringOrNull("albumId"),
+    albumName = obj.stringOrNull("albumName"),
+    isVideo = (obj["isVideo"] as? JsonPrimitive)?.booleanOrNull == true,
+)
+
+private fun JsonObject.requiredString(key: String): String =
+    stringOrNull(key) ?: error("missing $key")
+
+/**
+ * A stored string, with the shapes `org.json` left behind treated as absent:
+ * a key it was handed null for was dropped, and older rows can carry the text
+ * `"null"`.
+ */
+private fun JsonObject.stringOrNull(key: String): String? =
+    (this[key] as? JsonPrimitive)
+        ?.takeIf { it.isString }
+        ?.content
+        ?.takeIf { it.isNotBlank() && it != "null" }

@@ -341,12 +341,32 @@ object Downloads {
         return null
     }
 
-    /** Delete the file saved for [videoId] and forget it. */
+    /**
+     * Delete the file saved for [videoId] and forget it.
+     *
+     * The record is dropped only once the file is really gone. Forgetting it
+     * regardless — which is what this used to do — left a file on the device
+     * that nothing could reach through the app any more, while the Downloads
+     * page said it had been removed.
+     *
+     * A record whose file has already disappeared counts as deleted: there is
+     * nothing left to remove, and keeping the claim would make every later
+     * delete fail.
+     */
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         open()
         val uri = _saved.value[videoId]?.toUri() ?: return@withContext false
+        if (!DownloadStore.exists(context, uri)) {
+            Log.d(TAG, "$videoId was already gone; forgetting the record")
+            forget(videoId)
+            return@withContext true
+        }
         val deleted = DownloadStore.delete(context, uri)
-        forget(videoId)
+        if (deleted) {
+            forget(videoId)
+        } else {
+            Log.w(TAG, "$videoId could not be deleted; keeping the record")
+        }
         deleted
     }
 
@@ -452,14 +472,27 @@ object Downloads {
      * files are already gone, this one is what actually takes them off the
      * device — the "delete download" a whole album or playlist card offers,
      * where a single track only ever offers [delete].
+     *
+     * Returns true only when every recorded file was deleted. The collection
+     * record is kept when any of them could not be, because it is still the
+     * only thing that knows those files belong to this release; the tracks
+     * that did go are forgotten individually. A false here is the caller's
+     * cue to say so rather than let the card disappear.
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
         open()
         val record = _collections.value[id] ?: return false
-        var any = false
-        record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
-        forgetCollection(id)
-        return any
+        var failedAny = false
+        record.videoIds.forEach { videoId ->
+            if (videoId !in _saved.value) return@forEach
+            if (!delete(context, videoId)) failedAny = true
+        }
+        if (failedAny) {
+            Log.w(TAG, "kept the record for $id: some of its downloads could not be deleted")
+        } else {
+            forgetCollection(id)
+        }
+        return !failedAny
     }
 
     /**

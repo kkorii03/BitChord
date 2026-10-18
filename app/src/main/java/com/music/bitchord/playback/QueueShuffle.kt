@@ -47,8 +47,42 @@ object QueueShuffle {
     /** Entry IDs in their pre-shuffle order. Empty while shuffle is off. */
     private var original: List<String> = emptyList()
 
+    /**
+     * The order to store alongside a queue snapshot, so that turning shuffle
+     * off after a restart can still put the queue back.
+     *
+     * Null when shuffle is off or when this queue has no pre-shuffle order to
+     * speak of — [enableForNextQueue] only marks the *next* queue as shuffled,
+     * and its order is recorded by [startingOrder] once that queue exists.
+     */
+    fun persistedOrder(): List<String>? = original.takeIf { _enabled.value && it.isNotEmpty() }
+
+    /**
+     * Re-attaches the state restored with a queue snapshot.
+     *
+     * This is what makes un-shuffling work after the process was killed: the
+     * queue comes back in shuffled order, and [order] is the order it held
+     * before shuffling. Without it `original` was empty on a fresh process, so
+     * the toggle only moved the icon — [toggle] now refuses that rather than
+     * pretend.
+     */
+    fun restorePersisted(enabled: Boolean, order: List<String>?) {
+        _enabled.value = enabled
+        original = if (enabled) order.orEmpty() else emptyList()
+    }
+
     fun toggle(player: Player) {
-        if (_enabled.value) restore(player) else shuffle(player)
+        if (_enabled.value) {
+            // Shuffled, but the order it was shuffled from is not known: the
+            // queue was restored from a restart snapshot that predates this
+            // bookkeeping, or was started shuffled from a page. Flipping the
+            // icon would promise a reorder that cannot happen, so the switch
+            // stays on instead.
+            if (original.isEmpty() && player.mediaItemCount > 1) return
+            restore(player)
+        } else {
+            shuffle(player)
+        }
         // Persist the new state so it survives app restarts.
         AppSettings.setShuffleEnabled(_enabled.value)
     }

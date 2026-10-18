@@ -56,6 +56,12 @@ data class PlayerState(
      * back unchanged every tick invalidates nothing.
      */
     val durationMs: Long = 0L,
+    /**
+     * The last playback error, for the screens that render it themselves
+     * (desktop and Listen Together). The Android player does not draw it: the
+     * service shows a toast when it skips or gives up, so the message does not
+     * depend on this composition still being alive.
+     */
     val error: String? = null,
     /** True while ExoPlayer is buffering — including our own stream-URL resolution. */
     val isLoading: Boolean = false,

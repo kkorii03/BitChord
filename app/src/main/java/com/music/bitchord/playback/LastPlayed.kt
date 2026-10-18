@@ -15,7 +15,17 @@ import kotlinx.serialization.json.Json
  */
 object LastPlayed {
 
-    class Snapshot(val songs: List<Song>, val index: Int, val positionMs: Long)
+    class Snapshot(
+        val songs: List<Song>,
+        val index: Int,
+        val positionMs: Long,
+        /**
+         * The order the queue held before it was shuffled, when shuffle was on
+         * as this snapshot was written. Null otherwise; see
+         * [QueueShuffle.restorePersisted].
+         */
+        val shuffleOrder: List<String>? = null,
+    )
 
     private lateinit var prefs: SharedPreferences
     private val json = Json { ignoreUnknownKeys = true }
@@ -41,6 +51,7 @@ object LastPlayed {
         val bounds = window(songs.size, safeIndex)
         val stored = StoredQueue(
             tracks = songs.subList(bounds.first, bounds.last + 1).map { StoredTrack.from(it) },
+            shuffleOrder = QueueShuffle.persistedOrder(),
         )
         val encoded = runCatching {
             json.encodeToString(StoredQueue.serializer(), stored)
@@ -65,6 +76,7 @@ object LastPlayed {
         val bounds = window(songs.size, safeIndex)
         val stored = StoredQueue(
             tracks = songs.subList(bounds.first, bounds.last + 1).map { StoredTrack.from(it) },
+            shuffleOrder = QueueShuffle.persistedOrder(),
         )
         val encoded = runCatching {
             json.encodeToString(StoredQueue.serializer(), stored)
@@ -105,6 +117,7 @@ object LastPlayed {
             songs = songs,
             index = index.coerceIn(songs.indices),
             positionMs = positionMs.coerceAtLeast(0L),
+            shuffleOrder = stored.shuffleOrder?.takeIf { it.isNotEmpty() },
         )
     }
 
@@ -124,6 +137,11 @@ object LastPlayed {
         val index: Int? = null,
         /** Compatibility with queue snapshots written before scalar state was separated. */
         val positionMs: Long? = null,
+        /**
+         * The pre-shuffle running order, when shuffle was on. Optional so
+         * snapshots written before this field existed still decode.
+         */
+        val shuffleOrder: List<String>? = null,
     ) {
         val legacyIndex: Int? get() = index
         val legacyPositionMs: Long? get() = positionMs

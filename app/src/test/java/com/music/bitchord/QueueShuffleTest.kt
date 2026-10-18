@@ -3,6 +3,7 @@ package com.music.bitchord
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.queueStartIndex
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -116,5 +117,27 @@ class QueueShuffleTest {
         val original = (0 until 10_000).map { it.toString() }
         val upcoming = original.shuffled()
         assertEquals(original, restored(upcoming, original))
+    }
+
+    @Test
+    fun `a restored queue keeps the order it was shuffled from`() {
+        // Written with the restart snapshot; without it a fresh process has
+        // nothing to restore and the toggle could only move the icon.
+        QueueShuffle.restorePersisted(enabled = true, order = listOf("a", "b", "c"))
+
+        assertEquals(listOf("a", "b", "c"), QueueShuffle.persistedOrder())
+        assertEquals(true, QueueShuffle.enabled.value)
+    }
+
+    @Test
+    fun `a restored queue with no stored order reports none`() {
+        QueueShuffle.restorePersisted(enabled = true, order = null)
+
+        assertNull(QueueShuffle.persistedOrder())
+
+        QueueShuffle.restorePersisted(enabled = false, order = listOf("a", "b"))
+
+        assertNull(QueueShuffle.persistedOrder())
+        assertEquals(false, QueueShuffle.enabled.value)
     }
 }

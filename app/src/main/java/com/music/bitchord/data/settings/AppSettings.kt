@@ -362,6 +362,15 @@ object AppSettings {
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
 
+    /**
+     * True once this install has asked for `POST_NOTIFICATIONS`, which the
+     * media notification needs on Android 13+. Asked once and remembered,
+     * grant or denial: the permission can only be given again from system
+     * settings, and a repeat prompt is an interruption with no answer of its
+     * own.
+     */
+    val notificationPermissionAsked = MutableStateFlow(false)
+
     /** Repeat mode for the player — Off, All, or One. */
     val repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
 
@@ -955,6 +964,7 @@ object AppSettings {
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
         personalisedAutoplay.value = prefs.getBoolean(KEY_PERSONALISED_AUTOPLAY, true)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
+        notificationPermissionAsked.value = prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
@@ -1216,6 +1226,12 @@ object AppSettings {
     fun setShuffleEnabled(value: Boolean) {
         shuffleEnabled.value = value
         prefs.edit().putBoolean(KEY_SHUFFLE_ENABLED, value).apply()
+    }
+
+    /** Remembers that the notification permission has been asked for. */
+    fun markNotificationPermissionAsked() {
+        notificationPermissionAsked.value = true
+        prefs.edit().putBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, true).apply()
     }
 
     fun setRepeatMode(value: Int) {
@@ -2290,6 +2306,7 @@ object AppSettings {
     private const val KEY_AUTOPLAY = "autoplay"
     private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
+    private const val KEY_NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"

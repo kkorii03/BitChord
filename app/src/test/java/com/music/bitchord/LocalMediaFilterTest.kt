@@ -73,4 +73,39 @@ class LocalMediaFilterTest {
             ),
         )
     }
+
+    @Test
+    fun `filter off keeps recordings the music gate would drop`() {
+        // "Show non-music audio" off means the folder/duration heuristics are
+        // skipped; only the container has to be playable. This is the half of
+        // the setting that used to be a no-op.
+        assertTrue(
+            LocalMediaRepository.hasLocalMusicExtension(
+                displayName = "voice-note.m4a",
+                path = "/storage/emulated/0/Recordings/voice-note.m4a",
+            ),
+        )
+        assertTrue(
+            LocalMediaRepository.hasLocalMusicExtension(
+                displayName = "memo.opus",
+                path = "/storage/emulated/0/Voice Recorder/memo.opus",
+            ),
+        )
+    }
+
+    @Test
+    fun `filter off still refuses containers the app cannot play`() {
+        assertFalse(
+            LocalMediaRepository.hasLocalMusicExtension(
+                displayName = "clip.mkv",
+                path = "/storage/emulated/0/Movies/clip.mkv",
+            ),
+        )
+        assertFalse(
+            LocalMediaRepository.hasLocalMusicExtension(
+                displayName = "notes.txt",
+                path = "/storage/emulated/0/Download/notes.txt",
+            ),
+        )
+    }
 }

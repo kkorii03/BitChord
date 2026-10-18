@@ -1118,4 +1118,8 @@
     <string name="deepgram_key_ok">Deepgram 키가 확인되었습니다</string>
     <string name="deepgram_key_bad">Deepgram이 이 키를 거부했습니다. 키를 다시 확인하십시오.</string>
     <string name="deepgram_key_unverified">저장했지만 키를 확인하지 못했습니다(인터넷 연결 확인)</string>
+    <string name="playback_unplayable_skipped">이 곡을 재생할 수 없어요. 다음 곡으로 넘어갑니다</string>
+    <string name="playback_error">재생 오류가 발생했어요</string>
+    <string name="download_delete_failed">다운로드를 삭제하지 못했어요</string>
+    <string name="download_delete_partial_failed">일부 곡을 삭제하지 못했어요. 나머지는 그대로 두었습니다</string>
 </resources>

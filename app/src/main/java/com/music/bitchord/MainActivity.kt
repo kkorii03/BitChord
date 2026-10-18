@@ -179,6 +179,7 @@ import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueCoordinator
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
+import com.music.bitchord.playback.QueueEdit
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
 import com.music.bitchord.data.model.QueueTier
@@ -1901,6 +1902,26 @@ private fun BitChordApp(
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { /* Refusing costs the progress notification, not the download. */ }
+    // Asked on the first play as well as on a download: the media notification
+    // is drawn the moment playback starts, and on Android 13+ none of it
+    // appears without this. Asked once per install — a denial is remembered,
+    // because only the system settings can change it afterwards, and a repeat
+    // prompt would just be an interruption.
+    LaunchedEffect(player.isPlaying) {
+        if (!player.isPlaying || AppSettings.notificationPermissionAsked.value) {
+            return@LaunchedEffect
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@LaunchedEffect
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return@LaunchedEffect
+        }
+        AppSettings.markNotificationPermissionAsked()
+        notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     val storagePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -2026,13 +2047,17 @@ private fun BitChordApp(
 
             // Asked for here rather than at launch because here is where it means
             // something: a download is the first thing this app does that the user
-            // is expected to walk away from.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            // is expected to walk away from. Only while it has never been asked:
+            // the first-play prompt may already have spent this install's one ask,
+            // and a denial is not something this dialog can undo.
+            if (!AppSettings.notificationPermissionAsked.value &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.POST_NOTIFICATIONS,
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
+                AppSettings.markNotificationPermissionAsked()
                 notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
 
@@ -2315,8 +2340,22 @@ private fun BitChordApp(
                     QueueCoordinator.jumpToQueueItem(c, index, player.queue)
                 }
             },
-            onRemoveFromQueue = { controller?.removeMediaItem(it) },
-            onMoveInQueue = { from, to -> controller?.moveMediaItem(from, to) },
+            onRemoveFromQueue = { index ->
+                controller?.let { c ->
+                    // The drawer's index is from the queue it drew; the
+                    // timeline may have moved since. See [QueueEdit].
+                    if (QueueEdit.canRemove(index, c.mediaItemCount)) {
+                        c.removeMediaItem(index)
+                    }
+                }
+            },
+            onMoveInQueue = { from, to ->
+                controller?.let { c ->
+                    if (QueueEdit.canMove(from, to, c.mediaItemCount)) {
+                        c.moveMediaItem(from, to)
+                    }
+                }
+            },
             onQueueDragActiveChange = { active -> controller?.setQueueDragActive(active) },
             // The enriched copy, not player.song — otherwise the menu
             // hides the album and artist rows even once their browse
@@ -2866,7 +2905,16 @@ private fun BitChordApp(
                             isPlaying = player.isPlaying,
                             onDeleteDownloads = { selected ->
                                 scope.launch {
-                                    selected.forEach { song -> Downloads.delete(context, song.videoId) }
+                                    val failed = selected.count { song ->
+                                        !Downloads.delete(context, song.videoId)
+                                    }
+                                    if (failed > 0) {
+                                        Toast.makeText(
+                                            context,
+                                            R.string.download_delete_failed,
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
                                 }
                             },
                             onUploadToWebDav =
@@ -4672,7 +4720,15 @@ private fun BitChordApp(
                 onDeleteDownload = target.downloadId?.let { id ->
                     {
                         browseActions = null
-                        scope.launch { Downloads.deleteCollection(context, id) }
+                        scope.launch {
+                            if (!Downloads.deleteCollection(context, id)) {
+                                Toast.makeText(
+                                    context,
+                                    R.string.download_delete_partial_failed,
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
                     }
                 },
             )

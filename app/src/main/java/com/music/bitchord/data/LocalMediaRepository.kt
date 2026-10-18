@@ -240,7 +240,12 @@ object LocalMediaRepository {
                 }
             }
         } else {
-            "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+            // Filtering off means exactly that: no `IS_MUSIC` gate. Asking for
+            // it either way — which is what this used to do — made the setting
+            // a no-op, because recordings, voice notes and recorder output are
+            // usually flagged as not-music by the scanner. The extension check
+            // below still keeps videos and non-audio files out of the list.
+            null
         }
         val selectionArgs = if (filterNonMusic) {
             arrayOf(MIN_LOCAL_MUSIC_DURATION_MS.toString())
@@ -280,7 +285,11 @@ object LocalMediaRepository {
                     val durationMs = cursor.getLong(durationCol)
                     val path = cursor.getString(dataCol)
 
-                    if (filterNonMusic && !isEligibleLocalMusic(durationMs, displayName, path)) continue
+                    if (filterNonMusic) {
+                        if (!isEligibleLocalMusic(durationMs, displayName, path)) continue
+                    } else if (!hasLocalMusicExtension(displayName, path)) {
+                        continue
+                    }
                     if (!isInSelectedFolder(path, AppSettings.localMusicFolderUri.value)) continue
 
                     val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
@@ -354,17 +363,28 @@ object LocalMediaRepository {
      */
     internal fun isEligibleLocalMusic(durationMs: Long, displayName: String, path: String?): Boolean {
         if (durationMs in 1 until MIN_LOCAL_MUSIC_DURATION_MS) return false
-
-        val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-            ?: displayName
-        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        if (extension !in localMusicExtensions) return false
+        if (!hasLocalMusicExtension(displayName, path)) return false
 
         val normalizedPath = path
             ?.replace('\\', '/')
             ?.lowercase(Locale.ROOT)
             ?: return true
         return nonMusicPathSegments.none(normalizedPath::contains)
+    }
+
+    /**
+     * Whether the file is one of the audio containers this app can play.
+     *
+     * Split out from [isEligibleLocalMusic] because it is the one gate that
+     * still applies when "Show non-music audio" is on: the folder and duration
+     * heuristics are what that setting turns off, not the ability to read the
+     * file.
+     */
+    internal fun hasLocalMusicExtension(displayName: String, path: String?): Boolean {
+        val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: displayName
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return extension in localMusicExtensions
     }
 
     private fun String.removeAudioExtension(): String {

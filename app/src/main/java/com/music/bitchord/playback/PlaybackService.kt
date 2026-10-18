@@ -719,6 +719,16 @@ class PlaybackService : MediaLibraryService() {
      */
     private var consecutiveErrorSkips = 0
 
+    /**
+     * The track whose playback failure has already been shown to the listener.
+     *
+     * One failed track raises its error several times on the way to being
+     * skipped — a retry per attempt, then the verdict — and a toast for each
+     * would read as the app failing over and over. Keyed by media id, so a
+     * different track failing afterwards still gets its own message.
+     */
+    private var reportedPlaybackFailureId: String? = null
+
     private var scrobbleManager: ScrobbleManager? = null
     private var listenBrainzSong: Song? = null
 
@@ -3565,8 +3575,15 @@ class PlaybackService : MediaLibraryService() {
                 // the outside that is indistinguishable from a hung app — which
                 // is what the report describes and what "it was stuck on my
                 // phone too" means. Moving on is the only honest answer.
-                skipReason(verdict, error, neverStarted, attempts)?.let { reason ->
+                val reason = skipReason(verdict, error, neverStarted, attempts)
+                if (reason != null) {
                     withContext(Dispatchers.Main) { skipPastUnplayable(mediaId, reason) }
+                } else {
+                    // Nothing is going to skip — a track that died mid-song, or
+                    // a queue that has failed many in a row. The player stays
+                    // where it is, so this is the only place the listener can
+                    // learn that it is not just buffering.
+                    reportPlaybackFailure(mediaId, R.string.playback_error)
                 }
                 return@launch
             }
@@ -3844,23 +3861,40 @@ class PlaybackService : MediaLibraryService() {
      *
      * With nothing after it there is nowhere to go, and stopping is then the
      * correct end state rather than a failure to recover: the error stays on the
-     * player, which is what puts a message in front of the listener — see
-     * `rememberPlayerState` in
-     * [PlayerConnection][com.music.bitchord.playback.PlayerConnection].
+     * player, which is what the desktop and party screens read, and
+     * [reportPlaybackFailure] tells the listener in a toast — the Android player
+     * UI leaves [PlayerState.error] to those screens and says nothing itself.
      */
     private fun skipPastUnplayable(mediaId: String, reason: String) {
         val exoPlayer = player ?: return
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
         if (!exoPlayer.hasNextMediaItem()) {
             TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
+            reportPlaybackFailure(mediaId, R.string.playback_error)
             return
         }
         TrackLog.w("BitChord", "$reason — skipping to the next track", about = mediaId)
+        reportPlaybackFailure(mediaId, R.string.playback_unplayable_skipped)
         exoPlayer.seekToNextMediaItem()
         // No play() here: an error does not clear playWhenReady, so prepare()
         // resumes exactly as far as the listener had asked for. Calling play()
         // would un-pause a queue they had paused.
         exoPlayer.prepare()
+    }
+
+    /**
+     * Says, once per track, that it could not be played.
+     *
+     * A toast rather than a notification or an in-app banner because this
+     * service outlives the screen: the queue can be skipping a dead track with
+     * the app in the background or the phone in a pocket, and the toast is the
+     * one surface that reaches the listener in every one of those states
+     * without asking for `POST_NOTIFICATIONS` first.
+     */
+    private fun reportPlaybackFailure(mediaId: String, message: Int) {
+        if (reportedPlaybackFailureId == mediaId) return
+        reportedPlaybackFailureId = mediaId
+        Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -5443,6 +5477,14 @@ class PlaybackService : MediaLibraryService() {
         val last = LastPlayed.load() ?: return false
         persistedQueueStart = 0
         player.setMediaItems(last.songs.map { it.toMediaItem() }, last.index, last.positionMs)
+        // The snapshot can have been taken while the queue was shuffled, and it
+        // is stored in that shuffled order. Handing the pre-shuffle order back
+        // to [QueueShuffle] is what lets the toggle undo it after a restart
+        // instead of only moving the icon.
+        QueueShuffle.restorePersisted(
+            enabled = AppSettings.shuffleEnabled.value,
+            order = last.shuffleOrder,
+        )
         return true
     }
 
