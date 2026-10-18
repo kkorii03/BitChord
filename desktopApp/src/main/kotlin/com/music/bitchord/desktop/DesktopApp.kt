@@ -858,10 +858,17 @@ fun BitChordDesktopApp() {
         signInError = null
         signInBusy = label
         try {
-            val scope = withContext(Dispatchers.IO) { DesktopYouTubeSession.adoptSessionScope(cookie) }
-            if (scope == null) {
-                signInError = "$label is not signed in to YouTube Music."
-                return
+            val result = withContext(Dispatchers.IO) { DesktopYouTubeSession.adoptSessionScope(cookie) }
+            val scope = when (result) {
+                is DesktopYouTubeSession.ScopeResult.SignedIn -> result.session
+                is DesktopYouTubeSession.ScopeResult.Unavailable -> {
+                    signInError = "Could not read your YouTube Music sign-in: ${result.reason}."
+                    return
+                }
+                DesktopYouTubeSession.ScopeResult.SignedOut -> {
+                    signInError = "$label is not signed in to YouTube Music."
+                    return
+                }
             }
             DesktopYouTubeAuth.adopt(scope)
             // Asked with the session in force, so they describe the account that was just captured

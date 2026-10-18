@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.innertube.Innertube
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
@@ -52,43 +53,73 @@ internal object DesktopYouTubeSession {
     }
 
     /**
+     * What the music.youtube.com shell said about a cookie.
+     *
+     * The difference matters: "this cookie is signed out" is an answer
+     * (`LOGGED_IN=false`), while a refusal or a network failure is no answer at
+     * all and must not throw away a session that is probably still good.
+     */
+    internal sealed interface ScopeResult {
+        /** The shell answered and this is the identity it reports. */
+        data class SignedIn(val session: DesktopYouTubeAuth.Session) : ScopeResult
+
+        /** The shell answered and positively reports `LOGGED_IN=false`. */
+        data object SignedOut : ScopeResult
+
+        /** The shell could not be read: network, 401/403/404, or no `LOGGED_IN` at all. */
+        data class Unavailable(val reason: String) : ScopeResult
+    }
+
+    /**
      * Reads who the stored cookie actually acts as out of the signed-in music.youtube.com shell,
      * and adopts its visitor id.
      */
-    suspend fun adoptSessionScope(cookie: String): DesktopYouTubeAuth.Session? {
-        val html = runCatching {
+    suspend fun adoptSessionScope(cookie: String): ScopeResult {
+        val response = runCatching {
             client.get("https://music.youtube.com/") {
                 header("User-Agent", WEB_USER_AGENT)
                 header("Accept-Language", "en-US,en;q=0.9")
                 header("Cookie", cookie)
-                DesktopYouTubeAuth.signatureFor(cookie, DesktopYouTubeAuth.MUSIC_ORIGIN)
+                Innertube.authorizationFor(cookie, DesktopYouTubeAuth.MUSIC_ORIGIN)
                     ?.let { header("Authorization", it) }
-            }.bodyAsText()
+            }
         }.getOrElse {
             DesktopTrackLog.log("could not read the session scope: ${it.message}")
-            return null
+            return ScopeResult.Unavailable(it.message ?: "network error")
+        }
+        if (response.status.value !in 200..299) {
+            return ScopeResult.Unavailable("music.youtube.com answered HTTP ${response.status.value}")
+        }
+        val html = runCatching { response.bodyAsText() }.getOrElse {
+            DesktopTrackLog.log("could not read the session scope: ${it.message}")
+            return ScopeResult.Unavailable(it.message ?: "unreadable response")
         }
 
         // The one value that must not be guessed.
-        val signedIn = CONFIG_LOGGED_IN.find(html)?.groupValues?.get(1) == "true"
-        if (!signedIn) {
+        val loggedIn = CONFIG_LOGGED_IN.find(html)?.groupValues?.get(1)
+        if (loggedIn == null) {
+            return ScopeResult.Unavailable("music.youtube.com shell did not state LOGGED_IN")
+        }
+        if (loggedIn != "true") {
             DesktopTrackLog.log("music.youtube.com served a signed-out shell; not scoping requests")
-            return null
+            return ScopeResult.SignedOut
         }
         // The shell's own visitor id, bound to this session — see [sessionBound].
         CONFIG_VISITOR_DATA.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }?.let {
             visitorData.set(it)
             sessionBound = true
         }
-        return DesktopYouTubeAuth.Session(
-            cookie = cookie,
-            authUser = CONFIG_SESSION_INDEX.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: "0",
-            pageId = CONFIG_PAGE_ID.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() },
-            // `<accountSyncId>||<sessionSyncId>`; only the first half names the account, and the
-            // second changes on its own schedule.
-            dataSyncId = CONFIG_DATASYNC_ID.find(html)?.groupValues?.get(1)
-                ?.substringBefore("||")
-                ?.takeIf { it.isNotBlank() },
+        return ScopeResult.SignedIn(
+            DesktopYouTubeAuth.Session(
+                cookie = cookie,
+                authUser = CONFIG_SESSION_INDEX.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: "0",
+                pageId = CONFIG_PAGE_ID.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() },
+                // `<accountSyncId>||<sessionSyncId>`; only the first half names the account, and the
+                // second changes on its own schedule.
+                dataSyncId = CONFIG_DATASYNC_ID.find(html)?.groupValues?.get(1)
+                    ?.substringBefore("||")
+                    ?.takeIf { it.isNotBlank() },
+            ),
         )
     }
 

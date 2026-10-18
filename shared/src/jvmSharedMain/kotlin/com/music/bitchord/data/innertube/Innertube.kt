@@ -1703,8 +1703,11 @@ object Innertube {
      * `__Secure-` forms; signing those with a lone `SAPISIDHASH` is answered
      * 401 "missing required authentication credential" — what the S24 log
      * showed for every youtube.com request after a fresh sign-in.
+     *
+     * Public so the desktop module signs its own youtube.com page fetches with
+     * the same scheme instead of keeping a second, weaker copy.
      */
-    internal fun authorizationFor(
+    fun authorizationFor(
         cookieHeader: String,
         origin: String,
         timestamp: Long = nowSeconds(),

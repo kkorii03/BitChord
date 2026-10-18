@@ -92,10 +92,20 @@ internal object DesktopAccounts {
             DesktopYouTubeAuth.adopt(null)
             return null
         }
-        DesktopYouTubeSession.adoptSessionScope(stored.cookie)?.let { live ->
-            val session = healedIdentity(account, profile, stored, live)
-            DesktopYouTubeAuth.adopt(session)
-            return session
+        when (val result = DesktopYouTubeSession.adoptSessionScope(stored.cookie)) {
+            is DesktopYouTubeSession.ScopeResult.SignedIn -> {
+                val session = healedIdentity(account, profile, stored, result.session)
+                DesktopYouTubeAuth.adopt(session)
+                return session
+            }
+            // A shell that could not be read says nothing about the cookie: a 401/403/404 or a
+            // network failure is not a sign-out, so the stored session stays in force.
+            is DesktopYouTubeSession.ScopeResult.Unavailable -> {
+                DesktopTrackLog.log("could not confirm the stored session (${result.reason}); keeping it")
+                DesktopYouTubeAuth.adopt(stored)
+                return stored
+            }
+            DesktopYouTubeSession.ScopeResult.SignedOut -> Unit
         }
 
         DesktopTrackLog.log("the stored session has expired; looking for a fresh one in the browser it came from")
@@ -192,7 +202,8 @@ internal object DesktopAccounts {
         for (profile in ordered) {
             val jar = (DesktopBrowserCookies.read(profile) as? DesktopBrowserCookies.Result.Session)?.cookie
                 ?: continue
-            val scope = DesktopYouTubeSession.adoptSessionScope(jar) ?: continue
+            val scope = (DesktopYouTubeSession.adoptSessionScope(jar) as? DesktopYouTubeSession.ScopeResult.SignedIn)
+                ?.session ?: continue
             val belongs = scope.dataSyncId == account.accountId ||
                 (account.sourceProfile != null && profile.database.toString() == account.sourceProfile)
             if (!belongs) continue

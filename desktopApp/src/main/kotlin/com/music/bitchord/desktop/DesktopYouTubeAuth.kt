@@ -2,8 +2,6 @@ package com.music.bitchord.desktop
 
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.StreamResolver
-import java.security.MessageDigest
-import java.util.Locale
 
 /** Who this app is acting as when it talks to YouTube, and how it proves it. */
 internal object DesktopYouTubeAuth {
@@ -57,10 +55,10 @@ internal object DesktopYouTubeAuth {
     /** The headers an authenticated request carries, or nothing when signed out. */
     fun headers(origin: String = MUSIC_ORIGIN): Map<String, String> {
         val current = session ?: return emptyMap()
-        val secret = signingSecret(current.cookie) ?: return emptyMap()
+        val authorization = signatureFor(current.cookie, origin) ?: return emptyMap()
         return buildMap {
             put("Cookie", current.cookie)
-            put("Authorization", sapisidHash(secret, origin))
+            put("Authorization", authorization)
             put("X-Goog-AuthUser", current.authUser)
             put("X-Origin", origin)
             current.pageId?.takeIf { it.isNotBlank() }?.let { put("X-Goog-PageId", it) }
@@ -72,32 +70,8 @@ internal object DesktopYouTubeAuth {
      * secret.
      */
     fun signatureFor(cookie: String, origin: String): String? =
-        signingSecret(cookie)?.let { sapisidHash(it, origin) }
+        Innertube.authorizationFor(cookie, origin)
 
     /** `onBehalfOfUser`, which rides in the request body rather than a header. */
     fun onBehalfOfUser(): String? = session?.dataSyncId?.takeIf { it.isNotBlank() }
-
-    /** The cookie the signature is taken over. */
-    private fun signingSecret(cookie: String): String? {
-        val jar = cookie.split(';').mapNotNull { entry ->
-            val name = entry.substringBefore('=').trim()
-            val value = entry.substringAfter('=', "").trim()
-            if (name.isEmpty() || value.isEmpty()) null else name to value
-        }.toMap()
-        return SIGNING_COOKIES.firstNotNullOfOrNull { jar[it] }
-    }
-
-    /**
-     * `SAPISIDHASH <seconds>_<sha1(seconds + secret + origin)>`, the scheme Google's web clients
-     * use.
-     */
-    private fun sapisidHash(secret: String, origin: String): String {
-        val timestamp = System.currentTimeMillis() / 1_000
-        val digest = MessageDigest.getInstance("SHA-1")
-            .digest("$timestamp $secret $origin".toByteArray(Charsets.UTF_8))
-            .joinToString("") { String.format(Locale.ROOT, "%02x", it) }
-        return "SAPISIDHASH ${timestamp}_$digest"
-    }
-
-    private val SIGNING_COOKIES = listOf("SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID")
 }
