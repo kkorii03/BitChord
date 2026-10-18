@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.BatterySaver
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
 import androidx.compose.material.icons.rounded.BlurOn
@@ -149,6 +150,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.settings.LowPowerMode
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.playback.AudioCache
@@ -209,6 +211,7 @@ fun SettingsScreen(
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPowerMode by AppSettings.lowPowerMode.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
@@ -849,6 +852,20 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
+                )
+            }
+            val lowPowerTitle = stringResource(R.string.low_power_mode)
+            row(lowPowerTitle, "battery", "heat", "power saving") {
+                SettingsRow(
+                    icon = Icons.Rounded.BatterySaver,
+                    title = lowPowerTitle,
+                    subtitle = stringResource(R.string.low_power_mode_subtitle),
+                )
+                SegmentedControl(
+                    options = LowPowerMode.entries.map { it.localizedLabel() },
+                    selectedIndex = LowPowerMode.entries.indexOf(lowPowerMode),
+                    onSelect = { AppSettings.setLowPowerMode(LowPowerMode.entries[it]) },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
             }
             val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)
@@ -2033,6 +2050,15 @@ private fun ThemeMode.localizedLabel(): String = stringResource(
         ThemeMode.SYSTEM -> R.string.system
         ThemeMode.LIGHT -> R.string.light
         ThemeMode.DARK -> R.string.dark
+    },
+)
+
+@Composable
+private fun LowPowerMode.localizedLabel(): String = stringResource(
+    when (this) {
+        LowPowerMode.AUTO -> R.string.low_power_auto
+        LowPowerMode.ON -> R.string.low_power_on
+        LowPowerMode.OFF -> R.string.low_power_off
     },
 )
 

@@ -119,6 +119,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
+        // After AppSettings, whose flows it feeds: the power-save switch and
+        // the battery can change while the app is in the background.
+        com.music.bitchord.playback.LowPowerDevice.start(this)
         // Before anything resolves a track: an addon with `checkValidLossless`
         // is gated on this, and the gate reads "no" until it has looked.
         com.music.bitchord.playback.audio.LosslessOutput.init(this)

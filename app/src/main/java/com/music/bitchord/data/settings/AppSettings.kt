@@ -360,6 +360,32 @@ object AppSettings {
     /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
     val reduceAnimation = MutableStateFlow(false)
 
+    /** The listener's low-power choice; see [lowPowerActive]. */
+    val lowPowerMode = MutableStateFlow(LowPowerMode.AUTO)
+
+    /**
+     * True while the player should take its cheap path: no canvas video, no
+     * lyric bloom/lift/swell, a cheaper backdrop, and automatic timing and
+     * analysis work deferred. Recomputed from [lowPowerMode] and the phone's
+     * power-save/battery broadcasts by
+     * [com.music.bitchord.playback.LowPowerDevice].
+     */
+    val lowPower = MutableStateFlow(false)
+
+    /** Whether the charger is connected; low power lets automatic work run when it is. */
+    val charging = MutableStateFlow(true)
+
+    /**
+     * Automatic AI timing and the background analysis fetch may run: either the
+     * phone is not saving power, or it is plugged in and can afford them.
+     * Manual asks never read this.
+     */
+    val heavyWorkAllowed: Boolean get() = !lowPower.value || charging.value
+
+    /** What the last battery broadcast said; kept to recompute [lowPower]. */
+    private var powerSaveMode = false
+    private var batteryPercent = 100
+
     /** Requests a sustained high-refresh UI. Off keeps Android's automatic policy. */
     val highPerformanceMode = MutableStateFlow(false)
 
@@ -905,6 +931,17 @@ object AppSettings {
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
+        lowPowerMode.value = runCatching {
+            LowPowerMode.valueOf(
+                prefs.getString(KEY_LOW_POWER_MODE, null) ?: LowPowerMode.AUTO.name,
+            )
+        }.getOrDefault(LowPowerMode.AUTO)
+        lowPower.value = lowPowerActive(
+            lowPowerMode.value,
+            powerSaveMode,
+            batteryPercent,
+            charging.value,
+        )
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
@@ -1301,6 +1338,33 @@ object AppSettings {
         val editor = prefs.edit().putBoolean(KEY_REDUCE_ANIMATION, value)
         if (value) editor.putBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         editor.apply()
+    }
+
+    fun setLowPowerMode(value: LowPowerMode) {
+        lowPowerMode.value = value
+        prefs.edit().putString(KEY_LOW_POWER_MODE, value.name).apply()
+        refreshLowPower()
+    }
+
+    /**
+     * The device's side of [lowPower], fed by the broadcasts
+     * [com.music.bitchord.playback.LowPowerDevice] listens for. Kept here so
+     * the shared player reads one source of truth.
+     */
+    fun setDevicePower(powerSave: Boolean, batteryPercent: Int, charging: Boolean) {
+        this.powerSaveMode = powerSave
+        this.batteryPercent = batteryPercent.coerceIn(0, 100)
+        this.charging.value = charging
+        refreshLowPower()
+    }
+
+    private fun refreshLowPower() {
+        lowPower.value = lowPowerActive(
+            lowPowerMode.value,
+            powerSaveMode,
+            batteryPercent,
+            charging.value,
+        )
     }
 
     fun setStopOnTaskRemoved(value: Boolean) {
@@ -2185,6 +2249,7 @@ object AppSettings {
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
+    private const val KEY_LOW_POWER_MODE = "low_power_mode"
     private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"

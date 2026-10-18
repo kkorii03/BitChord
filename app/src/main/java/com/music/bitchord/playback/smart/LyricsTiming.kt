@@ -14,6 +14,7 @@ import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -395,12 +396,19 @@ object LyricsTiming {
 
         // The records start coming down now, while the video's opening is
         // still on its way, rather than once it has arrived.
-        candidates
-            .filter { it.localUri == null && kept(context, it.videoId) == null }
-            .forEach {
-                AudioCache.keepForTiming(it.videoId)
-                AudioCache.requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(it.videoId)))
-            }
+        //
+        // Not in low power: this is a background fetch of every candidate's
+        // opening, and the measurement itself still reads what the player is
+        // already streaming. It is picked up again once the phone is charging
+        // or no longer saving power.
+        if (AppSettings.heavyWorkAllowed) {
+            candidates
+                .filter { it.localUri == null && kept(context, it.videoId) == null }
+                .forEach {
+                    AudioCache.keepForTiming(it.videoId)
+                    AudioCache.requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(it.videoId)))
+                }
+        }
         // The video too: when it is the next song being prepared, nothing plays it yet.
         AudioCache.keepForTiming(video.videoId)
 

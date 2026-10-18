@@ -271,6 +271,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // mix. See [stopped].
         if (stopped) return
         if (trackId in running) return
+        // Whatever an earlier session already measured comes back first: it is
+        // a disk read, not a decode. Everything past this point — the
+        // catalogue lookup, the head fetch, the analysis itself — is the
+        // background work low power defers until the phone is charging or no
+        // longer saving power.
+        restoreOnce(trackId)
+        if (!AppSettings.heavyWorkAllowed) return
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
         // Only the canonical YouTube rendition of this recording will do, not
@@ -280,7 +287,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Queued before the cache is even consulted, so a track measured in an
         // earlier session short-circuits the whole path rather than being
         // re-earned from audio the cache may since have evicted.
-        restoreOnce(trackId)
 
         // A track playing off the device is not a download in progress. Every
         // byte of it is already there, and none of those bytes are in the cache:

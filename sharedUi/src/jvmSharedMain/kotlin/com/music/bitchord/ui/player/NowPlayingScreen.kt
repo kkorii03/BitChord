@@ -813,6 +813,7 @@ fun NowPlayingScreen(
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
     val canvas = rememberCanvasArtwork(song)
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
@@ -1647,8 +1648,12 @@ fun NowPlayingScreen(
     val fullArtworkBlurImage = rememberFullArtworkBlurImage(
         imageUrl = remoteArt,
         artPx = ART_PX,
-        prepare = landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
-            playerPrewarmStage >= 1,
+        // Low power never builds the screen-sized blur: the seam-aware mesh is
+        // already mounted underneath and carries the backdrop on its own, so
+        // skipping the effect here is the cheap path rather than a blank one.
+        prepare = !lowPower &&
+            (landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
+                playerPrewarmStage >= 1),
     )
     // One movable Image node, not two backdrop call sites. Compose carries it
     // between the portrait and landscape players; only the cached bitmap
@@ -2128,6 +2133,7 @@ fun NowPlayingScreen(
             legacyMesh && !canvasFirstPortrait
         val fullArtworkBackdropAlpha by animateFloatAsState(
             targetValue = if (
+                !lowPower &&
                 !legacyMeshBackdrop &&
                 (tabletArtworkBackdrop || lyricsOpen || queueOpen) &&
                 (tabletArtworkBackdrop || fullArtworkBlurImage != null)
@@ -2148,7 +2154,9 @@ fun NowPlayingScreen(
                 trackKey = song.videoId,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
-        } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
+        } else if ((!tabletArtworkBackdrop || lowPower) && !spotifyCanvasPresentation) {
+            // Saving power on a tablet skips the full-cover blur it would
+            // otherwise use, and this mesh stands in for it.
             ArtworkMeshBackdrop(
                 mesh = artMesh,
                 seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight else 0.dp,

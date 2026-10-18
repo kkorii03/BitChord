@@ -319,9 +319,13 @@ fun ArtworkMeshBackdrop(
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
     // RenderEffect only; below API 31 `blur` is a no-op. It is not missed here —
     // the CPU-side interpolation is what carries the smoothness.
-    val canBlur = !reduceDynamicBlur && renderEffectBlurSupported
+    //
+    // Low power gives the blur up too: it is a full-screen RenderEffect, and
+    // the interpolated mesh already reads soft without it.
+    val canBlur = !reduceDynamicBlur && !lowPower && renderEffectBlurSupported
 
     // The mesh on screen, and the one fading in over it. Two states rather than
     // one animated value because what crossfades here is a pair of bitmaps, not
@@ -344,7 +348,7 @@ fun ArtworkMeshBackdrop(
 
         // Nothing to fade *from* on the first read, and nothing to fade at all
         // when the user has asked for less motion.
-        if (current == null || reduceAnimation) {
+        if (current == null || reduceAnimation || lowPower) {
             shown = next
             return@LaunchedEffect
         }

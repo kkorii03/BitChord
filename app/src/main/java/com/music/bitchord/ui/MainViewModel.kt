@@ -844,6 +844,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
+        // Automatic only — the manual button calls [runAiTiming] directly and
+        // still works while the phone saves power.
+        if (!AppSettings.heavyWorkAllowed) return
         if (!AppSettings.aiTimingAhead.value) return
         if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
         if (!LyricsTiming.wantsAi(context, videoId, lines)) return
@@ -856,6 +859,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * and found nothing, Gemini is asked — once per video and lyrics.
      */
     private suspend fun autoAiIfNeeded(generation: Long, lines: List<LyricLine>) {
+        // An upload's worth of work for a track already playing: low power
+        // leaves it for a charging session or a non-saving phone.
+        if (!AppSettings.heavyWorkAllowed) return
         // "AI 싱크 미리 맞추기" already asks the quick engines on its own; once the
         // measurement gives up it also gets Whisper's better ear.
         if (!AppSettings.autoLyricsTiming.value && !AppSettings.aiTimingAhead.value) return

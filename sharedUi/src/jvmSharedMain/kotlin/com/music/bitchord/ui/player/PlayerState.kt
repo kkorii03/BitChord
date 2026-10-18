@@ -43,10 +43,16 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     val canvasOverCellular by PlayerSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by PlayerSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     val meteredConnection by PlayerSettings.meteredConnection.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
     // The switch turns the feature off outright; this is the narrower "not
     // over cellular" case — see [PlayerSettings.canvasOverCellular] for why a
     // clip's own loop makes that worth guarding separately from a still image.
-    val canvasAllowedNow = canvasEnabled && (meteredConnection != true || canvasOverCellular)
+    //
+    // Low power turns it off too, and for the same reason the setting exists:
+    // a second decoder looping video is the most expensive decoration the
+    // player draws. Null is the still sleeve, which is what low power shows.
+    val canvasAllowedNow = canvasEnabled && !lowPower &&
+        (meteredConnection != true || canvasOverCellular)
     // Keyed on the song's identity rather than its videoId: a version switch
     // swaps the videoId for another cut of the *same* song, and a canvas is
     // searched for by title and artist — resetting here threw the clip out

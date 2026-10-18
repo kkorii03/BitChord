@@ -128,6 +128,7 @@ private val NoCast = MutableStateFlow(CastUi())
 private val NoSongMeaning = MutableStateFlow(false)
 private val NoAutoTranslate = MutableStateFlow(false)
 private val NoAutomixVideos = MutableStateFlow(false)
+private val NoLowPower = MutableStateFlow(false)
 
 /** What the output drawer needs to know about casting to draw its row. */
 data class CastUi(
@@ -185,6 +186,16 @@ interface PlayerSettingsSource {
     val autoTranslateLyrics: StateFlow<Boolean> get() = NoAutoTranslate
     /** Automix mixes video songs too; off, they get a plain crossfade. */
     val automixVideos: StateFlow<Boolean> get() = NoAutomixVideos
+    /**
+     * The phone is saving power — its system power saver is on, its owner asked
+     * for the mode, or it is under 20% and unplugged. While true the player
+     * takes its cheap path: no canvas video, no lyric bloom, lift or swell, a
+     * cheaper backdrop, and automatic timing/analysis work waits.
+     *
+     * The phone derives it from its own power and battery broadcasts. The
+     * desktop has no battery to save and leaves this false.
+     */
+    val lowPower: StateFlow<Boolean> get() = NoLowPower
     val versionAlignmentInProgress: StateFlow<Boolean>
 
     fun setLastPlayerScreen(value: LastPlayerScreen)

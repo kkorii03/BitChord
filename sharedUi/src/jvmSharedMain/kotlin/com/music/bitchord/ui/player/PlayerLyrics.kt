@@ -1716,8 +1716,12 @@ internal fun LyricsPanel(
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val lyricsBlur by PlayerSettings.lyricsBlur.collectAsStateWithLifecycle()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // Saving power reads as "reduce animation" here as well: the bloom is a
+    // blurred third copy of the line, and it is exactly the kind of flourish
+    // the mode exists to stop.
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
 
-    val glowing = !reduceAnimation && !reduceDynamicBlur && lyricsBlur &&
+    val glowing = !reduceAnimation && !lowPower && !reduceDynamicBlur && lyricsBlur &&
         renderEffectBlurSupported
 
     LaunchedEffect(listState) {
@@ -1946,7 +1950,8 @@ internal fun LyricsPanel(
             val step = distance.coerceAtMost(LINE_FALLOFF_ALPHA.lastIndex)
             val blur by animateDpAsState(
                 targetValue = when {
-                    !isSynced || reduceDynamicBlur || !lyricsBlur || browsing || isActive -> 0.dp
+                    !isSynced || reduceDynamicBlur || lowPower || !lyricsBlur ||
+                        browsing || isActive -> 0.dp
                     else -> LINE_FALLOFF_BLUR[step]
                 },
                 animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
@@ -2240,7 +2245,7 @@ internal fun LyricsPanel(
                     animateFloatAsState(
                         targetValue = if (wanted) 1f else 0f,
                         animationSpec = when {
-                            reduceAnimation -> tween(0)
+                            reduceAnimation || lowPower -> tween(0)
                             wanted -> tween(BACKING_OPEN_MS, easing = LYRIC_EASING)
                             else -> tween(
                                 BACKING_CLOSE_MS,
@@ -2280,6 +2285,10 @@ internal fun LyricsPanel(
                         glowAlpha = glow,
                         room = GLOW_ROOM,
                         alignEnd = alignEnd,
+                        // The letter-by-letter sweep is the feature and stays;
+                        // the lift and per-letter swell are the extra drawing
+                        // pass low power gives up.
+                        rise = !lowPower,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     // A line the service handed back unchanged ("falling
@@ -2506,12 +2515,14 @@ private class SubLyricsReveal(
 @Composable
 private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String): SubLyricsReveal {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    val calm = reduceAnimation || lowPower
     // Keyed to the track: a new song arrives with nothing under it, and must
     // not fold the last song's translation away over its own opening lines.
     val shown = remember(trackKey) { mutableStateOf(target) }
     val progress = remember(trackKey) { Animatable(if (target != null) 1f else 0f) }
-    LaunchedEffect(target, trackKey, reduceAnimation) {
-        if (reduceAnimation) {
+    LaunchedEffect(target, trackKey, calm) {
+        if (calm) {
             shown.value = target
             progress.snapTo(if (target != null) 1f else 0f)
             return@LaunchedEffect
@@ -2699,6 +2710,8 @@ private fun CurrentLyricLine(
     }
 
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    val calm = reduceAnimation || lowPower
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -2719,8 +2732,8 @@ private fun CurrentLyricLine(
         AnimatedContent(
             targetState = Triple(index, current, text),
             transitionSpec = {
-                val duration = if (reduceAnimation) 0 else 340
-                if (reduceAnimation) {
+                val duration = if (calm) 0 else 340
+                if (calm) {
                     (fadeIn(snap()) togetherWith fadeOut(snap())).using(
                         SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })
                     )
@@ -2861,6 +2874,7 @@ internal fun rememberLyricsTranslation(
     haptics: Haptics,
 ): LyricsTranslationUi {
     val reduceTranslationMotion by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
     val configuredLocale = appLanguageTag()
     val preferredTranslation by PlayerSettings.translationLanguage.collectAsStateWithLifecycle()
     // Settings wins where it has been set; blank means follow the app. Only the
@@ -3115,7 +3129,7 @@ internal fun rememberLyricsTranslation(
         showingTranslation = showingTranslation,
         showingRomanization = showingRomanization,
         transition = translationTransition,
-        reduceMotion = reduceTranslationMotion,
+        reduceMotion = reduceTranslationMotion || lowPower,
         status = status,
         toggleTranslation = toggleTranslation,
         toggleRomanization = toggleRomanization,

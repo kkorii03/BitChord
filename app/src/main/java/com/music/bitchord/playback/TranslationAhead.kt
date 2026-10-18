@@ -124,6 +124,11 @@ internal object TranslationAhead {
      * first half-minute of every cover.
      */
     private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
+        // Low power defers the whole ahead-of-time pass: it uploads or streams
+        // for a track nobody is listening to yet. The next track's own
+        // automatic pass picks it up once the phone is charging or no longer
+        // saving power; the manual button is unaffected.
+        if (!AppSettings.heavyWorkAllowed) return
         val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
         if (!query.isVideo || song.localUri != null) return
         if (found.lines.none { it.timeMs > 0 }) return
