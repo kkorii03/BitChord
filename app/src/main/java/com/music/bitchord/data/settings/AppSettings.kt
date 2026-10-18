@@ -11,6 +11,10 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.net.ProxyConfig
+import com.music.bitchord.data.net.ProxyMode
+import com.music.bitchord.data.net.ProxyScope
+import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
@@ -729,6 +733,24 @@ object AppSettings {
     val smbUsername = MutableStateFlow("")
     val smbPassword = MutableStateFlow("")
 
+    // ── Network proxy ─────────────────────────────────────────────────────
+
+    /**
+     * An optional proxy for YouTube traffic, for networks where the Music
+     * origin is gated by the client's country. Off by default and inert until
+     * configured; see [YouTubeProxy] for where it is applied.
+     *
+     * Host, port, username and scope are ordinary settings. The password is
+     * mirrored out of [AuthStore] like the WebDAV and SMB secrets, so it is
+     * encrypted at rest and stays out of backup exports.
+     */
+    val proxyMode = MutableStateFlow(ProxyMode.OFF)
+    val proxyHost = MutableStateFlow("")
+    val proxyPort = MutableStateFlow(0)
+    val proxyUsername = MutableStateFlow("")
+    val proxyPassword = MutableStateFlow("")
+    val proxyScope = MutableStateFlow(ProxyScope.MUSIC_ONLY)
+
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
      * order they were pinned.
@@ -1101,6 +1123,17 @@ object AppSettings {
             webdavUsername.value,
             webdavPassword.value,
         )
+        proxyMode.value = runCatching {
+            ProxyMode.valueOf(prefs.getString(KEY_PROXY_MODE, null) ?: ProxyMode.OFF.name)
+        }.getOrDefault(ProxyMode.OFF)
+        proxyHost.value = prefs.getString(KEY_PROXY_HOST, "").orEmpty()
+        proxyPort.value = prefs.getInt(KEY_PROXY_PORT, 0)
+        proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
+        proxyPassword.value = authStore.proxyPassword.orEmpty()
+        proxyScope.value = runCatching {
+            ProxyScope.valueOf(prefs.getString(KEY_PROXY_SCOPE, null) ?: ProxyScope.MUSIC_ONLY.name)
+        }.getOrDefault(ProxyScope.MUSIC_ONLY)
+        publishProxy()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
@@ -2120,6 +2153,59 @@ object AppSettings {
         setSmbPassword("")
     }
 
+    /**
+     * Saves the proxy in one write.
+     *
+     * One call rather than a setter per field: the settings dialog can change
+     * every value at once, and publishing five intermediate configurations
+     * would clear the connection pool five times and, worse, briefly expose a
+     * configuration that is half old and half new to a request in flight.
+     *
+     * The password goes to the encrypted store; everything else is ordinary
+     * preferences. A mode of OFF is saved like any other so the host and port
+     * survive turning the proxy off and on again.
+     */
+    fun setProxyConfig(config: ProxyConfig) {
+        val normalized = config.normalized()
+        val port = normalized.port.coerceIn(0, 65535)
+        proxyMode.value = normalized.mode
+        proxyHost.value = normalized.host
+        proxyPort.value = port
+        proxyUsername.value = normalized.username
+        proxyPassword.value = normalized.password
+        proxyScope.value = normalized.scope
+        prefs.edit()
+            .putString(KEY_PROXY_MODE, normalized.mode.name)
+            .putString(KEY_PROXY_HOST, normalized.host)
+            .putInt(KEY_PROXY_PORT, port)
+            .putString(KEY_PROXY_USERNAME, normalized.username)
+            .putString(KEY_PROXY_SCOPE, normalized.scope.name)
+            .apply()
+        authStore.proxyPassword = normalized.password.ifEmpty { null }
+        publishProxy()
+    }
+
+    /** Moves the proxy between Music-only and all YouTube traffic. */
+    fun setProxyScope(value: ProxyScope) {
+        proxyScope.value = value
+        prefs.edit().putString(KEY_PROXY_SCOPE, value.name).apply()
+        publishProxy()
+    }
+
+    private fun publishProxy() {
+        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
+        YouTubeProxy.update(
+            ProxyConfig(
+                mode = proxyMode.value,
+                host = proxyHost.value,
+                port = proxyPort.value,
+                username = proxyUsername.value,
+                password = proxyPassword.value,
+                scope = proxyScope.value,
+            ),
+        )
+    }
+
     private fun publishSmbAuth() {
         if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
         com.music.bitchord.data.smb.SmbAuth.update(
@@ -2399,6 +2485,11 @@ object AppSettings {
     private const val KEY_SMB_SHARE = "smb_share"
     private const val KEY_SMB_BASE_PATH = "smb_base_path"
     private const val KEY_SMB_USERNAME = "smb_username"
+    private const val KEY_PROXY_MODE = "proxy_mode"
+    private const val KEY_PROXY_HOST = "proxy_host"
+    private const val KEY_PROXY_PORT = "proxy_port"
+    private const val KEY_PROXY_USERNAME = "proxy_username"
+    private const val KEY_PROXY_SCOPE = "proxy_scope"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"

@@ -121,6 +121,8 @@ fun AccountAndScrobblingScreen(
             )
         }
 
+        ProxySettingsSection()
+
         SettingsGroup(
             header = stringResource(R.string.spotify),
             footer = stringResource(R.string.spotify_connect_subtitle),

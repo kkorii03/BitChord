@@ -136,6 +136,12 @@ object Http {
         .retryOnConnectionFailure(true)
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        // The optional YouTube proxy, applied here because every network path
+        // in the app funnels through this one client — Innertube and NewPipe
+        // included, and ExoPlayer's media fetches through OkHttpDataSource.
+        // Both answer from mutable state, so a settings change needs no rebuild.
+        .proxySelector(com.music.bitchord.data.net.YouTubeProxy.proxySelector)
+        .proxyAuthenticator(com.music.bitchord.data.net.YouTubeProxy.proxyAuthenticator)
         .addInterceptor(webDavInterceptor)
         .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()
