@@ -106,6 +106,24 @@ scroll_top() {
 
 back() { adb shell input keyevent 4; sleep "${1:-3}"; }
 
+# Every section starts from the same place: the Home tab, with no sheet or
+# detail page left open by the section before it. Four BACKs are enough for the
+# deepest sheet this tour opens; the tab tap covers a section that ended on a
+# detail page whose own BACK handler consumed one of them.
+reset_home() {
+  local i
+  for i in 1 2 3 4; do adb shell input keyevent 4; sleep 1; done
+  sleep 2
+  if ! tap "홈" last 5 && ! tap "Home" last 3; then
+    # Those BACKs can leave the app when Home was already the root screen;
+    # bring it back so the next section has a tab bar to tap.
+    adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
+    sleep 15
+    tap "홈" last 5 || tap "Home" last 3 || true
+  fi
+  sleep 3
+}
+
 # Swipe up until $1 is on screen; prints its centre or nothing.
 scroll_to() {
   local label=$1 tries=${2:-10} i at
@@ -213,64 +231,79 @@ PY
 }
 
 # ---- Home ---------------------------------------------------------------
-shot home "Home tab"
-scroll_shots home-scrolled 3 "Home scrolled"
+section_home() {
+  shot home "Home tab"
+  scroll_shots home-scrolled 3 "Home scrolled"
+}
 
 # ---- Explore ------------------------------------------------------------
-if tap "둘러보기" last 5 || tap "Explore" last 3; then
-  shot explore "Explore tab"
-  scroll_shots explore-scrolled 2 "Explore scrolled"
-  # A mood/genre page from the grid (titles are Korean).
-  if tap_scrolled "운동" 5 5; then
-    shot explore-mood "Explore mood/genre page"
-    scroll_shots explore-mood-scrolled 2 "Explore mood page scrolled"
-    back
-  fi
-fi
-
-# ---- Library ------------------------------------------------------------
-if tap "보관함" last 5 || tap "Library" last 3; then
-  shot library "Library tab"
-  scroll_shots library-scrolled 3 "Library scrolled"
-  scroll_top
-
-  # Folders.
-  if tap_scrolled "다운로드" 5 8; then
-    shot library-downloads "Library - Downloads"
-    scroll_shots library-downloads-scrolled 2 "Library - Downloads scrolled"
-    back
-  fi
-  scroll_top
-  if tap_scrolled "로컬 음악" 5 8; then
-    shot library-local "Library - Local music"
-    if tap "아티스트" first 4; then shot library-local-artists "Library - Local music, artists tab"; fi
-    if tap "앨범" first 4; then shot library-local-albums "Library - Local music, albums tab"; fi
-    scroll_shots library-local-scrolled 2 "Library - Local music scrolled"
-    back
-  fi
-
-  # Smart playlists made from this device's listening.
-  for spec in "자주 들은 노래:library-smart-top" "반복 재생 중:library-smart-repeat" "다시 듣기:library-smart-rediscover" "좋아요 표시했지만 덜 들은 노래:library-smart-liked-unplayed"; do
-    label=${spec%%:*}; key=${spec#*:}
-    scroll_top
-    if tap_scrolled "$label" 5 6; then
-      shot "$key" "Smart playlist: $label"
-      scroll_shots "$key-scrolled" 2 "Smart playlist: $label scrolled"
+section_explore() {
+  reset_home
+  if tap "둘러보기" last 5 || tap "Explore" last 3; then
+    shot explore "Explore tab"
+    scroll_shots explore-scrolled 2 "Explore scrolled"
+    # A mood/genre page from the grid (titles are Korean).
+    if tap_scrolled "운동" 5 5; then
+      shot explore-mood "Explore mood/genre page"
+      scroll_shots explore-mood-scrolled 2 "Explore mood page scrolled"
       back
     fi
-  done
-
-  # Listening history, from the Library top bar.
-  scroll_top
-  if tap "청취 기록" first 6; then
-    shot history "Listening history"
-    scroll_shots history-scrolled 2 "Listening history scrolled"
-    back
   fi
+}
 
-  # ---- Settings ---------------------------------------------------------
-  scroll_top
-  if tap "설정" first 5 || tap "Settings" first 3; then
+# ---- Library ------------------------------------------------------------
+section_library() {
+  reset_home
+  if tap "보관함" last 5 || tap "Library" last 3; then
+    shot library "Library tab"
+    scroll_shots library-scrolled 3 "Library scrolled"
+    scroll_top
+
+    # Folders.
+    if tap_scrolled "다운로드" 5 8; then
+      shot library-downloads "Library - Downloads"
+      scroll_shots library-downloads-scrolled 2 "Library - Downloads scrolled"
+      back
+    fi
+    scroll_top
+    if tap_scrolled "로컬 음악" 5 8; then
+      shot library-local "Library - Local music"
+      if tap "아티스트" first 4; then shot library-local-artists "Library - Local music, artists tab"; fi
+      if tap "앨범" first 4; then shot library-local-albums "Library - Local music, albums tab"; fi
+      scroll_shots library-local-scrolled 2 "Library - Local music scrolled"
+      back
+    fi
+
+    # Smart playlists made from this device's listening.
+    for spec in "자주 들은 노래:library-smart-top" "반복 재생 중:library-smart-repeat" "다시 듣기:library-smart-rediscover" "좋아요 표시했지만 덜 들은 노래:library-smart-liked-unplayed"; do
+      label=${spec%%:*}; key=${spec#*:}
+      scroll_top
+      if tap_scrolled "$label" 5 6; then
+        shot "$key" "Smart playlist: $label"
+        scroll_shots "$key-scrolled" 2 "Smart playlist: $label scrolled"
+        back
+      fi
+    done
+
+    # Listening history, from the Library top bar.
+    scroll_top
+    if tap "청취 기록" first 6; then
+      shot history "Listening history"
+      scroll_shots history-scrolled 2 "Listening history scrolled"
+      back
+    fi
+  fi
+}
+
+# ---- Settings -----------------------------------------------------------
+section_settings() {
+  reset_home
+  # Settings is reached from the Library top bar, so visit Library first
+  # rather than assuming the previous section left us there.
+  if tap "보관함" last 5 || tap "Library" last 3; then
+    sleep 2
+    scroll_top
+    if tap "설정" first 5 || tap "Settings" first 3; then
     shot settings-top "Settings (top)"
     scroll_shots settings-scrolled 3 "Settings scrolled"
 
@@ -341,10 +374,13 @@ if tap "보관함" last 5 || tap "Library" last 3; then
 
     back
   fi
-fi
+  fi
+}
 
 # ---- Search -------------------------------------------------------------
-if tap "검색" last 5 || tap "Search" last 3; then
+section_search() {
+  reset_home
+  if tap "검색" last 5 || tap "Search" last 3; then
   sleep 3
   shot search-empty "Search (empty, keyboard up)"
 
@@ -392,14 +428,17 @@ if tap "검색" last 5 || tap "Search" last 3; then
     fi
   fi
   if tap "비디오" first 6; then sleep 3; shot search-results-videos "Search results - Videos tab"; fi
-fi
+  fi
+}
 
 # ---- Now playing, lyrics, queue, sheets ---------------------------------
-# A shared link populates the player even though the datacenter IP cannot play.
-adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
-sleep 20
-shot now-playing-mini "Now playing (mini player)"
-if tap "Dance Monkey" last 4 || tap "Rolling" last 4; then
+section_now_playing() {
+  reset_home
+  # A shared link populates the player even though the datacenter IP cannot play.
+  adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
+  sleep 20
+  shot now-playing-mini "Now playing (mini player)"
+  if tap "Dance Monkey" last 4 || tap "Rolling" last 4; then
   sleep 2
   shot now-playing "Now playing (expanded)"
   adb shell input swipe 540 1200 540 400 400; sleep 3
@@ -437,7 +476,18 @@ if tap "Dance Monkey" last 4 || tap "Rolling" last 4; then
     back
   fi
   back
-fi
+  fi
+}
+
+# Each section is independent: one that finds its label missing, or ends on a
+# different screen than it expected, must not keep the next one from running.
+# reset_home at the head of every section is what makes that safe.
+section_home || true
+section_explore || true
+section_library || true
+section_settings || true
+section_search || true
+section_now_playing || true
 
 adb logcat -d > "$OUT/logcat.txt"
 # Why playback did not start, if it did not (bot check, 403, source error...).

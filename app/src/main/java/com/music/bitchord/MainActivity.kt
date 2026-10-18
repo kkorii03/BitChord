@@ -2657,6 +2657,8 @@ private fun BitChordApp(
                             onSongSwipe = onSongSwipe,
                             onRetry = viewModel::loadHistory,
                             contentPadding = listPadding,
+                            signedIn = signedIn,
+                            onSignIn = { webSession = WebSessionMode.SIGN_IN },
                         )
                     } else if (key == "library_show_all") {
                         libraryShowAll?.let { shelf ->
@@ -3012,6 +3014,8 @@ private fun BitChordApp(
                             },
                             songSort = songSort,
                             contentPadding = listPadding,
+                            signedIn = signedIn,
+                            onSignIn = { webSession = WebSessionMode.SIGN_IN },
                         )
                     } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: selectedTab) {
                         TAB_HOME -> HomeScreen(

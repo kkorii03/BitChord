@@ -15,6 +15,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.R
 
@@ -59,6 +60,20 @@ val SFProDisplay = FontFamily(
     Font(R.font.sf_pro_display_heavy, FontWeight.W800),
 )
 
+/**
+ * Korean wraps between words rather than inside them.
+ *
+ * Android 13+ is where `LineBreak.WordBreak.Phrase` is honoured; older
+ * versions ignore the setting and keep their previous behaviour, so this is
+ * safe to apply to the whole scale. The lyrics set the same rule on their own
+ * text ([com.music.bitchord.ui.player.PlayerLyrics]).
+ */
+private val PhraseLineBreak = LineBreak(
+    strategy = LineBreak.Strategy.HighQuality,
+    strictness = LineBreak.Strictness.Strict,
+    wordBreak = LineBreak.WordBreak.Phrase,
+)
+
 // Heavy, tight typography — the backbone of the Apple Music look.
 private val BitChordTypography = Typography(
     displayLarge = TextStyle(fontWeight = FontWeight.W800, fontSize = 34.sp, letterSpacing = (-0.8).sp),
@@ -70,7 +85,26 @@ private val BitChordTypography = Typography(
     bodyMedium = TextStyle(fontWeight = FontWeight.W400, fontSize = 14.sp),
     labelMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = 12.sp),
     labelSmall = TextStyle(fontWeight = FontWeight.W600, fontSize = 11.sp),
-).withFamily(SFProDisplay)
+).withFamily(SFProDisplay).withPhraseLineBreak()
+
+/** Applies [PhraseLineBreak] to every style in the scale. */
+private fun Typography.withPhraseLineBreak() = Typography(
+    displayLarge = displayLarge.copy(lineBreak = PhraseLineBreak),
+    displayMedium = displayMedium.copy(lineBreak = PhraseLineBreak),
+    displaySmall = displaySmall.copy(lineBreak = PhraseLineBreak),
+    headlineLarge = headlineLarge.copy(lineBreak = PhraseLineBreak),
+    headlineMedium = headlineMedium.copy(lineBreak = PhraseLineBreak),
+    headlineSmall = headlineSmall.copy(lineBreak = PhraseLineBreak),
+    titleLarge = titleLarge.copy(lineBreak = PhraseLineBreak),
+    titleMedium = titleMedium.copy(lineBreak = PhraseLineBreak),
+    titleSmall = titleSmall.copy(lineBreak = PhraseLineBreak),
+    bodyLarge = bodyLarge.copy(lineBreak = PhraseLineBreak),
+    bodyMedium = bodyMedium.copy(lineBreak = PhraseLineBreak),
+    bodySmall = bodySmall.copy(lineBreak = PhraseLineBreak),
+    labelLarge = labelLarge.copy(lineBreak = PhraseLineBreak),
+    labelMedium = labelMedium.copy(lineBreak = PhraseLineBreak),
+    labelSmall = labelSmall.copy(lineBreak = PhraseLineBreak),
+)
 
 /** Applies [family] to every style in the scale, so nothing is left on Roboto. */
 private fun Typography.withFamily(family: FontFamily) = Typography(

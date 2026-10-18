@@ -50,12 +50,14 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.graphics.luminance
 import com.music.bitchord.data.model.LibraryState
+import com.music.bitchord.data.stats.SmartPlaylist
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -250,6 +252,13 @@ fun DetailScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     /**
+     * Whether the account is signed in, and the way in when it isn't. Only the
+     * liked-songs smart list needs this: it is an account reading, so its empty
+     * state offers sign-in where the device-made lists just explain themselves.
+     */
+    signedIn: Boolean = true,
+    onSignIn: (() -> Unit)? = null,
+    /**
      * Whether this page's hero is actually on screen. False under the raised
      * player, which is a window of its own and leaves this page composed: a
      * clip left running here would decode a second copy of the same video into
@@ -309,6 +318,14 @@ fun DetailScreen(
         rawSongs.withIndex().associate { (i, s) -> s.videoId to i + 1 }
     }
     val isArtist = page.type == BrowseType.ARTIST
+    // A smart playlist with nothing to show is an empty shelf, not a release
+    // with a missing sleeve: the tall artwork header would push the title into
+    // the middle of the screen and leave the explanation stranded below it.
+    val smartEmpty = SmartPlaylist.of(page.browseId) != null && page.songs is UiState.Error
+    // Liked songs are the one smart list that lives on the account; a guest
+    // opening it gets the way to sign in rather than only a retry-less message.
+    val smartNeedsSignIn = smartEmpty && !signedIn &&
+        SmartPlaylist.of(page.browseId) == SmartPlaylist.LIKED_UNPLAYED
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
     val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
@@ -430,8 +447,12 @@ fun DetailScreen(
                 // Capping against the window's own height is what keeps the ratio's
                 // math honest once the width it's fed is no longer guaranteed to be
                 // the narrow one it was written for.
-                val artHeight = (maxWidth / if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO)
-                    .coerceAtMost(maxHeight * 0.6f)
+                val artHeight = if (smartEmpty) {
+                    0.dp
+                } else {
+                    (maxWidth / if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO)
+                        .coerceAtMost(maxHeight * 0.6f)
+                }
 
                 PageBackground(
                     page = page,
@@ -452,7 +473,9 @@ fun DetailScreen(
                     contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
                 ) {
             item(key = "header") {
-                if (isArtist) {
+                if (smartEmpty) {
+                    CompactReleaseHeader(page = page, palette = palette)
+                } else if (isArtist) {
                     ArtistHeader(page = page, palette = palette, artHeight = artHeight, appleArt = appleArt)
                 } else {
                     ReleaseHeader(
@@ -569,7 +592,18 @@ fun DetailScreen(
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
-                is UiState.Error -> item { MessageState(state.message) }
+                is UiState.Error -> if (smartEmpty) {
+                    item(key = "smart-empty") {
+                        SmartPlaylistEmptyState(
+                            message = state.message,
+                            palette = palette,
+                            onSignIn = onSignIn.takeIf { smartNeedsSignIn },
+                            modifier = Modifier.fillParentMaxHeight(0.55f),
+                        )
+                    }
+                } else {
+                    item { MessageState(state.message) }
+                }
                 is UiState.Success -> if (isArtist) {
                     // An artist's full song list would bury the album shelves, so
                     // it pages sideways four at a time and stops at twenty.
@@ -727,6 +761,84 @@ fun DetailScreen(
     )
 }
 }
+}
+
+/**
+ * A smart playlist's header when it has no songs: just its name and the line
+ * that explains what the list is, at the top of the page where the title of a
+ * list belongs. The artwork header is skipped entirely — there is no cover to
+ * show and no track count to report.
+ */
+@Composable
+private fun CompactReleaseHeader(page: DetailPage, palette: ArtworkPalette) {
+    val (credit, meta) = page.headerLines(trackCount = 0)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = HEADER_GUTTER, end = HEADER_GUTTER)
+            .padding(top = topBarContentPadding() + 4.dp, bottom = 8.dp),
+    ) {
+        Text(
+            text = page.title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = palette.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (credit.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = credit,
+                style = MaterialTheme.typography.titleMedium,
+                color = palette.accent,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (meta.isNotBlank()) {
+            Spacer(Modifier.height(5.dp))
+            Text(
+                text = meta,
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
+                color = palette.onBackgroundVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** The empty state under that header: an icon and the one line that says why. */
+@Composable
+private fun SmartPlaylistEmptyState(
+    message: String,
+    palette: ArtworkPalette,
+    onSignIn: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = BitChordIcons.MusicNote,
+                contentDescription = null,
+                tint = palette.onBackgroundVariant,
+                modifier = Modifier.size(42.dp),
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = palette.onBackgroundVariant,
+                textAlign = TextAlign.Center,
+            )
+            if (onSignIn != null) {
+                Button(onClick = onSignIn) { Text(stringResource(R.string.sign_in)) }
+            }
+        }
+    }
 }
 
 /**
