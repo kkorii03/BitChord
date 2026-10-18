@@ -36,6 +36,13 @@ adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
 sleep 25
 
 n=0
+# Geometry for the bottom-tab coordinate fallback (4 equal slots).
+SCREEN_W=$(adb shell wm size | tr -d '\r' | sed -n 's/.*: *\([0-9]*\)x.*/\1/p' | tail -1)
+SCREEN_H=$(adb shell wm size | tr -d '\r' | sed -n 's/.*: *[0-9]*x\([0-9]*\).*/\1/p' | tail -1)
+SCREEN_W=${SCREEN_W:-1080}
+SCREEN_H=${SCREEN_H:-2400}
+TAB_MIN_Y=$(( SCREEN_H * 17 / 20 ))
+
 # Screenshot + hierarchy + one line in index.txt: name, then what it should show.
 shot() {
   n=$((n + 1)); name=$(printf "%02d-%s" "$n" "$1")
@@ -81,10 +88,20 @@ print(x, y)
 PY
 }
 
+# Labels that end the session or leave the app; never tapped, whatever the
+# screen. The same list is also excluded from tap_first_item's candidates.
+is_dangerous() {
+  printf '%s' "$1" | grep -Eiq '로그인|로그아웃|sign[ _-]?in|sign[ _-]?out|logout|삭제|지우기|delete|clear|공유|share|http|외부'
+}
+
 # Returns 0 only when the label was found and tapped, so callers can decide
 # whether a following BACK would be safe.
 tap() {
   local at
+  if is_dangerous "$1"; then
+    echo "refusing dangerous label: $1"
+    return 1
+  fi
   at=$(find_center "$1" "$2")
   if [ -n "$at" ]; then
     adb shell input tap $at
@@ -106,22 +123,110 @@ scroll_top() {
 
 back() { adb shell input keyevent 4; sleep "${1:-3}"; }
 
+# The IME leaves the bottom bar covered; one ESCAPE dismisses it. BACK is not
+# used here: at the tab-bar root it would finish the activity.
+keyboard_shown() { adb shell dumpsys input_method 2>/dev/null | grep -q 'mInputShown=true'; }
+hide_keyboard() {
+  if keyboard_shown; then
+    adb shell input keyevent 111
+    sleep 1
+  fi
+}
+
+# Package of the resumed activity (empty if it cannot be parsed).
+current_pkg() {
+  local p
+  p=$(adb shell dumpsys activity activities 2>/dev/null | sed -n 's/.*mResumedActivity.* \([A-Za-z0-9_.]*\)\/.*/\1/p' | head -1)
+  [ -n "$p" ] || p=$(adb shell dumpsys window 2>/dev/null | sed -n 's/.*mCurrentFocus=.* \([A-Za-z0-9_.]*\)\/.*/\1/p' | head -1)
+  printf '%s' "$p"
+}
+
+# Centre of a bottom-bar item of our app, matched by text, content-desc or
+# resource-id. Only nodes inside the own package and the bottom strip count, so
+# the launcher's full-screen "홈" and its search pill can never be picked up.
+tab_node() {
+  local labels=$1 ids=$2
+  dump_ui
+  python3 - "$PKG" "$TAB_MIN_Y" "$labels" "$ids" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+pkg, min_y = sys.argv[1], int(sys.argv[2])
+labels = [s for s in sys.argv[3].split('|') if s]
+ids = [s.lower() for s in sys.argv[4].split('|') if s]
+try:
+    nodes = list(ET.parse('/tmp/ui.xml').iter('node'))
+except Exception:
+    sys.exit(0)
+hits, loose = [], []
+for n in nodes:
+    if n.get('package') != pkg:
+        continue
+    try:
+        x1, y1, x2, y2 = map(int, re.findall(r'-?\d+', n.get('bounds') or ''))
+    except Exception:
+        continue
+    if y1 < min_y or y2 - y1 < 20:
+        continue
+    text = (n.get('text') or '').strip()
+    desc = (n.get('content-desc') or '').strip()
+    rid = (n.get('resource-id') or '').lower()
+    c = ((y1 + y2) // 2, (x1 + x2) // 2)
+    if any(text == s or desc == s for s in labels) or any(s in rid for s in ids):
+        hits.append(c)
+    elif any(s in text or s in desc for s in labels):
+        loose.append(c)
+hits = hits or loose
+if hits:
+    hits.sort()
+    print(hits[-1][1], hits[-1][0])
+PY
+}
+
+# Coordinate fallback: four equal slots along the bottom tab bar.
+tab_xy() { echo $(( SCREEN_W * (2 * $1 + 1) / 8 )) $(( SCREEN_H - SCREEN_H / 13 )); }
+
+ALL_TAB_LABELS="홈|둘러보기|보관함|검색|Home|Explore|Library|Search"
+ALL_TAB_IDS="tab_home|tab_explore|tab_library|tab_search|nav_home|nav_explore|nav_library|nav_search|home_tab|explore_tab|library_tab|search_tab"
+tab_bar_visible() { [ -n "$(tab_node "$ALL_TAB_LABELS" "$ALL_TAB_IDS")" ]; }
+
+# $1=key $2=slot index (0=Home, 1=Explore, 2=Library, 3=Search), $3=labels
+# ("|"-separated, text or content-desc), $4=resource-id fragments.
+tap_tab() {
+  local key=$1 idx=$2 at
+  hide_keyboard
+  at=$(tab_node "$3" "$4")
+  if [ -z "$at" ]; then
+    at=$(tab_xy "$idx")
+    echo "tab $key: not in dump, coordinate fallback at $at"
+  fi
+  adb shell input tap $at
+  sleep "${5:-5}"
+  return 0
+}
+
 # Every section starts from the same place: the Home tab, with no sheet or
-# detail page left open by the section before it. Four BACKs are enough for the
-# deepest sheet this tour opens; the tab tap covers a section that ended on a
-# detail page whose own BACK handler consumed one of them.
+# detail page left open by the section before it. BACK is only sent while the
+# app is resumed and only until the tab bar is back: four blind BACKs at the
+# Home root finish the activity and leave the launcher in front, whose bottom
+# search pill then answers to "검색".
 reset_home() {
-  local i
-  for i in 1 2 3 4; do adb shell input keyevent 4; sleep 1; done
-  sleep 2
-  if ! tap "홈" last 5 && ! tap "Home" last 3; then
-    # Those BACKs can leave the app when Home was already the root screen;
-    # bring it back so the next section has a tab bar to tap.
+  local i pkg
+  hide_keyboard
+  for i in 1 2 3; do
+    tab_bar_visible && break
+    pkg=$(current_pkg)
+    if [ -n "$pkg" ] && [ "$pkg" != "$PKG" ]; then break; fi
+    adb shell input keyevent 4
+    sleep 2
+  done
+  pkg=$(current_pkg)
+  if [ "$pkg" != "$PKG" ]; then
+    echo "reset_home: '${pkg:-unknown}' in front, bringing $PKG back"
     adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
     sleep 15
-    tap "홈" last 5 || tap "Home" last 3 || true
   fi
-  sleep 3
+  hide_keyboard
+  tap_tab home 0 "홈|Home" "tab_home|nav_home|home_tab"
+  sleep 2
 }
 
 # Swipe up until $1 is on screen; prints its centre or nothing.
@@ -138,6 +243,10 @@ scroll_to() {
 # Find a label by scrolling down, then tap it. $2=sleep, $3=max swipes.
 tap_scrolled() {
   local at
+  if is_dangerous "$1"; then
+    echo "refusing dangerous label: $1"
+    return 1
+  fi
   at=$(scroll_to "$1" "${3:-10}")
   if [ -n "$at" ]; then
     adb shell input tap $at
@@ -172,6 +281,7 @@ skip = {
     '로컬 음악', '자주 들은 노래', '반복 재생 중', '다시 듣기',
     '좋아요 표시했지만 덜 들은 노래', '모두 보기', '더 보기', '상위 결과',
     '재생', '셔플', '구독', '팔로우',
+    '로그인', '로그아웃', '삭제', '공유', '외부에서 열기', '외부 링크',
 }
 try:
     nodes = list(ET.parse('/tmp/ui.xml').iter('node'))
@@ -239,59 +349,57 @@ section_home() {
 # ---- Explore ------------------------------------------------------------
 section_explore() {
   reset_home
-  if tap "둘러보기" last 5 || tap "Explore" last 3; then
-    shot explore "Explore tab"
-    scroll_shots explore-scrolled 2 "Explore scrolled"
-    # A mood/genre page from the grid (titles are Korean).
-    if tap_scrolled "운동" 5 5; then
-      shot explore-mood "Explore mood/genre page"
-      scroll_shots explore-mood-scrolled 2 "Explore mood page scrolled"
-      back
-    fi
+  tap_tab explore 1 "둘러보기|Explore" "tab_explore|nav_explore|explore_tab|explore"
+  shot explore "Explore tab"
+  scroll_shots explore-scrolled 2 "Explore scrolled"
+  # A mood/genre page from the grid (titles are Korean).
+  if tap_scrolled "운동" 5 5; then
+    shot explore-mood "Explore mood/genre page"
+    scroll_shots explore-mood-scrolled 2 "Explore mood page scrolled"
+    back
   fi
 }
 
 # ---- Library ------------------------------------------------------------
 section_library() {
   reset_home
-  if tap "보관함" last 5 || tap "Library" last 3; then
-    shot library "Library tab"
-    scroll_shots library-scrolled 3 "Library scrolled"
-    scroll_top
+  tap_tab library 2 "보관함|Library" "tab_library|nav_library|library_tab|library"
+  shot library "Library tab"
+  scroll_shots library-scrolled 3 "Library scrolled"
+  scroll_top
 
-    # Folders.
-    if tap_scrolled "다운로드" 5 8; then
-      shot library-downloads "Library - Downloads"
-      scroll_shots library-downloads-scrolled 2 "Library - Downloads scrolled"
+  # Folders.
+  if tap_scrolled "다운로드" 5 8; then
+    shot library-downloads "Library - Downloads"
+    scroll_shots library-downloads-scrolled 2 "Library - Downloads scrolled"
+    back
+  fi
+  scroll_top
+  if tap_scrolled "로컬 음악" 5 8; then
+    shot library-local "Library - Local music"
+    if tap "아티스트" first 4; then shot library-local-artists "Library - Local music, artists tab"; fi
+    if tap "앨범" first 4; then shot library-local-albums "Library - Local music, albums tab"; fi
+    scroll_shots library-local-scrolled 2 "Library - Local music scrolled"
+    back
+  fi
+
+  # Smart playlists made from this device's listening.
+  for spec in "자주 들은 노래:library-smart-top" "반복 재생 중:library-smart-repeat" "다시 듣기:library-smart-rediscover" "좋아요 표시했지만 덜 들은 노래:library-smart-liked-unplayed"; do
+    label=${spec%%:*}; key=${spec#*:}
+    scroll_top
+    if tap_scrolled "$label" 5 6; then
+      shot "$key" "Smart playlist: $label"
+      scroll_shots "$key-scrolled" 2 "Smart playlist: $label scrolled"
       back
     fi
-    scroll_top
-    if tap_scrolled "로컬 음악" 5 8; then
-      shot library-local "Library - Local music"
-      if tap "아티스트" first 4; then shot library-local-artists "Library - Local music, artists tab"; fi
-      if tap "앨범" first 4; then shot library-local-albums "Library - Local music, albums tab"; fi
-      scroll_shots library-local-scrolled 2 "Library - Local music scrolled"
-      back
-    fi
+  done
 
-    # Smart playlists made from this device's listening.
-    for spec in "자주 들은 노래:library-smart-top" "반복 재생 중:library-smart-repeat" "다시 듣기:library-smart-rediscover" "좋아요 표시했지만 덜 들은 노래:library-smart-liked-unplayed"; do
-      label=${spec%%:*}; key=${spec#*:}
-      scroll_top
-      if tap_scrolled "$label" 5 6; then
-        shot "$key" "Smart playlist: $label"
-        scroll_shots "$key-scrolled" 2 "Smart playlist: $label scrolled"
-        back
-      fi
-    done
-
-    # Listening history, from the Library top bar.
-    scroll_top
-    if tap "청취 기록" first 6; then
-      shot history "Listening history"
-      scroll_shots history-scrolled 2 "Listening history scrolled"
-      back
-    fi
+  # Listening history, from the Library top bar.
+  scroll_top
+  if tap "청취 기록" first 6; then
+    shot history "Listening history"
+    scroll_shots history-scrolled 2 "Listening history scrolled"
+    back
   fi
 }
 
@@ -300,10 +408,10 @@ section_settings() {
   reset_home
   # Settings is reached from the Library top bar, so visit Library first
   # rather than assuming the previous section left us there.
-  if tap "보관함" last 5 || tap "Library" last 3; then
-    sleep 2
-    scroll_top
-    if tap "설정" first 5 || tap "Settings" first 3; then
+  tap_tab library 2 "보관함|Library" "tab_library|nav_library|library_tab|library"
+  sleep 2
+  scroll_top
+  if tap "설정" first 5 || tap "Settings" first 3; then
     shot settings-top "Settings (top)"
     scroll_shots settings-scrolled 3 "Settings scrolled"
 
@@ -374,13 +482,12 @@ section_settings() {
 
     back
   fi
-  fi
 }
 
 # ---- Search -------------------------------------------------------------
 section_search() {
   reset_home
-  if tap "검색" last 5 || tap "Search" last 3; then
+  tap_tab search 3 "검색|Search" "tab_search|nav_search|search_tab"
   sleep 3
   shot search-empty "Search (empty, keyboard up)"
 
@@ -428,7 +535,6 @@ section_search() {
     fi
   fi
   if tap "비디오" first 6; then sleep 3; shot search-results-videos "Search results - Videos tab"; fi
-  fi
 }
 
 # ---- Now playing, lyrics, queue, sheets ---------------------------------
@@ -481,13 +587,22 @@ section_now_playing() {
 
 # Each section is independent: one that finds its label missing, or ends on a
 # different screen than it expected, must not keep the next one from running.
-# reset_home at the head of every section is what makes that safe.
-section_home || true
-section_explore || true
-section_library || true
-section_settings || true
-section_search || true
-section_now_playing || true
+# reset_home at the head of every section is what makes that safe, and
+# run_section always succeeds so a failed section never aborts the rest.
+run_section() {
+  local fn=$1 label=$2 start=$n
+  echo "== section $label start (shots $n)"
+  "$fn" || echo "section $label reported an error"
+  echo "== section $label end (shots $n, +$((n - start)))"
+  return 0
+}
+
+run_section section_home home
+run_section section_explore explore
+run_section section_library library
+run_section section_settings settings
+run_section section_search search
+run_section section_now_playing now-playing
 
 adb logcat -d > "$OUT/logcat.txt"
 # Why playback did not start, if it did not (bot check, 403, source error...).
