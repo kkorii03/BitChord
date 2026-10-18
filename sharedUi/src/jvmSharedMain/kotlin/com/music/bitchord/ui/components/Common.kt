@@ -104,6 +104,34 @@ import androidx.compose.foundation.border
 val PAGE_GUTTER = 16.dp
 
 /**
+ * Corner radius for small square artwork — the 48–72dp thumbnails on track,
+ * search and typeahead rows. Apple Music keeps these at a light 6–8dp so the
+ * cover still reads as a square rather than a card.
+ */
+val SMALL_ART_CORNER = 8.dp
+
+/**
+ * Corner radius for large cards and card-sized artwork: shelves, the lead
+ * hero, mood tiles and release covers. Kept one step off [SMALL_ART_CORNER] so
+ * a cover is not cornered like a thumbnail.
+ */
+val LARGE_CARD_CORNER = 12.dp
+
+/** The smallest artwork that is a card/cover rather than a row thumbnail. */
+private val LARGE_ART_THRESHOLD = 88.dp
+
+/**
+ * The corner an image of [artworkSize] takes: small round-rect for a row
+ * thumbnail, [LARGE_CARD_CORNER] once it is a card or a release cover. Pure so
+ * the boundary can be pinned by a unit test rather than repeated as literals.
+ */
+fun artworkCorner(artworkSize: Dp): Dp =
+    if (artworkSize >= LARGE_ART_THRESHOLD) LARGE_CARD_CORNER else SMALL_ART_CORNER
+
+/** Vertical padding every standard 48/52dp track row uses, so rows match. */
+val LIST_ROW_VERTICAL_PADDING = 4.dp
+
+/**
  * The inset the floating chrome sits at: the mini player, the tab bar and the
  * top bar's controls. The same as [PAGE_GUTTER], so the bars' edges line up
  * with the content scrolling beneath them rather than sitting just outside it.
@@ -495,7 +523,7 @@ private fun SongRowContent(
             .background(activeBackground)
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onMore ?: onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (trackNumber != null) {
@@ -531,8 +559,8 @@ private fun SongRowContent(
                     contentDescription = null,
                     modifier = Modifier
                         .matchParentSize()
-                        .clip(RoundedCornerShape(8.dp))
-                        .thumbnailBorder(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(SMALL_ART_CORNER))
+                        .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
                 if (searchPlayingStyle && isCurrent && isPlaying) {

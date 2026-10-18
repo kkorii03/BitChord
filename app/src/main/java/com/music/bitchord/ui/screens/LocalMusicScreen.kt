@@ -91,6 +91,7 @@ import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.ExplicitSongTitle
+import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
@@ -724,13 +725,13 @@ private fun ArtistRow(
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Rounded.Person,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(26.dp),
             )
             if (thumbnailUrl != null) {
@@ -791,13 +792,13 @@ private fun ArtistGridCard(
                 .fillMaxWidth(0.88f)
                 .aspectRatio(1f)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Rounded.Person,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(44.dp),
             )
             if (thumbnailUrl != null) {
@@ -1024,13 +1025,13 @@ private fun AlbumGridCard(
                 .aspectRatio(1f)
                 .clip(shape)
                 .thumbnailBorder(shape)
-                .background(MaterialTheme.colorScheme.secondaryContainer),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = if (entry.playlist) Icons.AutoMirrored.Rounded.QueueMusic else Icons.Rounded.Album,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(36.dp),
             )
             // Albums grouped off tags have no cover of their own; the first
@@ -1161,13 +1162,13 @@ private fun CollectionArtwork(url: String?, playlist: Boolean, size: Dp) {
         modifier = Modifier
             .size(size)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.secondaryContainer),
+            .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = if (playlist) Icons.AutoMirrored.Rounded.QueueMusic else Icons.Rounded.Album,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(size * 0.54f),
         )
         if (url != null) {
@@ -1225,13 +1226,13 @@ private fun DrillDownHeader(
         }
         Box(
             modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp).size(188.dp)
-                .clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.secondaryContainer),
+                .clip(RoundedCornerShape(LARGE_CARD_CORNER)).background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = if (artworkUrl == null) Icons.Rounded.Person else Icons.Rounded.Album,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(64.dp),
             )
             artworkUrl?.let { artwork ->

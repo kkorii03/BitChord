@@ -117,10 +117,10 @@ fun SongRowSkeleton(index: Int = 0, circular: Boolean = false, modifier: Modifie
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ShimmerBox(Modifier.size(52.dp), if (circular) CircleShape else RoundedCornerShape(8.dp))
+        ShimmerBox(Modifier.size(52.dp), if (circular) CircleShape else RoundedCornerShape(SMALL_ART_CORNER))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             SkeletonLine(fraction = TitleWidths[index % TitleWidths.size], height = 14.dp)
@@ -165,7 +165,7 @@ private fun HeroShelfSkeleton() {
                 items(2) {
                     ShimmerBox(
                         modifier = Modifier.width(cardWidth).aspectRatio(HERO_CARD_RATIO),
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(LARGE_CARD_CORNER),
                     )
                 }
             }
@@ -204,7 +204,7 @@ fun LazyListScope.recentlyPlayedSkeleton(listLayout: Boolean) {
                         items(2) {
                             ShimmerBox(
                                 modifier = Modifier.width(cardWidth).aspectRatio(HERO_CARD_RATIO),
-                                shape = RoundedCornerShape(18.dp),
+                                shape = RoundedCornerShape(LARGE_CARD_CORNER),
                             )
                         }
                     }
@@ -233,7 +233,7 @@ private fun RecentsHeaderSkeleton() {
 
 /** The compact carousel of square cards used by every shelf below the first. */
 @Composable
-fun ShelfSkeleton(index: Int = 0, cardWidth: Dp = SHELF_CARD_WIDTH, cardCorner: Dp = 12.dp) {
+fun ShelfSkeleton(index: Int = 0, cardWidth: Dp = SHELF_CARD_WIDTH, cardCorner: Dp = LARGE_CARD_CORNER) {
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeaderSkeleton(index = index)
         LazyRow(
@@ -359,7 +359,7 @@ fun LazyListScope.detailSkeleton(isArtist: Boolean) {
         }
         item(key = "skeleton:detail:sections") {
             Box(Modifier.graphicsLayer { alpha = 0.4f }) {
-                ShelfSkeleton(index = 2, cardCorner = 10.dp)
+                ShelfSkeleton(index = 2, cardCorner = LARGE_CARD_CORNER)
             }
         }
         return
@@ -377,10 +377,10 @@ fun LazyListScope.detailSkeleton(isArtist: Boolean) {
 @Composable
 private fun CompactSongRowSkeleton(index: Int) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = LIST_ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ShimmerBox(Modifier.size(48.dp), RoundedCornerShape(7.dp))
+        ShimmerBox(Modifier.size(48.dp), RoundedCornerShape(SMALL_ART_CORNER))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             SkeletonLine(fraction = TitleWidths[index % TitleWidths.size], height = 14.dp)

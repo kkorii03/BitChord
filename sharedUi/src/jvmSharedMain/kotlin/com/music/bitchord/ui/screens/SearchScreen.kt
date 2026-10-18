@@ -73,8 +73,11 @@ import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.ui.components.artworkCorner
+import com.music.bitchord.ui.components.LIST_ROW_VERTICAL_PADDING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -330,7 +333,7 @@ fun SearchScreen(
                                         top = 16.dp,
                                         bottom = 6.dp,
                                     ),
-                                    style = MaterialTheme.typography.titleSmall,
+                                    style = MaterialTheme.typography.titleLarge,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
@@ -489,7 +492,11 @@ private fun TopResultCard(
             AsyncImage(
                 model = song.thumbnailUrl?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
-                modifier = Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(artworkCorner(72.dp)))
+                    .thumbnailBorder(RoundedCornerShape(artworkCorner(72.dp)))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
             )
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
@@ -703,7 +710,7 @@ private fun TypeaheadSongRow(
             .fillMaxWidth()
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(52.dp)) {
@@ -712,8 +719,8 @@ private fun TypeaheadSongRow(
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(SMALL_ART_CORNER))
+                    .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
             if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -803,7 +810,12 @@ private fun RecentSearchEntityRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(start = PAGE_GUTTER, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            .padding(
+                start = PAGE_GUTTER,
+                end = 8.dp,
+                top = LIST_ROW_VERTICAL_PADDING,
+                bottom = LIST_ROW_VERTICAL_PADDING,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(52.dp)) {
@@ -812,8 +824,8 @@ private fun RecentSearchEntityRow(
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(SMALL_ART_CORNER))
+                    .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
             if (isCurrent && isPlaying) {
@@ -863,7 +875,7 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             .fillMaxWidth()
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
@@ -873,11 +885,11 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
                 .size(52.dp)
                 .clip(
                     if (item.type == BrowseType.ARTIST) CircleShape
-                    else RoundedCornerShape(8.dp),
+                    else RoundedCornerShape(SMALL_ART_CORNER),
                 )
                 .thumbnailBorder(
                     if (item.type == BrowseType.ARTIST) CircleShape
-                    else RoundedCornerShape(8.dp),
+                    else RoundedCornerShape(SMALL_ART_CORNER),
                 )
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         )

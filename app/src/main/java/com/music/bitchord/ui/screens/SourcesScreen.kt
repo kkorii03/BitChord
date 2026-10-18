@@ -123,6 +123,7 @@ fun SourcesScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val failed = stringResource(R.string.failed)
     val configs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
@@ -152,7 +153,7 @@ fun SourcesScreen(
             val source = SourceRegistry.instance(config.id) ?: return@forEach
             health[config.id] = withContext(Dispatchers.IO) {
                 runCatching { source.health() }
-                    .getOrElse { SourceHealth.Unreachable(it.message ?: "Failed") }
+                    .getOrElse { SourceHealth.Unreachable(it.message ?: failed) }
             }
             // An addon names itself, so the row takes that name rather than a
             // hostname — and rather than a field asking the user to make one up.
@@ -934,6 +935,7 @@ internal fun SourceEditorAlert(
     var statusIsGood by remember { mutableStateOf(false) }
 
     val connected = stringResource(R.string.connected)
+    val failed = stringResource(R.string.failed)
     val unreadable = stringResource(R.string.source_unrecognised)
     val alreadyAdded = stringResource(R.string.source_already_added)
 
@@ -981,7 +983,7 @@ internal fun SourceEditorAlert(
             // its server still be refusing every search.
             val health = withContext(Dispatchers.IO) {
                 runCatching { SourceRegistry.probeCandidate(found) }
-                    .getOrElse { SourceHealth.Unreachable(it.message ?: "Failed") }
+                    .getOrElse { SourceHealth.Unreachable(it.message ?: failed) }
             }
             statusIsGood = health.isOk
             status = when (health) {

@@ -136,8 +136,11 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
+import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.SMALL_ART_CORNER
+import com.music.bitchord.ui.components.artworkCorner
 import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -1724,7 +1727,7 @@ private fun SectionHeading(
         if (onShowAll != null) {
             Text(
                 text = stringResource(R.string.show_all),
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium,
                 color = palette.accent,
                 modifier = Modifier
                     .clickable(onClick = onShowAll)
@@ -1760,8 +1763,8 @@ private fun CompactSongRow(
                 contentDescription = null,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .thumbnailBorder(RoundedCornerShape(7.dp))
+                    .clip(RoundedCornerShape(SMALL_ART_CORNER))
+                    .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
                     .background(palette.elevated),
             )
             if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -1819,8 +1822,8 @@ private fun SuggestedSongRow(
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(SMALL_ART_CORNER))
+                    .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
                     .background(palette.elevated),
             )
             if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -1915,7 +1918,7 @@ private fun TopReleaseCard(
     onToggleSaved: (() -> Unit)?,
 ) {
     val shape = RoundedCornerShape(28.dp)
-    val coverShape = RoundedCornerShape(12.dp)
+    val coverShape = RoundedCornerShape(artworkCorner(88.dp))
     val haptics = rememberHaptics()
     Row(
         modifier = Modifier
@@ -2017,8 +2020,8 @@ private fun SectionCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(10.dp))
-                .thumbnailBorder(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(LARGE_CARD_CORNER))
+                .thumbnailBorder(RoundedCornerShape(LARGE_CARD_CORNER))
                 .background(palette.elevated),
         )
         Spacer(Modifier.height(8.dp))
