@@ -1069,19 +1069,29 @@ object InnertubeParser {
      * The account header buried in the `account_menu` popup. Not every client
      * gets an `email` back — some return only the @handle — so whichever is
      * present is used as the secondary line.
+     *
+     * youtube.com uses the same fields as Music but not always the same text
+     * shape: its `accountName` and `channelHandle` can be `simpleText` where
+     * Music sends `runs`. Both are read here, and the handle is kept apart
+     * from the email so a switcher's @name is not mistaken for one.
      */
     fun parseAccount(response: JsonElement): Account? {
         val header = collectRenderers(response, "activeAccountHeaderRenderer").firstOrNull()
+            ?: collectRenderers(response, "accountHeaderRenderer").firstOrNull()
             ?: return null
-        val name = header.o("accountName").runs()
+        val name = header.o("accountName").text()
         if (name.isBlank()) return null
-        val email = header.o("email").runs()
-            .ifBlank { header.o("email").s("simpleText").orEmpty() }
-            .ifBlank { header.o("channelHandle").runs() }
+        val email = header.o("email").text()
+            .ifBlank { header.o("channelHandle").text() }
+        val handle = header.o("channelHandle").text()
+            .ifBlank { header.o("accountByline").text().takeIf { it.startsWith("@") }.orEmpty() }
+            .ifBlank { email.takeIf { it.startsWith("@") }.orEmpty() }
         return Account(
             name = name,
             email = email,
-            thumbnailUrl = header.o("accountPhoto").a("thumbnails").best(),
+            thumbnailUrl = header.o("accountPhoto").a("thumbnails").best()
+                ?: header.a("accountPhoto").best(),
+            handle = handle.ifBlank { null },
         )
     }
 
@@ -1539,6 +1549,10 @@ private fun JsonElement?.findString(key: String): String? = when (this) {
 
 private fun JsonElement?.runs(): String =
     this.a("runs")?.joinToString("") { it.s("text").orEmpty() }.orEmpty()
+
+/** A text field as `runs` or `simpleText` — youtube.com sends both shapes. */
+private fun JsonElement?.text(): String =
+    runs().ifBlank { s("simpleText").orEmpty() }
 
 /** The first run's text alone — for a field that is a count or a label, never a sentence. */
 private fun JsonElement?.firstRunText(): String? =

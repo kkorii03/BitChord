@@ -352,6 +352,7 @@ data class Account(
     val name: String,
     val email: String,
     val thumbnailUrl: String?,
+    val handle: String? = null,
 )
 
 /**

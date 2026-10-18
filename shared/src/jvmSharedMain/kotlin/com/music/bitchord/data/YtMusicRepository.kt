@@ -720,9 +720,15 @@ object YtMusicRepository {
                     .let { list -> list.firstOrNull { it.activeOnWeb } ?: list.firstOrNull() }
                     ?.let {
                         // The switcher's subtitle is usually an @handle, not
-                        // an email; the email field is used to dedupe accounts.
+                        // an email; the email field is used to dedupe accounts,
+                        // so the handle is kept beside it rather than in it.
                         val email = it.subtitle.takeIf { s -> '@' in s && !s.startsWith("@") }.orEmpty()
-                        Account(name = it.name, email = email, thumbnailUrl = it.thumbnailUrl)
+                        Account(
+                            name = it.name,
+                            email = email,
+                            thumbnailUrl = it.thumbnailUrl,
+                            handle = it.subtitle.takeIf { s -> s.startsWith("@") },
+                        )
                     }
             }.onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it

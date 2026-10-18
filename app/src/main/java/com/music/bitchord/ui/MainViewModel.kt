@@ -2008,24 +2008,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // A channel picked in the in-app browser arrives as ids and nothing
             // else — the page's `ytcfg` never says what the channel is called.
             // The account menu, asked *as* that channel, answers with its name,
-            // which is what the settings row needs to show.
-            if (account != null && _selectedChannelKey.value != null) {
-                _selectedChannelName.value = account.name
-                val accountId = _activeAccountId.value
-                val profileId = _activeProfileId.value
-                val session = accountId?.let { id -> authStore.sessions.firstOrNull { it.accountId == id } }
-                val updated = session?.let { saved -> saved.copy(
-                    name = account.name, email = account.email,
-                    profiles = saved.profiles.map { profile ->
-                        if (profile.profileId == profileId) profile.copy(
-                            name = account.name, handle = account.email, avatar = account.thumbnailUrl,
-                        ) else profile
-                    },
-                ) }
-                if (updated != null) {
-                    authStore.upsertSession(updated, activate = false)
-                    _googleAccounts.value = authStore.sessions
-                }
+            // which is what the settings row needs to show. It also fills in the
+            // generic sign-in header once youtube.com can name the account.
+            if (_selectedChannelKey.value != null) _selectedChannelName.value = account.name
+            val accountId = _activeAccountId.value ?: return@launch
+            val profileId = _activeProfileId.value ?: return@launch
+            val session = authStore.sessions.firstOrNull { it.accountId == accountId } ?: return@launch
+            val handle = account.handle?.takeIf { it.isNotBlank() } ?: account.email
+            val updated = session.copy(
+                name = account.name,
+                email = account.email,
+                profiles = session.profiles.map { profile ->
+                    if (profile.profileId == profileId) profile.copy(
+                        name = account.name, handle = handle, avatar = account.thumbnailUrl,
+                    ) else profile
+                },
+            )
+            if (updated != session) {
+                authStore.upsertSession(updated, activate = false)
+                _googleAccounts.value = authStore.sessions
             }
         }
     }
@@ -3725,7 +3726,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val profile = YouTubeProfile(
                 profileId = selectedProfileId,
                 name = account.name,
-                handle = account.email,
+                handle = account.handle?.takeIf { it.isNotBlank() } ?: account.email,
                 avatar = account.thumbnailUrl,
                 pageId = pageId,
                 dataSyncId = dataSyncId,
