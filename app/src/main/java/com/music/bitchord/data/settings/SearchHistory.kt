@@ -105,6 +105,9 @@ object SearchHistory {
      * Matching is by id so re-tapping an existing entity updates its timestamp.
      */
     fun record(entity: SearchHistoryEntity) {
+        // Private listening is a promise that searches of this session are not
+        // kept, so the tap never reaches the list — nor its disk writer.
+        if (!PrivateListening.allows(ListeningSink.SEARCH_HISTORY, AppSettings.privateListening.value)) return
         open()
         val deduped = _recent.value.filterNot { it.id.equals(entity.id, ignoreCase = true) }
         save((listOf(entity) + deduped).take(MAX_ENTRIES))

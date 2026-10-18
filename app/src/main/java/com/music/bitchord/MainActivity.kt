@@ -646,6 +646,7 @@ private fun BitChordApp(
         browseActions = target
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
+    val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
     val partyState by ListenTogether.state.collectAsStateWithLifecycle()
     // The same answer the playback service acts on, rather than a second one
     // derived here — see [autoplayEnabledFor]. Drawing the local preference in
@@ -4314,6 +4315,12 @@ private fun BitChordApp(
                 // whatever ids it's ever going to have.
                 resolvingLinks = fromPlayer && linksLoading,
                 showSleepTimer = fromPlayer,
+                privateListening = privateListening,
+                onTogglePrivateListening = if (fromPlayer) {
+                    { AppSettings.setPrivateListening(!privateListening) }
+                } else {
+                    null
+                },
                 // Offered for every playing track with a YouTube upload
                 // behind it, not only for one an upgrade visibly swapped:
                 // a source ranked above YouTube can be playing its own

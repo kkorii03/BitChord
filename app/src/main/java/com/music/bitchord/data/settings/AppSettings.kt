@@ -247,6 +247,16 @@ object AppSettings {
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
     val skipSilence = MutableStateFlow(false)
 
+    /**
+     * Incognito listening: suppress every history-bearing write while on.
+     *
+     * Persisted across restarts like the other switches, because the listener
+     * chose a mode rather than a one-off session. Turning it off only resumes
+     * recording from that point; nothing that happened while it was on is
+     * written afterwards. See [PrivateListening] for the pure sink decision.
+     */
+    val privateListening = MutableStateFlow(false)
+
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
 
@@ -961,6 +971,7 @@ object AppSettings {
             )
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
+        privateListening.value = prefs.getBoolean(KEY_PRIVATE_LISTENING, false)
         outputPcmMode.value = runCatching {
             OutputPcmMode.valueOf(
                 prefs.getString(KEY_OUTPUT_PCM_MODE, OutputPcmMode.PCM_16.name)
@@ -1346,6 +1357,11 @@ object AppSettings {
     fun setSkipSilence(value: Boolean) {
         skipSilence.value = value
         prefs.edit().putBoolean(KEY_SKIP_SILENCE, value).apply()
+    }
+
+    fun setPrivateListening(value: Boolean) {
+        privateListening.value = value
+        prefs.edit().putBoolean(KEY_PRIVATE_LISTENING, value).apply()
     }
 
     fun setDolbyAtmos(value: Boolean) {
@@ -2380,6 +2396,7 @@ object AppSettings {
     private const val KEY_AUTOMIX_VIDEOS = "automix_videos"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
+    private const val KEY_PRIVATE_LISTENING = "private_listening"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"

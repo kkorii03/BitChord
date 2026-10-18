@@ -1333,4 +1333,7 @@
     <string name="diagnostics">Diagnostics</string>
     <string name="export_diagnostic_log">Export diagnostic log</string>
     <string name="export_diagnostic_log_subtitle">Send this file when reporting playback, home or search problems.</string>
+    <string name="private_listening">Incognito mode</string>
+    <string name="private_listening_subtitle">Playback and searches won\'t appear in YouTube history, recommendations, or this device\'s history</string>
+    <string name="private_listening_indicator">Incognito mode is on</string>
 </resources>

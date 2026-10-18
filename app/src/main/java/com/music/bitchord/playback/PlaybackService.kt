@@ -139,7 +139,9 @@ import com.music.bitchord.data.scrobbling.ListenBrainzManager
 import com.music.bitchord.data.scrobbling.ScrobbleManager
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.EqualizerMode
+import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.data.settings.PrivateListening
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -3220,17 +3222,25 @@ class PlaybackService : MediaLibraryService() {
         // manual skip (SEEK) means the song wasn't listened to, so it must
         // not be scrobbled.
         val ended = previousEnded
+        val scrobblingAllowed =
+            PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)
         val prevSong = listenBrainzSong
         val prevStart = listenBrainzStartMs
-        if (prevSong != null && ended && prevStart > 0L) {
+        if (scrobblingAllowed && prevSong != null && ended && prevStart > 0L) {
             submitListenBrainzFinished(prevSong, prevStart, listenBrainzDurationMs)
         }
         // AutoPlay's session seed: only a track that ran to its end counts.
-        if (prevSong != null && ended) lastCompletedSong = prevSong
-        listenBrainzSong = newSong
-        listenBrainzStartMs = if (exoPlayer.isPlaying) System.currentTimeMillis() else 0L
+        // Private listening keeps it out too — the session is recommendation
+        // learning just as much as the stored counters are.
+        if (scrobblingAllowed && prevSong != null && ended) lastCompletedSong = prevSong
+        listenBrainzSong = if (scrobblingAllowed) newSong else null
+        listenBrainzStartMs = if (scrobblingAllowed && exoPlayer.isPlaying) {
+            System.currentTimeMillis()
+        } else {
+            0L
+        }
         listenBrainzDurationMs = durationMs
-        if (newSong != null && exoPlayer.isPlaying) {
+        if (scrobblingAllowed && newSong != null && exoPlayer.isPlaying) {
             submitListenBrainzPlayingNow(newSong, 0L, durationMs)
         }
 
@@ -6245,6 +6255,26 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
         scope.launch {
+            // Event-driven: the toggle itself is the only thing that wakes this.
+            // On the way in, drop whatever is already pending so nothing from
+            // before the switch can be written afterwards; on the way out,
+            // suppress the interrupted playthrough and resume only from the
+            // next real track.
+            AppSettings.privateListening.drop(1).collect { enabled ->
+                PlaybackTracker.suppressCurrent(player?.currentMediaItem?.mediaId)
+                if (enabled) {
+                    ListeningRecorder.onPrivateModeEnabled()
+                    scrobbleManager?.onPrivateModeEnabled()
+                    listenBrainzSong = null
+                    listenBrainzStartMs = 0L
+                    listenBrainzDurationMs = null
+                    clearDiscordPresence()
+                } else {
+                    player?.takeIf { it.isPlaying }?.let(::pushDiscordPresence)
+                }
+            }
+        }
+        scope.launch {
             // Re-evaluate the already queued next track immediately when this
             // preference changes, instead of waiting for another timeline event.
             AppSettings.preferMusicOnly.drop(1).collect {
@@ -6671,6 +6701,7 @@ class PlaybackService : MediaLibraryService() {
      * track change.
      */
     private fun pushDiscordPresence(exoPlayer: ExoPlayer) {
+        if (!PrivateListening.allows(ListeningSink.DISCORD_PRESENCE, AppSettings.privateListening.value)) return
         val rpc = discordRpc ?: return
         val song = exoPlayer.currentMediaItem?.toSong() ?: return
         // Read on the main thread, before the push is handed to IO: by the time
@@ -6736,6 +6767,7 @@ class PlaybackService : MediaLibraryService() {
      * stays a no-op whenever ListenBrainz is switched off.
      */
     private fun submitListenBrainzFinished(song: Song, startMs: Long, durationMs: Long?) {
+        if (!PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)) return
         val lbEnabled = AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return
@@ -6747,6 +6779,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** Sends a ListenBrainz "now playing" update for the current track. */
     private fun submitListenBrainzPlayingNow(song: Song, positionMs: Long, durationMs: Long?) {
+        if (!PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)) return
         val lbEnabled = AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return

@@ -2,6 +2,8 @@ package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ListeningSink
+import com.music.bitchord.data.settings.PrivateListening
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -106,12 +108,37 @@ object PlaybackTracker {
     private var opening: String? = null
 
     /**
+     * A playthrough that must never open a session.
+     *
+     * Set when private listening is switched on or off for the track already
+     * playing, so turning it back off cannot register the remainder of a play
+     * whose first part was private. A real track transition clears it.
+     */
+    @Volatile
+    private var suppressedVideoId: String? = null
+
+    private fun trackingAllowed(): Boolean =
+        PrivateListening.allows(ListeningSink.YOUTUBE_HISTORY, AppSettings.privateListening.value)
+
+    /**
+     * Drops the open session without a closing ping and remembers [videoId] as
+     * the playthrough private mode interrupted.
+     */
+    fun suppressCurrent(videoId: String?) {
+        session = null
+        opening = null
+        suppressedVideoId = videoId
+    }
+
+    /**
      * Call when [videoId] becomes audible — both on play/resume and when the
      * queue moves on. A no-op while the same track is already being tracked, so
      * a pause/resume does not register a second play.
      */
     fun onPlaying(videoId: String) {
         if (!VIDEO_ID.matches(videoId)) return
+        if (!trackingAllowed()) return
+        if (suppressedVideoId == videoId) return
         if (Innertube.cookie == null) return
         // A downloaded track plays perfectly well with the radio off — the
         // whole point of downloading it — so this is the one place that has
@@ -139,6 +166,16 @@ object PlaybackTracker {
      * two-minute mark is reported as two minutes rather than lost.
      */
     fun onTrackChanged(positionSeconds: Long) {
+        // A real transition ends the suppressed playthrough, whatever private
+        // listening does next.
+        suppressedVideoId = null
+        if (!trackingAllowed()) {
+            // Drop the session without the closing watchtime ping: private mode
+            // must not add anything to the account's history.
+            session = null
+            opening = null
+            return
+        }
         val closing = session ?: return
         session = null
         scope.launch(TrackLog.about(closing.videoId)) {
@@ -155,6 +192,11 @@ object PlaybackTracker {
      * [REPORT_INTERVAL_SECONDS] of new audio.
      */
     fun onProgress(videoId: String, positionSeconds: Long) {
+        if (!trackingAllowed()) {
+            session = null
+            opening = null
+            return
+        }
         val current = session ?: return
         if (current.videoId != videoId) return
         if (!current.atrSent && positionSeconds >= current.tracking.atrAfterSeconds) {
@@ -195,6 +237,11 @@ object PlaybackTracker {
      * is a teardown that is about to cancel everything in sight.
      */
     fun onPlaybackFinished(positionSeconds: Long) {
+        if (!trackingAllowed()) {
+            session = null
+            opening = null
+            return
+        }
         val closing = session ?: return
         session = null
         scope.launch(TrackLog.about(closing.videoId)) {
@@ -242,6 +289,7 @@ object PlaybackTracker {
      *   worth repeating — the answer was a failure, not a verdict.
      */
     private suspend fun open(videoId: String): Boolean = lock.withLock {
+        if (!trackingAllowed()) return@withLock true
         // The one thing the tracking request cannot be answered without. Fetched
         // through [StreamResolver] so it is shared with — and usually already
         // warmed by — the resolve that is starting this very track.

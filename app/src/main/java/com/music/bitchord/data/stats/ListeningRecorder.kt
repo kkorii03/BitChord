@@ -3,6 +3,9 @@ package com.music.bitchord.data.stats
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ListeningSink
+import com.music.bitchord.data.settings.PrivateListening
 import com.music.bitchord.data.taste.TasteSignals
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +55,19 @@ object ListeningRecorder {
     private var samplesSinceFlush = 0
 
     /**
+     * The playthrough private mode interrupted.
+     *
+     * Set while private listening is on and cleared only when a different
+     * track arrives. Without it, turning private mode off halfway through a
+     * song would let the rest of that same playthrough count — a play made
+     * partly in private would be written after the fact.
+     */
+    private var privatePlaythroughId: String? = null
+
+    private fun recordingAllowed(): Boolean =
+        PrivateListening.allows(ListeningSink.LISTENING_STATS, AppSettings.privateListening.value)
+
+    /**
      * One tick of the player's sampler.
      *
      * [durationMs] is the decoder's figure when it has one; the row's stated
@@ -60,6 +76,27 @@ object ListeningRecorder {
      */
     @Synchronized
     fun onSample(song: Song, durationMs: Long) {
+        if (!recordingAllowed()) {
+            // Keep reminding ourselves which playthrough is private; a private
+            // session that moves on to another track must suppress that one too.
+            privatePlaythroughId = song.videoId
+            if (currentId != null) {
+                // Anything already counted belongs to the part that was not
+                // private. Flush it now, then stop the clock so the gap across
+                // the switch is not credited to either side.
+                currentId = null
+                playedThisTrack = 0L
+                playCounted = false
+                completionCounted = false
+                samplesSinceFlush = 0
+                ListeningStats.flush(force = true)
+            }
+            return
+        }
+        if (privatePlaythroughId != null) {
+            if (song.videoId == privatePlaythroughId) return
+            privatePlaythroughId = null
+        }
         val now = System.currentTimeMillis()
         if (song.videoId != currentId) {
             // A new track anchors the clock and contributes nothing yet — see
@@ -125,6 +162,24 @@ object ListeningRecorder {
     }
 
     /**
+     * The toggle turned private listening on.
+     *
+     * Closes the ordinary part of the current playthrough straight away rather
+     * than waiting for the next sampler tick, and forgets the track so the next
+     * tick anchors instead of crediting the gap across the switch.
+     */
+    @Synchronized
+    fun onPrivateModeEnabled() {
+        if (currentId == null) return
+        currentId = null
+        playedThisTrack = 0L
+        playCounted = false
+        completionCounted = false
+        samplesSinceFlush = 0
+        ListeningStats.flush(force = true)
+    }
+
+    /**
      * The queue ran out, which is the one way a track can reach its end
      * without the sampler having seen 80% of it — a song shorter than a couple
      * of sample intervals, or one whose last tick arrived early.
@@ -134,6 +189,8 @@ object ListeningRecorder {
      */
     @Synchronized
     fun onEnded(song: Song) {
+        if (!recordingAllowed()) return
+        if (song.videoId == privatePlaythroughId) return
         if (song.videoId != currentId || completionCounted) return
         completionCounted = true
         TasteSignals.onCompleted(enriched(song))

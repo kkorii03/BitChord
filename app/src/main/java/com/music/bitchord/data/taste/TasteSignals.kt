@@ -9,6 +9,9 @@ import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ListeningSink
+import com.music.bitchord.data.settings.PrivateListening
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -140,7 +143,7 @@ object TasteSignals {
      * Called once per playthrough by the listening recorder, not per sample.
      */
     fun onPlayed(song: Song) {
-        if (!ready()) return
+        if (!ready() || !privateSensitiveRecordingAllowed()) return
         val now = System.currentTimeMillis()
         synchronized(lock) {
             val singer = singerOf(song)
@@ -161,7 +164,7 @@ object TasteSignals {
      * momentum, which is why the two are recorded together.
      */
     fun onCompleted(song: Song) {
-        if (!ready()) return
+        if (!ready() || !privateSensitiveRecordingAllowed()) return
         val now = System.currentTimeMillis()
         synchronized(lock) {
             val singer = singerOf(song)
@@ -193,7 +196,7 @@ object TasteSignals {
      * after a long seek back is not counted as a fresh one.
      */
     fun onUserAdvance(song: Song, positionMs: Long, durationMs: Long?) {
-        if (!ready()) return
+        if (!ready() || !privateSensitiveRecordingAllowed()) return
         // A position the player could not report is not evidence of a skip.
         if (positionMs < 0L) return
         val length = durationMs?.takeIf { it > 0L } ?: song.durationMillis()
@@ -221,7 +224,7 @@ object TasteSignals {
      * still kept, and the track's metadata is filled in the next time it plays.
      */
     fun onRated(videoId: String, song: Song?, status: LikeStatus) {
-        if (!ready() || videoId.isBlank()) return
+        if (!ready() || !privateSensitiveRecordingAllowed() || videoId.isBlank()) return
         val now = System.currentTimeMillis()
         synchronized(lock) {
             val track = song?.let { trackFor(it, singerOf(it)) }
@@ -412,6 +415,14 @@ object TasteSignals {
      * arrives. The window is the startup read of one small file.
      */
     private fun ready(): Boolean = this::file.isInitialized && loaded
+
+    /**
+     * Private listening also silences recommendation learning. Reading what was
+     * learned before is harmless; adding this session's plays, completions,
+     * skips and ratings to it is exactly what the mode promises not to do.
+     */
+    private fun privateSensitiveRecordingAllowed(): Boolean =
+        PrivateListening.allows(ListeningSink.TASTE, AppSettings.privateListening.value)
 
     // ── Shapes ──────────────────────────────────────────────────────────────
 

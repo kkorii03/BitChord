@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -360,6 +361,7 @@ fun MiniPlayer(
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
     // percent rather than a dp figure, so the corner stays exactly half the
     // height if the row's contents ever change it — which is what keeps a pill
@@ -421,11 +423,23 @@ fun MiniPlayer(
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                ExplicitSongTitle(
-                    song = song,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (privateListening) {
+                        Icon(
+                            imageVector = Icons.Rounded.VisibilityOff,
+                            contentDescription = stringResource(R.string.private_listening_indicator),
+                            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    ExplicitSongTitle(
+                        song = song,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 Text(
                     text = song.artist,
                     style = MaterialTheme.typography.bodyMedium,

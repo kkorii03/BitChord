@@ -204,6 +204,7 @@ fun SettingsScreen(
     val automixVideos by AppSettings.automixVideos.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
+    val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     // A property of the hardware, so it is read once rather than remembered
     // against a key that can never change — see [DeviceCodecs.playsDolbyAtmos],
@@ -829,6 +830,25 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setSkipSilence(!skipSilence) },
+                )
+            }
+            val privateListeningTitle = stringResource(R.string.private_listening)
+            row(privateListeningTitle, "private", "incognito", "history", "privacy") {
+                SettingsRow(
+                    icon = Icons.Rounded.VisibilityOff,
+                    title = privateListeningTitle,
+                    subtitle = stringResource(R.string.private_listening_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = privateListening,
+                            onCheckedChange = AppSettings::setPrivateListening,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setPrivateListening(!privateListening) },
                 )
             }
             val spatialAudioTitle = stringResource(R.string.spatial_audio)

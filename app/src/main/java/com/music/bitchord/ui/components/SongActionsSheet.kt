@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -147,6 +148,12 @@ fun SongActionsSheet(
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
+    /**
+     * The player's quick incognito switch. Null outside the player, where the
+     * switch belongs to Settings rather than to one row in a list.
+     */
+    privateListening: Boolean = false,
+    onTogglePrivateListening: (() -> Unit)? = null,
     /**
      * Sends the playing track back to YouTube's own upload, and keeps it there.
      * Offered for any player item that has one behind it — a substituted copy
@@ -383,6 +390,16 @@ fun SongActionsSheet(
                 value = sleepTimerStatus(),
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
+        }
+        onTogglePrivateListening?.let {
+            ActionRow(
+                icon = Icons.Rounded.VisibilityOff,
+                label = stringResource(R.string.private_listening),
+                value = stringResource(if (privateListening) R.string.enabled else R.string.off),
+                tint = if (privateListening) palette.accent else null,
+                accent = palette.accent,
+                onClick = it,
+            )
         }
         // Deliberately outside the online-only block below. Local files and
         // completed downloads use the same player lyric clock (including

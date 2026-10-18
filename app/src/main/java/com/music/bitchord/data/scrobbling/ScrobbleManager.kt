@@ -3,6 +3,9 @@ package com.music.bitchord.data.scrobbling
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ListeningSink
+import com.music.bitchord.data.settings.PrivateListening
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -37,7 +40,7 @@ class ScrobbleManager(
         song: Song?,
         durationMs: Long? = null,
     ) {
-        if (song == null) return
+        if (song == null || !recordingAllowed()) return
         songStartedAt = System.currentTimeMillis() / 1000
         songStarted = true
         startScrobbleTimer(song, durationMs)
@@ -47,6 +50,7 @@ class ScrobbleManager(
     }
 
     fun onSongResume(song: Song) {
+        if (!recordingAllowed()) return
         resumeScrobbleTimer(song)
     }
 
@@ -116,6 +120,7 @@ class ScrobbleManager(
     }
 
     private fun scrobbleSong(song: Song, durationSeconds: Int) {
+        if (!recordingAllowed()) return
         // A cover is scrobbled to who sings it — the byline "원곡자 · 가수 커버"
         // is how the player shows it, not an artist Last.fm knows.
         val scrobbleArtist = com.music.bitchord.data.cover.CoverTitles.creditedArtist(song).forScrobble()
@@ -137,6 +142,7 @@ class ScrobbleManager(
     }
 
     private fun updateNowPlaying(song: Song) {
+        if (!recordingAllowed()) return
         // A cover is scrobbled to who sings it — the byline "원곡자 · 가수 커버"
         // is how the player shows it, not an artist Last.fm knows.
         val scrobbleArtist = com.music.bitchord.data.cover.CoverTitles.creditedArtist(song).forScrobble()
@@ -174,6 +180,16 @@ class ScrobbleManager(
     }
 
     private fun String.forScrobble(): String = if (usePrimaryArtistOnly) primaryArtist() else this
+
+    /**
+     * Private listening was switched on: drop the pending scrobble and the
+     * "now playing" state. Nothing is submitted for the interrupted play, and
+     * turning the mode back off starts a new decision at the next track.
+     */
+    fun onPrivateModeEnabled() = destroy()
+
+    private fun recordingAllowed(): Boolean =
+        PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)
 
     companion object {
         private const val TAG = "ScrobbleManager"

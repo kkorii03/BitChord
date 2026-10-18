@@ -618,6 +618,9 @@
     <string name="signed_in_as">%1$s(으)로 로그인됨</string>
     <string name="signing_in">로그인하는 중…</string>
     <string name="sleep_timer">잠자기 타이머</string>
+    <string name="private_listening">시크릿 모드</string>
+    <string name="private_listening_subtitle">재생과 검색이 YouTube 기록·추천과 이 기기의 기록에 남지 않아요</string>
+    <string name="private_listening_indicator">시크릿 모드가 켜져 있어요</string>
     <string name="sources_no_lossless">무손실 오디오를 제공하는 활성 소스가 없습니다. 트랜스코딩 없이 무손실 파일을 재생하려면 애드온을 추가하십시오.</string>
     <string name="sources_order_footer">소스에 노래가 없거나 연결할 수 없으면 BitChord가 다음 소스를 시도합니다. YouTube보다 위에 있는 소스는 더 나은 버전을 찾으면 YouTube 음원을 대체할 수 있습니다.</string>
     <string name="sources_order_header">소스(이 순서대로 시도)</string>
