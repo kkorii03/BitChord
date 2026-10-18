@@ -86,6 +86,24 @@ fun YtMusicLoginScreen(
         else captureFrom(view, currentOnCaptured, currentOnUnavailable)
     }
 
+    // m.youtube.com is a single-page app: after the Google redirects it changes
+    // screens without another onPageFinished, so a jar that completes after the
+    // last page load was never seen and "이 프로필 사용" stayed disabled (S24).
+    // While this sign-in screen is open the jar is checked once a second — a
+    // cookie lookup, for the few seconds the screen exists.
+    LaunchedEffect(mode) {
+        if (mode != WebSessionMode.SIGN_IN) return@LaunchedEffect
+        var last: Boolean? = null
+        while (true) {
+            val ready = authCookieHeader() != null
+            if (ready != last) {
+                currentOnPageReady(ready)
+                last = ready
+            }
+            kotlinx.coroutines.delay(1_000)
+        }
+    }
+
     AndroidView(
         modifier = modifier.fillMaxSize(),
         factory = { context ->
@@ -105,6 +123,11 @@ fun YtMusicLoginScreen(
                 // continues to (youtube.com, not music.youtube.com) instead.
 
                 webViewClient = object : WebViewClient() {
+                    override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                        // Single-page navigations land here, not in onPageFinished.
+                        if (authCookieHeader() != null) currentOnPageReady(true)
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         // The cookie jar decides whether the login is done,
                         // not the page. A paywall, youtube.com's home page and
