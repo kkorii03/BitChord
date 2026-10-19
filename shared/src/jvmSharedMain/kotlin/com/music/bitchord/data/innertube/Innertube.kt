@@ -7,6 +7,7 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestBuilder
@@ -674,7 +675,8 @@ object Innertube {
             // empty-home check looks for, so it switches the session to the
             // youtube.com fallback instead of leaving Home on an error.
             val message = e.message.orEmpty()
-            if (browseId.startsWith("FEmusic") && ("401" in message || "403" in message)) {
+            val status = (e as? ResponseException)?.response?.status?.value
+            if (browseId.startsWith("FEmusic") && (status == 401 || status == 403)) {
                 MusicGateFallback.markGated("music browse $browseId refused: ${message.take(60)}")
             }
             throw e

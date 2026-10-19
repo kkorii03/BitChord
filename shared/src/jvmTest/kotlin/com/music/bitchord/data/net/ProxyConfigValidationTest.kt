@@ -111,4 +111,49 @@ class ProxyConfigValidationTest {
         assertFalse(text.contains("super-secret"))
         assertTrue(text.contains("'***'"))
     }
+
+    @Test
+    fun `a proxy URL parses credentials and is always music-only`() {
+        val config = ProxyUrlParser.parse("http://listener:p%40ss@proxy.example:8080")
+
+        assertEquals(ProxyMode.HTTP, config?.mode)
+        assertEquals("proxy.example", config?.host)
+        assertEquals(8080, config?.port)
+        assertEquals("listener", config?.username)
+        assertEquals("p@ss", config?.password)
+        assertEquals(ProxyScope.MUSIC_ONLY, config?.scope)
+        assertTrue(config?.usable == true)
+    }
+
+    @Test
+    fun `a socks5 URL uses the conventional port when none is given`() {
+        val config = ProxyUrlParser.parse("socks5://proxy.example")
+
+        assertEquals(ProxyMode.SOCKS5, config?.mode)
+        assertEquals("proxy.example", config?.host)
+        assertEquals(1080, config?.port)
+        assertEquals("", config?.username)
+        assertEquals("", config?.password)
+    }
+
+    @Test
+    fun `an IPv6 proxy URL keeps its literal and port`() {
+        val config = ProxyUrlParser.parse("http://[2001:db8::1]:3128")
+
+        assertEquals("2001:db8::1", config?.host)
+        assertEquals(3128, config?.port)
+        assertNull(ProxyValidation.validate(config!!))
+    }
+
+    @Test
+    fun `a malformed or unsupported proxy URL is rejected`() {
+        assertNull(ProxyUrlParser.parse(null))
+        assertNull(ProxyUrlParser.parse(""))
+        assertNull(ProxyUrlParser.parse("proxy.example:8080"))
+        assertNull(ProxyUrlParser.parse("ftp://proxy.example:21"))
+        assertNull(ProxyUrlParser.parse("http://"))
+        assertNull(ProxyUrlParser.parse("http://proxy.example:not-a-port"))
+        assertNull(ProxyUrlParser.parse("http://proxy.example:0"))
+        assertNull(ProxyUrlParser.parse("http://user@:8080"))
+    }
 }

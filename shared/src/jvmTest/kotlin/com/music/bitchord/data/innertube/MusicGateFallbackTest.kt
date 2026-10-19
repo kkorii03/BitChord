@@ -89,6 +89,31 @@ class MusicGateFallbackTest {
     }
 
     @Test
+    fun `a proxy change resets every identity to unknown`() {
+        val store = MemoryStore()
+        MusicGateFallback.init(store)
+        MusicGateFallback.markGated("test", key = "u:first", now = 42L)
+        MusicGateFallback.markGated("test", key = "u:second", now = 42L)
+        MusicGateFallback.markGated("test", key = "anonymous", now = 42L)
+        assertTrue(MusicGateFallback.active.value)
+
+        MusicGateFallback.resetAll()
+
+        for (key in listOf("u:first", "u:second", "anonymous")) {
+            assertEquals(MusicGateFallback.State.UNKNOWN, MusicGateFallback.state(key))
+            assertTrue(MusicGateFallback.shouldTryMusic(key, now = 42L))
+        }
+        assertFalse(MusicGateFallback.active.value)
+
+        // The reset is persisted, so a restart does not bring the old verdicts back.
+        MusicGateFallback.resetForTest()
+        MusicGateFallback.init(store)
+        for (key in listOf("u:first", "u:second", "anonymous")) {
+            assertEquals(MusicGateFallback.State.UNKNOWN, MusicGateFallback.state(key))
+        }
+    }
+
+    @Test
     fun `an observed gated home marks the anonymous session`() {
         // No cookie and no resolved scope: the shared "anonymous" entry.
         MusicGateFallback.observeBrowse("FEmusic_home", json(GATED_HOME))

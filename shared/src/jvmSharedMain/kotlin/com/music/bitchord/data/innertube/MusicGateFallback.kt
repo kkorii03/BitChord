@@ -178,6 +178,24 @@ object MusicGateFallback {
         return entry.state == State.GATED && now - entry.checkedAt >= RECHECK_MS
     }
 
+    /**
+     * Forgets every identity's verdict after the network they were made on
+     * changed — currently when the proxy settings move.
+     *
+     * A GATED verdict describes the old route, so it must not keep Home on the
+     * youtube.com fallback for a day after a working proxy was configured. The
+     * entries are kept (so they are persisted as UNKNOWN) rather than removed,
+     * which also makes the next re-check happen immediately through
+     * [shouldTryMusic].
+     */
+    @Synchronized
+    fun resetAll() {
+        if (entries.isEmpty()) return
+        entries.keys.forEach { entries[it] = Entry(State.UNKNOWN, 0L) }
+        persist()
+        refreshActive()
+    }
+
     fun markOpen(key: String = currentKey(), now: Long = System.currentTimeMillis()) {
         val changed = entries[key]?.state != State.OPEN
         if (!changed) return

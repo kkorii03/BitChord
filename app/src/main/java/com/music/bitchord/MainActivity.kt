@@ -148,6 +148,7 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibrarySort
@@ -466,11 +467,24 @@ class MainActivity : AppCompatActivity() {
                 Log.d(DEBUG_TAG, "debug: seeded $seeded plays")
             }
         }
+        if (intent.hasExtra(EXTRA_PROXY)) {
+            val config = ProxyUrlParser.parse(intent.getStringExtra(EXTRA_PROXY))
+            if (config != null) {
+                AppSettings.setProxyConfig(config)
+                Log.d(
+                    DEBUG_TAG,
+                    "debug: proxy ${config.mode} ${config.host}:${config.port} scope=${config.scope}",
+                )
+            } else {
+                Log.w(DEBUG_TAG, "debug: proxy URL ignored (invalid)")
+            }
+        }
     }
 
     private companion object {
         const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
         const val EXTRA_SEED_HISTORY = "bitchord.debug.seedHistory"
+        const val EXTRA_PROXY = "bitchord.debug.proxy"
         const val DEBUG_TAG = "BitChord"
     }
 }

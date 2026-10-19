@@ -11,6 +11,7 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.net.ProxyConfig
 import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyScope
@@ -762,6 +763,15 @@ object AppSettings {
     val proxyUsername = MutableStateFlow("")
     val proxyPassword = MutableStateFlow("")
     val proxyScope = MutableStateFlow(ProxyScope.MUSIC_ONLY)
+
+    /**
+     * Bumped whenever [publishProxy] really changes the route.
+     *
+     * The UI watches it to re-check the Music gate and reload Home/Explore at
+     * once, instead of waiting for the next daily re-check. The initial value
+     * is not a change, so collectors drop it.
+     */
+    val proxyRevision = MutableStateFlow(0L)
 
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
@@ -2204,16 +2214,22 @@ object AppSettings {
 
     private fun publishProxy() {
         if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
-        YouTubeProxy.update(
-            ProxyConfig(
-                mode = proxyMode.value,
-                host = proxyHost.value,
-                port = proxyPort.value,
-                username = proxyUsername.value,
-                password = proxyPassword.value,
-                scope = proxyScope.value,
-            ),
-        )
+        val next = ProxyConfig(
+            mode = proxyMode.value,
+            host = proxyHost.value,
+            port = proxyPort.value,
+            username = proxyUsername.value,
+            password = proxyPassword.value,
+            scope = proxyScope.value,
+        ).normalized()
+        val changed = next != YouTubeProxy.config
+        YouTubeProxy.update(next)
+        if (!changed) return
+        // The route the stored verdicts were made on has moved. Start every
+        // identity from UNKNOWN so the next Home/Explore request re-checks
+        // through the new route instead of trusting yesterday's answer.
+        MusicGateFallback.resetAll()
+        proxyRevision.value += 1
     }
 
     private fun publishSmbAuth() {

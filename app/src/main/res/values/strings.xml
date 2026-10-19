@@ -1253,8 +1253,12 @@
     <string name="proxy_scope_all_subtitle">www.youtube.com and googlevideo.com stream downloads use the proxy too.</string>
     <string name="proxy_connection_test">Test connection</string>
     <string name="proxy_connection_test_subtitle">Checks music.youtube.com Home through the proxy.</string>
+    <string name="proxy_gate_state">Music route</string>
+    <string name="proxy_gate_direct">Connected directly to YouTube Music</string>
+    <string name="proxy_gate_fallback">Korean restriction bypass in use (fallback route)</string>
+    <string name="proxy_test_action">Test</string>
     <string name="proxy_testing">Checking…</string>
-    <string name="proxy_test_ok">Working</string>
+    <string name="proxy_test_ok">Connected: YouTube Music Home has %1$d shelves</string>
     <string name="proxy_test_gated">Blocked</string>
     <string name="proxy_test_failed">Connection failed: %1$s</string>
     <string name="proxy_test_no_content">Connected, but the response had no content</string>

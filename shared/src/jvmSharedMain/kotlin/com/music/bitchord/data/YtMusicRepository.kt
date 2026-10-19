@@ -8,6 +8,7 @@ import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.YouTubeWebSearch
+import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.ChartsPage
@@ -30,6 +31,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
+import io.ktor.client.plugins.ResponseException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -82,7 +84,14 @@ object YtMusicRepository {
             val home = try {
                 Innertube.browse("FEmusic_home")
             } catch (failure: Exception) {
-                if (MusicGateFallback.isActive(key)) {
+                // A working proxy is the listener's way out of the gate. If
+                // the request fails on the wire, surface that error instead of
+                // silently reading youtube.com behind their back; only the
+                // gate's own refusal still justifies the fallback there.
+                if (
+                    MusicGateFallback.isActive(key) &&
+                    (!YouTubeProxy.config.usable || isMusicGateSignal(failure))
+                ) {
                     Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
                     return@call YouTubeFallback.home(force)
                 }
@@ -1395,6 +1404,20 @@ object YtMusicRepository {
             runCatching { Innertube.browse("FEmusic_home") }
         }
         return MusicGateFallback.isActive(key)
+    }
+
+    /**
+     * One immediate gate re-check after the proxy settings moved.
+     *
+     * [MusicGateFallback.resetAll] has already made every identity UNKNOWN, so
+     * [ensureGateKnown] performs exactly one browse through the new route.
+     */
+    suspend fun recheckGateNow(): Boolean = ensureGateKnown()
+
+    /** The gate's own refusal, as opposed to a network or proxy failure. */
+    private fun isMusicGateSignal(failure: Exception): Boolean {
+        val status = (failure as? ResponseException)?.response?.status?.value
+        return status == 401 || status == 403
     }
 
     /**

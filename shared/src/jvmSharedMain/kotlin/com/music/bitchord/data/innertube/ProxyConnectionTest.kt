@@ -6,10 +6,10 @@ import kotlinx.coroutines.CancellationException
 /**
  * The Settings > Network proxy "연결 테스트" action.
  *
- * One music.youtube.com Home browse, through whatever the proxy settings now
- * are. It is deliberately the same request the app's Home load makes, so a
- * pass means the normal YouTube Music path is reachable and not merely that a
- * TCP connection could be opened.
+ * One anonymous music.youtube.com Home browse, through whatever the proxy
+ * settings now are. Anonymous keeps the check cheap and independent of the
+ * account's gate verdict; a pass still proves the proxy can reach Music and
+ * not merely that a TCP connection could be opened.
  *
  * A pass also clears a stored GATED verdict ([MusicGateFallback.markOpen]):
  * the gate is a property of the network the request left from, and the proxy
@@ -19,8 +19,8 @@ import kotlinx.coroutines.CancellationException
 object ProxyConnectionTest {
 
     sealed interface Result {
-        /** YouTube Music answered with shelves. */
-        data object Ok : Result
+        /** YouTube Music answered with [shelves] shelves on Home. */
+        data class Ok(val shelves: Int) : Result
 
         /** YouTube Music answered, but with the no-Premium gate. */
         data object Gated : Result
@@ -30,15 +30,19 @@ object ProxyConnectionTest {
     }
 
     suspend fun run(): Result = try {
-        val home = Innertube.browse("FEmusic_home")
+        // Anonymous on purpose: this asks whether the route can reach Music at
+        // all, so it must not depend on (or disturb) the account's gate verdict
+        // before the answer is in.
+        val home = Innertube.browseAnonymous("FEmusic_home")
+        val shelves = MusicGateFallback.musicHomeShelfCount(home)
         when {
             MusicGateFallback.isGatedHome(home) -> {
                 MusicGateFallback.markGated("proxy connection test")
                 Result.Gated
             }
-            MusicGateFallback.musicHomeShelfCount(home) > 0 -> {
+            shelves > 0 -> {
                 if (YouTubeProxy.config.usable) MusicGateFallback.markOpen()
-                Result.Ok
+                Result.Ok(shelves)
             }
             else -> Result.Failed(null)
         }

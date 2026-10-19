@@ -34,6 +34,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.ProxyConnectionTest
 import com.music.bitchord.data.net.ProxyConfig
 import com.music.bitchord.data.net.ProxyConfigError
@@ -66,6 +67,7 @@ internal fun ProxySettingsSection() {
     val username by AppSettings.proxyUsername.collectAsStateWithLifecycle()
     val password by AppSettings.proxyPassword.collectAsStateWithLifecycle()
     val proxyScope by AppSettings.proxyScope.collectAsStateWithLifecycle()
+    val gateActive by MusicGateFallback.active.collectAsStateWithLifecycle()
 
     var editing by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -75,12 +77,23 @@ internal fun ProxySettingsSection() {
     val result = testResult
     val testSubtitle = when {
         testing -> stringResource(R.string.proxy_testing)
-        result is ProxyConnectionTest.Result.Ok -> stringResource(R.string.proxy_test_ok)
+        result is ProxyConnectionTest.Result.Ok ->
+            stringResource(R.string.proxy_test_ok, result.shelves)
         result is ProxyConnectionTest.Result.Gated -> stringResource(R.string.proxy_test_gated)
         result is ProxyConnectionTest.Result.Failed ->
             result.message?.let { stringResource(R.string.proxy_test_failed, it) }
                 ?: stringResource(R.string.proxy_test_no_content)
         else -> stringResource(R.string.proxy_connection_test_subtitle)
+    }
+    val runTest = {
+        if (!testing) {
+            testing = true
+            testResult = null
+            coroutineScope.launch {
+                testResult = ProxyConnectionTest.run()
+                testing = false
+            }
+        }
     }
 
     SettingsGroup(
@@ -92,6 +105,14 @@ internal fun ProxySettingsSection() {
             title = stringResource(R.string.proxy_type),
             subtitle = stringResource(mode.labelRes()),
             onClick = { editing = true },
+        )
+        RowDivider()
+        SettingsRow(
+            icon = Icons.Rounded.CheckCircle,
+            title = stringResource(R.string.proxy_gate_state),
+            subtitle = stringResource(
+                if (gateActive) R.string.proxy_gate_fallback else R.string.proxy_gate_direct,
+            ),
         )
 
         if (mode != ProxyMode.OFF) {
@@ -144,13 +165,12 @@ internal fun ProxySettingsSection() {
                 title = stringResource(R.string.proxy_connection_test),
                 subtitle = testSubtitle,
                 enabled = !testing && host.isNotBlank(),
-                onClick = {
-                    if (testing) return@SettingsRow
-                    testing = true
-                    testResult = null
-                    coroutineScope.launch {
-                        testResult = ProxyConnectionTest.run()
-                        testing = false
+                trailing = {
+                    TextButton(
+                        onClick = runTest,
+                        enabled = !testing && host.isNotBlank(),
+                    ) {
+                        Text(stringResource(R.string.proxy_test_action))
                     }
                 },
             )

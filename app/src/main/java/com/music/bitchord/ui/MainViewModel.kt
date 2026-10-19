@@ -1918,6 +1918,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackTracker.registeredPlays.drop(1).collect { homeStale = true }
         }
         viewModelScope.launch {
+            // AppSettings has already reset the gate when the route changed;
+            // ask once more through the new route and repaint both feeds
+            // rather than leaving yesterday's GATED answer on screen.
+            AppSettings.proxyRevision.drop(1).collect {
+                YtMusicRepository.recheckGateNow()
+                refresh(Feed.HOME, force = true)
+                refresh(Feed.EXPLORE)
+            }
+        }
+        viewModelScope.launch {
             AppSettings.filterNonMusicAudio.drop(1).collect {
                 if (_detailStack.value.any { page -> page.browseId == "local:all" }) {
                     reloadLocalDetail("local:all")

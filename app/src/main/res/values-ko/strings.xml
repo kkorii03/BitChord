@@ -1156,8 +1156,12 @@
     <string name="proxy_scope_all_subtitle">www.youtube.com과 googlevideo.com 스트림 다운로드도 프록시를 사용합니다.</string>
     <string name="proxy_connection_test">연결 테스트</string>
     <string name="proxy_connection_test_subtitle">프록시를 통해 music.youtube.com 홈을 확인합니다.</string>
+    <string name="proxy_gate_state">음악 연결 경로</string>
+    <string name="proxy_gate_direct">YouTube Music 직접 연결</string>
+    <string name="proxy_gate_fallback">한국 제한 우회 중(대체 경로)</string>
+    <string name="proxy_test_action">테스트</string>
     <string name="proxy_testing">확인 중…</string>
-    <string name="proxy_test_ok">정상</string>
+    <string name="proxy_test_ok">연결됨: YouTube Music 홈 %1$d개 선반</string>
     <string name="proxy_test_gated">차단됨</string>
     <string name="proxy_test_failed">연결 실패: %1$s</string>
     <string name="proxy_test_no_content">연결되었지만 응답에 콘텐츠가 없습니다</string>
