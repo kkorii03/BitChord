@@ -613,12 +613,30 @@ run_section() {
   return 0
 }
 
+# ---- Proxy save must not crash -------------------------------------------
+# Saving proxy settings once killed the app on the device (pool eviction on
+# the main thread). Saves an unreachable proxy through the debug switch, which
+# takes the same AppSettings path as the settings dialog, then checks the
+# process is still alive and the Home tab still renders.
+section_proxy() {
+  reset_home
+  adb shell am start -n $PKG/com.music.bitchord.MainActivity --es bitchord.debug.proxy "http://tour:tour@127.0.0.1:9"
+  sleep 12
+  if adb shell pidof $PKG >/dev/null 2>&1; then echo "proxy-save: alive" >> "$OUT/index.txt"; else echo "proxy-save: CRASHED" >> "$OUT/index.txt"; fi
+  adb logcat -d | grep -E 'FATAL EXCEPTION|NetworkOnMainThread' | head -20 > "$OUT/proxy-crash.txt" || true
+  shot proxy-saved "Home after saving an unreachable proxy (must not crash)"
+  # Turn it back off for any later section.
+  adb shell am start -n $PKG/com.music.bitchord.MainActivity --es bitchord.debug.proxy "off"
+  sleep 5
+}
+
 # Quick mode: only the screens a home/explore/artwork change can affect.
 if [ "${TOUR_QUICK:-0}" = "1" ]; then
   run_section section_home home
   run_section section_explore explore
   run_section section_search search
   run_section section_now_playing now-playing
+  run_section section_proxy proxy
 else
   run_section section_home home
   run_section section_explore explore
