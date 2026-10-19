@@ -506,7 +506,24 @@ object YtMusicRepository {
                         "(music ${if (page == null) "failed" else "returned no rows"})",
                 )
                 val songs = YouTubeWebSearch.songs(query)
-                if (songs.isNotEmpty()) {
+                if (filter == SearchFilter.SONGS) {
+                    // The Songs filter is what Korea's catalogue refuses. Its
+                    // album search still answers, so map the uploads to their
+                    // catalogue tracks and put the matching album tracks first;
+                    // whatever stays unmapped keeps the cover resolver's
+                    // cleaned youtube.com metadata.
+                    val catalogue = CatalogSongMapper.forSearch(query, songs)
+                    if (catalogue.isNotEmpty()) {
+                        val shown = YouTubeCoverResolver.enrich(
+                            catalogue,
+                            CatalogSongMapper.MAX_ROWS_PER_PAGE,
+                        )
+                        return@call SearchPage(
+                            shown.map { SearchResult.Track(it) }.distinctBy { it.identityKey() },
+                            null,
+                        )
+                    }
+                } else if (songs.isNotEmpty()) {
                     return@call SearchPage(songs.map { SearchResult.Track(it) }.distinctBy { it.identityKey() }, null)
                 }
             }

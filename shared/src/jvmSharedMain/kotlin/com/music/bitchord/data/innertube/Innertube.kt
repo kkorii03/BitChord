@@ -683,6 +683,23 @@ object Innertube {
         return response
     }
 
+    /**
+     * A music.youtube.com page read without the listener's account.
+     *
+     * The Korea/no-Premium album pages are the one catalogue source that still
+     * answers anonymously, and [com.music.bitchord.data.CatalogSongMapper]
+     * needs their track lists to replace video uploads with real songs. The
+     * request carries no cookie and no account visitor id, whatever the gate
+     * verdict happens to be. Its answer is deliberately not fed to
+     * [MusicGateFallback.observeBrowse]: an anonymous response says nothing
+     * about whether the signed-in identity is gated.
+     */
+    suspend fun browseAnonymous(browseId: String, params: String? = null): JsonObject =
+        postMusic("browse", forceAnonymous = true) {
+            put("browseId", browseId)
+            params?.let { put("params", it) }
+        }
+
     // ---- youtube.com WEB fallback -------------------------------------------
     //
     // Same endpoints, same cookie, different origin and client. Used only when
@@ -1544,6 +1561,7 @@ object Innertube {
         query: Map<String, String> = emptyMap(),
         hl: String = currentLanguage,
         gl: String = currentCountry,
+        forceAnonymous: Boolean = false,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // In Korea without Premium the signed-in Music session is refused
@@ -1552,7 +1570,7 @@ object Innertube {
         // 2026-10-18). Once the gate is known, Music is read signed out; the
         // account's own feeds come from youtube.com instead (YouTubeFallback).
         // Account writes keep the session so they fail visibly, not silently.
-        val anonymous = isAnonymousRequest(endpoint) ||
+        val anonymous = forceAnonymous || isAnonymousRequest(endpoint) ||
             (MusicGateFallback.isActive() && !isAccountWrite(endpoint))
         // The common authenticated path: Home, Library, likes, playlists,
         // account menus and all their continuations pass through it. Waiting

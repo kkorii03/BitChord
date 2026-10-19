@@ -174,9 +174,20 @@ internal object YouTubeFallback {
             emptyList()
         }
 
+        // One lookup allowance per Home build, shared by the rows this page
+        // actually shows. Recents and Quick picks spend it first.
+        val catalogBudget = CatalogSongMapper.newBudget()
+
         val recents = recentSongs
             .takeIf { it.isNotEmpty() }
             ?.let { musicOnlyShelf(HomeShelf(RECENT_TITLE, it.map(::shelfItem))) }
+            ?.let {
+                CatalogSongMapper.mapShelf(
+                    it,
+                    catalogBudget,
+                    sources = recentSongs.associateBy(Song::videoId),
+                )
+            }
         val recentsIds = recents?.items.orEmpty()
             .mapNotNullTo(HashSet<String>()) { it.videoId }
         val quickPicks = quickPicksShelf(
@@ -184,6 +195,7 @@ internal object YouTubeFallback {
             seed = YouTubeFallbackFeed.mostPlayed(localPlays)?.song
                 ?: recentSongs.firstOrNull(),
             excludedIds = recentsIds,
+            budget = catalogBudget,
         )
         val listenAgain = listenAgainShelf(localPlays)
         val myMixes = mixShelf(localPlays)
@@ -355,6 +367,7 @@ internal object YouTubeFallback {
         localPlays: List<LocalPlay>,
         seed: Song?,
         excludedIds: Set<String>,
+        budget: CatalogSongMapper.LookupBudget,
     ): HomeShelf? {
         val now = System.currentTimeMillis()
         val hidden = excludedIds + YouTubeFallbackFeed.recentIds(
@@ -391,7 +404,7 @@ internal object YouTubeFallback {
         ).distinctBy { it.videoId }
             .take(YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
         if (songs.isEmpty()) return null
-        val shown = songs.map(::displaySong)
+        val shown = CatalogSongMapper.mapPage(songs.map(::displaySong), budget)
         val covered = YouTubeCoverResolver.enrich(shown, YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
         return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, covered.map(::shelfItem))
     }
@@ -636,6 +649,7 @@ internal object YouTubeFallback {
         cachedCategory(browseId)?.let { return it }
         return categoryLock.withLock {
             cachedCategory(browseId)?.let { return@withLock it }
+            val catalogBudget = CatalogSongMapper.newBudget()
             val term = YouTubeCategoryRules.searchTerm(category)
             val official = runCatching { Innertube.searchFeaturedPlaylists(term) }
                 .onFailure {
@@ -648,7 +662,7 @@ internal object YouTubeFallback {
                 .let(YouTubeCategoryRules::officialPlaylists)
                 .take(CATEGORY_LIMIT)
             val songs = official.firstOrNull()?.browseId?.let { id ->
-                runCatching { officialPlaylistSongs(id, CATEGORY_SONG_LIMIT) }
+                runCatching { officialPlaylistSongs(id, CATEGORY_SONG_LIMIT, catalogBudget) }
                     .onFailure {
                         if (it is CancellationException) throw it
                         Log.w(TAG, "Official playlist $id failed: ${it.message}")
@@ -685,14 +699,19 @@ internal object YouTubeFallback {
      * Runtimes are kept, long compilations are dropped, and the first visible
      * page's titles/artists go through the display cleaner and cover resolver.
      */
-    private suspend fun officialPlaylistSongs(browseId: String, limit: Int): List<Song> {
+    private suspend fun officialPlaylistSongs(
+        browseId: String,
+        limit: Int,
+        budget: CatalogSongMapper.LookupBudget = CatalogSongMapper.newBudget(),
+    ): List<Song> {
         val page = webPlaylistPage(browseId, anonymous = true)
         val songs = page.songs.asSequence()
             .filter(YouTubeCategoryRules::isOfficialTrack)
             .take(limit)
             .map(::displaySong)
             .toList()
-        return YouTubeCoverResolver.enrich(songs, CATEGORY_COVER_LIMIT)
+        val mapped = CatalogSongMapper.mapPage(songs, budget)
+        return YouTubeCoverResolver.enrich(mapped, CATEGORY_COVER_LIMIT)
     }
 
     private fun cachedCategory(
@@ -1032,7 +1051,8 @@ internal object YouTubeFallback {
     }
 
     /** The display strings for a youtube.com row, before its cover is resolved. */
-    private fun displaySong(song: Song): Song = YouTubeDisplayCleaner.clean(song, knownArtists)
+    private fun displaySong(song: Song): Song =
+        if (song.albumId != null) song else YouTubeDisplayCleaner.clean(song, knownArtists)
 
     private fun displayShelf(shelf: HomeShelf): HomeShelf = shelf.copy(
         items = shelf.items.map { item ->
@@ -1054,7 +1074,9 @@ internal object YouTubeFallback {
     }
 
     private fun shelfItem(song: Song): ShelfItem {
-        val shown = displaySong(song)
+        // A catalogue row (album mapping or a local play) already names its
+        // release; the upload cleaner is only for youtube.com packaging.
+        val shown = if (song.albumId != null) song else displaySong(song)
         return ShelfItem(
             title = shown.title,
             subtitle = shown.artist,
