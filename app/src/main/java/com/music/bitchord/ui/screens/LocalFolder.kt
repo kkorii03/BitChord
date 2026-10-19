@@ -82,6 +82,7 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchPlayingBars
+import com.music.bitchord.ui.components.SegmentedControl
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.longPressMenuClickable
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
