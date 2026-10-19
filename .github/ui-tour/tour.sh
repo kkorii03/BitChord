@@ -38,7 +38,7 @@ adb logcat -c
 # and persists both; the second builds the home from them.
 if [ "${TOUR_GATED:-1}" = "1" ]; then
   adb shell am start -n $PKG/com.music.bitchord.MainActivity \
-    --ez bitchord.debug.forceMusicGate true --ez bitchord.debug.seedHistory true
+    --ez bitchord.debug.forceMusicGate true --ez bitchord.debug.seedHistory true --ez bitchord.debug.skipOnboarding true
   sleep 20
   adb shell am force-stop $PKG
   sleep 2

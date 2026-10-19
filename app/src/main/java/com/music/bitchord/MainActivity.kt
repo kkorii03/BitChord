@@ -558,6 +558,10 @@ class MainActivity : AppCompatActivity() {
                 Log.d(DEBUG_TAG, "debug: seeded $seeded plays")
             }
         }
+        if (intent.getBooleanExtra(EXTRA_SKIP_ONBOARDING, false)) {
+            AppSettings.setOnboardingComplete()
+            Log.d(DEBUG_TAG, "debug: onboarding skipped")
+        }
         if (intent.hasExtra(EXTRA_PROXY)) {
             val config = ProxyUrlParser.parse(intent.getStringExtra(EXTRA_PROXY))
             if (config != null) {
@@ -575,6 +579,7 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
         const val EXTRA_SEED_HISTORY = "bitchord.debug.seedHistory"
+        const val EXTRA_SKIP_ONBOARDING = "bitchord.debug.skipOnboarding"
         const val EXTRA_PROXY = "bitchord.debug.proxy"
         const val DEBUG_TAG = "BitChord"
     }

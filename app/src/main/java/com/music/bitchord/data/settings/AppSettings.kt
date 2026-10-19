@@ -1090,6 +1090,10 @@ object AppSettings {
     }
 
     private fun readAll() {
+        // Read before the migrations below write their defaults: on a fresh
+        // install this is the only moment the file is still empty.
+        val onboardingSaved = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
+        val existingInstall = !onboardingSaved && hadDataBeforeOnboarding()
         migrateCellularQualityDefault()
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
@@ -1156,7 +1160,15 @@ object AppSettings {
             batteryPercent,
             charging.value,
         )
-        onboardingComplete.value = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
+        // The welcome pages are new, so their flag is absent on an install that
+        // already has a listener's settings, account or history. Sending those
+        // through onboarding would read as the app having forgotten them, so
+        // an existing install is marked done silently.
+        val onboardingDone = onboardingSaved || existingInstall
+        onboardingComplete.value = onboardingDone
+        if (!onboardingSaved && onboardingDone) {
+            prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
+        }
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
@@ -1728,6 +1740,18 @@ object AppSettings {
         onboardingComplete.value = true
         prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
     }
+
+    /**
+     * Whether this install holds anything a listener made before the welcome
+     * pages existed: a saved setting, a restored session, or a recorded play.
+     * A fresh install has none of them, so it still gets onboarding.
+     */
+    private fun hadDataBeforeOnboarding(): Boolean =
+        prefs.all.keys.any { it != KEY_ONBOARDING_COMPLETE } ||
+            runCatching { authStore.isSignedIn }.getOrDefault(false) ||
+            runCatching {
+                com.music.bitchord.data.stats.ListeningStats.hasStoredHistory(appContext)
+            }.getOrDefault(false)
 
     fun setStopOnTaskRemoved(value: Boolean) {
         stopOnTaskRemoved.value = value
