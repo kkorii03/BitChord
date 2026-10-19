@@ -1884,7 +1884,7 @@ object AudioCache {
         var bytes = 0L
         var failure: String? = null
 
-        fun pullTracked(at: Long, size: Long): Pair<Long, String?> {
+        suspend fun pullTracked(at: Long, size: Long): Pair<Long, String?> {
             probes++
             val outcome = pull(cacheKey, uri, at, size, pinKey)
             bytes += outcome.first

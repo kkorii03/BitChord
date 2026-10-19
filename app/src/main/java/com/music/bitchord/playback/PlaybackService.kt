@@ -7745,6 +7745,12 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToDefaultPosition(mediaItemIndex: Int) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "cmd: seek-to-item idx=$mediaItemIndex from ui " +
+                    "(from ${wrappedPlayer.currentMediaItemIndex}/${wrappedPlayer.mediaItemCount})",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
             onUserIntent()
             super.seekToDefaultPosition(mediaItemIndex)
         }
@@ -7873,19 +7879,6 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 base
             }
-        }
-
-        override fun seekToMediaItem(mediaItemIndex: Int) {
-            if (locked()) return
-            TrackLog.d(
-                "BitChord",
-                "cmd: seek-to-item idx=$mediaItemIndex from ui " +
-                    "(from ${wrappedPlayer.currentMediaItemIndex}/${wrappedPlayer.mediaItemCount})",
-                about = wrappedPlayer.currentMediaItem?.mediaId,
-            )
-            onUserIntent()
-            crossfade.onSkipRequested()
-            super.seekToMediaItem(mediaItemIndex)
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
@@ -9143,10 +9136,10 @@ private fun transitionReason(reason: Int): String = when (reason) {
 private fun playReason(reason: Int): String = when (reason) {
     Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "ui"
     Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "focus"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_GAIN -> "focus"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "noisy"
     Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
     Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_PLAYLIST_CHANGED -> "queue"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "suppressed"
     else -> "other($reason)"
 }
 
