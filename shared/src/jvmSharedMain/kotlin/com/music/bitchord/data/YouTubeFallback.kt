@@ -102,6 +102,14 @@ internal object YouTubeFallback {
     @Volatile
     private var homeCache: Triple<String, Long, HomeFeed>? = null
 
+    /**
+     * Artist names from the listener's own plays, used by the display cleaner
+     * to recognise an `Artist - Title` upload on a personal channel. Refreshed
+     * with the local history that builds each Home; empty until the first build.
+     */
+    @Volatile
+    private var knownArtists: Set<String> = emptySet()
+
     private const val LIKED_CACHE_MS = 5L * 60 * 1000
 
     // ---- Home ---------------------------------------------------------------
@@ -148,6 +156,10 @@ internal object YouTubeFallback {
 
     private suspend fun buildHome(): HomeFeed {
         val localPlays = LocalPlayHistory.recent(HISTORY_LIMIT)
+        knownArtists = localPlays.asSequence()
+            .map { it.song.artist }
+            .filter { it.isNotBlank() }
+            .toSet()
         val recentSongs = try {
             mergedHistory(RECENT_LIMIT, localPlays)
         } catch (cancelled: CancellationException) {
@@ -193,8 +205,9 @@ internal object YouTubeFallback {
             liked = liked,
             youtubeHome = personalShelves,
             // The Music channel's own shelves are music by construction; only
-            // the mixed uploads above need per-row classification.
-            musicChannel = channelShelves(),
+            // the mixed uploads above need per-row classification. Their titles
+            // still need the display cleaner.
+            musicChannel = channelShelves().map(::displayShelf),
         )
         return HomeFeed(
             shelves = enrichCovers(YouTubeFallbackFeed.dedupeShelves(shelves)),
@@ -373,7 +386,8 @@ internal object YouTubeFallback {
         ).distinctBy { it.videoId }
             .take(YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
         if (songs.isEmpty()) return null
-        val covered = YouTubeCoverResolver.enrich(songs, YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
+        val shown = songs.map(::displaySong)
+        val covered = YouTubeCoverResolver.enrich(shown, YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
         return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, covered.map(::shelfItem))
     }
 
@@ -381,21 +395,40 @@ internal object YouTubeFallback {
      * An RD mix card for each of the recent local history's top artists, with
      * songs filling any shortfall, capped at [YouTubeFallbackFeed.MIX_LIMIT].
      */
-    private fun mixShelf(localPlays: List<LocalPlay>): HomeShelf? {
+    private suspend fun mixShelf(localPlays: List<LocalPlay>): HomeShelf? {
         val seeds = YouTubeFallbackFeed.mixSeeds(localPlays)
         if (seeds.isEmpty()) return null
         val items = seeds.map { seed ->
+            val shown = displaySong(
+                Song(
+                    videoId = seed.videoId,
+                    title = seed.title,
+                    artist = seed.artist,
+                    thumbnailUrl = seed.thumbnailUrl,
+                ),
+            )
             ShelfItem(
-                title = if (seed.artist.isBlank()) "${seed.title} 믹스" else "${seed.artist} 믹스",
+                title = if (shown.artist.isBlank()) "${shown.title} 믹스" else "${shown.artist} 믹스",
                 subtitle = "믹스",
-                // The local record already holds the cover the listener saw;
-                // the UI crops it square when it is a video frame.
-                thumbnailUrl = seed.thumbnailUrl,
+                // The local record already holds the cover the listener saw.
+                // When it has none, the video's hq720 still is tried, and the
+                // cover resolver may replace it with the square album cover.
+                thumbnailUrl = seed.thumbnailUrl?.takeIf { it.isNotBlank() }
+                    ?: seedStill(shown),
                 videoId = null,
                 browseId = "RD${seed.videoId}",
             )
         }
         return HomeShelf(YouTubeFallbackFeed.MY_MIXES_TITLE, items)
+    }
+
+    /** A missing mix cover: the square catalogue cover, else the video's hq720 frame. */
+    private suspend fun seedStill(song: Song): String {
+        val still = "https://i.ytimg.com/vi/${song.videoId}/hq720.jpg"
+        return YouTubeCoverResolver.enrich(listOf(song.copy(thumbnailUrl = still)), 1)
+            .firstOrNull()
+            ?.thumbnailUrl
+            ?: still
     }
 
     private suspend fun likedShelf(): HomeShelf? {
@@ -425,6 +458,8 @@ internal object YouTubeFallback {
         return shelf.copy(
             items = shelf.items.filterIndexed { index, item ->
                 item.videoId == null || index !in songIndexes || item.videoId in kept
+            }.map { item ->
+                if (item.videoId != null) displayItem(item) else item
             },
         )
     }
@@ -466,7 +501,7 @@ internal object YouTubeFallback {
      * ([RecentShelf.LOCAL_ONLY_MINIMUM]), because it mixes in everything watched
      * in the YouTube app.
      */
-    suspend fun history(): List<Song> = mergedHistory(HISTORY_LIMIT)
+    suspend fun history(): List<Song> = mergedHistory(HISTORY_LIMIT).map(::displaySong)
 
     private suspend fun mergedHistory(
         limit: Int,
@@ -500,7 +535,7 @@ internal object YouTubeFallback {
     private suspend fun youtubeHistory(): List<Song> {
         val parsed = YouTubeWebParser.parseHistory(Innertube.browseYouTube("FEhistory"))
         val music = YouTubeMusicClassifier.filterMusic(parsed, HISTORY_LIMIT)
-        return YouTubeCoverResolver.enrich(music, HISTORY_LIMIT)
+        return YouTubeCoverResolver.enrich(music.map(::displaySong), HISTORY_LIMIT)
     }
 
     suspend fun quickPicks(excludeSongIds: Set<String>): List<Song> {
@@ -578,34 +613,40 @@ internal object YouTubeFallback {
     }
 
     /**
-     * One curated category, from an anonymous youtube.com search: a playlists
-     * shelf and a songs shelf. The result is cached for [CATEGORY_CACHE_MS];
-     * an empty answer is not cached so a later tap can try again.
+     * One curated category, from three anonymous youtube.com searches: three
+     * playlist shelves (deduped across the queries) and a songs shelf narrowed
+     * to single tracks. The result is cached for [CATEGORY_CACHE_MS]; an empty
+     * answer is not cached so a later tap can try again.
      */
     private suspend fun curatedCategoryShelves(category: ExploreCategory): List<HomeShelf> {
         val browseId = ExploreCategories.browseId(category)
         cachedCategory(browseId)?.let { return it }
         return categoryLock.withLock {
             cachedCategory(browseId)?.let { return@withLock it }
-            val playlists = runCatching { YouTubeWebSearch.playlists(category.query) }
-                .onFailure {
-                    if (it is CancellationException) throw it
-                    Log.w(TAG, "YouTube playlist search failed: ${it.message}")
-                }
-                .getOrDefault(emptyList())
-                .distinctBy { it.browseId }
-                .take(CATEGORY_LIMIT)
-            val songs = runCatching { YouTubeWebSearch.songs(category.query) }
+            val playlistGroups = YouTubeCategoryRules.playlistQueries(category).map { query ->
+                runCatching { YouTubeWebSearch.playlists(query) }
+                    .onFailure {
+                        if (it is CancellationException) throw it
+                        Log.w(TAG, "YouTube playlist search failed: ${it.message}")
+                    }
+                    .getOrDefault(emptyList())
+            }
+            val shelves = YouTubeCategoryRules
+                .playlistShelves(playlistGroups, CATEGORY_LIMIT)
+                .toMutableList()
+            val songs = runCatching {
+                YouTubeWebSearch.songs(YouTubeCategoryRules.songQuery(category))
+            }
                 .onFailure {
                     if (it is CancellationException) throw it
                     Log.w(TAG, "YouTube song search failed: ${it.message}")
                 }
                 .getOrDefault(emptyList())
                 .let(::cheapMusicOnly)
+                .filter(YouTubeCategoryRules::isSingleSong)
+                .map(::displaySong)
                 .distinctBy { it.videoId }
                 .take(CATEGORY_LIMIT)
-            val shelves = ArrayList<HomeShelf>(2)
-            if (playlists.isNotEmpty()) shelves += HomeShelf("재생목록", playlists)
             if (songs.isNotEmpty()) shelves += HomeShelf("노래", songs.map(::shelfItem))
             val result = shelves.toList()
             if (result.isNotEmpty()) {
@@ -657,7 +698,9 @@ internal object YouTubeFallback {
         cachedCategoryArtwork(browseId, now)?.let { return it }
         return artworkLock.withPermit {
             cachedCategoryArtwork(browseId, now)?.let { return@withPermit it }
-            val url = runCatching { YouTubeWebSearch.playlists(category.query) }
+            val query = YouTubeCategoryRules.playlistQueries(category).firstOrNull()
+                ?: return@withPermit null
+            val url = runCatching { YouTubeWebSearch.playlists(query) }
                 .onFailure {
                     if (it is CancellationException) throw it
                     Log.w(TAG, "YouTube playlist artwork search failed: ${it.message}")
@@ -894,11 +937,13 @@ internal object YouTubeFallback {
             if (indexes.isEmpty()) return@map shelf
             val songs = indexes.map { index ->
                 val item = shelf.items[index]
-                Song(
-                    videoId = item.videoId.orEmpty(),
-                    title = item.title,
-                    artist = item.subtitle,
-                    thumbnailUrl = item.thumbnailUrl,
+                displaySong(
+                    Song(
+                        videoId = item.videoId.orEmpty(),
+                        title = item.title,
+                        artist = item.subtitle,
+                        thumbnailUrl = item.thumbnailUrl,
+                    ),
                 )
             }
             val byIndex = indexes
@@ -907,17 +952,48 @@ internal object YouTubeFallback {
             budget -= indexes.size
             shelf.copy(
                 items = shelf.items.mapIndexed { index, item ->
-                    byIndex[index]?.let { item.copy(thumbnailUrl = it.thumbnailUrl) } ?: item
+                    byIndex[index]?.let { song ->
+                        item.copy(
+                            title = song.title,
+                            subtitle = song.artist,
+                            thumbnailUrl = song.thumbnailUrl,
+                        )
+                    } ?: item
                 },
             )
         }
     }
 
-    private fun shelfItem(song: Song): ShelfItem = ShelfItem(
-        title = song.title,
-        subtitle = song.artist,
-        thumbnailUrl = song.thumbnailUrl,
-        videoId = song.videoId,
-        browseId = null,
+    /** The display strings for a youtube.com row, before its cover is resolved. */
+    private fun displaySong(song: Song): Song = YouTubeDisplayCleaner.clean(song, knownArtists)
+
+    private fun displayShelf(shelf: HomeShelf): HomeShelf = shelf.copy(
+        items = shelf.items.map { item ->
+            if (item.videoId != null) displayItem(item) else item
+        },
     )
+
+    private fun displayItem(item: ShelfItem): ShelfItem {
+        val videoId = item.videoId ?: return item
+        val cleaned = displaySong(
+            Song(
+                videoId = videoId,
+                title = item.title,
+                artist = item.subtitle,
+                thumbnailUrl = item.thumbnailUrl,
+            ),
+        )
+        return item.copy(title = cleaned.title, subtitle = cleaned.artist)
+    }
+
+    private fun shelfItem(song: Song): ShelfItem {
+        val shown = displaySong(song)
+        return ShelfItem(
+            title = shown.title,
+            subtitle = shown.artist,
+            thumbnailUrl = shown.thumbnailUrl,
+            videoId = shown.videoId,
+            browseId = null,
+        )
+    }
 }

@@ -48,6 +48,8 @@ internal object YouTubeCoverResolver {
 
     private const val STORE_KEY = "youtube_cover_cache_v1"
     private const val NONE = "none"
+    /** Unit separator: not legal in a URL and never in a catalogue title. */
+    private const val FIELD = "\u001F"
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -76,6 +78,20 @@ internal object YouTubeCoverResolver {
         val album: String? = null,
     )
 
+    /**
+     * The catalogue's own metadata for a row whose recording was confirmed.
+     *
+     * [artworkUrl] is the square cover; [title] and [artist] are the names the
+     * store files the same recording under ("Friday (feat. Jang Yi-jeong)" /
+     * "IU"), which read better than an upload's packaging. Empty strings mean
+     * an older cache entry kept only the artwork.
+     */
+    data class Match(
+        val title: String,
+        val artist: String,
+        val artworkUrl: String?,
+    )
+
     /** Whether [url] is a 16:9 video frame that a square cover could replace. */
     fun isVideoThumbnail(url: String?): Boolean {
         val value = url ?: return false
@@ -88,7 +104,19 @@ internal object YouTubeCoverResolver {
      * The square cover for [song], or null when the row should keep its
      * thumbnail. Never throws: a network failure is reported as no answer.
      */
-    suspend fun coverFor(song: Song): String? {
+    suspend fun coverFor(song: Song): String? = matchFor(song)?.artworkUrl
+
+    /**
+     * The catalogue metadata for [song] when iTunes or Deezer has the same
+     * recording, or null when neither could confirm it. A confirmed match
+     * carries the store's title and artist as well as its square artwork, so
+     * callers can show the catalogue's names while keeping the video id.
+     *
+     * Settled answers, including "no match", are cached; entries written by
+     * the artwork-only version of this cache are still read as a cover with no
+     * display metadata.
+     */
+    suspend fun matchFor(song: Song): Match? {
         if (!isVideoThumbnail(song.thumbnailUrl)) return null
         val target = TrackMatcher.targetOf(song)
         val artist = cleanArtist(target.artist)
@@ -96,9 +124,7 @@ internal object YouTubeCoverResolver {
         val key = cacheKey(target.title, artist)
 
         cache.ensureLoaded(MusicGateFallback.sharedStore())
-        cache.get(key)?.let { entry ->
-            return if (entry.value == NONE) null else entry.value.takeIf { it.startsWith("http") }
-        }
+        cache.get(key)?.let { entry -> return decode(entry.value) }
 
         val query = TrackMatcher.queries(
             TrackMatcher.Target(title = target.title, artist = artist),
@@ -106,22 +132,32 @@ internal object YouTubeCoverResolver {
 
         val itunes = searchItunes(query)
         itunes?.firstNotNullOfOrNull { candidate ->
-            candidate.artworkUrl?.takeIf {
-                accept(target.title, artist, candidate.title, candidate.artist)
+            candidate.takeIf {
+                it.artworkUrl != null &&
+                    accept(target.title, artist, it.title, it.artist)
             }
-        }?.let { url ->
-            cache.put(key, url)
-            return url
+        }?.let { candidate ->
+            return remember(
+                key = key,
+                candidate = candidate,
+                fallbackTitle = target.title,
+                fallbackArtist = artist,
+            )
         }
 
         val deezer = searchDeezer(query)
         deezer?.firstNotNullOfOrNull { candidate ->
-            candidate.artworkUrl?.takeIf {
-                accept(target.title, artist, candidate.title, candidate.artist)
+            candidate.takeIf {
+                it.artworkUrl != null &&
+                    accept(target.title, artist, it.title, it.artist)
             }
-        }?.let { url ->
-            cache.put(key, url)
-            return url
+        }?.let { candidate ->
+            return remember(
+                key = key,
+                candidate = candidate,
+                fallbackTitle = target.title,
+                fallbackArtist = artist,
+            )
         }
 
         // Both services answered and neither had the recording: settled, worth
@@ -132,9 +168,10 @@ internal object YouTubeCoverResolver {
     }
 
     /**
-     * Rewrites the thumbnails of the first [limit] songs that carry a video
-     * frame. Order is preserved, and every row is returned whether or not it
-     * found a cover.
+     * Rewrites the thumbnail, title and artist of the first [limit] songs that
+     * carry a video frame, using the catalogue's metadata where it confirmed
+     * the recording. Order is preserved, and every row is returned whether or
+     * not it found a match.
      */
     suspend fun enrich(songs: List<Song>, limit: Int = 30): List<Song> {
         if (songs.isEmpty() || limit <= 0) return songs
@@ -145,18 +182,63 @@ internal object YouTubeCoverResolver {
                     async { song }
                 } else {
                     async {
-                        val cover = try {
-                            gate.withPermit { coverFor(song) }
+                        val match = try {
+                            gate.withPermit { matchFor(song) }
                         } catch (cancelled: kotlinx.coroutines.CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
                             null
                         }
-                        if (cover != null) song.copy(thumbnailUrl = cover) else song
+                        match?.let {
+                            // A cover's title and byline name its own singer.
+                            // The catalogue match may still supply the square
+                            // artwork, but never replaces that credit.
+                            val keepCredit = CoverTitles.isCover(song)
+                            song.copy(
+                                title = if (keepCredit) song.title
+                                else it.title.ifBlank { song.title },
+                                artist = if (keepCredit) song.artist
+                                else it.artist.ifBlank { song.artist },
+                                thumbnailUrl = it.artworkUrl ?: song.thumbnailUrl,
+                            )
+                        } ?: song
                     }
                 }
             }.awaitAll()
         }
+    }
+
+    private fun remember(
+        key: String,
+        candidate: Candidate,
+        fallbackTitle: String,
+        fallbackArtist: String,
+    ): Match {
+        val match = Match(
+            title = candidate.title.trim().ifBlank { fallbackTitle },
+            artist = candidate.artist.trim().ifBlank { fallbackArtist },
+            artworkUrl = candidate.artworkUrl,
+        )
+        cache.put(key, encode(match))
+        return match
+    }
+
+    private fun encode(match: Match): String =
+        listOf(match.artworkUrl.orEmpty(), match.title, match.artist).joinToString(FIELD)
+
+    private fun decode(value: String): Match? {
+        if (value == NONE) return null
+        val parts = value.split(FIELD)
+        if (parts.size >= 3) {
+            return Match(
+                title = parts[1],
+                artist = parts[2],
+                artworkUrl = parts[0].takeIf { it.startsWith("http") },
+            )
+        }
+        // An entry from the artwork-only cache: still a cover, no display names.
+        return value.takeIf { it.startsWith("http") }
+            ?.let { Match(title = "", artist = "", artworkUrl = it) }
     }
 
     /**
