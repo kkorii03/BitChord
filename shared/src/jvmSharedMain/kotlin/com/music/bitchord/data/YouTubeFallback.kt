@@ -103,7 +103,7 @@ internal object YouTubeFallback {
     private var channelCache: Pair<Long, List<HomeShelf>>? = null
 
     @Volatile
-    private var likedCache: Pair<Long, YouTubeWebParser.PlaylistResult?>? = null
+    private var likedCache: Triple<String, Long, YouTubeWebParser.PlaylistResult?>? = null
 
     @Volatile
     private var homeCache: Triple<String, Long, HomeFeed>? = null
@@ -1011,13 +1011,22 @@ internal object YouTubeFallback {
         ).songs
 
     private suspend fun likedFirstPage(): YouTubeWebParser.PlaylistResult? {
-        // Liked music is per-account too; a signed-out tour skips it rather
-        // than asking youtube.com a question it cannot answer.
+        // Liked music is per-account: key the short cache by the session, so a
+        // cookie/profile change cannot serve the previous account's rows for
+        // the rest of the five-minute window. The session is read again under
+        // the lock, before any request, so a switch that lands while a lookup
+        // is in flight cannot store the old account's rows under the new key.
         if (Innertube.cookie == null) return null
+        val sessionKey = Innertube.sessionKey()
         val now = System.currentTimeMillis()
-        likedCache?.let { (at, page) -> if (now - at < LIKED_CACHE_MS) return page }
+        likedCache?.let { (key, at, page) ->
+            if (key == sessionKey && now - at < LIKED_CACHE_MS) return page
+        }
         return likedLock.withLock {
-            likedCache?.let { (at, page) -> if (now - at < LIKED_CACHE_MS) return@withLock page }
+            val current = Innertube.sessionKey()
+            likedCache?.let { (key, at, page) ->
+                if (key == current && now - at < LIKED_CACHE_MS) return@withLock page
+            }
             for (id in listOf(LIKED_MUSIC, LIKED_VIDEOS)) {
                 val root = runCatching { Innertube.browseYouTube(id) }
                     .onFailure { if (it is CancellationException) throw it }
@@ -1025,10 +1034,10 @@ internal object YouTubeFallback {
                 val page = YouTubeWebParser.parsePlaylist(root)
                 if (page.songs.isEmpty()) continue
                 page.continuation?.let(::rememberContinuation)
-                likedCache = System.currentTimeMillis() to page
+                likedCache = Triple(current, System.currentTimeMillis(), page)
                 return@withLock page
             }
-            likedCache = System.currentTimeMillis() to null
+            likedCache = Triple(current, System.currentTimeMillis(), null)
             null
         }
     }

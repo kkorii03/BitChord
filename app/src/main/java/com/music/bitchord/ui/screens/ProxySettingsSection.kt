@@ -21,6 +21,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,7 +76,17 @@ internal fun ProxySettingsSection() {
     var editing by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<ProxyConnectionTest.Result?>(null) }
+    var testRevision by remember { mutableStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+
+    // A result belongs to the route it was measured on. The saved dialog
+    // already clears it on save; this also covers the scope switch and any
+    // other publication of a new configuration. The revision makes an
+    // in-flight test's late answer land only if the route did not change.
+    LaunchedEffect(mode, host, port, username, password, proxyScope) {
+        testRevision++
+        testResult = null
+    }
 
     val result = testResult
     val testSubtitle = when {
@@ -92,8 +103,10 @@ internal fun ProxySettingsSection() {
         if (!testing) {
             testing = true
             testResult = null
+            val revision = ++testRevision
             coroutineScope.launch {
-                testResult = ProxyConnectionTest.run()
+                val outcome = ProxyConnectionTest.run()
+                if (revision == testRevision) testResult = outcome
                 testing = false
             }
         }

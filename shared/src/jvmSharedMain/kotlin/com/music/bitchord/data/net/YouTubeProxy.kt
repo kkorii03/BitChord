@@ -68,11 +68,24 @@ object YouTubeProxy {
      * The selector OkHttp asks per route. Everything outside the chosen scope
      * answers [Proxy.NO_PROXY] and keeps its normal connection.
      */
-    internal val proxySelector: ProxySelector = object : ProxySelector() {
+    internal val proxySelector: ProxySelector = selector(ignoreHealth = false)
+
+    /**
+     * The same selector without the "proxy was unreachable" bypass.
+     *
+     * Used for a request that was already decided to go through the proxy (and
+     * for the Settings connection test): if the health memory flips to
+     * UNREACHABLE between that decision and the selector running, the request
+     * must still really use the proxy — otherwise a success would be recorded
+     * for a route it never took and would clear a fresh UNREACHABLE.
+     */
+    internal val forceProxySelector: ProxySelector = selector(ignoreHealth = true)
+
+    private fun selector(ignoreHealth: Boolean): ProxySelector = object : ProxySelector() {
         override fun select(uri: URI): List<Proxy> {
             val config = current
             if (!config.usable) return listOf(Proxy.NO_PROXY)
-            if (ProxyHealthMonitor.shouldBypassProxy()) return listOf(Proxy.NO_PROXY)
+            if (!ignoreHealth && ProxyHealthMonitor.shouldBypassProxy()) return listOf(Proxy.NO_PROXY)
             if (!ProxyScopeMatcher.matches(uri.host, uri.path, config.scope)) {
                 return listOf(Proxy.NO_PROXY)
             }

@@ -1213,9 +1213,15 @@ private fun BitChordApp(
     val proxyHealth by ProxyHealthMonitor.state.collectAsStateWithLifecycle()
     var proxyHealthNotified by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(proxyHealth) {
-        if (proxyHealth == ProxyHealth.UNREACHABLE && !proxyHealthNotified) {
-            proxyHealthNotified = true
-            Toast.makeText(context, R.string.proxy_health_home_notice, Toast.LENGTH_LONG).show()
+        if (proxyHealth == ProxyHealth.UNREACHABLE) {
+            if (!proxyHealthNotified) {
+                proxyHealthNotified = true
+                Toast.makeText(context, R.string.proxy_health_home_notice, Toast.LENGTH_LONG).show()
+            }
+        } else {
+            // Recovered (or never known): a later outage is news again. Still
+            // at most one notice per outage.
+            proxyHealthNotified = false
         }
     }
     val currentFeed = when {

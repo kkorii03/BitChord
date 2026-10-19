@@ -9,7 +9,8 @@ import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.innertube.YouTubeWebSearch
-import com.music.bitchord.data.net.ProxyFailure
+import com.music.bitchord.data.net.ProxyHealth
+import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
@@ -88,17 +89,22 @@ object YtMusicRepository {
         // because Home is the first page every launch touches.
         if (MusicGateFallback.shouldTryMusic(key)) {
             val home = try {
-                Innertube.browse("FEmusic_home")
+                // Signed even if the current verdict would read Music signed
+                // out: this re-check exists to learn the account's verdict.
+                Innertube.browse("FEmusic_home", forceSigned = true)
             } catch (failure: Exception) {
                 // A working proxy is the listener's way out of the gate. If
                 // the request fails on the wire, surface that error instead of
                 // silently reading youtube.com behind their back; only the
                 // gate's own refusal still justifies the fallback there.
                 // A proxy that is down is different: the direct retry (see
-                // Innertube.postMusic) already happened, so Home must fall
-                // back rather than show an error screen.
+                // Innertube.postMusic) succeeded, recorded UNREACHABLE, and
+                // Home must fall back rather than show an error screen. An
+                // offline phone leaves health UNKNOWN, so the normal network
+                // error is surfaced instead.
                 if (
-                    (YouTubeProxy.config.usable && ProxyFailure.isProxyDown(failure)) ||
+                    (YouTubeProxy.config.usable &&
+                        ProxyHealthMonitor.state.value == ProxyHealth.UNREACHABLE) ||
                     (MusicGateFallback.isActive(key) &&
                         (!YouTubeProxy.config.usable || isMusicGateSignal(failure)))
                 ) {
@@ -1476,15 +1482,19 @@ object YtMusicRepository {
      *
      * Called by entry points that can be the first thing opened in a process
      * (Explore, Library, a shared link). It costs one browse only while the
-     * verdict is unknown; after that the persisted answer decides.
+     * verdict is unknown and not backing off, or when a stored verdict is due
+     * for re-check; after that the persisted answer decides.
      */
     private suspend fun ensureGateKnown(): Boolean {
         ensureSessionForGate()
         val key = Innertube.sessionKey()
-        if (MusicGateFallback.state(key) == MusicGateFallback.State.UNKNOWN ||
-            MusicGateFallback.needsRecheck(key)
-        ) {
-            runCatching { Innertube.browse("FEmusic_home") }
+        if (MusicGateFallback.needsRecheck(key)) {
+            // Signed for the same reason as Home's re-check.
+            runCatching { Innertube.browse("FEmusic_home", forceSigned = true) }
+                // A failure is still a check that happened: move checkedAt so
+                // every entry point does not repeat the same failing browse
+                // until the window opens again.
+                .onFailure { MusicGateFallback.touch(key) }
         }
         return MusicGateFallback.isActive(key)
     }

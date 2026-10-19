@@ -1,8 +1,12 @@
 package com.music.bitchord.data.net
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.URI
 
 class ProxyHealthMemoryTest {
 
@@ -55,5 +59,24 @@ class ProxyHealthMemoryTest {
     @Test
     fun `a direct retry that fails proves only that the phone is offline`() {
         assertFalse(ProxyFailure.directRetryProvesProxyDown(directRetrySucceeded = false))
+    }
+
+    @Test
+    fun `a route pinned to the proxy is not bypassed by the health memory`() {
+        YouTubeProxy.update(
+            ProxyConfig(mode = ProxyMode.HTTP, host = "proxy.example", port = 8080),
+        )
+        try {
+            ProxyHealthMonitor.recordUnreachable()
+            val uri = URI("https://music.youtube.com/youtubei/v1/browse")
+
+            assertEquals(Proxy.NO_PROXY, YouTubeProxy.proxySelector.select(uri).single())
+
+            val pinned = YouTubeProxy.forceProxySelector.select(uri).single()
+            assertEquals(Proxy.Type.HTTP, pinned.type())
+            assertEquals(8080, (pinned.address() as InetSocketAddress).port)
+        } finally {
+            YouTubeProxy.update(ProxyConfig())
+        }
     }
 }

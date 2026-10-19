@@ -43,9 +43,40 @@ class MusicGateFallbackTest {
     }
 
     @Test
-    fun `moods with no items are gated`() {
-        assertTrue(MusicGateFallback.isGatedMoods(json(EMPTY_MOODS)))
+    fun `an empty mood grid is gated only with a Premium upsell`() {
+        assertTrue(MusicGateFallback.isGatedMoods(json(GATED_MOODS)))
+        assertFalse(MusicGateFallback.isGatedMoods(json(EMPTY_MOODS)))
         assertFalse(MusicGateFallback.isGatedMoods(json(OPEN_MOODS)))
+    }
+
+    @Test
+    fun `a failed re-check backs off until the window opens`() {
+        val key = "u:backoff"
+        val at = 1_000_000L
+
+        // Never checked: the first entry point must ask once.
+        assertTrue(MusicGateFallback.needsRecheck(key, now = at))
+
+        // The browse failed, so touch() records the attempt without a verdict.
+        MusicGateFallback.touch(key, now = at)
+        assertEquals(MusicGateFallback.State.UNKNOWN, MusicGateFallback.state(key))
+        assertFalse(MusicGateFallback.needsRecheck(key, now = at + 1))
+        assertFalse(
+            MusicGateFallback.needsRecheck(key, now = at + MusicGateFallback.RECHECK_MS - 1),
+        )
+        assertTrue(MusicGateFallback.needsRecheck(key, now = at + MusicGateFallback.RECHECK_MS))
+    }
+
+    @Test
+    fun `a gate re-check asks as the account even while gated`() {
+        MusicGateFallback.forceForTesting(true)
+        assertTrue(Innertube.musicRequestIsAnonymous("browse", "FEmusic_home"))
+        assertFalse(
+            Innertube.musicRequestIsAnonymous("browse", "FEmusic_home", forceSigned = true),
+        )
+
+        MusicGateFallback.forceForTesting(false)
+        assertTrue(Innertube.musicRequestIsAnonymous("browse", "FEmusic_moods_and_genres"))
     }
 
     @Test
@@ -173,6 +204,12 @@ class MusicGateFallbackTest {
 
         const val EMPTY_MOODS = """
             {"contents":{"singleColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[]}}}}]}}}
+        """
+
+        const val GATED_MOODS = """
+            {"contents":{"singleColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
+              {"musicDescriptionShelfRenderer":{"description":{"runs":[{"text":"Get YouTube Music Premium"}]}}}
+            ]}}}}]}}}
         """
 
         const val OPEN_MOODS = """

@@ -641,6 +641,18 @@ object Innertube {
     // Same OkHttp instance ExoPlayer streams through — see Http.
     private val client = newClient(Http.client)
 
+    /**
+     * The shared stack with the proxy route pinned for this one request.
+     *
+     * [postMusic] decides the route once, before sending. Without this the
+     * selector could still answer [java.net.Proxy.NO_PROXY] because another
+     * request recorded the proxy unreachable a moment later, and the response
+     * would then be counted as a proxy success even though it went direct.
+     */
+    private val routedClient = newClient(
+        Http.client.newBuilder().proxySelector(YouTubeProxy.forceProxySelector).build(),
+    )
+
     /** The direct-only stack used for the single retry when the proxy dies. */
     private val directClient = newClient(Http.directClient)
 
@@ -690,9 +702,19 @@ object Innertube {
 
     // ---- Public API ---------------------------------------------------------
 
-    suspend fun browse(browseId: String, params: String? = null): JsonObject {
+    suspend fun browse(
+        browseId: String,
+        params: String? = null,
+        forceSigned: Boolean = false,
+    ): JsonObject {
+        // An anonymous page says nothing about the account: moods/genres,
+        // charts and Explore are sent without the cookie even while signed in.
+        // Its response (and its refusal) must therefore not become the
+        // signed-in identity's verdict. A gate re-check passes [forceSigned]
+        // so the answer it is meant to learn from is asked as the account.
+        val anonymous = musicRequestIsAnonymous("browse", browseId, forceSigned = forceSigned)
         val response = try {
-            postMusic("browse", browseId = browseId) {
+            postMusic("browse", browseId = browseId, forceSigned = forceSigned) {
                 put("browseId", browseId)
                 params?.let { put("params", it) }
             }
@@ -706,12 +728,12 @@ object Innertube {
             // youtube.com fallback instead of leaving Home on an error.
             val message = e.message.orEmpty()
             val status = (e as? ResponseException)?.response?.status?.value
-            if (browseId.startsWith("FEmusic") && (status == 401 || status == 403)) {
+            if (!anonymous && browseId.startsWith("FEmusic") && (status == 401 || status == 403)) {
                 MusicGateFallback.markGated("music browse $browseId refused: ${message.take(60)}")
             }
             throw e
         }
-        MusicGateFallback.observeBrowse(browseId, response)
+        if (!anonymous) MusicGateFallback.observeBrowse(browseId, response)
         return response
     }
 
@@ -1627,6 +1649,7 @@ object Innertube {
         hl: String = currentLanguage,
         gl: String = currentCountry,
         forceAnonymous: Boolean = false,
+        forceSigned: Boolean = false,
         browseId: String? = null,
         directRetryOnProxyFailure: Boolean = true,
         searchKind: SearchKind? = null,
@@ -1639,8 +1662,12 @@ object Innertube {
         // 2026-10-18). Once the gate is known, Music is read signed out; the
         // account's own feeds come from youtube.com instead (YouTubeFallback).
         // Account writes keep the session so they fail visibly, not silently.
-        val anonymous = forceAnonymous || isAnonymousRequest(endpoint, browseId) ||
-            (MusicGateFallback.isActive() && !isAccountWrite(endpoint))
+        val anonymous = musicRequestIsAnonymous(
+            endpoint = endpoint,
+            browseId = browseId,
+            forceAnonymous = forceAnonymous,
+            forceSigned = forceSigned,
+        )
         if (isSearchEndpoint(endpoint)) {
             // isAnonymousRequest already forces this; the check keeps a future
             // search endpoint from ever logging (or sending) account=yes.
@@ -1733,7 +1760,7 @@ object Innertube {
                 answer
             }
             try {
-                attempt(client, proxyActive)
+                attempt(if (proxyActive) routedClient else client, proxyActive)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1918,6 +1945,21 @@ object Innertube {
     internal fun isAnonymousRequest(endpoint: String, browseId: String? = null): Boolean =
         isSearchEndpoint(endpoint) ||
             (endpoint == "browse" && browseId != null && isAnonymousBrowseId(browseId))
+
+    /**
+     * The one decision about whether a Music request leaves without the
+     * account, shared by [postMusic] and by [browse]'s choice to observe the
+     * response. [forceSigned] exists for the gate re-check: it must ask as the
+     * account even while the current verdict would send everything anonymous.
+     */
+    internal fun musicRequestIsAnonymous(
+        endpoint: String,
+        browseId: String? = null,
+        forceAnonymous: Boolean = false,
+        forceSigned: Boolean = false,
+    ): Boolean = !forceSigned &&
+        (forceAnonymous || isAnonymousRequest(endpoint, browseId) ||
+            (MusicGateFallback.isActive() && !isAccountWrite(endpoint)))
 
     /** Endpoints that carry a search query, on either host. */
     internal fun isSearchEndpoint(endpoint: String): Boolean =

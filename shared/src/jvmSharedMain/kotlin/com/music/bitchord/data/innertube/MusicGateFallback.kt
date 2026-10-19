@@ -207,17 +207,27 @@ object MusicGateFallback {
     }
 
     /**
-     * True when a stored GATED verdict has aged past its re-check window.
+     * True when a stored verdict has aged past its re-check window.
      *
-     * That is once a day normally, ten minutes while a proxy is configured,
-     * or immediately when the verdict was loaded from an earlier process and
-     * a proxy is configured — the route it was made on was never proved.
+     * For GATED that is once a day normally, ten minutes while a proxy is
+     * configured, or immediately when the verdict was loaded from an earlier
+     * process and a proxy is configured — the route it was made on was never
+     * proved. An UNKNOWN entry that was checked but could not answer (see
+     * [touch]) backs off for the same window instead of making every entry
+     * point ask again. No entry at all still means "ask once".
      */
     fun needsRecheck(key: String = currentKey(), now: Long = System.currentTimeMillis()): Boolean {
         if (forced) return false
-        val entry = entries[key] ?: return false
-        return gatedNeedsRecheck(entry, now)
+        val entry = entries[key] ?: return true
+        return when (entry.state) {
+            State.GATED -> gatedNeedsRecheck(entry, now)
+            State.UNKNOWN -> now - entry.checkedAt >= recheckWindow()
+            State.OPEN -> false
+        }
     }
+
+    private fun recheckWindow(): Long =
+        if (YouTubeProxy.config.usable) PROXY_RECHECK_MS else RECHECK_MS
 
     /**
      * Forgets every identity's verdict after the network they were made on
@@ -368,7 +378,14 @@ object MusicGateFallback {
     fun isGatedHome(root: JsonObject): Boolean =
         musicHomeShelfCount(root) == 0 && hasPremiumUpsell(root)
 
-    fun isGatedMoods(root: JsonObject): Boolean = musicMoodItemCount(root) == 0
+    /**
+     * An empty mood/genre grid alone is not proof of the gate: a transient or
+     * region-specific empty answer would otherwise pin the account to the
+     * youtube.com fallback for a whole day. Require the same Premium upsell
+     * that [isGatedHome] requires.
+     */
+    fun isGatedMoods(root: JsonObject): Boolean =
+        musicMoodItemCount(root) == 0 && hasPremiumUpsell(root)
 
     fun isGatedPlayer(root: JsonObject): Boolean {
         val status = findFirst(root, "playabilityStatus") ?: return false

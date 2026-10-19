@@ -1,5 +1,6 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.YouTubeProxy
 import kotlinx.coroutines.CancellationException
@@ -30,17 +31,23 @@ object ProxyConnectionTest {
         data class Failed(val message: String?) : Result
     }
 
-    suspend fun run(): Result = try {
-        // Anonymous on purpose: this asks whether the route can reach Music at
-        // all, so it must not depend on (or disturb) the account's gate verdict
-        // before the answer is in.
-        //
-        // No direct failover here: a pass must mean the proxy answered, not
-        // that the request quietly went around it.
-        if (YouTubeProxy.config.usable && ProxyHealthMonitor.shouldBypassProxy()) {
-            Result.Failed(null)
-        } else {
+    suspend fun run(): Result {
+        val proxyConfigured = YouTubeProxy.config.usable
+        // A manual test is the listener asking again right now, so the
+        // five-minute "unreachable" memory must not decide the answer before
+        // the request is sent (it would otherwise be bypassed and fail with no
+        // content). Forget it; a failed attempt below records it again.
+        if (proxyConfigured) ProxyHealthMonitor.clear()
+        return try {
+            // Anonymous on purpose: this asks whether the route can reach Music at
+            // all, so it must not depend on (or disturb) the account's gate verdict
+            // before the answer is in.
+            //
+            // No direct failover here: a pass must mean the proxy answered, not
+            // that the request quietly went around it.
             val home = Innertube.browseAnonymousThroughProxyOnly("FEmusic_home")
+            // The request came back, so the route works however the gate reads.
+            if (proxyConfigured) ProxyHealthMonitor.recordSuccess()
             val shelves = MusicGateFallback.musicHomeShelfCount(home)
             when {
                 MusicGateFallback.isGatedHome(home) -> {
@@ -48,15 +55,20 @@ object ProxyConnectionTest {
                     Result.Gated
                 }
                 shelves > 0 -> {
-                    if (YouTubeProxy.config.usable) MusicGateFallback.markOpen()
+                    if (proxyConfigured) MusicGateFallback.markOpen()
                     Result.Ok(shelves)
                 }
                 else -> Result.Failed(null)
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The listener just proved the proxy route failed; keep the short
+            // bypass so other requests do not each wait for the same timeout.
+            if (proxyConfigured && ProxyFailure.isProxyDown(e)) {
+                ProxyHealthMonitor.recordUnreachable()
+            }
+            Result.Failed(e.message)
         }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        Result.Failed(e.message)
     }
 }
