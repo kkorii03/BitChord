@@ -37,6 +37,7 @@ import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
 import io.ktor.client.plugins.ResponseException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -65,6 +66,11 @@ object YtMusicRepository {
     private val audioVersionCache = ConcurrentHashMap<String, Song>()
     // Cache for video version lookups from audio tracks (null means no video found).
     private val videoVersionCache = ConcurrentHashMap<String, Song?>()
+    // A lookup in flight, so the queue prefetcher and the player's switch
+    // share one search instead of sending the same request twice at once.
+    private val audioLookups = ConcurrentHashMap<String, CompletableDeferred<Song>>()
+    /** Liked Music's continuation tokens, whose later pages need the same split. */
+    private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
     fun cachedAudioVersion(videoId: String): Song? = audioVersionCache[videoId]
     fun cachedVideoVersion(videoId: String): Song? = videoVersionCache[videoId]
@@ -694,6 +700,27 @@ object YtMusicRepository {
         // recording. A cover plays as itself.
         if (CoverTitles.isCover(song)) return song
         audioVersionCache[song.videoId]?.let { return it }
+        val mine = CompletableDeferred<Song>()
+        audioLookups.putIfAbsent(song.videoId, mine)?.let {
+            return try {
+                it.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            }
+        }
+        try {
+            val resolved = resolveAudioUncached(song)
+            mine.complete(resolved)
+            return resolved
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            audioLookups.remove(song.videoId, mine)
+        }
+    }
+
+    private suspend fun resolveAudioUncached(song: Song): Song {
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
             val candidates = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
@@ -794,8 +821,10 @@ object YtMusicRepository {
 
     private val NOT_THE_VIDEO = listOf(
         "lyric", "가사", "visuali", "audio", "live", "라이브", "cover", "커버", "reaction", "리액션",
-        "stage", "무대", "performance", "dance practice", "안무", "fancam", "직캠", "karaoke", "inst",
-        "sped up", "slowed", "1 hour", "loop", "teaser", "티저", "behind", "making",
+        "stage", "\uBB34\uB300", "performance", "dance practice", "\uC548\uBB34", "fancam",
+        "\uC9C1\uCEA0", "karaoke", "inst", "musicbank", "\uC778\uAE30\uAC00\uC694",
+        "\uC5E0\uCE74\uC6B4\uD2B8\uB2E4\uC6B4", "m countdown", "mcountdown", "\uAD50\uCC28\uD3B8\uC9D1",
+        "sped up", "slowed", "1 hour", "loop", "teaser", "\uD2F0\uC800", "behind", "making",
     )
 
     suspend fun resolveVideo(song: Song): Song? {
@@ -815,7 +844,7 @@ object YtMusicRepository {
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { match ->
+            TrackMatcher.bestForVideoSwitch(candidates, target)?.let { match ->
                 Log.d(
                     TAG,
                     "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
@@ -919,7 +948,10 @@ object YtMusicRepository {
 
             val likedPage = liked.await()
             val likedSongs = likedPage?.songs.orEmpty()
-            val likedIds = likedSongs.mapTo(HashSet()) { it.videoId }
+            // Hidden rows are still liked: they must keep their heart and must
+            // not reappear in the library "Songs" section as if unliked.
+            val likedIds = (likedSongs + likedPage?.hiddenSongs.orEmpty())
+                .mapTo(HashSet()) { it.videoId }
             LikeState.seedLiked(likedIds)
             LibraryPage(
                 likedSongs = likedSongs,
@@ -963,7 +995,9 @@ object YtMusicRepository {
         var next: String? = firstToken
         while (next != null && seen.add(next)) {
             val page = loadNext(next) ?: return
-            LikeState.seedLiked(page.songs.mapTo(HashSet()) { it.videoId })
+            LikeState.seedLiked(
+                (page.songs + page.hiddenSongs).mapTo(HashSet()) { it.videoId },
+            )
             next = page.continuation
         }
     }
@@ -1029,6 +1063,11 @@ object YtMusicRepository {
         val continuation: String?,
         val suggested: List<Song> = emptyList(),
         /**
+         * Liked Music's rows that are videos, not songs. Kept off [songs] so
+         * the page shows music by default, but carried for its reveal row.
+         */
+        val hiddenSongs: List<Song> = emptyList(),
+        /**
          * Whether the release this page describes is in the library. Only the
          * first page can answer — a continuation carries rows and nothing else
          * — so it is null from [moreSongs] and must not overwrite what
@@ -1071,6 +1110,7 @@ object YtMusicRepository {
                 songs = result.songs,
                 continuation = result.continuation,
                 header = result.header,
+                hiddenSongs = result.hiddenSongs,
             )
         }
         val response = Innertube.browse(browseId)
@@ -1087,12 +1127,34 @@ object YtMusicRepository {
                 songs = result.songs,
                 continuation = result.continuation,
                 header = result.header,
+                hiddenSongs = result.hiddenSongs,
             )
         }
+        val shown = if (browseId == LIKED_MUSIC) musicOnlyLikedPage(page) else page
         // Only a playlist has an owner in the sense that matters — see
         // parsePlaylistOwned — and only its own first response can be asked.
-        if (!browseId.startsWith("VL")) page
-        else page.copy(owned = InnertubeParser.parsePlaylistOwned(response))
+        if (!browseId.startsWith("VL")) shown
+        else shown.copy(owned = InnertubeParser.parsePlaylistOwned(response))
+    }
+
+    /**
+     * Liked Music is the account's whole hearted history, videos included.
+     * Split off the non-music rows exactly as the youtube.com fallback does
+     * (see [YouTubeMusicClassifier.splitMusic]) so the page reads as songs and
+     * the hidden rows stay available behind its reveal row. Only this feed
+     * gets the treatment.
+     */
+    private suspend fun musicOnlyLikedPage(page: SongPage): SongPage {
+        page.continuation?.let(likedContinuations::add)
+        if (page.songs.isEmpty()) {
+            Log.i(TAG, "liked: shown=0 hidden=0 (music mode)")
+            return page
+        }
+        val (music, videos) = YouTubeMusicClassifier.splitMusic(page.songs, LIKED_JUDGE_LIMIT)
+        val shown = music.map { YouTubeDisplayCleaner.cleanUpload(it) }
+        val hidden = videos.map { YouTubeDisplayCleaner.cleanUpload(it) }
+        Log.i(TAG, "liked: shown=${shown.size} hidden=${hidden.size} (music mode)")
+        return page.copy(songs = shown, hiddenSongs = hidden)
     }
 
     /**
@@ -1131,9 +1193,12 @@ object YtMusicRepository {
                 songs = result.songs,
                 continuation = result.continuation,
                 header = result.header,
+                hiddenSongs = result.hiddenSongs,
             )
         }
-        pageOf(Innertube.browseContinuation(token))
+        pageOf(Innertube.browseContinuation(token)).let { page ->
+            if (token in likedContinuations) musicOnlyLikedPage(page) else page
+        }
     }
 
     /**
@@ -1158,7 +1223,13 @@ object YtMusicRepository {
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
         InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
-            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
+            return SongPage(
+                songs = shelf.songs,
+                continuation = shelf.continuation,
+                suggested = shelf.suggested,
+                library = library,
+                header = header,
+            )
         }
         return SongPage(
             // One response can name the same track twice — an album page that
@@ -1260,6 +1331,9 @@ object YtMusicRepository {
      * moment it stops being liked — see MainViewModel's `dropFromLikedLists`.
      */
     const val LIKED_MUSIC = "VLLM"
+
+    /** Rows of a Liked Music page judged by category; the rest are trusted. */
+    private const val LIKED_JUDGE_LIMIT = 30
 
     /** Songs explicitly added to the library — distinct from Liked Music. */
     private const val LIBRARY_SONGS = "FEmusic_liked_videos"

@@ -1182,4 +1182,6 @@
     <string name="export_diagnostic_log">진단 로그 내보내기</string>
     <string name="export_diagnostic_log_subtitle">재생·홈·검색 문제를 알려 줄 때 이 파일을 보내 주세요</string>
     <string name="diagnostic_log_saved">다운로드 폴더에 저장했어요: %1$s</string>
+    <string name="liked_hidden_videos_show">영상 숨김 %1$d개 · 보기</string>
+    <string name="liked_hidden_videos_hide">영상 숨김 %1$d개 · 숨기기</string>
 </resources>

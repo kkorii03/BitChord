@@ -30,6 +30,12 @@ internal object YouTubeWebParser {
         val songs: List<Song>,
         val continuation: String?,
         val header: InnertubeParser.BrowseHeader?,
+        /**
+         * Video rows a music-only list hid (Liked Music). Kept beside [songs]
+         * so the page can offer "N videos hidden · Show" instead of pretending
+         * the account never liked them.
+         */
+        val hiddenSongs: List<Song> = emptyList(),
     )
 
     /**
@@ -470,6 +476,9 @@ internal object YouTubeWebParser {
         return ShelfItem(
             title = title,
             subtitle = video.findObject("shortBylineText")?.firstRun().orEmpty(),
+            // Some playlist rows (`VLLM`, clipped lists) carry no `thumbnail`
+            // renderer at all; the fallback layer adds the video still and
+            // logs the row (see YouTubeFallback.ensureArtwork).
             thumbnailUrl = video.findObject("thumbnail")?.thumbnails(),
             videoId = videoId,
             browseId = null,

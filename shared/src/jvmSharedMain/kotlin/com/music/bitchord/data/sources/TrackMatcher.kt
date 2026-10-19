@@ -52,6 +52,8 @@ object TrackMatcher {
         val isExplicit: Boolean? = null,
         /** Music-video timing includes visual intros/outros that catalogue audio omits. */
         val isVideo: Boolean = false,
+        /** The artist's own channel, when the queue row knew it. */
+        val artistId: String? = null,
     )
 
     fun targetOf(song: Song) = Target(
@@ -62,6 +64,7 @@ object TrackMatcher {
         song.albumName,
         song.isExplicit,
         song.isVideo,
+        song.artistId,
     )
 
     // ── Asking ──────────────────────────────────────────────────────────────
@@ -131,6 +134,65 @@ object TrackMatcher {
      */
     fun best(candidates: List<Song>, target: Target): Song? =
         ranked(candidates, target).firstOrNull()
+
+    /**
+     * The best video to play when the listener asks to switch an audio track
+     * to its video version.
+     *
+     * A search for "After LIKE" happily returns a Music Bank fancam before the
+     * official upload, and a fancam is the wrong recording to put under the
+     * song: different camera, crowd noise, an intro from the host. A row whose
+     * title carries a concert/stage/cover marker the original title does not
+     * is skipped outright; the official channel and an "Official"/"MV" title
+     * win among the survivors.
+     */
+    fun bestForVideoSwitch(candidates: List<Song>, target: Target): Song? {
+        val wanted = normalize(target.title)
+        val allowed = candidates.filter { candidate ->
+            val got = normalize(candidate.title)
+            VIDEO_SWITCH_MARKERS.none { marker -> marker in got && marker !in wanted }
+        }
+        val matches = ranked(allowed, target)
+        if (matches.isEmpty()) return null
+        return matches.maxWithOrNull(
+            compareBy<Song> { officialRank(it, target) }
+                .thenBy { score(it, target) ?: Int.MIN_VALUE },
+        )
+    }
+
+    /**
+     * How much a candidate reads as the artist's own video rather than an
+     * upload of it. Higher wins; the score inside each tier still decides ties.
+     */
+    private fun officialRank(candidate: Song, target: Target): Int {
+        if (target.artistId != null && candidate.artistId == target.artistId) return 4
+        val channel = normalize(candidate.artist).trim()
+        val artist = normalize(primaryArtist(target.artist)).trim()
+        if (artist.isNotEmpty() &&
+            (channel == artist || channel == "$artist official" || channel == "${artist}vevo")
+        ) {
+            return 3
+        }
+        if (VIDEO_TITLE_MARKER.containsMatchIn(normalize(candidate.title))) return 2
+        return 0
+    }
+
+    /** `Official`, `MV`, `M/V` and `Music Video` in a video-switch candidate. */
+    private val VIDEO_TITLE_MARKER = Regex(
+        """(?<![a-z])(?:official|m\s*/\s*v|mv|music\s+video)(?![a-z])""",
+    )
+
+    /**
+     * Markers that make a search hit a different video: a fancam, a stage, a
+     * cover, a reaction, a karaoke/lyric upload, a loop. Allowed only when the
+     * title being switched already says the same word.
+     */
+    private val VIDEO_SWITCH_MARKERS = listOf(
+        "fancam", "\uC9C1\uCEA0", "live", "\uB77C\uC774\uBE0C", "stage", "\uBB34\uB300",
+        "musicbank", "\uC778\uAE30\uAC00\uC694", "\uC5E0\uCE74\uC6B4\uD2B8\uB2E4\uC6B4",
+        "m countdown", "mcountdown", "reaction", "cover", "dance practice", "lyrics",
+        "karaoke", "1 hour", "\uAD50\uCC28\uD3B8\uC9D1",
+    )
 
     /**
      * The catalogue counterpart for a music-video upload selected explicitly

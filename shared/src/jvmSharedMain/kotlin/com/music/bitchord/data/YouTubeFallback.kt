@@ -5,6 +5,7 @@ import com.music.bitchord.data.charts.ChartType
 import com.music.bitchord.data.charts.ChartsApi
 import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.cover.squareFriendlyThumbnail
+import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.YouTubeWebParser
@@ -64,6 +65,8 @@ internal object YouTubeFallback {
     private const val QUICK_PICKS_WINDOW_MS = 24L * 60L * 60L * 1000L
     /** Only this much of a youtube.com history page is judged and shown at once. */
     private const val HISTORY_LIMIT = 30
+    /** Rows of Liked Music judged before the rest are trusted; one lookup each. */
+    private const val LIKED_JUDGE_LIMIT = 30
     /** Square-cover lookups for the home feed, spread over its first shelves. */
     private const val HOME_COVER_LIMIT = 20
     private const val SHELF_COVER_LIMIT = 6
@@ -81,6 +84,9 @@ internal object YouTubeFallback {
 
     /** Tokens this fallback issued, mapped to whether their next page must be anonymous. */
     private val continuationTokens = ConcurrentHashMap<String, Boolean>()
+
+    /** Tokens that page Liked Music, whose later rows need the same music filter. */
+    private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
     private val channelLock = Mutex()
 
@@ -951,7 +957,32 @@ internal object YouTubeFallback {
             webPlaylistPage(browseId, anonymous = false)
         }
         result.continuation?.let { rememberContinuation(it, anonymous = false) }
+        if (isLikedPlaylist(raw)) {
+            result.continuation?.let(likedContinuations::add)
+            return musicOnlyLiked(result)
+        }
         return result
+    }
+
+    /** The two youtube.com routes that hold everything the account hearted. */
+    private fun isLikedPlaylist(id: String): Boolean =
+        id == LIKED_MUSIC || id == LIKED_VIDEOS || id == "LM" || id == "LL"
+
+    /**
+     * Liked Music is a list of everything hearted on YouTube, fancams, full
+     * musicals and talk clips included. Show the songs; keep the videos aside
+     * so the page can offer to reveal them rather than silently dropping what
+     * the account liked.
+     */
+    private suspend fun musicOnlyLiked(
+        result: YouTubeWebParser.PlaylistResult,
+    ): YouTubeWebParser.PlaylistResult {
+        if (result.songs.isEmpty()) return result
+        val (music, videos) = YouTubeMusicClassifier.splitMusic(result.songs, LIKED_JUDGE_LIMIT)
+        return result.copy(
+            songs = music.map(::displaySong),
+            hiddenSongs = videos.map(::displaySong),
+        )
     }
 
     /** Whether [browseId] names a YouTube Music editorial `RDCLAK` playlist. */
@@ -990,6 +1021,10 @@ internal object YouTubeFallback {
         }
         val result = YouTubeWebParser.parsePlaylistContinuation(root)
         result.continuation?.let { rememberContinuation(it, anonymous) }
+        if (token in likedContinuations) {
+            result.continuation?.let(likedContinuations::add)
+            return musicOnlyLiked(result)
+        }
         return result
     }
 
@@ -1045,6 +1080,7 @@ internal object YouTubeFallback {
                 val page = YouTubeWebParser.parsePlaylist(root)
                 if (page.songs.isEmpty()) continue
                 page.continuation?.let(::rememberContinuation)
+                page.continuation?.let(likedContinuations::add)
                 likedCache = Triple(current, System.currentTimeMillis(), page)
                 return@withLock page
             }
@@ -1112,8 +1148,26 @@ internal object YouTubeFallback {
     }
 
     /** The display strings for a youtube.com row, before its cover is resolved. */
-    private fun displaySong(song: Song): Song =
-        if (song.albumId != null) song else YouTubeDisplayCleaner.clean(song, knownArtists)
+    private fun displaySong(song: Song): Song {
+        val shown = if (song.albumId != null) song else YouTubeDisplayCleaner.clean(song, knownArtists)
+        return ensureArtwork(shown)
+    }
+
+    /**
+     * A row with no usable thumbnail is drawn as a black square. The video's
+     * still always exists by id, so use it and say why the row needed it.
+     */
+    private fun ensureArtwork(song: Song): Song {
+        val raw = song.thumbnailUrl?.trim()
+        val reason = when {
+            raw.isNullOrEmpty() -> "no thumbnail"
+            !raw.startsWith("http") -> "not a url"
+            else -> return song
+        }
+        val fallback = videoThumbnailUrl(song.videoId) ?: return song
+        Log.i(TAG, "art: missing for ${song.videoId} ($reason) -> fallback")
+        return song.copy(thumbnailUrl = fallback)
+    }
 
     private fun displayShelf(shelf: HomeShelf): HomeShelf = shelf.copy(
         items = shelf.items.map { item ->
@@ -1131,13 +1185,17 @@ internal object YouTubeFallback {
                 thumbnailUrl = item.thumbnailUrl,
             ),
         )
-        return item.copy(title = cleaned.title, subtitle = cleaned.artist)
+        return item.copy(
+            title = cleaned.title,
+            subtitle = cleaned.artist,
+            thumbnailUrl = cleaned.thumbnailUrl,
+        )
     }
 
     private fun shelfItem(song: Song): ShelfItem {
         // A catalogue row (album mapping or a local play) already names its
         // release; the upload cleaner is only for youtube.com packaging.
-        val shown = if (song.albumId != null) song else displaySong(song)
+        val shown = if (song.albumId != null) ensureArtwork(song) else displaySong(song)
         return ShelfItem(
             title = shown.title,
             subtitle = shown.artist,

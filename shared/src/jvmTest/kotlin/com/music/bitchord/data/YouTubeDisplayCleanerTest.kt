@@ -70,13 +70,23 @@ class YouTubeDisplayCleanerTest {
     }
 
     @Test
-    fun `a cover keeps the cover singer and its title`() {
+    fun `a cover reads as the song and its singer`() {
         val cover = song("Shape of You - Ed Sheeran (cover by Jane)", "Jane")
 
         val cleaned = YouTubeDisplayCleaner.clean(cover)
 
-        assertEquals(cover.title, cleaned.title)
+        assertEquals("Shape of You (cover)", cleaned.title)
         assertEquals("Jane", cleaned.artist)
+    }
+
+    @Test
+    fun `the reported Marigold cover keeps the singer, not the uploader`() {
+        val cover = song("\uC544\uC774\uBBAD - Marigold / cover by \uC624\uD654\uC694", "Ohwayo")
+
+        val cleaned = YouTubeDisplayCleaner.clean(cover)
+
+        assertEquals("Marigold (cover)", cleaned.title)
+        assertEquals("\uC624\uD654\uC694", cleaned.artist)
     }
 
     @Test
@@ -140,6 +150,26 @@ class YouTubeDisplayCleanerTest {
 
         assertEquals("Supernova", cleaned.title)
         assertEquals("aespa", cleaned.artist)
+    }
+
+    @Test
+    fun `only uploads are cleaned, an ATV catalogue row is untouched`() {
+        val catalogue = Song(
+            videoId = "v-atv",
+            title = "Dynamite (Official Video)",
+            artist = "BTS",
+            thumbnailUrl = null,
+            albumId = "MPREb_atv",
+        )
+        val upload = Song(
+            videoId = "v-upload",
+            title = "BTS - Dynamite (Official Video)",
+            artist = "BTS",
+            thumbnailUrl = null,
+        )
+
+        assertEquals(catalogue, YouTubeDisplayCleaner.cleanUpload(catalogue))
+        assertEquals("Dynamite", YouTubeDisplayCleaner.cleanUpload(upload).title)
     }
 
     @Test

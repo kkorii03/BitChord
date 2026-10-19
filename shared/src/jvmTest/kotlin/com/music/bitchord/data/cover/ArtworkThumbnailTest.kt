@@ -1,5 +1,7 @@
 package com.music.bitchord.data.cover
 
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.artworkAt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -70,5 +72,40 @@ class ArtworkThumbnailTest {
     @Test
     fun `null stays null`() {
         assertNull(squareFriendlyThumbnail(null))
+    }
+
+    @Test
+    fun `a row without artwork falls back to the video still`() {
+        val song = Song(
+            videoId = "dQw4w9WgXcQ",
+            title = "Song",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+
+        assertEquals(square, song.artworkAt(160))
+    }
+
+    @Test
+    fun `a local row gets no YouTube fallback`() {
+        val song = Song(
+            videoId = "dQw4w9WgXcQ",
+            title = "Local",
+            artist = "Artist",
+            thumbnailUrl = null,
+            localUri = "content://media/1",
+        )
+
+        assertNull(song.artworkAt(160))
+    }
+
+    @Test
+    fun `videoThumbnailUrl only accepts a video id`() {
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            videoThumbnailUrl("dQw4w9WgXcQ"),
+        )
+        assertNull(videoThumbnailUrl("too-short"))
+        assertNull(videoThumbnailUrl(null))
     }
 }

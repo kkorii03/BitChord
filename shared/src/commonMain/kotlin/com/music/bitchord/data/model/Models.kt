@@ -1,6 +1,7 @@
 package com.music.bitchord.data.model
 
 import com.music.bitchord.data.cover.squareFriendlyThumbnail
+import com.music.bitchord.data.cover.videoThumbnailUrl
 
 /** Tier of an item in the playback queue. */
 enum class QueueTier {
@@ -205,7 +206,13 @@ data class Song(
  *
  * Video thumbnails carry no hint and are returned unchanged.
  */
-fun Song.artworkAt(px: Int): String? = thumbnailUrl.artworkAt(px)
+fun Song.artworkAt(px: Int): String? =
+    thumbnailUrl.artworkAt(px)
+        // A row can reach the UI with no thumbnail at all (a liked playlist
+        // row whose renderer omitted `thumbnail`, a queue item restored from
+        // an older snapshot). YouTube always has the video's still, and that
+        // is better than the black square the image loader would draw.
+        ?: videoThumbnailUrl(videoId)?.takeIf { localUri == null }?.artworkAt(px)
 
 /**
  * Whether a row is the track the player is on, for the now-playing highlight.
@@ -560,6 +567,12 @@ data class DetailPage(
     val type: BrowseType = BrowseType.OTHER,
     /** Albums / singles carousels, populated for artist pages. */
     val sections: List<HomeShelf> = emptyList(),
+    /**
+     * Liked Music's video rows, kept out of [songs] so the list is music by
+     * default. Non-empty only on that page, where the header offers to reveal
+     * them ("N videos hidden · Show").
+     */
+    val hiddenSongs: List<Song> = emptyList(),
     /**
      * Tracks YouTube offers to round out a playlist but that were never
      * added — see [com.music.bitchord.data.innertube.InnertubeParser.parsePlaylistShelf].

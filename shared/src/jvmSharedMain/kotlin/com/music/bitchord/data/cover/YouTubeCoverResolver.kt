@@ -8,6 +8,8 @@ import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -60,6 +62,9 @@ internal object YouTubeCoverResolver {
     private const val LOG_TAG = "BitChord"
 
     private val cache = StoredVerdictCache(STORE_KEY, MAX_ENTRIES)
+
+    /** One in-flight lookup per song, so duplicate enrich callers share it. */
+    private val inFlight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Match?>>()
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -131,6 +136,35 @@ internal object YouTubeCoverResolver {
         cache.ensureLoaded(MusicGateFallback.sharedStore())
         cache.get(key)?.let { entry -> return decode(entry.value) }
 
+        // Two enrich passes can ask for the same row in the same instant (the
+        // detail page's cover fill and the search fallback's). Both used to
+        // send the same iTunes/Deezer request; the first caller now owns the
+        // lookup and the second awaits its answer.
+        val mine = CompletableDeferred<Match?>()
+        inFlight.putIfAbsent(key, mine)?.let { pending ->
+            return try {
+                pending.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            }
+        }
+        try {
+            val match = matchForUncached(target, artist, key)
+            mine.complete(match)
+            return match
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            inFlight.remove(key, mine)
+        }
+    }
+
+    private suspend fun matchForUncached(
+        target: TrackMatcher.Target,
+        artist: String,
+        key: String,
+    ): Match? {
         val query = TrackMatcher.queries(
             TrackMatcher.Target(title = target.title, artist = artist),
         ).firstOrNull()?.takeIf { it.isNotBlank() } ?: return null

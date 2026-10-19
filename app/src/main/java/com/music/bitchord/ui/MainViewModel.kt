@@ -1205,7 +1205,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (page.browseId != YtMusicRepository.LIKED_MUSIC || songs == null) {
                 page
             } else {
-                page.copy(songs = UiState.Success(songs.filterNot { it.videoId == videoId }))
+                page.copy(
+                    songs = UiState.Success(songs.filterNot { it.videoId == videoId }),
+                    hiddenSongs = page.hiddenSongs.filterNot { it.videoId == videoId },
+                )
             }
         }
     }
@@ -3229,6 +3232,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var remoteListing = false
             /** Tracks YouTube offers to round the playlist out — see [DetailPage.suggestedSongs]. */
             var suggested: List<Song> = emptyList()
+            /** Liked Music's video rows — see [DetailPage.hiddenSongs]. */
+            var hidden: List<Song> = emptyList()
             /** Whether this release is already saved — see [DetailPage.library]. */
             var library: LibraryState? = null
             /** YouTube's own "About" blurb — see [DetailPage.description]. */
@@ -3342,6 +3347,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 remoteListing = true
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
+                                hidden = page.hiddenSongs.withArtwork(thumbnailUrl ?: artwork)
                                 library = page.library
                                 UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
                             }
@@ -3364,6 +3370,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         title = name ?: it.title,
                         subtitle = credit ?: it.subtitle,
                         suggestedSongs = suggested,
+                        hiddenSongs = hidden,
                         library = library,
                         description = description,
                         subscriberCountText = subscriberCountText,
@@ -3623,13 +3630,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val addedSuggested = fetched.suggested
                     .filter { it.videoId !in known && knownSuggested.add(it.videoId) }
                     .withArtwork(artworkFallback)
+                // Liked Music's video rows can arrive on any page; they are
+                // counted and revealed together with the first page's.
+                val knownHidden = current.hiddenSongs.mapTo(HashSet()) { it.videoId }
+                val addedHidden = fetched.hiddenSongs
+                    .filter { it.videoId !in known && knownHidden.add(it.videoId) }
+                    .withArtwork(artworkFallback)
                 // A page with nothing new on it means the feed has looped back
                 // rather than run dry with a token still attached.
-                if (added.isEmpty() && addedSuggested.isEmpty()) return@launch
+                if (added.isEmpty() && addedSuggested.isEmpty() && addedHidden.isEmpty()) return@launch
                 _detailStack.value = stack.toMutableList().also {
                     it[index] = current.copy(
                         songs = UiState.Success(existing + added),
                         suggestedSongs = current.suggestedSongs + addedSuggested,
+                        hiddenSongs = current.hiddenSongs + addedHidden,
                     )
                 }
                 next = fetched.continuation

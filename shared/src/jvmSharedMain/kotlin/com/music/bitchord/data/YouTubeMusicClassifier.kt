@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.Song
@@ -48,8 +49,21 @@ internal object YouTubeMusicClassifier {
     @Volatile
     internal var categoryLookup: suspend (String) -> String? = { Innertube.playerCategory(it) }
 
+    /**
+     * Anything this long is a programme/full musical, not a song: the listener
+     * liked a video, not a track. Checked before the channel rules so a
+     * `- Topic` upload of a whole concert is hidden too.
+     */
+    const val MAX_SONG_SECONDS = 15 * 60
+
     /** Whether a row's own metadata settles it without a request, or null when it does not. */
-    fun ruleVerdict(title: String, artist: String, album: String? = null): Verdict? {
+    fun ruleVerdict(
+        title: String,
+        artist: String,
+        album: String? = null,
+        durationSec: Int? = null,
+    ): Verdict? {
+        if (durationSec != null && durationSec > MAX_SONG_SECONDS) return Verdict.NOT_MUSIC
         val channel = artist.trim()
         if (!album.isNullOrBlank()) return Verdict.MUSIC
         if (channel.endsWith("- Topic", ignoreCase = true)) return Verdict.MUSIC
@@ -91,10 +105,11 @@ internal object YouTubeMusicClassifier {
         title: String,
         artist: String,
         album: String? = null,
+        durationSec: Int? = null,
     ): Boolean {
-        ruleVerdict(title, artist, album)?.let { verdict ->
+        ruleVerdict(title, artist, album, durationSec)?.let { verdict ->
             if (cached(videoId) == null) remember(videoId, verdict)
-            return true
+            return verdict != Verdict.NOT_MUSIC
         }
         when (cached(videoId)) {
             Verdict.MUSIC -> return true
@@ -129,13 +144,57 @@ internal object YouTubeMusicClassifier {
             val verdicts = shown.map { song ->
                 async {
                     gate.withPermit {
-                        isMusic(song.videoId, song.title, song.artist, song.albumName)
+                        isMusic(
+                            song.videoId,
+                            song.title,
+                            song.artist,
+                            song.albumName,
+                            com.music.bitchord.data.sources.TrackMatcher.secondsOf(song.durationText),
+                        )
                     }
                 }
             }.awaitAll()
-            shown.filterIndexed { index, _ -> verdicts[index] }
+            shown.filterIndexed { index, song -> verdicts[index] || CoverTitles.isCover(song) }
         }
         return judged + songs.drop(shown.size)
+    }
+
+    /**
+     * Separates the rows of the first [limit] that are music from the videos
+     * that are not, keeping the page's order inside each half. Used where the
+     * list must stay complete but the video rows should be hidden — Liked
+     * Music — rather than dropped irrecoverably.
+     */
+    suspend fun splitMusic(songs: List<Song>, limit: Int = 30): Pair<List<Song>, List<Song>> {
+        if (limit <= 0) return songs to emptyList()
+        val shown = songs.take(limit)
+        if (shown.isEmpty()) return songs to emptyList()
+        val gate = Semaphore(MAX_CONCURRENT)
+        val verdicts = coroutineScope {
+            shown.map { song ->
+                async {
+                    gate.withPermit {
+                        isMusic(
+                            song.videoId,
+                            song.title,
+                            song.artist,
+                            song.albumName,
+                            com.music.bitchord.data.sources.TrackMatcher.secondsOf(song.durationText),
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
+        val music = ArrayList<Song>(shown.size)
+        val hidden = ArrayList<Song>()
+        shown.forEachIndexed { index, song ->
+            // A cover is a music upload even when YouTube files it under a
+            // broad category; it stays visible and the display cleaner names
+            // it as the cover it is.
+            if (verdicts[index] || CoverTitles.isCover(song)) music += song else hidden += song
+        }
+        music += songs.drop(shown.size)
+        return music to hidden
     }
 
     internal fun cacheSize(): Int = cache.size()

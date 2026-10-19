@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.remote.RemoteArtworkStore
 
@@ -24,7 +25,12 @@ import com.music.bitchord.data.remote.RemoteArtworkStore
 fun rememberRemoteArtworkUrl(song: Song?): String? {
     val context = LocalContext.current
     val key = song?.videoId
-    var resolved by remember(key) { mutableStateOf(song?.thumbnailUrl) }
+    // A YouTube row with no artwork reached the player as a black square;
+    // the video still is the last resort (and local files never get one).
+    val still = song?.takeIf { it.localUri == null }?.videoId?.let(::videoThumbnailUrl)
+    var resolved by remember(key) {
+        mutableStateOf(song?.thumbnailUrl?.takeIf { it.isNotBlank() } ?: still)
+    }
     LaunchedEffect(key) {
         if (song != null && song.thumbnailUrl == null &&
             (song.videoId.startsWith("webdav:") || song.videoId.startsWith("smb:"))

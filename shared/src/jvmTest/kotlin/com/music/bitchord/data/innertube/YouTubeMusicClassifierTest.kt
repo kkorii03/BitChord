@@ -106,6 +106,43 @@ class YouTubeMusicClassifierTest {
     }
 
     @Test
+    fun `a video longer than fifteen minutes is not a song`() {
+        assertEquals(
+            Verdict.NOT_MUSIC,
+            YouTubeMusicClassifier.ruleVerdict(
+                "Full musical",
+                "Some Theatre",
+                durationSec = 15 * 60 + 1,
+            ),
+        )
+        assertNull(
+            YouTubeMusicClassifier.ruleVerdict(
+                "Full musical",
+                "\uC0AC\uC6B4\uB4DC\uD2B8\uB799",
+                durationSec = 15 * 60,
+            ),
+        )
+    }
+
+    @Test
+    fun `liked videos split into songs and hidden videos`() = runBlocking {
+        YouTubeMusicClassifier.categoryLookup = { id ->
+            if (id == "v-video") "Entertainment" else "Music"
+        }
+        val songs = listOf(
+            Song("v-song", "Song", "Artist", null, durationText = "3:12"),
+            Song("v-video", "Fancam", "Channel", null, durationText = "4:00"),
+            Song("v-long", "Full musical", "Theatre", null, durationText = "57:44"),
+            Song("v-tail", "Tail", "Artist", null),
+        )
+
+        val (music, hidden) = YouTubeMusicClassifier.splitMusic(songs, limit = 3)
+
+        assertEquals(listOf("v-song", "v-tail"), music.map { it.videoId })
+        assertEquals(listOf("v-video", "v-long"), hidden.map { it.videoId })
+    }
+
+    @Test
     fun `the verdict cache drops the oldest entry at its cap`() {
         repeat(YouTubeMusicClassifier.MAX_ENTRIES + 1) { index ->
             YouTubeMusicClassifier.remember("v$index", Verdict.MUSIC, index.toLong())

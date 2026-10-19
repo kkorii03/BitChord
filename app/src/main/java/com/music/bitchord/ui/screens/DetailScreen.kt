@@ -308,7 +308,13 @@ fun DetailScreen(
      */
     songSort: SongSort = SongSort.DEFAULT,
 ) {
-    val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
+    val visibleSongs = (page.songs as? UiState.Success)?.data.orEmpty()
+    // Liked Music keeps the account's non-music videos aside by default;
+    // the row below the header reveals them. Everywhere else this is empty.
+    var showHiddenVideos by rememberSaveable(page.browseId) { mutableStateOf(false) }
+    val rawSongs = remember(visibleSongs, page.hiddenSongs, showHiddenVideos) {
+        if (showHiddenVideos) visibleSongs + page.hiddenSongs else visibleSongs
+    }
     val songs = remember(rawSongs, songSort) { rawSongs.sortedForDetail(songSort) }
     // What a numbered row shows regardless of [songSort] — an album's track
     // numbers are the sleeve's own and must not relabel themselves to match
@@ -511,6 +517,30 @@ fun DetailScreen(
                         onFocused = { focusSearch = false },
                         palette = palette,
                         type = page.type,
+                    )
+                }
+            }
+
+            if (page.hiddenSongs.isNotEmpty()) {
+                item(key = "hidden-videos") {
+                    Text(
+                        text = if (showHiddenVideos) {
+                            stringResource(
+                                R.string.liked_hidden_videos_hide,
+                                page.hiddenSongs.size,
+                            )
+                        } else {
+                            stringResource(
+                                R.string.liked_hidden_videos_show,
+                                page.hiddenSongs.size,
+                            )
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = palette.accent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showHiddenVideos = !showHiddenVideos }
+                            .padding(horizontal = HEADER_GUTTER, vertical = 10.dp),
                     )
                 }
             }
