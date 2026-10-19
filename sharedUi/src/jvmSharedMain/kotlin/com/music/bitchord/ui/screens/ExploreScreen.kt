@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +63,8 @@ fun ExploreScreen(
     listState: LazyListState,
     onCategoryClick: (MoodGenre) -> Unit,
     onRetry: () -> Unit,
+    /** Called once for each tile that scrolls into view without a cover yet. */
+    onCategoryVisible: (MoodGenre) -> Unit = {},
     refreshing: Boolean,
     onRefresh: () -> Unit,
     pullState: PullToRefreshState,
@@ -114,7 +117,12 @@ fun ExploreScreen(
                             .distinctBy { it.browseId to it.params }
                             .chunked(columns)
                         items(rows, key = { row -> row.first().let { "${it.browseId}|${it.params}" } }) { row ->
-                            MoodGenreRow(row = row, columns = columns, onCategoryClick = onCategoryClick)
+                            MoodGenreRow(
+                                row = row,
+                                columns = columns,
+                                onCategoryClick = onCategoryClick,
+                                onCategoryVisible = onCategoryVisible,
+                            )
                         }
                     }
                 }
@@ -128,6 +136,7 @@ private fun MoodGenreRow(
     row: List<MoodGenre>,
     columns: Int,
     onCategoryClick: (MoodGenre) -> Unit,
+    onCategoryVisible: (MoodGenre) -> Unit,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(MOOD_SPACING),
@@ -139,6 +148,7 @@ private fun MoodGenreRow(
             MoodGenreCard(
                 item = item,
                 onClick = { onCategoryClick(item) },
+                onVisible = { onCategoryVisible(item) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -156,8 +166,15 @@ private fun MoodGenreRow(
 private fun MoodGenreCard(
     item: MoodGenre,
     onClick: () -> Unit,
+    onVisible: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // A LazyColumn composes a card only when it scrolls into view, which is the
+    // right moment to ask for its cover. Once one has arrived the key changes
+    // and the second run does nothing.
+    LaunchedEffect(item.browseId, item.params, item.thumbnailUrl) {
+        if (item.thumbnailUrl == null) onVisible()
+    }
     val tone = remember(item.stripeColor, item.title) { moodTone(item) }
     Box(
         modifier = modifier

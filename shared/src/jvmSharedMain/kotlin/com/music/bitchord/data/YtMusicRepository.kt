@@ -35,6 +35,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
@@ -45,6 +47,8 @@ object YtMusicRepository {
 
     private const val TAG = "BitChord"
     private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
+    /** Battery over latency: Explore resolves at most three tile covers at once. */
+    private val moodGenreArtworkLock = Semaphore(3)
     // Includes unchanged video fallbacks as well as successful matches. The
     // queue prefetcher asks before a track becomes current; remembering its
     // answer makes the eventual player switch use the exact rendition whose
@@ -446,19 +450,24 @@ object YtMusicRepository {
         }.also { result -> result.getOrNull()?.let { moodGenreShelfCache.putIfAbsent(key, it) } }
     }
 
-    /** A category card borrows the first real cover from the playlists it opens. */
-    suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> {
-        // Curated Explore tiles are fetched only when opened; their artwork is
-        // whatever an earlier open already put in memory, never a new request.
-        if (browseId.startsWith(ExploreCategories.BROWSE_PREFIX)) {
-            return Result.success(YouTubeFallback.cachedCategoryThumbnail(browseId))
+    /**
+     * A category card borrows the first real cover from the playlists it opens.
+     * Only a tile the UI has made visible calls this, and the limiter keeps the
+     * three-at-a-time budget even when a wide grid composes several at once.
+     */
+    suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> =
+        moodGenreArtworkLock.withPermit {
+            if (browseId.startsWith(ExploreCategories.BROWSE_PREFIX)) {
+                return@withPermit Result.success(
+                    withContext(Dispatchers.IO) { YouTubeFallback.categoryArtwork(browseId) },
+                )
+            }
+            moodGenreShelves(browseId, params).map { shelves ->
+                shelves.asSequence().flatMap { it.items.asSequence() }
+                    .mapNotNull(ShelfItem::thumbnailUrl)
+                    .firstOrNull()
+            }
         }
-        return moodGenreShelves(browseId, params).map { shelves ->
-            shelves.asSequence().flatMap { it.items.asSequence() }
-                .mapNotNull(ShelfItem::thumbnailUrl)
-                .firstOrNull()
-        }
-    }
 
     /** One page of a search response, with the token for its next page if present. */
     data class SearchPage(

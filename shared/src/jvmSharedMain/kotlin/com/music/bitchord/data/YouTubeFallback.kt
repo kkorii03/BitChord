@@ -4,6 +4,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.charts.ChartType
 import com.music.bitchord.data.charts.ChartsApi
 import com.music.bitchord.data.cover.YouTubeCoverResolver
+import com.music.bitchord.data.cover.squareFriendlyThumbnail
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.YouTubeWebParser
 import com.music.bitchord.data.innertube.YouTubeWebSearch
@@ -18,7 +19,9 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.ConcurrentHashMap
 
@@ -83,6 +86,12 @@ internal object YouTubeFallback {
 
     /** Curated [ExploreCategories] tiles, keyed by their `ytq:` browse id. */
     private val categoryCache = ConcurrentHashMap<String, Pair<Long, List<HomeShelf>>>()
+
+    /** Covers already settled for a curated tile. */
+    private val artworkCache = ExploreCategoryArtworkCache()
+
+    /** Battery over latency: at most three tile covers resolve at once. */
+    private val artworkLock = Semaphore(3)
 
     @Volatile
     private var channelCache: Pair<Long, List<HomeShelf>>? = null
@@ -521,10 +530,11 @@ internal object YouTubeFallback {
     /**
      * Explore's grid: the curated [ExploreCategories] sections first, then the
      * Music channel's own shelves as single tiles. Static on purpose — a tile's
-     * search only runs when it is opened, and a tile borrows its cover from an
-     * already-cached result rather than fetching one.
+     * search only runs when it is opened or becomes visible, and a tile borrows
+     * its cover from the persistent artwork cache when it has one.
      */
     suspend fun exploreSections(): List<MoodGenreSection> {
+        val now = System.currentTimeMillis()
         val curated = ExploreCategories.sections.map { (sectionTitle, categories) ->
             MoodGenreSection(
                 title = sectionTitle,
@@ -534,7 +544,7 @@ internal object YouTubeFallback {
                         title = category.title,
                         browseId = browseId,
                         params = null,
-                        thumbnailUrl = cachedCategoryThumbnail(browseId),
+                        thumbnailUrl = cachedCategoryArtwork(browseId, now),
                     )
                 },
             )
@@ -620,6 +630,44 @@ internal object YouTubeFallback {
         ?.firstNotNullOfOrNull { shelf ->
             shelf.items.firstNotNullOfOrNull { it.thumbnailUrl }
         }
+
+    /** The chosen cover from the persistent cache, then from a category already opened. */
+    private fun cachedCategoryArtwork(
+        browseId: String,
+        now: Long = System.currentTimeMillis(),
+    ): String? {
+        artworkCache.get(browseId)?.let { return it }
+        val fromShelves = cachedCategoryThumbnail(browseId, now) ?: return null
+        val url = squareFriendlyThumbnail(fromShelves) ?: return null
+        artworkCache.put(browseId, url)
+        return url
+    }
+
+    /**
+     * The cover for one curated tile: the first playlist the tile's own search
+     * returns, in the same 16:9 `hq720` frame the rows use. Only a tile the UI
+     * has made visible asks for this, and [artworkLock] caps the work at three
+     * searches at once; the settled answer is reused for [ExploreCategoryArtworkCache.TTL_MS].
+     */
+    internal suspend fun categoryArtwork(
+        browseId: String,
+        now: Long = System.currentTimeMillis(),
+    ): String? {
+        val category = ExploreCategories.find(browseId) ?: return null
+        cachedCategoryArtwork(browseId, now)?.let { return it }
+        return artworkLock.withPermit {
+            cachedCategoryArtwork(browseId, now)?.let { return@withPermit it }
+            val url = runCatching { YouTubeWebSearch.playlists(category.query) }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    Log.w(TAG, "YouTube playlist artwork search failed: ${it.message}")
+                }
+                .getOrDefault(emptyList())
+                .firstNotNullOfOrNull { squareFriendlyThumbnail(it.thumbnailUrl) }
+            url?.let { artworkCache.put(browseId, it) }
+            url
+        }
+    }
 
     /**
      * Drops rows the classifier already knows are not music, using only its

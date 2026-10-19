@@ -306,16 +306,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
@@ -570,6 +567,7 @@ fun BitChordDesktopApp() {
     var homeIdentity by remember { mutableStateOf<String?>(null) }
     var exploreState by remember { mutableStateOf<UiState<List<MoodGenreSection>>>(UiState.Loading) }
     var selectedMoodGenre by remember { mutableStateOf<MoodGenre?>(null) }
+    val moodGenreArtworkJobs = remember { java.util.concurrent.ConcurrentHashMap<String, Job>() }
     // Bumped by a retry so the loaders below re-run without the state they are keyed on having to
     // change to something and back again.
     var exploreReloads by remember { mutableStateOf(0) }
@@ -2444,37 +2442,32 @@ fun BitChordDesktopApp() {
         }
     }
 
-    // Category buttons carry no artwork of their own, so a few are resolved at a time from the
-    // shelves they open.
-    LaunchedEffect(exploreState) {
-        val sections = (exploreState as? UiState.Success)?.data ?: return@LaunchedEffect
-        if (sections.all { section -> section.items.all { it.thumbnailUrl != null } }) return@LaunchedEffect
-        val limiter = Semaphore(4)
-        coroutineScope {
-            sections.flatMap(MoodGenreSection::items)
-                .filter { it.thumbnailUrl == null }
-                .forEach { item ->
-                    launch {
-                        val artwork = limiter.withPermit {
-                            DesktopSearchClient.moodGenreArtwork(item.browseId, item.params).getOrNull()
-                        } ?: return@launch
-                        val current = (exploreState as? UiState.Success)?.data ?: return@launch
-                        exploreState = UiState.Success(
-                            current.map { section ->
-                                section.copy(
-                                    items = section.items.map { entry ->
-                                        if (entry.browseId == item.browseId && entry.params == item.params) {
-                                            entry.copy(thumbnailUrl = artwork)
-                                        } else {
-                                            entry
-                                        }
-                                    },
-                                )
-                            },
-                        )
-                    }
-                }
+    // Only a tile the grid has scrolled into view asks for a cover; the repository keeps the
+    // three-at-a-time budget and reuses a settled cover for a day.
+    fun loadMoodGenreArtwork(item: MoodGenre) {
+        if (item.thumbnailUrl != null) return
+        val key = "${item.browseId}:${item.params.orEmpty()}"
+        if (moodGenreArtworkJobs[key]?.isCompleted == false) return
+        val job = scope.launch {
+            val artwork = DesktopSearchClient.moodGenreArtwork(item.browseId, item.params).getOrNull()
+                ?: return@launch
+            val current = (exploreState as? UiState.Success)?.data ?: return@launch
+            exploreState = UiState.Success(
+                current.map { section ->
+                    section.copy(
+                        items = section.items.map { entry ->
+                            if (entry.browseId == item.browseId && entry.params == item.params) {
+                                entry.copy(thumbnailUrl = artwork)
+                            } else {
+                                entry
+                            }
+                        },
+                    )
+                },
+            )
         }
+        moodGenreArtworkJobs[key] = job
+        job.invokeOnCompletion { moodGenreArtworkJobs.remove(key, job) }
     }
 
     /** The next page of the open collection, appended in place. */
@@ -3754,6 +3747,7 @@ fun BitChordDesktopApp() {
                             state = exploreState,
                             listState = exploreListState,
                             onCategoryClick = ::openMoodGenre,
+                            onCategoryVisible = { loadMoodGenreArtwork(it) },
                             onRetry = { exploreReloads++ },
                             refreshing = false,
                             onRefresh = { exploreReloads++ },

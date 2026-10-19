@@ -35,10 +35,37 @@ class ExploreCategoriesTest {
     }
 
     @Test
-    fun `sections contain exactly the two catalogues`() {
-        assertEquals(listOf("장르", "분위기·상황"), ExploreCategories.sections.map { it.first })
+    fun `sections put moods before genres`() {
+        assertEquals(listOf("분위기·상황", "장르"), ExploreCategories.sections.map { it.first })
+        assertEquals(ExploreCategories.moods, ExploreCategories.sections[0].second)
+        assertEquals(ExploreCategories.genres, ExploreCategories.sections[1].second)
+        assertEquals(ExploreCategories.moods + ExploreCategories.genres, ExploreCategories.all)
+    }
+
+    @Test
+    fun `mood titles match the music app grid`() {
+        assertEquals(
+            listOf(
+                "게임", "에너지 충전", "잠잘 때", "집중할 때", "출퇴근 & 등하교",
+                "편안한 분위기", "행복한 기분", "파티", "로맨스", "슬플 때",
+                "운동", "가족", "비 오는 날", "드라이브", "공부",
+            ),
+            ExploreCategories.moods.map { it.title },
+        )
+        assertEquals(15, ExploreCategories.moods.size)
+    }
+
+    @Test
+    fun `genre titles keep YouTube Music's order`() {
+        assertEquals(
+            listOf(
+                "K-pop", "발라드", "힙합", "R&B", "인디", "록", "팝", "J-pop",
+                "트로트", "OST", "재즈", "클래식", "EDM", "애니메이션",
+                "우타이테·VTuber 커버", "로파이",
+            ),
+            ExploreCategories.genres.map { it.title },
+        )
         assertEquals(16, ExploreCategories.genres.size)
-        assertEquals(12, ExploreCategories.moods.size)
     }
 
     @Test
