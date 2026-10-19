@@ -948,6 +948,24 @@ object AppSettings {
         get() = !wifiOnlyDownloads.value || meteredConnection.value != true
 
     /**
+     * Loads only the saved proxy route, synchronously and without the rest of
+     * the settings.
+     *
+     * Application.onCreate calls this before it starts anything that can issue
+     * a YouTube request: the proxy has to be in [YouTubeProxy] before the
+     * process's first browse, or a direct request from Korea records a GATED
+     * verdict against a network the listener already routed around. [init]
+     * still runs later for everything else; reading the same preferences in
+     * both places converges on one published configuration.
+     */
+    fun initProxy(context: Context, authStore: AuthStore) {
+        appContext = context.applicationContext
+        prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        this.authStore = authStore
+        readProxy()
+    }
+
+    /**
      * [authStore] is the application's own, passed in rather than opened again:
      * each open of the encrypted store is a keystore round trip, and a second
      * one here was a measurable slice of cold start.
@@ -1181,17 +1199,7 @@ object AppSettings {
             webdavUsername.value,
             webdavPassword.value,
         )
-        proxyMode.value = runCatching {
-            ProxyMode.valueOf(prefs.getString(KEY_PROXY_MODE, null) ?: ProxyMode.OFF.name)
-        }.getOrDefault(ProxyMode.OFF)
-        proxyHost.value = prefs.getString(KEY_PROXY_HOST, "").orEmpty()
-        proxyPort.value = prefs.getInt(KEY_PROXY_PORT, 0)
-        proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
-        proxyPassword.value = authStore.proxyPassword.orEmpty()
-        proxyScope.value = runCatching {
-            ProxyScope.valueOf(prefs.getString(KEY_PROXY_SCOPE, null) ?: ProxyScope.MUSIC_ONLY.name)
-        }.getOrDefault(ProxyScope.MUSIC_ONLY)
-        publishProxy()
+        readProxy()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
@@ -2294,6 +2302,21 @@ object AppSettings {
     fun setProxyScope(value: ProxyScope) {
         proxyScope.value = value
         prefs.edit().putString(KEY_PROXY_SCOPE, value.name).apply()
+        publishProxy()
+    }
+
+    /** Reads the proxy fields and publishes them; shared by [init] and [initProxy]. */
+    private fun readProxy() {
+        proxyMode.value = runCatching {
+            ProxyMode.valueOf(prefs.getString(KEY_PROXY_MODE, null) ?: ProxyMode.OFF.name)
+        }.getOrDefault(ProxyMode.OFF)
+        proxyHost.value = prefs.getString(KEY_PROXY_HOST, "").orEmpty()
+        proxyPort.value = prefs.getInt(KEY_PROXY_PORT, 0)
+        proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
+        proxyPassword.value = authStore.proxyPassword.orEmpty()
+        proxyScope.value = runCatching {
+            ProxyScope.valueOf(prefs.getString(KEY_PROXY_SCOPE, null) ?: ProxyScope.MUSIC_ONLY.name)
+        }.getOrDefault(ProxyScope.MUSIC_ONLY)
         publishProxy()
     }
 

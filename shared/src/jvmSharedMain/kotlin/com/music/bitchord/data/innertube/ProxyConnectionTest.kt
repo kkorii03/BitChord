@@ -15,7 +15,7 @@ import kotlinx.coroutines.CancellationException
  * A pass also clears a stored GATED verdict ([MusicGateFallback.markOpen]):
  * the gate is a property of the network the request left from, and the proxy
  * is how the listener changed that network. Without this the fallback would
- * keep serving youtube.com until the next daily re-check.
+ * keep serving youtube.com until the next re-check.
  */
 object ProxyConnectionTest {
 

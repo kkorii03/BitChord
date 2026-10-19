@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.net.YouTubeProxy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,9 +29,10 @@ import java.util.concurrent.ConcurrentHashMap
  * because one account being gated says nothing about the next one.
  *
  * Detection is deliberately passive: [observeBrowse] and [observePlayer] read
- * responses the app was already making. The only extra request is the daily
- * re-check [shouldTryMusic] permits, which is one browse on the first Home load
- * of a new day.
+ * responses the app was already making. The only extra request is the re-check
+ * [shouldTryMusic] permits: one browse on the first Home load after the window
+ * (a day normally, ten minutes while a proxy is configured), and on the first
+ * Home load of a process when a proxy is configured.
  */
 object MusicGateFallback {
 
@@ -38,8 +40,16 @@ object MusicGateFallback {
     private const val STORE_KEY = "music_gate_fallback_v1"
     private const val FORCE_KEY = "music_gate_force_v1"
 
-    /** How long a GATED verdict is trusted before one request re-checks it. */
+    /** How long a GATED verdict is trusted before one request re-checks it, with no proxy. */
     const val RECHECK_MS = 24L * 60 * 60 * 1000
+
+    /**
+     * How long a GATED verdict is trusted while a proxy is configured.
+     *
+     * Much shorter than [RECHECK_MS]: the proxy is the route the verdict is
+     * meant to escape, so a verdict must not hide a working route for a day.
+     */
+    const val PROXY_RECHECK_MS = 10L * 60 * 1000
 
     /** A tiny string store; the phone's SharedPreferences, the desktop's preferences file. */
     interface Store {
@@ -51,7 +61,16 @@ object MusicGateFallback {
 
     enum class Signal { NONE, OPEN, GATED }
 
-    private class Entry(var state: State, var checkedAt: Long)
+    /**
+     * [fromThisProcess] is false for a verdict loaded from [Store] at [init].
+     * Such a verdict describes the route of an earlier process; while a proxy
+     * is usable it is re-checked on the first Home load instead of trusted.
+     */
+    private class Entry(
+        var state: State,
+        var checkedAt: Long,
+        var fromThisProcess: Boolean,
+    )
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
@@ -115,7 +134,7 @@ object MusicGateFallback {
                         else -> State.UNKNOWN
                     }
                     val at = objectValue.string("at")?.toLongOrNull() ?: 0L
-                    entries[key] = Entry(state, at)
+                    entries[key] = Entry(state, at, fromThisProcess = false)
                 }
             }.onFailure { Log.w(TAG, "could not read the music-gate state: ${it.message}") }
         }
@@ -139,7 +158,21 @@ object MusicGateFallback {
     fun state(key: String = currentKey()): State =
         if (forced) State.GATED else (entries[key]?.state ?: State.UNKNOWN)
 
-    fun isActive(key: String = currentKey()): Boolean = state(key) == State.GATED
+    /**
+     * Whether requests for [key] should be shaped like a gated listener now.
+     *
+     * A GATED verdict loaded from an earlier process is not trusted while a
+     * proxy is usable: it was made before this process proved the proxy route,
+     * and treating it as active would force the re-check's own Home browse to
+     * go anonymous instead of asking as the account it is meant to answer for.
+     * The verdict stays readable through [state] and is re-checked lazily.
+     */
+    fun isActive(key: String = currentKey()): Boolean {
+        if (forced) return true
+        val entry = entries[key] ?: return false
+        if (entry.state != State.GATED) return false
+        return !(YouTubeProxy.config.usable && !entry.fromThisProcess)
+    }
 
     /**
      * Makes every identity read as gated, or gives the real verdicts back.
@@ -161,21 +194,29 @@ object MusicGateFallback {
     /**
      * Whether asking music.youtube.com is still worthwhile.
      *
-     * False only for a GATED verdict made less than [RECHECK_MS] ago. The first
-     * Home load after that window asks once more, so a Premium subscription or
-     * a network change is noticed within a day without anything polling.
+     * False while a GATED verdict is fresh: [PROXY_RECHECK_MS] when a proxy is
+     * configured, [RECHECK_MS] otherwise. A verdict loaded from an earlier
+     * process is never fresh while a proxy is configured. The first Home load
+     * after the window asks once more, so a Premium subscription or a network
+     * change is noticed without anything polling.
      */
     fun shouldTryMusic(key: String = currentKey(), now: Long = System.currentTimeMillis()): Boolean {
         if (forced) return false
         val entry = entries[key] ?: return true
-        return entry.state != State.GATED || now - entry.checkedAt >= RECHECK_MS
+        return entry.state != State.GATED || gatedNeedsRecheck(entry, now)
     }
 
-    /** True when a stored GATED verdict has aged past its once-a-day re-check. */
+    /**
+     * True when a stored GATED verdict has aged past its re-check window.
+     *
+     * That is once a day normally, ten minutes while a proxy is configured,
+     * or immediately when the verdict was loaded from an earlier process and
+     * a proxy is configured — the route it was made on was never proved.
+     */
     fun needsRecheck(key: String = currentKey(), now: Long = System.currentTimeMillis()): Boolean {
         if (forced) return false
         val entry = entries[key] ?: return false
-        return entry.state == State.GATED && now - entry.checkedAt >= RECHECK_MS
+        return gatedNeedsRecheck(entry, now)
     }
 
     /**
@@ -191,7 +232,7 @@ object MusicGateFallback {
     @Synchronized
     fun resetAll() {
         if (entries.isEmpty()) return
-        entries.keys.forEach { entries[it] = Entry(State.UNKNOWN, 0L) }
+        entries.keys.forEach { entries[it] = Entry(State.UNKNOWN, 0L, fromThisProcess = true) }
         persist()
         refreshActive()
     }
@@ -211,8 +252,10 @@ object MusicGateFallback {
         val existing = entries[key]
         val changed = existing?.state != State.GATED
         // A player refusal while the verdict is already fresh is not new
-        // information and does not need a preference write.
-        if (!changed && now - (existing?.checkedAt ?: 0) < RECHECK_MS) return
+        // information and does not need a preference write. "Fresh" follows
+        // the same window as shouldTryMusic, so a proxy verdict older than ten
+        // minutes is refreshed instead of being left stale forever.
+        if (!changed && existing != null && !gatedNeedsRecheck(existing, now)) return
         update(key, State.GATED, now)
         if (changed) {
             Log.w(TAG, "music gate: YouTube Music restricted for ${mask(key)} ($reason)")
@@ -222,7 +265,9 @@ object MusicGateFallback {
     /** Records that a re-check happened even when it could not answer either way. */
     @Synchronized
     fun touch(key: String = currentKey(), now: Long = System.currentTimeMillis()) {
-        entries.computeIfAbsent(key) { Entry(State.UNKNOWN, now) }.checkedAt = now
+        val entry = entries.computeIfAbsent(key) { Entry(State.UNKNOWN, now, fromThisProcess = true) }
+        entry.checkedAt = now
+        entry.fromThisProcess = true
         persist()
     }
 
@@ -277,9 +322,25 @@ object MusicGateFallback {
         refreshActive()
     }
 
+    /**
+     * The one place the re-check window is decided.
+     *
+     * A proxy makes every GATED verdict suspect: one loaded from an earlier
+     * process was made before this process proved the proxy route, and one
+     * made in this process is only trusted for [PROXY_RECHECK_MS]. With no
+     * proxy the daily rule is unchanged.
+     */
+    private fun gatedNeedsRecheck(entry: Entry, now: Long): Boolean {
+        if (entry.state != State.GATED) return false
+        val proxied = YouTubeProxy.config.usable
+        if (proxied && !entry.fromThisProcess) return true
+        val window = if (proxied) PROXY_RECHECK_MS else RECHECK_MS
+        return now - entry.checkedAt >= window
+    }
+
     @Synchronized
     private fun update(key: String, state: State, at: Long) {
-        entries[key] = Entry(state, at)
+        entries[key] = Entry(state, at, fromThisProcess = true)
         persist()
         refreshActive()
     }

@@ -78,6 +78,13 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
+        // The proxy route has to be in YouTubeProxy before this process makes
+        // its first YouTube request. Everything below can start such a request
+        // — a source open or the session-scope lookup a few lines down — while
+        // the full settings read is still running, and a direct first browse
+        // from Korea is exactly what stores a GATED verdict even though a
+        // working proxy is configured. This is only the small proxy read.
+        AppSettings.initProxy(this, authStore)
         // Opened off the main thread, alongside the stores below: none of these
         // reads a setting or the session, and between them they are the slowest
         // opens at startup — SourceRegistry's encrypted store most of all.
