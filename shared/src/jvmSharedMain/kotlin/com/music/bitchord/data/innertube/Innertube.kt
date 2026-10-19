@@ -1031,10 +1031,10 @@ object Innertube {
     const val COMMUNITY_PLAYLISTS_PARAMS = "EgeKAQQoAEABagwQDhAKEAMQBRAJEAQ="
 
     suspend fun searchFeaturedPlaylists(query: String): JsonObject =
-        search(query, FEATURED_PLAYLISTS_PARAMS, SearchKind.CATALOG)
+        search(query, params = FEATURED_PLAYLISTS_PARAMS, kind = SearchKind.CATALOG)
 
     suspend fun searchCommunityPlaylists(query: String): JsonObject =
-        search(query, COMMUNITY_PLAYLISTS_PARAMS, SearchKind.CATALOG)
+        search(query, params = COMMUNITY_PLAYLISTS_PARAMS, kind = SearchKind.CATALOG)
 
     /**
      * The typeahead list YouTube Music's own search box shows for a
