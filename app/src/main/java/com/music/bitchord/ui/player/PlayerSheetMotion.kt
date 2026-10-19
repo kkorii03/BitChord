@@ -69,7 +69,7 @@ class PlayerSheetMotion(
     private val scope: CoroutineScope,
     private val dock: PlayerDock,
     private val shown: () -> Boolean,
-    private val setShown: (Boolean) -> Unit,
+    private val setShown: (Boolean, PlayerExpandSource) -> Unit,
 ) : MiniPlayerPull {
     /** NaN while the sheet stands where M3 put it. */
     var held by mutableFloatStateOf(Float.NaN)
@@ -167,15 +167,28 @@ class PlayerSheetMotion(
     private fun recentSheetVelocity(): Float =
         if ((System.nanoTime() - sheetSampleNanos) / 1e6f < SHEET_VELOCITY_FRESH_MS) sheetVelocity else 0f
 
+    /**
+     * Places the player at [from] and asks the host to show it. False when the
+     * host refused — a raise with no touch behind it, see
+     * [PlayerExpandGuard] — in which case nothing is left held: a refused open
+     * must not leave the sheet partway up for the next resume to find.
+     */
+    private fun hold(from: Float, source: PlayerExpandSource): Boolean {
+        held = from
+        setShown(true, source)
+        if (shown()) return true
+        held = Float.NaN
+        return false
+    }
+
     /** A tap on the mini player. */
     fun open() {
         if (shown()) return
         settle?.cancel()
         closing = false
         val travel = travel()
-        held = travel
         // Raised already open: [held] is what slides it up.
-        setShown(true)
+        if (!hold(travel, PlayerExpandSource.TAP)) return
         settle = scope.launch {
             // The sheet's window takes a frame or two to exist. Started before
             // then, the first stretch of the slide would happen to nothing.
@@ -242,10 +255,9 @@ class PlayerSheetMotion(
             if (delta >= 0f || shown()) return
             settle?.cancel()
             closing = false
-            held = travel()
+            if (!hold(travel(), PlayerExpandSource.PULL)) return
             pullStartAt = held
             pullStartNanos = System.nanoTime()
-            setShown(true)
         }
         settle?.cancel()
         held = (held + delta).coerceIn(0f, travel())
@@ -277,6 +289,21 @@ class PlayerSheetMotion(
         }
     }
 
+    /**
+     * Drops a [held] left behind by a drag that never finished — one the app
+     * leaving the screen cancelled mid-pull, say. Called when the activity
+     * resumes: with the app no longer saying the sheet is shown, a value that
+     * still places it partway up is stale, and both the sheet's initial value
+     * ([holding]) and the mini player's artwork read it. With nothing shown
+     * there is nothing to hold.
+     */
+    fun resetIfStale() {
+        if (shown()) return
+        settle?.cancel()
+        closing = false
+        held = Float.NaN
+    }
+
     /** From the host, once the sheet has left composition. */
     fun onSheetGone() {
         closing = false
@@ -284,7 +311,10 @@ class PlayerSheetMotion(
         sheetVelocity = 0f
         settle?.cancel()
         windowRestore?.cancel()
-        held = Float.NaN
+        // A sheet gone while the app still says it is shown keeps its hold:
+        // that is a sheet on its way out, not a cancelled drag — and the
+        // activity drops anything still stale on the next resume.
+        if (!shown()) held = Float.NaN
         laidOut = false
         sheet = null
         window = null
@@ -312,6 +342,6 @@ class PlayerSheetMotion(
     /** Gone — with the window's own exit animation already off (see [quietWindow]). */
     private fun dismissQuietly() {
         quietWindow()
-        setShown(false)
+        setShown(false, PlayerExpandSource.MOTION)
     }
 }

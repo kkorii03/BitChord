@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -274,6 +275,8 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.PlayerExpandGuard
+import com.music.bitchord.ui.player.PlayerExpandSource
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
@@ -327,6 +330,60 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+
+    /** When this activity last came to the foreground, for [PlayerExpandGuard]. */
+    private var resumedAtNanos = 0L
+
+    /** When the last `ACTION_DOWN` reached this window, or 0 if none since resume. */
+    private var lastTouchDownNanos = 0L
+
+    /**
+     * The composition's sheet motion, handed back here so [onResume] can drop
+     * a value a drag cancelled while the app was away left behind — see
+     * [PlayerSheetMotion.resetIfStale].
+     */
+    private var playerMotion: PlayerSheetMotion? = null
+
+    override fun onStart() {
+        super.onStart()
+        noteForeground()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        noteForeground()
+        playerMotion?.resetIfStale()
+    }
+
+    /**
+     * A new arrival at the foreground clears the touch count with it: an open
+     * must follow a press made *after* coming back, not one made before the
+     * app was left — see [PlayerExpandGuard].
+     */
+    private fun noteForeground() {
+        resumedAtNanos = System.nanoTime()
+        lastTouchDownNanos = 0L
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) lastTouchDownNanos = System.nanoTime()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** Whether a finger has landed on this window since the activity last resumed. */
+    internal fun touchedSinceResume(): Boolean = lastTouchDownNanos != 0L
+
+    internal fun msSinceResume(): Long = (System.nanoTime() - resumedAtNanos) / 1_000_000L
+
+    /** Milliseconds since the last `ACTION_DOWN`, or -1 if there was none. */
+    internal fun msSinceTouch(): Long =
+        if (lastTouchDownNanos == 0L) -1L else (System.nanoTime() - lastTouchDownNanos) / 1_000_000L
+
+    /** Called from the composition so [onResume] has something to reset. */
+    internal fun attachPlayerSheetMotion(motion: PlayerSheetMotion?) {
+        playerMotion = motion
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -401,6 +458,9 @@ class MainActivity : AppCompatActivity() {
                         windowWidth = maxWidth,
                         windowHeight = maxHeight,
                         appBackdrop = appBackdrop,
+                        // For the expand guard and its diagnostic log: the
+                        // activity is what saw the last touch and resume.
+                        activity = this@MainActivity,
                     )
                 }
                 }
@@ -517,6 +577,8 @@ private fun BitChordApp(
      */
     windowHeight: Dp,
     appBackdrop: LayerBackdrop,
+    /** The activity, for the expand guard and its diagnostic log — see [PlayerExpandGuard]. */
+    activity: MainActivity,
     viewModel: MainViewModel = viewModel(),
 ) {
     val context = LocalContext.current
@@ -545,6 +607,26 @@ private fun BitChordApp(
      * permanent pane.
      */
     var showNowPlaying by remember { mutableStateOf(false) }
+    // The one way the player is raised, whoever asks: M3 moving it, the app
+    // moving it, or a widget's deep link. A raise has to follow a touch the
+    // activity saw since it last resumed — or be that deep link — so a
+    // programmatic open while the app is coming back to the foreground cannot
+    // raise the sheet by itself (see [PlayerExpandGuard]). Every raise that
+    // does happen leaves one line in the exportable log, with the frames that
+    // asked for it, so the next report of an unexpected raise can say which
+    // path it came by.
+    val setPlayerShown: (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
+        if (!shown) {
+            if (showNowPlaying) showNowPlaying = false
+        } else if (!showNowPlaying) {
+            if (PlayerExpandGuard.allow(source, activity.touchedSinceResume())) {
+                showNowPlaying = true
+                PlayerExpandGuard.logExpand(source, activity.msSinceResume(), activity.msSinceTouch())
+            } else {
+                PlayerExpandGuard.logRefused(source, activity.msSinceResume())
+            }
+        }
+    }
     // Where the two ends of opening and closing the player meet: the mini
     // player's cover reports itself here, the sheet its offset, and the player
     // flies its artwork between them — see [PlayerDock].
@@ -558,8 +640,14 @@ private fun BitChordApp(
             scope = playerSheetScope,
             dock = playerDock,
             shown = { showNowPlaying },
-            setShown = { showNowPlaying = it },
+            setShown = setPlayerShown,
         )
+    }
+    // Resuming is when a drag cancelled while the app was away gets its hold
+    // dropped — see [PlayerSheetMotion.resetIfStale].
+    DisposableEffect(playerSheetMotion) {
+        activity.attachPlayerSheetMotion(playerSheetMotion)
+        onDispose { activity.attachPlayerSheetMotion(null) }
     }
     playerSheetMotion.windowInfo = LocalWindowInfo.current
     // "Reduce animation" keeps the player as it always was: M3's own slide up
@@ -575,7 +663,11 @@ private fun BitChordApp(
     // on its window's own exit animation — the old fast drop, with a copy of the
     // artwork slipping down out of the mini player's cover after it.
     val dismissPlayer: () -> Unit = {
-        if (reducePlayerMotion) showNowPlaying = false else playerSheetMotion.close()
+        if (reducePlayerMotion) {
+            setPlayerShown(false, PlayerExpandSource.MOTION)
+        } else {
+            playerSheetMotion.close()
+        }
     }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
@@ -585,7 +677,7 @@ private fun BitChordApp(
     val openPlayerRequested by PlayerDeepLink.pending.collectAsStateWithLifecycle()
     LaunchedEffect(openPlayerRequested) {
         if (openPlayerRequested) {
-            showNowPlaying = true
+            setPlayerShown(true, PlayerExpandSource.DEEPLINK)
             PlayerDeepLink.handled()
         }
     }
@@ -3963,7 +4055,7 @@ private fun BitChordApp(
                         onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
                         onExpand = if (reducePlayerMotion) {
-                            { showNowPlaying = true }
+                            { setPlayerShown(true, PlayerExpandSource.TAP) }
                         } else {
                             playerSheetMotion::open
                         },
@@ -4000,7 +4092,7 @@ private fun BitChordApp(
                             onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
                             onExpand = if (reducePlayerMotion) {
-                                { showNowPlaying = true }
+                                { setPlayerShown(true, PlayerExpandSource.TAP) }
                             } else {
                                 playerSheetMotion::open
                             },
@@ -4069,7 +4161,7 @@ private fun BitChordApp(
                 }
             }
             ModalBottomSheet(
-                onDismissRequest = { showNowPlaying = false },
+                onDismissRequest = { setPlayerShown(false, PlayerExpandSource.MOTION) },
                 sheetState = nowPlayingSheetState,
                 // None of M3's: it follows the sheet's own animation, which is
                 // no longer what moves the player. The player draws its own,

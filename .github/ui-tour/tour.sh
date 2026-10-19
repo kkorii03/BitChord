@@ -613,6 +613,48 @@ run_section() {
   return 0
 }
 
+# ---- Coming back to the app must not expand the player --------------------
+# Reported on the device: with the mini player showing, leaving the app (Home,
+# Back, Recents) and returning raised the full-screen player by itself. Each
+# way back is captured, and `expanded=` counts markers only the full player
+# has, so the result can be read from index.txt as well as the pictures.
+player_expanded() {
+  dump_ui
+  local n
+  n=$(grep -c -E 'text="(다음 재생|가사)"|content-desc="(다음 재생|가사)"|text="(Up next|Lyrics)"' /tmp/ui.xml 2>/dev/null || true)
+  echo "${n:-0}"
+}
+section_return() {
+  reset_home
+  adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
+  sleep 20
+  shot return-0-before "Mini player showing, before leaving"
+  echo "return-0 expanded=$(player_expanded)" >> "$OUT/index.txt"
+  # Home key, then the launcher icon.
+  adb shell input keyevent 3; sleep 4
+  adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1; sleep 7
+  shot return-1-home "After Home key and launcher icon"
+  echo "return-1-home expanded=$(player_expanded)" >> "$OUT/index.txt"
+  # Back key leaves the app, then the launcher icon.
+  adb shell input keyevent 4; sleep 4
+  adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1; sleep 7
+  shot return-2-back "After Back key and launcher icon"
+  echo "return-2-back expanded=$(player_expanded)" >> "$OUT/index.txt"
+  # Home, then back to the app through Recents.
+  adb shell input keyevent 3; sleep 3
+  adb shell input keyevent 187; sleep 4
+  adb shell input tap $(( SCREEN_W / 2 )) $(( SCREEN_H / 2 )); sleep 7
+  shot return-3-recents "After Recents"
+  echo "return-3-recents expanded=$(player_expanded)" >> "$OUT/index.txt"
+  # And a long stay in the background (the process may be reclaimed).
+  adb shell input keyevent 3; sleep 2
+  adb shell am kill $PKG; sleep 3
+  adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1; sleep 9
+  shot return-4-killed "After the app was killed in the background"
+  echo "return-4-killed expanded=$(player_expanded)" >> "$OUT/index.txt"
+  adb logcat -d | grep -E 'player expand' | tail -20 > "$OUT/player-expand.txt" || true
+}
+
 # ---- Proxy save must not crash -------------------------------------------
 # Saving proxy settings once killed the app on the device (pool eviction on
 # the main thread). Saves an unreachable proxy through the debug switch, which
@@ -639,6 +681,7 @@ if [ "${TOUR_QUICK:-0}" = "1" ]; then
   run_section section_explore explore
   run_section section_search search
   run_section section_now_playing now-playing
+  run_section section_return return
   run_section section_proxy proxy
 else
   run_section section_home home
