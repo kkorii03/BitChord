@@ -1922,7 +1922,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // ask once more through the new route and repaint both feeds
             // rather than leaving yesterday's GATED answer on screen.
             AppSettings.proxyRevision.drop(1).collect {
-                YtMusicRepository.recheckGateNow()
+                // A failing re-check (proxy unreachable, wrong password) must
+                // show as an error on Home, never take the app down.
+                try {
+                    YtMusicRepository.recheckGateNow()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    com.music.bitchord.data.DebugLog.w("BitChord", "proxy re-check failed: ${failure.message}")
+                }
                 refresh(Feed.HOME, force = true)
                 refresh(Feed.EXPLORE)
             }

@@ -47,7 +47,12 @@ object YouTubeProxy {
         val normalized = config.normalized()
         if (normalized == current) return
         current = normalized
-        Http.client.connectionPool.evictAll()
+        // Off the caller's thread: closing a pooled TLS socket writes its
+        // close_notify, and the settings dialog saves on the main thread, where
+        // Android kills the app for network I/O (crashed on the S24, ko-74).
+        Thread({ runCatching { Http.client.connectionPool.evictAll() } }, "proxy-evict")
+            .apply { isDaemon = true }
+            .start()
     }
 
     /** Whether [url] would be sent through the proxy under the current scope. */
