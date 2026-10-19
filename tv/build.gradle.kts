@@ -53,6 +53,26 @@ val listenTogetherServer: String = (
     ).trim().trimEnd('/')
 
 /*
+ * The commit a build came from, for the exported diagnostic log. Never a
+ * credential; blank when the build happens outside a git checkout (a source
+ * archive, for instance), which the export reports as "unknown" rather than
+ * failing the build over.
+ *
+ * The TV app compiles the phone app's sources (see sourceSets below), and
+ * DiagnosticsExport reads BuildConfig.GIT_SHA from them — so this has to be
+ * declared here too, exactly as app/build.gradle.kts declares it. Without it
+ * :tv:compileReleaseKotlin fails on an unresolved reference.
+ */
+val gitSha: String = runCatching {
+    val process = ProcessBuilder("git", "rev-parse", "--short=7", "HEAD")
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val text = process.inputStream.bufferedReader().use { it.readText() }.trim()
+    if (process.waitFor() == 0 && text.length in 7..40 && text.all { it.isLetterOrDigit() }) text else ""
+}.getOrDefault("")
+
+/*
  * Bump this by hand before cutting each sideloaded test build ("beta2",
  * "beta3", ...) and blank it out before cutting the real release. Marks the
  * versionName below as a pre-release: AppUpdateChecker.isNewer() treats any
@@ -100,6 +120,9 @@ android {
         // the updater installs the TV app here, never the phone app. See
         // AppUpdateChecker.apkAssetUrl.
         buildConfigField("String", "UPDATE_APK_PREFIX", "\"BitChordTV-\"")
+        // Read by the phone app's DiagnosticsExport, which this module compiles
+        // as-is — see the gitSha block above.
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
     }
 
     splits {
