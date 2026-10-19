@@ -1444,6 +1444,10 @@ private fun BitChordApp(
         keepVideoId = null
         val holdUntilAligned = AppSettings.smartVersionAlignment.value
         if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = true
+        // Set once the swap command is out; until then a pause made here is
+        // ours to undo, even if this coroutine is cancelled (the effect that
+        // calls it is restarted whenever the activity's UI is rebuilt).
+        var handedOver = false
         if (pauseWhileResolving) c.pause()
         try {
             TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
@@ -1485,10 +1489,17 @@ private fun BitChordApp(
             // The same line in the finally is the catch-all for every path
             // that never got this far, where nothing else would release it.
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
+            handedOver = true
             c.swapToVersion(target)
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
             switchingAudioVersion = false
+            if (!handedOver && resumeAfterResolution && !c.playWhenReady &&
+                c.currentMediaItem?.mediaId == song.videoId
+            ) {
+                TrackLog.d("Player", "audio switch abandoned; resuming", song.videoId)
+                c.play()
+            }
         }
     }
 
@@ -1659,8 +1670,14 @@ private fun BitChordApp(
     // A failed/identical match simply resumes this untouched video.
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
-        if (preferMusicOnly && song.isVideo && song.videoId != keepVideoId) {
-            switchToMusicOnly(song, pauseWhileResolving = true)
+        // Once per track per process: this effect also re-runs when the UI is
+        // rebuilt on returning to the app, and that must not stop a song
+        // that is already playing. Mid-song (past 3 s) it never pauses.
+        if (preferMusicOnly && song.isVideo && song.videoId != keepVideoId &&
+            musicOnlyTried.add(song.videoId)
+        ) {
+            val startOfTrack = (controller?.currentPosition ?: 0L) < 3_000L
+            switchToMusicOnly(song, pauseWhileResolving = startOfTrack)
         }
     }
 
@@ -5748,6 +5765,7 @@ private fun BitChordApp(
     }
 }
 
+<<<<<<< HEAD
 /** UIKit's sheet curve: leaves at once, settles long — a sheet let go of, not pushed. */
 private val OnboardingDismissEasing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
@@ -5881,3 +5899,12 @@ private fun FrostedMenuRow(
 private fun String?.isDeviceFolderPage(): Boolean =
     this != null && startsWith("local:") &&
         !startsWith(Downloads.PLAYLIST_PREFIX) && !startsWith(LocalGroups.PREFIX)
+=======
+/**
+ * Video rows already offered the music-only swap in this process. The effect
+ * that offers it re-runs whenever the activity's UI is rebuilt (returning to
+ * the app), and a second offer would pause a song that is already playing.
+ */
+private val musicOnlyTried: MutableSet<String> =
+    java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+>>>>>>> task/char-sync

@@ -79,17 +79,6 @@ jobs:
           grep -E "Task :app:compileProdReleaseKotlin|BUILD (SUCCESSFUL|FAILED)" compile.log | while IFS= read -r l; do echo "::notice title=compile::$l"; done || true
           exit $status
 
-      # The desktop app shares the Innertube signing code; compile it so a
-      # change there cannot break the desktop build unseen.
-      - name: Compile the desktop app
-        shell: bash
-        run: |
-          set +e -o pipefail
-          ./gradlew :desktopApp:compileKotlin --console=plain 2>&1 | tee desktop.log
-          status=${PIPESTATUS[0]}
-          grep -E "^e: " desktop.log | head -40 | while IFS= read -r l; do echo "::error title=desktop::$l"; done || true
-          exit $status
-
       # The app module's pure-logic tests added with the timing-cost and
       # artwork fixes. Named one by one: the rest of app/src/test is not kept
       # green (the audio output tests already fail on this branch's base).

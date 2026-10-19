@@ -729,7 +729,7 @@ object YtMusicRepository {
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { match ->
+            TrackMatcher.bestSameArtist(candidates, target)?.let { match ->
                 Log.d(
                     TAG,
                     "audio switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",

@@ -136,6 +136,21 @@ object TrackMatcher {
         ranked(candidates, target).firstOrNull()
 
     /**
+     * [best], but only a row that credits one of the target's artists.
+     *
+     * For swapping a playing upload to its catalogue song the recording must
+     * be the same one, and [score] deliberately lets a different credit
+     * through on title and length alone (film catalogues). That let a
+     * title-only query turn Justin Bieber's "Sorry" into f(x)'s
+     * "Sorry (Dear. Daddy)" mid-song.
+     */
+    fun bestSameArtist(candidates: List<Song>, target: Target): Song? =
+        // A positive score only: artistScore answers 0 when either credit has
+        // no comparable words ("f(x)" is all single letters), and "cannot tell"
+        // must not count as the same artist here.
+        ranked(candidates, target).firstOrNull { (artistScore(target.artist, it.artist) ?: 0) > 0 }
+
+    /**
      * The best video to play when the listener asks to switch an audio track
      * to its video version.
      *
