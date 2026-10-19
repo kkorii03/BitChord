@@ -193,6 +193,8 @@ class CrossfadeController(
      * [Phase.IDLE] is the only phase that can still be preempted for free.
      */
     private val versionSwapActive: () -> Boolean = { false },
+    /** Invoked after [finish] has completed cleanup and returned to IDLE. */
+    private val onSettled: () -> Unit = {},
 ) {
 
     private enum class Phase {
@@ -256,6 +258,19 @@ class CrossfadeController(
      * [holdAtEnd]. Null when nothing is held.
      */
     private var heldAtEnd: ExoPlayer? = null
+
+    /**
+     * Set by an idle tick that found a transition coming for the playing
+     * track — see [holdAhead]. A tick that leaves it false lets go of any hold.
+     */
+    private var holdWanted = false
+
+    /**
+     * The outgoing track's queue index when the transition armed. A player
+     * that could not be held moves off it at its end, onto the very song
+     * fading in — see [ranOn].
+     */
+    private var outgoingItemIndex = C.INDEX_UNSET
 
     /** Which player this class's own listener is currently attached to. */
     private var listeningTo: ExoPlayer? = null
@@ -636,9 +651,10 @@ class CrossfadeController(
         override fun onPlayerError(error: PlaybackException) = bail()
 
         // The session reached the end of a track [holdAtEnd] is holding, before
-        // the handoff took it off that track. Only ever a late handoff or a
-        // transition that never started; either way the hold must not leave
-        // the listener paused at the end of a song.
+        // the handoff took it off that track. Only ever a late handoff, or a
+        // transition that was held for ahead of arming and never started;
+        // either way the hold must not leave the listener paused at the end of
+        // a song.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (playWhenReady || reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) return
             val held = heldAtEnd ?: return
@@ -763,10 +779,23 @@ class CrossfadeController(
         }
     }
 
-    /** Arms a crossfade as the playing track runs out. */
+    /**
+     * Arms a crossfade as the playing track runs out, and holds the track's
+     * end for it ahead of that — see [holdAhead]. Whatever path through
+     * [planAutoTransition] decides no transition is coming lets go of the
+     * hold, which is free.
+     */
     private fun considerAutoTransition() {
         val player = active()
+        // Paused or buffering: the transition is no nearer, and a hold already
+        // in place is still exactly as right as it was.
         if (!player.isPlaying) return
+        holdWanted = false
+        planAutoTransition(player)
+        if (!holdWanted && phase == Phase.IDLE) releaseHold()
+    }
+
+    private fun planAutoTransition(player: ExoPlayer) {
         // Not while a version swap owns the standby player — see
         // [versionSwapActive]. Nothing to clean up on the way out unlike the
         // party case below: a version swap is a between-tracks affair on the
@@ -874,12 +903,11 @@ class CrossfadeController(
             beginSleepFadeOut(fade)
             return
         }
+        holdAhead(player, duration)
         // Arm early: the standby has to open the incoming track and buffer to
         // its cue point, and that work has to be finished by the time the fade
-        // is due rather than started then. And before this player starts
-        // reading the next track, or the end can no longer be held — see
-        // [holdAtEnd].
-        if (remaining > fade + ARM_LEAD_MS && remaining > armBeforeReadAheadMs()) return
+        // is due rather than started then.
+        if (remaining > fade + ARM_LEAD_MS) return
 
         begin(fade, endMs = duration, smart = false, automixFallback = fallbackLength)
     }
@@ -1019,6 +1047,7 @@ class CrossfadeController(
             beginSleepFadeOut(fade)
             return
         }
+        holdAhead(player, duration)
         // Same arm-ahead margin as the standard path, just measured against
         // the plan's own start rather than a fixed offset from track end —
         // an analyzed mix-out anchor can place that start well before the
@@ -1027,15 +1056,9 @@ class CrossfadeController(
         // Plus, when the outgoing track is the one sped up, the beats that
         // ramp takes: it has to be at the incoming tempo by the fade, so it
         // starts that much earlier, from arming.
-        //
-        // And never later than the point this player starts reading the next
-        // track, whatever the plan says: a short blend ending on the file's
-        // last sample would otherwise arm too late to hold it — see
-        // [holdAtEnd].
         val beatMs = (plan.beatSeconds * 1000).roundToLong()
         val rampMs = if (beatMs > 0L) rampStepsFor(plan.outgoingPlaybackRate) * beatMs else 0L
-        val fileRemaining = duration - player.currentPosition
-        if (remaining > ARM_LEAD_MS + rampMs && fileRemaining > armBeforeReadAheadMs()) return
+        if (remaining > ARM_LEAD_MS + rampMs) return
 
         begin(
             fade,
@@ -1232,9 +1255,17 @@ class CrossfadeController(
         handedOff = false
         outgoing = out
         incoming = into
+        outgoingItemIndex = out.currentMediaItemIndex
 
+        val t0 = SystemClock.elapsedRealtimeNanos()
         val items = (0 until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        val copyDurationUs = (SystemClock.elapsedRealtimeNanos() - t0) / 1000L
         queuedItemCount = items.size
+        val perTrackUs = if (items.isNotEmpty()) copyDurationUs.toDouble() / items.size else 0.0
+        Log.d(
+            TAG,
+            "begin() queue copy: ${items.size} tracks in ${copyDurationUs}µs (${String.format(java.util.Locale.US, "%.2f", perTrackUs)}µs/track)",
+        )
 
         Log.d(
             TAG,
@@ -1258,7 +1289,10 @@ class CrossfadeController(
         // fight each other. Undone in [finish].
         into.applyPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
         into.volume = 0f
+        val setNanos0 = SystemClock.elapsedRealtimeNanos()
         into.setMediaItems(items, nextIndex, incomingCueTimeMs)
+        val setDurationUs = (SystemClock.elapsedRealtimeNanos() - setNanos0) / 1000L
+        Log.d(TAG, "standby setMediaItems: ${items.size} tracks in ${setDurationUs}µs")
         // Before `prepare`, so the standby's per-player audio state is right
         // for the incoming track from its very first decoded frame rather than
         // from the handoff, which is half a blend too late.
@@ -1301,22 +1335,55 @@ class CrossfadeController(
      * are told it is final, play it out to its last sample and stop. Removing
      * the items behind it then touches nothing being read. It has to be set
      * before the read-ahead reaches the next track, though — setting it once
-     * that has happened makes Media3 flush to undo it, the same break — so
-     * this is skipped when it is already too late, and both arm paths arm
-     * early enough that it rarely is.
+     * that has happened makes Media3 flush to undo it, the same break, at
+     * full volume, just before the blend.
      *
-     * Released in [finish], and by [listener] if the track runs out while
-     * still the session's.
+     * Which is what the standard crossfade kept doing. This used to be set
+     * at arm time and trusted an estimate of the read-ahead — the sink's lead
+     * plus a second and a half for the decoder — and the standard path arms
+     * only its fade plus [ARM_LEAD_MS] before the file ends, inside what a
+     * deep decoder pipeline (FLAC frames, a software decoder's queue) really
+     * reads ahead. Automix mostly escaped it by arming off a mix-out point
+     * well clear of the file end. So the estimate is gone: this only holds
+     * where Media3 *cannot* yet be reading on — see [MEDIA3_READ_AHEAD_LIMIT_MS]
+     * — and [holdAhead] puts it there from the idle tick, for either kind of
+     * transition, long before either arms. Where that is too late — a seek
+     * into the last seconds — the end is left unheld, and [handOff] leaves
+     * the queue alone rather than flush.
+     *
+     * Released in [finish], by an idle tick that no longer expects a
+     * transition, and by [listener] if the track runs out while still the
+     * session's.
      */
     private fun holdAtEnd(out: ExoPlayer) {
+        if (heldAtEnd === out) return
         val duration = out.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
-        if (duration - out.currentPosition <= readAheadMs()) {
-            Log.d(TAG, "end not held: ${duration - out.currentPosition}ms left, read-ahead ${readAheadMs()}ms")
+        val left = duration - out.currentPosition
+        if (left <= maxReadAheadMs(out)) {
+            Log.d(TAG, "end not held: ${left}ms left, may already be reading on (${maxReadAheadMs(out)}ms)")
             return
         }
+        releaseHold()
         out.pauseAtEndOfMediaItems = true
         heldAtEnd = out
+        Log.d(TAG, "end held at ${left}ms left")
+    }
+
+    /**
+     * Holds the playing track's end for the transition an idle tick has
+     * found coming, as soon as it is within reach of [holdAtEnd] — whether or
+     * not that transition has armed yet. Arming waits for its own lead;
+     * holding cannot, because by then the player may already be reading on.
+     */
+    private fun holdAhead(player: ExoPlayer, duration: Long) {
+        val left = duration - player.currentPosition
+        val limit = maxReadAheadMs(player)
+        if (left > limit + HOLD_AHEAD_MS) return
+        holdWanted = true
+        // Silently, past the point it can be done: [begin] says so once, not
+        // every idle tick.
+        if (left > limit) holdAtEnd(player)
     }
 
     /** Undoes [holdAtEnd]. Idempotent; never flushes. */
@@ -1326,21 +1393,23 @@ class CrossfadeController(
     }
 
     /**
-     * How far before its track's end the session player starts reading the
-     * next one, with room to spare: its sink's lead over the speaker, plus
-     * the decoder and a tick or two of this class running late.
+     * The furthest before its track's end, in media ms, that [player] can
+     * have started reading the next one: Media3's wall-clock limit at its
+     * current speed, and a margin for a position report that is a tick old
+     * and the hop to the playback thread.
      */
-    private fun readAheadMs(): Long {
-        val lead = filters.incomingLeadMs().takeIf { it > 0L } ?: FALLBACK_SINK_LEAD_MS
-        return lead + READ_AHEAD_MARGIN_MS
+    private fun maxReadAheadMs(player: ExoPlayer): Long {
+        val speed = player.playbackParameters.speed.coerceAtLeast(1f)
+        return (MEDIA3_READ_AHEAD_LIMIT_MS * speed).roundToLong() + HOLD_SAFETY_MS
     }
 
     /**
-     * The latest the arm paths may arm and still leave [holdAtEnd] room: two
-     * idle ticks ahead of [readAheadMs], so the tick that notices the end
-     * coming is never already past it.
+     * Whether [out], left unheld, has run on from its own track into the one
+     * after it — the song fading in, started a second time on the player
+     * that is leaving. Never true for a held player: it stops on its track.
      */
-    private fun armBeforeReadAheadMs(): Long = readAheadMs() + 2 * IDLE_STEP_MS
+    private fun ranOn(out: ExoPlayer): Boolean =
+        handedOff && outgoingItemIndex != C.INDEX_UNSET && out.currentMediaItemIndex != outgoingItemIndex
 
     /**
      * Waits for the standby to have the incoming track ready at its cue point,
@@ -1471,8 +1540,10 @@ class CrossfadeController(
         // the items being removed. Without the hold, a handoff this close to
         // the track's end removes the period its renderers are reading, and
         // Media3 flushes the sink to recover — a break in the track still
-        // playing.
-        if (out.mediaItemCount > out.currentMediaItemIndex + 1) {
+        // playing. So an unheld player keeps its queue: it runs on into the
+        // incoming song at the very end of its fade, where [ranOn] has it
+        // silenced, and [finish] retires it a tick or two later.
+        if (heldAtEnd === out && out.mediaItemCount > out.currentMediaItemIndex + 1) {
             out.removeMediaItems(out.currentMediaItemIndex + 1, out.mediaItemCount)
         }
     }
@@ -1565,7 +1636,7 @@ class CrossfadeController(
         val rise = mixRise(progress)
         val fall = mixFall(progress)
         player.volume = rise
-        out.volume = fall
+        out.volume = if (ranOn(out)) 0f else fall
         onBlendHeadroom(
             headroomFor(mixRise(outgoingAt), outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan)),
         )
@@ -1734,7 +1805,7 @@ class CrossfadeController(
         }
         val progress = (SystemClock.elapsedRealtime() - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
-            val fall = bailFromGain * fallGain(progress)
+            val fall = if (leaving === outgoing && ranOn(leaving)) 0f else bailFromGain * fallGain(progress)
             leaving.volume = fall
             onBlendHeadroom(headroomFor(1f, fall))
             return
@@ -1786,6 +1857,7 @@ class CrossfadeController(
     private fun leavingOnBail(): ExoPlayer? = if (handedOff) outgoing else incoming
 
     private fun finish() {
+        val wasTransitioning = phase != Phase.IDLE
         if (phase != Phase.IDLE) {
             Log.d(TAG, "finish from $phase")
             // Stamped under this guard rather than beside the assignment at the
@@ -1844,6 +1916,7 @@ class CrossfadeController(
         outgoing = null
         incoming = null
         handedOff = false
+        outgoingItemIndex = C.INDEX_UNSET
         queuedItemCount = 0
         incomingCueTimeMs = 0L
         incomingPlaybackRate = 1.0
@@ -1852,6 +1925,7 @@ class CrossfadeController(
         outgoingAnalysis = TrackAnalysis()
         incomingAnalysis = TrackAnalysis()
         phase = Phase.IDLE
+        if (wasTransitioning) onSettled()
     }
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
@@ -2689,18 +2763,26 @@ class CrossfadeController(
         const val ARM_LEAD_MS = 4_000L
 
         /**
-         * What a player reads beyond its sink's lead before it reaches the next
-         * track: the decoder's buffers in flight, and an idle tick or two of this
-         * class getting round to arming. See [holdAtEnd].
+         * The earliest, in wall-clock ms before the next item starts, that
+         * Media3 1.11 lets a player's renderers move on to reading it:
+         * `ExoPlayerImplInternal.DURATION_TO_ADVANCE_READING_THRESHOLD_US`,
+         * checked in `maybeUpdateReadingPeriod` against the playing position
+         * divided by speed (javap, 1.11.0). Before this point [holdAtEnd]
+         * provably cannot flush; after it, it might. Re-check on a Media3 bump.
          */
-        const val READ_AHEAD_MARGIN_MS = 1_500L
+        const val MEDIA3_READ_AHEAD_LIMIT_MS = 10_000L
 
         /**
-         * The sink's lead when it has not reported one. A float route's runs to
-         * about four seconds (see [TransitionFilterProcessor.leadUs]); this
-         * errs long, since guessing short is the costly mistake.
+         * Margin on [MEDIA3_READ_AHEAD_LIMIT_MS] for a position report up to a
+         * tick stale and the message's hop to the playback thread.
          */
-        const val FALLBACK_SINK_LEAD_MS = 6_000L
+        const val HOLD_SAFETY_MS = 1_000L
+
+        /**
+         * How far ahead of the last safe moment [holdAhead] starts holding: a
+         * dozen idle ticks, so one late tick never misses it.
+         */
+        const val HOLD_AHEAD_MS = 3_000L
 
         /**
          * States in which a track is measured well enough to be *entered* on.

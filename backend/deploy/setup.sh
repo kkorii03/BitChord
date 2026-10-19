@@ -63,6 +63,17 @@ if ! cmp -s /tmp/Caddyfile /etc/caddy/Caddyfile; then
   mv /tmp/Caddyfile /etc/caddy/Caddyfile
   systemctl reload caddy || systemctl restart caddy
 fi
+# Hard memory cap so a runaway Caddy is killed and restarted alone rather than the
+# whole 1 GB VM thrashing swap. No soft GOMEMLIMIT: a limit below the working set
+# made the Go GC run flat out on a CPU the hypervisor was already starving.
+install -d /etc/systemd/system/caddy.service.d
+cat > /etc/systemd/system/caddy.service.d/memory.conf <<'UNIT'
+[Service]
+MemoryMax=750M
+Restart=always
+RestartSec=2
+UNIT
+systemctl daemon-reload
 
 echo "== deploy hook"
 echo "$DOMAIN" > /etc/bitchord-domain
@@ -78,6 +89,71 @@ if [ -n "${DEPLOY_PUBKEY:-}" ]; then
   echo 'deploy ALL=(root) NOPASSWD: /usr/local/sbin/bitchord-deploy' > /etc/sudoers.d/bitchord-deploy
   chmod 440 /etc/sudoers.d/bitchord-deploy && visudo -cf /etc/sudoers.d/bitchord-deploy
 fi
+
+echo "== kernel network limits"
+# The micro VM's default conntrack table is tiny (7680) and keeps an idle
+# established TCP flow for five days, which is how a crowd of phones that
+# vanish without a FIN would fill it. Give it room and a one-hour memory.
+cat > /etc/sysctl.d/90-bitchord.conf <<'SYSCTL'
+net.netfilter.nf_conntrack_max = 65536
+net.netfilter.nf_conntrack_tcp_timeout_established = 3600
+SYSCTL
+# Load the module at boot, or systemd-sysctl runs before it exists and the limit is lost.
+echo nf_conntrack > /etc/modules-load.d/nf_conntrack.conf
+sysctl --system >/dev/null 2>&1 || true
+
+echo "== swap"
+# 1 GB of RAM and no swap meant a connection spike could get Caddy OOM-killed.
+if ! swapon --show --noheadings | grep -q .; then
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+echo 'vm.swappiness = 1' > /etc/sysctl.d/91-bitchord-swap.conf
+sysctl -q -p /etc/sysctl.d/91-bitchord-swap.conf || true
+
+echo "== tcp buffers + health watchdog"
+# Smaller default TCP buffers so thousands of idle sockets cost less kernel memory.
+cat > /etc/sysctl.d/92-bitchord-tcp.conf <<'SYSCTL'
+net.ipv4.tcp_rmem = 4096 16384 262144
+net.ipv4.tcp_wmem = 4096 16384 262144
+SYSCTL
+sysctl -q -p /etc/sysctl.d/92-bitchord-tcp.conf || true
+cat > /usr/local/sbin/bitchord-watchdog <<'WATCHDOG'
+#!/usr/bin/env bash
+# Restarts Caddy when the public health check has failed twice in a row. The 1 GB
+# VM can get wedged under a connection surge; this heals it within ~2 minutes
+# instead of waiting for a human. At most one restart per 5 minutes.
+DOMAIN="$(cat /etc/bitchord-domain)"
+F=/run/bitchord-watchdog.fails; L=/run/bitchord-watchdog.last
+if curl -sk -m6 -o /dev/null -f --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/healthz"; then echo 0 > $F; exit 0; fi
+n=$(( $(cat $F 2>/dev/null || echo 0) + 1 )); echo $n > $F
+[ "$n" -lt 2 ] && exit 0
+now=$(date +%s); last=$(cat $L 2>/dev/null || echo 0)
+[ $((now - last)) -lt 300 ] && exit 0
+echo $now > $L; echo 0 > $F
+logger -t bitchord-watchdog "health check failed twice; restarting caddy"
+systemctl restart caddy
+WATCHDOG
+chmod 755 /usr/local/sbin/bitchord-watchdog
+cat > /etc/systemd/system/bitchord-watchdog.service <<'UNIT'
+[Unit]
+Description=Restart Caddy if the health check keeps failing
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bitchord-watchdog
+UNIT
+cat > /etc/systemd/system/bitchord-watchdog.timer <<'UNIT'
+[Unit]
+Description=Run the BitChord health watchdog every minute
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=60s
+AccuracySec=5s
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now bitchord-watchdog.timer >/dev/null 2>&1 || true
 
 echo "== firewall"
 # Oracle's Ubuntu images ship an iptables REJECT rule that blocks everything

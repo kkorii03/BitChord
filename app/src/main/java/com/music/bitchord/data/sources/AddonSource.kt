@@ -221,6 +221,7 @@ class AddonSource(
                         } else {
                             ModuleSource.qualityTier("${track.audioQuality} ${track.format}")
                         },
+                        sourceHiRes = !track.isDolbyAtmos && track.isHiRes,
                     )
                 }
                 .toList()
@@ -229,10 +230,22 @@ class AddonSource(
     // ── Stream ────────────────────────────────────────────────────────────
 
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
+        stream(trackId, request, stereoOnly = false)
+
+    /**
+     * As [stream], for a row the listener picked from the Addons search.
+     *
+     * [stereoOnly] is that row being the stereo mix, and it withholds the
+     * `?atmos=auto` every other request carries — see [AddonClient.stream].
+     * Only the pinned play of a row asks for this; matching a YouTube track
+     * to an addon and the upgrade passes still welcome whichever mix the
+     * addon thinks best.
+     */
+    suspend fun stream(trackId: String, request: StreamRequest, stereoOnly: Boolean): SourceStream? =
         withContext(Dispatchers.IO) {
             if (!admitted("a stream")) return@withContext null
             val tier = request.tier
-            val result = client.stream(trackId, tier)
+            val result = client.stream(trackId, tier, stereoOnly)
             val answer = result.getOrNull()
 
             if (answer == null) {
@@ -261,7 +274,15 @@ class AddonSource(
                 return@withContext fromRow(trackId, tier)
             }
 
-            openable(url, answer, trackId, tier)
+            openable(url, answer, trackId, tier).also { stream ->
+                if (stereoOnly && stream?.format?.isDolbyAtmos == true) {
+                    TrackLog.w(
+                        TAG,
+                        "${config.displayName}: asked for the stereo mix of $trackId with no Atmos hint " +
+                            "and was sent Atmos anyway",
+                    )
+                }
+            }
         }
 
     /**
@@ -370,18 +391,21 @@ class AddonSource(
                     .lowercase(Locale.ROOT).takeIf { it in AUDIO_CODECS }
             }
 
+        // The tier's own published meaning is the last resort and only for
+        // the lossy rungs, where "HIGH" is a statement of 320 and the
+        // number is what says "this is not what you asked for". Flagged, so
+        // stats for nerds measures the stream instead of repeating the tier.
+        val tierKbps = when (tier) {
+            AddonClient.TIER_HIGH -> 320
+            AddonClient.TIER_LOW -> 128
+            else -> null
+        }
         return StreamFormat(
             codec = codec,
-            // The tier's own published meaning is the last resort and only for
-            // the lossy rungs, where "HIGH" is a statement of 320 and the
-            // number is what says "this is not what you asked for".
-            kbps = answer.kbps ?: when (tier) {
-                AddonClient.TIER_HIGH -> 320
-                AddonClient.TIER_LOW -> 128
-                else -> null
-            },
+            kbps = answer.kbps ?: tierKbps,
             sampleRateHz = answer.sampleRateHz,
             bitDepth = answer.bits,
+            kbpsInferred = answer.kbps == null && tierKbps != null,
         )
     }
 

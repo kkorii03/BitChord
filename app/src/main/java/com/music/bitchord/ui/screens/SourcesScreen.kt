@@ -281,7 +281,7 @@ fun SourcesScreen(
             }
 
             // The one shut-out an addon can't tell apart from "not lossless":
-            // headphones on LDAC or LHDC whose codec Android won't name without
+            // headphones on LDAC, LHDC or SSC UHQ whose codec Android won't name without
             // the Nearby devices permission. Offered only then, and only from
             // here, where the reason for asking is on screen.
             val waiting = configs.any { it.enabled && it.awaitsLosslessOutput }
@@ -667,7 +667,7 @@ private fun AddSourceRow(onClick: () -> Unit) {
 
 /**
  * Asks for Nearby devices so the Bluetooth codec can be read — the only way an
- * LDAC or LHDC headset qualifies for an addon's `checkValidLossless`. Draws
+ * LDAC, LHDC or SSC UHQ headset qualifies for an addon's `checkValidLossless`. Draws
  * nothing where the permission does not exist (before Android 12) or is
  * already granted, since asking again would do nothing.
  */

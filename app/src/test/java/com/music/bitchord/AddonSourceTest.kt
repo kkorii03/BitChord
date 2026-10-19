@@ -575,6 +575,85 @@ class AddonSourceTest {
     }
 
     /**
+     * Hi-res is one tier with 16-bit lossless for ranking, but the Addons
+     * search badge tells them apart, so the row has to keep the difference.
+     */
+    @Test
+    fun `a hi-res row stays lossless but is flagged hi-res for its badge`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/search",
+            json(
+                """{"tracks":[
+                  {"id":"t1","title":"S","artist":"A","duration":247,"audioQuality":"HI_RES_LOSSLESS","format":"dash"},
+                  {"id":"t2","title":"S","artist":"A","duration":247,"audioQuality":"LOSSLESS","format":"flac"},
+                  {"id":"t3","title":"S","artist":"A","duration":247,"audioQuality":"HI_RES_LOSSLESS","audioModes":["DOLBY_ATMOS"]}
+                ]}""",
+            ),
+        )
+
+        val songs = AddonSource(config()).search("s", limit = 5)
+
+        assertEquals("LOSSLESS", songs[0].sourceQuality)
+        assertTrue(songs[0].sourceHiRes)
+        assertEquals("LOSSLESS", songs[1].sourceQuality)
+        assertFalse(songs[1].sourceHiRes)
+        // An immersive row is badged Dolby Atmos, never also Hi-Res.
+        assertEquals("DOLBY", songs[2].sourceQuality)
+        assertFalse(songs[2].sourceHiRes)
+    }
+
+    /**
+     * The stereo row picked from the Addons search, on an addon that answers
+     * `?atmos=auto` with the immersive mix: asked the ordinary way, the
+     * Lossless row tapped played as Dolby Atmos. Asked as a picked stereo row,
+     * no hint goes out and the FLAC comes back.
+     */
+    @Test
+    fun `a picked stereo row is asked for without the atmos hint and plays stereo`() = runBlocking {
+        server.dispatcher = atmosDispatcher("https://cdn.example.com/dash/tidal-atmos")
+        route("/manifest.json", manifest())
+
+        val picked = AddonSource(config()).stream("t1", StreamRequest.Lossless, stereoOnly = true)!!
+
+        assertNull(requestFor("/stream/t1").queryParameter("atmos"))
+        assertFalse(picked.format.isDolbyAtmos)
+        assertEquals("flac", picked.format.codec)
+    }
+
+    /** The ordinary path — matching, upgrades — still offers the addon Atmos. */
+    @Test
+    fun `an unpicked stream still carries the atmos hint`() = runBlocking {
+        server.dispatcher = atmosDispatcher("https://cdn.example.com/dash/tidal-atmos")
+        route("/manifest.json", manifest())
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("auto", requestFor("/stream/t1").queryParameter("atmos"))
+        assertTrue(stream.format.isDolbyAtmos)
+    }
+
+    /** A declared `atmos` setting is turned to its own "off" for a picked stereo row. */
+    @Test
+    fun `a picked stereo row sends the declared atmos setting's off value`() = runBlocking {
+        route(
+            "/manifest.json",
+            json(
+                """
+                {"id":"a","name":"A","resources":["search","stream","settings"],
+                 "settings":[{"key":"atmos","type":"select","default":"auto",
+                              "options":[{"value":"only"},{"value":"auto"},{"value":"off"}]}]}
+                """.trimIndent(),
+            ),
+        )
+        route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
+
+        AddonSource(config()).stream("t1", StreamRequest.Lossless, stereoOnly = true)
+
+        assertEquals("off", requestFor("/stream/t1").queryParameter("atmos"))
+    }
+
+    /**
      * A server answering `?atmos=auto` the way the spec describes: the
      * immersive mix when it was asked for, the stereo ladder when it wasn't.
      */

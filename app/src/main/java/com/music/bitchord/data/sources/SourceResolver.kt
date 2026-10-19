@@ -111,8 +111,31 @@ object SourceResolver {
             configId = configId,
             trackId = trackId,
             target = targetIn(uri),
+            pickedMix = uri.getQueryParameter(MIX_PARAM),
         )
     }
+
+    /**
+     * `&mix=` on an addon row's playback URI: which mix the row itself was,
+     * [MIX_ATMOS] or [MIX_STEREO] as its search answer tagged it, or [MIX_ANY]
+     * when it said neither.
+     *
+     * Present on every addon row and nothing else. Those reach the queue one
+     * way — picked by hand from the Addons search, then replayed from history
+     * or a playlist — and the marker makes that play strict: the row the
+     * listener chose, never its Atmos sibling, another source's better copy,
+     * or YouTube's Opus. That last covers Automix too, which would otherwise
+     * fetch a YouTube match just to measure the track — see
+     * [isPickedAddonRow]. Absent, nothing changes.
+     */
+    const val MIX_PARAM = "mix"
+    const val MIX_STEREO = "stereo"
+    const val MIX_ATMOS = "atmos"
+    const val MIX_ANY = "any"
+
+    /** Whether [uri] is an addon row played as itself — see [MIX_PARAM]. */
+    fun isPickedAddonRow(uri: Uri): Boolean =
+        uri.authority == "source" && uri.getQueryParameter(MIX_PARAM) != null
 
     /**
      * The recording a playback URI describes, for matching it elsewhere.
@@ -140,6 +163,7 @@ object SourceResolver {
         configId: String,
         trackId: String,
         target: TrackMatcher.Target,
+        pickedMix: String? = null,
     ): SourceStream? {
         val request = requestForNow()
         val active = SourceRegistry.activeForPlayback()
@@ -155,7 +179,9 @@ object SourceResolver {
         // asking first. This is the whole reason the list is ordered — it is
         // what makes "my own FLAC of this, if I have one, else stream it"
         // expressible.
-        if (request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
+        // A row picked by hand is not up for substitution — see [MIX_PARAM].
+        val picked = pickedMix != null && pinned is AddonSource
+        if (!picked && request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
                 val upgraded = matchAndStream(source, target, request) ?: continue
@@ -173,7 +199,13 @@ object SourceResolver {
         }
 
         if (pinned != null) {
-            attempt(pinned) { pinned.stream(trackId, request) }
+            attempt(pinned) {
+                if (picked) {
+                    (pinned as AddonSource).stream(trackId, request, stereoOnly = pickedMix == MIX_STEREO)
+                } else {
+                    pinned.stream(trackId, request)
+                }
+            }
                 ?.let { return it.copy(sourceConfigId = pinned.configId) }
         }
 
@@ -181,8 +213,14 @@ object SourceResolver {
         // user asked for, and another source having it is not unlikely — this
         // is the difference between a dead server skipping the queue forward
         // and a dead server being invisible.
-        val (fallbackSource, stream) =
-            bestAcross(active.filterNot { it.configId == configId }, target, request) ?: return null
+        //
+        // Not YouTube, though, for a row picked from the Addons search: its
+        // Opus is a lesser copy of a different upload, and the listener chose
+        // this addon's precisely to not be hearing it — see [MIX_PARAM].
+        val fallbacks = active.filterNot {
+            it.configId == configId || (pickedMix != null && it.kind == SourceKind.YOUTUBE)
+        }
+        val (fallbackSource, stream) = bestAcross(fallbacks, target, request) ?: return null
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
     }

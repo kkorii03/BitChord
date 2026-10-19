@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.auth.clearSpotifyWebSession
 import androidx.compose.foundation.layout.Column
 import android.content.Intent
 import android.widget.Toast

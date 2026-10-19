@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-app",
+      "runtimeExecutable": "corepack",
+      "runtimeArgs": ["pnpm", "--dir", "web/app", "dev"],
+      "port": 5173
+    }
+  ]
+}

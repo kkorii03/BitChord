@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.data.model.toSong
+import com.music.bitchord.ui.components.SwipeToQueueBox
 import com.music.bitchord.ui.components.contextClick
 import androidx.compose.ui.unit.Dp
 import com.music.bitchord.sharedui.resources.*
@@ -70,7 +72,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.isSameTrackAs
+import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
@@ -145,6 +147,15 @@ fun SearchScreen(
      * YouTube. The phone's top bar flips this; the desktop never does.
      */
     searchingLibrary: Boolean = false,
+    /** Whether the page is showing the enabled addons' combined results; see [addonResults]. */
+    searchingAddons: Boolean = false,
+    /** The Addons source's tracks for the submitted query; null until one is submitted. */
+    addonResults: UiState<List<Song>>? = null,
+    /** Words searched in the Addons tab before, newest first; shown while the field is empty. */
+    addonHistory: List<String> = emptyList(),
+    onAddonHistoryClick: (String) -> Unit = {},
+    onAddonHistoryRemove: (String) -> Unit = {},
+    onAddonHistoryClear: () -> Unit = {},
     /** The Library source's tracks for [query]; null while nothing is typed. */
     libraryResults: UiState<List<Song>>? = null,
     /** Files on the device are a running order to play through, not a station seed. */
@@ -186,14 +197,14 @@ fun SearchScreen(
     // MainViewModel.suggestions. Nothing below it is worth showing while it is
     // up: the results are for whatever was searched before this edit began,
     // and so are the filter tabs above them.
-    val suggesting = suggestions.isNotEmpty() && !searchingLibrary
+    val suggesting = suggestions.isNotEmpty() && !searchingLibrary && !searchingAddons
     // Live media results arrive from the parallel typeahead pipeline; show
     // them only while the user is still typing (suggestions visible), so they
     // appear as a dropdown beneath the text completions rather than floating
     // after the search has committed.
     val showTypeahead = typeaheadResults.isNotEmpty() && suggesting
-    LaunchedEffect(listState, results, loadingMore, searchingLibrary) {
-        if (results !is UiState.Success || searchingLibrary) return@LaunchedEffect
+    LaunchedEffect(listState, results, loadingMore, searchingLibrary, searchingAddons) {
+        if (results !is UiState.Success || searchingLibrary || searchingAddons) return@LaunchedEffect
         snapshotFlow {
             val layout = listState.layoutInfo
             (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
@@ -217,6 +228,8 @@ fun SearchScreen(
                     focusRequester = focusRequester,
                     placeholder = if (searchingLibrary) {
                         stringResource(Res.string.search_library_hint)
+                    } else if (searchingAddons) {
+                        stringResource(Res.string.search_addons_hint)
                     } else {
                         stringResource(Res.string.search_hint)
                     },
@@ -238,7 +251,7 @@ fun SearchScreen(
             // they stay up for an empty or failed search too, or picking a filter
             // that finds nothing would take away the control needed to leave it.
             // They are YouTube's categories, so the Library source has none.
-            if (results != null && !suggesting && !searchingLibrary) {
+            if (results != null && !suggesting && !searchingLibrary && !searchingAddons) {
                 SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
             }
         }
@@ -249,9 +262,14 @@ fun SearchScreen(
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
             when {
-                searchingLibrary -> librarySearchResults(
+                searchingLibrary || searchingAddons -> librarySearchResults(
                     query = query.trim(),
-                    results = libraryResults,
+                    results = if (searchingAddons) addonResults else libraryResults,
+                    addons = searchingAddons,
+                    addonHistory = addonHistory,
+                    onAddonHistoryClick = onAddonHistoryClick,
+                    onAddonHistoryRemove = onAddonHistoryRemove,
+                    onAddonHistoryClear = onAddonHistoryClear,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                     onSongClick = onLibrarySongClick,
@@ -290,8 +308,10 @@ fun SearchScreen(
                         currentSong = currentSong,
                         isPlaying = isPlaying,
                         onClick = onHistoryClick,
+                        onSongLongPress = onSongLongPress,
                         onRemove = onHistoryRemove,
                         onClear = onHistoryClear,
+                        onSongSwipe = onSongSwipe,
                     )
                 }
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
@@ -304,15 +324,21 @@ fun SearchScreen(
                             is SearchResult.Browse -> null
                             else -> null
                         } }
+                    val isCurrentRow = playingRowMatcher(tracks, currentSong)
                     val topResult = results.data.filterIsInstance<SearchResult.TopTrack>().firstOrNull()
                     if (filter == SearchFilter.ALL && topResult != null) {
                         item(key = "search:top-result:${topResult.song.videoId}") {
-                            TopResultCard(
-                                song = topResult.song,
-                                onPlay = { onTopResultPlay(topResult.song) },
-                                onPlaylist = { onTopResultPlaylist(topResult.song) },
-                                onLongPress = { onSongLongPress(topResult.song) },
-                            )
+                            SwipeToQueueBox(
+                                onSwipeToQueue = { onSongSwipe(topResult.song) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                TopResultCard(
+                                    song = topResult.song,
+                                    onPlay = { onTopResultPlay(topResult.song) },
+                                    onPlaylist = { onTopResultPlaylist(topResult.song) },
+                                    onLongPress = { onSongLongPress(topResult.song) },
+                                )
+                            }
                         }
                     }
                     searchSections(
@@ -358,8 +384,8 @@ fun SearchScreen(
                                     },
                                     onLongPress = { onSongLongPress(row.song) },
                                     onSwipeToQueue = { onSongSwipe(row.song) },
-                                    isCurrent = row.song.isSameTrackAs(currentSong),
-                                    isPlaying = isPlaying && row.song.isSameTrackAs(currentSong),
+                                    isCurrent = isCurrentRow(row.song),
+                                    isPlaying = isPlaying && isCurrentRow(row.song),
                                     searchPlayingStyle = true,
                                     activeTint = PlayingAccent,
                                 )
@@ -426,6 +452,11 @@ private fun searchSections(
 private fun LazyListScope.librarySearchResults(
     query: String,
     results: UiState<List<Song>>?,
+    addons: Boolean,
+    addonHistory: List<String>,
+    onAddonHistoryClick: (String) -> Unit,
+    onAddonHistoryRemove: (String) -> Unit,
+    onAddonHistoryClear: () -> Unit,
     currentSong: Song?,
     isPlaying: Boolean,
     onSongClick: (List<Song>, Int) -> Unit,
@@ -433,27 +464,39 @@ private fun LazyListScope.librarySearchResults(
     onSongSwipe: (Song) -> Unit,
 ) {
     when (results) {
-        null -> item(key = "library:empty") {
-            MessageState(stringResource(Res.string.search_library_empty))
+        null -> if (addons && query.isEmpty() && addonHistory.isNotEmpty()) {
+            recentAddonSearches(addonHistory, onAddonHistoryClick, onAddonHistoryRemove, onAddonHistoryClear)
+        } else item(key = "library:empty") {
+            MessageState(
+                stringResource(if (addons) Res.string.search_addons_empty else Res.string.search_library_empty),
+            )
         }
         UiState.Loading -> songListSkeleton(keyPrefix = "skeleton:search:library")
         is UiState.Error -> item(key = "library:error") { MessageState(results.message) }
         is UiState.Success -> if (results.data.isEmpty()) {
             item(key = "library:no-match") {
-                MessageState(stringResource(Res.string.search_library_no_results, query))
+                MessageState(
+                    if (addons) {
+                        stringResource(Res.string.search_addons_no_results, query)
+                    } else {
+                        stringResource(Res.string.search_library_no_results, query)
+                    },
+                )
             }
         } else {
             val tracks = results.data
-            itemsIndexed(tracks, key = { index, song -> "library_${song.videoId}_$index" }) { index, song ->
+            val isCurrentRow = playingRowMatcher(tracks, currentSong)
+            itemsIndexed(tracks, key = { index, song -> "${if (addons) "addon" else "library"}_${song.videoId}_$index" }) { index, song ->
                 SongRow(
                     song = song,
                     onClick = { onSongClick(tracks, index) },
                     onLongPress = { onSongLongPress(song) },
                     onSwipeToQueue = { onSongSwipe(song) },
-                    isCurrent = song.isSameTrackAs(currentSong),
-                    isPlaying = isPlaying && song.isSameTrackAs(currentSong),
+                    isCurrent = isCurrentRow(song),
+                    isPlaying = isPlaying && isCurrentRow(song),
                     searchPlayingStyle = true,
                     activeTint = PlayingAccent,
+                    showSourceQuality = addons,
                 )
                 if (index < tracks.lastIndex) {
                     HorizontalDivider(
@@ -475,10 +518,12 @@ private fun TopResultCard(
     onPlay: () -> Unit,
     onPlaylist: () -> Unit,
     onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
             .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 18.dp, bottom = 8.dp)
             .longPressMenuClickable(onClick = onPlay, onLongClick = onLongPress)
             .contextClick(onLongPress),
@@ -657,6 +702,10 @@ private fun LazyListScope.searchTypeaheadDropdown(
     currentSong: Song?,
     isPlaying: Boolean,
 ) {
+    val isCurrentRow = playingRowMatcher(
+        typeaheadResults.mapNotNull { (it as? SearchResult.Track)?.song ?: (it as? SearchResult.TopTrack)?.song },
+        currentSong,
+    )
     item(key = "typeahead:divider") {
         HorizontalDivider(
             modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER),
@@ -676,8 +725,8 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
-                isCurrent = result.song.isSameTrackAs(currentSong),
-                isPlaying = isPlaying && result.song.isSameTrackAs(currentSong),
+                isCurrent = isCurrentRow(result.song),
+                isPlaying = isPlaying && isCurrentRow(result.song),
             )
             is SearchResult.Browse -> BrowseRow(
                 item = result.item,
@@ -688,8 +737,8 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
-                isCurrent = result.song.isSameTrackAs(currentSong),
-                isPlaying = isPlaying && result.song.isSameTrackAs(currentSong),
+                isCurrent = isCurrentRow(result.song),
+                isPlaying = isPlaying && isCurrentRow(result.song),
             )
         }
     }
@@ -759,8 +808,10 @@ private fun LazyListScope.recentSearches(
     currentSong: Song?,
     isPlaying: Boolean,
     onClick: (SearchHistoryEntity) -> Unit,
+    onSongLongPress: (Song) -> Unit,
     onRemove: (String) -> Unit,
     onClear: () -> Unit,
+    onSongSwipe: (Song) -> Unit,
 ) {
     item(key = "recent:header") {
         Row(
@@ -787,86 +838,175 @@ private fun LazyListScope.recentSearches(
         }
     }
     items(history, key = { "recent:${it.id}" }) { entity ->
+        // A recent track gets the same menu and swipe as a result row, so it can
+        // be queued without interrupting what's playing. The ids an old build
+        // saved as raw queries ("q:…") have no track behind them.
+        val song = entity.toSong()
         RecentSearchEntityRow(
             entity = entity,
             isCurrent = entity.entityType == EntityType.TRACK && entity.id == currentSong?.videoId,
             isPlaying = isPlaying,
             onClick = { onClick(entity) },
+            onLongPress = song?.let { { onSongLongPress(it) } },
             onRemove = { onRemove(entity.id) },
+            onSwipeToQueue = song?.let { { onSongSwipe(it) } },
         )
+    }
+}
+
+/** The Addons tab's recents: just the words that were searched, no song behind them. */
+private fun LazyListScope.recentAddonSearches(
+    history: List<String>,
+    onClick: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    item(key = "addon-recent:header") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(Res.string.recent_searches),
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = stringResource(Res.string.clear),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(percent = 50))
+                    .clickable(onClick = onClear)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
+    }
+    items(history, key = { "addon-recent:$it" }) { term ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick(term) }
+                .padding(start = PAGE_GUTTER, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.History,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(16.dp))
+            Text(
+                text = term,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable { onRemove(term) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(Res.string.recent_search_remove, term),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
     }
 }
 
 /**
  * Spotify-style entity row: square thumbnail, bold title, subtitle with type,
- * and a removal button. Tapping navigates to the entity or plays it directly.
+ * and a removal button. Tapping navigates to the entity or plays it directly;
+ * holding a track opens its menu.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecentSearchEntityRow(
     entity: SearchHistoryEntity,
     isCurrent: Boolean,
     isPlaying: Boolean,
     onClick: () -> Unit,
+    onLongPress: (() -> Unit)?,
     onRemove: () -> Unit,
+    onSwipeToQueue: (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(
-                start = PAGE_GUTTER,
-                end = 8.dp,
-                top = LIST_ROW_VERTICAL_PADDING,
-                bottom = LIST_ROW_VERTICAL_PADDING,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
+    SwipeToQueueBox(
+        onSwipeToQueue = onSwipeToQueue,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Box(Modifier.size(52.dp)) {
-            AsyncImage(
-                model = entity.artworkUrl.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(SMALL_ART_CORNER))
-                    .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            if (isCurrent && isPlaying) {
-                SearchPlayingBars(Modifier.align(Alignment.Center))
-            }
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = entity.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = entity.subtitle.ifBlank { entity.entityType.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) } },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Box(
+        Row(
             modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onRemove),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+                .contextClick(onLongPress)
+                .padding(
+                    start = PAGE_GUTTER,
+                    end = 8.dp,
+                    top = LIST_ROW_VERTICAL_PADDING,
+                    bottom = LIST_ROW_VERTICAL_PADDING,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Rounded.Close,
-                contentDescription = stringResource(Res.string.recent_search_remove, entity.title),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+            Box(Modifier.size(52.dp)) {
+                AsyncImage(
+                    model = entity.artworkUrl.artworkAt(ROW_ART_PX),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(SMALL_ART_CORNER))
+                        .thumbnailBorder(RoundedCornerShape(SMALL_ART_CORNER))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                if (isCurrent && isPlaying) {
+                    SearchPlayingBars(Modifier.align(Alignment.Center))
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = entity.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = entity.subtitle.ifBlank { entity.entityType.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) } },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(Res.string.recent_search_remove, entity.title),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

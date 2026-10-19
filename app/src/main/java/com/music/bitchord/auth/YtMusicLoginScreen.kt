@@ -73,6 +73,8 @@ fun YtMusicLoginScreen(
     onCaptureUnavailable: () -> Unit = {},
     /** True once a signed-in YouTube Music page is available for confirmation. */
     onPageReady: (Boolean) -> Unit = {},
+    /** For a host that needs the WebView set up differently — the TV app, for its remote. */
+    configureWebView: (WebView) -> Unit = {},
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     val currentOnCaptured by rememberUpdatedState(onCaptured)
@@ -107,13 +109,15 @@ fun YtMusicLoginScreen(
     AndroidView(
         modifier = modifier.fillMaxSize(),
         factory = { context ->
-            // Clearing the local jar is enough to show a fresh Google login.
-            // Never visit accounts.google.com/Logout here: that invalidates a
-            // previously saved account on Google's server, so adding account B
-            // silently breaks account A.
-            if (mode == WebSessionMode.SIGN_IN) BrowserSession.clearGoogleCookies()
-            else initialCookie?.let(BrowserSession::installGoogleCookies)
+            if (mode == WebSessionMode.SIGN_IN) {
+                BrowserSession.clearGoogleCookies()
+            } else initialCookie?.let(BrowserSession::installGoogleCookies)
             WebView(context).apply {
+                if (mode == WebSessionMode.SIGN_IN) {
+                    clearCache(true)
+                    clearHistory()
+                    clearFormData()
+                }
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 // The WebView's own user agent, deliberately: posing as desktop
@@ -121,6 +125,7 @@ fun YtMusicLoginScreen(
                 // 없음 - 브라우저 또는 앱이 안전하지 않을 수 있습니다", seen on the
                 // S24). The Premium paywall is avoided by where the login
                 // continues to (youtube.com, not music.youtube.com) instead.
+                configureWebView(this)
 
                 webViewClient = object : WebViewClient() {
                     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {

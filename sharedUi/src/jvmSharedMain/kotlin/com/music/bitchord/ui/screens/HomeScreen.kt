@@ -119,6 +119,16 @@ private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     return videoId == song.videoId || (title == song.title && subtitle == song.artist)
 }
 
+private fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Boolean {
+    song ?: return { false }
+    // The card that was played, when the shelf holds it, and only that one —
+    // see [com.music.bitchord.data.model.playingRowMatcher], which rows use.
+    if (any { it.videoId == song.videoId }) return { it.videoId == song.videoId }
+    val byName = firstOrNull { it.videoId != null && it.title == song.title && it.subtitle == song.artist }
+        ?: return { false }
+    return { it == byName }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -344,14 +354,29 @@ private fun RecentShelf(
             viewType = viewType,
             onViewTypeToggle = onViewTypeToggle,
         )
+        val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         if (viewType == LibraryViewType.LIST) {
-            TrackColumns(
-                shelf = shelf,
-                onItemClick = onItemClick,
-                onItemLongPress = onItemLongPress,
-                currentSong = currentSong,
-                isPlaying = isPlaying,
-            )
+            BoxWithConstraints {
+                val columnWidth = trackColumnWidth(maxWidth)
+                ShelfRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                        Column(Modifier.width(columnWidth)) {
+                            column.forEach { item ->
+                                RecentTrackRow(
+                                    item = item,
+                                    onClick = { onItemClick(item) },
+                                    onLongPress = onItemLongPress?.let { { it(item) } },
+                                    isCurrent = isCurrentItem(item),
+                                    isPlaying = isCurrentItem(item) && isPlaying,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             BoxWithConstraints {
                 val cardWidth = heroCardWidth(maxWidth)
@@ -365,8 +390,8 @@ private fun RecentShelf(
                             onClick = { onItemClick(item) },
                             onLongPress = onItemLongPress?.let { { it(item) } },
                             modifier = Modifier.width(cardWidth),
-                            isCurrent = item.matchesCurrentlyPlaying(currentSong),
-                            isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
+                            isCurrent = isCurrentItem(item),
+                            isPlaying = isCurrentItem(item) && isPlaying,
                         )
                     }
                 }
@@ -457,7 +482,7 @@ private fun RecentSectionHeader(
             if (subtitle.isNotBlank()) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -670,7 +695,7 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
         Column(Modifier.weight(1f)) {
             Text(
                 text = displayTitle,
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -678,7 +703,7 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
             if (displaySubtitle.isNotBlank()) {
                 Text(
                     text = displaySubtitle,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -877,6 +902,7 @@ private fun HeroShelf(
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
+        val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         // Measured rather than taken as a share of the parent, because the card
         // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
         // width is also the only one of the two the aspect ratio below can turn
@@ -894,8 +920,8 @@ private fun HeroShelf(
                         onClick = { onItemClick(item) },
                         onLongPress = onItemLongPress?.let { { it(item) } },
                         modifier = Modifier.width(cardWidth),
-                        isCurrent = item.matchesCurrentlyPlaying(currentSong),
-                        isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
+                        isCurrent = isCurrentItem(item),
+                        isPlaying = isCurrentItem(item) && isPlaying,
                     )
                 }
             }
@@ -981,6 +1007,7 @@ internal fun Shelf(
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
+        val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -991,8 +1018,8 @@ internal fun Shelf(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = onItemLongPress?.let { { it(item) } },
-                    isCurrent = item.matchesCurrentlyPlaying(currentSong),
-                    isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
+                    isCurrent = isCurrentItem(item),
+                    isPlaying = isCurrentItem(item) && isPlaying,
                 )
             }
         }

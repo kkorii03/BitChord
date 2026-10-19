@@ -11,6 +11,9 @@ import coil3.disk.DiskCache
 import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+import coil3.svg.SvgDecoder
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import okhttp3.OkHttpClient
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.LocalPlay
@@ -24,8 +27,10 @@ import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.data.smb.SmbCoverFetcher
 import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.canvas.SpotifyToken
+import com.music.bitchord.data.spotify.SpotifyLibrary
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LastPlayed
+import com.music.bitchord.playback.BoundedContextPersistence
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.AndroidStreamHooks
@@ -100,8 +105,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
             TrackLog.write(level, tag, message, error)
         }
+        // The Spotify library and import live in the shared module; the tokens are the WebView's.
+        SpotifyLibrary.auth = SpotifyLibrary.Auth {
+            SpotifyToken.accessToken()?.let { SpotifyLibrary.Tokens(it, SpotifyToken.clientToken()) }
+        }
         // The per-app language picker, which YouTube Music's `hl` follows.
-        Innertube.appLanguage = { AppCompatDelegate.getApplicationLocales().get(0)?.language }
+        // Full tag (zh-Hant / zh-Hans preserved); Innertube maps to hl/gl.
+        Innertube.appLanguage = { AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag() }
+        migrateScriptOnlyAppLocale()
         // The content country, which YouTube Music's `gl` follows. Read live,
         // so a change applies from the next request.
         Innertube.contentCountry = { AppSettings.contentCountry.value }
@@ -186,6 +197,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         ListenTogether.init(this)
         SearchHistory.init(this)
         LastPlayed.init(this)
+        BoundedContextPersistence.init(this)
         com.music.bitchord.playback.PartyPersonalQueueStash.init(this)
         // SponsorBlock's cache of the segments each video has, read by
         // PlaybackService when a track starts — see
@@ -244,12 +256,16 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // one to hand — see SpotifyToken's doc for why.
         SpotifyToken.init(this)
         // A sideloaded update is just a new APK over the old one, so app data —
-        // including whatever the old build left in these caches — survives it
-        // untouched. Wipe both on the first launch of a higher versionCode so a
-        // format or key change between builds can't serve stale or mismatched
-        // bytes from a cache the new code didn't write.
+        // including whatever the old build left in the image cache — survives
+        // it untouched. Wipe that on the first launch of a higher versionCode so
+        // a format change between builds can't serve stale bytes.
+        //
+        // The song cache is deliberately *not* wiped here any more. It is the
+        // Cached songs folder and what plays offline, and clearing it on every
+        // update is what made the whole folder disappear overnight whenever a
+        // new build was installed. A build that really does change its keys or
+        // its bytes says so through AudioCache's own cache format instead.
         if (AppSettings.consumeVersionUpdate(BuildConfig.VERSION_CODE)) {
-            AudioCache.clear()
             SingletonImageLoader.get(this).let { loader ->
                 loader.memoryCache?.clear()
                 loader.diskCache?.clear()
@@ -260,6 +276,29 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
         StartupTrace.applicationCreated()
+    }
+
+    /**
+     * Coil's own transport, separate from [Http][com.music.bitchord.data.Http]'s
+     * playback-tuned client.
+     *
+     * Wikimedia (which serves signature art) answers generic clients with
+     * HTTP 403 under its User-Agent policy, so every image request carries an
+     * identifying agent. Anything else falls through to Coil's own fetchers.
+     */
+    private val coilHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header(
+                            "User-Agent",
+                            "BitChord/${BuildConfig.VERSION_NAME} (Android; +https://github.com/kushagrasinghx/BitChord)",
+                        )
+                        .build(),
+                )
+            }
+            .build()
     }
 
     /**
@@ -282,6 +321,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 // Covers filed on the SMB share; anything else falls
                 // through to Coil's own fetchers. See SmbCoverFetcher.
                 add(SmbCoverFetcher.Factory())
+                // Artist signatures are usually SVG, which Coil can't
+                // decode without this. See ArtistSignatureRepository.
+                add(SvgDecoder.Factory())
+                // Wikimedia 403s Coil's default client; see [coilHttpClient].
+                add(OkHttpNetworkFetcherFactory(callFactory = { coilHttpClient }))
             }
             .memoryCache {
                 MemoryCache.Builder()
@@ -379,5 +423,27 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
 
         /** A previous process this recent is treated as a warm restart, not a cold launch. */
         private const val WARM_RESTART_MS = 10 * 60 * 1000L
+
+        /**
+         * One-time move from region-less script tags to regional ones.
+         *
+         * Early builds of the Simplified/Traditional picker stored `zh-Hant` /
+         * `zh-Hans`. Android Views resolve those (script qualifiers), but the
+         * shared Compose resources only match language + region — so Settings
+         * read Traditional while the player read Simplified. Regional tags
+         * match on both systems. Bare `zh` is left alone: it historically
+         * meant Simplified.
+         */
+        private fun migrateScriptOnlyAppLocale() {
+            val current = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
+            val replacement = when (current) {
+                "zh-Hant" -> "zh-TW"
+                "zh-Hans" -> "zh-CN"
+                else -> return
+            }
+            AppCompatDelegate.setApplicationLocales(
+                androidx.core.os.LocaleListCompat.forLanguageTags(replacement),
+            )
+        }
     }
 }

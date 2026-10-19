@@ -197,7 +197,13 @@ data class AddonTrack(
         get() = atmos == true || ATMOS_HINT.containsMatchIn(
             "$audioQuality ${audioMode.orEmpty()} ${audioModes.joinToString(" ")} $format",
         )
+
+    /** Whether the row names the hi-res tier — Tidal's `HI_RES_LOSSLESS`, `hires-96`, `24-bit`. */
+    val isHiRes: Boolean get() = HI_RES_HINT.containsMatchIn("$audioQuality $format")
 }
+
+/** How a row spells the hi-res lossless tier in its quality label. */
+private val HI_RES_HINT = Regex("""hi[-_ ]?res|24[-_ ]?bit""", RegexOption.IGNORE_CASE)
 
 /**
  * The spellings an addon uses for an immersive mix, in any free-text field.

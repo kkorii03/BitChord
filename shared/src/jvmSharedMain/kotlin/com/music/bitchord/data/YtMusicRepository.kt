@@ -554,12 +554,13 @@ object YtMusicRepository {
     suspend fun searchPage(
         query: String,
         filter: SearchFilter,
+        anonymous: Boolean = true,
         kind: SearchKind = SearchKind.TYPED,
     ): Result<SearchPage> =
         call("search:${filter.name}") {
             val music = runCatching {
                 InnertubeParser.parseSearchPage(
-                    Innertube.search(query, filter.params, kind),
+                    Innertube.search(query, filter.params, anonymous = anonymous, kind = kind),
                     includeVideos = filter == SearchFilter.VIDEOS,
                 ).let { page ->
                     SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
@@ -624,7 +625,7 @@ object YtMusicRepository {
         filter: SearchFilter,
         kind: SearchKind = SearchKind.TYPED,
     ): Result<List<SearchResult>> =
-        searchPage(query, filter, kind).map { it.rows }
+        searchPage(query, filter, kind = kind).map { it.rows }
 
     private fun SearchResult.identityKey(): String = when (this) {
         is SearchResult.TopTrack -> "v:${song.videoId}"
@@ -1032,7 +1033,7 @@ object YtMusicRepository {
             if (normalizedArtistName(name).isEmpty()) return@call null
             val filter = SearchFilter.ARTISTS
             InnertubeParser.parseSearchPage(
-                Innertube.search(name, filter.params, SearchKind.ARTIST),
+                Innertube.search(name, filter.params, kind = SearchKind.ARTIST),
             ).rows
                 .filterIsInstance<SearchResult.Browse>()
                 .map { it.item }
@@ -1164,12 +1165,14 @@ object YtMusicRepository {
      * Their header play action names a backing playlist containing every track,
      * so read songs and pagination from there while retaining the richer album
      * header and controls from the original response.
+     *
+     * Only when that playlist is actually the better listing — see
+     * [albumPlaylistOf]. Otherwise the album's own rows stand.
      */
     private suspend fun albumPageOf(albumResponse: JsonObject): SongPage {
         val metadata = pageOf(albumResponse)
-        val playlistId = InnertubeParser.parseAlbumPlaylistId(albumResponse) ?: return metadata
-        val tracks = pageOf(Innertube.browse("VL${playlistId.removePrefix("VL")}"))
-        return tracks.copy(
+        val playlist = albumPlaylistOf(albumResponse, metadata.songs.size) ?: return metadata
+        return pageOf(playlist).copy(
             library = metadata.library,
             header = metadata.header,
             description = metadata.description,
@@ -1184,6 +1187,42 @@ object YtMusicRepository {
      */
     suspend fun enrichDetailCovers(songs: List<Song>, limit: Int = 20): List<Song> =
         YouTubeCoverResolver.enrich(songs, limit)
+
+    /**
+     * The first response of the playlist backing an album, or null when the
+     * album page's own rows are the better listing.
+     *
+     * Not every backing playlist can be browsed. Drake's "Views"
+     * (`MPREb_g9nBVaaauTA`) names `OLAK5uy_mmdeq…` in its play button, and
+     * browsing that answers 200 with no `contents` at all — only a `noindex`
+     * microformat — while the album page itself lists all twenty tracks.
+     * Swapping the playlist in unconditionally showed such an album empty.
+     *
+     * Row counts alone can't decide it, though: an album page stops at 200
+     * rows with no continuation, while its playlist pages 100 at a time —
+     * `MPREb_pCTElvzIlpy` is 200 rows on the album, 100 + a token on the
+     * playlist, and 233 once that is followed. So the album's rows win only
+     * when the playlist has fewer *and* nothing more to page.
+     */
+    private suspend fun albumPlaylistOf(albumResponse: JsonObject, albumRows: Int): JsonObject? {
+        val playlistId = InnertubeParser.parseAlbumPlaylistId(albumResponse) ?: return null
+        val response = try {
+            Innertube.browse("VL${playlistId.removePrefix("VL")}")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "album playlist $playlistId failed, keeping album rows: ${e.message}")
+            return null
+        }
+        val shelf = InnertubeParser.parsePlaylistShelf(response)
+        val rows = (shelf?.songs ?: InnertubeParser.collectSongsDeep(response)).size
+        val more = (shelf?.continuation ?: InnertubeParser.continuationToken(response)) != null
+        if (rows < albumRows && !more) {
+            Log.w(TAG, "album playlist $playlistId has $rows rows vs album's $albumRows, keeping album rows")
+            return null
+        }
+        return response
+    }
 
     /** The page [SongPage.continuation] points at. */
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {
@@ -1277,9 +1316,8 @@ object YtMusicRepository {
         val out = LinkedHashMap<String, Song>()
         var response = Innertube.browse(browseId)
         if (browseId.startsWith("MPREb")) {
-            InnertubeParser.parseAlbumPlaylistId(response)?.let { playlistId ->
-                response = Innertube.browse("VL${playlistId.removePrefix("VL")}")
-            }
+            val albumRows = InnertubeParser.collectSongsDeep(response).size
+            albumPlaylistOf(response, albumRows)?.let { response = it }
         }
         var page = 1
         while (true) {

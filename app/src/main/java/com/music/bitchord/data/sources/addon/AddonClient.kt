@@ -155,9 +155,14 @@ class AddonClient(rawBaseUrl: String) {
      * the string: an addon's ids are whatever its backend uses, and one holding
      * a `/` or a `?` would otherwise rewrite the request into a different
      * endpoint entirely.
+     *
+     * [stereoOnly] withholds the `?atmos=` hint — see [settingsFor]. It is for
+     * a stereo row the listener picked by hand from the Addons search: there
+     * `auto` is not an offer but an override, and the addon answers with the
+     * Atmos sibling of the very row that was chosen over it.
      */
-    suspend fun stream(trackId: String, tier: String): Result<AddonStream> {
-        val params = settingsFor(tier)
+    suspend fun stream(trackId: String, tier: String, stereoOnly: Boolean = false): Result<AddonStream> {
+        val params = settingsFor(tier, stereoOnly)
         return streams.get(
             key = keyOf(trackId, params.toString()),
             describe = { "▶ addon stream(${redact(baseUrl)}) id=$trackId tier=$tier" },
@@ -196,7 +201,7 @@ class AddonClient(rawBaseUrl: String) {
      * Last comes `atmos`, which is the one parameter here that is not about
      * quality. See [atmosHint].
      */
-    private suspend fun settingsFor(tier: String): Map<String, String> {
+    private suspend fun settingsFor(tier: String, stereoOnly: Boolean = false): Map<String, String> {
         val declared = manifest().getOrNull()?.settings.orEmpty()
         val params = LinkedHashMap<String, String>()
         declared.forEach { setting ->
@@ -209,7 +214,22 @@ class AddonClient(rawBaseUrl: String) {
                 .mapNotNull { it.stringValue }
             params[QUALITY_KEY] = matchTier(tier, options) ?: tier
         }
-        atmosHint()?.let { params.putIfAbsent(ATMOS_KEY, it) }
+        if (stereoOnly) {
+            // Asked for the stereo mix by name, so nothing that lets the addon
+            // swap in an immersive one: no hint, and a declared `atmos`
+            // setting pinned to its "off" value rather than its default.
+            val atmosSetting = declared.firstOrNull { it.key == ATMOS_KEY }
+            if (atmosSetting == null) {
+                params.remove(ATMOS_KEY)
+            } else {
+                params[ATMOS_KEY] = atmosSetting.options
+                    .mapNotNull { it.stringValue }
+                    .firstOrNull { ATMOS_OFF.matches(it) }
+                    ?: ATMOS_NEVER
+            }
+        } else {
+            atmosHint()?.let { params.putIfAbsent(ATMOS_KEY, it) }
+        }
         return params
     }
 
@@ -395,9 +415,11 @@ class AddonClient(rawBaseUrl: String) {
 
         private const val QUALITY_KEY = "quality"
 
-        /** The spec's immersive-audio hint, and the only value BitChord ever sends for it. */
+        /** The spec's immersive-audio hint: `auto` normally, an "off" only for a stereo row picked by hand. */
         private const val ATMOS_KEY = "atmos"
         private const val ATMOS_AUTO = "auto"
+        private const val ATMOS_NEVER = "0"
+        private val ATMOS_OFF = Regex("0|false|off|no|none|never|stereo", RegexOption.IGNORE_CASE)
 
         private val LOSSLESS_WORDS = listOf("lossless", "flac", "hifi", "hi-res", "hires", "max", "best")
         private val HIGH_WORDS = listOf("high", "320", "normal", "standard")

@@ -828,6 +828,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     private fun analysisUriFor(trackId: String, playbackUri: Uri): Uri? {
         if (playbackUri.getQueryParameter("v") != null || playbackUri.authority != "source") return playbackUri
+        // Never for a row picked from the Addons search: that would put a
+        // YouTube search and its Opus on the network under a track whose whole
+        // point is not being YouTube. Left unmeasured, as a party leaves every
+        // track — see [SourceResolver.MIX_PARAM].
+        if (SourceResolver.isPickedAddonRow(playbackUri)) return null
         sourceAnalysisUris[trackId]?.let { return it }
         if (trackId in sourceResolutionAttempted) return null
         if (!sourceResolutions.add(trackId)) return null

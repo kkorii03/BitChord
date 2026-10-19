@@ -33,6 +33,7 @@ import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
@@ -154,6 +156,11 @@ fun SongActionsSheet(
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
+    /**
+     * Takes this track out of the song cache. Null hides the row — the caller
+     * passes one only while the cache actually holds some of it.
+     */
+    onRemoveFromCache: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
     showPlaybackSpeed: Boolean = false,
     /**
@@ -213,9 +220,12 @@ fun SongActionsSheet(
      */
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {
+    var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
     var pickingSleepTimer by remember { mutableStateOf(false) }
     var pickingPlaybackSpeed by remember { mutableStateOf(false) }
     val menu = presentation == SongActionsPresentation.Menu
+    // The held-row menu has no pages to swap, so there Song Info opens as a dialog.
+    if (menu && showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
     // Read from the thumbnail the row that opened this sheet was already
     // showing, not a larger copy of it: the tint is a blur and a handful of
     // swatches, neither of which a bigger image improves, and going back for
@@ -314,6 +324,14 @@ fun SongActionsSheet(
         }
 
         DownloadRow(song, palette, isOffline, onDownload)
+        onRemoveFromCache?.let {
+            ActionRow(
+                icon = Icons.Rounded.DeleteSweep,
+                label = stringResource(R.string.remove_from_cache),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
         ActionRow(
             icon = Icons.Rounded.Radio,
@@ -392,6 +410,9 @@ fun SongActionsSheet(
                 ).show()
             }
         }
+        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+            showingSongInfo = true
+        }
         if (showSleepTimer) {
             ActionRow(
                 icon = Icons.Rounded.Bedtime,
@@ -459,6 +480,10 @@ fun SongActionsSheet(
         }
         if (pickingSleepTimer) {
             SleepTimerPicker(palette = palette, onBack = { pickingSleepTimer = false })
+            return@TintedSheet
+        }
+        if (showingSongInfo) {
+            SongInfoPage(song = song, palette = palette, onBack = { showingSongInfo = false })
             return@TintedSheet
         }
 

@@ -107,27 +107,21 @@ object Innertube {
             ?.takeIf { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
             ?: "US"
 
-    val currentLanguage: String
+    val currentLocaleTag: String
         get() {
             val raw = appLanguage()?.ifEmpty { null }
-                ?: Locale.getDefault().language.ifEmpty { "en" }
-            return when (raw.lowercase(Locale.ROOT)) {
-                "iw" -> "he"
-                "in" -> "id"
-                "ji" -> "yi"
-                else -> raw
-            }
+                ?: Locale.getDefault().toLanguageTag().ifEmpty { "en" }
+            return com.music.bitchord.data.LocaleTags.normalizeAppTag(raw)
         }
 
+    val currentLanguage: String
+        get() = com.music.bitchord.data.LocaleTags.ytHl(currentLocaleTag)
+
+    val currentRegion: String
+        get() = com.music.bitchord.data.LocaleTags.ytGl(currentLocaleTag)
+
     private val acceptLanguageHeader: String
-        get() {
-            val lang = currentLanguage
-            return if (lang == "en") {
-                "en-US,en;q=0.9"
-            } else {
-                "$lang,en-US;q=0.8,en;q=0.7"
-            }
-        }
+        get() = com.music.bitchord.data.LocaleTags.acceptLanguage(currentLocaleTag)
 
     private const val MUSIC_BASE = "https://music.youtube.com/youtubei/v1"
     private const val MUSIC_ORIGIN = "https://music.youtube.com"
@@ -998,10 +992,15 @@ object Innertube {
      * A search page. Never sent as the listener's account — see
      * [isAnonymousRequest] and [postMusic]'s endpoint check — so no query the
      * app or the listener runs here reaches YouTube's search history.
+     *
+     * Upstream 1.8.1 accepts a flag for an explicit submit that would be
+     * recorded in YT Music history; this fork keeps every search anonymous,
+     * so the flag is accepted for call-site compatibility and ignored.
      */
     suspend fun search(
         query: String,
         params: String? = null,
+        anonymous: Boolean = true,
         kind: SearchKind = SearchKind.TYPED,
     ): JsonObject =
         postMusic("search", searchKind = kind, searchQueryLength = query.length) {
@@ -1346,8 +1345,8 @@ object Innertube {
                 parameter("cos", "Windows")
                 parameter("cosver", "10.0")
             }
-            parameter("hl", "en_US")
-            parameter("cr", "US")
+            parameter("hl", currentLanguage.replace('-', '_'))
+            parameter("cr", currentCountry)
             extras()
             statsHeaders(session, origin, userAgentFor(clientName))
         }.status.value

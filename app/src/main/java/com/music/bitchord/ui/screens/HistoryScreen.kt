@@ -24,7 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import com.music.bitchord.data.model.isSameTrackAs
+import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -88,6 +88,7 @@ fun HistoryScreen(
 
             is UiState.Success -> {
                 val songs = state.data
+                val isCurrentRow = playingRowMatcher(songs, currentSong)
                 // The videoId alone is not a key here: the feed is deduplicated
                 // on it, but a list keyed on something that could repeat is one
                 // bad response away from a crash. The index makes it total.
@@ -97,8 +98,8 @@ fun HistoryScreen(
                         onClick = { onSongClick(songs, index) },
                         onLongPress = { onSongLongPress(song) },
                         onSwipeToQueue = { onSongSwipe(song) },
-                        isCurrent = song.isSameTrackAs(currentSong),
-                        isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                        isCurrent = isCurrentRow(song),
+                        isPlaying = isCurrentRow(song) && isPlaying,
                         searchPlayingStyle = true,
                         activeTint = PlayingAccent,
                     )

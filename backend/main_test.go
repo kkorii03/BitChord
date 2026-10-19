@@ -20,6 +20,8 @@ import (
 )
 
 func setupTestServer() *httptest.Server {
+	// Each test server starts with its own party-creation allowance.
+	createLimiter = newIPRateLimiter(time.Minute, config.CreateRatePerMinute, config.RateLimitMaxEntries)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", handleRoot)
 	mux.HandleFunc("GET /healthz", handleHealthz)
@@ -480,5 +482,43 @@ func TestInviteLanding(t *testing.T) {
 	}
 	if !strings.Contains(content, code) {
 		t.Errorf("Expected HTML content to contain party code %s", code)
+	}
+}
+
+// A browser offers the token as a subprotocol (it cannot set Authorization on
+// a WebSocket). The server answers with the protocol name alone, never the token.
+func TestWebSocketTokenAsSubprotocol(t *testing.T) {
+	ts := setupTestServer()
+	defer ts.Close()
+
+	b, _ := json.Marshal(map[string]string{"userId": "u1", "deviceId": "d1", "displayName": "Host"})
+	res, _ := http.Post(ts.URL+"/api/parties", "application/json", bytes.NewReader(b))
+	var created map[string]interface{}
+	_ = json.NewDecoder(res.Body).Decode(&created)
+	code := created["code"].(string)
+	token := created["token"].(string)
+
+	u, _ := url.Parse(ts.URL)
+	u.Scheme = "ws"
+	u.Path = fmt.Sprintf("/ws/parties/%s", code)
+
+	dialer := websocket.Dialer{Subprotocols: []string{socketProtocol, socketTokenPrefix + token}}
+	ws, resp, err := dialer.Dial(u.String(), nil)
+	if err != nil {
+		t.Fatalf("WebSocket with a subprotocol token failed: %v", err)
+	}
+	defer ws.Close()
+	if got := resp.Header.Get("Sec-WebSocket-Protocol"); got != socketProtocol {
+		t.Fatalf("expected the server to answer %q, got %q", socketProtocol, got)
+	}
+	var welcome map[string]interface{}
+	_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := ws.ReadJSON(&welcome); err != nil || welcome["type"] != protocol.FrameWelcome {
+		t.Fatalf("expected a welcome frame, got %v (%v)", welcome["type"], err)
+	}
+
+	bad := websocket.Dialer{Subprotocols: []string{socketProtocol, socketTokenPrefix + "nottherighttoken"}}
+	if _, resp, err := bad.Dial(u.String(), nil); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for a wrong subprotocol token, got %v", err)
 	}
 }

@@ -4,10 +4,22 @@ import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.ui.AppUiHost
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
+import com.music.bitchord.ui.player.MESH_CYCLE_MILLIS
+import com.music.bitchord.ui.player.MeshGradientBackground
+import com.music.bitchord.ui.player.WelcomeMeshPalettes
+import com.music.bitchord.ui.player.cyclingMeshPalette
 import androidx.compose.foundation.clickable
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -352,7 +364,59 @@ fun SongRow(
     searchPlayingStyle: Boolean = false,
     /** True while a Downloads row belongs to the current multi-selection. */
     selected: Boolean = false,
+    /**
+     * Leads the artist line with the tier the row's source offered — Lossless,
+     * Hi-Res Lossless, Dolby Atmos, High quality — for lists where rows from
+     * different catalogues sit side by side: the Addons search.
+     */
+    showSourceQuality: Boolean = false,
+    /**
+     * A control of the page's own, drawn just ahead of the ⋮ — the Cached
+     * songs folder's per-track download button. Null on every other list.
+     */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
+    SwipeToQueueBox(
+        onSwipeToQueue = onSwipeToQueue,
+        modifier = modifier,
+    ) {
+        SongRowContent(
+            song = song,
+            onClick = onClick,
+            onLongPress = onLongPress,
+            onMore = onMore ?: onLongPress,
+            modifier = if (onSwipeToQueue != null) Modifier.background(rowBackground) else modifier,
+            trackNumber = trackNumber,
+            subtitleColor = subtitleColor,
+            downloadedTint = downloadedTint,
+            isCurrent = isCurrent,
+            isPlaying = isPlaying,
+            activeTint = activeTint,
+            searchPlayingStyle = searchPlayingStyle,
+            selected = selected,
+            showSourceQuality = showSourceQuality,
+            trailing = trailing,
+        )
+    }
+}
+
+/**
+ * Wraps content with a swipe gesture revealing [QueueSwipeBackground] that
+ * triggers [onSwipeToQueue] when swiped past 45% of width and snaps back.
+ * If [onSwipeToQueue] is null, renders [content] directly.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToQueueBox(
+    onSwipeToQueue: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    if (onSwipeToQueue == null) {
+        content()
+        return
+    }
+
     val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
     var boxWidth by remember { mutableFloatStateOf(0f) }
@@ -374,25 +438,6 @@ fun SongRow(
         positionalThreshold = { distance -> distance * 0.5f },
     )
     swipeStateHolder.value = swipeState
-
-    if (onSwipeToQueue == null) {
-        SongRowContent(
-            song = song,
-            onClick = onClick,
-            onLongPress = onLongPress,
-            onMore = onMore ?: onLongPress,
-            modifier = modifier,
-            trackNumber = trackNumber,
-            subtitleColor = subtitleColor,
-            downloadedTint = downloadedTint,
-            isCurrent = isCurrent,
-            isPlaying = isPlaying,
-            activeTint = activeTint,
-            searchPlayingStyle = searchPlayingStyle,
-            selected = selected,
-        )
-        return
-    }
 
     // The row reveals "Queue" from the first pixel of the drag, but it only
     // *commits* past 45% of the width — so without this the label is a promise
@@ -423,21 +468,7 @@ fun SongRow(
         modifier = modifier.onSizeChanged { boxWidth = it.width.toFloat() },
         backgroundContent = { QueueSwipeBackground(swipeState) },
     ) {
-        SongRowContent(
-            song = song,
-            onClick = onClick,
-            onLongPress = onLongPress,
-            onMore = onMore ?: onLongPress,
-            modifier = Modifier.background(rowBackground),
-            trackNumber = trackNumber,
-            subtitleColor = subtitleColor,
-            downloadedTint = downloadedTint,
-            isCurrent = isCurrent,
-            isPlaying = isPlaying,
-            activeTint = activeTint,
-            searchPlayingStyle = searchPlayingStyle,
-            selected = selected,
-        )
+        content()
     }
 }
 
@@ -504,6 +535,8 @@ private fun SongRowContent(
     activeTint: Color = MaterialTheme.colorScheme.primary,
     searchPlayingStyle: Boolean = false,
     selected: Boolean = false,
+    showSourceQuality: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val titleColor by animateColorAsState(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
@@ -581,16 +614,27 @@ private fun SongRowContent(
                 color = titleColor,
             )
             Spacer(Modifier.height(2.dp))
-            Text(
-                text = listOfNotNull(
-                    song.artist.takeIf { it.isNotBlank() },
-                    song.downloadFormat,
-                ).joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = subtitleColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            val subtitle = listOfNotNull(
+                song.artist.takeIf { it.isNotBlank() },
+                song.downloadFormat,
+            ).joinToString(" · ")
+            val quality = if (showSourceQuality) song.sourceQualityBadge() else null
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (quality != null) {
+                    SourceQualityBadge(
+                        quality = quality,
+                        color = subtitleColor,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Text(
+                    text = if (quality != null && subtitle.isNotEmpty()) " · $subtitle" else subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = subtitleColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (downloadedTint != null) {
             DownloadedBadge(song.videoId, downloadedTint)
@@ -630,9 +674,13 @@ private fun SongRowContent(
                 )
             }
         }
+        if (trailing != null && !matching && !unavailable) {
+            Spacer(Modifier.width(4.dp))
+            trailing()
+        }
         // Same sheet the long-press opens, for anyone who doesn't think to hold.
         if (onMore != null && !matching && !unavailable) {
-            RowMoreButton(onClick = onMore)
+            RowMoreButton(onClick = onMore, tint = subtitleColor)
         }
     }
 }
@@ -791,35 +839,70 @@ fun PullToRefresh(
     }
 }
 
-/** Slim dismissible-looking prompt shown atop Home while signed out. */
+/**
+ * The prompt atop Home while signed out: a card in the welcome pages' living
+ * mesh, so the one thing Home asks of a signed-out listener looks like an
+ * invitation from the app rather than a settings row that wandered in.
+ *
+ * Drawn white-on-colour in either theme, like Replay and the welcome — the
+ * mesh is the card, and white type is what sits on colour.
+ */
 @Composable
 fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.98f else 1f, spring(stiffness = 900f), label = "signInScale")
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = PAGE_GUTTER, vertical = 8.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onSignIn)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(22.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onSignIn),
     ) {
-        Column(Modifier.weight(1f)) {
+        // A card is a few hundred dp the reader is looking straight at, which
+        // is the case the mesh lets keep moving — see its `continuous` note.
+        MeshGradientBackground(
+            palette = cyclingMeshPalette(WelcomeMeshPalettes),
+            modifier = Modifier.matchParentSize(),
+            continuous = true,
+            driftMillis = 6_000,
+            blurRadius = 36.dp,
+            colorFadeMillis = MESH_CYCLE_MILLIS,
+        )
+        Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 18.dp)) {
             Text(
                 text = stringResource(Res.string.sign_in_youtube_music),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.W800,
+                color = Color.White,
             )
-            Text(
-                text = stringResource(Res.string.personalized_recommendations),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .padding(start = 16.dp, end = 20.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Image(
+                    painter = painterResource(Res.drawable.ic_google_g),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(Res.string.sign_in_with_google),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.W700,
+                    color = Color.Black,
+                )
+            }
         }
-        Spacer(Modifier.width(12.dp))
-        Button(onClick = onSignIn) { Text(stringResource(Res.string.sign_in)) }
     }
 }
 

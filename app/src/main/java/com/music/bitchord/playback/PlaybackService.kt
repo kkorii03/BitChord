@@ -85,6 +85,8 @@ import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
 import com.music.bitchord.playback.cast.CastSink
+import com.music.bitchord.playback.cast.RemoteSpeaker
+import com.music.bitchord.playback.cast.Speakers
 import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import com.music.bitchord.playback.audio.SilenceSkipper
@@ -107,6 +109,7 @@ import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
+import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.BrowseItem
@@ -122,6 +125,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import com.music.bitchord.data.Http
+import com.music.bitchord.auth.SignedIn
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.DiagnosticsState
@@ -136,6 +140,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.scrobbling.ListenBrainzManager
 import com.music.bitchord.data.scrobbling.ScrobbleManager
@@ -152,6 +157,7 @@ import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
+import com.music.bitchord.wear.WearBridge
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -163,6 +169,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -182,19 +189,37 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.roundToInt
+import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import java.util.Locale
+import java.util.UUID
 
 
 /** Session command used by both the player UI and the media notification. */
 const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
+
+/** Backoff before each retry of a failed bounded continuation page. */
+private val BOUNDED_CONTINUATION_RETRIES_MS = longArrayOf(2_000L, 5_000L, 15_000L)
+
+/** Session command used by album/playlist playback to install a bounded context. */
+const val ACTION_START_BOUNDED_CONTEXT = "com.music.bitchord.action.START_BOUNDED_CONTEXT"
+const val ACTION_CLEAR_BOUNDED_CONTEXT = "com.music.bitchord.action.CLEAR_BOUNDED_CONTEXT"
+const val EXTRA_BOUNDED_CONTEXT_SONGS = "bitchord.boundedContext.songs"
+const val EXTRA_BOUNDED_CONTEXT_START_INDEX = "bitchord.boundedContext.startIndex"
+const val EXTRA_BOUNDED_CONTEXT_SOURCE_TITLE = "bitchord.boundedContext.sourceTitle"
+const val EXTRA_BOUNDED_CONTEXT_SOURCE_TYPE = "bitchord.boundedContext.sourceType"
+const val EXTRA_BOUNDED_CONTEXT_SOURCE_ID = "bitchord.boundedContext.sourceId"
+const val EXTRA_BOUNDED_CONTEXT_CONTINUATION = "bitchord.boundedContext.continuation"
 
 /** Session command used to smoothly swap the current track's version (film vs release). */
 const val ACTION_SWAP_VERSION = "com.music.bitchord.action.SWAP_VERSION"
 const val EXTRA_SWAP_MEDIA_ITEM = "bitchord.swap.media_item"
 
 /** Session command used by the media notification's and the 4×1 widget's Favorite button. */
+/** How long the service may stay in the foreground, paused, while the watch plays. */
+private const val WATCH_SESSION_FOREGROUND_MS = 6 * 60 * 60 * 1000L
+
 const val ACTION_TOGGLE_FAVORITE = "com.music.bitchord.action.TOGGLE_FAVORITE"
 
 /** Session command used by the media notification's and the 4×1 widget's Shuffle button. */
@@ -234,19 +259,6 @@ internal class ManualUpgradeThrottle(private val cooldownMs: Long) {
     }
 }
 
-/**
- * Session command carrying a rearrangement of the queue worked out by a
- * controller — see [QueueShuffle.reorderFromCommand].
- *
- * A command rather than the ordinary player call because the items a controller
- * can see have had their playback URIs stripped on the way out to it. The
- * permutation travels instead, and the session applies it to the items it holds.
- */
-const val ACTION_REORDER_QUEUE = "com.music.bitchord.action.REORDER_QUEUE"
-
-/** Where the rearrangement starts, and where each slot's new occupant stands now. */
-const val EXTRA_REORDER_FROM = "bitchord.reorder.from"
-const val EXTRA_REORDER_ORDER = "bitchord.reorder.order"
 
 /**
  * Session command marking the span of a queue drag in the UI — see
@@ -766,7 +778,33 @@ class PlaybackService : MediaLibraryService() {
     private var discordPresenceUp = false
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /** Canonical context owner for the active local bounded album/playlist. */
+    private val boundedContextRegistry = ContextRegistry { snapshot ->
+        scope.launch {
+            val window = boundedContextWindow ?: return@launch
+            if (snapshot.contextToken != boundedContextToken) return@launch
+            window.extendTo(snapshot.songs.size)
+            boundedContextRequest?.let { BoundedContextRequests.publish(it, snapshot) }
+            player?.let(::saveBoundedContextSnapshot)
+            scheduleBoundedContextTopUp()
+        }
+    }
+
+    private var boundedContextWindow: QueueWindow? = null
+    private var boundedContextToken: String? = null
+    private var boundedContextSource: QueueSource? = null
+    private var boundedContextRequest: BoundedContextRequests.Request? = null
+    private var boundedContinuationJob: Job? = null
+    private var boundedTopUpJob: Job? = null
+    /** Coalesced bounded edits waiting for CrossfadeController settlement. */
+    private var boundedEditState = BoundedQueueEditState()
+
     private val localBitrateCache = ConcurrentHashMap<String, Int>()
+
+    /** [measuredStreamKbps]'s answers, keyed by rendition URI, and the ones still being read. */
+    private val measuredBitrateCache = ConcurrentHashMap<String, Int>()
+    private val measuringBitrate: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
      * One thread for the sampler's bookkeeping (listening record, recent
@@ -819,6 +857,18 @@ class PlaybackService : MediaLibraryService() {
     )
 
     /**
+     * The BitChord watch app as the speaker — the same model as Cast: the phone
+     * keeps the queue paused, the watch plays it and owns the clock. See
+     * [WearBridge.createSpeaker].
+     */
+    private val watchSpeaker by lazy {
+        WearBridge.createSpeaker(this, scope, localPlayer = { player }, onChanged = { publishWidgetState() })
+    }
+
+    /** Every remote speaker, as the one the session player reports. */
+    private val speakers by lazy { Speakers(listOf(castPlayback, watchSpeaker)) }
+
+    /**
      * Binds playback to a Listen Together party, when there is one.
      *
      * Here rather than in the UI because a party has to outlive the app
@@ -827,6 +877,8 @@ class PlaybackService : MediaLibraryService() {
     private var partySync: PartySync? = null
 
     /** Commands exposed as the secondary buttons on the media notification. */
+    private val boundedContextCommand = SessionCommand(ACTION_START_BOUNDED_CONTEXT, Bundle.EMPTY)
+    private val clearBoundedContextCommand = SessionCommand(ACTION_CLEAR_BOUNDED_CONTEXT, Bundle.EMPTY)
     private val favoriteCommand = SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY)
     private val autoplayCommand = SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY)
     private val shuffleCommand = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
@@ -837,7 +889,6 @@ class PlaybackService : MediaLibraryService() {
     private val commitRadioQueueCommand = SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY)
     private val upgradeQualityCommand = SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY)
     private val swapVersionCommand = SessionCommand(ACTION_SWAP_VERSION, Bundle.EMPTY)
-    private val reorderQueueCommand = SessionCommand(ACTION_REORDER_QUEUE, Bundle.EMPTY)
     private val queueDragCommand = SessionCommand(ACTION_QUEUE_DRAG, Bundle.EMPTY)
 
     private var favoriteActionJob: Job? = null
@@ -1058,7 +1109,7 @@ class PlaybackService : MediaLibraryService() {
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
             // quiet again and the receiver is asked instead.
-            if (playWhenReady) player?.let(castPlayback::onLocalStartedPlaying)
+            if (playWhenReady) player?.let(speakers::onLocalStartedPlaying)
             publishWidgetState(playing = playWhenReady)
             // The only place the *reason* can be read. A party has to tell a
             // pause the listener asked for from one another app imposed, and
@@ -1100,6 +1151,9 @@ class PlaybackService : MediaLibraryService() {
                 // and the next boundary after it are both new. Paused, there is
                 // no next boundary to wait for — just the one subtitle update.
                 if (exoPlayer.isPlaying) startLyricsTicker() else updateLyricSubtitle()
+                // The watch extrapolates its progress ring from the last
+                // position it was given, the same way Discord does.
+                WearBridge.republish(this@PlaybackService, exoPlayer)
             }
             scheduleSkipSegmentMessages()
         }
@@ -1128,7 +1182,7 @@ class PlaybackService : MediaLibraryService() {
             // A receiver, if it is the speaker, is put on whatever became
             // current — or it is the one that moved, and this is the phone
             // catching up, which [CastPlayback] tells apart by track.
-            castPlayback.onLocalTransition(mediaItem, reason)
+            speakers.onLocalTransition(mediaItem, reason)
 
             // No crossfade case to allow for here any more. A blended advance
             // never reaches this callback — the incoming track starts as the
@@ -1229,7 +1283,8 @@ class PlaybackService : MediaLibraryService() {
                 "BitChord",
                 "mode: repeat=${DiagnosticsState.repeatLabel(repeatMode)} (was ${DiagnosticsState.repeatLabel(previous)})",
             )
-            castPlayback.onLocalRepeatChanged(repeatMode)
+            speakers.onLocalRepeatChanged(repeatMode)
+            player?.let { WearBridge.republish(this@PlaybackService, it) }
             // Repeat-one makes the "next" track this one again.
             player?.let { activeLoudness().nextMediaId = nextMediaIdOf(it) }
             // Repeat-all loops the queue as it stands; AutoPlay's tracks are the
@@ -1245,7 +1300,15 @@ class PlaybackService : MediaLibraryService() {
             // back off is left with a queue that simply stops after the playing
             // track.
             when {
-                repeatMode == Player.REPEAT_MODE_ALL -> stashAutoplayTracks()
+                repeatMode == Player.REPEAT_MODE_ALL -> {
+                    stashAutoplayTracks()
+                    // A bounded context may retain physical history before its
+                    // final current item. Materialise the logical next cycle
+                    // before native repeat-all can wrap into that history.
+                    // The scheduler defers this append while crossfade owns
+                    // the players and applies it at settlement.
+                    if (boundedContextWindow != null) scheduleBoundedContextTopUp()
+                }
                 previous == Player.REPEAT_MODE_ALL -> restoreAutoplayTracks()
             }
             // Turning repeat-all back off can leave the current item at the end
@@ -1269,7 +1332,7 @@ class PlaybackService : MediaLibraryService() {
             // stage switches to that track on its own at the boundary.
             activeLoudness().nextMediaId = nextMediaIdOf(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
-                castPlayback.onLocalQueueChanged()
+                speakers.onLocalQueueChanged()
                 saveQueueSnapshot(exoPlayer)
                 refreshCustomLayouts()
                 // Queue edits can remove AutoPlay's whole tail while leaving
@@ -1430,6 +1493,7 @@ class PlaybackService : MediaLibraryService() {
         NerdStats.forgetLastSession()
         lastNerdStatsKey = null
         localBitrateCache.clear()
+        measuredBitrateCache.clear()
         QualityUpgrade.forgetLastSession()
         com.music.bitchord.lockscreen.LockScreenLyrics.attach(this) { player?.currentMediaItem != null }
         // The lyric ticker is off while the screen is off and nothing is
@@ -1461,6 +1525,26 @@ class PlaybackService : MediaLibraryService() {
         // edit once that single service-side transaction has completed.
         scope.launch {
             QueueShuffle.enabled
+                .collectLatest {
+                    refreshCustomLayouts()
+                    publishWidgetState()
+                }
+        }
+        // While the watch is the speaker this process serves its audio, and a
+        // paused service drops out of the foreground after ten minutes — after
+        // which Android may freeze the process mid-stream. Held up for the
+        // length of the session instead.
+        scope.launch {
+            WearBridge.watchSession.collect { onWatch ->
+                setForegroundServiceTimeoutMs(
+                    if (onWatch) WATCH_SESSION_FOREGROUND_MS else DEFAULT_FOREGROUND_SERVICE_TIMEOUT_MS,
+                )
+            }
+        }
+        // Signing in or out adds or removes Like everywhere at once.
+        scope.launch {
+            SignedIn.state(this@PlaybackService)
+                .drop(1)
                 .collectLatest {
                     refreshCustomLayouts()
                     publishWidgetState()
@@ -1796,6 +1880,8 @@ class PlaybackService : MediaLibraryService() {
             DsdExtractorsFactory(),
         )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
+        // The watch, when it is the speaker, reads tracks through this same chain.
+        WearBridge.attachStreams(AudioCache.playbackFactory(defaultDataSourceFactory))
 
         configuredFloatOutput = shouldEnableFloatOutput()
         val exoPlayer = buildPlayer(
@@ -1845,7 +1931,7 @@ class PlaybackService : MediaLibraryService() {
                 restoreLastQueue(exoPlayer)
             }
         } else {
-            restoreLastQueue(exoPlayer)
+            restoreBoundedQueueOrLast(exoPlayer)
         }
         if (restored) {
             publishWidgetState()
@@ -1877,6 +1963,16 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
         }
+        scope.launch {
+            var wasInParty = ListenTogether.state.value.inParty
+            ListenTogether.state
+                .map { it.inParty }
+                .distinctUntilChanged()
+                .collect { inParty ->
+                    if (wasInParty && !inParty) rebuildBoundedContextAfterParty()
+                    wasInParty = inParty
+                }
+        }
         loadAutoplayForCurrentTrack()
 
         // Only the analytics listener reports the format the audio renderer was
@@ -1889,6 +1985,7 @@ class PlaybackService : MediaLibraryService() {
 
         val controller = createCrossfadeController()
         crossfade = controller
+        QueueShuffle.isCrossfadeTransitioning = { crossfade?.isTransitioning() == true }
         controller.start()
 
         mediaSession = MediaLibrarySession.Builder(
@@ -1913,7 +2010,7 @@ class PlaybackService : MediaLibraryService() {
         onUserIntent = { partySync?.onLocalIntent() },
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
-        cast = castPlayback,
+        cast = speakers,
         getSubtitle = { lastPublishedSubtitle },
         onUserAdvance = ::noteTasteSkip,
     )
@@ -2005,18 +2102,34 @@ class PlaybackService : MediaLibraryService() {
                 loudnessA.setBlendTrim(trim)
                 loudnessB.setBlendTrim(trim)
             },
+            onSettled = {
+                if (boundedEditState.hasPendingEdits) {
+                    scope.launch {
+                        applyDeferredBoundedQueueEdit()
+                    }
+                }
+            },
             versionSwapActive = { versionSwapJob?.isActive == true },
         )
 
+    /**
+     * Whether Like is offered for [item] — the player's own rule, so no surface
+     * shows a heart the player doesn't: there has to be an account to record it
+     * against, and a local file or a download has no YouTube identity to rate.
+     */
+    private fun canLike(item: MediaItem?): Boolean =
+        item != null && SignedIn.state(this).value && item.toSong().localUri == null
+
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
-        val favorite = CommandButton.Builder(
-            if (LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE) {
-                CommandButton.ICON_HEART_FILLED
-            } else {
-                CommandButton.ICON_HEART_UNFILLED
-            },
+        val liked = LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE
+        // The icon constant tells controllers like Android Auto what the button
+        // means; the custom drawable swaps Material's sharp star for the
+        // player's rounded one on the notification itself.
+        val favorite = if (!canLike(player?.currentMediaItem)) null else CommandButton.Builder(
+            if (liked) CommandButton.ICON_STAR_FILLED else CommandButton.ICON_STAR_UNFILLED,
         )
+            .setCustomIconResId(if (liked) R.drawable.ic_notification_star_filled else R.drawable.ic_notification_star)
             .setSessionCommand(favoriteCommand)
             .setDisplayName("좋아요")
             .build()
@@ -2031,7 +2144,7 @@ class PlaybackService : MediaLibraryService() {
             .setSessionCommand(shuffleCommand)
             .setDisplayName(if (shuffleEnabled) "임의 재생 끔" else "임의 재생 켬")
             .build()
-        return listOf(favorite, shuffle)
+        return listOfNotNull(favorite, shuffle)
     }
 
     /** Adds Radio/Revert for controllers with room for them, e.g. Android Auto. */
@@ -2129,11 +2242,14 @@ class PlaybackService : MediaLibraryService() {
 
             beginRadioQueue()
             val currentIndex = activePlayer.currentMediaItemIndex
-            if (currentIndex + 1 < activePlayer.mediaItemCount) {
-                activePlayer.removeMediaItems(currentIndex + 1, activePlayer.mediaItemCount)
+            // Station first, old tail after, so the current track is never
+            // briefly last and AutoPlay does not append this radio again.
+            activePlayer.addMediaItems(currentIndex + 1, related.map { it.toMediaItem() })
+            val oldTail = currentIndex + 1 + related.size
+            if (oldTail < activePlayer.mediaItemCount) {
+                activePlayer.removeMediaItems(oldTail, activePlayer.mediaItemCount)
             }
             if (currentIndex > 0) activePlayer.removeMediaItems(0, currentIndex)
-            activePlayer.addMediaItems(1, related.map { it.toMediaItem() })
             saveQueueSnapshotImmediately(activePlayer)
         }
     }
@@ -2615,8 +2731,377 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun toggleShuffleFromSession() {
+        val window = boundedContextWindow
+        if (window != null && !ListenTogether.state.value.inParty) {
+            val target = !(boundedEditState.desiredShuffle ?: window.isShuffleEnabled)
+            boundedEditState = BoundedQueueEdits.requestShuffle(
+                boundedEditState,
+                desiredShuffle = target,
+            )
+            if (crossfade?.isTransitioning() != true) applyDeferredBoundedQueueEdit()
+            return
+        }
+        // A party's queue is the server's, not the album last played here.
+        // A stale canonical order would let turning shuffle off splice that
+        // album back in whenever the party plays one of its tracks.
+        if (ListenTogether.state.value.inParty) QueueShuffle.clearCanonicalContext()
         player?.let(QueueShuffle::toggle)
         refreshCustomLayouts()
+    }
+
+    /**
+     * Latest desired shuffle state wins. Nothing logical is mutated until the
+     * actual crossfade settlement callback; thus the outgoing and standby
+     * queues cannot be based on different generations of the logical order.
+     */
+    private fun applyDeferredBoundedQueueEdit() {
+        val exoPlayer = player ?: return
+        val window = boundedContextWindow ?: return
+        if (ListenTogether.state.value.inParty || crossfade?.isTransitioning() == true) return
+        val settlement = BoundedQueueEdits.settle(
+            state = boundedEditState,
+            settledGeneration = boundedEditState.contextGeneration,
+        )
+        val edit = settlement.edit ?: return
+        boundedEditState = settlement.state
+        boundedContextAnchor(exoPlayer)?.let { anchor ->
+            if (window.currentCanonicalIndex != anchor) window.jumpTo(anchor)
+        }
+        if (edit.desiredShuffle != null) {
+            window.setShuffle(edit.desiredShuffle, shuffleSeed = Random.nextLong())
+            QueueShuffle.setEnabled(edit.desiredShuffle)
+            AppSettings.setShuffleEnabled(edit.desiredShuffle)
+            replaceBoundedUpcoming(exoPlayer, window)
+        }
+        if (edit.refresh) replaceBoundedUpcoming(exoPlayer, window)
+        if (edit.topUp) {
+            applyBoundedContextTopUp()
+        }
+        refreshCustomLayouts()
+    }
+
+    /** Replace only the bounded upcoming tail, retaining current/history and tiers. */
+    private fun replaceBoundedUpcoming(exoPlayer: ExoPlayer, window: QueueWindow) {
+        val snapshot = boundedContextRegistry.snapshot() ?: return
+        if (snapshot.contextToken != boundedContextToken) return
+        window.extendTo(snapshot.songs.size)
+        val from = exoPlayer.currentMediaItemIndex + 1
+        if (from < 0) return
+        val existing = (from until exoPlayer.mediaItemCount).map(exoPlayer::getMediaItemAt)
+        val users = existing.filter { it.queueTier == QueueTier.USER_QUEUE }
+        val autoplay = existing.filter { it.queueTier == QueueTier.AUTOPLAY }
+        val existingContext = existing.filter { it.queueTier == QueueTier.CONTEXT }
+            .associateBy { QueueWindowEntry(it.canonicalIndex ?: -1, it.contextCycleId ?: window.cycleId) }
+        val context = BoundedQueuePlanner.physicalUpcoming(
+            window = window,
+            repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL &&
+                BoundedQueuePlanner.canRepeat(snapshot.continuationState),
+        ).map { entry ->
+            existingContext[entry] ?: boundedMediaItem(
+                snapshot.songs[entry.canonicalIndex], entry.canonicalIndex, entry.cycleId,
+            )
+        }
+        QueueShuffle.replaceChanged(exoPlayer, from, exoPlayer.mediaItemCount, users + context + autoplay)
+    }
+
+    /**
+     * Installs the first bounded window for an album/playlist request.  The
+     * complete list stays in [boundedContextRegistry]; only the bounded plan is
+     * converted to Media3 items.  This command is intentionally handled by the
+     * service so the physical edit uses the raw ExoPlayer and never trips the
+     * PartySync user-intent path.
+     */
+    private fun startBoundedContext(args: Bundle) {
+        val exoPlayer = player ?: return
+        val requestToken = args.getString(EXTRA_BOUNDED_CONTEXT_SONGS) ?: return
+        val request = BoundedContextRequests.take(requestToken) ?: return
+        if (CastController.state.value.casting || castPlayback.active) {
+            // MainActivity normally keeps Cast on the full-queue path. This
+            // closes the race where a receiver connects after the tap but
+            // before this session command is handled.
+            BoundedContextRequests.discard(requestToken)
+            return
+        }
+        BoundedContextPersistence.clearImmediately()
+        boundedEditState = BoundedQueueEdits.invalidateContext(boundedEditState)
+
+        val source = request.source
+        val requestedSongs = request.songs
+            .filterNot { it.isUnresolvedSpotify }
+            .map { it.copy(
+                queueTier = QueueTier.CONTEXT,
+                playbackSource = source.title,
+                playbackSourceType = source.type,
+                playbackSourceId = source.id,
+            ) }
+        if (requestedSongs.isEmpty()) return
+
+        val requestedIndex = request.startIndex
+            .coerceIn(requestedSongs.indices)
+        val selectedKey = requestedSongs[requestedIndex].contextEntryKey()
+        val contextToken = "${source.type.name}:${source.id.orEmpty()}:${UUID.randomUUID()}"
+        val registered = boundedContextRegistry.register(
+            contextToken = contextToken,
+            sourceKey = "${source.type.name}:${source.id.orEmpty()}",
+            browseId = source.id,
+            songs = requestedSongs,
+            continuationToken = request.continuationToken,
+        )
+        val selectedIndex = registered.songs.indexOfFirst { it.contextEntryKey() == selectedKey }
+            .takeIf { it >= 0 } ?: 0
+        val shuffle = request.shuffle
+        // A fresh seed per start: the default one is fixed, which gave the
+        // same album the same "shuffled" order every time it was played.
+        val window = QueueWindow(registered.songs.size, shuffleSeed = Random.nextLong())
+            .startAt(selectedIndex, shuffle)
+
+        boundedContinuationJob?.cancel()
+        boundedContextWindow = window
+        boundedContextToken = contextToken
+        boundedContextSource = source
+        boundedContextRequest = request
+        BoundedContextRequests.publish(request, registered)
+
+        val currentIndex = exoPlayer.currentMediaItemIndex
+        val upcoming = if (currentIndex in 0 until exoPlayer.mediaItemCount) {
+            (currentIndex + 1 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it) }
+        } else {
+            emptyList()
+        }
+        val userQueue = upcoming.filter { it.queueTier == QueueTier.USER_QUEUE }.map(MediaItem::toSong)
+        val autoplay = upcoming.filter { it.queueTier == QueueTier.AUTOPLAY }.map(MediaItem::toSong)
+        val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
+        val plan = BoundedQueuePlanner.buildInitialPlan(
+            contextSnapshot = registered,
+            selectedIndex = selectedIndex,
+            queueWindow = window,
+            preservedUserQueue = userQueue,
+            existingAutoplay = if (repeatAll) emptyList() else autoplay,
+            repeatAll = repeatAll,
+        )
+
+        QueueShuffle.setCanonicalContext(
+            registered.songs.mapIndexed { index, song ->
+                val canonical = song.copy(queueEntryId = "context:$contextToken:$index")
+                QueueShuffle.withQueueMetadata(
+                    canonical.toMediaItem(),
+                    newEntryId = canonical.queueEntryId,
+                    newCanonicalIndex = index,
+                    newTier = QueueTier.CONTEXT,
+                )
+            },
+        )
+
+        val items = boundedMediaItems(plan, window)
+        val start = plan.history.size
+        exoPlayer.setMediaItems(items, start.coerceIn(items.indices), 0L)
+        saveBoundedContextSnapshot(exoPlayer)
+        exoPlayer.prepare()
+        exoPlayer.play()
+        startBoundedContinuationLoading(contextToken)
+    }
+
+    /** Clears local bounded state before a non-context queue replaces the player. */
+    private fun clearBoundedContext() {
+        boundedEditState = BoundedQueueEdits.invalidateContext(boundedEditState)
+        boundedContextRequest?.handoffToken?.let(BoundedContextRequests::discard)
+        boundedContinuationJob?.cancel()
+        boundedContinuationJob = null
+        boundedTopUpJob?.cancel()
+        boundedTopUpJob = null
+        boundedContextRegistry.register(
+            contextToken = "cleared:${UUID.randomUUID()}",
+            sourceKey = "cleared",
+            browseId = null,
+            songs = emptyList(),
+            continuationToken = null,
+        )
+        BoundedContextPersistence.clearImmediately()
+        boundedContextWindow = null
+        boundedContextToken = null
+        boundedContextSource = null
+        boundedContextRequest = null
+        QueueShuffle.clearCanonicalContext()
+    }
+
+    /** Follows the continuation independently of the detail-page lifecycle. */
+    private fun startBoundedContinuationLoading(contextToken: String) {
+        boundedContinuationJob?.cancel()
+        boundedContinuationJob = scope.launch {
+            var failures = 0
+            while (isActive && boundedContextToken == contextToken) {
+                val request = boundedContextRegistry.claimContinuation(contextToken) ?: return@launch
+                val page = withContext(Dispatchers.IO) {
+                    YtMusicRepository.moreSongs(request.continuationToken).getOrNull()
+                }
+                if (page == null) {
+                    // fail() leaves the token claimable. A single dropped
+                    // request used to end loading for good, leaving both the
+                    // queue and the page cut short; retry with backoff, then
+                    // hand the walk back to the detail page.
+                    boundedContextRegistry.fail(request)
+                    if (++failures > BOUNDED_CONTINUATION_RETRIES_MS.size) {
+                        boundedContextRequest?.handoffToken?.let(BoundedContextRequests::release)
+                        return@launch
+                    }
+                    delay(BOUNDED_CONTINUATION_RETRIES_MS[failures - 1])
+                    continue
+                }
+                failures = 0
+                val source = boundedContextSource
+                val songs = page.songs.map { song ->
+                    if (source == null) song else song.copy(
+                        queueTier = QueueTier.CONTEXT,
+                        playbackSource = source.title,
+                        playbackSourceType = source.type,
+                        playbackSourceId = source.id,
+                    )
+                }
+                val result = boundedContextRegistry.complete(
+                    request,
+                    ContinuationPage(songs = songs, continuationToken = page.continuation),
+                )
+                if (result.status != ContinuationResultStatus.COMPLETED) return@launch
+            }
+        }
+    }
+
+    private fun scheduleBoundedContextTopUp() {
+        if (boundedContextWindow == null || boundedContextToken == null) return
+        boundedEditState = BoundedQueueEdits.requestTopUp(boundedEditState)
+        if (boundedTopUpJob?.isActive == true) return
+        boundedTopUpJob = scope.launch {
+            if (ListenTogether.state.value.inParty) return@launch
+            if (crossfade?.isTransitioning() == true) {
+                return@launch
+            }
+            applyBoundedContextTopUp()
+            boundedEditState = boundedEditState.copy(topUpPending = false)
+        }
+    }
+
+    private fun applyBoundedContextTopUp() {
+        val exoPlayer = player ?: return
+        val window = boundedContextWindow ?: return
+        val snapshot = boundedContextRegistry.snapshot() ?: return
+        if (snapshot.contextToken != boundedContextToken) return
+        window.extendTo(snapshot.songs.size)
+        val currentIndex = boundedContextAnchor(exoPlayer) ?: window.currentCanonicalIndex ?: return
+        if (window.currentCanonicalIndex != currentIndex) {
+            window.jumpTo(currentIndex)
+        }
+        val now = exoPlayer.currentMediaItemIndex
+        val afterCurrent = if (now in 0 until exoPlayer.mediaItemCount) {
+            (now + 1 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it) }
+        } else emptyList()
+        val existingEntries = afterCurrent
+            .filter { it.queueTier == QueueTier.CONTEXT }
+            .mapNotNull { item ->
+                val canonicalIndex = QueueShuffle.getCanonicalIndex(item) ?: return@mapNotNull null
+                QueueWindowEntry(canonicalIndex, item.contextCycleId ?: window.cycleId)
+            }
+        val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL &&
+            BoundedQueuePlanner.canRepeat(snapshot.continuationState)
+        val additions = BoundedQueuePlanner.topUpEntries(
+            window = window,
+            materialized = existingEntries,
+            repeatAll = repeatAll,
+        )
+        if (additions.isEmpty()) return
+        val autoplayIndex = (now + 1 until exoPlayer.mediaItemCount)
+            .firstOrNull { exoPlayer.getMediaItemAt(it).queueTier == QueueTier.AUTOPLAY }
+            ?: exoPlayer.mediaItemCount
+        val items = additions.map { entry ->
+            boundedMediaItem(snapshot.songs[entry.canonicalIndex], entry.canonicalIndex, entry.cycleId)
+        }
+        exoPlayer.addMediaItems(autoplayIndex, items)
+    }
+
+    private fun boundedContextAnchor(exoPlayer: ExoPlayer): Int? {
+        val current = exoPlayer.currentMediaItem
+        if (current?.queueTier == QueueTier.CONTEXT) {
+            QueueShuffle.getCanonicalIndex(current)?.let { return it }
+        }
+        val currentIndex = exoPlayer.currentMediaItemIndex
+        for (index in currentIndex - 1 downTo 0) {
+            val item = exoPlayer.getMediaItemAt(index)
+            if (item.queueTier == QueueTier.CONTEXT) {
+                QueueShuffle.getCanonicalIndex(item)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun syncBoundedContextCursor(exoPlayer: ExoPlayer, mediaItem: MediaItem?) {
+        val window = boundedContextWindow ?: return
+        if (ListenTogether.state.value.inParty) return
+        if (mediaItem?.queueTier != QueueTier.CONTEXT) return
+        val canonicalIndex = QueueShuffle.getCanonicalIndex(mediaItem) ?: return
+        val cycle = mediaItem.contextCycleId
+        if (cycle != null) {
+            window.commit(QueueWindowEntry(canonicalIndex, cycle))
+        } else if (window.currentCanonicalIndex != canonicalIndex) {
+            window.jumpTo(canonicalIndex)
+        }
+    }
+
+    /** Re-establishes the local bounded projection after PartySync gives up ownership. */
+    private fun rebuildBoundedContextAfterParty() {
+        val exoPlayer = player ?: return
+        val window = boundedContextWindow ?: return
+        val snapshot = boundedContextRegistry.snapshot() ?: return
+        if (snapshot.contextToken != boundedContextToken) return
+        val anchor = boundedContextAnchor(exoPlayer)
+        if (anchor == null || anchor !in snapshot.songs.indices) {
+            // The party may have replaced the queue with tracks that have no
+            // local canonical identity. Preserve that queue rather than reset
+            // playback into an unproven bounded reconstruction.
+            clearBoundedContext()
+            return
+        }
+        if (window.currentCanonicalIndex != anchor) window.jumpTo(anchor)
+        // Shuffle toggled in the party cleared this; the projection needs it back.
+        QueueShuffle.setCanonicalContext(
+            snapshot.songs.mapIndexed { index, song ->
+                val canonical = song.copy(queueEntryId = "context:${snapshot.contextToken}:$index")
+                QueueShuffle.withQueueMetadata(
+                    canonical.toMediaItem(),
+                    newEntryId = canonical.queueEntryId,
+                    newCanonicalIndex = index,
+                    newTier = QueueTier.CONTEXT,
+                )
+            },
+        )
+        boundedEditState = BoundedQueueEdits.requestRefresh(boundedEditState)
+        if (crossfade?.isTransitioning() != true) applyDeferredBoundedQueueEdit()
+    }
+
+    private fun boundedMediaItems(plan: BoundedContextPlan, window: QueueWindow): List<MediaItem> {
+        val canonical = plan.canonicalContext
+        val history = plan.history.map { song ->
+            boundedMediaItem(song, canonical.indexOfFirst { it.contextEntryKey() == song.contextEntryKey() }, window.cycleId)
+        }
+        val current = boundedMediaItem(plan.current, plan.currentCanonicalIndex, window.cycleId)
+        val user = plan.userQueue.map { it.copy(queueEntryId = it.queueEntryId ?: UUID.randomUUID().toString()).toMediaItem() }
+        val context = plan.contextUpcoming.map { entry ->
+            boundedMediaItem(canonical[entry.canonicalIndex], entry.canonicalIndex, entry.cycleId)
+        }
+        val autoplay = plan.autoplay.map { it.copy(queueEntryId = it.queueEntryId ?: UUID.randomUUID().toString()).toMediaItem() }
+        return history + listOf(current) + user + context + autoplay
+    }
+
+    private fun boundedMediaItem(song: Song, canonicalIndex: Int, cycleId: Long): MediaItem {
+        val entry = song.copy(
+            queueTier = QueueTier.CONTEXT,
+            queueEntryId = "window:${UUID.randomUUID()}",
+        )
+        return QueueShuffle.withQueueMetadata(
+            entry.toMediaItem(),
+            newEntryId = entry.queueEntryId,
+            newCanonicalIndex = canonicalIndex,
+            newTier = QueueTier.CONTEXT,
+            newContextCycleId = cycleId,
+        )
     }
 
     private fun toggleAutoplayFromNotification() {
@@ -2664,6 +3149,9 @@ class PlaybackService : MediaLibraryService() {
             exoPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
             (party.inParty && autoplaySupplierId(party) != party.you?.memberId)
         ) {
+            return
+        }
+        if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) {
             return
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
@@ -2737,12 +3225,26 @@ class PlaybackService : MediaLibraryService() {
                             return@launch
                         }
                     } else {
-                        latestPlayer.addMediaItems(resolved.map { it.toMediaItem() })
-                        TrackLog.i(
-                            "BitChord",
-                            "queue: autoplay-append n=${resolved.size} at=${latestPlayer.mediaItemCount - resolved.size} " +
-                                "size=${latestPlayer.mediaItemCount} by=autoplay",
-                        )
+                        // The queue may have changed while the radio request
+                        // was out — a station landing behind it is the usual
+                        // case — so check against what is queued now, not the
+                        // snapshot the batch was picked against.
+                        val queuedNow = (0 until latestPlayer.mediaItemCount)
+                            .map { latestPlayer.getMediaItemAt(it).toSong() }
+                        val room = MAX_QUEUED_AUTOPLAY -
+                            (latestPlayer.currentMediaItemIndex + 1 until latestPlayer.mediaItemCount)
+                                .count { latestPlayer.getMediaItemAt(it).fromAutoplay }
+                        val fresh = resolved
+                            .filterNot { song -> queuedNow.any { QueueBuilder.isSameRecording(it, song) } }
+                            .take(room.coerceAtLeast(0))
+                        if (fresh.isNotEmpty()) {
+                            latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
+                            TrackLog.i(
+                                "BitChord",
+                                "queue: autoplay-append n=${fresh.size} at=${latestPlayer.mediaItemCount - fresh.size} " +
+                                    "size=${latestPlayer.mediaItemCount} by=autoplay",
+                            )
+                        }
                     }
                     if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
                     return@launch
@@ -2825,6 +3327,20 @@ class PlaybackService : MediaLibraryService() {
         autoplayLoadJob = null
         autoplaySeed = null
         loadAutoplayForCurrentTrack()
+    }
+
+    private fun boundedAutoplayEligible(exoPlayer: ExoPlayer): Boolean {
+        val window = boundedContextWindow ?: return true
+        val snapshot = boundedContextRegistry.snapshot() ?: return false
+        if (snapshot.contextToken != boundedContextToken) return false
+        boundedContextAnchor(exoPlayer)?.let { anchor ->
+            if (window.currentCanonicalIndex != anchor) window.jumpTo(anchor)
+        }
+        return BoundedQueuePlanner.autoplayEligible(
+            window = window,
+            continuationState = snapshot.continuationState,
+            repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+        )
     }
 
     /** @see autoplayEnabledFor — shared with the player, which draws the toggle. */
@@ -3123,8 +3639,15 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        syncBoundedContextCursor(exoPlayer, mediaItem)
+        if (boundedContextWindow != null && !ListenTogether.state.value.inParty) {
+            saveBoundedContextSnapshot(exoPlayer)
+        }
         currentAudioInputFormat = null
-        NerdStats.onTrackTransition()
+        NerdStats.onTrackTransition(mediaItem?.mediaId)
+        // A rendition discarded and fetched again comes back under the same
+        // URI, so a size measured for the last track isn't kept past it.
+        measuredBitrateCache.clear()
         AudioOutputStatus.onTrackTransition()
         // The entry this track is read from now counts as played — the only
         // kind the Cached songs folder lists. See [AudioCache.Origin].
@@ -3158,7 +3681,13 @@ class PlaybackService : MediaLibraryService() {
         // made every one of those paths progressively more expensive.
         val expiredHistory = queueHistoryTrimCount(exoPlayer.currentMediaItemIndex)
         if (expiredHistory > 0) {
-            if (exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) {
+            if (boundedContextWindow != null) {
+                // In bounded mode the logical QueueWindow owns repeat/cycle
+                // state. The player timeline only retains the recent history;
+                // rotating expired rows would reintroduce them ahead of the
+                // logical cursor and make a cycle look unconsumed.
+                exoPlayer.removeMediaItems(0, expiredHistory)
+            } else if (exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) {
                 // Repeat-all still means the whole queue. Rotate history that
                 // has fallen out of the visible 25-song window to the end
                 // instead of deleting it; it becomes upcoming again in the
@@ -3180,6 +3709,7 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
         }
+        scheduleBoundedContextTopUp()
         // A *different* track is a clean slate for [recoverFrom], and so is the
         // same track becoming current for any reason other than that method's
         // own retry. The distinction is the whole of the reported loading loop.
@@ -3468,6 +3998,18 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * Whether [error] was the connection's fault rather than the bytes': the
+     * network failed or timed out, a URL had expired, or there was no
+     * connection to begin with. Such a failure says nothing against what is
+     * cached, so recovery keeps every complete entry — see [AudioCache.discard].
+     */
+    private fun isNetworkFault(error: PlaybackException): Boolean =
+        error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+            AudioCache.isOffline()
+
+    /**
      * Puts a track that died mid-read back on its feet.
      *
      * Two things get thrown away before trying again, because both have been
@@ -3517,12 +4059,6 @@ class PlaybackService : MediaLibraryService() {
         ) {
             return
         }
-        // An addon/JioSaavn stream gets one chance. If it fails after selection,
-        // retrying the ordinary item only lets the same deterministic lookup win
-        // again. Rebuild it as an explicit YouTube request instead. This also
-        // clears a DASH/HLS MIME left on an upgraded item, which otherwise makes
-        // Media3 parse YouTube's WebM bytes as a manifest forever.
-        if (fallbackFailedAlternativeToYouTube(item, uri, position)) return
         // A manifest read as audio is not a broken stream, and everything below
         // this line would treat it as one. Ahead of the verdict and the attempt
         // budget for the same reason as the local-file case above: this is not
@@ -3533,6 +4069,12 @@ class PlaybackService : MediaLibraryService() {
         ) {
             return
         }
+        // An addon/JioSaavn stream gets one chance. If it fails after selection,
+        // retrying the ordinary item only lets the same deterministic lookup win
+        // again. Rebuild it as an explicit YouTube request instead. This also
+        // clears a DASH/HLS MIME left on an upgraded item, which otherwise makes
+        // Media3 parse YouTube's WebM bytes as a manifest forever.
+        if (fallbackFailedAlternativeToYouTube(item, uri, position, error)) return
         // Giving up on the *retry*, not on everything below it.
         //
         // A track that has exhausted its attempts is not finished with.
@@ -3630,11 +4172,14 @@ class PlaybackService : MediaLibraryService() {
                 QualityUpgrade.refuseUpgrades(videoId)
             }
         uri?.getQueryParameter("v")?.let(StreamChoice::forget)
+        // Read now, not after the delay: it describes the failure, and the
+        // connection may be back by then.
+        val networkFault = isNetworkFault(error)
         scope.launch(TrackLog.about(mediaId)) {
             // Long enough for the released source to let go of the cache keys
             // about to be removed, short enough to read as a stutter.
             delay(RECOVERY_DELAY_MS)
-            uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it) } }
+            uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it, keepComplete = networkFault) } }
             // The bytes go even when nothing is going to be prepared after
             // them. A half-filled entry whose owner has just been forgotten is
             // the seam this file's [StreamChoice] note is about: the next play
@@ -3683,8 +4228,13 @@ class PlaybackService : MediaLibraryService() {
         item: MediaItem,
         uri: Uri?,
         position: Long,
+        error: PlaybackException,
     ): Boolean {
         val playbackUri = uri ?: return false
+        // A track the listener picked from an addon is that addon's or nothing:
+        // a YouTube Opus copy under it is a different, lesser recording they
+        // did not ask for. Let the ordinary retry/skip path deal with it.
+        if (playbackUri.authority == "source") return false
         val videoId = playbackUri.getQueryParameter("v")
         val substituted = videoId?.let(StreamChoice::isSubstitute) == true
         if (!PlaybackFallback.isAlternative(playbackUri.toString(), substituted)) return false
@@ -3705,9 +4255,10 @@ class PlaybackService : MediaLibraryService() {
             about = mediaId,
         )
 
+        val networkFault = isNetworkFault(error)
         scope.launch(TrackLog.about(mediaId)) {
             delay(RECOVERY_DELAY_MS)
-            withContext(Dispatchers.IO) { AudioCache.discard(playbackUri) }
+            withContext(Dispatchers.IO) { AudioCache.discard(playbackUri, keepComplete = networkFault) }
             withContext(Dispatchers.Main) {
                 val live = this@PlaybackService.player ?: return@withContext
                 if (live.currentMediaItem?.mediaId != mediaId) return@withContext
@@ -5433,8 +5984,12 @@ class PlaybackService : MediaLibraryService() {
         // The sampler calls this every five seconds because the renderer can
         // settle on its format after the track change. Only a changed format
         // (or a bitrate measured for this item) can change the card, so the
-        // snapshot is built then, not on every tick.
+        // snapshot is built then, not on every tick. The generation is part of
+        // the key: a track change resets the published snapshot without
+        // necessarily changing the renderer format.
+        val generation = NerdStats.currentGeneration
         val formatKey = listOf(
+            generation,
             mediaId,
             format?.sampleMimeType,
             format?.containerMimeType,
@@ -5467,17 +6022,14 @@ class PlaybackService : MediaLibraryService() {
                 Pair((format.bitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
             mediaId != null && localBitrateCache.containsKey(mediaId) ->
                 Pair(localBitrateCache[mediaId], TelemetryProvenance.AUTHORITATIVE)
-            NerdStats.declaredFormat(mediaId)?.kbps != null ->
-                Pair(NerdStats.declaredFormat(mediaId)?.kbps, TelemetryProvenance.AUTHORITATIVE)
-            NerdStats.pickedBitrateKbps(mediaId) != null ->
-                Pair(NerdStats.pickedBitrateKbps(mediaId), TelemetryProvenance.AUTHORITATIVE)
             dsd == null && isRawPcm && pcmDataRate != null ->
                 Pair(pcmDataRate, TelemetryProvenance.DERIVED)
             else ->
-                Pair(null, TelemetryProvenance.UNKNOWN)
+                NerdStats.sourceBitrate(mediaId) { measuredStreamKbps(player) }
+                    ?: Pair(null, TelemetryProvenance.UNKNOWN)
         }
 
-        NerdStats.current.value = NerdStats.Snapshot(
+        NerdStats.publish(NerdStats.Snapshot(
             mimeType = dsd?.let { "audio/$it" } ?: format?.sampleMimeType,
             bitrateKbps = bitrate,
             bitrateProvenance = provenance,
@@ -5492,7 +6044,41 @@ class PlaybackService : MediaLibraryService() {
                 "audio/x-dff" -> "DFF"
                 else -> null
             },
-        )
+            mediaId = mediaId,
+        ), expectedGeneration = generation)
+    }
+
+    /**
+     * The playing stream's real bitrate: its full size over its length, or
+     * null until both are known.
+     *
+     * For an addon that didn't state a bitrate and got one guessed from the
+     * tier it was asked for — see [NerdStats.sourceBitrate]. The size is what
+     * the server's response said, recorded in the cache index the first time
+     * the rendition was opened, so this works on a stream still downloading.
+     * Slightly high, because container overhead counts toward the bytes and
+     * not toward the audio. Read off the main thread, once per rendition: the
+     * cache index lookup takes the cache's lock, which a loader may be holding.
+     */
+    private fun measuredStreamKbps(player: Player): Int? {
+        val uri = player.currentMediaItem?.localConfiguration?.uri ?: return null
+        val key = uri.toString()
+        measuredBitrateCache[key]?.let { return it }
+        val durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return null
+        if (measuringBitrate.add(key)) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val bytes = AudioCache.contentLengthOf(uri)
+                    if (bytes > 0) {
+                        val kbps = (bytes * 8 / durationMs).toInt()
+                        if (kbps > 0) measuredBitrateCache[key] = kbps
+                    }
+                } finally {
+                    measuringBitrate.remove(key)
+                }
+            }
+        }
+        return null
     }
 
     /** Serialize only the bounded window needed for a future cold-start resume. */
@@ -5501,6 +6087,7 @@ class PlaybackService : MediaLibraryService() {
         if (player.mediaItemCount == 0) {
             persistedQueueStart = 0
             LastPlayed.clear()
+            BoundedContextPersistence.clear()
             return
         }
         val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
@@ -5510,6 +6097,7 @@ class PlaybackService : MediaLibraryService() {
             songs = range.map { player.getMediaItemAt(it).toSong() },
             index = player.currentMediaItemIndex - range.first,
         )
+        saveBoundedContextSnapshot(player)
         savePlaybackState(player)
     }
 
@@ -5519,6 +6107,7 @@ class PlaybackService : MediaLibraryService() {
         if (player.mediaItemCount == 0) {
             persistedQueueStart = 0
             LastPlayed.clearImmediately()
+            BoundedContextPersistence.clearImmediately()
             return
         }
         val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
@@ -5528,11 +6117,42 @@ class PlaybackService : MediaLibraryService() {
             index = player.currentMediaItemIndex,
             positionMs = player.currentPosition,
         )
+        saveBoundedContextSnapshot(player, immediately = true)
+    }
+
+    /** Capture logical state and only the materialized bounded projection. */
+    private fun saveBoundedContextSnapshot(player: ExoPlayer, immediately: Boolean = false) {
+        if (ListenTogether.state.value.inParty) return
+        val window = boundedContextWindow ?: return
+        val context = boundedContextRegistry.snapshot() ?: return
+        val source = boundedContextSource ?: return
+        if (context.contextToken != boundedContextToken || context.songs.isEmpty()) return
+        val currentIndex = player.currentMediaItemIndex.coerceIn(0, player.mediaItemCount - 1)
+        val range = LastPlayed.window(player.mediaItemCount, currentIndex)
+        if (range.isEmpty()) return
+        val entries = range.map { index ->
+            val item = player.getMediaItemAt(index)
+            BoundedContextPersistence.Entry(
+                song = item.toSong(),
+                canonicalIndex = if (item.queueTier == QueueTier.CONTEXT) item.canonicalIndex else null,
+                cycleId = if (item.queueTier == QueueTier.CONTEXT) item.contextCycleId else null,
+            )
+        }
+        val state = BoundedContextPersistence.State(
+            context = context,
+            source = source,
+            window = window.snapshot(),
+            entries = entries,
+            currentIndex = currentIndex - range.first,
+            positionMs = player.currentPosition,
+        )
+        if (immediately) BoundedContextPersistence.saveImmediately(state) else BoundedContextPersistence.save(state)
     }
 
     /** Drop every service-side reference that could resurrect the former queue. */
     private fun beginRadioQueue() {
         crossfade?.onSkipRequested()
+        clearBoundedContext()
         autoplayLoadJob?.cancel()
         autoplayLoadJob = null
         autoplaySeed = null
@@ -5546,6 +6166,12 @@ class PlaybackService : MediaLibraryService() {
     /** Persist index and position without touching or serializing queue contents. */
     private fun savePlaybackState(player: ExoPlayer) {
         if (player.mediaItemCount == 0) return
+        if (boundedContextWindow != null && !ListenTogether.state.value.inParty) {
+            BoundedContextPersistence.savePlaybackState(
+                currentEntryId = player.currentMediaItem?.queueEntryId,
+                positionMs = player.currentPosition,
+            )
+        }
         // The player is read here, on its own thread; the prefs write itself is
         // queued on the sampler thread like the rest of the periodic work.
         val index = player.currentMediaItemIndex - persistedQueueStart
@@ -5571,6 +6197,81 @@ class PlaybackService : MediaLibraryService() {
             enabled = AppSettings.shuffleEnabled.value,
             order = last.shuffleOrder,
         )
+        return true
+    }
+
+    /**
+     * Restore the logical bounded context first, falling back to the unchanged
+     * LastPlayed physical snapshot when the new record is absent or unsafe.
+     */
+    private fun restoreBoundedQueueOrLast(player: ExoPlayer): Boolean {
+        val persisted = BoundedContextPersistence.load()
+        if (persisted != null && restoreBoundedQueue(player, persisted)) return true
+        if (persisted != null) BoundedContextPersistence.clearImmediately()
+        return restoreLastQueue(player)
+    }
+
+    private fun restoreBoundedQueue(
+        exoPlayer: ExoPlayer,
+        persisted: BoundedContextPersistence.State,
+    ): Boolean {
+        val projected = BoundedContextPersistence.restoreProjection(
+            persisted,
+            repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+        ) ?: return false
+        val restoredWindow = runCatching { QueueWindow.restore(projected.window) }.getOrNull()
+            ?: return false
+        if (restoredWindow.canonicalSize != projected.context.songs.size) return false
+        val restoredCurrent = restoredWindow.currentCanonicalIndex ?: return false
+        if (projected.currentIndex !in projected.entries.indices) return false
+
+        val restoredContext = runCatching {
+            boundedContextRegistry.restore(projected.context)
+        }.getOrNull() ?: return false
+        if (restoredContext.songs.isEmpty()) return false
+
+        val contextToken = restoredContext.contextToken
+        val canonicalMediaItems = restoredContext.songs.mapIndexed { index, song ->
+            val canonical = song.copy(queueEntryId = "context:$contextToken:$index")
+            QueueShuffle.withQueueMetadata(
+                canonical.toMediaItem(),
+                newEntryId = canonical.queueEntryId,
+                newCanonicalIndex = index,
+                newTier = QueueTier.CONTEXT,
+            )
+        }
+        QueueShuffle.setCanonicalContext(canonicalMediaItems)
+
+        val items = projected.entries.map { entry ->
+            val canonicalIndex = entry.canonicalIndex
+            if (canonicalIndex == null) {
+                entry.song.toMediaItem()
+            } else {
+                boundedMediaItem(
+                    entry.song.copy(queueTier = QueueTier.CONTEXT),
+                    canonicalIndex,
+                    entry.cycleId ?: restoredWindow.cycleId,
+                )
+            }
+        }
+        if (items.size != projected.entries.size) return false
+
+        boundedContextWindow = restoredWindow
+        boundedContextToken = contextToken
+        boundedContextSource = persisted.source
+        boundedContextRequest = BoundedContextRequests.restore(
+            BoundedContextRequests.Request(
+                songs = restoredContext.songs,
+                startIndex = restoredCurrent,
+                source = persisted.source,
+                continuationToken = restoredContext.continuationToken,
+                shuffle = restoredWindow.isShuffleEnabled,
+            ),
+        )
+        boundedEditState = BoundedQueueEdits.invalidateContext(boundedEditState)
+        persistedQueueStart = 0
+        exoPlayer.setMediaItems(items, projected.currentIndex, projected.positionMs)
+        startBoundedContinuationLoading(contextToken)
         return true
     }
 
@@ -5618,22 +6319,26 @@ class PlaybackService : MediaLibraryService() {
         val liked = LikeState.overrides.value[song.videoId]?.let { it == LikeStatus.LIKE }
             ?: MediaWidgetSnapshot.load(this).takeIf { it.mediaId == song.videoId }?.isLiked
             ?: false
-        MediaWidgetSnapshot.save(
-            this,
-            MediaWidgetSnapshot(
-                mediaId = song.videoId,
-                title = song.title,
-                artist = song.artist,
-                artworkUrl = song.thumbnailUrl,
-                // playWhenReady, not isPlaying — see MediaWidgetSnapshot.isPlaying.
-                isPlaying = playing ?: exoPlayer.playWhenReady,
-                hasPrevious = exoPlayer.hasPreviousMediaItem(),
-                hasNext = exoPlayer.hasNextMediaItem(),
-                isLiked = liked,
-                shuffleEnabled = QueueShuffle.enabled.value,
-            ),
+        val reported: Player = mediaSession?.player ?: exoPlayer
+        val snapshot = MediaWidgetSnapshot(
+            mediaId = song.videoId,
+            title = song.title,
+            artist = song.artist,
+            artworkUrl = song.thumbnailUrl,
+            // playWhenReady, not isPlaying — see MediaWidgetSnapshot.isPlaying.
+            // Through the session player, which answers for Cast or the watch
+            // while one of them is the speaker.
+            isPlaying = playing ?: reported.playWhenReady,
+            hasPrevious = exoPlayer.hasPreviousMediaItem(),
+            hasNext = exoPlayer.hasNextMediaItem(),
+            isLiked = liked,
+            canLike = canLike(exoPlayer.currentMediaItem),
+            shuffleEnabled = QueueShuffle.enabled.value,
         )
+        MediaWidgetSnapshot.save(this, snapshot)
         MediaWidget.refresh(this)
+        // The watch app follows the widget — same moments, same snapshot.
+        WearBridge.publish(this, snapshot, reported, playing)
     }
 
     private var foreignCachePurgeJob: Job? = null
@@ -6898,6 +7603,8 @@ class PlaybackService : MediaLibraryService() {
         com.music.bitchord.lockscreen.LockScreenLyrics.detach(this)
         headphoneResume.detach()
         runCatching { unregisterReceiver(screenStateReceiver) }
+        WearBridge.attachStreams(null)
+        WearBridge.releaseSpeaker()
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.
@@ -6908,7 +7615,10 @@ class PlaybackService : MediaLibraryService() {
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         partySync?.stop()
         partySync = null
-        player?.let(::savePlaybackState)
+        player?.let {
+            saveQueueSnapshot(it)
+            savePlaybackState(it)
+        }
         // And to leave the widgets showing a play button. Nothing else reports a
         // swipe-away, so a widget left on the home screen would sit there with a
         // pause glyph on a service that no longer exists.
@@ -6985,6 +7695,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.cancel()
+        QueueShuffle.isCrossfadeTransitioning = null
         crossfade?.release()
         crossfade = null
         mediaSession?.release()
@@ -7001,6 +7712,7 @@ class PlaybackService : MediaLibraryService() {
         AudioOutputStatus.reset()
         NerdStats.forgetLastSession()
         localBitrateCache.clear()
+        measuredBitrateCache.clear()
         super.onDestroy()
     }
 
@@ -7426,8 +8138,8 @@ class PlaybackService : MediaLibraryService() {
         private val deferPlayToParty: () -> Boolean,
         /** @see PartySync.onLockedTransport */
         private val lockedTransport: (Boolean) -> Boolean,
-        /** What plays on a Cast receiver, whose clock this reports while it is the speaker. */
-        private val cast: CastPlayback,
+        /** Cast or the watch, whichever is the speaker — its clock is what this reports. */
+        private val cast: RemoteSpeaker,
         private val getSubtitle: () -> String?,
         /** The listener moved off the current track through this surface — see [noteTasteSkip]. */
         private val onUserAdvance: (Player) -> Unit,
@@ -7500,12 +8212,12 @@ class PlaybackService : MediaLibraryService() {
         override fun isDeviceMuted(): Boolean = if (cast.active) false else super.isDeviceMuted()
 
         override fun setDeviceVolume(volume: Int, flags: Int) {
-            if (cast.active) CastController.setVolume(volume / 100f) else super.setDeviceVolume(volume, flags)
+            if (cast.active) cast.setVolume(volume / 100f) else super.setDeviceVolume(volume, flags)
         }
 
         @Suppress("DEPRECATION")
         override fun setDeviceVolume(volume: Int) {
-            if (cast.active) CastController.setVolume(volume / 100f) else super.setDeviceVolume(volume)
+            if (cast.active) cast.setVolume(volume / 100f) else super.setDeviceVolume(volume)
         }
 
         override fun increaseDeviceVolume(flags: Int) {
@@ -7536,7 +8248,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         private fun nudgeReceiverVolume(delta: Float) =
-            CastController.setVolume(CastController.volume.value + delta)
+            cast.setVolume(cast.deviceVolume / 100f + delta)
 
         override fun onRemotePlaybackChanged() {
             val flags = FlagSet.Builder()
@@ -7899,45 +8611,24 @@ class PlaybackService : MediaLibraryService() {
                 return
             }
             if (mediaItemIndex != currentMediaItemIndex) onUserAdvance(this)
-            val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
-            if (skipped == null) {
+            if (mediaItemIndex <= wrappedPlayer.currentMediaItemIndex) {
                 wrappedPlayer.seekTo(mediaItemIndex, positionMs)
                 return
             }
-
-            // A direct choice of a later queue row bypasses items between current and target.
-            // Invariant: A queue jump may consume/delete USER_QUEUE items only when jumping within
-            // USER_QUEUE. Jumps to any other tier (CONTEXT or AUTOPLAY) must NEVER delete USER_QUEUE items.
-            val targetTier = wrappedPlayer.getMediaItemAt(mediaItemIndex).queueTier
-            val removableIndices = mutableListOf<Int>()
-            for (i in skipped) {
-                val tier = wrappedPlayer.getMediaItemAt(i).queueTier
-                val isRemovable = if (targetTier == QueueTier.USER_QUEUE) {
-                    tier == QueueTier.USER_QUEUE
-                } else {
-                    tier != QueueTier.USER_QUEUE
-                }
-                if (isRemovable) {
-                    removableIndices.add(i)
-                }
-            }
-
-            // Remove in reverse order so preceding indices remain valid during removal
-            for (i in removableIndices.asReversed()) {
-                wrappedPlayer.removeMediaItem(i)
-            }
-            var newTargetIndex = mediaItemIndex - removableIndices.count { it < mediaItemIndex }
-            // Whatever was kept still sits between here and the target. Seeking
-            // past it would leave it behind the playhead, where
-            // [QueueCoordinator.consumePlayedUserQueue] deletes it on the next
-            // transition — so the target moves up to play next instead, with
-            // the kept rows following it, the same order an in-app tap gives.
-            val nextIndex = wrappedPlayer.currentMediaItemIndex + 1
-            if (newTargetIndex > nextIndex) {
-                wrappedPlayer.moveMediaItem(newTargetIndex, nextIndex)
-                newTargetIndex = nextIndex
-            }
-            wrappedPlayer.seekTo(newTargetIndex, positionMs)
+            // A direct choice of a later queue row bypasses items between
+            // current and target (and an AutoPlay row, even the next one,
+            // becomes the new context). The in-app queue tap lands here too (as a
+            // controller seek), so the notification, Auto, Wear and the app
+            // all follow the one plan in [QueueTimeline.computeJumpOrder] —
+            // in particular, bypassed USER_QUEUE rows are re-pinned after the
+            // target rather than left behind the playhead, where
+            // [QueueCoordinator.consumePlayedUserQueue] would delete them.
+            QueueCoordinator.jumpToQueueItem(
+                wrappedPlayer,
+                mediaItemIndex,
+                positionMs = positionMs,
+                play = false,
+            )
         }
 
         override fun seekToPreviousMediaItem() {
@@ -7994,6 +8685,8 @@ class PlaybackService : MediaLibraryService() {
             val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
                 .buildUpon()
                 .add(favoriteCommand)
+                .add(boundedContextCommand)
+                .add(clearBoundedContextCommand)
                 .add(autoplayCommand)
                 .add(shuffleCommand)
                 .add(startStationCommand)
@@ -8003,7 +8696,6 @@ class PlaybackService : MediaLibraryService() {
                 .add(commitRadioQueueCommand)
                 .add(upgradeQualityCommand)
                 .add(swapVersionCommand)
-                .add(reorderQueueCommand)
                 .add(queueDragCommand)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
@@ -8030,6 +8722,8 @@ class PlaybackService : MediaLibraryService() {
             args: Bundle,
         ): ListenableFuture<SessionResult> {
             when (customCommand.customAction) {
+                ACTION_START_BOUNDED_CONTEXT -> startBoundedContext(args)
+                ACTION_CLEAR_BOUNDED_CONTEXT -> clearBoundedContext()
                 ACTION_TOGGLE_AUTOPLAY -> toggleAutoplayFromNotification()
                 ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromSession()
                 ACTION_START_STATION -> startStationFromSession()
@@ -8045,7 +8739,6 @@ class PlaybackService : MediaLibraryService() {
                         smoothSwapCurrentTrackVersion(targetSong.toMediaItem())
                     }
                 }
-                ACTION_REORDER_QUEUE -> player?.let { QueueShuffle.reorderFromCommand(it, args) }
                 ACTION_QUEUE_DRAG -> {
                     if (args.getBoolean(EXTRA_QUEUE_DRAG_ACTIVE, false)) {
                         partySync?.beginQueueDrag()
@@ -8053,9 +8746,12 @@ class PlaybackService : MediaLibraryService() {
                         partySync?.endQueueDrag()
                     }
                 }
-                ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.mediaId?.let {
-                    toggleFavoriteFromNotification(it)
-                }
+                // A widget or watch drawn before the track changed can still
+                // send this for one the player offers no Like on.
+                ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem
+                    ?.takeIf(::canLike)
+                    ?.mediaId
+                    ?.let { toggleFavoriteFromNotification(it) }
                 else -> return Futures.immediateFuture(
                     SessionResult(SessionError.ERROR_NOT_SUPPORTED),
                 )

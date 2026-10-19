@@ -20,6 +20,8 @@
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
+    <string name="watch_output">Watch</string>
+    <string name="watch_output_subtitle">Play on your watch’s speaker or headphones</string>
     <string name="channel_count">%1$d ch</string>
     <string name="choose_lyrics_provider">Choose lyrics provider</string>
     <string name="clear">Clear</string>
@@ -107,6 +109,7 @@
     <string name="no_lyrics_for_track">No lyrics for this track</string>
     <string name="no_lyrics_found">No lyrics found</string>
     <string name="now_playing">Now playing</string>
+    <string name="previously_played">Previously played</string>
     <string name="open_lyrics">Lyrics</string>
     <string name="pause">Pause</string>
     <string name="play">Play</string>
@@ -168,6 +171,9 @@
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
     <string name="search_library_empty">Search the songs in your Local Music folder.</string>
     <string name="search_library_hint">Songs, Artists and Albums</string>
+    <string name="search_addons_hint">Search your addons</string>
+    <string name="search_addons_empty">Search every enabled addon at once. Tracks play straight from the addon.</string>
+    <string name="search_addons_no_results">No addon has “%1$s”.</string>
     <string name="search_library_no_results">Nothing in Local Music matches “%1$s”.</string>
     <string name="selected">Selected</string>
     <string name="share">Share</string>
@@ -208,6 +214,7 @@
     <string name="member_since">Member since</string>
     <string name="import_spotify">Import Spotify</string>
     <string name="import_spotify_subtitle">From a playlist link</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
     <string name="lyrics_translated_gemini">%1$s translation · Gemini</string>
     <string name="song_meaning">What this song means</string>
     <string name="song_meaning_loading">Reading the song…</string>
