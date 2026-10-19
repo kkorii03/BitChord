@@ -26,7 +26,9 @@ import java.util.Locale
 /**
  * Removes the things a diagnostic log must never carry off the phone: cookies,
  * session identifiers, authorization headers, API keys, email addresses and
- * the query strings of googlevideo URLs (the host and path are kept).
+ * the query strings of every http(s) URL (the host and path are kept). Signed
+ * media URLs are not unique to googlevideo: JioSaavn and module sources log
+ * theirs too, and a query is where their signature and expiry live.
  *
  * Pure and side-effect free so the rules can be tested without a device.
  */
@@ -39,7 +41,7 @@ object LogRedactor {
     private val GOOGLE_API_KEY = Regex("""AIza[0-9A-Za-z_\-]{20,}""")
     private val SK_KEY = Regex("""\bsk-[A-Za-z0-9_\-]{16,}""")
     private val EMAIL = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""")
-    private val GOOGLEVIDEO_URL = Regex("""(?i)(https?://[^\s?#]*googlevideo[^\s?#]*)(\?[^\s]*)?""")
+    private val URL_QUERY = Regex("""(?i)(https?://[^\s?#]+)\?[^\s#]*""")
 
     fun redact(input: String): String {
         var out = COOKIE.replace(input, "\$1[redacted]")
@@ -48,7 +50,7 @@ object LogRedactor {
         out = GOOGLE_API_KEY.replace(out, "[redacted-key]")
         out = SK_KEY.replace(out, "[redacted-key]")
         out = EMAIL.replace(out, "[redacted-email]")
-        out = GOOGLEVIDEO_URL.replace(out, "\$1")
+        out = URL_QUERY.replace(out, "\$1")
         return out
     }
 }

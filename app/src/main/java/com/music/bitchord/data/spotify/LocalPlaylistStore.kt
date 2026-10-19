@@ -4,8 +4,12 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -49,6 +53,15 @@ object LocalPlaylistStore {
 
     private lateinit var prefs: SharedPreferences
 
+    /**
+     * Writes run one at a time off the calling thread: a large playlist is a
+     * whole JSON serialisation, and on the UI thread that showed up as a
+     * frame hitch every save.
+     */
+    private val writer = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(1),
+    )
+
     private val _playlists = MutableStateFlow<List<LocalPlaylist>>(emptyList())
     val playlists = _playlists.asStateFlow()
 
@@ -62,8 +75,17 @@ object LocalPlaylistStore {
         val raw = prefs.getString(KEY_PLAYLISTS, null) ?: return
         val parsed = parsePlaylists(raw)
         if (parsed == null) {
-            // Not even an array: keep the text aside and leave the live value
-            // alone rather than start empty and overwrite it on the next save.
+            // Not even an array: try the copy kept from an earlier damaged
+            // load first, so an overwritten live value does not strand the
+            // listener with an empty library.
+            recoverFromBackup()?.let { recovered ->
+                _playlists.value = recovered
+                persistAsync(recovered)
+                Log.w(TAG, "local playlists are unreadable; restored the last readable backup")
+                return
+            }
+            // Keep the text aside and leave the live value alone rather than
+            // start empty and overwrite it on the next save.
             backup(raw)
             Log.w(TAG, "local playlists are unreadable; kept the original as a backup")
             return
@@ -75,6 +97,13 @@ object LocalPlaylistStore {
         _playlists.value = parsed.playlists
     }
 
+    /** A fully readable backup, or null when none was kept or it is damaged too. */
+    private fun recoverFromBackup(): List<LocalPlaylist>? {
+        val raw = prefs.getString(KEY_PLAYLISTS_BACKUP, null) ?: return null
+        val parsed = parsePlaylists(raw) ?: return null
+        return parsed.playlists.takeUnless { parsed.damaged }
+    }
+
     private fun backup(raw: String) {
         prefs.edit().putString(KEY_PLAYLISTS_BACKUP, raw).apply()
     }
@@ -84,14 +113,14 @@ object LocalPlaylistStore {
         val playlist = LocalPlaylist(id = id, title = title, songs = songs)
         val updated = listOf(playlist) + _playlists.value.filterNot { it.id == id }
         _playlists.value = updated
-        persist(updated)
+        persistAsync(updated)
         return playlist
     }
 
     fun deletePlaylist(id: String) {
         val updated = _playlists.value.filterNot { it.id == id || it.browseId == id || it.id == id.removePrefix("local:playlist:") }
         _playlists.value = updated
-        persist(updated)
+        persistAsync(updated)
     }
 
     fun renamePlaylist(id: String, newTitle: String) {
@@ -102,7 +131,7 @@ object LocalPlaylistStore {
             } else it
         }
         _playlists.value = updated
-        persist(updated)
+        persistAsync(updated)
     }
 
     fun getPlaylist(id: String): LocalPlaylist? {
@@ -127,8 +156,12 @@ object LocalPlaylistStore {
             PlaylistImportMode.MERGE -> mergePlaylists(_playlists.value, incoming)
         }
         _playlists.value = next
-        persist(next)
+        persistAsync(next)
         return next.size
+    }
+
+    private fun persistAsync(list: List<LocalPlaylist>) {
+        writer.launch { persist(list) }
     }
 
     private fun persist(list: List<LocalPlaylist>) {
@@ -163,7 +196,10 @@ object LocalPlaylistStore {
                 pObj.put("songs", songsArray)
                 jsonArray.put(pObj)
             }
-            prefs.edit().putString(KEY_PLAYLISTS, jsonArray.toString()).apply()
+            val saved = prefs.edit().putString(KEY_PLAYLISTS, jsonArray.toString()).commit()
+            if (!saved) Log.w(TAG, "saving local playlists failed")
+        }.onFailure {
+            Log.w(TAG, "saving local playlists threw: ${it.message}")
         }
     }
 }

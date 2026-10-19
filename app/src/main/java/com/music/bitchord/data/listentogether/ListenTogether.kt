@@ -451,16 +451,35 @@ object ListenTogether {
         if (active) {
             refreshServerHealth(showChecking = false)
         }
+        syncHealthMonitor()
     }
 
+    /**
+     * Polls /healthz only while somebody can see the result: the party screen
+     * is open, or this device is in a party whose server must stay reachable.
+     */
     private fun startHealthMonitor() {
         healthMonitorJob?.cancel()
         healthMonitorJob = scope.launch {
             while (isActive) {
                 val delayMs = if (isScreenActive) 10_000L else 30_000L
                 delay(delayMs)
+                if (!isScreenActive && !_state.value.inParty) break
                 refreshServerHealth(showChecking = false)
             }
+        }
+    }
+
+    private fun stopHealthMonitor() {
+        healthMonitorJob?.cancel()
+        healthMonitorJob = null
+    }
+
+    private fun syncHealthMonitor() {
+        if (isScreenActive || _state.value.inParty) {
+            startHealthMonitor()
+        } else {
+            stopHealthMonitor()
         }
     }
 
@@ -654,7 +673,7 @@ object ListenTogether {
             }
         }
 
-        startHealthMonitor()
+        syncHealthMonitor()
         refreshServerHealth(showChecking = true)
     }
 
@@ -781,6 +800,7 @@ object ListenTogether {
                 queue = membership.party.queue,
                 connection = Connection.CONNECTING,
             )
+            syncHealthMonitor()
         }
         connect()
         return membership.code
@@ -838,6 +858,7 @@ object ListenTogether {
                 queue = membership.party.queue,
                 connection = Connection.CONNECTING,
             )
+            syncHealthMonitor()
         }
         connect()
         return membership.code
@@ -974,6 +995,7 @@ object ListenTogether {
                     queue = membership.party.queue,
                     connection = Connection.CONNECTING,
                 )
+                syncHealthMonitor()
             }
 
             // Outside NonCancellable: establish socket connection
@@ -997,6 +1019,7 @@ object ListenTogether {
             activePartyServerBase = null
             prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
             _state.value = State()
+            syncHealthMonitor()
             if (code != null && held != null) {
                 releaseStaleSlotOnServer(currentServer, code, held)
             }

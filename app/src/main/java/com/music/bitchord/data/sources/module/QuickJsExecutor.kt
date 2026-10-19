@@ -12,7 +12,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -102,8 +101,11 @@ internal object QuickJsExecutor {
     fun isLoaded(moduleId: String): Boolean =
         synchronized(engineLock) { pools.containsKey(moduleId) }
 
+    // Derived from the shared stack so the listener's proxy, connection pool
+    // and DNS behaviour apply to module fetches too. A fresh Builder() would
+    // silently bypass all of them.
     private val syncHttpClient by lazy {
-        OkHttpClient.Builder()
+        com.music.bitchord.data.Http.client.newBuilder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .build()

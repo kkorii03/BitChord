@@ -46,7 +46,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import org.jetbrains.compose.resources.stringResource
@@ -56,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
@@ -128,6 +133,41 @@ internal fun LyricsOffsetSheet(
     LaunchedEffect(Unit) { shown = true }
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
 
+    // The body scrolls, so its scroll owns the gesture before the drag
+    // detector below sees it. A pull past the top has to move the drawer
+    // itself, the way every other sheet here behaves.
+    val dismissOnRelease: () -> Unit = {
+        if (height > 0 && drag > height * DismissDragFraction) onDismiss() else drag = 0f
+    }
+    val drawerScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (drag <= 0f || available.y >= 0f) return Offset.Zero
+                val used = available.y.coerceAtLeast(-drag)
+                drag += used
+                return Offset(0f, used)
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y > 0f) drag += available.y
+                if (drag > 0f && available.y < 0f) {
+                    val used = available.y.coerceAtLeast(-drag)
+                    drag += used
+                    return Offset(0f, used)
+                }
+                return available
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (drag <= 0f) return Velocity.Zero
+                dismissOnRelease()
+                return available
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity) = available
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -169,15 +209,10 @@ internal fun LyricsOffsetSheet(
                         interactionSource = remember { MutableInteractionSource() },
                         onClick = {},
                     )
+                    .nestedScroll(drawerScroll)
                     .pointerInput(height) {
                         detectVerticalDragGestures(
-                            onDragEnd = {
-                                if (height > 0 && drag > height * DismissDragFraction) {
-                                    onDismiss()
-                                } else {
-                                    drag = 0f
-                                }
-                            },
+                            onDragEnd = dismissOnRelease,
                             onDragCancel = { drag = 0f },
                         ) { _, delta -> drag = (drag + delta).coerceAtLeast(0f) }
                     }

@@ -316,9 +316,7 @@ internal fun InlineQueue(
                         QueueHeading(
                             title = stringResource(Res.string.next_in_queue),
                             modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion()),
-                        ) {
-                            QueueClearButton(MaterialTheme.typography.labelLarge, controlsLocked, onClear)
-                        }
+                        )
                     }
                     queueSection(tracks.user, QueueSection.USER, drag, controlsLocked, onJumpTo, onRemove)
                 }

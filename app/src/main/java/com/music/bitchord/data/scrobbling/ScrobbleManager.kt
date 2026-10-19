@@ -68,6 +68,12 @@ class ScrobbleManager(
         durationMs: Long? = null,
     ) {
         scrobbleJob?.cancel()
+        scrobbleJob = null
+        // A new track must never inherit the previous one's remaining time:
+        // pausing/resuming a track with no known duration would otherwise
+        // scrobble it on the old track's schedule.
+        scrobbleRemainingMillis = 0L
+        scrobbleTimerStartedAt = 0L
         val resolvedDurationSeconds = durationMs?.toInt()?.div(1000)
             ?: durationSeconds(song.durationText)
             ?: return

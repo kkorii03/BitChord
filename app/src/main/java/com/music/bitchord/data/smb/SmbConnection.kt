@@ -45,6 +45,33 @@ object SmbConnection {
         }
     }
 
+    /**
+     * Opens a one-off connection with the given credentials, never touching
+     * [SmbAuth] or the pooled session. Used for "Test" so a wrong password
+     * cannot drop the live library connection.
+     */
+    fun <T> withTemporaryShare(
+        host: String,
+        share: String,
+        username: String,
+        password: String,
+        block: (DiskShare) -> T,
+    ): T {
+        val (parsedHost, parsedPort) = com.music.bitchord.data.smb.SmbConfig.splitHostPort(host)
+        val shareName = share.trim().trim('/')
+        require(parsedHost.isNotBlank() && shareName.isNotBlank()) { "서버와 공유 이름을 입력하십시오" }
+        val newClient = SMBClient(connectionConfig())
+        try {
+            val newConnection = newClient.connect(parsedHost, parsedPort)
+            val session: Session = newConnection.authenticate(authFor(username, password))
+            val diskShare = session.connectShare(shareName) as? DiskShare
+                ?: throw SmbException("\"$shareName\" is not a file share")
+            return block(diskShare)
+        } finally {
+            runCatching { newClient.close() }
+        }
+    }
+
     @Synchronized
     private fun open(): DiskShare {
         val live = share
@@ -53,13 +80,7 @@ object SmbConnection {
         val host = SmbAuth.host
         val shareName = SmbAuth.share
         require(host.isNotBlank() && shareName.isNotBlank()) { "SMB가 설정되지 않았습니다" }
-        val config = SmbConfig.builder()
-            .withTimeout(20, TimeUnit.SECONDS)
-            .withReadTimeout(30, TimeUnit.SECONDS)
-            .withWriteTimeout(30, TimeUnit.SECONDS)
-            .withTransactTimeout(30, TimeUnit.SECONDS)
-            .build()
-        val newClient = SMBClient(config)
+        val newClient = SMBClient(connectionConfig())
         try {
             val newConnection = newClient.connect(host, SmbAuth.port)
             val session: Session = newConnection.authenticate(authFor(SmbAuth.username, SmbAuth.password))
@@ -74,6 +95,13 @@ object SmbConnection {
             throw e
         }
     }
+
+    private fun connectionConfig(): SmbConfig = SmbConfig.builder()
+        .withTimeout(20, TimeUnit.SECONDS)
+        .withReadTimeout(30, TimeUnit.SECONDS)
+        .withWriteTimeout(30, TimeUnit.SECONDS)
+        .withTransactTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     /**
      * Never anonymous(): smbj 0.15 derives SMB3 keys from a session key an

@@ -51,6 +51,18 @@ class LogRedactorTest {
     }
 
     @Test
+    fun everyMediaUrlLosesItsQueryBecauseItIsSigned() {
+        val out = LogRedactor.redact(
+            "JioSaavn 320kbps https://aac.saavncdn.com/1/song.mp4?sign=secret&expires=1 " +
+                "module streamUrl=https://cdn.example.test/a.m4a?token=also-secret",
+        )
+        assertFalse(out.contains("sign=secret"))
+        assertFalse(out.contains("token=also-secret"))
+        assertTrue(out.contains("https://aac.saavncdn.com/1/song.mp4"))
+        assertTrue(out.contains("https://cdn.example.test/a.m4a"))
+    }
+
+    @Test
     fun ordinaryLinesAreUnchanged() {
         val line = "12:00:00.000 D/BitChord resolved abc123 via direct IOS @ 256kbps"
         assertEquals(line, LogRedactor.redact(line))

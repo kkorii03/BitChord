@@ -36,10 +36,11 @@ object SmbClient {
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             require(SmbConfig.isConfigured(host, share)) { "서버와 공유 이름을 입력하십시오" }
-            SmbAuth.update(host, share, basePath, username, password)
-            SmbConnection.withShare { diskShare ->
-                diskShare.list(smbPath(SmbAuth.basePath))
+            SmbConnection.withTemporaryShare(host, share, username, password) { diskShare ->
+                diskShare.list(smbPath(basePath))
             }
+        }.onSuccess {
+            SmbAuth.update(host, share, basePath, username, password)
         }.map { }
     }
 
