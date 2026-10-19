@@ -39,6 +39,7 @@ import com.music.bitchord.data.model.GENERIC_ACCOUNT_NAME
 import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
+import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
 import com.music.bitchord.data.model.mergeHomeShelves
@@ -156,6 +157,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The load in flight, so a tab that is shown while it runs does not ask twice. */
     private var exploreLoadJob: Job? = null
+
+    /** The last answer before hidden categories are applied, so showing one again can restore it. */
+    private var rawExploreSections: List<MoodGenreSection> = emptyList()
 
     private val _selectedMoodGenre = MutableStateFlow<MoodGenre?>(null)
     val selectedMoodGenre: StateFlow<MoodGenre?> = _selectedMoodGenre.asStateFlow()
@@ -1982,6 +1986,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
+            // Hiding or restoring a category repaints the grid from the last
+            // answer rather than spending another network request.
+            AppSettings.hiddenExploreCategories.drop(1).collect {
+                if (rawExploreSections.isNotEmpty()) publishExplore()
+            }
+        }
+        viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
             // downloaded it ??see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())
@@ -2127,31 +2138,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadExplore() {
+        rawExploreSections = emptyList()
         _explore.value = UiState.Loading
         exploreLoadJob?.cancel()
         exploreLoadJob = viewModelScope.launch { fetchExplore() }
     }
 
     private suspend fun fetchExplore() {
-        val state = YtMusicRepository.moodAndGenres().fold(
+        YtMusicRepository.moodAndGenres().fold(
             onSuccess = { sections ->
-                if (sections.isEmpty()) {
-                    UiState.Error(text(R.string.nothing_to_explore))
-                } else {
-                    // The Music channel's own card closes the grid, after the
-                    // curated moods and genres.
-                    val charts = MoodGenre(
-                        title = text(R.string.charts),
-                        browseId = Innertube.CHARTS_BROWSE_ID,
-                        params = null,
-                        stripeColor = 0xFFE8304CL,
-                    )
-                    UiState.Success(sections + MoodGenreSection(text(R.string.charts), listOf(charts)))
-                }
+                rawExploreSections = sections
+                publishExplore()
             },
-            onFailure = { UiState.Error(it.friendly()) },
+            onFailure = {
+                rawExploreSections = emptyList()
+                _explore.value = UiState.Error(it.friendly())
+            },
         )
-        _explore.value = state
+    }
+
+    /**
+     * Applies the hidden-category filter to the last answer and appends the
+     * charts card. Kept separate from the fetch so a change in Settings takes
+     * effect at once without another network request.
+     */
+    private fun publishExplore() {
+        val visible = ExploreCategoryFilter.visible(
+            rawExploreSections,
+            AppSettings.hiddenExploreCategories.value,
+        )
+        // The Music channel's own card closes the grid, after the curated
+        // moods and genres, and stays even when everything above it is hidden.
+        val charts = MoodGenre(
+            title = text(R.string.charts),
+            browseId = Innertube.CHARTS_BROWSE_ID,
+            params = null,
+            stripeColor = 0xFFE8304CL,
+        )
+        _explore.value = UiState.Success(
+            visible + MoodGenreSection(text(R.string.charts), listOf(charts)),
+        )
     }
 
     /**
@@ -2166,8 +2192,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val job = viewModelScope.launch {
             val artwork = YtMusicRepository.moodGenreArtwork(item.browseId, item.params).getOrNull()
                 ?: return@launch
-            val current = (_explore.value as? UiState.Success)?.data ?: return@launch
-            _explore.value = UiState.Success(current.map { section ->
+            if (rawExploreSections.isEmpty()) return@launch
+            rawExploreSections = rawExploreSections.map { section ->
                 section.copy(items = section.items.map { currentItem ->
                     if (currentItem.browseId == item.browseId && currentItem.params == item.params) {
                         currentItem.copy(thumbnailUrl = artwork)
@@ -2175,7 +2201,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         currentItem
                     }
                 })
-            })
+            }
+            publishExplore()
         }
         moodGenreArtworkJobs[key] = job
         job.invokeOnCompletion { moodGenreArtworkJobs.remove(key, job) }

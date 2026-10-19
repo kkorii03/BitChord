@@ -9,6 +9,7 @@ import android.net.NetworkCapabilities
 import androidx.media3.common.Player
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.innertube.MusicGateFallback
@@ -659,6 +660,15 @@ object AppSettings {
      */
     val coverSingers = MutableStateFlow<Set<String>>(emptySet())
 
+    /**
+     * Explore tiles the listener has hidden, matched by their normalised
+     * title — see [ExploreCategoryFilter]. Seeded once on the first run of
+     * this version with the regional categories this fork's proxy exposes;
+     * the flag beside it makes sure a listener who shows them again does not
+     * get them back on the next launch.
+     */
+    val hiddenExploreCategories = MutableStateFlow<Set<String>>(emptySet())
+
     /** Pick a paused song back up when headphones connect. */
     val resumeOnHeadphones = MutableStateFlow(true)
 
@@ -1096,6 +1106,15 @@ object AppSettings {
             ?: contentCountry.value
         coverChannels.value = prefs.getStringSet(KEY_COVER_CHANNELS, null)?.toSet().orEmpty()
         coverSingers.value = prefs.getStringSet(KEY_COVER_SINGERS, null)?.toSet().orEmpty()
+        val hiddenSeeded = prefs.getBoolean(KEY_HIDDEN_EXPLORE_SEEDED_V1, false)
+        val storedHidden = prefs.getStringSet(KEY_HIDDEN_EXPLORE_CATEGORIES, null)?.toSet().orEmpty()
+        hiddenExploreCategories.value = ExploreCategoryFilter.seedHidden(storedHidden, hiddenSeeded)
+        if (!hiddenSeeded) {
+            prefs.edit()
+                .putStringSet(KEY_HIDDEN_EXPLORE_CATEGORIES, HashSet(hiddenExploreCategories.value))
+                .putBoolean(KEY_HIDDEN_EXPLORE_SEEDED_V1, true)
+                .apply()
+        }
         resumeOnHeadphones.value = prefs.getBoolean(KEY_RESUME_ON_HEADPHONES, true)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
@@ -1776,6 +1795,30 @@ object AppSettings {
             next
         }
         prefs.edit().putStringSet(KEY_COVER_SINGERS, HashSet(next)).apply()
+    }
+
+    /** Hides one Explore category by the label the listener long-pressed. */
+    fun hideExploreCategory(title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+        setHiddenExploreCategories(hiddenExploreCategories.value + trimmed)
+    }
+
+    /** Brings one hidden Explore category back into the grid. */
+    fun showExploreCategory(title: String) {
+        setHiddenExploreCategories(hiddenExploreCategories.value - title)
+    }
+
+    /** Brings every Explore category back. The one-time seed flag stays set. */
+    fun clearHiddenExploreCategories() {
+        setHiddenExploreCategories(emptySet())
+    }
+
+    private fun setHiddenExploreCategories(next: Set<String>) {
+        val stable = next.toSet()
+        hiddenExploreCategories.value = stable
+        if (!::prefs.isInitialized) return
+        prefs.edit().putStringSet(KEY_HIDDEN_EXPLORE_CATEGORIES, HashSet(stable)).apply()
     }
 
     fun setResumeOnHeadphones(value: Boolean) {
@@ -2492,6 +2535,8 @@ object AppSettings {
     private const val KEY_CHARTS_COUNTRY = "ko_charts_country"
     private const val KEY_COVER_CHANNELS = "ko_cover_channels"
     private const val KEY_COVER_SINGERS = "ko_cover_singers"
+    private const val KEY_HIDDEN_EXPLORE_CATEGORIES = "ko_hidden_explore_categories"
+    private const val KEY_HIDDEN_EXPLORE_SEEDED_V1 = "hidden_explore_seeded_v1"
     private const val MAX_COVER_SINGERS = 400
     private const val KEY_RESUME_ON_HEADPHONES = "ko_resume_on_headphones"
     const val DEFAULT_CONTENT_COUNTRY = "KR"

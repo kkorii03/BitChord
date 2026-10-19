@@ -29,6 +29,8 @@
     <string name="downgraded_from">↓ %1$s에서 낮춤</string>
     <string name="drag_to_reorder">드래그하여 순서 변경</string>
     <string name="failed">실패</string>
+    <string name="hide_explore_category">이 카테고리 숨기기</string>
+    <string name="hide_explore_category_message">“%1$s”을(를) 둘러보기에서 숨길까요?</string>
     <string name="hi_res_lossless">고해상도 무손실</string>
     <string name="high_quality">고품질</string>
     <string name="high_quality_upgrading">고품질, 업그레이드 중</string>

@@ -274,6 +274,7 @@ fun SettingsScreen(
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
+    val hiddenExploreCategories by AppSettings.hiddenExploreCategories.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
@@ -334,6 +335,7 @@ fun SettingsScreen(
     var confirmClearSongCache by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
+    var showHiddenCategories by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
 
     val batterySettingsLauncher = rememberLauncherForActivityResult(
@@ -1380,6 +1382,23 @@ fun SettingsScreen(
                     )
                 }
             }
+            val hiddenCategoriesTitle = stringResource(R.string.hidden_explore_categories)
+            row(hiddenCategoriesTitle, "explore", "category", "filter", "hide") {
+                SettingsRow(
+                    icon = Icons.Rounded.VisibilityOff,
+                    title = hiddenCategoriesTitle,
+                    subtitle = if (hiddenExploreCategories.isEmpty()) {
+                        stringResource(R.string.hidden_explore_categories_none)
+                    } else {
+                        stringResource(
+                            R.string.hidden_explore_categories_count,
+                            hiddenExploreCategories.size,
+                        )
+                    },
+                    trailing = { Chevron() },
+                    onClick = { showHiddenCategories = true },
+                )
+            }
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.performance)) {
@@ -2116,6 +2135,53 @@ fun SettingsScreen(
         )
     }
 
+    if (showHiddenCategories) {
+        AlertDialog(
+            onDismissRequest = { showHiddenCategories = false },
+            title = { Text(stringResource(R.string.hidden_explore_categories)) },
+            text = {
+                if (hiddenExploreCategories.isEmpty()) {
+                    Text(stringResource(R.string.hidden_explore_categories_none))
+                } else {
+                    Column {
+                        hiddenExploreCategories.sorted().forEach { title ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { AppSettings.showExploreCategory(title) }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = stringResource(R.string.show_again),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { AppSettings.clearHiddenExploreCategories() },
+                    enabled = hiddenExploreCategories.isNotEmpty(),
+                ) {
+                    Text(stringResource(R.string.show_all_again))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHiddenCategories = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */

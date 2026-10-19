@@ -29,6 +29,8 @@
     <string name="downgraded_from">↓ from %1$s</string>
     <string name="drag_to_reorder">Drag to reorder</string>
     <string name="failed">Failed</string>
+    <string name="hide_explore_category">Hide this category</string>
+    <string name="hide_explore_category_message">Hide “%1$s” from Explore?</string>
     <string name="hi_res_lossless">Hi-Res Lossless</string>
     <string name="high_quality">High quality</string>
     <string name="high_quality_upgrading">High quality, upgrading</string>

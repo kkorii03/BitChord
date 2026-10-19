@@ -96,7 +96,7 @@ object MoodLabels {
         "reggae & caribbean" to "레게 및 캐리비안",
         "reggae" to "레게",
         "african" to "아프리카",
-        "arabic" to "아랍",
+        "arabic" to "아랍 음악",
         "soundtracks & musicals" to "OST 및 뮤지컬",
         "soundtracks" to "OST",
         "musicals" to "뮤지컬",

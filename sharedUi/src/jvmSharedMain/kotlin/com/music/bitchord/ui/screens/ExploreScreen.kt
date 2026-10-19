@@ -2,8 +2,9 @@ package com.music.bitchord.ui.screens
 
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.stringResource
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,12 +23,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.MoodGenreSection
@@ -65,6 +72,11 @@ fun ExploreScreen(
     onRetry: () -> Unit,
     /** Called once for each tile that scrolls into view without a cover yet. */
     onCategoryVisible: (MoodGenre) -> Unit = {},
+    /**
+     * Offers to hide a long-pressed tile. Null keeps the desktop build's grid
+     * exactly as it was: no hide affordance, no dialog.
+     */
+    onHideCategory: ((MoodGenre) -> Unit)? = null,
     refreshing: Boolean,
     onRefresh: () -> Unit,
     pullState: PullToRefreshState,
@@ -73,6 +85,7 @@ fun ExploreScreen(
     /** The big "Explore" heading; the desktop's pages carry none. */
     showTitle: Boolean = true,
 ) {
+    var pendingHide by remember { mutableStateOf<MoodGenre?>(null) }
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -122,12 +135,47 @@ fun ExploreScreen(
                                 columns = columns,
                                 onCategoryClick = onCategoryClick,
                                 onCategoryVisible = onCategoryVisible,
+                                onCategoryLongClick = onHideCategory?.let {
+                                    { item ->
+                                        if (!ExploreCategoryFilter.isProtected(item)) pendingHide = item
+                                    }
+                                },
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    pendingHide?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingHide = null },
+            title = { Text(stringResource(Res.string.hide_explore_category)) },
+            text = {
+                Text(
+                    stringResource(
+                        Res.string.hide_explore_category_message,
+                        item.title,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingHide = null
+                        onHideCategory?.invoke(item)
+                    },
+                ) {
+                    Text(stringResource(Res.string.hide_explore_category))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingHide = null }) {
+                    Text(stringResource(Res.string.cancel))
+                }
+            },
+        )
     }
 }
 
@@ -137,6 +185,7 @@ private fun MoodGenreRow(
     columns: Int,
     onCategoryClick: (MoodGenre) -> Unit,
     onCategoryVisible: (MoodGenre) -> Unit,
+    onCategoryLongClick: ((MoodGenre) -> Unit)?,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(MOOD_SPACING),
@@ -148,6 +197,7 @@ private fun MoodGenreRow(
             MoodGenreCard(
                 item = item,
                 onClick = { onCategoryClick(item) },
+                onLongClick = onCategoryLongClick?.let { longClick -> { longClick(item) } },
                 onVisible = { onCategoryVisible(item) },
                 modifier = Modifier.weight(1f),
             )
@@ -162,10 +212,12 @@ private fun MoodGenreRow(
  * redrawn as a duotone of the stripe's colour so every card reads as one
  * tinted sleeve rather than a photo pasted onto a swatch.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MoodGenreCard(
     item: MoodGenre,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
     onVisible: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -181,7 +233,10 @@ private fun MoodGenreCard(
             .aspectRatio(MOOD_CARD_ASPECT)
             .clip(MOOD_CARD_SHAPE)
             .background(tone.stripe)
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     ) {
         Box(
             Modifier

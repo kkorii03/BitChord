@@ -1094,6 +1094,11 @@
     <string name="auto_translate_lyrics_subtitle">번역 버튼을 누르지 않아도 가사 아래에 번역이 표시됩니다. 원문만 보려면 번역 버튼을 누르십시오.</string>
     <string name="content_country">콘텐츠 국가</string>
     <string name="content_country_description">차트, 무드 및 최신 음악을 이 국가 기준으로 표시합니다. 계정 위치는 변경되지 않습니다.</string>
+    <string name="hidden_explore_categories">숨긴 카테고리</string>
+    <string name="hidden_explore_categories_none">숨긴 카테고리가 없습니다</string>
+    <string name="hidden_explore_categories_count">%1$d개 숨김</string>
+    <string name="show_again">다시 보기</string>
+    <string name="show_all_again">모두 다시 보기</string>
     <string name="resume_on_headphones">헤드폰 연결 시 이어서 재생</string>
     <string name="resume_on_headphones_subtitle">Bluetooth 또는 유선 헤드폰을 연결하면 30분 안에 일시 정지한 노래를 다시 재생합니다.</string>
     <string name="charts">차트</string>
