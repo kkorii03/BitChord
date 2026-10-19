@@ -75,4 +75,14 @@ class VideoSwitchMatcherTest {
 
         assertNotNull(TrackMatcher.bestForVideoSwitch(listOf(candidate), live))
     }
+
+    @Test
+    fun `the audio switch never lands on another artist's song of the same name`() {
+        val bieber = TrackMatcher.Target(title = "Sorry", artist = "Justin Bieber", durationSec = 200)
+        val fx = song("FXSORRY0001", "Sorry (Dear. Daddy)", "f(x)", "3:21")
+        val other = song("OTHERSORRY1", "Sorry", "Beyonce", "3:20")
+        assertNull(TrackMatcher.bestSameArtist(listOf(fx, other), bieber))
+        val right = song("BIEBERSORRY", "Sorry", "Justin Bieber", "3:20")
+        assertEquals("BIEBERSORRY", TrackMatcher.bestSameArtist(listOf(other, right, fx), bieber)?.videoId)
+    }
 }
