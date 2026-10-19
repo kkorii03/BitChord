@@ -1952,7 +1952,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (failure: Throwable) {
                     com.music.bitchord.data.DebugLog.w("BitChord", "proxy re-check failed: ${failure.message}")
                 }
-                refresh(Feed.HOME, force = true, replaceShelves = true)
+                refresh(Feed.HOME, force = true, replaceShelves = true, reason = "proxy")
                 refresh(Feed.EXPLORE)
             }
         }
@@ -2028,7 +2028,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!homeStale) return
         homeStale = false
         // A first load already in flight will pick the new play up by itself.
-        if (_home.value is UiState.Success) refresh(Feed.HOME)
+        if (_home.value is UiState.Success) refresh(Feed.HOME, reason = "tab")
     }
 
     /**
@@ -2121,7 +2121,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * comes from the same source: the proxy changed the route out from under
      * them, so what was on screen is no longer that route's answer.
      */
-    fun refresh(feed: Feed, force: Boolean = false, replaceShelves: Boolean = false) {
+    fun refresh(
+        feed: Feed,
+        force: Boolean = false,
+        replaceShelves: Boolean = false,
+        reason: String = "tab",
+    ) {
         if (feed == Feed.LIBRARY && !_signedIn.value) return
         val identity = listenerKey()
         var started: Job? = null
@@ -2131,7 +2136,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     when (feed) {
-                        Feed.HOME -> refreshHome(identity, force, replaceShelves)
+                        Feed.HOME -> refreshHome(identity, force, replaceShelves, reason)
                         Feed.EXPLORE -> fetchExplore()
                         Feed.LIBRARY -> fetchLibrary(identity)
                     }
@@ -2278,7 +2283,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_detailStack.value.isNotEmpty()) _detailStack.value = emptyList()
     }
 
-    fun loadHome() {
+    fun loadHome() = loadHome("startup")
+
+    /** The Home error state's Retry button: a tab load, not a fresh launch. */
+    fun retryHome() = loadHome("tab")
+
+    private fun loadHome(reason: String) {
+        com.music.bitchord.data.TrackLog.d("BitChord", "home: refresh by $reason")
         val identity = listenerKey()
         val generation = homeLoadGeneration.incrementAndGet()
         _home.value = UiState.Loading
@@ -2451,7 +2462,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         identity: String?,
         force: Boolean = false,
         replaceShelves: Boolean = false,
+        reason: String = "tab",
     ) = coroutineScope {
+        com.music.bitchord.data.TrackLog.d("BitChord", "home: refresh by $reason")
         val generation = homeLoadGeneration.incrementAndGet()
         homeContinuation = null
         _homeLoadingMore.value = false

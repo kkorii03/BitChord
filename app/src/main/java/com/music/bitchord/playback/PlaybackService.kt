@@ -124,6 +124,7 @@ import java.util.concurrent.atomic.AtomicLong
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.discord.discordAudioQualityLine
@@ -1048,6 +1049,11 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            TrackLog.d(
+                "BitChord",
+                "cmd: ${if (playWhenReady) "resume" else "pause"} from ${playReason(reason)}",
+                about = player?.currentMediaItem?.mediaId,
+            )
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
@@ -1168,6 +1174,11 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            TrackLog.w(
+                "BitChord",
+                "error: ${error.errorCodeName} (${error.errorCode}) on ${exoPlayer.currentMediaItem?.mediaId}",
+                about = exoPlayer.currentMediaItem?.mediaId,
+            )
             recoverFrom(error, exoPlayer)
         }
 
@@ -1214,6 +1225,10 @@ class PlaybackService : MediaLibraryService() {
         override fun onRepeatModeChanged(repeatMode: Int) {
             val previous = lastRepeatMode
             lastRepeatMode = repeatMode
+            TrackLog.d(
+                "BitChord",
+                "mode: repeat=${DiagnosticsState.repeatLabel(repeatMode)} (was ${DiagnosticsState.repeatLabel(previous)})",
+            )
             castPlayback.onLocalRepeatChanged(repeatMode)
             // Repeat-one makes the "next" track this one again.
             player?.let { activeLoudness().nextMediaId = nextMediaIdOf(it) }
@@ -1247,6 +1262,8 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            DiagnosticsState.queueSize = exoPlayer.mediaItemCount
+            DiagnosticsState.queueIndex = exoPlayer.currentMediaItemIndex
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             // A queue edit can change what follows gaplessly, and the loudness
             // stage switches to that track on its own at the boundary.
@@ -1818,6 +1835,11 @@ class PlaybackService : MediaLibraryService() {
             if (stashed != null && stashed.songs.isNotEmpty()) {
                 persistedQueueStart = 0
                 exoPlayer.setMediaItems(stashed.songs.map { it.toMediaItem() }, stashed.index, stashed.positionMs)
+                TrackLog.i(
+                    "BitChord",
+                    "queue: restore n=${stashed.songs.size} at=${stashed.index} " +
+                        "emptyMeta=${stashed.songs.count { it.title.isBlank() || it.artist.isBlank() }} by=restore",
+                )
                 true
             } else {
                 restoreLastQueue(exoPlayer)
@@ -2155,6 +2177,12 @@ class PlaybackService : MediaLibraryService() {
         val sourceSong = currentItem.toSong()
         val targetSong = targetMediaItem.toSong()
         val smartAlignEnabled = AppSettings.smartVersionAlignment.value
+        TrackLog.d(
+            "BitChord",
+            "queue: replace n=1 at=$currentIndex size=${activePlayer.mediaItemCount} " +
+                "by=version (${sourceSong.videoId} -> ${targetMediaItem.mediaId})",
+            about = currentItem.mediaId,
+        )
 
         versionSwapJob?.cancel()
         val generation = ++versionSwapGeneration
@@ -2710,6 +2738,11 @@ class PlaybackService : MediaLibraryService() {
                         }
                     } else {
                         latestPlayer.addMediaItems(resolved.map { it.toMediaItem() })
+                        TrackLog.i(
+                            "BitChord",
+                            "queue: autoplay-append n=${resolved.size} at=${latestPlayer.mediaItemCount - resolved.size} " +
+                                "size=${latestPlayer.mediaItemCount} by=autoplay",
+                        )
                     }
                     if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
                     return@launch
@@ -3133,8 +3166,18 @@ class PlaybackService : MediaLibraryService() {
                 repeat(expiredHistory) {
                     exoPlayer.moveMediaItem(0, exoPlayer.mediaItemCount - 1)
                 }
+                TrackLog.d(
+                    "BitChord",
+                    "queue: move n=$expiredHistory at=0 to=${exoPlayer.mediaItemCount - 1} " +
+                        "size=${exoPlayer.mediaItemCount} by=history",
+                )
             } else {
                 exoPlayer.removeMediaItems(0, expiredHistory)
+                TrackLog.d(
+                    "BitChord",
+                    "queue: remove n=$expiredHistory at=0 " +
+                        "size=${exoPlayer.mediaItemCount} by=history",
+                )
             }
         }
         // A *different* track is a clean slate for [recoverFrom], and so is the
@@ -3158,6 +3201,26 @@ class PlaybackService : MediaLibraryService() {
             recoveries.clear()
         }
         retryingMediaId = null
+
+        // One line for every way a track can become current: an ordinary
+        // transition, a crossfade handoff and a version swap all pass through
+        // here. `meta` names what is missing from the item, which is how a
+        // black player with an empty title is told apart from a cover that
+        // simply failed to load.
+        val played = mediaItem?.toSong()
+        TrackLog.i(
+            "BitChord",
+            "play: -> ${played?.title?.take(80).orEmpty()} - ${played?.artist?.take(80).orEmpty()} " +
+                "(${mediaItem?.mediaId}) idx=${exoPlayer.currentMediaItemIndex}/${exoPlayer.mediaItemCount} " +
+                "reason=${transitionReason(reason)} meta=${missingMeta(played)}",
+            about = mediaItem?.mediaId,
+        )
+        DiagnosticsState.currentTrackId = mediaItem?.mediaId
+        DiagnosticsState.currentTitle = played?.title
+        DiagnosticsState.queueSize = exoPlayer.mediaItemCount
+        DiagnosticsState.queueIndex = exoPlayer.currentMediaItemIndex
+        DiagnosticsState.repeatMode = exoPlayer.repeatMode
+        DiagnosticsState.shuffle = QueueShuffle.enabled.value
 
         // Where the wait starts, for the log in onIsPlayingChanged — unless
         // there was no wait. A crossfaded track has been audible for as long as
@@ -3885,6 +3948,7 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         TrackLog.w("BitChord", "$reason — skipping to the next track", about = mediaId)
+        TrackLog.d("BitChord", "cmd: next from failure", about = mediaId)
         reportPlaybackFailure(mediaId, R.string.playback_unplayable_skipped)
         exoPlayer.seekToNextMediaItem()
         // No play() here: an error does not clear playWhenReady, so prepare()
@@ -4410,6 +4474,12 @@ class PlaybackService : MediaLibraryService() {
             val previousFormat = NerdStats.declaredFormat(mediaId)
             swappingMediaId = mediaId
             swapCutAt = SystemClock.elapsedRealtime()
+            TrackLog.d(
+                "BitChord",
+                "queue: replace n=1 at=${player.currentMediaItemIndex} " +
+                    "size=${player.mediaItemCount} by=upgrade",
+                about = mediaId,
+            )
             val upgradedMetadata = now.item.mediaMetadata.buildUpon()
                 .setExtras(Bundle(now.item.mediaMetadata.extras ?: Bundle()).apply {
                     putBoolean(EXTRA_QUALITY_UPGRADED, true)
@@ -5488,6 +5558,11 @@ class PlaybackService : MediaLibraryService() {
         val last = LastPlayed.load() ?: return false
         persistedQueueStart = 0
         player.setMediaItems(last.songs.map { it.toMediaItem() }, last.index, last.positionMs)
+        TrackLog.i(
+            "BitChord",
+            "queue: restore n=${last.songs.size} at=${last.index} " +
+                "emptyMeta=${last.songs.count { it.title.isBlank() || it.artist.isBlank() }} by=restore",
+        )
         // The snapshot can have been taken while the queue was shuffled, and it
         // is stored in that shuffled order. Handing the pre-shuffle order back
         // to [QueueShuffle] is what lets the toggle undo it after a restart
@@ -7552,6 +7627,7 @@ class PlaybackService : MediaLibraryService() {
             // this device rejoins it wherever it has got to. See
             // [PartySync.onLockedTransport], which owns that catch-up.
             if (lockedTransport(true)) return
+            TrackLog.d("BitChord", "cmd: play from ui", about = wrappedPlayer.currentMediaItem?.mediaId)
             onUserIntent()
             // Held back only when a party will schedule the start for everyone
             // at once — see [PartySync.shouldDeferPlay], which starts the player
@@ -7567,6 +7643,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun pause() {
             if (lockedTransport(false)) return
+            TrackLog.d("BitChord", "cmd: pause from ui", about = wrappedPlayer.currentMediaItem?.mediaId)
             onUserIntent()
             if (cast.active) {
                 cast.pause()
@@ -7580,12 +7657,18 @@ class PlaybackService : MediaLibraryService() {
         // are not asking to move the party.
         override fun stop() {
             if (locked()) { super.stop(); return }
+            TrackLog.d("BitChord", "cmd: stop from ui")
             onUserIntent()
             super.stop()
         }
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
             if (lockedTransport(playWhenReady)) return
+            TrackLog.d(
+                "BitChord",
+                "cmd: ${if (playWhenReady) "resume" else "pause"} from ui",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
             onUserIntent()
             if (playWhenReady && deferPlayToParty()) return
             if (cast.active) {
@@ -7600,6 +7683,11 @@ class PlaybackService : MediaLibraryService() {
         // reconcile anyway.
         override fun seekTo(positionMs: Long) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "cmd: seek ${positionMs}ms from ui",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
             onUserIntent()
             if (cast.active) {
                 cast.seekTo(positionMs)
@@ -7630,6 +7718,13 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToPrevious() {
             if (locked()) return
+            val restart = wrappedPlayer.currentPosition > maxSeekToPreviousPosition ||
+                !wrappedPlayer.hasPreviousMediaItem()
+            TrackLog.d(
+                "BitChord",
+                "cmd: ${if (restart) "previous-restart" else "previous"} from ui",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
             onUserIntent()
             if (cast.active) {
                 castPrevious()
@@ -7656,6 +7751,10 @@ class PlaybackService : MediaLibraryService() {
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: set n=${mediaItems.size} at=0 size=${mediaItems.size} by=ui",
+            )
             onUserIntent()
             super.setMediaItems(mediaItems, resetPosition)
         }
@@ -7666,6 +7765,10 @@ class PlaybackService : MediaLibraryService() {
             startPositionMs: Long,
         ) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: set n=${mediaItems.size} at=$startIndex size=${mediaItems.size} by=ui",
+            )
             onUserIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
         }
@@ -7679,36 +7782,64 @@ class PlaybackService : MediaLibraryService() {
         // who can reorder it is still choosing the music.
         override fun addMediaItems(index: Int, mediaItems: List<MediaItem>) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: add n=${mediaItems.size} at=$index size=${wrappedPlayer.mediaItemCount + mediaItems.size} by=ui",
+            )
             onUserIntent()
             super.addMediaItems(index, mediaItems)
         }
 
         override fun addMediaItems(mediaItems: List<MediaItem>) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: add n=${mediaItems.size} at=${wrappedPlayer.mediaItemCount} " +
+                    "size=${wrappedPlayer.mediaItemCount + mediaItems.size} by=ui",
+            )
             onUserIntent()
             super.addMediaItems(mediaItems)
         }
 
         override fun removeMediaItem(index: Int) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: remove n=1 at=$index size=${(wrappedPlayer.mediaItemCount - 1).coerceAtLeast(0)} by=ui",
+            )
             onUserIntent()
             super.removeMediaItem(index)
         }
 
         override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
             if (locked()) return
+            val n = (toIndex - fromIndex).coerceAtLeast(0)
+            TrackLog.d(
+                "BitChord",
+                "queue: remove n=$n at=$fromIndex " +
+                    "size=${(wrappedPlayer.mediaItemCount - n).coerceAtLeast(0)} by=ui",
+            )
             onUserIntent()
             super.removeMediaItems(fromIndex, toIndex)
         }
 
         override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: move n=1 at=$currentIndex to=$newIndex size=${wrappedPlayer.mediaItemCount} by=ui",
+            )
             onUserIntent()
             super.moveMediaItem(currentIndex, newIndex)
         }
 
         override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: move n=${(toIndex - fromIndex).coerceAtLeast(0)} at=$fromIndex to=$newIndex " +
+                    "size=${wrappedPlayer.mediaItemCount} by=ui",
+            )
             onUserIntent()
             super.moveMediaItems(fromIndex, toIndex, newIndex)
         }
@@ -7719,12 +7850,17 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>,
         ) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "queue: replace n=${mediaItems.size} at=$fromIndex size=${wrappedPlayer.mediaItemCount} by=ui",
+            )
             onUserIntent()
             super.replaceMediaItems(fromIndex, toIndex, mediaItems)
         }
 
         override fun clearMediaItems() {
             if (locked()) return
+            TrackLog.d("BitChord", "queue: clear n=${wrappedPlayer.mediaItemCount} at=0 size=0 by=ui")
             onUserIntent()
             super.clearMediaItems()
         }
@@ -7739,8 +7875,27 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
+        override fun seekToMediaItem(mediaItemIndex: Int) {
+            if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "cmd: seek-to-item idx=$mediaItemIndex from ui " +
+                    "(from ${wrappedPlayer.currentMediaItemIndex}/${wrappedPlayer.mediaItemCount})",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
+            onUserIntent()
+            crossfade.onSkipRequested()
+            super.seekToMediaItem(mediaItemIndex)
+        }
+
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
             if (locked()) return
+            TrackLog.d(
+                "BitChord",
+                "cmd: jump to idx=$mediaItemIndex at ${positionMs}ms from ui " +
+                    "(from ${wrappedPlayer.currentMediaItemIndex}/${wrappedPlayer.mediaItemCount})",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
             onUserIntent()
             crossfade.onSkipRequested()
             if (mediaItemIndex !in 0 until wrappedPlayer.mediaItemCount) return
@@ -7794,6 +7949,13 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToPreviousMediaItem() {
             if (locked()) return
+            val restart = !hasPreviousMediaItem() ||
+                currentPosition <= maxSeekToPreviousPosition
+            TrackLog.d(
+                "BitChord",
+                "cmd: ${if (restart) "previous-restart" else "previous"} from ui",
+                about = wrappedPlayer.currentMediaItem?.mediaId,
+            )
             onUserIntent()
             crossfade.onSkipRequested()
             if (cast.active) {
@@ -7810,6 +7972,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToNextMediaItem() {
             if (locked()) return
+            TrackLog.d("BitChord", "cmd: next from ui", about = wrappedPlayer.currentMediaItem?.mediaId)
             onUserIntent()
             crossfade.onSkipRequested()
             onUserAdvance(this)
@@ -7818,6 +7981,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun seekToNext() {
             if (locked()) return
+            TrackLog.d("BitChord", "cmd: next from ui", about = wrappedPlayer.currentMediaItem?.mediaId)
             onUserIntent()
             crossfade.onSkipRequested()
             onUserAdvance(this)
@@ -8965,4 +9129,34 @@ class PlaybackService : MediaLibraryService() {
          */
         const val PARTY_QUEUE_ECHO_TIMEOUT_MS = 5_000L
     }
+}
+
+/** The short reason names a diagnostic log reads without the Media3 constants. */
+private fun transitionReason(reason: Int): String = when (reason) {
+    Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
+    Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
+    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "REPEAT"
+    Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
+    else -> "OTHER($reason)"
+}
+
+private fun playReason(reason: Int): String = when (reason) {
+    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "ui"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "focus"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_GAIN -> "focus"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_PLAYLIST_CHANGED -> "queue"
+    else -> "other($reason)"
+}
+
+/** Which pieces a queue item is missing, for the `play:` line's `meta=`. */
+private fun missingMeta(song: com.music.bitchord.data.model.Song?): String {
+    if (song == null) return "title,artist,artwork"
+    val missing = buildList {
+        if (song.title.isBlank()) add("title")
+        if (song.artist.isBlank()) add("artist")
+        if (song.thumbnailUrl.isNullOrBlank()) add("artwork")
+    }
+    return missing.ifEmpty { listOf("ok") }.joinToString(",")
 }

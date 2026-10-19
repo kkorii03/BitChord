@@ -51,6 +51,9 @@ import java.util.concurrent.ConcurrentHashMap
 object YtMusicRepository {
 
     private const val TAG = "BitChord"
+
+    /** A repository call slower than this gets its own line in the log. */
+    private const val SLOW_CALL_MS = 3_000L
     private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
     /** Battery over latency: Explore resolves at most three tile covers at once. */
     private val moodGenreArtworkLock = Semaphore(3)
@@ -677,6 +680,10 @@ object YtMusicRepository {
      */
     suspend fun resolveAudio(song: Song): Song {
         if (!song.isVideo) return song
+        if (song.title.isBlank() || song.artist.isBlank()) {
+            Log.w(TAG, "audio switch skipped: ${song.videoId} has empty title/artist")
+            return song
+        }
         // A cover's "audio version" is the song it covers — someone else's
         // recording. A cover plays as itself.
         if (CoverTitles.isCover(song)) return song
@@ -787,6 +794,13 @@ object YtMusicRepository {
 
     suspend fun resolveVideo(song: Song): Song? {
         if (song.isVideo) return null
+        if (song.title.isBlank() || song.artist.isBlank()) {
+            // Seen on a queue entry that had lost its header: searching the
+            // empty string can only return something unrelated. The play line
+            // names the missing fields; this says the lookup was skipped.
+            Log.w(TAG, "video switch skipped: ${song.videoId} has empty title/artist")
+            return null
+        }
         videoVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
@@ -1510,6 +1524,8 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
+            fun elapsedMs() = (System.nanoTime() - started) / 1_000_000
             runCatching { block() }.recoverCatching { failure ->
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
@@ -1526,7 +1542,21 @@ object YtMusicRepository {
                 // Result and put the abandoned request's error on screen.
                 // Cancellation isn't this call's to answer for.
                 .onFailure { if (it is CancellationException) throw it }
-                .onSuccess { Log.d(TAG, "$label ok") }
-                .onFailure { Log.w(TAG, "$label failed: ${it.message}") }
+                .onSuccess {
+                    val ms = elapsedMs()
+                    Log.d(TAG, "$label ok ${ms}ms")
+                    if (ms > SLOW_CALL_MS) Log.w(TAG, "slow: $label $ms")
+                }
+                .onFailure {
+                    val ms = elapsedMs()
+                    val status = (it as? ResponseException)?.response?.status?.value
+                    val via = if (YouTubeProxy.config.usable) "proxy" else "direct"
+                    Log.w(
+                        TAG,
+                        "fail: $label ${it::class.simpleName ?: "Exception"} " +
+                            "${status ?: "-"} via=$via (${ms}ms)",
+                    )
+                    if (ms > SLOW_CALL_MS) Log.w(TAG, "slow: $label $ms")
+                }
         }
 }

@@ -57,7 +57,6 @@ class PoTokenGenerator(
 
     suspend fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult? {
         val supported = available()
-        TrackLog.d(TAG, "WebView state: supported=$supported, badImpl=$webViewBadImpl")
         if (!supported || webViewBadImpl) {
             TrackLog.d(TAG, "WebView not available: supported=$supported, badImpl=$webViewBadImpl")
             return null
@@ -104,6 +103,7 @@ class PoTokenGenerator(
     }
 
     private suspend fun getWebClientPoToken(videoId: String, sessionId: String, forceRecreate: Boolean): PoTokenResult {
+        val mintStart = System.nanoTime()
         val (poTokenGenerator, streamingPot, hasBeenRecreated) =
             webPoTokenGenLock.withLock {
                 val shouldRecreate =
@@ -111,7 +111,7 @@ class PoTokenGenerator(
                         webPoTokenGenerator!!.isDead ||
                         webPoTokenSessionId != sessionId
                 if (shouldRecreate) {
-                    TrackLog.d(TAG, "Creating new PoTokenWebView (forceRecreate=$forceRecreate)")
+                    TrackLog.d(TAG, "potoken: creating page (forceRecreate=$forceRecreate)")
                     webPoTokenGenerator?.close()
                     webPoTokenGenerator = null
                     webPoTokenStreamingPot = null
@@ -126,7 +126,6 @@ class PoTokenGenerator(
                     webPoTokenGenerator = newGenerator
                     webPoTokenStreamingPot = newStreamingPot
                     webPoTokenSessionId = sessionId
-                    TrackLog.d(TAG, "Streaming PO token generated")
                 }
                 Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreate)
             }
@@ -140,7 +139,12 @@ class PoTokenGenerator(
                 return getWebClientPoToken(videoId = videoId, sessionId = sessionId, forceRecreate = true)
             }
         }
-        TrackLog.d(TAG, "PO token generated successfully")
+        // One line per mint, in place of the browser page's console chatter.
+        TrackLog.d(
+            TAG,
+            "potoken: minted in ${(System.nanoTime() - mintStart) / 1_000_000}ms" +
+                (if (hasBeenRecreated) " (new page)" else ""),
+        )
         return PoTokenResult(
             playerRequestPoToken = streamingPot,
             streamingDataPoToken = playerPot,

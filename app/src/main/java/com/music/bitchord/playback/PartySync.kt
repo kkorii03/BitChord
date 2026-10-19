@@ -693,6 +693,7 @@ class PartySync(
             // much. Taken beforehand, every track change would start this device
             // a little behind and then be hauled forward by a correcting seek.
             val startAt = ListenTogether.partyPositionMs() ?: party.playback.positionMs
+            Log.i(TAG, "queue: set n=${items.size} at=$startIndex size=${items.size} by=party")
             exo.setMediaItems(items, startIndex, startAt)
             exo.prepare()
             // Not started here even when the party is playing: the resume may be

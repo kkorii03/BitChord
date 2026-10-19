@@ -82,11 +82,14 @@ class PoTokenWebView private constructor(
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                 val msg = m.message()
-                // Log all console messages for debugging
+                // The page's own debugging chatter is dozens of lines per mint
+                // and none of it is ever the answer; PoTokenGenerator writes the
+                // one summary line instead. Warnings and errors are kept — a
+                // failed mint is exactly what a log reader is looking for.
                 when (m.messageLevel()) {
                     ConsoleMessage.MessageLevel.ERROR -> TrackLog.e(TAG, "JS: $msg")
                     ConsoleMessage.MessageLevel.WARNING -> TrackLog.w(TAG, "JS: $msg")
-                    else -> TrackLog.d(TAG, "JS: $msg")
+                    else -> Unit
                 }
 
                 if (msg.contains("Uncaught")) {

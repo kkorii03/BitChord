@@ -11,6 +11,7 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.ExploreCategoryFilter
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.innertube.MusicGateFallback
@@ -169,6 +170,30 @@ enum class SongSort {
 object AppSettings {
 
     private lateinit var prefs: SharedPreferences
+
+    /**
+     * One line per setting change, for the exported diagnostic log.
+     *
+     * A preference listener rather than a log call in every setter: every
+     * setting already writes here, so this sees all of them (including an
+     * import, which writes the file wholesale) without a hundred edits. Values
+     * are only printed for booleans and numbers; a string could be a host, a
+     * username or a token, so it is reported as `set`/`cleared` and never read
+     * back into the log.
+     */
+    private val settingsChangeListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key != null) {
+                val value = runCatching { prefs.all[key] }.getOrNull()
+                val shown = when (value) {
+                    is Boolean, is Int, is Long, is Float -> value.toString()
+                    is Set<*> -> "set(${value.size})"
+                    null -> "cleared"
+                    else -> if (value.toString().isBlank()) "cleared" else "set"
+                }
+                TrackLog.d("BitChord", "setting: $key = $shown")
+            }
+        }
 
     /** Kept so a setting the widgets read can redraw them without a caller passing one. */
     private lateinit var appContext: Context
@@ -448,6 +473,12 @@ object AppSettings {
     /** What the last battery broadcast said; kept to recompute [lowPower]. */
     private var powerSaveMode = false
     private var batteryPercent = 100
+
+    /** The last battery figure, for the diagnostic export header. */
+    fun batteryPercentValue(): Int = batteryPercent
+
+    /** When the current private session began, or 0 while it is off. */
+    fun privateListeningSince(): Long = privateListeningSinceMs
 
     /** Requests a sustained high-refresh UI. Off keeps Android's automatic policy. */
     val highPerformanceMode = MutableStateFlow(false)
@@ -993,6 +1024,8 @@ object AppSettings {
     fun init(context: Context, authStore: AuthStore) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        runCatching { prefs.unregisterOnSharedPreferenceChangeListener(settingsChangeListener) }
+        prefs.registerOnSharedPreferenceChangeListener(settingsChangeListener)
         // A Gemini key can be baked into a personal build's resources after it is
         // built (never committed). It is only a default: a key typed in Settings wins.
         bundledGeminiApiKey = context.getString(com.music.bitchord.R.string.default_gemini_api_key).trim()

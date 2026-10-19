@@ -9,6 +9,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.MixBlend
@@ -1271,6 +1272,12 @@ class CrossfadeController(
         into.prepare()
 
         phase = Phase.ARMING
+        TrackLog.d(
+            "BitChord",
+            "crossfade: start out=${out.currentMediaItem?.mediaId} in=${items.getOrNull(nextIndex)?.mediaId} " +
+                "fade=${fade}ms cue=${incomingCueTimeMs}ms smart=$smart",
+            about = items.getOrNull(nextIndex)?.mediaId,
+        )
         return true
     }
 
@@ -1751,6 +1758,11 @@ class CrossfadeController(
     private fun bail() {
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
         Log.d(TAG, "bail from $phase")
+        TrackLog.d(
+            "BitChord",
+            "crossfade: abort out=${outgoing?.currentMediaItem?.mediaId} " +
+                "in=${incoming?.currentMediaItem?.mediaId} phase=$phase handedOff=$handedOff",
+        )
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
         if (!handedOff && phase != Phase.FADING) {

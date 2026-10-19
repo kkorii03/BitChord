@@ -53,6 +53,21 @@ val listenTogetherServer: String = (
     ).trim().trimEnd('/')
 
 /*
+ * The commit a build came from, for the exported diagnostic log. Never a
+ * credential; blank when the build happens outside a git checkout (a source
+ * archive, for instance), which the export reports as "unknown" rather than
+ * failing the build over.
+ */
+val gitSha: String = runCatching {
+    val process = ProcessBuilder("git", "rev-parse", "--short=7", "HEAD")
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val text = process.inputStream.bufferedReader().use { it.readText() }.trim()
+    if (process.waitFor() == 0 && text.length in 7..40 && text.all { it.isLetterOrDigit() }) text else ""
+}.getOrDefault("")
+
+/*
  * Bump this by hand before cutting each sideloaded test build ("beta2",
  * "beta3", ...) and blank it out before cutting the real release. Marks the
  * versionName below as a pre-release: AppUpdateChecker.isNewer() treats any
@@ -105,6 +120,7 @@ android {
             "LISTEN_TOGETHER_SERVER",
             "\"${listenTogetherServer.replace("\\", "\\\\").replace("\"", "\\\"")}\"",
         )
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
     }
 
     splits {

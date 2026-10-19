@@ -131,6 +131,7 @@ import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.BrowseType
@@ -621,10 +622,14 @@ private fun BitChordApp(
     // path it came by.
     val setPlayerShown: (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
         if (!shown) {
-            if (showNowPlaying) showNowPlaying = false
+            if (showNowPlaying) {
+                showNowPlaying = false
+                TrackLog.i("BitChord", "nav: Player close source=${source.logName}")
+            }
         } else if (!showNowPlaying) {
             if (PlayerExpandGuard.allow(source, activity.touchedSinceResume())) {
                 showNowPlaying = true
+                TrackLog.i("BitChord", "nav: Player open source=${source.logName}")
                 PlayerExpandGuard.logExpand(source, activity.msSinceResume(), activity.msSinceTouch())
             } else {
                 PlayerExpandGuard.logRefused(source, activity.msSinceResume())
@@ -940,6 +945,27 @@ private fun BitChordApp(
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
+    // One line per screen the listener arrives at, whether by tab, a pushed
+    // page, a sheet or the player. The export's header reads the same value,
+    // so a report can say where the app was when the log was taken.
+    val screenLabel = when {
+        showNowPlaying -> "Player"
+        showReplay -> "Replay"
+        showSettings -> settingsSubScreen?.let { "Settings/$it" } ?: "Settings"
+        showDiscord -> "Settings/discord"
+        showSpotify -> "Settings/spotify"
+        detail != null -> "Detail ${detail.type.name.lowercase()}"
+        selectedMoodGenre != null -> "Explore/${selectedMoodGenre?.title.orEmpty()}"
+        selectedTab == TAB_HOME -> "Home"
+        selectedTab == TAB_EXPLORE -> "Explore"
+        selectedTab == TAB_LIBRARY -> "Library"
+        selectedTab == TAB_SEARCH -> "Search"
+        else -> "tab$selectedTab"
+    }
+    LaunchedEffect(screenLabel) {
+        TrackLog.i("BitChord", "nav: $screenLabel")
+        DiagnosticsState.screen = screenLabel
+    }
     // Local Music has no artwork to wash the top inset in, so it renders with
     // the ordinary bounded status bar rather than the artwork gradient used by
     // album/artist/playlist pages. Downloads is the same page, and the tab row
@@ -1324,6 +1350,10 @@ private fun BitChordApp(
      * preserve the old behaviour and let the video keep playing meanwhile.
      */
     suspend fun switchToMusicOnly(song: Song, pauseWhileResolving: Boolean) {
+        if (song.title.isBlank() || song.artist.isBlank()) {
+            TrackLog.w("Player", "version switch skipped: empty title/artist", song.videoId)
+            return
+        }
         val c = controller ?: return
         val index = c.currentMediaItemIndex
         if (index !in 0 until c.mediaItemCount ||
@@ -1389,6 +1419,10 @@ private fun BitChordApp(
      * up front. This is the inverse of switchToMusicOnly.
      */
     suspend fun switchToVideo(song: Song, pauseWhileResolving: Boolean) {
+        if (song.title.isBlank() || song.artist.isBlank()) {
+            TrackLog.w("Player", "version switch skipped: empty title/artist", song.videoId)
+            return
+        }
         val c = controller ?: return
         val index = c.currentMediaItemIndex
         if (index !in 0 until c.mediaItemCount ||
@@ -3270,9 +3304,9 @@ private fun BitChordApp(
                                 }
                             },
                             onItemLongPress = onShelfLongPress,
-                            onRetry = viewModel::loadHome,
+                            onRetry = viewModel::retryHome,
                             refreshing = MainViewModel.Feed.HOME in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME, force = true) },
+                            onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME, force = true, reason = "pull") },
                             pullState = homePull,
                             contentPadding = listPadding,
                             onLoadMore = viewModel::loadMoreHome,

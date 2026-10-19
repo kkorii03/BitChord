@@ -148,6 +148,7 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -842,6 +843,21 @@ fun NowPlayingScreen(
     // A lambda, not a value: read by the lyric strip and panel in scopes of
     // their own, so a tick recomposes them and not the player around them.
     val lyricsPlayhead = rememberLyricPlayhead(position)
+    // Lyrics are looked up per track and then settle once. The exported log
+    // records which provider answered and whether the lines are timed, which
+    // is the difference between "no lyrics" and "lyrics on the wrong clock".
+    LaunchedEffect(song.videoId, lyricsSource, lyrics, lyricsUnavailable) {
+        val state = when {
+            lyrics?.isNotEmpty() == true -> "found"
+            lyricsUnavailable -> "none"
+            else -> "pending"
+        }
+        val synced = lyrics?.any { it.isWordSynced || it.timeMs > 0 } == true
+        TrackLog.i(
+            "BitChord",
+            "lyrics: ${lyricsSource?.label ?: "none"} $state synced=$synced",
+        )
+    }
     val seekToLyric: (Long) -> Unit = { lineTimeMs ->
         onSeek(adjustedLyricsSeekTarget(lineTimeMs, lyricsOffsetMs))
     }
@@ -1301,6 +1317,20 @@ fun NowPlayingScreen(
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
     val art = rememberPlayerArtwork(remoteArt)
+    // What the artwork area is actually showing, once per change rather than
+    // per frame: the black-player reports need to say whether the item had no
+    // artwork, the cover failed, or the metadata itself was empty.
+    LaunchedEffect(song.videoId, canvas?.url, art.loaded, art.failed) {
+        val reason = when {
+            canvas != null -> "canvas"
+            art.loaded -> "cover"
+            remoteArt.isNullOrBlank() -> "placeholder (no url)"
+            song.title.isBlank() || song.artist.isBlank() -> "placeholder (metadata empty)"
+            art.failed -> "placeholder (load failed)"
+            else -> "placeholder (loading)"
+        }
+        TrackLog.d("BitChord", "player art: $reason for ${song.videoId}")
+    }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —

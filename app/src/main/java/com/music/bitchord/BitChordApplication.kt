@@ -1,6 +1,7 @@
 package com.music.bitchord
 
 import android.app.Application
+import android.os.Bundle
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import coil3.ImageLoader
@@ -40,12 +41,53 @@ import com.music.bitchord.startup.StartupTrace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
+
+    /** Foreground/background transitions, logged as they happen rather than sampled. */
+    private var startedActivities = 0
+
+    private val activityLifecycle = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) = Unit
+
+        override fun onActivityStarted(activity: android.app.Activity) {
+            if (startedActivities++ == 0) {
+                TrackLog.i("BitChord", "lifecycle: foreground")
+            }
+        }
+
+        override fun onActivityResumed(activity: android.app.Activity) = Unit
+
+        override fun onActivityPaused(activity: android.app.Activity) = Unit
+
+        override fun onActivityStopped(activity: android.app.Activity) {
+            if (startedActivities > 0 && --startedActivities == 0) {
+                TrackLog.i("BitChord", "lifecycle: background")
+                // The last chance to put the tail on disk while the app is out
+                // of sight; the writer would get there anyway, but a process
+                // killed in the background may not leave it that long.
+                TrackLog.flush()
+            }
+        }
+
+        override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: Bundle) = Unit
+
+        override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+    }
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        // First, before anything below can fail: a crash during startup has to
+        // leave the same evidence as one while a track plays.
+        val logDirectory = File(filesDir, "logs")
+        TrackLog.initPersistence(logDirectory)
+        installCrashHandler()
+        logProcessStart(logDirectory)
+        registerActivityLifecycleCallbacks(activityLifecycle)
+        TrackLog.i("BitChord", "lifecycle: app created")
+
         // The player is drawn by the shared UI module; this is what it reads
         // underneath — settings, the Canvas decoder, outputs, the party.
         AndroidStreamHooks.installEarly()
@@ -257,6 +299,65 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             .crossfade(200)
             .build()
 
+    /**
+     * Chains the platform's own handler rather than replacing it.
+     *
+     * The app's line goes to the trail synchronously before the process dies —
+     * the writer thread will not get a turn — and the previous handler still
+     * runs so the crash is reported to the system exactly as before.
+     */
+    private fun installCrashHandler() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching { TrackLog.crash(thread, throwable) }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+
+    /**
+     * One line per process start. "Warm" is a previous process seen in the last
+     * ten minutes: Android's own cold/warm distinction is not visible from an
+     * Application, and for reading a crash trail what matters is whether this
+     * is a fresh launch or a restart of something that was just running.
+     */
+    private fun logProcessStart(directory: File) {
+        val marker = File(directory, "process.txt")
+        val now = System.currentTimeMillis()
+        val previousAt = runCatching {
+            marker.readLines().getOrNull(1)?.toLongOrNull()
+        }.getOrNull() ?: 0L
+        val warm = previousAt > 0L && now - previousAt in 0..WARM_RESTART_MS
+        TrackLog.i(
+            "BitChord",
+            "lifecycle: process start pid=${android.os.Process.myPid()} ${if (warm) "warm" else "cold"}",
+        )
+        runCatching { marker.writeText("${android.os.Process.myPid()} $now") }
+    }
+
+    /**
+     * Trim callbacks are events, not a signal to start watching memory: only
+     * the levels that mean the process is actually under pressure are logged,
+     * and every one of them is a chance to get the buffered tail onto disk.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        when (level) {
+            android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE,
+            -> TrackLog.w("BitChord", "lifecycle: trim memory level=$level")
+        }
+        TrackLog.flush()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        TrackLog.w("BitChord", "lifecycle: low memory")
+        TrackLog.flush()
+    }
+
     private fun initLastfm() {
         val sessionKey = AppSettings.lastfmSessionKey.value
         if (sessionKey.isBlank()) return
@@ -275,5 +376,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     companion object {
         lateinit var authStore: AuthStore
             private set
+
+        /** A previous process this recent is treated as a warm restart, not a cold launch. */
+        private const val WARM_RESTART_MS = 10 * 60 * 1000L
     }
 }

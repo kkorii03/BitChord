@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import androidx.media3.common.Player
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
@@ -83,6 +84,10 @@ object QueueCoordinator {
         for (i in userQueueIndices.asReversed()) {
             player.removeMediaItem(i)
         }
+        if (userQueueIndices.isNotEmpty()) {
+            TrackLog.d("BitChord", "queue: remove n=${userQueueIndices.size} at=${userQueueIndices.first()} " +
+                "size=${player.mediaItemCount} by=clear-user-queue")
+        }
     }
 
     /**
@@ -108,6 +113,10 @@ object QueueCoordinator {
 
         for (i in playedIndices.asReversed()) {
             player.removeMediaItem(i)
+        }
+        if (playedIndices.isNotEmpty()) {
+            TrackLog.d("BitChord", "queue: remove n=${playedIndices.size} at=${playedIndices.first()} " +
+                "size=${player.mediaItemCount} by=consume-user-queue")
         }
     }
 

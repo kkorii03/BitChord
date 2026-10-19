@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -70,6 +71,37 @@ object TrackLog {
     /** The platform's own closing lines for an exported log's header — the build, the device. */
     @Volatile
     var headerLines: () -> List<String> = { emptyList() }
+
+    /**
+     * The rotating file this log is written through, when the platform has
+     * given it a directory. Null on the desktop until its own log is wired up,
+     * and in a plain JVM test of the reader-side code.
+     */
+    @Volatile
+    private var persistence: TrackLogPersistence? = null
+
+    /**
+     * Starts writing lines to rotating files under [directory]. Idempotent, and
+     * cheap: the writer thread only starts on the first line.
+     *
+     * Called from the application's `onCreate`, before any line worth keeping
+     * is logged, so a crash during startup leaves a file behind too.
+     */
+    fun initPersistence(directory: File) {
+        if (persistence != null) return
+        synchronized(this) {
+            if (persistence != null) return
+            runCatching {
+                directory.mkdirs()
+                persistence = TrackLogPersistence(directory)
+            }
+        }
+    }
+
+    /** Forces every queued line to disk — used on background/trim and before export. */
+    fun flush() {
+        runCatching { persistence?.flush() }
+    }
 
 
     // ── Writing ─────────────────────────────────────────────────────────────
@@ -152,13 +184,25 @@ object TrackLog {
         } else {
             message
         }
+        if (!TrackLogNoise.keep(level, tag, text)) return
+        val at = System.currentTimeMillis()
         synchronized(lines) {
-            lines.addLast(Line(System.currentTimeMillis(), level, tag, text, about))
+            lines.addLast(Line(at, level, tag, text, about))
             held += text.length
             while ((held > MAX_HELD_CHARS || lines.size > MAX_LINES) && lines.isNotEmpty()) {
                 held -= lines.removeFirst().text.length
             }
         }
+        // The file gets a date as well as a clock: it is read back after a
+        // restart, when "09:14:22" alone could be any of several mornings.
+        runCatching {
+            persistence?.append("${persistentClock.get().format(Date(at))} $level/$tag $text")
+        }
+    }
+
+    /** A per-thread formatter: [SimpleDateFormat] is not safe to share. */
+    private val persistentClock = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     }
 
     /**
@@ -169,6 +213,53 @@ object TrackLog {
         val snapshot = synchronized(lines) { lines.toList() }
         val clock = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
         return snapshot.map { "${clock.format(Date(it.at))} ${it.level}/${it.tag} ${it.text}" }
+    }
+
+    /**
+     * Everything for an exported log: the persisted files oldest first, or the
+     * in-memory ring when the platform never attached one.
+     *
+     * The files are preferred rather than concatenated with the ring because
+     * the ring holds the same recent lines again; repeating the last few
+     * thousand entries at the end of a multi-megabyte log only makes it harder
+     * to read.
+     */
+    fun exportText(): String {
+        val persisted = runCatching {
+            persistence?.let { store ->
+                store.flush()
+                store.readOldestFirst()
+            }
+        }.getOrNull()
+        if (!persisted.isNullOrEmpty()) return persisted.joinToString("\n")
+        return everything().joinToString("\n")
+    }
+
+    /**
+     * The last line a process can write: called from the uncaught-exception
+     * handler, so it bypasses the writer queue and flushes synchronously.
+     *
+     * The stack is cut at [CRASH_STACK_LINES]: the first frames say where the
+     * crash came from, and the rest is framework noise that pushes the useful
+     * part out of the export.
+     */
+    fun crash(thread: Thread, throwable: Throwable) {
+        val at = System.currentTimeMillis()
+        val message = buildString {
+            append("CRASH ${thread.name}: $throwable")
+            throwable.stackTrace.take(CRASH_STACK_LINES).forEach { frame ->
+                append("\n    at ").append(frame)
+            }
+        }.take(MAX_LINE_CHARS)
+        synchronized(lines) {
+            lines.addLast(Line(at, 'E', "BitChord", message, null))
+            held += message.length
+        }
+        runCatching {
+            val store = persistence ?: return
+            store.appendSync("${persistentClock.get().format(Date(at))} E/BitChord $message")
+            store.flush()
+        }
     }
 
     // ── Reading ─────────────────────────────────────────────────────────────
@@ -295,4 +386,7 @@ object TrackLog {
     private const val MAX_LINE_CHARS = 2_000
 
     private const val MAX_REMEMBERED = 32
+
+    /** Frames kept from a crash: enough to find the caller, not the framework. */
+    private const val CRASH_STACK_LINES = 25
 }

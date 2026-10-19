@@ -1,10 +1,13 @@
-﻿package com.music.bitchord.data
+package com.music.bitchord.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.MediaStore
 import android.webkit.CookieManager
 import androidx.core.content.FileProvider
@@ -90,6 +93,7 @@ object DiagnosticsExport {
                         "version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) " +
                             "${BuildConfig.BUILD_TYPE}",
                     )
+                    appendLine("git: ${BuildConfig.GIT_SHA.ifBlank { "unknown" }}")
                     appendLine("android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
                     appendLine("device: ${Build.MANUFACTURER} ${Build.MODEL}")
                     appendLine("signed in: ${if (signedIn) "yes" else "no"}")
@@ -97,7 +101,19 @@ object DiagnosticsExport {
                     appendLine("music gate active: ${MusicGateFallback.active.value}")
                     MusicGateFallback.describe().forEach { appendLine("music gate: $it") }
                     appendLine("proxy: ${if (proxy == ProxyMode.OFF) "off" else "on (${proxy.name.lowercase(Locale.US)})"}")
-                    appendLine("private listening: ${if (AppSettings.privateListening.value) "on" else "off"}")
+                    appendLine("proxy scope: ${AppSettings.proxyScope.value.name.lowercase(Locale.US)}")
+                    val privateSince = AppSettings.privateListeningSince()
+                    appendLine(
+                        "private listening: ${if (AppSettings.privateListening.value) "on" else "off"}" +
+                            if (privateSince > 0L) {
+                                " since ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(privateSince))}"
+                            } else {
+                                ""
+                            },
+                    )
+                    DiagnosticsState.describe().forEach { appendLine(it) }
+                    appendLine("power: ${powerState(context)}")
+                    appendLine("network: ${networkType(context)}")
                     appendLine("auth cookie length: ${cookie?.length ?: 0}")
                     appendLine("auth cookie names: ${authCookieNames.joinToString(", ").ifEmpty { "(none)" }}")
                     appendLine(
@@ -110,7 +126,7 @@ object DiagnosticsExport {
                     webViewNames.forEach { appendLine(it) }
                     appendLine("---")
                 }
-                val content = header + LogRedactor.redact(TrackLog.everything().joinToString("\n")) + "\n"
+                val content = header + LogRedactor.redact(TrackLog.exportText()) + "\n"
                 val downloadsUri = saveToDownloads(context, fileName, content)
                 val uri = downloadsUri ?: FileProvider.getUriForFile(
                     context,
@@ -149,6 +165,29 @@ object DiagnosticsExport {
             null
         }
     }
+
+    private fun powerState(context: Context): String {
+        val manager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val saver = manager?.isPowerSaveMode == true
+        return "saver=${if (saver) "on" else "off"} " +
+            "lowPower=${if (AppSettings.lowPower.value) "on" else "off"} " +
+            "mode=${AppSettings.lowPowerMode.value.name.lowercase(Locale.US)} " +
+            "battery=${AppSettings.batteryPercentValue()}%"
+    }
+
+    private fun networkType(context: Context): String = runCatching {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return@runCatching "unknown"
+        val network = manager.activeNetwork ?: return@runCatching "none"
+        val caps = manager.getNetworkCapabilities(network) ?: return@runCatching "none"
+        when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+            else -> "other"
+        }
+    }.getOrElse { "unknown" }
 
     private fun cookieNames(header: String?): List<String> = header.orEmpty()
         .split(';')

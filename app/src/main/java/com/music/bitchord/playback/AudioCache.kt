@@ -1877,6 +1877,21 @@ object AudioCache {
         if (upstreamFactory == null) return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
 
+        val about = mediaIdIn(uri)
+        val label = about ?: cacheKey
+        val fetchStart = SystemClock.elapsedRealtime()
+        var probes = 0
+        var bytes = 0L
+        var failure: String? = null
+
+        fun pullTracked(at: Long, size: Long): Pair<Long, String?> {
+            probes++
+            val outcome = pull(cacheKey, uri, at, size, pinKey)
+            bytes += outcome.first
+            failure = outcome.second
+            return outcome
+        }
+
         // A cheap first knock rather than the whole range on the door.
         // Losing this entry to another writer isn't something
         // [CacheDataSource] surfaces as a failure — it quietly falls through
@@ -1903,32 +1918,40 @@ object AudioCache {
             val hole = position + ready
             val probe = minOf(LOCK_PROBE_BYTES, position + length - hole)
             if (probe > 0) {
-                pull(cacheKey, uri, hole, probe, pinKey)
+                pullTracked(hole, probe)
                 if (cache.getCachedBytes(cacheKey, hole, probe) < probe) {
-                    TrackLog.d(TAG, "read-ahead for $cacheKey not kept (entry in use): stopped after the probe", about = mediaIdIn(uri))
+                    TrackLog.d(
+                        TAG,
+                        "read-ahead $label: $probes probes, ${formatBytes(bytes)} not kept (entry in use)",
+                        about = about,
+                    )
                     return
                 }
             }
         }
-        pull(cacheKey, uri, position, length, pinKey)
+        pullTracked(position, length)
+        // One summary for the whole operation, where there used to be a line
+        // before and after every probe. The duration is what makes a
+        // read-ahead overlapping a resolve visible; the byte count is what
+        // makes it expensive.
+        val elapsed = SystemClock.elapsedRealtime() - fetchStart
+        TrackLog.d(
+            TAG,
+            "read-ahead $label: $probes probes, ${formatBytes(bytes)} in ${elapsed}ms" +
+                (failure?.let { " (failed: ${it.substringBefore("?").take(60)})" } ?: ""),
+            about = about,
+        )
     }
 
     /** The actual network pull behind [fetch], unconditional and unchecked. */
-    private suspend fun pull(cacheKey: String, uri: Uri, position: Long, length: Long, pinKey: Boolean) {
-        val upstream = upstreamFactory ?: return
-
-        // Whose track this is, taken off the URI rather than off [cacheKey]:
-        // the key splits a track's renditions apart on purpose, and reading
-        // ahead is the clearest case there is of work logged nowhere near the
-        // track it is for. See [TrackLog.about].
-        val about = mediaIdIn(uri)
-        // Read-ahead is the app's largest consumer of bandwidth and, until this
-        // line existed, its most invisible: whole tracks were pulled down while
-        // a listener waited on a resolve for the track in front of them, and
-        // nothing in the log said so. Bracketing it is what makes the overlap
-        // between "reading ahead" and "waiting for sound" readable at all.
-        val fetchStart = SystemClock.elapsedRealtime()
-        TrackLog.d(TAG, "read-ahead fetching $cacheKey [$position, ${position + length})", about = about)
+    private suspend fun pull(
+        cacheKey: String,
+        uri: Uri,
+        position: Long,
+        length: Long,
+        pinKey: Boolean,
+    ): Pair<Long, String?> {
+        val upstream = upstreamFactory ?: return 0L to null
 
         val source = readAheadCacheFactory(upstream)
             .apply { if (pinKey) setCacheKeyFactory { cacheKey } }
@@ -1940,7 +1963,10 @@ object AudioCache {
             .build()
         val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
 
-        runCatching {
+        // Expected failures here are a skip or losing the entry to the player;
+        // neither is worth failing playback over, and both are reported by the
+        // caller's one summary line — see [fetch].
+        val failure = runCatching {
             withContext(Dispatchers.IO) {
                 // CacheWriter blocks in a read loop and checks this flag between
                 // reads; cancelling the coroutine alone would leave it running.
@@ -1951,18 +1977,7 @@ object AudioCache {
                     handle.dispose()
                 }
             }
-        }.onFailure {
-            // Expected on a skip, and never worth failing playback over — see
-            // [readAheadCacheFactory] for why this is now also the ordinary
-            // shape of losing the race to the player.
-            TrackLog.d(TAG, "read-ahead stopped for $cacheKey: ${it.message}", about = about)
-        }.onSuccess {
-            TrackLog.d(
-                TAG,
-                "read-ahead fetched $cacheKey [$position, ${position + length}) in " +
-                    "${SystemClock.elapsedRealtime() - fetchStart}ms",
-                about = about,
-            )
-        }
+        }.exceptionOrNull()
+        return length to failure?.message
     }
 }

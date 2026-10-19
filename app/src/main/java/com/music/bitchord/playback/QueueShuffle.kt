@@ -6,6 +6,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
+import com.music.bitchord.data.DiagnosticsState
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -43,6 +45,8 @@ object QueueShuffle {
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
     fun setEnabled(enabled: Boolean) {
         _enabled.value = enabled
+        DiagnosticsState.shuffle = enabled
+        TrackLog.d("BitChord", "mode: shuffle=${if (enabled) "on" else "off"}")
     }
     /** Entry IDs in their pre-shuffle order. Empty while shuffle is off. */
     private var original: List<String> = emptyList()
@@ -69,6 +73,7 @@ object QueueShuffle {
     fun restorePersisted(enabled: Boolean, order: List<String>?) {
         _enabled.value = enabled
         original = if (enabled) order.orEmpty() else emptyList()
+        TrackLog.d("BitChord", "mode: shuffle=${if (enabled) "on" else "off"} from restore")
     }
 
     fun toggle(player: Player) {
@@ -85,6 +90,8 @@ object QueueShuffle {
         }
         // Persist the new state so it survives app restarts.
         AppSettings.setShuffleEnabled(_enabled.value)
+        DiagnosticsState.shuffle = _enabled.value
+        TrackLog.d("BitChord", "mode: shuffle=${if (_enabled.value) "on" else "off"} from ui")
     }
 
     /**
