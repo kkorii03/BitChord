@@ -427,7 +427,10 @@ object StreamResolver {
         // In Korea without Premium the clients InnerTubeX leads with are the
         // refused ones; the anonymous IOS/ANDROID request is what plays there,
         // so it goes first once the gate is known, and last for everyone else.
-        val gated = MusicGateFallback.isActive()
+        // Through the overseas proxy only metadata travels; player requests stay
+        // on the Korean connection (see ProxyScopeMatcher), where the Music
+        // clients are refused just as when gated, so the same order applies.
+        val gated = MusicGateFallback.isActive() || com.music.bitchord.data.net.YouTubeProxy.config.usable
         val stream = try {
             (if (gated) timed("$videoId direct") { directStream(videoId) } else null)
                 ?: timed("$videoId InnerTubeX") { innerTubeXStream(videoId) }
@@ -500,7 +503,7 @@ object StreamResolver {
         // In a gated region WEB_REMIX is the identity that answers UNPLAYABLE
         // for every track. InnerTubeX already walks its own catalog, but
         // excluding the profile by name when it is known saves the dead ask.
-        if (MusicGateFallback.isActive()) skip += "WEB_REMIX"
+        if (MusicGateFallback.isActive() || com.music.bitchord.data.net.YouTubeProxy.config.usable) skip += "WEB_REMIX"
         repeat(INNERTUBEX_ATTEMPTS) {
             val found = try {
                 InnerTubeXResolver.extract(videoId, maxKbps, skip, requireM4a)

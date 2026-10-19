@@ -25,10 +25,10 @@ class ProxyScopeMatcherTest {
     }
 
     @Test
-    fun `youtubei api calls on www are proxied in music-only scope`() {
+    fun `music browse is proxied in music-only scope`() {
         assertTrue(
             ProxyScopeMatcher.matches(
-                "www.youtube.com",
+                "music.youtube.com",
                 "/youtubei/v1/browse",
                 ProxyScope.MUSIC_ONLY,
             ),
@@ -36,7 +36,75 @@ class ProxyScopeMatcherTest {
         assertTrue(
             ProxyScopeMatcher.matches(
                 "youtubei.googleapis.com",
+                "/youtubei/v1/browse",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+    }
+
+    @Test
+    fun `music player is not proxied in music-only scope`() {
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "music.youtube.com",
                 "/youtubei/v1/player",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+    }
+
+    @Test
+    fun `youtubei player is not proxied in music-only scope`() {
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "youtubei.googleapis.com",
+                "/youtubei/v1/player",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+    }
+
+    @Test
+    fun `www player is not proxied in music-only scope`() {
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "www.youtube.com",
+                "/youtubei/v1/player",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+        assertFalse(
+            ProxyScopeMatcher.matches("www.youtube.com", "/player", ProxyScope.MUSIC_ONLY),
+        )
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "m.youtube.com",
+                "/youtubei/v1/player",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+    }
+
+    @Test
+    fun `www browse is not proxied in music-only scope`() {
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "www.youtube.com",
+                "/youtubei/v1/browse",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "www.youtube.com",
+                "/youtubei/v1/search",
+                ProxyScope.MUSIC_ONLY,
+            ),
+        )
+        assertFalse(
+            ProxyScopeMatcher.matches(
+                "m.youtube.com",
+                "/youtubei/v1/browse",
                 ProxyScope.MUSIC_ONLY,
             ),
         )
@@ -109,8 +177,11 @@ class ProxyScopeMatcherTest {
         assertTrue(
             ProxyScopeMatcher.matches("MUSIC.YOUTUBE.COM", null, ProxyScope.MUSIC_ONLY),
         )
-        assertTrue(
+        assertFalse(
             ProxyScopeMatcher.matches("WWW.YouTube.com", "/YouTubei/v1/browse", ProxyScope.MUSIC_ONLY),
+        )
+        assertFalse(
+            ProxyScopeMatcher.matches("MUSIC.YOUTUBE.COM", "/YouTubei/v1/player", ProxyScope.MUSIC_ONLY),
         )
     }
 }

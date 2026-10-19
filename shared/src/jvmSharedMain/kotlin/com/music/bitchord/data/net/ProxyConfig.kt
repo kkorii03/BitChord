@@ -15,12 +15,15 @@ enum class ProxyMode { OFF, HTTP, SOCKS5 }
  *
  * Korea without YouTube Music Premium is the case this exists for: the Music
  * origin is gated while youtube.com still answers. [MUSIC_ONLY] is therefore
- * the safe default — it moves the browse/player traffic that the gate is
- * decided on, and leaves ordinary youtube.com pages and googlevideo media
- * downloads on whatever connection the phone already has.
+ * the safe default — it moves the browse traffic that the gate is decided on,
+ * and leaves ordinary youtube.com pages, stream/player negotiation and
+ * googlevideo media downloads on whatever connection the phone already has.
  */
 enum class ProxyScope {
-    /** music.youtube.com and the youtubei API calls only. */
+    /**
+     * music.youtube.com and youtubei.googleapis.com, minus any `/player`
+     * request. Stream resolution always uses the direct connection.
+     */
     MUSIC_ONLY,
 
     /** Every youtube.com host plus googlevideo.com media downloads. */
@@ -81,22 +84,32 @@ object ProxyScopeMatcher {
         return when (scope) {
             ProxyScope.ALL_YOUTUBE -> isYouTubeHost(target)
             ProxyScope.MUSIC_ONLY ->
-                target == "music.youtube.com" ||
-                    target == "youtubei.googleapis.com" ||
-                    (isYouTubeApiHost(target) && isYouTubeApiPath(requestPath))
+                isMusicOrigin(target) && !isStreamResolution(requestPath)
         }
     }
 
     /**
-     * The hosts that serve youtubei calls. `music.youtube.com` is deliberately
-     * absent here: it is handled as a whole-origin match above, while these
-     * three only earn the proxy for their API paths.
+     * The two hosts the gate is decided on. `www.youtube.com` and
+     * `m.youtube.com` are deliberately absent: their API calls (search, next,
+     * player) must stay on the direct connection, both because the Korean
+     * fallbacks already work there and because a player response minted
+     * through the proxy cannot be fetched from Korea.
      */
-    private fun isYouTubeApiHost(host: String): Boolean =
-        host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com"
+    private fun isMusicOrigin(host: String): Boolean =
+        host == "music.youtube.com" || host == "youtubei.googleapis.com"
 
-    private fun isYouTubeApiPath(path: String): Boolean =
-        path.startsWith("/youtubei/", ignoreCase = true)
+    /**
+     * googlevideo binds a stream URL to the IP of the `player` request that
+     * minted it, so a player response fetched through the overseas proxy
+     * returns URLs the phone then cannot use from Korea. Player negotiation
+     * therefore never goes through the proxy, on any host, in MUSIC_ONLY.
+     */
+    private fun isStreamResolution(path: String): Boolean {
+        val lower = path.lowercase()
+        return lower.endsWith("/player") ||
+            "/youtubei/v1/player" in lower ||
+            "/get_watch" in lower
+    }
 
     private fun isYouTubeHost(host: String): Boolean =
         host == "youtube.com" ||

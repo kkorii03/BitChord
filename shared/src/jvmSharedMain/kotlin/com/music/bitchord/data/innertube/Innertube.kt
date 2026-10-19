@@ -662,7 +662,7 @@ object Innertube {
 
     suspend fun browse(browseId: String, params: String? = null): JsonObject {
         val response = try {
-            postMusic("browse") {
+            postMusic("browse", browseId = browseId) {
                 put("browseId", browseId)
                 params?.let { put("params", it) }
             }
@@ -837,7 +837,7 @@ object Innertube {
      * country list, or null for the request's content country.
      */
     suspend fun charts(country: String?): JsonObject =
-        postMusic("browse") {
+        postMusic("browse", browseId = CHARTS_BROWSE_ID) {
             put("browseId", CHARTS_BROWSE_ID)
             if (!country.isNullOrBlank()) {
                 putJsonObject("formData") { putJsonArray("selectedValues") { add(country) } }
@@ -1564,6 +1564,7 @@ object Innertube {
         hl: String = currentLanguage,
         gl: String = currentCountry,
         forceAnonymous: Boolean = false,
+        browseId: String? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // In Korea without Premium the signed-in Music session is refused
@@ -1572,7 +1573,7 @@ object Innertube {
         // 2026-10-18). Once the gate is known, Music is read signed out; the
         // account's own feeds come from youtube.com instead (YouTubeFallback).
         // Account writes keep the session so they fail visibly, not silently.
-        val anonymous = forceAnonymous || isAnonymousRequest(endpoint) ||
+        val anonymous = forceAnonymous || isAnonymousRequest(endpoint, browseId) ||
             (MusicGateFallback.isActive() && !isAccountWrite(endpoint))
         // The common authenticated path: Home, Library, likes, playlists,
         // account menus and all their continuations pass through it. Waiting
@@ -1771,11 +1772,32 @@ object Innertube {
      * into their history and shaping recommendations around it. So none of
      * them may carry credentials.
      *
-     * Decided by endpoint rather than by caller so a future search route
-     * cannot reintroduce the problem by calling the request builder directly.
+     * An impersonal browse page is anonymous for the same reason: moods and
+     * genres, new releases, charts and Explore are the same page for everyone,
+     * yet a signed-in account registered in another country (India) makes
+     * Music answer them with *its* country's shelves whatever `gl` says. The
+     * account-free request keeps `gl` and returns the content country's page.
+     *
+     * Decided by endpoint (and browse id) rather than by caller so a future
+     * route cannot reintroduce the problem by calling the request builder
+     * directly.
      */
-    internal fun isAnonymousRequest(endpoint: String): Boolean =
-        endpoint == "search" || endpoint == "music/get_search_suggestions"
+    internal fun isAnonymousRequest(endpoint: String, browseId: String? = null): Boolean =
+        endpoint == "search" || endpoint == "music/get_search_suggestions" ||
+            (endpoint == "browse" && browseId != null && isAnonymousBrowseId(browseId))
+
+    /**
+     * Browse pages that are not personal: the mood/genre grid and its
+     * categories, new releases, charts (params select the country) and
+     * Explore. Home, library, history, likes, playlists and radio are not
+     * here and keep the session.
+     */
+    internal fun isAnonymousBrowseId(browseId: String): Boolean =
+        browseId == "FEmusic_moods_and_genres" ||
+            browseId.startsWith("FEmusic_moods_and_genres_category") ||
+            browseId.startsWith("FEmusic_new_releases") ||
+            browseId == CHARTS_BROWSE_ID ||
+            browseId == "FEmusic_explore"
 
     /** Endpoints that change the account; never sent signed out. */
     internal fun isAccountWrite(endpoint: String): Boolean =

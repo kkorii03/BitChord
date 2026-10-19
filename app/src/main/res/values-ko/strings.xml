@@ -1151,7 +1151,7 @@
     <string name="proxy_server">프록시 서버</string>
     <string name="proxy_server_not_set">호스트와 포트를 입력하십시오</string>
     <string name="proxy_scope_music">YouTube Music 요청만</string>
-    <string name="proxy_scope_music_subtitle">music.youtube.com과 youtubei API 요청만 프록시를 사용합니다. 일반 페이지와 스트림 다운로드는 현재 연결을 그대로 씁니다.</string>
+    <string name="proxy_scope_music_subtitle">music.youtube.com과 youtubei API 탐색 요청만 프록시를 사용합니다. 스트림과 플레이어 요청은 직접 연결을 사용하며, 일반 페이지와 다운로드도 마찬가지입니다.</string>
     <string name="proxy_scope_all">모든 YouTube 요청</string>
     <string name="proxy_scope_all_subtitle">www.youtube.com과 googlevideo.com 스트림 다운로드도 프록시를 사용합니다.</string>
     <string name="proxy_connection_test">연결 테스트</string>

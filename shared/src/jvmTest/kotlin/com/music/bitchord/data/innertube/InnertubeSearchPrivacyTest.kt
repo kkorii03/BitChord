@@ -28,6 +28,37 @@ class InnertubeSearchPrivacyTest {
     }
 
     @Test
+    fun `impersonal browse pages are anonymous`() {
+        listOf(
+            "FEmusic_moods_and_genres",
+            "FEmusic_moods_and_genres_category",
+            "FEmusic_new_releases",
+            "FEmusic_new_releases_albums",
+            "FEmusic_charts",
+            "FEmusic_explore",
+        ).forEach {
+            assertTrue(Innertube.isAnonymousBrowseId(it), it)
+            assertTrue(Innertube.isAnonymousRequest("browse", it), it)
+        }
+    }
+
+    @Test
+    fun `personal browse pages keep the session`() {
+        listOf(
+            "FEmusic_home",
+            "FEmusic_history",
+            "FEmusic_liked_videos",
+            "FEmusic_liked_playlists",
+            "FEmusic_library_corpus_track_artists",
+            "VLPLOWNEDPLAYLIST",
+        ).forEach {
+            assertFalse(Innertube.isAnonymousBrowseId(it), it)
+            assertFalse(Innertube.isAnonymousRequest("browse", it), it)
+        }
+        assertFalse(Innertube.isAnonymousRequest("browse"))
+    }
+
+    @Test
     fun `everything that needs the account is not anonymous`() {
         listOf(
             "browse",

@@ -623,7 +623,10 @@ section_proxy() {
   adb shell am start -n $PKG/com.music.bitchord.MainActivity --es bitchord.debug.proxy "http://tour:tour@127.0.0.1:9"
   sleep 12
   if adb shell pidof $PKG >/dev/null 2>&1; then echo "proxy-save: alive" >> "$OUT/index.txt"; else echo "proxy-save: CRASHED" >> "$OUT/index.txt"; fi
-  adb logcat -d | grep -E 'FATAL EXCEPTION|NetworkOnMainThread' | head -20 > "$OUT/proxy-crash.txt" || true
+  # Only crashes of our own process count (uiautomator's dump tool crashes on
+  # its own sometimes and must not be mistaken for ours).
+  adb logcat -d | grep -A3 'FATAL EXCEPTION' | grep -B1 -A2 "Process: $PKG" | head -20 > "$OUT/proxy-crash.txt" || true
+  [ -s "$OUT/proxy-crash.txt" ] && echo "proxy-save: APP CRASHED (see proxy-crash.txt)" >> "$OUT/index.txt"
   shot proxy-saved "Home after saving an unreachable proxy (must not crash)"
   # Turn it back off for any later section.
   adb shell am start -n $PKG/com.music.bitchord.MainActivity --es bitchord.debug.proxy "off"

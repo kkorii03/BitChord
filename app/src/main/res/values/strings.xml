@@ -1248,7 +1248,7 @@
     <string name="proxy_server">Proxy server</string>
     <string name="proxy_server_not_set">Set a host and port</string>
     <string name="proxy_scope_music">YouTube Music requests only</string>
-    <string name="proxy_scope_music_subtitle">Only music.youtube.com and youtubei API calls use the proxy. Ordinary pages and stream downloads stay on this connection.</string>
+    <string name="proxy_scope_music_subtitle">Only music.youtube.com and youtubei API browse calls use the proxy. Stream and player requests use the direct connection, as do ordinary pages and downloads.</string>
     <string name="proxy_scope_all">All YouTube requests</string>
     <string name="proxy_scope_all_subtitle">www.youtube.com and googlevideo.com stream downloads use the proxy too.</string>
     <string name="proxy_connection_test">Test connection</string>
