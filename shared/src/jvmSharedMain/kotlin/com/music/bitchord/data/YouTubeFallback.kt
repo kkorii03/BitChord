@@ -426,7 +426,7 @@ internal object YouTubeFallback {
         val rediscoveredIds = rediscovered.mapTo(HashSet()) { it.videoId }
         val mixed = seed?.videoId?.takeIf { it.isNotBlank() }?.let { videoId ->
             try {
-                radio(videoId)
+                rawRadio(videoId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -560,7 +560,11 @@ internal object YouTubeFallback {
      * ([RecentShelf.LOCAL_ONLY_MINIMUM]), because it mixes in everything watched
      * in the YouTube app.
      */
-    suspend fun history(): List<Song> = mergedHistory(HISTORY_LIMIT).map(::displaySong)
+    suspend fun history(): List<Song> =
+        CatalogSongMapper.mapPage(
+            mergedHistory(HISTORY_LIMIT).map(::displaySong),
+            CatalogSongMapper.newBudget(),
+        )
 
     private suspend fun mergedHistory(
         limit: Int,
@@ -1005,7 +1009,14 @@ internal object YouTubeFallback {
         return out.values.toList()
     }
 
-    suspend fun radio(videoId: String): List<Song> =
+    suspend fun radio(videoId: String): List<Song> {
+        val songs = rawRadio(videoId)
+        val music = YouTubeMusicClassifier.filterMusic(songs, songs.size)
+        return CatalogSongMapper.mapPage(music.map(::displaySong), CatalogSongMapper.newBudget())
+    }
+
+    /** The RD mix as youtube.com sends it, before any display or music filtering. */
+    private suspend fun rawRadio(videoId: String): List<Song> =
         YouTubeWebParser.parseRadio(
             Innertube.nextYouTube(videoId = videoId, playlistId = "RD$videoId"),
         ).songs

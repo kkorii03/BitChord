@@ -74,6 +74,7 @@ class YouTubeCoverResolverTest {
     fun `artist suffixes and artwork sizes are cleaned`() {
         assertEquals("Ed Sheeran", YouTubeCoverResolver.cleanArtist("Ed Sheeran - Topic"))
         assertEquals("Ed Sheeran", YouTubeCoverResolver.cleanArtist("Ed SheeranVEVO"))
+        assertEquals("Ed Sheeran", YouTubeCoverResolver.cleanArtist("Ed Sheeran · Shape of You"))
         assertEquals(
             "https://is1-ssl.mzstatic.com/image/thumb/600x600bb.jpg",
             YouTubeCoverResolver.squareArtwork(

@@ -275,7 +275,7 @@ internal object YouTubeCoverResolver {
 
     /** "Artist - Topic", "ArtistVEVO" and a byline's extra fields are not the credit. */
     internal fun cleanArtist(raw: String): String {
-        var value = raw.substringBefore(" 쨌 ").trim()
+        var value = raw.substringBefore(" · ").trim()
         value = value.replace(Regex("""(?i)\s*-\s*topic\s*$"""), "")
         value = value.replace(Regex("""(?i)\s*vevo\s*$"""), "")
         return value.trim()

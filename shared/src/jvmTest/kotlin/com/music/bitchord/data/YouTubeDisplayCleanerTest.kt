@@ -78,4 +78,96 @@ class YouTubeDisplayCleanerTest {
         assertEquals(cover.title, cleaned.title)
         assertEquals("Jane", cleaned.artist)
     }
+
+    @Test
+    fun `an SMTOWN quoted upload names the artist and the song`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "Hearts2Hearts 하츠투하츠 'The Chase' MV",
+            "SMTOWN",
+        )
+
+        assertEquals("The Chase", cleaned.title)
+        assertEquals("Hearts2Hearts", cleaned.artist)
+
+        val doubled = YouTubeDisplayCleaner.clean(
+            "Hearts2Hearts 하츠투하츠 ''The Chase'' MV",
+            "SMTOWN",
+        )
+
+        assertEquals("The Chase", doubled.title)
+        assertEquals("Hearts2Hearts", doubled.artist)
+    }
+
+    @Test
+    fun `a HYBE LABELS special video drops the packaging and the label`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "ILLIT (아일릿) 'Almond Chocolate' Special Video",
+            "HYBE LABELS",
+        )
+
+        assertEquals("Almond Chocolate", cleaned.title)
+        assertEquals("ILLIT", cleaned.artist)
+    }
+
+    @Test
+    fun `the 1theK underscore pattern keeps the artist and song`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "[MV] BTS(방탄소년단) _ Dynamite",
+            "1theK (원더케이)",
+        )
+
+        assertEquals("Dynamite", cleaned.title)
+        assertEquals("BTS", cleaned.artist)
+    }
+
+    @Test
+    fun `an official video suffix is removed from a normal artist channel`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "Uptown Funk (Official Video)",
+            "Mark Ronson",
+        )
+
+        assertEquals("Uptown Funk", cleaned.title)
+        assertEquals("Mark Ronson", cleaned.artist)
+    }
+
+    @Test
+    fun `a generic Entertainment channel is treated as an agency`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "aespa 에스파 'Supernova' MV",
+            "Some Entertainment",
+        )
+
+        assertEquals("Supernova", cleaned.title)
+        assertEquals("aespa", cleaned.artist)
+    }
+
+    @Test
+    fun `a normal artist channel and a bare song title are untouched`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Dynamite", "BTS")
+
+        assertEquals("Dynamite", cleaned.title)
+        assertEquals("BTS", cleaned.artist)
+
+        val official = YouTubeDisplayCleaner.clean("Dynamite", "BTS Official")
+
+        assertEquals("Dynamite", official.title)
+        assertEquals("BTS Official", official.artist)
+    }
+
+    @Test
+    fun `unbracketed video tags are removed but a live take is kept`() {
+        assertEquals(
+            "Dynamite",
+            YouTubeDisplayCleaner.clean("Dynamite Official Music Video", "BTS").title,
+        )
+        assertEquals(
+            "Dynamite",
+            YouTubeDisplayCleaner.clean("Dynamite 뮤직비디오", "BTS").title,
+        )
+        assertEquals(
+            "Dynamite (Live)",
+            YouTubeDisplayCleaner.clean("Dynamite (Live)", "BTS").title,
+        )
+    }
 }

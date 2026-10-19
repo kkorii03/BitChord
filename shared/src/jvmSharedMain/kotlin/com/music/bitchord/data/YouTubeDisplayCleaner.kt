@@ -37,11 +37,13 @@ internal object YouTubeDisplayCleaner {
     ): Cleaned {
         val rawTitle = title.trim()
         val rawChannel = channel.trim()
+        val labelChannel = isAgencyChannel(rawChannel)
         val channelArtist = cleanChannel(rawChannel)
         if (rawTitle.isBlank()) return Cleaned(rawTitle, channelArtist)
         var text = rawTitle
         while (true) {
             val next = VIDEO_TAG.replace(text, " ")
+                .replace(TRAILING_VIDEO_TAG, " ")
                 .replace(WHITESPACE, " ")
                 .trim()
                 .let { if (LEADING_OST.containsMatchIn(it)) LEADING_OST.replace(it, " ").trim() else it }
@@ -49,6 +51,15 @@ internal object YouTubeDisplayCleaner {
                 .trim()
             if (next == text) break
             text = next
+        }
+        // A label upload often puts the credit in the title and its own name on
+        // the channel: `Artist 한글명 'Song' MV`. The quoted song names where the
+        // artist ends, which no dash split can see.
+        if (labelChannel) {
+            splitQuotedSong(text)?.let { (artist, song) ->
+                val name = collapseAliases(artist)
+                if (name.isNotBlank() && song.isNotBlank()) return Cleaned(song, name)
+            }
         }
         val split = CoverTitles.splitTopLevelDash(text)
         if (split != null && shouldSplit(split.first, rawChannel, knownArtists)) {
@@ -58,7 +69,24 @@ internal object YouTubeDisplayCleaner {
                 return Cleaned(songTitle, artist)
             }
         }
-        return Cleaned(text.ifBlank { rawTitle }, channelArtist.ifBlank { rawChannel })
+        return Cleaned(
+            text.ifBlank { rawTitle },
+            // A label channel is not the artist; if the title carried no credit
+            // there is nothing honest to show in its place.
+            channelArtist.ifBlank { if (labelChannel) "" else rawChannel },
+        )
+    }
+
+    /** `['\"“”‘’]Song['\"“”‘’]` at the end, with the credit before it. */
+    private fun splitQuotedSong(text: String): Pair<String, String>? {
+        val match = QUOTED_TAIL.find(text) ?: return null
+        val artist = text.substring(0, match.range.first)
+            .trim()
+            .trimEnd('-', '–', '—', '_', ':', '|')
+            .trim()
+        val song = match.groupValues[1].trim()
+        if (artist.isBlank() || song.isBlank()) return null
+        return artist to song
     }
 
     private fun shouldSplit(left: String, channel: String, knownArtists: Set<String>): Boolean {
@@ -82,15 +110,34 @@ internal object YouTubeDisplayCleaner {
         if (text.isEmpty()) return false
         if (text.endsWith("topic")) return true
         if (text.contains("vevo")) return true
-        if (SHORT_LABEL.containsMatchIn(text)) return true
+        if (isAgencyChannel(channel)) return true
         return LABEL_MARKERS.any { text.contains(it) }
+    }
+
+    /**
+     * A channel that publishes other people's songs. `Artist Official` and
+     * `Artist - Topic` are artist channels, so they are not part of this.
+     */
+    private fun isAgencyChannel(channel: String): Boolean {
+        val text = TrackMatcher.normalize(channel).trim()
+        if (text.isEmpty()) return false
+        if (text.endsWith("topic") || text.contains("vevo")) return false
+        if (text in LABEL_CHANNELS) return true
+        if (SHORT_LABEL.containsMatchIn(text)) return true
+        if (AGENCY_MARKERS.any { text.contains(it) }) return true
+        return GENERIC_LABEL.containsMatchIn(text)
     }
 
     /** `Artist - Topic` and `ArtistVEVO` are channel plumbing, not the credit. */
     private fun cleanChannel(channel: String): String {
         var name = channel.trim()
-        name = name.replace(Regex("""(?i)\s*-\s*topic\s*$"""), "")
-        name = name.replace(Regex("""(?i)\s*vevo\s*$"""), "")
+        val topic = TOPIC_SUFFIX.containsMatchIn(name)
+        val vevo = VEVO_SUFFIX.containsMatchIn(name)
+        name = name.replace(TOPIC_SUFFIX, "")
+        name = name.replace(VEVO_SUFFIX, "")
+        // A `- Topic` or VEVO channel is named after the artist; only a real
+        // label/agency name is dropped.
+        if (!topic && !vevo && isAgencyChannel(name)) return ""
         return collapseAliases(name)
     }
 
@@ -103,6 +150,20 @@ internal object YouTubeDisplayCleaner {
         while (true) {
             val at = trailingGroupStart(text) ?: break
             text = text.substring(0, at).trim()
+        }
+        // K-pop credits are often written `EnglishName 한글명`; the bracketed
+        // form is handled above, and the unbracketed one reads as the name
+        // before the Hangul alias.
+        val words = text.split(WHITESPACE)
+        if (words.size >= 2) {
+            val tail = words.last()
+            val head = words.dropLast(1).joinToString(" ")
+            if (HANGUL.containsMatchIn(tail) &&
+                !HANGUL.containsMatchIn(head) &&
+                LATIN.containsMatchIn(head)
+            ) {
+                text = head
+            }
         }
         return text.trim()
     }
@@ -143,6 +204,23 @@ internal object YouTubeDisplayCleaner {
             """music\s*video)\s*[)\]）】]""",
     )
 
+    /** An un-bracketed packaging tag at the very end of an upload title. */
+    private val TRAILING_VIDEO_TAG = Regex(
+        """(?i)(?:^|\s)(?:official\s+(?:(?:music|lyric|performance|special)\s+)?""" +
+            """(?:video|mv|m\s*/\s*v|audio)|performance\s+video|lyric\s+video|""" +
+            """special\s+video|visuali[sz]er|music\s+video|m\s*/\s*v|mv|뮤직비디오)\s*[.!]?\s*$""",
+    )
+
+    /** `Artist 'Song'`, the quoted song closing a label upload's title. */
+    private val QUOTED_TAIL = Regex(
+        """(?:^|\s)['"“”‘’]{1,2}([^'"“”‘’]{1,120}?)['"“”‘’]{1,2}\s*$""",
+    )
+
+    private val HANGUL = Regex("""[가-힣]""")
+    private val LATIN = Regex("""[A-Za-z]""")
+    private val TOPIC_SUFFIX = Regex("""(?i)\s*-\s*topic\s*$""")
+    private val VEVO_SUFFIX = Regex("""(?i)\s*vevo\s*$""")
+
     /** A leading `[선재 업고 튀어 OST Part 3]` describes the release, not the song. */
     private val LEADING_OST = Regex(
         """^\s*[\[(（【][^)\]）】]*\bost\b[^)\]）】]*[)\]）】]\s*""",
@@ -158,6 +236,33 @@ internal object YouTubeDisplayCleaner {
         "1thek", "stone music", "smtown", "sm town", "starship",
         "hybe labels", "jyp", "yg entertainment", "kakao", "genie",
         "mnet", "kq entertainment", "cj enm", "official",
+    )
+
+    /** [LABEL_MARKERS] that name an agency rather than an artist's own channel. */
+    private val AGENCY_MARKERS = LABEL_MARKERS - "official"
+
+    /** Agency channels whose name is never the artist of the song they upload. */
+    private val LABEL_CHANNELS = setOf(
+        "smtown", "sm town", "hybe labels", "1thek", "1thek (원더케이)",
+        "jyp entertainment", "stone music entertainment", "genie music",
+        "mnet k-pop", "m2", "kbs kpop", "studio choom", "theblacklabel",
+        "yg entertainment", "starshiptv", "kakao entertainment",
+        "kakao m", "big hit music", "belift lab", "ador", "pledis entertainment",
+        "koz entertainment", "edam entertainment", "aomg", "h1ghr music",
+        "wakeone", "swing entertainment", "cube entertainment", "fnc entertainment",
+        "woollim entertainment", "dsp media", "rbw", "antenna", "mystic story",
+        "konnect entertainment", "yuehua entertainment", "abyss company",
+        "jellyfish entertainment", "dreamus", "bugs music", "music and new",
+        "warner music korea", "universal music", "sony music korea",
+        "mwave", "kcon", "dingo music", "lululala music",
+    )
+
+    /** `… Entertainment`, `… Labels`, `… Records` and official music channels. */
+    private val GENERIC_LABEL = Regex(
+        """(?i)\b(?:entertainment|records?|labels?)\b\s*$|""" +
+            """\bmusic\b\s*(?:official)?$|""" +
+            """\bofficial\s+music\b\s*$|""" +
+            """\bmusic\s+official\b""",
     )
 
     /** `YG`, `KQ` and `JYP` alone, without matching the letters inside a name. */
