@@ -44,7 +44,7 @@ data class SpotifyMatchResult(
 )
 
 /** One track's chosen candidate; [loose] when only the first search hit was available. */
-internal data class SpotifyMatch(val song: Song?, val loose: Boolean)
+data class SpotifyMatch(val song: Song?, val loose: Boolean)
 
 object SpotifyImporter {
 
@@ -199,7 +199,7 @@ object SpotifyImporter {
      * take that first hit unconditionally, which silently picked whichever
      * recording the backend happened to rank first.
      */
-    internal fun bestMatch(candidates: List<Song>, target: TrackMatcher.Target): SpotifyMatch {
+    fun bestMatch(candidates: List<Song>, target: TrackMatcher.Target): SpotifyMatch {
         TrackMatcher.best(candidates, target)?.let { return SpotifyMatch(it, loose = false) }
         val first = candidates.firstOrNull() ?: return SpotifyMatch(null, loose = false)
         return SpotifyMatch(first, loose = true)
