@@ -18,6 +18,7 @@ import com.music.bitchord.data.model.ArtistPage
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.HomeSource
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
@@ -232,7 +233,7 @@ object YtMusicRepository {
             return@call if (YouTubeFallback.isContinuation(token)) {
                 YouTubeFallback.moreHome(token)
             } else {
-                HomeFeed(emptyList(), null)
+                HomeFeed(emptyList(), null, HomeSource.FALLBACK)
             }
         }
         val response = Innertube.browseContinuation(token)

@@ -58,8 +58,26 @@ class HomeShelfMergeTest {
     fun `fresh order is kept and a repeated fresh title appears once`() {
         val previous = listOf(shelf("Recents", "a"))
         val fresh = listOf(shelf("Second", "b"), shelf("First", "c"), shelf("Second", "d"))
-        val merge = mergeHomeShelves(previous, fresh)
+        val merge = mergeHomeShelves(previous, fresh, HomeSource.MUSIC)
         assertEquals(listOf("Second", "First", "Recents"), merge.shelves.map { it.title })
         assertEquals(listOf("Recents"), merge.kept)
+    }
+
+    @Test
+    fun `a source switch replaces the old feed instead of keeping its shelves`() {
+        val previous = listOf(
+            shelf("Recents", "a"),
+            shelf("Quick picks", "b"),
+            shelf("내 믹스", "c"),
+        )
+        val fresh = listOf(shelf("나를 위한 추천", "d"), shelf("최근 재생", "e"))
+        val merge = mergeHomeShelves(
+            previous = previous,
+            fetched = fresh,
+            source = HomeSource.MUSIC,
+            previousSource = HomeSource.FALLBACK,
+        )
+        assertEquals(fresh, merge.shelves)
+        assertEquals(emptyList<String>(), merge.kept)
     }
 }

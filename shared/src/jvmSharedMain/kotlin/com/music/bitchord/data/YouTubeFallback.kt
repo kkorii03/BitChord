@@ -11,6 +11,7 @@ import com.music.bitchord.data.innertube.YouTubeWebParser
 import com.music.bitchord.data.model.ChartsPage
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.HomeSource
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.MoodGenreSection
@@ -229,6 +230,7 @@ internal object YouTubeFallback {
         return HomeFeed(
             shelves = enrichCovers(YouTubeFallbackFeed.dedupeShelves(shelves)),
             continuation = continuation,
+            source = HomeSource.FALLBACK,
         )
     }
 
@@ -486,12 +488,12 @@ internal object YouTubeFallback {
         val root = runCatching { Innertube.browseYouTubeContinuation(token) }
             .onFailure { if (it is CancellationException) throw it }
             .getOrNull()
-            ?: return HomeFeed(emptyList(), null)
+            ?: return HomeFeed(emptyList(), null, HomeSource.FALLBACK)
         val page = YouTubeWebParser.parseHome(root, musicOnly = true)
         page.continuation?.let(::rememberContinuation)
         val shelves = page.shelves.map { musicOnlyShelf(it) }
             .filter { it.items.isNotEmpty() }
-        return HomeFeed(enrichCovers(shelves), page.continuation)
+        return HomeFeed(enrichCovers(shelves), page.continuation, HomeSource.FALLBACK)
     }
 
     suspend fun recentShelf(): HomeShelf? {

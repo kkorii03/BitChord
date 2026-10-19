@@ -454,10 +454,14 @@ private const val REPEAT_SHELF_SHARE = 0.6
 
 private fun HomeShelf.browseKeys(): Set<String> = items.mapNotNullTo(HashSet()) { it.browseId }
 
+/** Which catalogue a Home page came from: Music itself, or the youtube.com fallback. */
+enum class HomeSource { MUSIC, FALLBACK }
+
 /** A page of the Home feed, plus the token for the next one — null once exhausted. */
 data class HomeFeed(
     val shelves: List<HomeShelf>,
     val continuation: String?,
+    val source: HomeSource = HomeSource.MUSIC,
 )
 
 /** The result of [mergeHomeShelves]: the page to show and the titles carried over from it. */
@@ -473,8 +477,18 @@ data class HomeShelfMerge(
  * (by title, ignoring case and surrounding whitespace) stay after the fresh
  * ones in their previous order. An empty fresh shelf also counts as no answer:
  * it never replaces a populated one with the same title.
+ *
+ * Carrying shelves across a source switch is wrong, though: youtube.com's
+ * fallback and Music's own Home name different shelves, and the stale ones
+ * would sit among the new feed's. When [previousSource] differs from [source]
+ * the fresh list is the whole page.
  */
-fun mergeHomeShelves(previous: List<HomeShelf>, fetched: List<HomeShelf>): HomeShelfMerge {
+fun mergeHomeShelves(
+    previous: List<HomeShelf>,
+    fetched: List<HomeShelf>,
+    source: HomeSource = HomeSource.MUSIC,
+    previousSource: HomeSource? = source,
+): HomeShelfMerge {
     fun key(shelf: HomeShelf) = shelf.title.trim().lowercase()
     val fresh = mutableListOf<HomeShelf>()
     val answered = HashSet<String>()
@@ -483,6 +497,7 @@ fun mergeHomeShelves(previous: List<HomeShelf>, fetched: List<HomeShelf>): HomeS
         if (title.isEmpty() || shelf.items.isEmpty()) return@forEach
         if (answered.add(title)) fresh += shelf
     }
+    if (previousSource != source) return HomeShelfMerge(fresh, emptyList())
     val carried = previous
         .filter { key(it) !in answered }
         .distinctBy { key(it) }

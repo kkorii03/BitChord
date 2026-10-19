@@ -40,6 +40,7 @@ import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.HomeSource
 import com.music.bitchord.data.model.mergeHomeShelves
 import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.model.LibraryPage
@@ -123,6 +124,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Titles already on screen, so a later page can't repeat a shelf. */
     private val homeSeenTitles = mutableSetOf<String>()
+
+    /**
+     * The catalogue the shelves on screen came from. A refresh may only carry
+     * old shelves over when the fresh feed is from the same source; switching
+     * between Music and the youtube.com fallback replaces the page.
+     */
+    private var homeSource: HomeSource? = null
 
     private val _homeLoadingMore = MutableStateFlow(false)
 
@@ -1931,7 +1939,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (failure: Throwable) {
                     com.music.bitchord.data.DebugLog.w("BitChord", "proxy re-check failed: ${failure.message}")
                 }
-                refresh(Feed.HOME, force = true)
+                refresh(Feed.HOME, force = true, replaceShelves = true)
                 refresh(Feed.EXPLORE)
             }
         }
@@ -2088,8 +2096,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * A second pull while the same feed is already refreshing joins that
      * request instead of starting another one, so two answers cannot race to
      * replace each other.
+     *
+     * [replaceShelves] drops every previous Home shelf even if the new feed
+     * comes from the same source: the proxy changed the route out from under
+     * them, so what was on screen is no longer that route's answer.
      */
-    fun refresh(feed: Feed, force: Boolean = false) {
+    fun refresh(feed: Feed, force: Boolean = false, replaceShelves: Boolean = false) {
         if (feed == Feed.LIBRARY && !_signedIn.value) return
         val identity = listenerKey()
         var started: Job? = null
@@ -2099,7 +2111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
                 try {
                     when (feed) {
-                        Feed.HOME -> refreshHome(identity, force)
+                        Feed.HOME -> refreshHome(identity, force, replaceShelves)
                         Feed.EXPLORE -> fetchExplore()
                         Feed.LIBRARY -> fetchLibrary(identity)
                     }
@@ -2236,6 +2248,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _home.value = UiState.Loading
         homeContinuation = null
         homeSeenTitles.clear()
+        homeSource = null
         _homeLoadingMore.value = false
         _homeRecentlyPlayedLoading.value = _signedIn.value
         // The core feed plus one browse per supplement. Recently played is left
@@ -2249,6 +2262,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         .onSuccess { feed ->
                             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
                             homeContinuation = feed.continuation
+                            homeSource = feed.source
                             publishHomeShelves(feed.shelves)
                         }
                         .onFailure { failure ->
@@ -2332,7 +2346,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * tab is shown again leaves it false, so the ten-minute gated feed cache
      * still answers there.
      */
-    private suspend fun refreshHome(identity: String?, force: Boolean = false) = coroutineScope {
+    private suspend fun refreshHome(
+        identity: String?,
+        force: Boolean = false,
+        replaceShelves: Boolean = false,
+    ) = coroutineScope {
         val generation = homeLoadGeneration.incrementAndGet()
         homeContinuation = null
         _homeLoadingMore.value = false
@@ -2344,7 +2362,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         YtMusicRepository.home(force = force).onSuccess { feed ->
             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
-            val merge = mergeHomeShelves(previous, feed.shelves.withoutRepeatsOf(emptyList()))
+            val merge = mergeHomeShelves(
+                previous = previous,
+                fetched = feed.shelves.withoutRepeatsOf(emptyList()),
+                source = feed.source,
+                previousSource = homeSource.takeUnless { replaceShelves },
+            )
+            homeSource = feed.source
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
             homeSeenTitles.addAll(merge.shelves.map { it.title.lowercase(Locale.ROOT) })

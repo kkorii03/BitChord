@@ -1587,6 +1587,7 @@ object Innertube {
         val requestCookie = if (anonymous) null else cookie
         val credentials = accountHeadersFor(
             endpoint = endpoint,
+            anonymous = anonymous,
             cookie = requestCookie,
             authUser = authUserFor(session),
             pageId = pageIdFor(session),
@@ -1630,9 +1631,13 @@ object Innertube {
                                 // `onBehalfOfUser` it cannot tie to the cookie
                                 // with 401, so a guess here would take the
                                 // whole app down rather than just history. An
-                                // anonymous request names no account at all.
-                                dataSyncIdForRequest(endpoint, dataSyncIdFor(session))
-                                    ?.let { put("onBehalfOfUser", it) }
+                                // anonymous request names no account at all —
+                                // not even the chosen channel's, which outranks
+                                // the session in [dataSyncIdFor].
+                                if (!anonymous) {
+                                    dataSyncIdForRequest(endpoint, dataSyncIdFor(session))
+                                        ?.let { put("onBehalfOfUser", it) }
+                                }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }
@@ -1801,7 +1806,9 @@ object Innertube {
      * pure decision so it can be tested without a socket.
      *
      * Empty for an anonymous request even when a cookie is present; that is
-     * the whole privacy guarantee. [authorization] is lazy so an anonymous
+     * the whole privacy guarantee. [anonymous] is the caller's explicit
+     * decision, so a force-anonymous browse of a normally signed endpoint
+     * cannot leak the session. [authorization] is lazy so an anonymous
      * request never even computes a SAPISID hash.
      */
     internal fun accountHeadersFor(
@@ -1810,8 +1817,9 @@ object Innertube {
         authUser: String,
         pageId: String?,
         authorization: () -> String?,
+        anonymous: Boolean = false,
     ): Map<String, String> {
-        if (cookie == null || isAnonymousRequest(endpoint)) return emptyMap()
+        if (anonymous || cookie == null || isAnonymousRequest(endpoint)) return emptyMap()
         return buildMap {
             put("Cookie", cookie)
             put("X-Goog-AuthUser", authUser)

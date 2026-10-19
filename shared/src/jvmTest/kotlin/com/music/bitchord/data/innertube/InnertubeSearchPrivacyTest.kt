@@ -104,6 +104,25 @@ class InnertubeSearchPrivacyTest {
     }
 
     @Test
+    fun `an explicitly anonymous request carries no account headers`() {
+        var hashed = false
+        val headers = Innertube.accountHeadersFor(
+            endpoint = "browse",
+            cookie = cookie,
+            authUser = "2",
+            pageId = pageId,
+            authorization = {
+                hashed = true
+                authorization
+            },
+            anonymous = true,
+        )
+
+        assertEquals(emptyMap<String, String>(), headers)
+        assertFalse(hashed)
+    }
+
+    @Test
     fun `a signed-out search is anonymous for the same reason`() {
         var hashed = false
         val headers = Innertube.accountHeadersFor(
