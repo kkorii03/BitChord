@@ -94,6 +94,11 @@ enum class LyricsSource(
         detail = "한국 노래 줄 단위 싱크",
         wordSynced = false,
     ),
+    MELON(
+        label = "Melon",
+        detail = "멜론, 한국 노래 가사와 라인 싱크",
+        wordSynced = false,
+    ),
     SIMP_MUSIC(
         label = "SimpMusic",
         detail = "비디오 기준으로 매칭되어 다른 버전과 헷갈리지 않음",

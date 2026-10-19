@@ -835,6 +835,7 @@ object LyricsRepository {
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
             LyricsSource.VIBE -> VibeLyrics.lyrics(title, artist, durationMs)
             LyricsSource.BUGS -> BugsLyrics.lyrics(title, artist, durationMs)
+            LyricsSource.MELON -> MelonLyrics.lyrics(title, artist, durationMs)
             // Never raced: only ever the last resort of [search].
             LyricsSource.GEMINI_TRANSCRIPT -> null
         }
