@@ -2,6 +2,7 @@ package com.music.bitchord.data.stats
 
 import android.content.Context
 import android.util.Log
+import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.HomeFallbackRules
 import com.music.bitchord.data.LocalArtist
 import com.music.bitchord.data.LocalPlay
@@ -98,6 +99,17 @@ object ListeningStats {
     private val writeLock = Mutex()
 
     /**
+     * The most recently queued write.
+     *
+     * A throttled [flush] can take the snapshot and hand it to [writer] while
+     * the caller is already on its way to read the file back. Joining this in
+     * [flushAndAwait] closes that gap; the [writeLock] keeps the writes in
+     * order, so joining the newest one also waits for anything ahead of it.
+     */
+    @Volatile
+    private var lastWrite: Job? = null
+
+    /**
      * Routine writes are at most one every two minutes. Playback samples every
      * few seconds; the month file is up to six hundred tracks, and rewriting it
      * at that rate is flash wear for numbers nobody reads at that resolution.
@@ -114,10 +126,11 @@ object ListeningStats {
     private var version = 0L
 
     /**
-     * Emits when a play is counted, so Home's Recents can follow this device's
-     * record the moment a track passes the play threshold. Event-driven: no
-     * timer and no polling. A slow collector may miss an intermediate event,
-     * which is harmless because it reads the whole recent list when it wakes.
+     * Emits when a playthrough starts and when a play is counted, so Home's
+     * Recents can follow this device's record immediately. Event-driven: no
+     * timer and no polling, and at most twice per track. A slow collector may
+     * miss an intermediate event, which is harmless because it reads the whole
+     * recent list when it wakes.
      */
     private val _changes = MutableSharedFlow<Unit>(
         extraBufferCapacity = 1,
@@ -147,6 +160,15 @@ object ListeningStats {
     }
 
     private val ready: Boolean get() = this::directory.isInitialized
+
+    /**
+     * Whether this store has been opened by an application.
+     *
+     * Read by [ListeningRecorder] at the first sample of a track so its
+     * diagnostic log can say that the play was not recorded because the store
+     * was not ready yet, rather than leaving a silent gap.
+     */
+    internal val isReady: Boolean get() = ready
 
     // ── Writing ─────────────────────────────────────────────────────────────
 
@@ -241,9 +263,33 @@ object ListeningStats {
             bucket.days[day] = (bucket.days[day] ?: 0L) + playedMs
             dirty = true
         }
-        // Outside the lock and only for a counted play: a track becomes the
-        // newest Recents row once, not on every five-second sample.
+        // Outside the lock and only for a counted play — see [recordStarted]
+        // for the other, once-per-playthrough event. A track is announced as
+        // the newest Recents row at most twice: when it starts and when it
+        // counts, never on every five-second sample.
         if (countsAsPlay) _changes.tryEmit(Unit)
+    }
+
+    /**
+     * Files the first sample of a new playthrough and announces it at once.
+     *
+     * A listener expects Recents to follow the track they just started, not
+     * only once it has passed the play threshold — see [ListeningRecorder],
+     * which holds that threshold. [record] files the time (and the `last` the
+     * shelf orders by), and [changes] wakes the shelf without waiting for a
+     * counted play or a disk write: [recentTracks] merges the open month in
+     * memory. Play counting itself is unchanged and stays on [record]'s
+     * `countsAsPlay` path.
+     */
+    fun recordStarted(
+        song: Song,
+        playedMs: Long,
+        atMs: Long = System.currentTimeMillis(),
+    ) {
+        if (!ready) return
+        record(song, playedMs, countsAsPlay = false, atMs = atMs)
+        if (song.videoId.isBlank()) return
+        _changes.tryEmit(Unit)
     }
 
     /**
@@ -296,16 +342,21 @@ object ListeningStats {
         val now = System.currentTimeMillis()
         pending()?.let { (key, snapshot) ->
             writeThrottle.wrote(now)
-            writer.launch { write(key, snapshot) }
+            lastWrite = writer.launch { write(key, snapshot) }
         }
     }
 
     /** As [flush], for a caller that is about to read back what it wrote. */
     private suspend fun flushAndAwait() {
-        pending()?.let { (key, snapshot) ->
+        val queued = pending()?.let { (key, snapshot) ->
             writeThrottle.wrote(System.currentTimeMillis())
-            writer.launch { write(key, snapshot) }.join()
+            writer.launch { write(key, snapshot) }.also { lastWrite = it }
         }
+        // No snapshot here means a throttled flush may already have taken one;
+        // its write can still be running, so wait for that too. When one was
+        // queued, joining it is enough: [writeLock] makes it run after any
+        // write already in flight.
+        (queued ?: lastWrite)?.join()
     }
 
     /** The open month as bytes-to-be, or null when nothing has changed. */
@@ -354,7 +405,7 @@ object ListeningStats {
         // has to reach disk before it is dropped on the floor.
         open?.let { previous ->
             val stale = previous.snapshot()
-            writer.launch { write(previous.key, stale) }
+            lastWrite = writer.launch { write(previous.key, stale) }
         }
         val loaded = read(key) ?: StoredBucket(month = key)
         return OpenBucket.of(key, loaded).also {
@@ -409,16 +460,57 @@ object ListeningStats {
      *
      * [TrackEntry.last] is the play time that orders this: the monthly buckets
      * exist for the Replay's arithmetic, not to imply that a track heard last
-     * month is newer than one heard this morning. The open month is flushed by
-     * [monthlyTracks] first, so a track that just played is already here.
+     * month is newer than one heard this morning.
+     *
+     * The open month is merged from memory as well as read off disk. A routine
+     * write is throttled and runs on the writer coroutine, so the file can lag
+     * behind the track that just started; merging the live bucket means Recents
+     * never waits for it and no write is forced just to read. Only a write for
+     * a month that has already rolled over has to land, because that data is no
+     * longer in `open`.
      */
-    suspend fun recentTracks(limit: Int = RECENT_LIMIT): List<TrackEntry> {
+    suspend fun recentTracks(limit: Int = RECENT_LIMIT): List<TrackEntry> =
+        withContext(Dispatchers.IO) {
+            if (limit <= 0) return@withContext emptyList()
+            if (!ready) return@withContext emptyList()
+            lastWrite?.join()
+            val (openKey, openTracks) = synchronized(lock) {
+                val bucket = open
+                bucket?.key to (bucket?.tracks?.values?.map { it.copy() }.orEmpty())
+            }
+            val fileTracks = months()
+                .filter { it.toString() != openKey }
+                .flatMap { month -> read(month.toString())?.tracks.orEmpty() }
+            mergeRecentTracks(fileTracks, openTracks, limit).also { tracks ->
+                Debug.i(
+                    RECENTS_TAG,
+                    "recents: local read n=${tracks.size} top=" +
+                        tracks.take(3).joinToString(" | ") { it.title },
+                )
+            }
+        }
+
+    /**
+     * The newest [limit] tracks across [fileTracks] and the open month's
+     * [openTracks], one row per id.
+     *
+     * [openTracks] are listed first so a track heard again in the open month
+     * wins a tie against the older copy already on disk. Pure so the merge can
+     * be tested without a directory.
+     */
+    internal fun mergeRecentTracks(
+        fileTracks: List<TrackEntry>,
+        openTracks: List<TrackEntry>,
+        limit: Int,
+    ): List<TrackEntry> {
         if (limit <= 0) return emptyList()
-        return monthlyTracks()
-            .flatMap { it.second }
+        return (openTracks + fileTracks)
+            .asSequence()
+            .filter { it.id.isNotBlank() }
             .sortedByDescending { it.last }
             .distinctBy { it.id }
             .take(limit)
+            .toList()
     }
 
     /**
@@ -819,6 +911,13 @@ object ListeningStats {
     )
 
     private const val TAG = "BitChordListening"
+
+    /**
+     * Tag for the Recents diagnostic trail, shared with the shared module's
+     * logs so one export reads as a single sequence.
+     */
+    private const val RECENTS_TAG = "BitChord"
+
     private const val DIRECTORY = "listening"
 
     /** At most one routine month write per two minutes of playback. */

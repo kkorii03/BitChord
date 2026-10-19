@@ -116,6 +116,19 @@ internal object YouTubeFallback {
     @Volatile
     private var knownArtists: Set<String> = emptySet()
 
+    /**
+     * The last Home build's Recents make-up, for the cached path's diagnostic
+     * line. Cheap scalars written once per build (not per sample).
+     */
+    @Volatile
+    private var recentsLocalCount = 0
+
+    @Volatile
+    private var recentsRemoteCount = 0
+
+    @Volatile
+    private var recentsTopTitle = ""
+
     private const val LIKED_CACHE_MS = 5L * 60 * 1000
 
     // ---- Home ---------------------------------------------------------------
@@ -132,13 +145,33 @@ internal object YouTubeFallback {
      * returning to the screen keep the cache.
      */
     suspend fun home(force: Boolean = false): HomeFeed {
-        cachedHome(force = force)?.let { return it }
+        cachedHome(force = force)?.let {
+            logRecentsShelf(cached = true)
+            return it
+        }
         return homeLock.withLock {
-            cachedHome(force = force)?.let { return@withLock it }
+            cachedHome(force = force)?.let {
+                logRecentsShelf(cached = true)
+                return@withLock it
+            }
             val feed = buildHome()
             homeCache = Triple(Innertube.sessionKey(), System.currentTimeMillis(), feed)
+            logRecentsShelf(cached = false)
             feed
         }
+    }
+
+    /**
+     * The Recents trail for the fallback Home: what the shelf was built from
+     * and whether this answer came from the ten-minute cache. Event-driven —
+     * one line per Home build or cached answer, never per row.
+     */
+    private fun logRecentsShelf(cached: Boolean) {
+        Log.i(
+            TAG,
+            "recents: fallback shelf local=$recentsLocalCount remote=$recentsRemoteCount " +
+                "top=$recentsTopTitle (cached=$cached)",
+        )
     }
 
     private fun cachedHome(
@@ -191,6 +224,12 @@ internal object YouTubeFallback {
             }
         val recentsIds = recents?.items.orEmpty()
             .mapNotNullTo(HashSet<String>()) { it.videoId }
+        // What this shelf was made of, for the Recents diagnostic line. The
+        // local rows are counted before youtube.com tops the list up, so the
+        // two numbers say which half the listener's play actually came from.
+        recentsLocalCount = RecentShelf.localSongs(localPlays, RECENT_LIMIT).size
+        recentsRemoteCount = (recentSongs.size - recentsLocalCount).coerceAtLeast(0)
+        recentsTopTitle = recents?.items?.firstOrNull()?.title.orEmpty()
         val quickPicks = quickPicksShelf(
             localPlays = localPlays,
             seed = YouTubeFallbackFeed.mostPlayed(localPlays)?.song

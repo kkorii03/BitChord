@@ -1,6 +1,7 @@
 package com.music.bitchord.data.stats
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -38,5 +39,59 @@ class ListeningStatsSeedTest {
     @Test
     fun `the plan is a pure function of now`() {
         assertEquals(ListeningStatsSeed.plan(now), ListeningStatsSeed.plan(now))
+    }
+
+    @Test
+    fun `a play still only in the open month leads the recent tracks`() {
+        val onDisk = TrackEntry(id = "old", title = "Old", last = 100)
+        val justPlayed = TrackEntry(id = "just", title = "Just played", last = 500)
+
+        val recent = ListeningStats.mergeRecentTracks(
+            fileTracks = listOf(onDisk),
+            openTracks = listOf(justPlayed),
+            limit = 20,
+        )
+
+        assertEquals(listOf("just", "old"), recent.map { it.id })
+    }
+
+    @Test
+    fun `the open month's copy wins a tie against the file`() {
+        val file = TrackEntry(id = "a", title = "Old title", last = 300)
+        val open = TrackEntry(id = "a", title = "New title", last = 300)
+
+        val recent = ListeningStats.mergeRecentTracks(
+            fileTracks = listOf(file),
+            openTracks = listOf(open),
+            limit = 20,
+        )
+
+        assertEquals(1, recent.size)
+        assertEquals("New title", recent.single().title)
+    }
+
+    @Test
+    fun `recent tracks are distinct by id and stop at the limit`() {
+        val file = listOf(
+            TrackEntry(id = "a", title = "A", last = 100),
+            TrackEntry(id = "b", title = "B", last = 200),
+        )
+        val open = listOf(
+            TrackEntry(id = "a", title = "A again", last = 400),
+            TrackEntry(id = "c", title = "C", last = 300),
+        )
+
+        val recent = ListeningStats.mergeRecentTracks(file, open, limit = 2)
+
+        assertEquals(listOf("a", "c"), recent.map { it.id })
+        assertEquals("A again", recent.first().title)
+    }
+
+    @Test
+    fun `a start is announced only on the first played step of an unannounced track`() {
+        assertTrue(announcesRecentsStart(playedBeforeMs = 0L, announcedId = null, videoId = "v1"))
+        assertTrue(announcesRecentsStart(playedBeforeMs = 0L, announcedId = "v0", videoId = "v1"))
+        assertFalse(announcesRecentsStart(playedBeforeMs = 5_000L, announcedId = null, videoId = "v1"))
+        assertFalse(announcesRecentsStart(playedBeforeMs = 0L, announcedId = "v1", videoId = "v1"))
     }
 }

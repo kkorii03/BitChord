@@ -124,8 +124,10 @@ object YtMusicRepository {
             // The gated feed already places Listen again in its fixed order.
             // Publishing it separately would prepend a duplicate and leave
             // Quick picks behind it, so the feed owns that shelf here.
+            Log.i(TAG, "recents: gated feed owns Recents")
             null
         } else {
+            Log.i(TAG, "recents: music")
             recentlyPlayed()
         }
     }
@@ -270,6 +272,11 @@ object YtMusicRepository {
             emptyList()
         }
         val allSongs = RecentShelf.merge(local, ytSongs, RECENT_LIMIT)
+        Log.i(
+            TAG,
+            "recents: music shelf local=${local.size} remote=${ytSongs.size} " +
+                "top=${allSongs.firstOrNull()?.title.orEmpty()}",
+        )
         if (allSongs.isEmpty()) return null
         return recentsShelf(allSongs)
     }

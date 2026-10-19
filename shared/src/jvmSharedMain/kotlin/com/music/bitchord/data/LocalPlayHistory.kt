@@ -3,8 +3,11 @@ package com.music.bitchord.data
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 
 /**
  * One play as this device recorded it, with the cover the listener actually saw.
@@ -76,14 +79,22 @@ object LocalPlayHistory {
 
     private const val TAG = "BitChord"
 
-    @Volatile
-    private var source: Source? = null
+    /**
+     * The installed source.
+     *
+     * A StateFlow rather than a plain nullable field so [changes] can keep
+     * watching: a collector that starts before the application has installed
+     * its record switches to it when it arrives instead of completing empty.
+     * Its value is the thread-safe read the other functions already assumed.
+     */
+    private val sourceState = MutableStateFlow<Source?>(null)
+    private val source: Source? get() = sourceState.value
 
     @Volatile
     private var accountNameSource: AccountNameSource? = null
 
     fun install(source: Source?) {
-        this.source = source
+        sourceState.value = source
     }
 
     fun installAccountName(source: AccountNameSource?) {
@@ -137,11 +148,22 @@ object LocalPlayHistory {
     }
 
     /**
-     * Play events from the installed source, or a flow that never completes and
-     * never emits when there is none. Collecting is event-driven: the source
-     * emits when it records a play, not on a timer.
+     * Play events from the installed source.
+     *
+     * Event-driven: the source emits when it records a play, not on a timer.
+     * With no source installed this logs once and stays subscribed, so an
+     * install that happens after the collector started still begins delivering
+     * events; it never completes just because nothing was installed yet.
      */
-    fun changes(): Flow<Unit> = source?.changes() ?: emptyFlow()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun changes(): Flow<Unit> = sourceState.flatMapLatest { current ->
+        if (current == null) {
+            Log.i(TAG, "recents: no local source, changes() is empty")
+            emptyFlow()
+        } else {
+            current.changes()
+        }
+    }
 
     /** The signed-in account's name, or null when no session source is installed. */
     fun accountName(): String? = try {
@@ -152,7 +174,7 @@ object LocalPlayHistory {
     }
 
     internal fun resetForTest() {
-        source = null
+        sourceState.value = null
         accountNameSource = null
     }
 }

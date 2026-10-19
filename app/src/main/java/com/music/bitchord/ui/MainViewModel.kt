@@ -1933,7 +1933,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             // Recents is the device's own record first, so a counted play
             // repaints the shelf from that record — no request and no polling.
-            LocalPlayHistory.changes().collect { refreshRecentsFromLocal() }
+            LocalPlayHistory.changes().collect {
+                recentsLog("recents: event -> refresh")
+                refreshRecentsFromLocal()
+            }
         }
         viewModelScope.launch {
             // AppSettings has already reset the gate when the route changed;
@@ -2297,6 +2300,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             homeContinuation = feed.continuation
                             homeSource = feed.source
                             publishHomeShelves(feed.shelves)
+                            logRecentsPublished("feed", feed.shelves)
                             // A gated feed can be ten minutes old, and its
                             // Recents must still lead with the latest local play.
                             refreshRecentsFromLocal()
@@ -2316,7 +2320,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     .onSuccess { shelf ->
                         if (isCurrentHomeLoad(identity, generation)) {
                             _homeRecentlyPlayedLoading.value = false
-                            shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+                            shelf?.let {
+                                publishHomeShelves(listOf(it), prepend = true)
+                                logRecentsPublished("load", listOf(it))
+                            }
                         }
                     }
                     .onFailure {
@@ -2357,22 +2364,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * no polling. A page that has not loaded yet is left for its own load.
      */
     private suspend fun refreshRecentsFromLocal() {
-        val shown = (_home.value as? UiState.Success)?.data ?: return
+        val state = _home.value
+        if (state !is UiState.Success) {
+            recentsLog("recents: refresh skipped, home not Success")
+            return
+        }
+        val shown = state.data
         val index = shown.indexOfFirst { isRecentsTitle(it.title) }
         val previous = shown.getOrNull(index)?.items.orEmpty()
         val shelf = YtMusicRepository.localRecentShelf(previous)?.takeIf { it.items.isNotEmpty() }
-            ?: return
-        // The flow can wake after a load or sign-out replaced the page.
-        val current = (_home.value as? UiState.Success)?.data ?: return
+        if (shelf == null) {
+            recentsLog("recents: refresh skipped, empty local shelf")
+            return
+        }
+        // Other shelves keep arriving while the page loads, so the page is
+        // re-read rather than required to be unchanged: the local shelf does
+        // not depend on them. Only a page that stopped being a page (sign-out,
+        // a reload in progress) is left alone.
+        val currentState = _home.value
+        if (currentState !is UiState.Success) {
+            recentsLog("recents: refresh skipped, page replaced")
+            return
+        }
+        val current = currentState.data
+        val top = shelf.items.firstOrNull()?.title.orEmpty()
         val currentIndex = current.indexOfFirst { isRecentsTitle(it.title) }
         if (currentIndex < 0) {
             homeSeenTitles.add(RECENTS_TITLE.lowercase(Locale.ROOT))
             _home.value = UiState.Success(listOf(shelf) + current)
+            recentsLog("recents: shelf repainted top=$top index=0")
         } else {
             _home.value = UiState.Success(
                 current.toMutableList().apply { set(currentIndex, shelf) },
             )
+            recentsLog("recents: shelf repainted top=$top index=$currentIndex")
         }
+    }
+
+    /** The Recents trail, tagged so one exported log reads as a single sequence. */
+    private fun recentsLog(message: String) {
+        com.music.bitchord.data.DebugLog.i("BitChord", message)
+    }
+
+    /** Logs the Recents shelf a load, refresh, or the feed itself just published. */
+    private fun logRecentsPublished(source: String, shelves: List<HomeShelf>) {
+        val shelf = shelves.firstOrNull { isRecentsTitle(it.title) } ?: return
+        recentsLog("recents: published by $source top=${shelf.items.firstOrNull()?.title.orEmpty()}")
     }
 
     private fun isRecentsTitle(title: String): Boolean =
@@ -2437,6 +2474,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             homeSeenTitles.clear()
             homeSeenTitles.addAll(merge.shelves.map { it.title.lowercase(Locale.ROOT) })
             if (merge.shelves.isNotEmpty()) _home.value = UiState.Success(merge.shelves)
+            logRecentsPublished("feed", merge.shelves)
             // The gated feed may have answered from its cache; the local
             // record is newer and costs no request.
             refreshRecentsFromLocal()
@@ -2457,7 +2495,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         recent.await().onSuccess { shelf ->
-            if (isCurrentHomeLoad(identity, generation)) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+            if (isCurrentHomeLoad(identity, generation)) {
+                shelf?.let {
+                    publishHomeShelves(listOf(it), prepend = true)
+                    logRecentsPublished("refresh", listOf(it))
+                }
+            }
         }
     }
 

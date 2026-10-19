@@ -1,5 +1,6 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -64,6 +65,15 @@ object ListeningRecorder {
      */
     private var privatePlaythroughId: String? = null
 
+    /**
+     * The track whose start has already been announced to Recents.
+     *
+     * Kept across a pause or stop so resuming the same track does not announce
+     * it again: the store emits at most twice per track, on the first played
+     * step and when the play is counted. A different track clears it.
+     */
+    private var startReportedId: String? = null
+
     private fun recordingAllowed(): Boolean =
         PrivateListening.allows(ListeningSink.LISTENING_STATS, AppSettings.privateListening.value)
 
@@ -79,6 +89,9 @@ object ListeningRecorder {
         if (!recordingAllowed()) {
             // Keep reminding ourselves which playthrough is private; a private
             // session that moves on to another track must suppress that one too.
+            if (privatePlaythroughId != song.videoId) {
+                Debug.i(TAG, "recents: not recorded, private listening")
+            }
             privatePlaythroughId = song.videoId
             if (currentId != null) {
                 // Anything already counted belongs to the part that was not
@@ -101,6 +114,7 @@ object ListeningRecorder {
         if (song.videoId != currentId) {
             // A new track anchors the clock and contributes nothing yet — see
             // the class note on undercounting.
+            if (startReportedId != song.videoId) startReportedId = null
             currentId = song.videoId
             lastSampleAt = now
             playedThisTrack = 0L
@@ -111,6 +125,7 @@ object ListeningRecorder {
         val step = (now - lastSampleAt).coerceIn(0L, MAX_STEP_MS)
         lastSampleAt = now
         if (step <= 0L) return
+        val playedBefore = playedThisTrack
         playedThisTrack += step
 
         val length = durationMs.takeIf { it > 0 } ?: song.durationMillis()
@@ -123,7 +138,20 @@ object ListeningRecorder {
         if (counts) playCounted = true
 
         val record = enriched(song)
-        ListeningStats.record(record, step, counts)
+        if (announcesRecentsStart(playedBefore, startReportedId, song.videoId)) {
+            startReportedId = song.videoId
+            if (ListeningStats.isReady) {
+                Debug.i(TAG, "recents: start ${record.title} (${record.videoId})")
+                // Files this step and wakes the shelf now. The play count, when
+                // it comes, is a separate event with no time of its own.
+                ListeningStats.recordStarted(record, step)
+                if (counts) ListeningStats.record(record, 0L, countsAsPlay = true)
+            } else {
+                Debug.i(TAG, "recents: not recorded, stats not ready")
+            }
+        } else {
+            ListeningStats.record(record, step, counts)
+        }
 
         // The recommendation store reads the same two events the listening
         // record does, at the moment they are already decided here: a play is
@@ -131,7 +159,10 @@ object ListeningRecorder {
         // close enough to "to the end" that a listener who stops at the outro
         // is not filed as having walked away. Neither runs per sample: the
         // flags keep each event to once per playthrough.
-        if (counts) TasteSignals.onPlayed(record)
+        if (counts) {
+            Debug.i(TAG, "recents: counted ${record.title}")
+            TasteSignals.onPlayed(record)
+        }
         if (!completionCounted && length > 0L && playedThisTrack >= length * 4 / 5) {
             completionCounted = true
             TasteSignals.onCompleted(record)
@@ -275,4 +306,23 @@ object ListeningRecorder {
 
     /** What a YouTube video id looks like, and nothing else this app plays does. */
     private const val YOUTUBE_ID_LENGTH = 11
+
+    /** Diagnostic tag shared with the rest of the Recents trail. */
+    private const val TAG = "BitChord"
 }
+
+/**
+ * Whether this sample is the point at which a track's start is announced.
+ *
+ * [playedBeforeMs] is the track's total before this sample, so zero is the
+ * first positive step. [announcedId] is the track whose start has already been
+ * announced; a pause resets the total but must not announce the same track a
+ * second time.
+ *
+ * Pure so the "at most twice per track" rule can be tested without a player.
+ */
+internal fun announcesRecentsStart(
+    playedBeforeMs: Long,
+    announcedId: String?,
+    videoId: String,
+): Boolean = playedBeforeMs == 0L && announcedId != videoId
