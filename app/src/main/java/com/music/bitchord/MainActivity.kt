@@ -5765,7 +5765,6 @@ private fun BitChordApp(
     }
 }
 
-<<<<<<< HEAD
 /** UIKit's sheet curve: leaves at once, settles long — a sheet let go of, not pushed. */
 private val OnboardingDismissEasing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
@@ -5899,7 +5898,6 @@ private fun FrostedMenuRow(
 private fun String?.isDeviceFolderPage(): Boolean =
     this != null && startsWith("local:") &&
         !startsWith(Downloads.PLAYLIST_PREFIX) && !startsWith(LocalGroups.PREFIX)
-=======
 /**
  * Video rows already offered the music-only swap in this process. The effect
  * that offers it re-runs whenever the activity's UI is rebuilt (returning to
@@ -5907,4 +5905,3 @@ private fun String?.isDeviceFolderPage(): Boolean =
  */
 private val musicOnlyTried: MutableSet<String> =
     java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
->>>>>>> task/char-sync
