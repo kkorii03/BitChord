@@ -497,9 +497,9 @@ internal object YouTubeFallback {
     }
 
     suspend fun recentShelf(): HomeShelf? {
-        cachedHome()?.shelves
-            ?.firstOrNull { it.title.equals(RECENT_TITLE, ignoreCase = true) }
-            ?.let { return it }
+        // Built from the current local record rather than the cached feed: the
+        // cache can be ten minutes old, which is exactly the shelf being asked
+        // about here.
         val songs = try {
             mergedHistory(RECENT_LIMIT)
         } catch (cancelled: CancellationException) {

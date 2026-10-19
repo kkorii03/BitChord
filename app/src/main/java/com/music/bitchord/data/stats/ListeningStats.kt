@@ -11,6 +11,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -108,6 +112,19 @@ object ListeningStats {
      */
     @Volatile
     private var version = 0L
+
+    /**
+     * Emits when a play is counted, so Home's Recents can follow this device's
+     * record the moment a track passes the play threshold. Event-driven: no
+     * timer and no polling. A slow collector may miss an intermediate event,
+     * which is harmless because it reads the whole recent list when it wakes.
+     */
+    private val _changes = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    val changes: SharedFlow<Unit> = _changes.asSharedFlow()
 
     /** The last summary handed out, and what it was computed from. */
     private var cached: Cached? = null
@@ -224,6 +241,9 @@ object ListeningStats {
             bucket.days[day] = (bucket.days[day] ?: 0L) + playedMs
             dirty = true
         }
+        // Outside the lock and only for a counted play: a track becomes the
+        // newest Recents row once, not on every five-second sample.
+        if (countsAsPlay) _changes.tryEmit(Unit)
     }
 
     /**

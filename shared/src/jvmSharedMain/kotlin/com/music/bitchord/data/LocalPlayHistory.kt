@@ -3,6 +3,8 @@ package com.music.bitchord.data
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 /**
  * One play as this device recorded it, with the cover the listener actually saw.
@@ -59,6 +61,12 @@ object LocalPlayHistory {
          * than [olderThanDays] days, oldest last play first.
          */
         suspend fun rediscover(limit: Int, olderThanDays: Int): List<LocalPlay> = emptyList()
+
+        /**
+         * Emits once each time a play is written to [recent], so the Home
+         * Recents shelf can follow the device's own history without polling.
+         */
+        fun changes(): Flow<Unit> = emptyFlow()
     }
 
     /** The signed-in session's display name, for the Listen again strapline. */
@@ -127,6 +135,13 @@ object LocalPlayHistory {
             emptyList()
         }
     }
+
+    /**
+     * Play events from the installed source, or a flow that never completes and
+     * never emits when there is none. Collecting is event-driven: the source
+     * emits when it records a play, not on a timer.
+     */
+    fun changes(): Flow<Unit> = source?.changes() ?: emptyFlow()
 
     /** The signed-in account's name, or null when no session source is installed. */
     fun accountName(): String? = try {

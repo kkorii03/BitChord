@@ -15,6 +15,7 @@ import com.music.bitchord.auth.adjacentProfile
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
@@ -1930,6 +1931,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackTracker.registeredPlays.drop(1).collect { homeStale = true }
         }
         viewModelScope.launch {
+            // Recents is the device's own record first, so a counted play
+            // repaints the shelf from that record — no request and no polling.
+            LocalPlayHistory.changes().collect { refreshRecentsFromLocal() }
+        }
+        viewModelScope.launch {
             // AppSettings has already reset the gate when the route changed;
             // ask once more through the new route and repaint both feeds
             // rather than leaving yesterday's GATED answer on screen.
@@ -2277,7 +2283,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         homeSeenTitles.clear()
         homeSource = null
         _homeLoadingMore.value = false
-        _homeRecentlyPlayedLoading.value = _signedIn.value
+        _homeRecentlyPlayedLoading.value = true
         // The core feed plus one browse per supplement. Recently played is left
         // out: it has its own skeleton at the head of the page rather than the
         // one at the tail.
@@ -2291,6 +2297,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             homeContinuation = feed.continuation
                             homeSource = feed.source
                             publishHomeShelves(feed.shelves)
+                            // A gated feed can be ten minutes old, and its
+                            // Recents must still lead with the latest local play.
+                            refreshRecentsFromLocal()
                         }
                         .onFailure { failure ->
                             if (isCurrentHomeLoad(identity, generation) && _home.value !is UiState.Success) {
@@ -2301,19 +2310,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     homeShelfRequestSettled(identity, generation)
                 }
             }
-            if (_signedIn.value) {
-                launch {
-                    YtMusicRepository.homeRecentlyPlayed()
-                        .onSuccess { shelf ->
-                            if (isCurrentHomeLoad(identity, generation)) {
-                                _homeRecentlyPlayedLoading.value = false
-                                shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
-                            }
+            // Not signed-in gated: the local half of Recents needs no account.
+            launch {
+                YtMusicRepository.homeRecentlyPlayed()
+                    .onSuccess { shelf ->
+                        if (isCurrentHomeLoad(identity, generation)) {
+                            _homeRecentlyPlayedLoading.value = false
+                            shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
                         }
-                        .onFailure {
-                            if (isCurrentHomeLoad(identity, generation)) _homeRecentlyPlayedLoading.value = false
-                        }
-                }
+                    }
+                    .onFailure {
+                        if (isCurrentHomeLoad(identity, generation)) _homeRecentlyPlayedLoading.value = false
+                    }
             }
             YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.forEach { browseId ->
                 launch {
@@ -2340,6 +2348,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun isCurrentHomeLoad(identity: String?, generation: Long) =
         identity == listenerKey() && generation == homeLoadGeneration.get()
+
+    /**
+     * Repaints Recents from the device's own record after a counted play.
+     *
+     * The shelf is rebuilt from local plays only, with whatever account rows
+     * are already on screen kept after them: no feed request, no cover lookup,
+     * no polling. A page that has not loaded yet is left for its own load.
+     */
+    private suspend fun refreshRecentsFromLocal() {
+        val shown = (_home.value as? UiState.Success)?.data ?: return
+        val index = shown.indexOfFirst { isRecentsTitle(it.title) }
+        val previous = shown.getOrNull(index)?.items.orEmpty()
+        val shelf = YtMusicRepository.localRecentShelf(previous)?.takeIf { it.items.isNotEmpty() }
+            ?: return
+        // The flow can wake after a load or sign-out replaced the page.
+        val current = (_home.value as? UiState.Success)?.data ?: return
+        val currentIndex = current.indexOfFirst { isRecentsTitle(it.title) }
+        if (currentIndex < 0) {
+            homeSeenTitles.add(RECENTS_TITLE.lowercase(Locale.ROOT))
+            _home.value = UiState.Success(listOf(shelf) + current)
+        } else {
+            _home.value = UiState.Success(
+                current.toMutableList().apply { set(currentIndex, shelf) },
+            )
+        }
+    }
+
+    private fun isRecentsTitle(title: String): Boolean =
+        title.trim().equals(RECENTS_TITLE, ignoreCase = true)
 
     private fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
         val existing = (_home.value as? UiState.Success)?.data.orEmpty()
@@ -2386,7 +2423,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _homePendingShelves.value = 0
         _homeRecentlyPlayedLoading.value = false
         val previous = (_home.value as? UiState.Success)?.data.orEmpty()
-        val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
+        val recent = async { YtMusicRepository.homeRecentlyPlayed() }
         YtMusicRepository.home(force = force).onSuccess { feed ->
             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
             val merge = mergeHomeShelves(
@@ -2400,6 +2437,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             homeSeenTitles.clear()
             homeSeenTitles.addAll(merge.shelves.map { it.title.lowercase(Locale.ROOT) })
             if (merge.shelves.isNotEmpty()) _home.value = UiState.Success(merge.shelves)
+            // The gated feed may have answered from its cache; the local
+            // record is newer and costs no request.
+            refreshRecentsFromLocal()
             if (merge.kept.isNotEmpty()) {
                 com.music.bitchord.data.DebugLog.i(
                     "BitChord",
@@ -2416,7 +2456,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
-        recent?.await()?.onSuccess { shelf ->
+        recent.await().onSuccess { shelf ->
             if (isCurrentHomeLoad(identity, generation)) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
         }
     }
@@ -2979,6 +3019,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** The app's own Recents key, as the feed and the shelf-title localiser use it. */
+        private const val RECENTS_TITLE = "Recents"
+
         /** How long startup has to settle before the non-start tabs are fetched. */
         private const val STARTUP_DEFER_MS = 2_000L
 

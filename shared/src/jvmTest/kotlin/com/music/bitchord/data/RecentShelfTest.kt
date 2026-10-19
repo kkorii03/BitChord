@@ -84,4 +84,28 @@ class RecentShelfTest {
         assertEquals(5, merged.size)
         assertEquals(listOf("a", "r1", "r2", "r3", "r4"), merged.map { it.videoId })
     }
+
+    @Test
+    fun `the just-played track leads local newest first, then remote without repeats`() {
+        val plays = listOf(
+            play("old-local", 100),
+            play("just-played", 500, cover = "local-cover"),
+            play("middle-local", 300),
+        )
+        val remote = listOf(
+            song("just-played", cover = "remote-cover"),
+            song("remote-older"),
+            song("middle-local"),
+            song("remote-newer"),
+        )
+
+        val merged = RecentShelf.merge(RecentShelf.localSongs(plays), remote)
+
+        assertEquals(
+            listOf("just-played", "middle-local", "old-local", "remote-older", "remote-newer"),
+            merged.map { it.videoId },
+        )
+        // The local row wins even when the account history also has that id.
+        assertEquals("local-cover", merged.first().thumbnailUrl)
+    }
 }

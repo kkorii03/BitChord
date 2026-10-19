@@ -249,40 +249,67 @@ object YtMusicRepository {
     }
 
     /**
-     * The lead shelf: the account's listening history, newest first.
+     * The lead shelf: the device's own plays first, then the account's
+     * listening history.
      *
-     * YouTube's home already carries a "Listen again", but it ranks by how
-     * *often* something has been played rather than how recently — so it keeps
-     * leading with last month's favourites for days after a change of mood,
-     * which reads as the feed being broken. The history feed reflects a play
-     * the moment it's registered, so it's what the top of the page is built
-     * from. YouTube's own shelf stays below, where its ranking is a feature.
+     * The local record is what this listener just heard here, so it is the
+     * authority for the top of the shelf and is already newest-first. The
+     * account's history follows it, de-duplicated, for listening in other
+     * clients — and because YouTube's own "Listen again" ranks by how *often*
+     * something was played rather than how *recently*, so it keeps leading
+     * with last month's favourites after a change of mood. YouTube's own shelf
+     * stays below, where its ranking is a feature.
      *
-     * Signed-in only; there is no history to read as a guest.
+     * The remote half is signed-in only; the local half works for a guest.
      */
     private suspend fun recentlyPlayed(): HomeShelf? {
-        val ytSongs = if (Innertube.cookie != null) {
+        val local = RecentShelf.localSongs(LocalPlayHistory.recent(RECENT_LIMIT))
+        val ytSongs = if (Innertube.cookie != null && local.size < RecentShelf.LOCAL_ONLY_MINIMUM) {
             runCatching { fetchHistory() }.getOrDefault(emptyList())
         } else {
             emptyList()
         }
-
-        val allSongs = ytSongs.distinctBy { it.videoId }.take(RECENT_LIMIT)
+        val allSongs = RecentShelf.merge(local, ytSongs, RECENT_LIMIT)
         if (allSongs.isEmpty()) return null
-        return HomeShelf(
-            title = RECENT_TITLE,
-            // A cover reads as its song here too ("Someone like you" / "Adele · 오화요
-            // 커버"), as it does in the player, not as the upload's own title.
-            items = allSongs.map { com.music.bitchord.data.cover.CoverTitles.applyTo(it) }.map {
-                ShelfItem(
-                    title = it.title,
-                    subtitle = it.artist,
-                    thumbnailUrl = it.thumbnailUrl,
-                    videoId = it.videoId,
-                    browseId = null,
-                )
-            },
-        )
+        return recentsShelf(allSongs)
+    }
+
+    /**
+     * The Recents shelf built from this device alone, followed by [previous]
+     * rows already on screen that local history does not already cover.
+     *
+     * Used when a play is counted while Home is open: it never asks the
+     * network, so the shelf follows the local record without re-downloading
+     * the feed, and the account rows already shown stay below the local ones.
+     */
+    suspend fun localRecentShelf(previous: List<ShelfItem> = emptyList()): HomeShelf? {
+        val local = RecentShelf.localSongs(LocalPlayHistory.recent(RECENT_LIMIT))
+        val remote = previous.mapNotNull { item ->
+            val videoId = item.videoId?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Song(
+                videoId = videoId,
+                title = item.title,
+                artist = item.subtitle,
+                thumbnailUrl = item.thumbnailUrl,
+            )
+        }
+        return recentsShelf(RecentShelf.merge(local, remote, RECENT_LIMIT))
+    }
+
+    /** [songs] as the Recents shelf, with covers shown the way the player shows them. */
+    private fun recentsShelf(songs: List<Song>): HomeShelf {
+        // A cover reads as its song here too, as it does in the player, not as
+        // the upload's own title.
+        val items = songs.map { com.music.bitchord.data.cover.CoverTitles.applyTo(it) }.map {
+            ShelfItem(
+                title = it.title,
+                subtitle = it.artist,
+                thumbnailUrl = it.thumbnailUrl,
+                videoId = it.videoId,
+                browseId = null,
+            )
+        }
+        return HomeShelf(title = RECENT_TITLE, items = items)
     }
 
     /**
@@ -310,14 +337,16 @@ object YtMusicRepository {
         if (ensureGateKnown()) YouTubeFallback.history() else fetchHistory()
     }
 
-    /** Account listening history for the Recents feed. */
+    /** Account listening history for the Recents feed, the device's own plays first. */
     suspend fun recents(): Result<List<Song>> = call("recents") {
         if (ensureGateKnown()) return@call YouTubeFallback.history()
-        if (Innertube.cookie != null) {
-            val history = runCatching { fetchHistory() }.getOrDefault(emptyList())
-            if (history.isNotEmpty()) return@call history
+        val local = RecentShelf.localSongs(LocalPlayHistory.recent(RECENT_LIMIT))
+        val remote = if (Innertube.cookie != null && local.size < RecentShelf.LOCAL_ONLY_MINIMUM) {
+            runCatching { fetchHistory() }.getOrDefault(emptyList())
+        } else {
+            emptyList()
         }
-        emptyList()
+        RecentShelf.merge(local, remote, RECENT_LIMIT)
     }
 
     /**

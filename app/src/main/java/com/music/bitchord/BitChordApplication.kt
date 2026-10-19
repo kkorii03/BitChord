@@ -172,6 +172,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
 
             override suspend fun rediscover(limit: Int, olderThanDays: Int) =
                 ListeningStats.rediscover(limit, olderThanDays)
+
+            override fun changes() = ListeningStats.changes
         })
         // The strapline under the old Listen again shelf: the account the
         // session is acting as, not a fresh network identity lookup.
