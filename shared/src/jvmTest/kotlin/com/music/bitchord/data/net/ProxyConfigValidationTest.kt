@@ -99,7 +99,7 @@ class ProxyConfigValidationTest {
     }
 
     @Test
-    fun `toString never carries the password`() {
+    fun `toString never carries the credentials`() {
         val text = ProxyConfig(
             mode = ProxyMode.HTTP,
             host = "proxy.example",
@@ -108,6 +108,7 @@ class ProxyConfigValidationTest {
             password = "super-secret",
         ).toString()
 
+        assertFalse(text.contains("listener"))
         assertFalse(text.contains("super-secret"))
         assertTrue(text.contains("'***'"))
     }

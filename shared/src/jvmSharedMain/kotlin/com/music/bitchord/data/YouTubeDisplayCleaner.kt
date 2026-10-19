@@ -28,8 +28,11 @@ internal object YouTubeDisplayCleaner {
      * names its song and artist, while an OMV/UGC upload is packaging that
      * [clean] has to rewrite.
      */
-    fun cleanUpload(song: Song, knownArtists: Set<String> = emptySet()): Song =
-        if (song.albumId != null) song else clean(song, knownArtists)
+    fun cleanUpload(song: Song, knownArtists: Set<String> = emptySet()): Song {
+        if (song.albumId != null) return song
+        val credit = song.artist.trim()
+        return clean(song, if (credit.isEmpty()) knownArtists else knownArtists + credit)
+    }
 
     /** A song with its display metadata cleaned; every other field is preserved. */
     fun clean(song: Song, knownArtists: Set<String> = emptySet()): Song {

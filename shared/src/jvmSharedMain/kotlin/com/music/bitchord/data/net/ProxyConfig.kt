@@ -42,8 +42,8 @@ enum class ProxyConfigError {
  *
  * The password is here because OkHttp needs it per request; the persisted copy
  * lives in the encrypted credential store (see AuthStore), and this type's
- * [toString] redacts it so the object can never spill a credential into a log
- * line through an accidental interpolation.
+ * [toString] redacts both credentials so the object can never spill one into a
+ * log line through an accidental interpolation.
  */
 data class ProxyConfig(
     val mode: ProxyMode = ProxyMode.OFF,
@@ -65,7 +65,8 @@ data class ProxyConfig(
     )
 
     override fun toString(): String =
-        "ProxyConfig(mode=$mode, host='$host', port=$port, username='$username', " +
+        "ProxyConfig(mode=$mode, host='$host', port=$port, " +
+            "username=${if (username.isEmpty()) "''" else "'***'"}, " +
             "password=${if (password.isEmpty()) "''" else "'***'"}, scope=$scope)"
 }
 

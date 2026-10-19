@@ -4,6 +4,7 @@ import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.net.LogUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -151,15 +152,16 @@ object StreamResolver {
                 TrackLog.w(
                     TAG,
                     "extractor fetch FAILED after ${MonotonicClock.nowMs() - requestStart}ms " +
-                        "${request.httpMethod()} ${request.url()}: ${e.javaClass.simpleName}: ${e.message}",
+                        "${request.httpMethod()} ${LogUrl.of(request.url())}: " +
+                        "${e.javaClass.simpleName}: ${e.message}",
                 )
                 throw e
             }
             val took = MonotonicClock.nowMs() - requestStart
             if (took > SLOW_FETCH_MS) {
-                TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
+                TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${LogUrl.of(request.url())}")
             } else {
-                TrackLog.d(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
+                TrackLog.d(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${LogUrl.of(request.url())}")
             }
             if (response.code == 429) {
                 response.close()
