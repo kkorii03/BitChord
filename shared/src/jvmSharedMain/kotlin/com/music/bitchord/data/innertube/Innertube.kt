@@ -703,6 +703,30 @@ object Innertube {
     }
 
     /**
+     * A public youtube.com page read without the listener's account.
+     *
+     * Used for YouTube Music's editorial `RDCLAK` playlists: their Music page
+     * answers no rows anonymously, while youtube.com's WEB browse of the same
+     * `VLRDCLAK…` id does. No cookie, no session visitor id, no account.
+     */
+    suspend fun browseYouTubeAnonymous(
+        browseId: String,
+        params: String? = null,
+    ): JsonObject = postYouTube("browse", anonymous = true) {
+        put("browseId", browseId)
+        params?.let { put("params", it) }
+    }
+
+    /** The next page of an anonymous youtube.com public browse. */
+    suspend fun browseYouTubeContinuationAnonymous(token: String): JsonObject = postYouTube(
+        endpoint = "browse",
+        query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
+        anonymous = true,
+    ) {
+        put("continuation", token)
+    }
+
+    /**
      * The category YouTube's own player metadata states for [videoId], read
      * without the listener's account.
      *
@@ -907,6 +931,22 @@ object Innertube {
     ) {
         put("continuation", token)
     }
+
+    /**
+     * YouTube Music's featured-playlist search filter (measured Korean IP,
+     * 2026-10-19). It answers YouTube-Music-authored `RDCLAK` collections,
+     * each with square editorial artwork.
+     */
+    const val FEATURED_PLAYLISTS_PARAMS = "EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ="
+
+    /** The same search filtered to community playlists. */
+    const val COMMUNITY_PLAYLISTS_PARAMS = "EgeKAQQoAEABagwQDhAKEAMQBRAJEAQ="
+
+    suspend fun searchFeaturedPlaylists(query: String): JsonObject =
+        search(query, FEATURED_PLAYLISTS_PARAMS)
+
+    suspend fun searchCommunityPlaylists(query: String): JsonObject =
+        search(query, COMMUNITY_PLAYLISTS_PARAMS)
 
     /**
      * The typeahead list YouTube Music's own search box shows for a
@@ -1608,24 +1648,33 @@ object Innertube {
         hl: String = currentLanguage,
         gl: String = currentCountry,
         ios: Boolean = false,
+        anonymous: Boolean = false,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // The session scope is read from the Music shell, which a gated Korean
         // session is refused; youtube.com does not need it to answer, so a
         // failure here must not take the fallback down with it.
-        if (cookie != null) {
+        if (!anonymous && cookie != null) {
             runCatching { ensureSessionScope() }
                 .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
-        val session = scope
-        val credentials = accountHeadersFor(
-            endpoint = endpoint,
-            cookie = cookie,
-            authUser = authUserFor(session),
-            pageId = pageIdFor(session),
-            authorization = { cookie?.let { c -> authorizationFor(c, YOUTUBE_ORIGIN) } },
-        )
-        val visitor = visitorData ?: ensureVisitorData()
+        val session = if (anonymous) null else scope
+        val credentials = if (anonymous) {
+            emptyMap<String, String>()
+        } else {
+            accountHeadersFor(
+                endpoint = endpoint,
+                cookie = cookie,
+                authUser = authUserFor(session),
+                pageId = pageIdFor(session),
+                authorization = { cookie?.let { c -> authorizationFor(c, YOUTUBE_ORIGIN) } },
+            )
+        }
+        val visitor = if (anonymous) {
+            ensureAnonymousVisitorData()
+        } else {
+            visitorData ?: ensureVisitorData()
+        }
         val clientId = if (ios) IOS_CLIENT_ID else WEB_CLIENT_ID
         val clientVersion = if (ios) IOS_CLIENT_VERSION else WEB_VERSION
         val userAgent = if (ios) IOS_USER_AGENT else WEB_USER_AGENT
@@ -1664,7 +1713,9 @@ object Innertube {
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
-                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                if (!anonymous) {
+                                    dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }
@@ -1673,7 +1724,12 @@ object Innertube {
                 )
             }.body<JsonObject>()
         }
-        if (visitorData == null) {
+        if (anonymous) {
+            if (anonymousVisitorData == null) {
+                anonymousVisitorData = response["responseContext"]?.jsonObject
+                    ?.get("visitorData")?.jsonPrimitive?.content
+            }
+        } else if (visitorData == null) {
             visitorData = response["responseContext"]?.jsonObject
                 ?.get("visitorData")?.jsonPrimitive?.content
         }

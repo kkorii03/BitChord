@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
@@ -8,80 +9,99 @@ import com.music.bitchord.data.sources.TrackMatcher
 /**
  * The pure rules behind a curated mood/genre page on the youtube.com fallback.
  *
- * A tile's page is rebuilt from anonymous searches rather than YouTube Music's
- * gated mood feed. The same category is asked three ways so one search engine
- * ranking cannot decide the whole page, and the video results are narrowed to
- * single songs because a search for "발라드" also returns hour-long compilations.
+ * A tile's page is rebuilt from YouTube Music's own playlists rather than the
+ * gated mood feed: the featured-playlist search answers YouTube-Music-authored
+ * `RDCLAK` collections, the top one supplies a real track list, and the
+ * community search supplies the rest. No youtube.com playlist or video search
+ * decides a category any more — those returned compilation uploads.
  */
 internal object YouTubeCategoryRules {
 
-    /** A single song is no shorter than this when the row states a runtime. */
-    const val MIN_SINGLE_SECONDS = 90
+    /** YouTube Music's featured-playlist search filter (measured Korean IP, 2026-10-19). */
+    const val FEATURED_PLAYLIST_PARAMS = Innertube.FEATURED_PLAYLISTS_PARAMS
 
-    /** And no longer than eight minutes; longer rows are mixes or compilations. */
-    const val MAX_SINGLE_SECONDS = 8 * 60
+    /** Its community-playlist search filter. */
+    const val COMMUNITY_PLAYLIST_PARAMS = Innertube.COMMUNITY_PLAYLISTS_PARAMS
 
-    /** One per playlist query, in order. Extra queries have no shelf. */
-    val PLAYLIST_SHELF_TITLES = listOf("추천 재생목록", "인기 재생목록", "더 보기")
+    /** The raw playlist-id prefix of a YouTube Music editorial collection. */
+    const val OFFICIAL_PLAYLIST_PREFIX = "RDCLAK"
 
-    /** The three searches that populate the playlist shelves. */
-    fun playlistQueries(category: ExploreCategory): List<String> = listOf(
-        category.query,
-        "${category.title} 노래 모음",
-        category.englishQuery,
-    ).map { it.replace(Regex("""\s+"""), " ").trim() }
-        .filter { it.isNotEmpty() }
-        .distinct()
+    /** The owner YouTube Music bills its editorial playlists to. */
+    const val OFFICIAL_PLAYLIST_AUTHOR = "YouTube Music"
 
-    /** The songs shelf asks for the category itself, not for a playlist of it. */
-    fun songQuery(category: ExploreCategory): String = category.query
-        .replace(Regex("""(?i)\s*플레이리스트\s*$"""), "")
-        .replace(Regex("""(?i)\s*playlist\s*$"""), "")
-        .trim()
-        .ifBlank { category.title }
+    const val OFFICIAL_SHELF_TITLE = "YouTube Music 추천 재생목록"
+    const val SONGS_SHELF_TITLE = "노래"
+    const val COMMUNITY_SHELF_TITLE = "커뮤니티 재생목록"
+
+    /** The songs shelf is the top official playlist's first page of tracks. */
+    const val OFFICIAL_TRACK_LIMIT = 25
+
+    /** Longer rows are compilations rather than one of the playlist's songs. */
+    const val MAX_OFFICIAL_TRACK_SECONDS = 10 * 60
+
+    /** The tile's own Korean term, or the measured per-tile override. */
+    fun searchTerm(category: ExploreCategory): String =
+        (category.queryOverride?.takeIf { it.isNotBlank() } ?: category.query)
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .ifBlank { category.title }
+
+    /** A YouTube Music editorial playlist: `RDCLAK…` art billed to YouTube Music. */
+    fun isOfficialPlaylist(item: ShelfItem): Boolean {
+        val playlistId = item.browseId?.removePrefix("VL") ?: return false
+        if (!playlistId.startsWith(OFFICIAL_PLAYLIST_PREFIX)) return false
+        return item.subtitle.contains(OFFICIAL_PLAYLIST_AUTHOR, ignoreCase = true)
+    }
+
+    fun officialPlaylists(items: List<ShelfItem>): List<ShelfItem> = items.filter(::isOfficialPlaylist)
 
     /**
-     * One shelf per query, in order. An item already shown by an earlier shelf
-     * is dropped, and a shelf left empty is omitted rather than drawn as a
-     * heading.
+     * Whether a row from an official playlist is one song rather than a
+     * compilation. A stated runtime over ten minutes is the decisive answer;
+     * the title markers catch a mix that claims to be shorter.
      */
-    fun playlistShelves(
-        groups: List<List<ShelfItem>>,
+    fun isOfficialTrack(song: Song): Boolean {
+        val seconds = TrackMatcher.secondsOf(song.durationText)
+        if (seconds != null && seconds > MAX_OFFICIAL_TRACK_SECONDS) return false
+        return !COMPILATION_MARKER.containsMatchIn(TrackMatcher.normalize(song.title))
+    }
+
+    /**
+     * The page's shelves in YouTube Music's order: editorial playlists, the
+     * top playlist's songs, then community playlists. Empty shelves are
+     * omitted, and a playlist already shown by an earlier shelf is dropped.
+     */
+    fun categoryShelves(
+        official: List<ShelfItem>,
+        songs: List<ShelfItem>,
+        community: List<ShelfItem>,
         limitPerShelf: Int,
+        songLimit: Int = OFFICIAL_TRACK_LIMIT,
     ): List<HomeShelf> {
-        if (limitPerShelf <= 0) return emptyList()
         val seen = HashSet<String>()
-        val out = ArrayList<HomeShelf>(groups.size)
-        groups.forEachIndexed { index, items ->
-            val title = PLAYLIST_SHELF_TITLES.getOrNull(index) ?: return@forEachIndexed
-            val fresh = items.asSequence()
+        fun fresh(items: List<ShelfItem>, limit: Int): List<ShelfItem> {
+            if (limit <= 0) return emptyList()
+            return items.asSequence()
                 .filter { item ->
                     val key = item.browseId
                         ?: item.videoId
                         ?: "${item.title}\n${item.subtitle}"
                     key.isNotBlank() && seen.add(key)
                 }
-                .take(limitPerShelf)
+                .take(limit)
                 .toList()
-            if (fresh.isNotEmpty()) out += HomeShelf(title, fresh)
         }
-        return out
-    }
-
-    /**
-     * Whether [song] is one track rather than a playlist upload.
-     *
-     * Duration is checked only when the row states one. The title rules catch
-     * the compilations that fit inside eight minutes too ("[PLAYLIST] …",
-     * "노래 모음", "1시간", "mix").
-     */
-    fun isSingleSong(song: Song): Boolean {
-        val seconds = TrackMatcher.secondsOf(song.durationText)
-        if (seconds != null && (seconds < MIN_SINGLE_SECONDS || seconds > MAX_SINGLE_SECONDS)) {
-            return false
+        return buildList {
+            fresh(official, limitPerShelf)
+                .takeIf { it.isNotEmpty() }
+                ?.let { add(HomeShelf(OFFICIAL_SHELF_TITLE, it)) }
+            fresh(songs, songLimit)
+                .takeIf { it.isNotEmpty() }
+                ?.let { add(HomeShelf(SONGS_SHELF_TITLE, it)) }
+            fresh(community, limitPerShelf)
+                .takeIf { it.isNotEmpty() }
+                ?.let { add(HomeShelf(COMMUNITY_SHELF_TITLE, it)) }
         }
-        val title = TrackMatcher.normalize(song.title)
-        return !COMPILATION_MARKER.containsMatchIn(title)
     }
 
     private val COMPILATION_MARKER = Regex(

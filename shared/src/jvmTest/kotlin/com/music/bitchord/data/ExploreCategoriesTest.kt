@@ -35,6 +35,17 @@ class ExploreCategoriesTest {
     }
 
     @Test
+    fun `queries are the Korean mood and genre terms themselves`() {
+        assertEquals("운동", ExploreCategories.find("ytq:workout")!!.query)
+        assertEquals("잠잘 때", ExploreCategories.find("ytq:sleep")!!.query)
+        assertEquals("편안한", ExploreCategories.find("ytq:chill")!!.query)
+        assertEquals("K-pop", ExploreCategories.find("ytq:kpop")!!.query)
+        assertEquals("로맨스", ExploreCategories.find("ytq:romance")!!.query)
+        // The measured per-tile override is optional and unused by default.
+        assertNull(ExploreCategories.find("ytq:workout")!!.queryOverride)
+    }
+
+    @Test
     fun `sections put moods before genres`() {
         assertEquals(listOf("분위기·상황", "장르"), ExploreCategories.sections.map { it.first })
         assertEquals(ExploreCategories.moods, ExploreCategories.sections[0].second)

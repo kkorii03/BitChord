@@ -115,6 +115,84 @@ object InnertubeParser {
     }
 
     /**
+     * Playlist cards from a Music search filtered to playlists.
+     *
+     * The subtitle is reduced to the row's owner, because that is what tells a
+     * YouTube Music editorial collection ("YouTube Music") from a listener's
+     * or channel's playlist. Browse ids keep their `VL` prefix; an editorial
+     * one is a `VLRDCLAK…` id.
+     */
+    fun parseMusicPlaylistCards(response: JsonObject): List<ShelfItem> {
+        val out = LinkedHashMap<String, ShelfItem>()
+        fun add(item: ShelfItem?) {
+            val browseId = item?.browseId ?: return
+            val playlistId = browseId.removePrefix("VL")
+            if (!browseId.startsWith("VL") && !playlistId.startsWith("RD")) return
+            if (playlistId.startsWith("OLAK") || playlistId.startsWith("MPRE")) return
+            val author = playlistAuthor(item.subtitle)
+            out.putIfAbsent(browseId, item.copy(subtitle = author.ifBlank { item.subtitle }))
+        }
+        fun addBrowse(browse: BrowseItem?) {
+            browse ?: return
+            add(ShelfItem(browse.title, browse.subtitle, browse.thumbnailUrl, null, browse.browseId))
+        }
+        // One document-order walk: a promoted card above the rows must stay the
+        // first official playlist, not move after them.
+        fun visit(element: JsonElement?) {
+            when (element) {
+                is JsonObject -> element.forEach { (key, value) ->
+                    when (key) {
+                        "musicResponsiveListItemRenderer" -> {
+                            val renderer = value as? JsonObject ?: return@forEach
+                            val browse = parseBrowseItem(renderer) ?: return@forEach
+                            add(
+                                ShelfItem(
+                                    browse.title,
+                                    playlistBilling(renderer, browse.subtitle),
+                                    browse.thumbnailUrl,
+                                    null,
+                                    browse.browseId,
+                                ),
+                            )
+                        }
+                        "musicCardShelfRenderer" -> addBrowse(
+                            parseCardShelfBrowse(value as? JsonObject ?: return@forEach),
+                        )
+                        "musicTwoRowItemRenderer" -> add(parseTwoRowItem(value as? JsonObject))
+                        else -> visit(value)
+                    }
+                }
+                is JsonArray -> element.forEach(::visit)
+                else -> Unit
+            }
+        }
+        visit(response)
+        return out.values.toList()
+    }
+
+    /** The owner out of "Playlist • YouTube Music" / "YouTube Music". */
+    private fun playlistAuthor(subtitle: String): String {
+        val parts = subtitle.split("•", "·", "|").map(String::trim).filter { it.isNotBlank() }
+        return parts.firstOrNull {
+            it.lowercase(Locale.ROOT) !in TYPE_WORDS && !it.matches(TALLY) && !it.matches(YEAR)
+        } ?: parts.firstOrNull().orEmpty()
+    }
+
+    /**
+     * Every subtitle column of a search row, not just the first: a playlist
+     * row can split "Playlist" and its owner across two columns.
+     */
+    private fun playlistBilling(renderer: JsonObject, fallback: String): String =
+        renderer.a("flexColumns").orEmpty()
+            .drop(1)
+            .mapNotNull { column ->
+                column.o("musicResponsiveListItemFlexColumnRenderer").o("text").runs()
+                    .takeIf { it.isNotBlank() }
+            }
+            .joinToString(" · ")
+            .ifBlank { fallback }
+
+    /**
      * The typeahead queries out of a `music/get_search_suggestions` response.
      *
      * Two sections come back. The first is what this reads: query strings, as

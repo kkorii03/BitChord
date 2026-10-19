@@ -6,8 +6,8 @@ import com.music.bitchord.data.charts.ChartsApi
 import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.cover.squareFriendlyThumbnail
 import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.YouTubeWebParser
-import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.model.ChartsPage
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
@@ -73,7 +73,12 @@ internal object YouTubeFallback {
     private const val CATEGORY_CACHE_MS = 6L * 60 * 60 * 1000
     /** How many rows each curated category shelf keeps from one search page. */
     private const val CATEGORY_LIMIT = 20
+    /** The songs shelf is the top official playlist's first 25 tracks. */
+    private const val CATEGORY_SONG_LIMIT = YouTubeCategoryRules.OFFICIAL_TRACK_LIMIT
+    /** Covers resolved for the first page of a category/detail listing. */
+    private const val CATEGORY_COVER_LIMIT = 20
 
+    /** Tokens this fallback issued, mapped to whether their next page must be anonymous. */
     private val continuationTokens = ConcurrentHashMap<String, Boolean>()
 
     private val channelLock = Mutex()
@@ -613,47 +618,81 @@ internal object YouTubeFallback {
     }
 
     /**
-     * One curated category, from three anonymous youtube.com searches: three
-     * playlist shelves (deduped across the queries) and a songs shelf narrowed
-     * to single tracks. The result is cached for [CATEGORY_CACHE_MS]; an empty
-     * answer is not cached so a later tap can try again.
+     * One curated category, built from YouTube Music's own searches:
+     *
+     *  - the featured-playlist filter, keeping only YouTube-Music-authored
+     *    `RDCLAK` collections (first shelf, and the tile's square artwork);
+     *  - the top official playlist's first 25 tracks, read anonymously from
+     *    youtube.com's WEB browse of the same id (second shelf);
+     *  - the community-playlist filter for the rest (third shelf).
+     *
+     * No youtube.com playlist or video search is used here any more: those
+     * answered compilation uploads rather than songs. The result is cached for
+     * [CATEGORY_CACHE_MS]; an empty answer is not cached so a later tap can
+     * try again.
      */
     private suspend fun curatedCategoryShelves(category: ExploreCategory): List<HomeShelf> {
         val browseId = ExploreCategories.browseId(category)
         cachedCategory(browseId)?.let { return it }
         return categoryLock.withLock {
             cachedCategory(browseId)?.let { return@withLock it }
-            val playlistGroups = YouTubeCategoryRules.playlistQueries(category).map { query ->
-                runCatching { YouTubeWebSearch.playlists(query) }
-                    .onFailure {
-                        if (it is CancellationException) throw it
-                        Log.w(TAG, "YouTube playlist search failed: ${it.message}")
-                    }
-                    .getOrDefault(emptyList())
-            }
-            val shelves = YouTubeCategoryRules
-                .playlistShelves(playlistGroups, CATEGORY_LIMIT)
-                .toMutableList()
-            val songs = runCatching {
-                YouTubeWebSearch.songs(YouTubeCategoryRules.songQuery(category))
-            }
+            val term = YouTubeCategoryRules.searchTerm(category)
+            val official = runCatching { Innertube.searchFeaturedPlaylists(term) }
                 .onFailure {
                     if (it is CancellationException) throw it
-                    Log.w(TAG, "YouTube song search failed: ${it.message}")
+                    Log.w(TAG, "Music featured-playlist search failed: ${it.message}")
                 }
-                .getOrDefault(emptyList())
-                .let(::cheapMusicOnly)
-                .filter(YouTubeCategoryRules::isSingleSong)
-                .map(::displaySong)
-                .distinctBy { it.videoId }
+                .getOrNull()
+                ?.let(InnertubeParser::parseMusicPlaylistCards)
+                .orEmpty()
+                .let(YouTubeCategoryRules::officialPlaylists)
                 .take(CATEGORY_LIMIT)
-            if (songs.isNotEmpty()) shelves += HomeShelf("노래", songs.map(::shelfItem))
-            val result = shelves.toList()
-            if (result.isNotEmpty()) {
-                categoryCache[browseId] = System.currentTimeMillis() to result
+            val songs = official.firstOrNull()?.browseId?.let { id ->
+                runCatching { officialPlaylistSongs(id, CATEGORY_SONG_LIMIT) }
+                    .onFailure {
+                        if (it is CancellationException) throw it
+                        Log.w(TAG, "Official playlist $id failed: ${it.message}")
+                    }
+                    .getOrDefault(emptyList())
+            }.orEmpty()
+            val community = runCatching { Innertube.searchCommunityPlaylists(term) }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    Log.w(TAG, "Music community-playlist search failed: ${it.message}")
+                }
+                .getOrNull()
+                ?.let(InnertubeParser::parseMusicPlaylistCards)
+                .orEmpty()
+                .take(CATEGORY_LIMIT)
+            val shelves = YouTubeCategoryRules.categoryShelves(
+                official = official,
+                songs = songs.map(::shelfItem),
+                community = community,
+                limitPerShelf = CATEGORY_LIMIT,
+                songLimit = CATEGORY_SONG_LIMIT,
+            )
+            if (shelves.isNotEmpty()) {
+                categoryCache[browseId] = System.currentTimeMillis() to shelves
             }
-            result
+            shelves
         }
+    }
+
+    /**
+     * The top official playlist's first [limit] songs, read anonymously from
+     * youtube.com's WEB browse of the `VLRDCLAK…` id: Music's own browse of
+     * these collections answers no rows without an account (measured).
+     * Runtimes are kept, long compilations are dropped, and the first visible
+     * page's titles/artists go through the display cleaner and cover resolver.
+     */
+    private suspend fun officialPlaylistSongs(browseId: String, limit: Int): List<Song> {
+        val page = webPlaylistPage(browseId, anonymous = true)
+        val songs = page.songs.asSequence()
+            .filter(YouTubeCategoryRules::isOfficialTrack)
+            .take(limit)
+            .map(::displaySong)
+            .toList()
+        return YouTubeCoverResolver.enrich(songs, CATEGORY_COVER_LIMIT)
     }
 
     private fun cachedCategory(
@@ -685,10 +724,11 @@ internal object YouTubeFallback {
     }
 
     /**
-     * The cover for one curated tile: the first playlist the tile's own search
-     * returns, in the same 16:9 `hq720` frame the rows use. Only a tile the UI
-     * has made visible asks for this, and [artworkLock] caps the work at three
-     * searches at once; the settled answer is reused for [ExploreCategoryArtworkCache.TTL_MS].
+     * The cover for one curated tile: the square Music artwork of the first
+     * YouTube-Music-authored `RDCLAK` playlist its own featured search
+     * returns. Only a tile the UI has made visible asks for this, and
+     * [artworkLock] caps the work at three searches at once; the settled
+     * answer is reused for [ExploreCategoryArtworkCache.TTL_MS].
      */
     internal suspend fun categoryArtwork(
         browseId: String,
@@ -698,31 +738,19 @@ internal object YouTubeFallback {
         cachedCategoryArtwork(browseId, now)?.let { return it }
         return artworkLock.withPermit {
             cachedCategoryArtwork(browseId, now)?.let { return@withPermit it }
-            val query = YouTubeCategoryRules.playlistQueries(category).firstOrNull()
-                ?: return@withPermit null
-            val url = runCatching { YouTubeWebSearch.playlists(query) }
+            val term = YouTubeCategoryRules.searchTerm(category)
+            val url = runCatching { Innertube.searchFeaturedPlaylists(term) }
                 .onFailure {
                     if (it is CancellationException) throw it
-                    Log.w(TAG, "YouTube playlist artwork search failed: ${it.message}")
+                    Log.w(TAG, "Music playlist artwork search failed: ${it.message}")
                 }
-                .getOrDefault(emptyList())
+                .getOrNull()
+                ?.let(InnertubeParser::parseMusicPlaylistCards)
+                .orEmpty()
+                .let(YouTubeCategoryRules::officialPlaylists)
                 .firstNotNullOfOrNull { squareFriendlyThumbnail(it.thumbnailUrl) }
             url?.let { artworkCache.put(browseId, it) }
             url
-        }
-    }
-
-    /**
-     * Drops rows the classifier already knows are not music, using only its
-     * free rules and its cache. No player lookups: a search for a music query
-     * should not spend a request per row deciding what it already returned.
-     */
-    private fun cheapMusicOnly(songs: List<Song>): List<Song> = songs.filter { song ->
-        when (YouTubeMusicClassifier.ruleVerdict(song.title, song.artist, song.albumName)) {
-            YouTubeMusicClassifier.Verdict.MUSIC -> true
-            // No free verdict: keep the row unless the cache already says it is not music.
-            else -> YouTubeMusicClassifier.cached(song.videoId) !=
-                YouTubeMusicClassifier.Verdict.NOT_MUSIC
         }
     }
 
@@ -841,24 +869,63 @@ internal object YouTubeFallback {
 
     // ---- Playlists and radio ------------------------------------------------
 
-    /** One page of a playlist (`VL…`) or a mix (`RD…`, served by `next`). */
+    /**
+     * One page of a playlist (`VL…`) or a mix (`RD…`, served by `next`).
+     *
+     * YouTube Music's editorial `RDCLAK` collections are the exception to
+     * both: their `VL…` page is read anonymously from youtube.com's WEB browse,
+     * because Music's own browse answers no rows for them without an account
+     * (measured). The first visible page's titles/artists are cleaned and its
+     * covers resolved, like the category's songs shelf.
+     */
     suspend fun playlistPage(browseId: String): YouTubeWebParser.PlaylistResult {
         val raw = browseId.removePrefix("VL")
+        if (isOfficialMusicPlaylistId(browseId)) return officialPlaylistPage(browseId)
         val result = if (raw.startsWith("RD")) {
             YouTubeWebParser.parseRadio(Innertube.nextYouTube(videoId = null, playlistId = raw))
         } else {
-            val id = if (browseId.startsWith("VL")) browseId else "VL$browseId"
-            YouTubeWebParser.parsePlaylist(Innertube.browseYouTube(id))
+            webPlaylistPage(browseId, anonymous = false)
         }
-        result.continuation?.let(::rememberContinuation)
+        result.continuation?.let { rememberContinuation(it, anonymous = false) }
         return result
     }
 
-    suspend fun morePlaylist(token: String): YouTubeWebParser.PlaylistResult {
-        val result = YouTubeWebParser.parsePlaylistContinuation(
-            Innertube.browseYouTubeContinuation(token),
+    /** Whether [browseId] names a YouTube Music editorial `RDCLAK` playlist. */
+    internal fun isOfficialMusicPlaylistId(browseId: String): Boolean =
+        browseId.removePrefix("VL").startsWith(YouTubeCategoryRules.OFFICIAL_PLAYLIST_PREFIX)
+
+    private suspend fun webPlaylistPage(
+        browseId: String,
+        anonymous: Boolean,
+    ): YouTubeWebParser.PlaylistResult {
+        val id = if (browseId.startsWith("VL")) browseId else "VL$browseId"
+        val root = if (anonymous) {
+            Innertube.browseYouTubeAnonymous(id)
+        } else {
+            Innertube.browseYouTube(id)
+        }
+        val result = YouTubeWebParser.parsePlaylist(root)
+        result.continuation?.let { rememberContinuation(it, anonymous) }
+        return result
+    }
+
+    private suspend fun officialPlaylistPage(browseId: String): YouTubeWebParser.PlaylistResult {
+        val result = webPlaylistPage(browseId, anonymous = true)
+        val cleaned = result.songs.map(::displaySong)
+        return result.copy(
+            songs = YouTubeCoverResolver.enrich(cleaned, CATEGORY_COVER_LIMIT),
         )
-        result.continuation?.let(::rememberContinuation)
+    }
+
+    suspend fun morePlaylist(token: String): YouTubeWebParser.PlaylistResult {
+        val anonymous = continuationTokens[token] == true
+        val root = if (anonymous) {
+            Innertube.browseYouTubeContinuationAnonymous(token)
+        } else {
+            Innertube.browseYouTubeContinuation(token)
+        }
+        val result = YouTubeWebParser.parsePlaylistContinuation(root)
+        result.continuation?.let { rememberContinuation(it, anonymous) }
         return result
     }
 
@@ -910,10 +977,10 @@ internal object YouTubeFallback {
 
     fun isContinuation(token: String): Boolean = continuationTokens.containsKey(token)
 
-    private fun rememberContinuation(token: String?) {
+    private fun rememberContinuation(token: String?, anonymous: Boolean = false) {
         token ?: return
         if (continuationTokens.size > 128) continuationTokens.clear()
-        continuationTokens[token] = true
+        continuationTokens[token] = anonymous
     }
 
     // ---- Covers -------------------------------------------------------------

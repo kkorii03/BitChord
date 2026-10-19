@@ -964,6 +964,16 @@ object YtMusicRepository {
         } else {
             pageOf(response)
         }
+        // Music's anonymous browse of a `VLRDCLAK…` editorial playlist answers
+        // no rows (measured); youtube.com's WEB browse of the same id does.
+        if (page.songs.isEmpty() && YouTubeFallback.isOfficialMusicPlaylistId(browseId)) {
+            val result = YouTubeFallback.playlistPage(browseId)
+            return@call SongPage(
+                songs = result.songs,
+                continuation = result.continuation,
+                header = result.header,
+            )
+        }
         // Only a playlist has an owner in the sense that matters — see
         // parsePlaylistOwned — and only its own first response can be asked.
         if (!browseId.startsWith("VL")) page
@@ -1000,7 +1010,7 @@ object YtMusicRepository {
 
     /** The page [SongPage.continuation] points at. */
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {
-        if (fallbackActive() && YouTubeFallback.isContinuation(token)) {
+        if (YouTubeFallback.isContinuation(token)) {
             val result = YouTubeFallback.morePlaylist(token)
             return@call SongPage(
                 songs = result.songs,
