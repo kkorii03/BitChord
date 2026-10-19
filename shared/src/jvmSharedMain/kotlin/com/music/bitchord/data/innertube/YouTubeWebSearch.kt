@@ -1,5 +1,6 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.ShelfItem
@@ -51,18 +52,24 @@ internal object YouTubeWebSearch {
             .build()
     }
 
-    fun songs(query: String): List<Song> {
-        val root = response(query, VIDEOS_FILTER) ?: return emptyList()
+    fun songs(query: String, kind: SearchKind = SearchKind.TYPED): List<Song> {
+        val root = response(query, VIDEOS_FILTER, kind) ?: return emptyList()
         return YouTubeWebParser.parseHistory(root)
     }
 
     /** Playlist cards for [query] from the playlists filter, anonymous like [songs]. */
-    fun playlists(query: String): List<ShelfItem> {
-        val root = response(query, PLAYLISTS_FILTER) ?: return emptyList()
+    fun playlists(query: String, kind: SearchKind = SearchKind.TYPED): List<ShelfItem> {
+        val root = response(query, PLAYLISTS_FILTER, kind) ?: return emptyList()
         return YouTubeWebParser.parsePlaylistResults(root)
     }
 
-    private fun response(query: String, params: String): JsonObject? {
+    private fun response(query: String, params: String, kind: SearchKind): JsonObject? {
+        // Logged here too because this path builds its own request: no cookie
+        // jar, no account visitor id, and never the query itself.
+        DebugLog.d(
+            LOG_TAG,
+            Innertube.searchLogLine("www.youtube.com", "youtubei/v1/search", kind, query.length),
+        )
         val body = buildJsonObject {
             putJsonObject("context") {
                 putJsonObject("client") {
@@ -124,4 +131,7 @@ internal object YouTubeWebSearch {
         }.getOrDefault(emptyList())
 
     private const val TAG = "YouTubeWebSearch"
+
+    /** Search-privacy lines go to the same logcat tag the rest of Innertube uses. */
+    private const val LOG_TAG = "BitChord"
 }

@@ -4,6 +4,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchFilter
@@ -64,7 +65,7 @@ internal object YouTubeArtistResolver {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            Log.w(TAG, "Artist lookup failed for $name: ${failure.message}")
+            Log.w(TAG, "Artist lookup failed length=${name.length}: ${failure.message}")
             return null
         }
         val hit = results.firstOrNull {
@@ -83,6 +84,7 @@ internal object YouTubeArtistResolver {
                 params = SearchFilter.ARTISTS.params,
                 hl = "ko",
                 gl = "KR",
+                kind = SearchKind.ARTIST,
             ),
         ).rows.filterIsInstance<SearchResult.Browse>().map { it.item }
 

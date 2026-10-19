@@ -643,9 +643,10 @@
     <string name="signed_in_as">Signed in as %1$s</string>
     <string name="signing_in">Signing in…</string>
     <string name="sleep_timer">Sleep timer</string>
-    <string name="private_listening">Incognito mode</string>
-    <string name="private_listening_subtitle">Playback and searches won\'t appear in YouTube history, recommendations, or this device\'s history</string>
-    <string name="private_listening_indicator">Incognito mode is on</string>
+    <string name="private_listening">Private mode</string>
+    <string name="private_listening_subtitle">Won\'t appear in YouTube history or scrobbles. Recent plays on this device are still saved</string>
+    <string name="private_listening_indicator">Private mode is on</string>
+    <string name="private_listening_turned_on">Private mode on · turns off in 6 hours</string>
     <string name="sources_no_lossless">No enabled source can provide lossless audio. Add an addon to play lossless files without transcoding.</string>
     <string name="sources_order_footer">If a source does not have a track or cannot be reached, BitChord tries the next one. Sources above YouTube can replace its recording when they return a better version.</string>
     <string name="sources_order_header">Sources, tried in this order</string>

@@ -246,4 +246,6 @@
     <string name="lyrics_timing_video_own">As timed by this video’s own captions.</string>
     <string name="lyrics_timing_ai_button">Time with AI</string>
     <string name="lyrics_timing_ai_button_running">Timing…</string>
+    <string name="private_listening_notice">Private mode · not saved to YouTube history</string>
+    <string name="private_listening_turn_off">Turn off</string>
 </resources>

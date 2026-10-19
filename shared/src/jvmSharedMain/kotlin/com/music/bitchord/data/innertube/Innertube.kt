@@ -52,6 +52,23 @@ import java.util.Base64
 import java.util.Locale
 
 /**
+ * Why a search request was made.
+ *
+ * Logged instead of the query itself: a diagnostic needs to know which path
+ * asked, never what the listener typed.
+ */
+enum class SearchKind(val label: String) {
+    TYPED("typed"),
+    TYPEAHEAD("typeahead"),
+    VIDEO_SWITCH("video-switch"),
+    AUDIO_SWITCH("audio-switch"),
+    CATALOG("catalog"),
+    ARTIST("artist"),
+    COVER("cover"),
+    SUGGEST("suggest"),
+}
+
+/**
  * Minimal Innertube (youtubei) client.
  *
  * WEB_REMIX against music.youtube.com for browse/search/library. It returns
@@ -63,7 +80,9 @@ import java.util.Locale
  *
  * Search and its suggestions are the deliberate exception: every one is sent
  * without the account (see [isAnonymousRequest]), because YouTube records a
- * signed-in search in the listener's history even when the app asked.
+ * signed-in search in the listener's history even when the app asked. The
+ * youtube.com builder applies the same rule, so its `search` endpoint cannot
+ * carry the session even if a caller asks for it.
  */
 object Innertube {
     /**
@@ -958,16 +977,24 @@ object Innertube {
      * [isAnonymousRequest] and [postMusic]'s endpoint check — so no query the
      * app or the listener runs here reaches YouTube's search history.
      */
-    suspend fun search(query: String, params: String? = null): JsonObject =
-        postMusic("search") {
+    suspend fun search(
+        query: String,
+        params: String? = null,
+        kind: SearchKind = SearchKind.TYPED,
+    ): JsonObject =
+        postMusic("search", searchKind = kind, searchQueryLength = query.length) {
             put("query", query)
             params?.let { put("params", it) }
         }
 
     /** The next page of a filtered search result; anonymous by the same rule. */
-    suspend fun searchContinuation(token: String): JsonObject = postMusic(
+    suspend fun searchContinuation(
+        token: String,
+        kind: SearchKind = SearchKind.TYPED,
+    ): JsonObject = postMusic(
         endpoint = "search",
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
+        searchKind = kind,
     ) {
         put("continuation", token)
     }
@@ -983,10 +1010,10 @@ object Innertube {
     const val COMMUNITY_PLAYLISTS_PARAMS = "EgeKAQQoAEABagwQDhAKEAMQBRAJEAQ="
 
     suspend fun searchFeaturedPlaylists(query: String): JsonObject =
-        search(query, FEATURED_PLAYLISTS_PARAMS)
+        search(query, FEATURED_PLAYLISTS_PARAMS, SearchKind.CATALOG)
 
     suspend fun searchCommunityPlaylists(query: String): JsonObject =
-        search(query, COMMUNITY_PLAYLISTS_PARAMS)
+        search(query, COMMUNITY_PLAYLISTS_PARAMS, SearchKind.CATALOG)
 
     /**
      * The typeahead list YouTube Music's own search box shows for a
@@ -1001,7 +1028,11 @@ object Innertube {
      * recorded against the listener as one they searched for.
      */
     suspend fun searchSuggestions(input: String): JsonObject =
-        postMusic("music/get_search_suggestions") {
+        postMusic(
+            "music/get_search_suggestions",
+            searchKind = SearchKind.SUGGEST,
+            searchQueryLength = input.length,
+        ) {
             put("input", input)
         }
 
@@ -1011,7 +1042,11 @@ object Innertube {
      * to the account's server-side search history.
      */
     suspend fun searchTypeahead(query: String): JsonObject =
-        postMusic("search") {
+        postMusic(
+            "search",
+            searchKind = SearchKind.TYPEAHEAD,
+            searchQueryLength = query.length,
+        ) {
             put("query", query)
         }
 
@@ -1031,7 +1066,14 @@ object Innertube {
         /** The catalogue to answer from; "ko"/"KR" lists Korean releases under their Korean names. */
         hl: String = "en",
         gl: String = "US",
-    ): JsonObject = postMusic("search", hl = hl, gl = gl) {
+        kind: SearchKind = SearchKind.TYPED,
+    ): JsonObject = postMusic(
+        "search",
+        hl = hl,
+        gl = gl,
+        searchKind = kind,
+        searchQueryLength = query.length,
+    ) {
         put("query", query)
         params?.let { put("params", it) }
     }
@@ -1587,6 +1629,8 @@ object Innertube {
         forceAnonymous: Boolean = false,
         browseId: String? = null,
         directRetryOnProxyFailure: Boolean = true,
+        searchKind: SearchKind? = null,
+        searchQueryLength: Int? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // In Korea without Premium the signed-in Music session is refused
@@ -1597,6 +1641,20 @@ object Innertube {
         // Account writes keep the session so they fail visibly, not silently.
         val anonymous = forceAnonymous || isAnonymousRequest(endpoint, browseId) ||
             (MusicGateFallback.isActive() && !isAccountWrite(endpoint))
+        if (isSearchEndpoint(endpoint)) {
+            // isAnonymousRequest already forces this; the check keeps a future
+            // search endpoint from ever logging (or sending) account=yes.
+            check(anonymous) { "search request must not carry the account" }
+            Log.d(
+                TAG,
+                searchLogLine(
+                    host = "music.youtube.com",
+                    endpoint = endpoint,
+                    kind = searchKind ?: defaultSearchKind(endpoint),
+                    queryLength = searchQueryLength,
+                ),
+            )
+        }
         // The common authenticated path: Home, Library, likes, playlists,
         // account menus and all their continuations pass through it. Waiting
         // here makes restoration process-wide rather than a special case
@@ -1734,28 +1792,44 @@ object Innertube {
         gl: String = currentCountry,
         ios: Boolean = false,
         anonymous: Boolean = false,
+        searchKind: SearchKind? = null,
+        searchQueryLength: Int? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
+        val anonymousRequest = isAnonymousYouTubeRequest(endpoint, anonymous)
+        if (isSearchEndpoint(endpoint)) {
+            check(anonymousRequest) { "youtube.com search must not carry the account" }
+            Log.d(
+                TAG,
+                searchLogLine(
+                    host = "www.youtube.com",
+                    endpoint = endpoint,
+                    kind = searchKind ?: defaultSearchKind(endpoint),
+                    queryLength = searchQueryLength,
+                ),
+            )
+        }
         // The session scope is read from the Music shell, which a gated Korean
         // session is refused; youtube.com does not need it to answer, so a
         // failure here must not take the fallback down with it.
-        if (!anonymous && cookie != null) {
+        if (!anonymousRequest && cookie != null) {
             runCatching { ensureSessionScope() }
                 .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
-        val session = if (anonymous) null else scope
-        val credentials = if (anonymous) {
+        val session = if (anonymousRequest) null else scope
+        val credentials = if (anonymousRequest) {
             emptyMap<String, String>()
         } else {
             accountHeadersFor(
                 endpoint = endpoint,
+                anonymous = anonymousRequest,
                 cookie = cookie,
                 authUser = authUserFor(session),
                 pageId = pageIdFor(session),
                 authorization = { cookie?.let { c -> authorizationFor(c, YOUTUBE_ORIGIN) } },
             )
         }
-        val visitor = if (anonymous) {
+        val visitor = if (anonymousRequest) {
             ensureAnonymousVisitorData()
         } else {
             visitorData ?: ensureVisitorData()
@@ -1798,7 +1872,7 @@ object Innertube {
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
-                                if (!anonymous) {
+                                if (!anonymousRequest) {
                                     dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
                                 }
                             }
@@ -1809,7 +1883,7 @@ object Innertube {
                 )
             }.body<JsonObject>()
         }
-        if (anonymous) {
+        if (anonymousRequest) {
             if (anonymousVisitorData == null) {
                 anonymousVisitorData = response["responseContext"]?.jsonObject
                     ?.get("visitorData")?.jsonPrimitive?.content
@@ -1842,8 +1916,42 @@ object Innertube {
      * directly.
      */
     internal fun isAnonymousRequest(endpoint: String, browseId: String? = null): Boolean =
-        endpoint == "search" || endpoint == "music/get_search_suggestions" ||
+        isSearchEndpoint(endpoint) ||
             (endpoint == "browse" && browseId != null && isAnonymousBrowseId(browseId))
+
+    /** Endpoints that carry a search query, on either host. */
+    internal fun isSearchEndpoint(endpoint: String): Boolean =
+        endpoint == "search" || endpoint == "music/get_search_suggestions"
+
+    /** The kind logged when a caller did not state why it searched. */
+    internal fun defaultSearchKind(endpoint: String): SearchKind =
+        if (endpoint == "music/get_search_suggestions") SearchKind.SUGGEST else SearchKind.TYPED
+
+    /**
+     * The one line every search request writes.
+     *
+     * The query never appears here — only its length — and `account=no` is not
+     * a parameter: a search request that could say yes is the bug this rule
+     * exists to prevent, so the logger cannot record one.
+     */
+    internal fun searchLogLine(
+        host: String,
+        endpoint: String,
+        kind: SearchKind,
+        queryLength: Int?,
+    ): String = buildString {
+        append("search: ").append(host).append('/').append(endpoint)
+        append(" kind=").append(kind.label)
+        append(" account=no")
+        queryLength?.let { append(" length=").append(it) }
+    }
+
+    /**
+     * Whether a youtube.com request is anonymous, including an explicit
+     * request for the session on a search endpoint.
+     */
+    internal fun isAnonymousYouTubeRequest(endpoint: String, anonymous: Boolean): Boolean =
+        anonymous || isAnonymousRequest(endpoint)
 
     /**
      * Browse pages that are not personal: the mood/genre grid and its

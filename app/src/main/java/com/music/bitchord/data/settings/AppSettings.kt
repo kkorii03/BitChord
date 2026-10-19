@@ -9,6 +9,7 @@ import android.net.NetworkCapabilities
 import androidx.media3.common.Player
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -105,6 +106,17 @@ enum class DownloadQuality(
 
 enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark")
+}
+
+/**
+ * Where a private session was switched on, named in the diagnostic log.
+ *
+ * Turning it off is always the listener's own act, so only the two ways on are
+ * listed here; expiry logs its own cause.
+ */
+enum class PrivateListeningSource(val logLabel: String) {
+    SETTINGS("settings"),
+    SONG_MENU("song menu"),
 }
 
 /**
@@ -260,8 +272,16 @@ object AppSettings {
      * chose a mode rather than a one-off session. Turning it off only resumes
      * recording from that point; nothing that happened while it was on is
      * written afterwards. See [PrivateListening] for the pure sink decision.
+     *
+     * A session is not indefinite: [privateListeningSinceMs] records when it
+     * was switched on, and [checkPrivateListeningExpiry] ends it after
+     * [PrivateListening.SESSION_MS]. The check runs at process start, when the
+     * app returns to the foreground, and before the listening recorder writes.
      */
     val privateListening = MutableStateFlow(false)
+
+    /** When the current private session began, or 0 while it is off. */
+    private var privateListeningSinceMs: Long = 0L
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
@@ -1025,7 +1045,7 @@ object AppSettings {
             )
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
-        privateListening.value = prefs.getBoolean(KEY_PRIVATE_LISTENING, false)
+        readPrivateListening()
         outputPcmMode.value = runCatching {
             OutputPcmMode.valueOf(
                 prefs.getString(KEY_OUTPUT_PCM_MODE, OutputPcmMode.PCM_16.name)
@@ -1217,6 +1237,64 @@ object AppSettings {
         discordButton2Text.value = prefs.getString(KEY_DISCORD_BUTTON_2_TEXT, "").orEmpty()
         discordButton2Visible.value = prefs.getBoolean(KEY_DISCORD_BUTTON_2_VISIBLE, true)
         discordInfoDismissed.value = prefs.getBoolean(KEY_DISCORD_INFO_DISMISSED, false)
+        checkPrivateListeningExpiry()
+    }
+
+    /**
+     * Reads the switch and its clock, seeding the clock for an install that was
+     * already private before this version stored one.
+     *
+     * The old preference said "on" without saying since when. Treating that as
+     * a session started now — rather than as one that never expires — gives
+     * those listeners the same six hours as everyone else, and the log line
+     * says why the start time is not the true one.
+     */
+    private fun readPrivateListening() {
+        val enabled = prefs.getBoolean(KEY_PRIVATE_LISTENING, false)
+        val storedSince = prefs.getLong(KEY_PRIVATE_LISTENING_SINCE, 0L)
+        if (!enabled) {
+            privateListeningSinceMs = 0L
+            privateListening.value = false
+            if (prefs.contains(KEY_PRIVATE_LISTENING_SINCE)) {
+                prefs.edit().remove(KEY_PRIVATE_LISTENING_SINCE).apply()
+            }
+            return
+        }
+        if (storedSince <= 0L) {
+            privateListeningSinceMs = System.currentTimeMillis()
+            prefs.edit().putLong(KEY_PRIVATE_LISTENING_SINCE, privateListeningSinceMs).apply()
+            privateListening.value = true
+            Debug.i(TAG, "private listening: on (since unknown, expires in 6h)")
+        } else {
+            privateListeningSinceMs = storedSince
+            privateListening.value = true
+        }
+    }
+
+    /**
+     * Ends a private session that has run its six hours.
+     *
+     * Event-driven and cheap: called at process start (via [readAll]), when the
+     * app returns to the foreground, and by
+     * [com.music.bitchord.data.stats.ListeningRecorder] before it decides
+     * whether to record. No timer, alarm or poll exists behind it.
+     */
+    @Synchronized
+    fun checkPrivateListeningExpiry(nowMs: Long = System.currentTimeMillis()) {
+        if (!this::prefs.isInitialized || !privateListening.value) return
+        if (privateListeningSinceMs <= 0L) {
+            privateListeningSinceMs = nowMs
+            prefs.edit().putLong(KEY_PRIVATE_LISTENING_SINCE, nowMs).apply()
+            return
+        }
+        if (PrivateListening.isActive(true, privateListeningSinceMs, nowMs)) return
+        privateListening.value = false
+        privateListeningSinceMs = 0L
+        prefs.edit()
+            .putBoolean(KEY_PRIVATE_LISTENING, false)
+            .remove(KEY_PRIVATE_LISTENING_SINCE)
+            .apply()
+        Debug.i(TAG, "private listening: off (by expired)")
     }
 
     /**
@@ -1414,9 +1492,35 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SKIP_SILENCE, value).apply()
     }
 
-    fun setPrivateListening(value: Boolean) {
+    /**
+     * Switches private listening on or off.
+     *
+     * [by] names only the way *on* was chosen; turning it off is always the
+     * listener's own act. Switching on starts a fresh six-hour clock, so a
+     * listener who turns it off and on again gets a whole session rather than
+     * inheriting the old one's remaining minutes.
+     */
+    @Synchronized
+    fun setPrivateListening(
+        value: Boolean,
+        by: PrivateListeningSource = PrivateListeningSource.SETTINGS,
+    ) {
+        if (value == privateListening.value) return
+        val now = System.currentTimeMillis()
+        privateListeningSinceMs = if (value) now else 0L
         privateListening.value = value
-        prefs.edit().putBoolean(KEY_PRIVATE_LISTENING, value).apply()
+        prefs.edit().apply {
+            putBoolean(KEY_PRIVATE_LISTENING, value)
+            if (value) putLong(KEY_PRIVATE_LISTENING_SINCE, now) else remove(KEY_PRIVATE_LISTENING_SINCE)
+        }.apply()
+        Debug.i(
+            TAG,
+            if (value) {
+                "private listening: on (by ${by.logLabel})"
+            } else {
+                "private listening: off (by user)"
+            },
+        )
     }
 
     fun setDolbyAtmos(value: Boolean) {
@@ -2517,6 +2621,9 @@ object AppSettings {
     /** Shared with the widgets' fallback read, so both halves name the same file. */
     private const val PREFS_NAME = "bitchord_settings"
 
+    /** Diagnostic tag shared with the rest of the playback trail. */
+    private const val TAG = "BitChord"
+
     private fun normalizePerformanceRefreshRate(value: Int): Int =
         value.takeIf { it in 50..240 } ?: DEFAULT_PERFORMANCE_REFRESH_RATE
 
@@ -2533,6 +2640,7 @@ object AppSettings {
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_PRIVATE_LISTENING = "private_listening"
+    private const val KEY_PRIVATE_LISTENING_SINCE = "private_listening_since"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"

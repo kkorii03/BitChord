@@ -1,8 +1,11 @@
 ﻿package com.music.bitchord.data.cover
 
+import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.StoredVerdictCache
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +56,8 @@ internal object YouTubeCoverResolver {
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+    private const val LOG_TAG = "BitChord"
 
     private val cache = StoredVerdictCache(STORE_KEY, MAX_ENTRIES)
 
@@ -289,6 +294,15 @@ internal object YouTubeCoverResolver {
 
     private suspend fun searchItunes(query: String): List<Candidate>? =
         withContext(Dispatchers.IO) {
+            DebugLog.d(
+                LOG_TAG,
+                Innertube.searchLogLine(
+                    "itunes.apple.com",
+                    "search",
+                    SearchKind.COVER,
+                    query.length,
+                ),
+            )
             val url = "https://itunes.apple.com/search?term=" +
                 URLEncoder.encode(query, "UTF-8") +
                 "&entity=song&limit=5&country=KR"
@@ -310,6 +324,15 @@ internal object YouTubeCoverResolver {
 
     private suspend fun searchDeezer(query: String): List<Candidate>? =
         withContext(Dispatchers.IO) {
+            DebugLog.d(
+                LOG_TAG,
+                Innertube.searchLogLine(
+                    "api.deezer.com",
+                    "search",
+                    SearchKind.COVER,
+                    query.length,
+                ),
+            )
             val url = "https://api.deezer.com/search?q=" +
                 URLEncoder.encode(query, "UTF-8") +
                 "&limit=5"

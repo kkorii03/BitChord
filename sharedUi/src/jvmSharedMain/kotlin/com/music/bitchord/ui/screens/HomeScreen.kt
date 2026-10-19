@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.VisibilityOff
 import com.music.bitchord.ui.icons.BitChordIcons
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.CARD_ART_PX
@@ -154,6 +155,13 @@ fun HomeScreen(
     leadHero: Boolean = true,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
+    /**
+     * Whether a private session is running, so the notice can sit above the
+     * Recents shelf and say why it is standing still.
+     */
+    privateListening: Boolean = false,
+    /** Turns that session off from the notice. Null on a host with no switch. */
+    onDisablePrivateListening: (() -> Unit)? = null,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
 
@@ -215,6 +223,8 @@ fun HomeScreen(
                         isPlaying = isPlaying,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
                         recentsViewType = recentsViewType,
+                        privateListening = privateListening,
+                        onDisablePrivateListening = onDisablePrivateListening,
                         onRecentsViewTypeToggle = {
                             AppUi.host.setHomeRecentsViewType(
                                 if (recentsViewType == LibraryViewType.LIST) {
@@ -263,6 +273,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     isPlaying: Boolean,
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
+    privateListening: Boolean = false,
+    onDisablePrivateListening: (() -> Unit)? = null,
     onRecentsViewTypeToggle: () -> Unit,
 ) {
     shelves.forEachIndexed { index, shelf ->
@@ -272,15 +284,20 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                 // Recents keeps its pager and toggle wherever the feed puts it
                 // — leading it is the norm, but an empty or reordered feed must
                 // not turn it into ordinary cards.
-                isRecentsShelf(shelf) -> RecentShelf(
-                    shelf = shelf,
-                    onItemClick = openItem,
-                    onItemLongPress = onItemLongPress,
-                    currentSong = currentSong,
-                    isPlaying = isPlaying,
-                    viewType = recentsViewType,
-                    onViewTypeToggle = onRecentsViewTypeToggle,
-                )
+                isRecentsShelf(shelf) -> Column {
+                    if (privateListening) {
+                        PrivateListeningNotice(onDisablePrivateListening)
+                    }
+                    RecentShelf(
+                        shelf = shelf,
+                        onItemClick = openItem,
+                        onItemLongPress = onItemLongPress,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        viewType = recentsViewType,
+                        onViewTypeToggle = onRecentsViewTypeToggle,
+                    )
+                }
                 // Quick picks is a song list, not a card shelf: the same
                 // four-rows-per-column pager as Recents, without the toggle.
                 isQuickPicksShelf(shelf) -> QuickPicksShelf(
@@ -470,6 +487,50 @@ private fun RecentSectionHeader(
                 ),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The quiet row above Recents while private listening is on.
+ *
+ * The switch lives in Settings and the song menu, both a few taps from here;
+ * this is the one place it can explain why the shelf below is not moving. It
+ * is deliberately not a banner: a small tinted row with the way out beside it.
+ */
+@Composable
+private fun PrivateListeningNotice(onTurnOff: (() -> Unit)?) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = PAGE_GUTTER, vertical = 2.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.VisibilityOff,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(Res.string.private_listening_notice),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (onTurnOff != null) {
+            Text(
+                text = stringResource(Res.string.private_listening_turn_off),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable(onClick = onTurnOff)
+                    .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
             )
         }
     }

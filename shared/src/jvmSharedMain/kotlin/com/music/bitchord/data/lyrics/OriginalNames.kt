@@ -2,6 +2,7 @@ package com.music.bitchord.data.lyrics
 
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
+import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.sources.TrackMatcher
@@ -110,7 +111,11 @@ object OriginalNames {
     private const val TOP_ROWS = 2
 
     private suspend fun searchYouTubeMusic(title: String, artist: String, durationMs: Long): Name? {
-        val response = Innertube.searchAnonymous("$title $artist", SearchFilter.SONGS.params)
+        val response = Innertube.searchAnonymous(
+            query = "$title $artist",
+            params = SearchFilter.SONGS.params,
+            kind = SearchKind.COVER,
+        )
         val songs = InnertubeParser.parseSearchPage(response, includeVideos = false).rows
             .filterIsInstance<SearchResult.Track>()
             .map { it.song }
@@ -150,7 +155,11 @@ object OriginalNames {
         // A cover's title often carries its reading in brackets
         // ("ギラギラ(기라기라)"): searched without it, matched on any of them.
         val main = TITLE_BRACKETS.replace(title, " ").trim().ifBlank { title }
-        val response = Innertube.searchAnonymous(main, SearchFilter.SONGS.params)
+        val response = Innertube.searchAnonymous(
+            query = main,
+            params = SearchFilter.SONGS.params,
+            kind = SearchKind.COVER,
+        )
         val songs = InnertubeParser.parseSearchPage(response, includeVideos = false).rows
             .filterIsInstance<SearchResult.Track>()
             .map { it.song }

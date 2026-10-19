@@ -155,6 +155,7 @@ import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibrarySort
+import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.ui.components.AccountProfileSelector
@@ -347,6 +348,9 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         noteForeground()
+        // A private session outlives the process, so coming back to the app is
+        // the other event that can find its six hours gone.
+        AppSettings.checkPrivateListeningExpiry()
     }
 
     override fun onResume() {
@@ -3274,6 +3278,10 @@ private fun BitChordApp(
                             onLoadMore = viewModel::loadMoreHome,
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
+                            privateListening = privateListening,
+                            onDisablePrivateListening = {
+                                AppSettings.setPrivateListening(false, PrivateListeningSource.SETTINGS)
+                            },
                         )
                         TAB_EXPLORE -> selectedMoodGenre?.let { category ->
                             MoodGenrePlaylistsScreen(
@@ -4491,7 +4499,17 @@ private fun BitChordApp(
                 showPlaybackSpeed = fromPlayer,
                 privateListening = privateListening,
                 onTogglePrivateListening = if (fromPlayer) {
-                    { AppSettings.setPrivateListening(!privateListening) }
+                    {
+                        val turningOn = !privateListening
+                        AppSettings.setPrivateListening(turningOn, PrivateListeningSource.SONG_MENU)
+                        if (turningOn) {
+                            Toast.makeText(
+                                context,
+                                R.string.private_listening_turned_on,
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
                 } else {
                     null
                 },

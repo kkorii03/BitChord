@@ -2,6 +2,7 @@ package com.music.bitchord.data.lyrics
 
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
+import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
@@ -73,7 +74,13 @@ object RecordingPick {
                         val title = if (!ask.main) name.first else {
                             BRACKETS.replace(name.first, " ").split(" - ", " / ").first().trim().ifBlank { name.first }
                         }
-                        val response = Innertube.searchAnonymous("$title ${name.second}".trim(), SearchFilter.SONGS.params, hl, gl)
+                        val response = Innertube.searchAnonymous(
+                            query = "$title ${name.second}".trim(),
+                            params = SearchFilter.SONGS.params,
+                            hl = hl,
+                            gl = gl,
+                            kind = SearchKind.COVER,
+                        )
                         InnertubeParser.parseSearchPage(response, includeVideos = false).rows
                             .filterIsInstance<SearchResult.Track>()
                             .map { it.song }

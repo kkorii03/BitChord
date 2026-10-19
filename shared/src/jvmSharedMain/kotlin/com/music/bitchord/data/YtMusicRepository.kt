@@ -7,6 +7,7 @@ import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.YouTubeProxy
@@ -535,11 +536,15 @@ object YtMusicRepository {
      * send the session, so a query the listener or the app runs never lands in
      * their YouTube search history.
      */
-    suspend fun searchPage(query: String, filter: SearchFilter): Result<SearchPage> =
+    suspend fun searchPage(
+        query: String,
+        filter: SearchFilter,
+        kind: SearchKind = SearchKind.TYPED,
+    ): Result<SearchPage> =
         call("search:${filter.name}") {
             val music = runCatching {
                 InnertubeParser.parseSearchPage(
-                    Innertube.search(query, filter.params),
+                    Innertube.search(query, filter.params, kind),
                     includeVideos = filter == SearchFilter.VIDEOS,
                 ).let { page ->
                     SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
@@ -553,10 +558,10 @@ object YtMusicRepository {
             if (wantsTracks && (page == null || page.rows.isEmpty())) {
                 Log.w(
                     TAG,
-                    "search: youtube.com fallback for '${query.take(80)}' " +
+                    "search: youtube.com fallback length=${query.length} " +
                         "(music ${if (page == null) "failed" else "returned no rows"})",
                 )
-                val songs = YouTubeWebSearch.songs(query)
+                val songs = YouTubeWebSearch.songs(query, kind)
                 if (filter == SearchFilter.SONGS) {
                     // The Songs filter is what Korea's catalogue refuses. Its
                     // album search still answers, so map the uploads to their
@@ -582,9 +587,13 @@ object YtMusicRepository {
         }
 
     /** Fetches the next page of a search only when the result list needs it. */
-    suspend fun searchContinuation(token: String, filter: SearchFilter): Result<SearchPage> = call("search:continuation") {
+    suspend fun searchContinuation(
+        token: String,
+        filter: SearchFilter,
+        kind: SearchKind = SearchKind.TYPED,
+    ): Result<SearchPage> = call("search:continuation") {
         InnertubeParser.parseSearchPage(
-            Innertube.searchContinuation(token),
+            Innertube.searchContinuation(token, kind),
             includeVideos = filter == SearchFilter.VIDEOS,
         ).let { page ->
             SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
@@ -595,8 +604,12 @@ object YtMusicRepository {
      * Compatibility helper for callers that need candidates but not a scrolling
      * result screen. Those callers need the first, most relevant page only.
      */
-    suspend fun search(query: String, filter: SearchFilter): Result<List<SearchResult>> =
-        searchPage(query, filter).map { it.rows }
+    suspend fun search(
+        query: String,
+        filter: SearchFilter,
+        kind: SearchKind = SearchKind.TYPED,
+    ): Result<List<SearchResult>> =
+        searchPage(query, filter, kind).map { it.rows }
 
     private fun SearchResult.identityKey(): String = when (this) {
         is SearchResult.TopTrack -> "v:${song.videoId}"
@@ -627,7 +640,7 @@ object YtMusicRepository {
      * anonymous for the same reason.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
-        call("typeahead:$input") {
+        call("typeahead:length=${input.length}") {
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
@@ -670,13 +683,16 @@ object YtMusicRepository {
         audioVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.SONGS)
+            val candidates = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
                 .getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
             TrackMatcher.best(candidates, target)?.let { match ->
-                Log.d(TAG, "audio switch: '${song.title}' -> '${match.title}' ($query)")
+                Log.d(
+                    TAG,
+                    "audio switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
+                )
                 audioVersionCache[song.videoId] = match
                 return match
             }
@@ -684,7 +700,11 @@ object YtMusicRepository {
             // timing. The manual switch may therefore use the exact official
             // song/artist match even when the video has a long intro or outro.
             TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { match ->
-                Log.d(TAG, "audio switch: accepted video/runtime drift '${song.title}' -> '${match.title}' ($query)")
+                Log.d(
+                    TAG,
+                    "audio switch: accepted video/runtime drift '${song.title}' -> " +
+                        "'${match.title}' (queryLength=${query.length})",
+                )
                 audioVersionCache[song.videoId] = match
                 return match
             }
@@ -739,7 +759,8 @@ object YtMusicRepository {
         val title = song.title.substringBefore(" (").substringBefore(" [").trim()
         val artist = song.artist.split(",", "&", " x ", " X ").first().trim()
         if (title.isBlank() || artist.isBlank()) return null
-        val results = search("$artist $title", SearchFilter.VIDEOS).getOrNull() ?: return null
+        val results = search("$artist $title", SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH)
+            .getOrNull() ?: return null
         val seconds = TrackMatcher.secondsOf(song.durationText)
         fun fold(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
         val wantTitle = fold(title)
@@ -769,13 +790,16 @@ object YtMusicRepository {
         videoVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS)
+            val candidates = search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH)
                 .getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
             TrackMatcher.best(candidates, target)?.let { match ->
-                Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' ($query)")
+                Log.d(
+                    TAG,
+                    "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
+                )
                 videoVersionCache[song.videoId] = match
                 return match
             }
@@ -949,15 +973,18 @@ object YtMusicRepository {
      * Asking for `Mate` can land on either of two artists of that name, which
      * is the honest answer to an ambiguous question rather than a wrong one.
      */
-    suspend fun findArtistPageId(name: String): Result<String?> = call("artistByName:$name") {
-        if (normalizedArtistName(name).isEmpty()) return@call null
-        val filter = SearchFilter.ARTISTS
-        InnertubeParser.parseSearchPage(Innertube.search(name, filter.params)).rows
-            .filterIsInstance<SearchResult.Browse>()
-            .map { it.item }
-            .firstOrNull { it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name) }
-            ?.browseId
-    }
+    suspend fun findArtistPageId(name: String): Result<String?> =
+        call("artistByName:length=${name.length}") {
+            if (normalizedArtistName(name).isEmpty()) return@call null
+            val filter = SearchFilter.ARTISTS
+            InnertubeParser.parseSearchPage(
+                Innertube.search(name, filter.params, SearchKind.ARTIST),
+            ).rows
+                .filterIsInstance<SearchResult.Browse>()
+                .map { it.item }
+                .firstOrNull { it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name) }
+                ?.browseId
+        }
 
     /**
      * The artist and album pages a track links out to.

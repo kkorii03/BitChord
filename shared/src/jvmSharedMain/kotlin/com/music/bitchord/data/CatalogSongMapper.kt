@@ -5,6 +5,7 @@ import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeShelf
@@ -297,7 +298,7 @@ internal object CatalogSongMapper {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                Log.w(TAG, "album search failed for '${trimmed.take(60)}': ${failure.message}")
+                Log.w(TAG, "album search failed length=${trimmed.length}: ${failure.message}")
                 null
             }.orEmpty()
 
@@ -414,6 +415,7 @@ internal object CatalogSongMapper {
             params = SearchFilter.ALBUMS.params,
             hl = "ko",
             gl = "KR",
+            kind = SearchKind.CATALOG,
         )
         InnertubeParser.parseSearch(root)
             .filterIsInstance<SearchResult.Browse>()

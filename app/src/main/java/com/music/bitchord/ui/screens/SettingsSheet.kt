@@ -145,6 +145,7 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
@@ -859,14 +860,21 @@ fun SettingsScreen(
                     trailing = {
                         Switch(
                             checked = privateListening,
-                            onCheckedChange = AppSettings::setPrivateListening,
+                            onCheckedChange = {
+                                AppSettings.setPrivateListening(it, PrivateListeningSource.SETTINGS)
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                                 checkedBorderColor = MaterialTheme.colorScheme.primary,
                             ),
                         )
                     },
-                    onClick = { AppSettings.setPrivateListening(!privateListening) },
+                    onClick = {
+                        AppSettings.setPrivateListening(
+                            !privateListening,
+                            PrivateListeningSource.SETTINGS,
+                        )
+                    },
                 )
             }
             val widgetOpensPlayerTitle = stringResource(R.string.widget_opens_player)

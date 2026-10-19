@@ -5,9 +5,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Pins the whole sink matrix rather than one call site: private listening must
- * silence every history-bearing write, and ordinary listening must leave all of
- * them alone.
+ * Pins the whole sink matrix rather than one call site: private mode silences
+ * only writes that leave the device, while local history, recommendations and
+ * the in-app search list keep recording.
  */
 class PrivateListeningTest {
 
@@ -22,11 +22,29 @@ class PrivateListeningTest {
     }
 
     @Test
-    fun `no sink records while private listening is on`() {
-        ListeningSink.entries.forEach { sink ->
+    fun `local sinks record while private listening is on`() {
+        listOf(
+            ListeningSink.LISTENING_STATS,
+            ListeningSink.TASTE,
+            ListeningSink.SEARCH_HISTORY,
+        ).forEach { sink ->
+            assertTrue(
+                PrivateListening.allows(sink, privateListening = true),
+                "$sink is local and must keep recording",
+            )
+        }
+    }
+
+    @Test
+    fun `account sinks stay silent while private listening is on`() {
+        listOf(
+            ListeningSink.YOUTUBE_HISTORY,
+            ListeningSink.SCROBBLING,
+            ListeningSink.DISCORD_PRESENCE,
+        ).forEach { sink ->
             assertFalse(
                 PrivateListening.allows(sink, privateListening = true),
-                "$sink must be silent in private listening",
+                "$sink leaves the device and must stay silent",
             )
         }
     }
@@ -39,8 +57,8 @@ class PrivateListeningTest {
     }
 
     @Test
-    fun `search history is never written in private listening`() {
-        assertFalse(
+    fun `search history keeps recording in private listening`() {
+        assertTrue(
             PrivateListening.allows(ListeningSink.SEARCH_HISTORY, privateListening = true),
         )
     }

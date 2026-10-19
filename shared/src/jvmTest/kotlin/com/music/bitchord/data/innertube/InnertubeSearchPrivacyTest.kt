@@ -10,10 +10,11 @@ import kotlin.test.assertTrue
  * The decision that keeps searches out of the listener's YouTube history.
  *
  * Every line of the app's search traffic - typed queries, typeahead, the
- * original behind a cover, a song's other-language name - ends at the same
- * request builder, so the guarantee is only as good as these pure decisions:
- * an account is never named, and no credential is ever computed, for a search
- * or suggestion endpoint.
+ * original behind a cover, a song's other-language name - ends at one of the
+ * two request builders (music.youtube.com or www.youtube.com), so the
+ * guarantee is only as good as these pure decisions: an account is never
+ * named, and no credential is ever computed, for a search or suggestion
+ * endpoint.
  */
 class InnertubeSearchPrivacyTest {
 
@@ -25,6 +26,30 @@ class InnertubeSearchPrivacyTest {
     fun `search and suggestions are anonymous endpoints`() {
         assertTrue(Innertube.isAnonymousRequest("search"))
         assertTrue(Innertube.isAnonymousRequest("music/get_search_suggestions"))
+    }
+
+    @Test
+    fun `youtube dot com search builder is anonymous even when the caller asks for the session`() {
+        assertTrue(Innertube.isAnonymousYouTubeRequest("search", anonymous = false))
+        assertTrue(Innertube.isAnonymousYouTubeRequest("search", anonymous = true))
+        assertFalse(Innertube.isAnonymousYouTubeRequest("browse", anonymous = false))
+        assertTrue(Innertube.isAnonymousYouTubeRequest("browse", anonymous = true))
+    }
+
+    @Test
+    fun `search log lines say account no and never include the query`() {
+        val line = Innertube.searchLogLine(
+            host = "www.youtube.com",
+            endpoint = "youtubei/v1/search",
+            kind = SearchKind.VIDEO_SWITCH,
+            queryLength = 12,
+        )
+
+        assertEquals(
+            "search: www.youtube.com/youtubei/v1/search kind=video-switch account=no length=12",
+            line,
+        )
+        assertFalse(line.contains("account=yes"))
     }
 
     @Test

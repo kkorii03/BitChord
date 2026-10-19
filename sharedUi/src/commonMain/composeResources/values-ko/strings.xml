@@ -246,4 +246,6 @@
     <string name="lyrics_timing_video_own">이 비디오 자막의 타이밍 그대로입니다.</string>
     <string name="lyrics_timing_ai_button">AI로 맞추기</string>
     <string name="lyrics_timing_ai_button_running">맞추는 중…</string>
+    <string name="private_listening_notice">시크릿 모드 · YouTube 기록에 남지 않아요</string>
+    <string name="private_listening_turn_off">끄기</string>
 </resources>

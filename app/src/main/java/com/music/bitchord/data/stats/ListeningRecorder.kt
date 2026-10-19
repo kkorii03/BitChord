@@ -74,8 +74,16 @@ object ListeningRecorder {
      */
     private var startReportedId: String? = null
 
-    private fun recordingAllowed(): Boolean =
-        PrivateListening.allows(ListeningSink.LISTENING_STATS, AppSettings.privateListening.value)
+    private fun recordingAllowed(): Boolean {
+        // Cheap time comparison, not a timer: the first sample after a session
+        // has run its six hours is what ends it. Every other sink then sees the
+        // same switched-off flow PlaybackService already watches.
+        AppSettings.checkPrivateListeningExpiry()
+        return PrivateListening.allows(
+            ListeningSink.LISTENING_STATS,
+            AppSettings.privateListening.value,
+        )
+    }
 
     /**
      * One tick of the player's sampler.

@@ -97,6 +97,7 @@ object DiagnosticsExport {
                     appendLine("music gate active: ${MusicGateFallback.active.value}")
                     MusicGateFallback.describe().forEach { appendLine("music gate: $it") }
                     appendLine("proxy: ${if (proxy == ProxyMode.OFF) "off" else "on (${proxy.name.lowercase(Locale.US)})"}")
+                    appendLine("private listening: ${if (AppSettings.privateListening.value) "on" else "off"}")
                     appendLine("auth cookie length: ${cookie?.length ?: 0}")
                     appendLine("auth cookie names: ${authCookieNames.joinToString(", ").ifEmpty { "(none)" }}")
                     appendLine(
