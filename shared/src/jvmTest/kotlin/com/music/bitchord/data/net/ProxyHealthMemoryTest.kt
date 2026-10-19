@@ -46,4 +46,14 @@ class ProxyHealthMemoryTest {
         now += 1_000L
         assertTrue(memory.isUnreachable())
     }
+
+    @Test
+    fun `a direct retry that succeeds proves the proxy alone is down`() {
+        assertTrue(ProxyFailure.directRetryProvesProxyDown(directRetrySucceeded = true))
+    }
+
+    @Test
+    fun `a direct retry that fails proves only that the phone is offline`() {
+        assertFalse(ProxyFailure.directRetryProvesProxyDown(directRetrySucceeded = false))
+    }
 }

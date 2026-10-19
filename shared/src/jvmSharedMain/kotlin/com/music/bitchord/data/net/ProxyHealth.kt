@@ -46,6 +46,19 @@ object ProxyFailure {
             current = node.cause
         }
     }
+
+    /**
+     * Whether a failed proxy request may be recorded as "the proxy is
+     * unreachable".
+     *
+     * Only a direct retry that then *succeeds* proves the proxy alone is down.
+     * If the direct request fails too, the phone's own network is what failed
+     * — every host is unresolvable — and remembering the proxy as unreachable
+     * would blame it for an outage and toast about a fallback route that never
+     * worked. The caller rethrows the direct failure in that case and leaves
+     * [ProxyHealthMonitor] at [ProxyHealth.UNKNOWN].
+     */
+    fun directRetryProvesProxyDown(directRetrySucceeded: Boolean): Boolean = directRetrySucceeded
 }
 
 /**

@@ -217,7 +217,9 @@ class MediaWidgetPill : AppWidgetProvider() {
         private fun openPlayer(context: Context): PendingIntent {
             val intent = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(PlayerDeepLink.EXTRA_OPEN_PLAYER, true)
+            if (WidgetOpenIntent.enabled(context)) {
+                intent.putExtra(PlayerDeepLink.EXTRA_OPEN_PLAYER, true)
+            }
             return PendingIntent.getActivity(
                 context,
                 REQUEST_OPEN_PLAYER,

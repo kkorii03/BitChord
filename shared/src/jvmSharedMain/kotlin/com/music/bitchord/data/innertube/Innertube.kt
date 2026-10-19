@@ -1683,9 +1683,24 @@ object Innertube {
                     ProxyFailure.isProxyDown(e)
                 ) {
                     Log.w(TAG, "music $endpoint: proxy unreachable, retrying directly")
-                    ProxyHealthMonitor.recordUnreachable()
                     proxyActive = false
-                    attempt(directClient, false)
+                    var directRetrySucceeded = false
+                    val direct = try {
+                        attempt(directClient, false)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (directFailure: Exception) {
+                        // The phone's whole network is down, not just the proxy.
+                        // Rethrow what the direct route said and leave
+                        // [ProxyHealthMonitor] at UNKNOWN: no toast, no 5-minute
+                        // bypass, because there is nothing reachable either way.
+                        throw directFailure
+                    }
+                    directRetrySucceeded = true
+                    if (ProxyFailure.directRetryProvesProxyDown(directRetrySucceeded)) {
+                        ProxyHealthMonitor.recordUnreachable()
+                    }
+                    direct
                 } else {
                     throw e
                 }

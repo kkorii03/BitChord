@@ -158,6 +158,9 @@ object AppSettings {
 
     private lateinit var prefs: SharedPreferences
 
+    /** Kept so a setting the widgets read can redraw them without a caller passing one. */
+    private lateinit var appContext: Context
+
     /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
     private lateinit var authStore: AuthStore
 
@@ -440,6 +443,16 @@ object AppSettings {
 
     /** Hides the "Playing from" / "Played by" caption at the top of the main player. */
     val hideSongStatus = MutableStateFlow(false)
+
+    /**
+     * Whether tapping a home-screen widget raises the full player.
+     *
+     * Off by default: a widget tap is how many people re-enter the app, and
+     * they expect the screen they left rather than the player pushed over it.
+     * Read by both widget providers when building their open intent — see
+     * [com.music.bitchord.widget.WidgetOpenIntent].
+     */
+    val widgetOpensPlayer = MutableStateFlow(false)
 
     /** Swiping a song row plays it next instead of adding it to the end of the queue. */
     val swipeToPlayNext = MutableStateFlow(false)
@@ -940,7 +953,8 @@ object AppSettings {
      * one here was a measurable slice of cold start.
      */
     fun init(context: Context, authStore: AuthStore) {
-        prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+        appContext = context.applicationContext
+        prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         // A Gemini key can be baked into a personal build's resources after it is
         // built (never committed). It is only a default: a key typed in Settings wins.
         bundledGeminiApiKey = context.getString(com.music.bitchord.R.string.default_gemini_api_key).trim()
@@ -1045,6 +1059,7 @@ object AppSettings {
         stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
         hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
+        widgetOpensPlayer.value = prefs.getBoolean(KEY_WIDGET_OPENS_PLAYER, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
@@ -1540,6 +1555,33 @@ object AppSettings {
         hideSongStatus.value = value
         prefs.edit().putBoolean(KEY_HIDE_SONG_STATUS, value).apply()
     }
+
+    fun setWidgetOpensPlayer(value: Boolean) {
+        widgetOpensPlayer.value = value
+        prefs.edit().putBoolean(KEY_WIDGET_OPENS_PLAYER, value).apply()
+        // The pending intent each widget already holds was built with the old
+        // answer, so every placed instance has to be rebuilt now rather than
+        // on the next track change.
+        if (this::appContext.isInitialized) {
+            com.music.bitchord.widget.MediaWidget.refresh(appContext)
+        }
+    }
+
+    /**
+     * The widget-readable copy of [widgetOpensPlayer].
+     *
+     * A widget can be asked to draw before [init] has run in a process that
+     * only ever handled its broadcast, and the flow would still read its
+     * default then. Fall back to the same preference file directly, so the
+     * switch keeps working in that window.
+     */
+    fun readWidgetOpensPlayer(context: Context): Boolean =
+        if (this::prefs.isInitialized) {
+            widgetOpensPlayer.value
+        } else {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_WIDGET_OPENS_PLAYER, false)
+        }
 
     fun setSwipeToPlayNext(value: Boolean) {
         swipeToPlayNext.value = value
@@ -2449,6 +2491,9 @@ object AppSettings {
 
     private const val DEFAULT_PERFORMANCE_REFRESH_RATE = 120
 
+    /** Shared with the widgets' fallback read, so both halves name the same file. */
+    private const val PREFS_NAME = "bitchord_settings"
+
     private fun normalizePerformanceRefreshRate(value: Int): Int =
         value.takeIf { it in 50..240 } ?: DEFAULT_PERFORMANCE_REFRESH_RATE
 
@@ -2495,6 +2540,7 @@ object AppSettings {
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
     private const val KEY_HIDE_SONG_STATUS = "hide_song_status"
+    private const val KEY_WIDGET_OPENS_PLAYER = "widget_opens_player"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"

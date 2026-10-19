@@ -312,7 +312,8 @@ abstract class MediaWidget : AppWidgetProvider() {
             setInt(viewId, "setImageAlpha", alpha)
 
         /**
-         * Opens the app on the full player.
+         * Opens the app, on the full player when
+         * [WidgetOpenIntent.shouldExpand] says the listener asked for it.
          *
          * No action and no launcher category on purpose. `MainActivity` is
          * `singleTask`, and an `ACTION_MAIN`/`CATEGORY_LAUNCHER` intent aimed at
@@ -324,7 +325,11 @@ abstract class MediaWidget : AppWidgetProvider() {
         private fun openPlayer(context: Context): PendingIntent {
             val intent = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(PlayerDeepLink.EXTRA_OPEN_PLAYER, true)
+            // Off (the default), the extra is absent and the intent only
+            // brings the task forward; on, it also raises the full player.
+            if (WidgetOpenIntent.enabled(context)) {
+                intent.putExtra(PlayerDeepLink.EXTRA_OPEN_PLAYER, true)
+            }
             return PendingIntent.getActivity(
                 context,
                 REQUEST_OPEN_PLAYER,

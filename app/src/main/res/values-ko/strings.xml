@@ -343,6 +343,8 @@
     <string name="hide_volume_bar_subtitle">메인 플레이어에서 음량 슬라이더를 제거합니다.</string>
     <string name="hide_song_status">노래 상태 가리기</string>
     <string name="hide_song_status_subtitle">메인 플레이어에서 \'재생 위치\' 또는 \'재생한 사람\' 문구를 가립니다.</string>
+    <string name="widget_opens_player">위젯을 누르면 재생 화면 열기</string>
+    <string name="widget_opens_player_subtitle">끄면 위젯을 눌러도 앱만 열려요</string>
     <string name="off">끔</string>
     <string name="low">낮음</string>
     <string name="medium">중간</string>

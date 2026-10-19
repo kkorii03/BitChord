@@ -76,6 +76,7 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Waves
+import androidx.compose.material.icons.rounded.Widgets
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -274,6 +275,7 @@ fun SettingsScreen(
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
+    val widgetOpensPlayer by AppSettings.widgetOpensPlayer.collectAsStateWithLifecycle()
     val hiddenExploreCategories by AppSettings.hiddenExploreCategories.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
@@ -865,6 +867,25 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setPrivateListening(!privateListening) },
+                )
+            }
+            val widgetOpensPlayerTitle = stringResource(R.string.widget_opens_player)
+            row(widgetOpensPlayerTitle, "widget", "home screen", "player") {
+                SettingsRow(
+                    icon = Icons.Rounded.Widgets,
+                    title = widgetOpensPlayerTitle,
+                    subtitle = stringResource(R.string.widget_opens_player_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = widgetOpensPlayer,
+                            onCheckedChange = AppSettings::setWidgetOpensPlayer,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setWidgetOpensPlayer(!widgetOpensPlayer) },
                 )
             }
             val spatialAudioTitle = stringResource(R.string.spatial_audio)
