@@ -2,6 +2,10 @@ package com.music.bitchord.data.innertube
 
 import com.music.bitchord.auth.normalizeDataSyncId
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.Http
+import com.music.bitchord.data.net.ProxyFailure
+import com.music.bitchord.data.net.ProxyHealthMonitor
+import com.music.bitchord.data.net.YouTubeProxy
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -599,20 +603,27 @@ object Innertube {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val client = HttpClient(OkHttp) {
-        // Same OkHttp instance ExoPlayer streams through — see Http.
-        engine { preconfigured = com.music.bitchord.data.Http.client }
+    private fun newClient(okHttp: okhttp3.OkHttpClient): HttpClient = HttpClient(OkHttp) {
+        engine { preconfigured = okHttp }
         install(ContentNegotiation) { json(json) }
         // Without this the only bound is OkHttp's own read timeout, and the
         // failure it raises reads as "Socket timeout has expired […]
         // socket_timeout=unknown" — Ktor reporting a limit it was never told.
+        // The connect bound is the proxy failover's: a dead proxy must not
+        // cost more than four seconds before the request goes direct.
         install(HttpTimeout) {
             requestTimeoutMillis = 30_000
-            connectTimeoutMillis = 15_000
+            connectTimeoutMillis = 4_000
             socketTimeoutMillis = 20_000
         }
         expectSuccess = true
     }
+
+    // Same OkHttp instance ExoPlayer streams through — see Http.
+    private val client = newClient(Http.client)
+
+    /** The direct-only stack used for the single retry when the proxy dies. */
+    private val directClient = newClient(Http.directClient)
 
     /**
      * Runs [block], giving transport failures another go before letting them
@@ -700,6 +711,16 @@ object Innertube {
         postMusic("browse", forceAnonymous = true) {
             put("browseId", browseId)
             params?.let { put("params", it) }
+        }
+
+    /**
+     * The same anonymous browse without the proxy failover, so the Settings
+     * connection test observes the proxy route itself rather than a direct
+     * retry behind it.
+     */
+    internal suspend fun browseAnonymousThroughProxyOnly(browseId: String): JsonObject =
+        postMusic("browse", forceAnonymous = true, directRetryOnProxyFailure = false) {
+            put("browseId", browseId)
         }
 
     // ---- youtube.com WEB fallback -------------------------------------------
@@ -1565,6 +1586,7 @@ object Innertube {
         gl: String = currentCountry,
         forceAnonymous: Boolean = false,
         browseId: String? = null,
+        directRetryOnProxyFailure: Boolean = true,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // In Korea without Premium the signed-in Music session is refused
@@ -1598,54 +1620,76 @@ object Innertube {
         val anonymousVisitor = if (anonymous) ensureAnonymousVisitorData() else null
         val visitor = if (anonymous) anonymousVisitor else visitorIdFor(endpoint, visitorData, anonymousVisitor)
         val clientVersion = webRemixVersion
+        val musicUrl = "$MUSIC_BASE/$endpoint"
+        var proxyActive = YouTubeProxy.matches(musicUrl) && !ProxyHealthMonitor.shouldBypassProxy()
         val response = withRetry {
-            client.post("$MUSIC_BASE/$endpoint") {
-                contentType(ContentType.Application.Json)
-                parameter("prettyPrint", "false")
-                parameter("hl", hl)
-                header("Accept-Language", acceptLanguageHeader)
-                query.forEach { (key, value) -> parameter(key, value) }
-                header("X-Origin", MUSIC_ORIGIN)
-                header("Origin", MUSIC_ORIGIN)
-                header("Referer", "$MUSIC_ORIGIN/")
-                // Stats pings are only honoured for a session Google recognises
-                // as a real client, so identify as one here too — the visitor
-                // id is minted on the first call and reused for the session.
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
-                header("X-YouTube-Client-Version", clientVersion)
-                visitor?.let { header("X-Goog-Visitor-Id", it) }
-                credentials.forEach { (name, value) -> header(name, value) }
-                setBody(
-                    buildJsonObject {
-                        putJsonObject("context") {
-                            putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
-                                put("clientVersion", clientVersion)
-                                put("hl", hl)
-                                put("gl", gl)
-                                visitor?.let { put("visitorData", it) }
-                            }
-                            putJsonObject("user") {
-                                put("lockedSafetyMode", false)
-                                // Only ever a value read back from a shell that
-                                // said it was signed in: Google answers an
-                                // `onBehalfOfUser` it cannot tie to the cookie
-                                // with 401, so a guess here would take the
-                                // whole app down rather than just history. An
-                                // anonymous request names no account at all —
-                                // not even the chosen channel's, which outranks
-                                // the session in [dataSyncIdFor].
-                                if (!anonymous) {
-                                    dataSyncIdForRequest(endpoint, dataSyncIdFor(session))
-                                        ?.let { put("onBehalfOfUser", it) }
+            val attempt: suspend (HttpClient, Boolean) -> JsonObject = { http, throughProxy ->
+                val answer = http.post(musicUrl) {
+                    contentType(ContentType.Application.Json)
+                    parameter("prettyPrint", "false")
+                    parameter("hl", hl)
+                    header("Accept-Language", acceptLanguageHeader)
+                    query.forEach { (key, value) -> parameter(key, value) }
+                    header("X-Origin", MUSIC_ORIGIN)
+                    header("Origin", MUSIC_ORIGIN)
+                    header("Referer", "$MUSIC_ORIGIN/")
+                    // Stats pings are only honoured for a session Google recognises
+                    // as a real client, so identify as one here too — the visitor
+                    // id is minted on the first call and reused for the session.
+                    header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
+                    header("X-YouTube-Client-Version", clientVersion)
+                    visitor?.let { header("X-Goog-Visitor-Id", it) }
+                    credentials.forEach { (name, value) -> header(name, value) }
+                    setBody(
+                        buildJsonObject {
+                            putJsonObject("context") {
+                                putJsonObject("client") {
+                                    put("clientName", "WEB_REMIX")
+                                    put("clientVersion", clientVersion)
+                                    put("hl", hl)
+                                    put("gl", gl)
+                                    visitor?.let { put("visitorData", it) }
                                 }
+                                putJsonObject("user") {
+                                    put("lockedSafetyMode", false)
+                                    // Only ever a value read back from a shell that
+                                    // said it was signed in: Google answers an
+                                    // `onBehalfOfUser` it cannot tie to the cookie
+                                    // with 401, so a guess here would take the
+                                    // whole app down rather than just history. An
+                                    // anonymous request names no account at all —
+                                    // not even the chosen channel's, which outranks
+                                    // the session in [dataSyncIdFor].
+                                    if (!anonymous) {
+                                        dataSyncIdForRequest(endpoint, dataSyncIdFor(session))
+                                            ?.let { put("onBehalfOfUser", it) }
+                                    }
+                                }
+                                putJsonObject("request") { put("useSsl", true) }
                             }
-                            putJsonObject("request") { put("useSsl", true) }
-                        }
-                        bodyExtras()
-                    },
-                )
-            }.body<JsonObject>()
+                            bodyExtras()
+                        },
+                    )
+                }.body<JsonObject>()
+                if (throughProxy) ProxyHealthMonitor.recordSuccess()
+                answer
+            }
+            try {
+                attempt(client, proxyActive)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (proxyActive && directRetryOnProxyFailure && !isAccountWrite(endpoint) &&
+                    ProxyFailure.isProxyDown(e)
+                ) {
+                    Log.w(TAG, "music $endpoint: proxy unreachable, retrying directly")
+                    ProxyHealthMonitor.recordUnreachable()
+                    proxyActive = false
+                    attempt(directClient, false)
+                } else {
+                    throw e
+                }
+            }
         }
 
         val responseVisitorData = response["responseContext"]?.jsonObject

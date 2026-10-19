@@ -1159,6 +1159,8 @@
     <string name="proxy_gate_state">음악 연결 경로</string>
     <string name="proxy_gate_direct">YouTube Music 직접 연결</string>
     <string name="proxy_gate_fallback">한국 제한 우회 중(대체 경로)</string>
+    <string name="proxy_health_unreachable">YouTube Music 연결 서버에 닿지 않아요 — 대체 경로로 동작 중</string>
+    <string name="proxy_health_home_notice">YouTube Music 프록시 서버에 닿지 않아 대체 경로로 동작합니다.</string>
     <string name="proxy_test_action">테스트</string>
     <string name="proxy_testing">확인 중…</string>
     <string name="proxy_test_ok">연결됨: YouTube Music 홈 %1$d개 선반</string>

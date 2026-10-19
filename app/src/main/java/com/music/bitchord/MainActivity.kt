@@ -148,6 +148,8 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.net.ProxyHealth
+import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
@@ -1086,6 +1088,14 @@ private fun BitChordApp(
     val explorePull = rememberPullToRefreshState()
     val libraryPull = rememberPullToRefreshState()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val proxyHealth by ProxyHealthMonitor.state.collectAsStateWithLifecycle()
+    var proxyHealthNotified by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(proxyHealth) {
+        if (proxyHealth == ProxyHealth.UNREACHABLE && !proxyHealthNotified) {
+            proxyHealthNotified = true
+            Toast.makeText(context, R.string.proxy_health_home_notice, Toast.LENGTH_LONG).show()
+        }
+    }
     val currentFeed = when {
         showSettings || showAccountScrobbling || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME

@@ -38,6 +38,8 @@ import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.ProxyConnectionTest
 import com.music.bitchord.data.net.ProxyConfig
 import com.music.bitchord.data.net.ProxyConfigError
+import com.music.bitchord.data.net.ProxyHealth
+import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyScope
 import com.music.bitchord.data.net.ProxyValidation
@@ -68,6 +70,7 @@ internal fun ProxySettingsSection() {
     val password by AppSettings.proxyPassword.collectAsStateWithLifecycle()
     val proxyScope by AppSettings.proxyScope.collectAsStateWithLifecycle()
     val gateActive by MusicGateFallback.active.collectAsStateWithLifecycle()
+    val proxyHealth by ProxyHealthMonitor.state.collectAsStateWithLifecycle()
 
     var editing by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -114,6 +117,16 @@ internal fun ProxySettingsSection() {
                 if (gateActive) R.string.proxy_gate_fallback else R.string.proxy_gate_direct,
             ),
         )
+        if (proxyHealth == ProxyHealth.UNREACHABLE) {
+            Text(
+                text = stringResource(R.string.proxy_health_unreachable),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+            )
+        }
 
         if (mode != ProxyMode.OFF) {
             RowDivider()

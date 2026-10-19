@@ -47,6 +47,7 @@ object YouTubeProxy {
         val normalized = config.normalized()
         if (normalized == current) return
         current = normalized
+        ProxyHealthMonitor.clear()
         // Off the caller's thread: closing a pooled TLS socket writes its
         // close_notify, and the settings dialog saves on the main thread, where
         // Android kills the app for network I/O (crashed on the S24, ko-74).
@@ -71,6 +72,7 @@ object YouTubeProxy {
         override fun select(uri: URI): List<Proxy> {
             val config = current
             if (!config.usable) return listOf(Proxy.NO_PROXY)
+            if (ProxyHealthMonitor.shouldBypassProxy()) return listOf(Proxy.NO_PROXY)
             if (!ProxyScopeMatcher.matches(uri.host, uri.path, config.scope)) {
                 return listOf(Proxy.NO_PROXY)
             }

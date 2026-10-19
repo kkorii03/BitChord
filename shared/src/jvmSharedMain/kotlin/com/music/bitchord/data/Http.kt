@@ -130,7 +130,7 @@ object Http {
         chain.proceed(request)
     }
 
-    val client: OkHttpClient = OkHttpClient.Builder()
+    private fun buildClient(withProxy: Boolean): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
@@ -140,9 +140,23 @@ object Http {
         // in the app funnels through this one client — Innertube and NewPipe
         // included, and ExoPlayer's media fetches through OkHttpDataSource.
         // Both answer from mutable state, so a settings change needs no rebuild.
-        .proxySelector(com.music.bitchord.data.net.YouTubeProxy.proxySelector)
-        .proxyAuthenticator(com.music.bitchord.data.net.YouTubeProxy.proxyAuthenticator)
+        // The metadata client's own four-second connect bound (see Innertube)
+        // is what keeps a dead proxy from stalling Home.
+        .apply {
+            if (withProxy) {
+                proxySelector(com.music.bitchord.data.net.YouTubeProxy.proxySelector)
+                proxyAuthenticator(com.music.bitchord.data.net.YouTubeProxy.proxyAuthenticator)
+            }
+        }
         .addInterceptor(webDavInterceptor)
         .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()
+
+    val client: OkHttpClient = buildClient(withProxy = true)
+
+    /**
+     * The same stack without any proxy, for the one direct retry a request
+     * makes when the proxy route is found dead.
+     */
+    internal val directClient: OkHttpClient = buildClient(withProxy = false)
 }

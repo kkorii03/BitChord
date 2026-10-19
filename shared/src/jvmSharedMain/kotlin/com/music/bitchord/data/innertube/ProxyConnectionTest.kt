@@ -1,5 +1,6 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.YouTubeProxy
 import kotlinx.coroutines.CancellationException
 
@@ -33,18 +34,25 @@ object ProxyConnectionTest {
         // Anonymous on purpose: this asks whether the route can reach Music at
         // all, so it must not depend on (or disturb) the account's gate verdict
         // before the answer is in.
-        val home = Innertube.browseAnonymous("FEmusic_home")
-        val shelves = MusicGateFallback.musicHomeShelfCount(home)
-        when {
-            MusicGateFallback.isGatedHome(home) -> {
-                MusicGateFallback.markGated("proxy connection test")
-                Result.Gated
+        //
+        // No direct failover here: a pass must mean the proxy answered, not
+        // that the request quietly went around it.
+        if (YouTubeProxy.config.usable && ProxyHealthMonitor.shouldBypassProxy()) {
+            Result.Failed(null)
+        } else {
+            val home = Innertube.browseAnonymousThroughProxyOnly("FEmusic_home")
+            val shelves = MusicGateFallback.musicHomeShelfCount(home)
+            when {
+                MusicGateFallback.isGatedHome(home) -> {
+                    MusicGateFallback.markGated("proxy connection test")
+                    Result.Gated
+                }
+                shelves > 0 -> {
+                    if (YouTubeProxy.config.usable) MusicGateFallback.markOpen()
+                    Result.Ok(shelves)
+                }
+                else -> Result.Failed(null)
             }
-            shelves > 0 -> {
-                if (YouTubeProxy.config.usable) MusicGateFallback.markOpen()
-                Result.Ok(shelves)
-            }
-            else -> Result.Failed(null)
         }
     } catch (e: CancellationException) {
         throw e

@@ -1256,6 +1256,8 @@
     <string name="proxy_gate_state">Music route</string>
     <string name="proxy_gate_direct">Connected directly to YouTube Music</string>
     <string name="proxy_gate_fallback">Korean restriction bypass in use (fallback route)</string>
+    <string name="proxy_health_unreachable">Can\'t reach the YouTube Music connection server — using the alternative route.</string>
+    <string name="proxy_health_home_notice">Can\'t reach the YouTube Music proxy — using the alternative route.</string>
     <string name="proxy_test_action">Test</string>
     <string name="proxy_testing">Checking…</string>
     <string name="proxy_test_ok">Connected: YouTube Music Home has %1$d shelves</string>

@@ -8,6 +8,7 @@ import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.YouTubeWebSearch
+import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
@@ -89,9 +90,13 @@ object YtMusicRepository {
                 // the request fails on the wire, surface that error instead of
                 // silently reading youtube.com behind their back; only the
                 // gate's own refusal still justifies the fallback there.
+                // A proxy that is down is different: the direct retry (see
+                // Innertube.postMusic) already happened, so Home must fall
+                // back rather than show an error screen.
                 if (
-                    MusicGateFallback.isActive(key) &&
-                    (!YouTubeProxy.config.usable || isMusicGateSignal(failure))
+                    (YouTubeProxy.config.usable && ProxyFailure.isProxyDown(failure)) ||
+                    (MusicGateFallback.isActive(key) &&
+                        (!YouTubeProxy.config.usable || isMusicGateSignal(failure)))
                 ) {
                     Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
                     return@call YouTubeFallback.home(force)
