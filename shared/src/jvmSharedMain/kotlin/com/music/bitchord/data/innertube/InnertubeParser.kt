@@ -791,10 +791,14 @@ object InnertubeParser {
             // is simply absent, which is what makes "remove from playlist"
             // offer itself exactly where it means something.
             setVideoId = renderer.o("playlistItemData").s("playlistSetVideoId"),
-            // The row type word is the clean signal when present ("All" tab);
-            // otherwise a music-video upload gives itself away with widescreen
-            // art where a catalogue track has square album cover art.
-            isVideo = rowType == "video" || thumbnails.isNotSquare(),
+            // The row's own `musicVideoType` says exactly what it is; the
+            // type word and the art are only fallbacks for responses without
+            // it. A video row can carry square art, and an ATV row beside it
+            // must still count as the catalogue song.
+            isVideo = when (val videoType = renderer.findString("musicVideoType")) {
+                null -> rowType == "video" || thumbnails.isNotSquare()
+                else -> !videoType.contains("ATV", ignoreCase = true)
+            },
             isExplicit = renderer.hasExplicitBadge(),
         )
     }
@@ -837,7 +841,10 @@ object InnertubeParser {
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,
-            isVideo = rowType == "video" || thumbnails.isNotSquare(),
+            isVideo = when (val videoType = renderer.findString("musicVideoType")) {
+                null -> rowType == "video" || thumbnails.isNotSquare()
+                else -> !videoType.contains("ATV", ignoreCase = true)
+            },
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
         )
     }
@@ -1234,46 +1241,76 @@ object InnertubeParser {
      * official video, never a fan upload or a lyric video found by search.
      */
     fun parseCounterpart(root: JsonElement, videoId: String): String? =
+        parseCounterpartSong(root, videoId)?.videoId
+
+    /**
+     * The catalogue release a music-video row is paired with, as a full row.
+     *
+     * The `next` response wraps an OMV row in a
+     * `playlistPanelVideoWrapperRenderer` whose `counterpart` is the ATV row
+     * YouTube Music switches to. Reading the whole row rather than just its id
+     * is what lets a queue be built with the song version up front: title,
+     * credits, artwork and runtime all come from YouTube's own pairing instead
+     * of a search guess.
+     */
+    fun parseCounterpartSong(root: JsonElement, videoId: String): Song? =
         collectRenderers(root, "playlistPanelVideoWrapperRenderer").firstNotNullOfOrNull { wrapper ->
             val primary = wrapper.o("primaryRenderer").o("playlistPanelVideoRenderer").s("videoId")
             if (primary != videoId) return@firstNotNullOfOrNull null
             wrapper.a("counterpart")?.firstNotNullOfOrNull { entry ->
-                entry.o("counterpartRenderer").o("playlistPanelVideoRenderer").s("videoId")
-            }?.takeIf { it.isNotBlank() && it != videoId }
-        }
+                parsePlaylistPanelRow(
+                    entry.o("counterpartRenderer").o("playlistPanelVideoRenderer"),
+                )
+            }?.takeIf { it.videoId.isNotBlank() && it.videoId != videoId }
+        }?.copy(isVideo = false, isVideoOrigin = true)
 
     /** Tracks of a watch queue (`next` response) — the AutoPlay radio mix. */
     fun parseWatchQueue(root: JsonElement): List<Song> {
         val out = LinkedHashMap<String, Song>()
         collectRenderers(root, "playlistPanelVideoRenderer").forEach { renderer ->
-            val videoId = renderer.s("videoId") ?: return@forEach
-            val title = renderer.o("title").runs()
-            if (title.isBlank()) return@forEach
-            // The byline packs artist, views and likes into one run list; only
-            // the leading runs before the first bullet are the credit.
-            val bylineRuns = renderer.o("longBylineText").a("runs").orEmpty()
-            val byline = bylineRuns.map { it.s("text").orEmpty() }
-            val artist = byline.takeWhile { !it.contains("•") }.joinToString("").trim()
-            // Those same runs link out to the artist and album pages, which is
-            // how a track started from the queue knows where it came from.
-            val credits = creditsOf(bylineRuns)
-            out[videoId] = Song(
-                videoId = videoId,
-                title = title,
-                artist = artist,
-                thumbnailUrl = renderer.o("thumbnail").a("thumbnails").best(),
-                durationText = renderer.o("lengthText").runs().takeIf { it.isNotBlank() },
-                artistId = credits.artistId,
-                artists = completeArtistCredits(artist.orEmpty(), credits.artists),
-                albumId = credits.albumId,
-                albumName = credits.albumName,
-                // A catalogue track is credited "Artist • Album • Year"; the
-                // matching music video is "Artist • 417M views • 2.4M likes".
-                isVideo = byline.any { it.contains("views", ignoreCase = true) || it.contains("조회수") },
-                isExplicit = renderer.hasExplicitBadge(),
-            )
+            val song = parsePlaylistPanelRow(renderer) ?: return@forEach
+            out[song.videoId] = song
         }
         return out.values.toList()
+    }
+
+    /** One `playlistPanelVideoRenderer` row, from a watch queue or a counterpart. */
+    private fun parsePlaylistPanelRow(renderer: JsonObject?): Song? {
+        if (renderer == null) return null
+        val videoId = renderer.s("videoId") ?: return null
+        val title = renderer.o("title").runs()
+        if (title.isBlank()) return null
+        // The byline packs artist, views and likes into one run list; only
+        // the leading runs before the first bullet are the credit.
+        val bylineRuns = renderer.o("longBylineText").a("runs").orEmpty()
+        val byline = bylineRuns.map { it.s("text").orEmpty() }
+        val artist = byline.takeWhile { !it.contains("•") }.joinToString("").trim()
+        // Those same runs link out to the artist and album pages, which is
+        // how a track started from the queue knows where it came from.
+        val credits = creditsOf(bylineRuns)
+        val videoType = renderer.findString("musicVideoType")
+        return Song(
+            videoId = videoId,
+            title = title,
+            artist = artist,
+            thumbnailUrl = renderer.o("thumbnail").a("thumbnails").best(),
+            durationText = renderer.o("lengthText").text().takeIf { it.isNotBlank() },
+            artistId = credits.artistId,
+            artists = completeArtistCredits(artist.orEmpty(), credits.artists),
+            albumId = credits.albumId,
+            albumName = credits.albumName,
+            // The row's own `musicVideoType` is authoritative where present:
+            // an OMV/UGC row is a video even when its art is square, and an
+            // ATV row is the catalogue song even beside a video upload. The
+            // byline tally is the older signal for responses without it.
+            isVideo = when {
+                videoType != null -> !videoType.contains("ATV", ignoreCase = true)
+                else -> byline.any {
+                    it.contains("views", ignoreCase = true) || it.contains("조회수")
+                }
+            },
+            isExplicit = renderer.hasExplicitBadge(),
+        )
     }
 
     /**

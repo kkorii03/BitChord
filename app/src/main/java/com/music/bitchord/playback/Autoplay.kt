@@ -153,14 +153,31 @@ suspend fun loadAutoplayTracks(
     }
     if (playable.isEmpty()) return Result.success(emptyList())
 
-    return Result.success(playable.map {
+    val rows = playable.map {
         it.copy(
             radioName = seedSong.radioName,
             playbackSource = seedSong.playbackSource,
             playbackSourceType = seedSong.playbackSourceType,
             playbackSourceId = seedSong.playbackSourceId,
         ).asQueueEntry(QueueTier.AUTOPLAY)
-    })
+    }
+    // Music-only works on the rows before they are appended, like every other
+    // queue build: the first few are resolved here and the rest as playback
+    // approaches them. A row with no song version is queued as its video.
+    return Result.success(
+        if (AppSettings.preferMusicOnly.value) {
+            try {
+                YtMusicRepository.resolveQueueAhead(rows, 0, ahead = 4)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                TrackLog.w("BitChord", "autoplay song versions failed: ${failure.message}", about = seedSong.videoId)
+                rows
+            }
+        } else {
+            rows
+        },
+    )
 }
 
 /**

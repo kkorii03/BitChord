@@ -1,9 +1,16 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.BoundedQueuePlanner
+import com.music.bitchord.playback.ContinuationState
 import com.music.bitchord.playback.QueueShuffle
+import com.music.bitchord.playback.QueueWindow
+import com.music.bitchord.playback.WINDOW_AHEAD
 import com.music.bitchord.playback.queueStartIndex
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -139,5 +146,45 @@ class QueueShuffleTest {
 
         assertNull(QueueShuffle.persistedOrder())
         assertEquals(false, QueueShuffle.enabled.value)
+    }
+
+    @Test
+    fun `a shuffled playlist keeps every row and leads with the random pick`() {
+        val songs = (0 until 127).map { index ->
+            Song(videoId = "song$index", title = "Song $index", artist = "Artist", thumbnailUrl = null)
+        }
+
+        val order = QueueShuffle.startingOrder(songs, startIndex = 64)
+
+        assertEquals(127, order.size)
+        assertEquals("song64", order.first().videoId)
+        assertEquals(127, order.map { it.videoId }.toSet().size)
+    }
+
+    /**
+     * A bounded playlist must refill its physical window from the same
+     * continuation until the last real track, and AutoPlay is only eligible
+     * once that continuation is terminal and nothing remains ahead.
+     */
+    @Test
+    fun `a bounded playlist refills to its end before autoplay`() {
+        val window = QueueWindow(127).startAt(0)
+        var ahead = BoundedQueuePlanner.physicalUpcoming(window, repeatAll = false)
+        assertEquals(WINDOW_AHEAD, ahead.size)
+        assertFalse(BoundedQueuePlanner.autoplayEligible(window, ContinuationState.AVAILABLE, false))
+
+        while (window.advanceAutomatically(repeatAll = false) != null) {
+            ahead = ahead.drop(1)
+            val additions = BoundedQueuePlanner.topUpEntries(window, ahead, repeatAll = false)
+            if (additions.isNotEmpty()) ahead = ahead + additions
+            if (window.upcoming(1, repeatAll = false).isNotEmpty()) {
+                assertFalse(BoundedQueuePlanner.autoplayEligible(window, ContinuationState.EXHAUSTED, false))
+            }
+        }
+
+        assertEquals(0, ahead.size)
+        assertFalse(BoundedQueuePlanner.autoplayEligible(window, ContinuationState.AVAILABLE, false))
+        assertFalse(BoundedQueuePlanner.autoplayEligible(window, ContinuationState.IN_FLIGHT, false))
+        assertTrue(BoundedQueuePlanner.autoplayEligible(window, ContinuationState.EXHAUSTED, false))
     }
 }

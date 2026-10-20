@@ -215,6 +215,8 @@ const val EXTRA_BOUNDED_CONTEXT_CONTINUATION = "bitchord.boundedContext.continua
 /** Session command used to smoothly swap the current track's version (film vs release). */
 const val ACTION_SWAP_VERSION = "com.music.bitchord.action.SWAP_VERSION"
 const val EXTRA_SWAP_MEDIA_ITEM = "bitchord.swap.media_item"
+/** Skip the video/song alignment pass for an automatic, pre-resolved swap. */
+const val EXTRA_SWAP_SKIP_ALIGNMENT = "bitchord.swap.skipAlignment"
 
 /** Session command used by the media notification's and the 4×1 widget's Favorite button. */
 /** How long the service may stay in the foreground, paused, while the watch plays. */
@@ -2276,6 +2278,7 @@ class PlaybackService : MediaLibraryService() {
     private fun smoothSwapCurrentTrackVersion(
         targetMediaItem: MediaItem,
         onSwapCommitted: (() -> Unit)? = null,
+        skipAlignment: Boolean = false,
     ) {
         val activePlayer = player ?: return
         val currentIndex = activePlayer.currentMediaItemIndex
@@ -2302,7 +2305,10 @@ class PlaybackService : MediaLibraryService() {
 
         val sourceSong = currentItem.toSong()
         val targetSong = targetMediaItem.toSong()
-        val smartAlignEnabled = AppSettings.smartVersionAlignment.value
+        // An automatic queue resolution already chose the song version before
+        // playback; it asks for no measuring pass, so the playing track is
+        // never held while a cut is compared.
+        val smartAlignEnabled = AppSettings.smartVersionAlignment.value && !skipAlignment
         TrackLog.d(
             "BitChord",
             "queue: replace n=1 at=$currentIndex size=${activePlayer.mediaItemCount} " +
@@ -2879,14 +2885,16 @@ class PlaybackService : MediaLibraryService() {
             emptyList()
         }
         val userQueue = upcoming.filter { it.queueTier == QueueTier.USER_QUEUE }.map(MediaItem::toSong)
-        val autoplay = upcoming.filter { it.queueTier == QueueTier.AUTOPLAY }.map(MediaItem::toSong)
         val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
         val plan = BoundedQueuePlanner.buildInitialPlan(
             contextSnapshot = registered,
             selectedIndex = selectedIndex,
             queueWindow = window,
             preservedUserQueue = userQueue,
-            existingAutoplay = if (repeatAll) emptyList() else autoplay,
+            // A new playlist/album does not inherit the previous queue's
+            // recommendations: those would otherwise sit directly after the
+            // first window and play before this collection had finished.
+            existingAutoplay = emptyList(),
             repeatAll = repeatAll,
         )
 
@@ -2909,6 +2917,7 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer.prepare()
         exoPlayer.play()
         startBoundedContinuationLoading(contextToken)
+        scheduleUpcomingSongVersions(exoPlayer)
     }
 
     /** Clears local bounded state before a non-context queue replaces the player. */
@@ -3025,6 +3034,12 @@ class PlaybackService : MediaLibraryService() {
             boundedMediaItem(snapshot.songs[entry.canonicalIndex], entry.canonicalIndex, entry.cycleId)
         }
         exoPlayer.addMediaItems(autoplayIndex, items)
+        TrackLog.i(
+            "BitChord",
+            "queue: window +${additions.size} from ${boundedContextSource?.title.orEmpty()} " +
+                "(loaded ${existingEntries.size + additions.size} of ${window.canonicalSize})",
+        )
+        scheduleUpcomingSongVersions(exoPlayer)
     }
 
     private fun boundedContextAnchor(exoPlayer: ExoPlayer): Int? {
@@ -3112,6 +3127,61 @@ class PlaybackService : MediaLibraryService() {
             newTier = QueueTier.CONTEXT,
             newContextCycleId = cycleId,
         )
+    }
+
+    /** Resolves the song versions of the next few queue rows before they play. */
+    private var songVersionJob: Job? = null
+
+    /**
+     * With music-only on, the next three rows are replaced by their catalogue
+     * releases as the queue approaches them. The current row was resolved when
+     * the queue was built; replacing it here would restart a track already
+     * playing, so this only ever touches what is still ahead.
+     */
+    private fun scheduleUpcomingSongVersions(exoPlayer: ExoPlayer) {
+        if (!AppSettings.preferMusicOnly.value) return
+        if (ListenTogether.state.value.inParty) return
+        songVersionJob?.cancel()
+        songVersionJob = scope.launch {
+            val current = exoPlayer.currentMediaItemIndex
+            if (current !in 0 until exoPlayer.mediaItemCount) return@launch
+            val last = (current + 3).coerceAtMost(exoPlayer.mediaItemCount - 1)
+            for (index in (current + 1)..last) {
+                if (!isActive) return@launch
+                if (index >= exoPlayer.mediaItemCount) return@launch
+                val item = exoPlayer.getMediaItemAt(index)
+                val song = item.toSong()
+                if (!song.isVideo || song.localUri != null) continue
+                val resolved = try {
+                    YtMusicRepository.songVersion(song)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    TrackLog.w("BitChord", "song version failed: ${failure.message}", about = song.videoId)
+                    null
+                } ?: continue
+                if (resolved.videoId == song.videoId) continue
+                if (index <= exoPlayer.currentMediaItemIndex) continue
+                if (index >= exoPlayer.mediaItemCount) continue
+                val now = exoPlayer.getMediaItemAt(index)
+                if (now.mediaId != song.videoId) continue
+                val replacement = QueueShuffle.withQueueMetadata(
+                    resolved.toMediaItem(),
+                    newEntryId = now.queueEntryId,
+                    newCanonicalIndex = now.canonicalIndex,
+                    newTier = now.queueTier,
+                    newContextCycleId = now.contextCycleId,
+                )
+                runCatching { exoPlayer.replaceMediaItem(index, replacement) }
+                    .onFailure {
+                        TrackLog.w(
+                            "BitChord",
+                            "song version replace failed at $index: ${it.message}",
+                            about = song.videoId,
+                        )
+                    }
+            }
+        }
     }
 
     private fun toggleAutoplayFromNotification() {
@@ -3263,6 +3333,7 @@ class PlaybackService : MediaLibraryService() {
                                 "queue: autoplay-append n=${fresh.size} at=${latestPlayer.mediaItemCount - fresh.size} " +
                                     "size=${latestPlayer.mediaItemCount} by=autoplay",
                             )
+                            scheduleUpcomingSongVersions(latestPlayer)
                         }
                     }
                     if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
@@ -3729,6 +3800,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scheduleBoundedContextTopUp()
+        scheduleUpcomingSongVersions(exoPlayer)
         // A *different* track is a clean slate for [recoverFrom], and so is the
         // same track becoming current for any reason other than that method's
         // own retry. The distinction is the whole of the reported loading loop.
@@ -8958,7 +9030,10 @@ class PlaybackService : MediaLibraryService() {
                     val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
                     if (bundle != null) {
                         val targetSong = songFromBundle(bundle)
-                        smoothSwapCurrentTrackVersion(targetSong.toMediaItem())
+                        smoothSwapCurrentTrackVersion(
+                            targetSong.toMediaItem(),
+                            skipAlignment = args.getBoolean(EXTRA_SWAP_SKIP_ALIGNMENT, false),
+                        )
                     }
                 }
                 ACTION_QUEUE_DRAG -> {

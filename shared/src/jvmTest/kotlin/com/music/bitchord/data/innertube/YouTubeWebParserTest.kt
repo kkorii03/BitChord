@@ -5,7 +5,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -28,6 +30,23 @@ class YouTubeWebParserTest {
         assertEquals("56B44F6D10557CC6", first.setVideoId)
         assertEquals("Mix - Rick Astley", page.header?.title)
         assertEquals("YouTube", page.header?.subtitle)
+    }
+
+    @Test
+    fun `an official video's counterpart is the catalogue song row`() {
+        val root = json(COUNTERPART)
+
+        val song = assertNotNull(InnertubeParser.parseCounterpartSong(root, "YQHsXMglC9A"))
+        assertEquals("ATV00000001", song.videoId)
+        assertEquals("Hello", song.title)
+        assertEquals("Adele", song.artist)
+        assertEquals("4:55", song.durationText)
+        assertFalse(song.isVideo)
+        assertTrue(song.isVideoOrigin)
+
+        assertEquals("ATV00000001", InnertubeParser.parseCounterpart(root, "YQHsXMglC9A"))
+        assertNull(InnertubeParser.parseCounterpart(root, "SOMEOTHERID"))
+        assertNull(InnertubeParser.parseCounterpartSong(root, "SOMEOTHERID"))
     }
 
     @Test
@@ -237,6 +256,40 @@ class YouTubeWebParserTest {
                 }}
               ]
             }}}}}
+        """
+
+        /** Trimmed from a music.youtube.com `next` queue with an OMV row. */
+        const val COUNTERPART = """
+            {"contents":{"contents":[
+              {"playlistPanelVideoWrapperRenderer":{
+                "primaryRenderer":{"playlistPanelVideoRenderer":{
+                  "videoId":"YQHsXMglC9A",
+                  "title":{"runs":[{"text":"Hello (Official Music Video)"}]},
+                  "longBylineText":{"runs":[{"text":"Adele"},{"text":" • "},{"text":"417M views"}]},
+                  "lengthText":{"runs":[{"text":"6:07"}]},
+                  "thumbnail":{"thumbnails":[{"url":"https://i.ytimg.com/vi/YQHsXMglC9A/hq.jpg"}]},
+                  "navigationEndpoint":{"watchEndpoint":{
+                    "videoId":"YQHsXMglC9A",
+                    "watchEndpointMusicSupportedConfigs":{"watchEndpointMusicConfig":{
+                      "musicVideoType":"MUSIC_VIDEO_TYPE_OMV"
+                    }}
+                  }}
+                }},
+                "counterpart":[{"counterpartRenderer":{"playlistPanelVideoRenderer":{
+                  "videoId":"ATV00000001",
+                  "title":{"runs":[{"text":"Hello"}]},
+                  "longBylineText":{"runs":[{"text":"Adele"}]},
+                  "lengthText":{"runs":[{"text":"4:55"}]},
+                  "thumbnail":{"thumbnails":[{"url":"https://i.ytimg.com/vi/ATV00000001/hq.jpg"}]},
+                  "navigationEndpoint":{"watchEndpoint":{
+                    "videoId":"ATV00000001",
+                    "watchEndpointMusicSupportedConfigs":{"watchEndpointMusicConfig":{
+                      "musicVideoType":"MUSIC_VIDEO_TYPE_ATV"
+                    }}
+                  }}
+                }}}]
+              }}
+            ]}}
         """
 
         const val PLAYLIST = """

@@ -827,8 +827,49 @@ object YtMusicRepository {
      * This is the inverse of [resolveAudio] - it finds the music video
      * for a catalogue track. Returns null when no video version is found.
      */
-    /** [officialVideo] answers by track id; "" for a track without one. */
-    private val officialVideos = ConcurrentHashMap<String, String>()
+    /** YouTube Music's own counterpart row for a video, plus "no counterpart". */
+    private val counterpartAudioCache = ConcurrentHashMap<String, Song>()
+    private val counterpartMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val counterpartLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+
+    /**
+     * The catalogue release YouTube Music pairs with music-video [videoId], as
+     * its own Song/Video switch does, or null when it pairs none.
+     *
+     * Read whole rather than by id: a queue built with the song version up
+     * front needs the counterpart's title, credits, art and runtime, not just
+     * its id. Only a successful `next` response is cached, so an offline
+     * attempt can be retried later.
+     */
+    suspend fun counterpartAudio(videoId: String): Song? {
+        if (videoId.isBlank()) return null
+        counterpartAudioCache[videoId]?.let { return it }
+        if (videoId in counterpartMissing) return null
+        val mine = CompletableDeferred<Song?>()
+        counterpartLookups.putIfAbsent(videoId, mine)?.let {
+            return try {
+                it.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            }
+        }
+        try {
+            val found = call("counterpart:$videoId") {
+                InnertubeParser.parseCounterpartSong(Innertube.next(videoId), videoId)
+            }
+            found.onSuccess { song ->
+                if (song == null) counterpartMissing.add(videoId) else counterpartAudioCache[videoId] = song
+            }
+            val answer = found.getOrNull()
+            mine.complete(answer)
+            return answer
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            counterpartLookups.remove(videoId, mine)
+        }
+    }
 
     /**
      * The official music video of catalogue track [videoId], as YouTube Music
@@ -836,16 +877,134 @@ object YtMusicRepository {
      * [resolveVideo] nothing is searched for, so nothing else — a lyric
      * video, a fan upload with a translation — can be picked by mistake.
      */
-    suspend fun officialVideo(videoId: String): String? {
-        if (videoId.isBlank()) return null
-        officialVideos[videoId]?.let { return it.ifEmpty { null } }
-        val found = call("counterpart:$videoId") {
-            InnertubeParser.parseCounterpart(Innertube.next(videoId), videoId)
+    suspend fun officialVideo(videoId: String): String? =
+        counterpartAudio(videoId)?.videoId
+
+    /** Song-version answers by music-video id, with "no version" cached too. */
+    private val songVersionCache = ConcurrentHashMap<String, Song>()
+    private val songVersionMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val songVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+
+    /**
+     * The song version of a music-video row, resolved before it reaches the
+     * queue instead of after it has started playing.
+     *
+     * YouTube Music's own counterpart comes first: it is exact, and it is what
+     * the official app's Song/Video switch uses. A catalogue search
+     * ([resolveAudio], the same-artist matcher) is the fallback for rows with
+     * no counterpart. Null means "play the video as it is", never silence.
+     *
+     * Queue fields stay on the original row, so the resolved track keeps its
+     * entry identity, tier, playlist slot and playback source. The answer is
+     * cached per video id; an unsuccessful pair of requests is not cached, so
+     * an offline attempt can be retried.
+     */
+    suspend fun songVersion(song: Song): Song? {
+        if (!song.isVideo || song.localUri != null) return null
+        if (song.title.isBlank() || song.artist.isBlank()) {
+            TrackLog.w(TAG, "song version: ${song.videoId} -> none via none (no title/artist)", about = song.videoId)
+            return null
         }
-        // Only an answer is kept; a failed request may just have been offline.
-        found.onSuccess { officialVideos[videoId] = it.orEmpty() }
-        return found.getOrNull()
+        if (CoverTitles.isCover(song)) {
+            TrackLog.i(TAG, "song version: ${song.videoId} -> none via none (cover)", about = song.videoId)
+            return null
+        }
+        songVersionCache[song.videoId]?.let { return it.withQueueFieldsOf(song) }
+        if (song.videoId in songVersionMissing) return null
+        val mine = CompletableDeferred<Song?>()
+        songVersionLookups.putIfAbsent(song.videoId, mine)?.let {
+            return try {
+                it.await()?.withQueueFieldsOf(song)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            }
+        }
+        try {
+            val counterpart = runCatching { counterpartAudio(song.videoId) }
+            var via = "counterpart"
+            var found = counterpart.getOrNull()
+            var search: Result<Song>? = null
+            if (found == null) {
+                search = runCatching { resolveAudio(song) }
+                found = search.getOrNull()?.takeIf { it.videoId != song.videoId }
+                via = if (found != null) "search" else "none"
+            }
+            // A pair is definitive when the counterpart answered (found or
+            // not) and, if it named none, the search also completed. A failed
+            // request is not "no version" and must be retried later.
+            val definitive = found != null ||
+                (counterpart.isSuccess && search?.isSuccess == true)
+            if (definitive) {
+                if (found == null) songVersionMissing.add(song.videoId)
+                else songVersionCache[song.videoId] = found
+            }
+            TrackLog.i(
+                TAG,
+                "song version: ${song.videoId} -> ${found?.videoId ?: "none"} via $via",
+                about = song.videoId,
+            )
+            mine.complete(found)
+            return found?.withQueueFieldsOf(song)
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            songVersionLookups.remove(song.videoId, mine)
+        }
     }
+
+    /**
+     * The song versions of the queue rows around [startIndex], resolved in
+     * parallel. Current + next few is the look-ahead the queue needs; rows
+     * further out are resolved as playback approaches them.
+     */
+    suspend fun resolveQueueAhead(
+        songs: List<Song>,
+        startIndex: Int,
+        ahead: Int = 4,
+    ): List<Song> {
+        if (songs.isEmpty() || ahead <= 0) return songs
+        val first = startIndex.coerceIn(0, songs.lastIndex)
+        val last = (first + ahead - 1).coerceAtMost(songs.lastIndex)
+        val candidates = (first..last).filter { songs[it].isVideo }
+        if (candidates.isEmpty()) return songs
+        val resolved = coroutineScope {
+            candidates.map { index ->
+                async(Dispatchers.IO) {
+                    val version = try {
+                        songVersion(songs[index])
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        Log.w(TAG, "song version failed for ${songs[index].videoId}: ${failure.message}")
+                        null
+                    }
+                    index to version
+                }
+            }.awaitAll()
+        }
+        if (resolved.none { it.second != null }) return songs
+        return songs.toMutableList().also { out ->
+            resolved.forEach { (index, version) -> if (version != null) out[index] = version }
+        }
+    }
+
+    private fun Song.withQueueFieldsOf(source: Song): Song = copy(
+        // A counterpart row is normally complete, but a search result can be
+        // sparse; never blank the metadata the queue already had.
+        title = title.ifBlank { source.title },
+        artist = artist.ifBlank { source.artist },
+        thumbnailUrl = thumbnailUrl ?: source.thumbnailUrl,
+        durationText = durationText ?: source.durationText,
+        isVideoOrigin = true,
+        queueTier = source.queueTier,
+        queueEntryId = source.queueEntryId,
+        radioName = source.radioName,
+        playbackSource = source.playbackSource,
+        playbackSourceType = source.playbackSourceType,
+        playbackSourceId = source.playbackSourceId,
+        setVideoId = source.setVideoId,
+    )
 
     private val officialBySearch = ConcurrentHashMap<String, String>()
 

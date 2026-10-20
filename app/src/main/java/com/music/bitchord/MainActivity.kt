@@ -153,6 +153,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
@@ -1428,26 +1429,36 @@ private fun BitChordApp(
      * up front. That makes the video's title/artwork visible immediately and
      * leaves it in place as the fallback if matching fails.
      *
-     * Automatic requests temporarily hold playback because the music-only
-     * preference is the version the listener asked to hear. Manual requests
-     * preserve the old behaviour and let the video keep playing meanwhile.
+     * Automatic requests never pause and never measure alignment: their row
+     * should already carry the song version (see
+     * [YtMusicRepository.resolveQueueAhead]) and this is only the fallback
+     * for a queue that reached the player unconverted. Manual requests keep
+     * the old behaviour, including the measured handover.
+     *
+     * Returns true only when the answer is definitive: the swap was handed
+     * over, or there is no distinct song version to play. A cancelled,
+     * superseded or failed lookup stays retryable.
      */
-    suspend fun switchToMusicOnly(song: Song, pauseWhileResolving: Boolean) {
+    suspend fun switchToMusicOnly(
+        song: Song,
+        pauseWhileResolving: Boolean,
+        alignVersion: Boolean = true,
+    ): Boolean {
         if (song.title.isBlank() || song.artist.isBlank()) {
             TrackLog.w("Player", "version switch skipped: empty title/artist", song.videoId)
-            return
+            return false
         }
-        val c = controller ?: return
+        val c = controller ?: return false
         val index = c.currentMediaItemIndex
         if (index !in 0 until c.mediaItemCount ||
             c.currentMediaItem?.mediaId != song.videoId ||
             switchingAudioVersion
-        ) return
+        ) return false
 
         val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
         switchingAudioVersion = true
         keepVideoId = null
-        val holdUntilAligned = AppSettings.smartVersionAlignment.value
+        val holdUntilAligned = alignVersion && AppSettings.smartVersionAlignment.value
         if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = true
         // Set once the swap command is out; until then a pause made here is
         // ours to undo, even if this coroutine is cancelled (the effect that
@@ -1456,20 +1467,28 @@ private fun BitChordApp(
         if (pauseWhileResolving) c.pause()
         try {
             TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
-            val audio = runCatching { YtMusicRepository.resolveAudio(song) }.getOrNull()
+            val lookup = runCatching { YtMusicRepository.songVersion(song) }
+            val audio = lookup.getOrNull()
             val stillCurrent = c.currentMediaItemIndex == index &&
                 c.currentMediaItem?.mediaId == song.videoId
 
+            // A failed request is not a "no such song" verdict: leave it
+            // retryable and keep the video playing, which is never silence.
+            if (lookup.isFailure) {
+                TrackLog.w("Player", "audio switch lookup failed for '${song.title}'", song.videoId)
+                if (stillCurrent && resumeAfterResolution) c.play()
+                return false
+            }
             // The original MediaItem was never removed, so failure only needs
             // to release the loading state and resume it immediately.
             if (audio == null || audio.videoId == song.videoId) {
                 TrackLog.w("Player", "audio switch found no distinct official song", song.videoId)
                 if (stillCurrent && resumeAfterResolution) c.play()
-                return
+                return true
             }
             if (!stillCurrent) {
                 TrackLog.d("Player", "audio switch discarded; listener changed track", song.videoId)
-                return
+                return false
             }
 
             convertedFromVideo = song
@@ -1495,7 +1514,8 @@ private fun BitChordApp(
             // that never got this far, where nothing else would release it.
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
             handedOver = true
-            c.swapToVersion(target)
+            c.swapToVersion(target, alignVersion = alignVersion)
+            return true
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
             switchingAudioVersion = false
@@ -1591,7 +1611,7 @@ private fun BitChordApp(
         if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return
         val songs = allSongs.filterNot { it.isUnresolvedSpotify }
         val index = songs.indexOf(allSongs.getOrNull(allIndex)).coerceAtLeast(0)
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1599,6 +1619,7 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
+            if (request != playRequestGeneration) return@launch
 
             if (ListenTogether.state.value.inParty) {
                 val selectedSong = songs.getOrNull(index) ?: return@launch
@@ -1617,17 +1638,36 @@ private fun BitChordApp(
                 )
                 c.playSongs(timeline, 0)
             } else {
+                // Music-only preference: the current row and the next three
+                // carry the catalogue release before either reaches the
+                // player, so playback never starts the music video and then
+                // hot-swaps it. A failed lookup keeps the video row, never
+                // silence. In a party the shared queue is not version-switched.
+                val queueSongs = if (AppSettings.preferMusicOnly.value) {
+                    try {
+                        YtMusicRepository.resolveQueueAhead(songs, index)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        TrackLog.w("BitChord", "song version look-ahead failed: ${failure.message}")
+                        songs
+                    }
+                } else {
+                    songs
+                }
+                // A newer tap may have landed while the look-ahead was out.
+                if (request != playRequestGeneration) return@launch
                 // A Cast session still owns the full queue on the phone so the
                 // receiver can follow its existing queue semantics. The bounded
                 // service path is local-player-only; the service repeats this
                 // guard for commands that race a newly connected receiver.
                 if (boundedContext && !CastController.state.value.casting) {
-                    c.playBoundedContext(songs, index, source, continuationToken)
+                    c.playBoundedContext(queueSongs, index, source, continuationToken)
                 } else {
                     val result = QueueCoordinator.buildContextQueue(
                         currentTimeline = currentTimeline,
                         currentIndex = currentIndex,
-                        newContextSongs = songs,
+                        newContextSongs = queueSongs,
                         selectedIndex = index,
                         contextSource = source,
                     )
@@ -1670,19 +1710,23 @@ private fun BitChordApp(
         }
     }
 
-    // Start with the video MediaItem so the main player is populated at once,
-    // then resolve its catalogue counterpart behind the loading indicators.
-    // A failed/identical match simply resumes this untouched video.
+    // Fallback for a video row that reached the player unconverted. Queues
+    // already resolve their current + next rows up front (see
+    // [YtMusicRepository.resolveQueueAhead]), so this normally does nothing;
+    // it must never pause or measure alignment, because the listener is
+    // already hearing the track. Tried marks only a definitive answer, so a
+    // cancelled or superseded lookup can be retried.
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
-        // Once per track per process: this effect also re-runs when the UI is
-        // rebuilt on returning to the app, and that must not stop a song
-        // that is already playing. Mid-song (past 3 s) it never pauses.
-        if (preferMusicOnly && song.isVideo && song.videoId != keepVideoId &&
-            musicOnlyTried.add(song.videoId)
+        if (preferMusicOnly && !partyState.inParty && song.isVideo &&
+            song.videoId != keepVideoId && song.videoId !in musicOnlyTried
         ) {
-            val startOfTrack = (controller?.currentPosition ?: 0L) < 3_000L
-            switchToMusicOnly(song, pauseWhileResolving = startOfTrack)
+            val settled = switchToMusicOnly(
+                song,
+                pauseWhileResolving = false,
+                alignVersion = false,
+            )
+            if (settled) musicOnlyTried.add(song.videoId)
         }
     }
 
@@ -1707,8 +1751,8 @@ private fun BitChordApp(
         val exists = withContext(Dispatchers.IO) {
             if (song.isVideo) {
                 runCatching {
-                    val resolved = YtMusicRepository.resolveAudio(song)
-                    resolved.videoId != song.videoId
+                    val resolved = YtMusicRepository.songVersion(song)
+                    resolved != null && resolved.videoId != song.videoId
                 }.getOrDefault(false)
             } else {
                 runCatching {
@@ -1729,7 +1773,7 @@ private fun BitChordApp(
      * where the surrounding list *is* the thing the user asked for.
      */
     val playRadio: (Song, QueueSource) -> Unit = { song, source ->
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1737,10 +1781,23 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
+            val played = if (AppSettings.preferMusicOnly.value) {
+                try {
+                    YtMusicRepository.songVersion(song) ?: song
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    TrackLog.w("BitChord", "song version failed for radio: ${failure.message}")
+                    song
+                }
+            } else {
+                song
+            }
+            if (request != playRequestGeneration) return@launch
             val oneOffQueue = QueueCoordinator.buildOneOffQueue(
                 currentTimeline = currentTimeline,
                 currentIndex = currentIndex,
-                tappedSong = song,
+                tappedSong = played,
                 source = source,
             )
             c.playSongs(oneOffQueue, 0)
@@ -3273,6 +3330,48 @@ private fun BitChordApp(
                                     continuationToken = latestPage?.continuation ?: page.continuation,
                                 )
                             }
+                            // Apple Music-style shuffle: the whole release, not
+                            // the first bounded window. A long playlist is
+                            // collected to its last continuation first, then
+                            // shuffled as one queue and started from a random
+                            // row; playSongs() calls play(), so the button
+                            // always starts playback.
+                            fun shuffleDetailSongs(loaded: List<Song>) {
+                                if (loaded.isEmpty()) return
+                                if (ListenTogether.state.value.controlsLocked) {
+                                    refusedByHost()
+                                    return
+                                }
+                                val request = ++playRequestGeneration
+                                val source = QueueSource(
+                                    page.title,
+                                    PlaybackSourceType.BROWSE,
+                                    page.browseId,
+                                )
+                                fun start(all: List<Song>) {
+                                    if (request != playRequestGeneration) return
+                                    val queue = all.map(withAlbum)
+                                    if (queue.isEmpty()) return
+                                    QueueShuffle.enableForNextQueue()
+                                    playFrom(
+                                        queue,
+                                        queue.indices.random(),
+                                        source,
+                                        boundedContext = false,
+                                        continuationToken = null,
+                                    )
+                                }
+                                val remote = (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
+                                    !page.browseId.startsWith("local:")
+                                if (!remote || page.continuation == null) {
+                                    start(loaded)
+                                } else {
+                                    viewModel.collectSongs(page.browseId) { result ->
+                                        val all = result.getOrNull().orEmpty()
+                                        start(all.takeIf { it.isNotEmpty() } ?: loaded)
+                                    }
+                                }
+                            }
                             // This page's songs being rearranged, drawn in place of its list.
                             val reordering = reorderTarget?.takeIf { it.browseId == page.browseId }
                             DetailScreen(
@@ -3295,15 +3394,7 @@ private fun BitChordApp(
                                 onSongClick = ::playDetailSongs,
                                 onSongLongPress = { openSongMenu(withAlbum(it)) },
                                 onSongSwipe = { onSongSwipe(withAlbum(it)) },
-                                onShuffle = { songs ->
-                                    if (songs.isNotEmpty()) {
-                                        // Shuffle goes on first so the queue is built shuffled
-                                        // as it is set — the random pick here only decides
-                                        // which track leads it.
-                                        QueueShuffle.enableForNextQueue()
-                                        playDetailSongs(songs, songs.indices.random())
-                                    }
-                                },
+                                onShuffle = { songs -> shuffleDetailSongs(songs) },
                                 onSectionItemClick = { item ->
                                     item.browseId?.let { id ->
                                         viewModel.openDetail(
