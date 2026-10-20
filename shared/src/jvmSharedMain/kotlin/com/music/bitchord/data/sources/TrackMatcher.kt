@@ -148,7 +148,48 @@ object TrackMatcher {
         // A positive score only: artistScore answers 0 when either credit has
         // no comparable words ("f(x)" is all single letters), and "cannot tell"
         // must not count as the same artist here.
-        ranked(candidates, target).firstOrNull { (artistScore(target.artist, it.artist) ?: 0) > 0 }
+        ranked(candidates, target).firstOrNull { candidate ->
+            (artistScore(target.artist, candidate.artist) ?: 0) > 0 &&
+                // The same person, not a name that merely contains them: "The
+                // Justin Bieber Cover Band" shares every word of "Justin
+                // Bieber" and is a piano cover of "Peaches", not the song.
+                namesTheSameArtist(target.artist, candidate.artist) &&
+                !isCoverOf(candidate, target)
+        }
+
+    /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
+    internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
+        val have = artistNames(got)
+        return artistNames(wanted).any { it in have }
+    }
+
+    /**
+     * A cover, karaoke or tribute row the target does not itself describe.
+     * Catalogues file them under the original title ("Peaches (Originally
+     * performed by Justin Bieber)"), so the title alone cannot rule them out.
+     */
+    internal fun isCoverOf(candidate: Song, target: Target): Boolean {
+        val wanted = (target.title + " " + target.artist).lowercase()
+        val got = (candidate.title + " " + candidate.artist).lowercase()
+        return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
+    }
+
+    private val COVER_MARKERS = listOf(
+        Regex("""originally performed"""),
+        Regex("""in the style of"""),
+        Regex("""made famous by"""),
+        Regex("""\bkaraoke\b"""),
+        Regex("""\btribute\b"""),
+        Regex("""\bcover\b"""),
+        Regex("""\bcovers\b"""),
+        Regex("""\binstrumental\b"""),
+        Regex("""\bpiano (version|cover)\b"""),
+        Regex("""\blullaby\b"""),
+        Regex("""\b8[- ]?bit\b"""),
+        Regex("""커버"""),
+        Regex("""반주"""),
+        Regex("""노래방"""),
+    )
 
     /**
      * The best video to play when the listener asks to switch an audio track

@@ -85,4 +85,22 @@ class VideoSwitchMatcherTest {
         val right = song("BIEBERSORRY", "Sorry", "Justin Bieber", "3:20")
         assertEquals("BIEBERSORRY", TrackMatcher.bestSameArtist(listOf(other, right, fx), bieber)?.videoId)
     }
+
+    @Test
+    fun `a cover band carrying the artist's name is not the artist`() {
+        val peaches = TrackMatcher.Target(
+            title = "Peaches (feat. Daniel Caesar, Giveon)",
+            artist = "Justin Bieber",
+            durationSec = 198,
+        )
+        val coverBand = song(
+            "COVERBAND01",
+            "Peaches (Originally performed by Justin Bieber)",
+            "The Justin Bieber Cover Band",
+            "3:22",
+        )
+        assertNull(TrackMatcher.bestSameArtist(listOf(coverBand), peaches))
+        val real = song("REALPEACHES", "Peaches (feat. Daniel Caesar, Giveon)", "Justin Bieber, Daniel Caesar, Giveon", "3:18")
+        assertEquals("REALPEACHES", TrackMatcher.bestSameArtist(listOf(coverBand, real), peaches)?.videoId)
+    }
 }
