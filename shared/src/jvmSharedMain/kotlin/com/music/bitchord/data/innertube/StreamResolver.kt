@@ -529,7 +529,7 @@ object StreamResolver {
                 ?: run {
                     TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                     timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
-                        ?.also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                        .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
                 }
         } catch (e: CancellationException) {
             throw e
