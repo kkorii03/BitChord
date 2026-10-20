@@ -35,8 +35,8 @@ val androidSdk: String? = file("local.properties")
 
 if (androidSdk != null && file(androidSdk).isDirectory) {
     include(":app")
-    include(":tv")
-    include(":wearos")
+    // include(":tv")      // not used in the Korean fork: left out of the build
+    // include(":wearos")  // not used in the Korean fork: left out of the build
 } else {
     logger.lifecycle("No Android SDK found — building the desktop targets only.")
 }
