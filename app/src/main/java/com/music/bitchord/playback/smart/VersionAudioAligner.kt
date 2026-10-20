@@ -35,11 +35,40 @@ object VersionAudioAligner {
     private const val HOP_MS = 10.0 // 100 frames per second (10ms resolution)
     private const val WIN_MS = 40.0 // 40ms analysis window
     private const val MAX_LAG_SECONDS = 40.0 // Search up to ±40s drift/intro
-    private const val MIN_CONFIDENCE = 0.40 // Minimum normalized correlation
+    private const val MIN_CONFIDENCE = VersionSwapPolicy.MIN_SWAP_CONFIDENCE
 
     // Cache computed offsets so subsequent switches are instantaneous:
     // (sourceVideoId, targetVideoId) -> offsetMs
     private val offsetCache = ConcurrentHashMap<Pair<String, String>, Long>()
+
+    /**
+     * The correlation behind the last measurement of a pair, kept even when it
+     * was too low to cache an offset: that is exactly the case the swap has to
+     * refuse, and the refusal needs the figure to report.
+     */
+    private val confidenceCache = ConcurrentHashMap<Pair<String, String>, Double>()
+
+    /**
+     * Pairs whose measurement said the two recordings do not match. One
+     * refusal per pair per process: trying the same hopeless decode again on
+     * every future switch only costs time and swaps nothing.
+     */
+    private val rejectedPairs = ConcurrentHashMap.newKeySet<Pair<String, String>>()
+
+    /** Correlation measured for this pair, if one has been measured. */
+    fun getConfidence(sourceVideoId: String, targetVideoId: String): Double? =
+        confidenceCache[sourceVideoId to targetVideoId]
+
+    /** True once [reject] has refused this pair in either direction. */
+    fun isRejected(sourceVideoId: String, targetVideoId: String): Boolean =
+        (sourceVideoId to targetVideoId) in rejectedPairs ||
+            (targetVideoId to sourceVideoId) in rejectedPairs
+
+    /** Remembers that this pair must not be swapped for the rest of the process. */
+    fun reject(sourceVideoId: String, targetVideoId: String) {
+        rejectedPairs.add(sourceVideoId to targetVideoId)
+        rejectedPairs.add(targetVideoId to sourceVideoId)
+    }
 
     /** How far a switch to the other cut has got; published for stats for nerds. */
     enum class CutPhase { FETCHING, MEASURING, ALIGNED, FAILED }
@@ -203,6 +232,8 @@ object VersionAudioAligner {
             )
             val bestLagFrames = correlation.lagFrames
             val confidence = correlation.confidence
+            confidenceCache[sourceSong.videoId to targetSong.videoId] = confidence
+            confidenceCache[targetSong.videoId to sourceSong.videoId] = confidence
             TrackLog.d(
                 TAG,
                 "Alignment for '${sourceSong.title}' -> '${targetSong.title}': lagFrames=$bestLagFrames, conf=$confidence, range=${correlation.floor}..${correlation.ceiling}",

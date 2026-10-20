@@ -155,6 +155,7 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.VersionAudioAligner
+import com.music.bitchord.playback.smart.VersionSwapPolicy
 import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import com.music.bitchord.wear.WearBridge
@@ -2326,7 +2327,8 @@ class PlaybackService : MediaLibraryService() {
             }
             try {
                 val startPosition = activePlayer.currentPosition
-                val alignmentOffsetMs = if (smartAlignEnabled) {
+                val wasPlayingBeforeAlign = activePlayer.playWhenReady
+                val alignmentOffsetMs: Long? = if (smartAlignEnabled) {
                     prepareVersionAlignment(sourceSong, targetSong, startPosition)
                 } else {
                     0L
@@ -2336,6 +2338,18 @@ class PlaybackService : MediaLibraryService() {
                     activePlayer.currentMediaItemIndex != currentIndex ||
                     activePlayer.currentMediaItem?.mediaId != sourceSong.videoId
                 ) {
+                    swappingMediaId = null
+                    return@launch
+                }
+
+                // A refusal means the measured recordings are not the same
+                // song. Keep the current item exactly as it was (the caller
+                // may have paused it while resolving), and never apply the
+                // target.
+                if (alignmentOffsetMs == null) {
+                    if (wasPlayingBeforeAlign && !activePlayer.playWhenReady) {
+                        activePlayer.play()
+                    }
                     swappingMediaId = null
                     return@launch
                 }
@@ -2609,15 +2623,33 @@ class PlaybackService : MediaLibraryService() {
         return deferred
     }
 
+    /**
+     * Returns the shift to apply, `0` when nothing could be measured (the old
+     * "swap anyway" behaviour), or `null` when the measurement says the two
+     * recordings do not match. The null is the refusal: the caller leaves the
+     * current item playing and the pair is remembered so the same hopeless
+     * decode is not tried again this process.
+     */
     private suspend fun prepareVersionAlignment(
         sourceSong: Song,
         targetSong: Song,
         currentPosMs: Long,
-    ): Long {
+    ): Long? {
         val sourceId = sourceSong.videoId
         val targetId = targetSong.videoId
 
+        if (VersionAudioAligner.isRejected(sourceId, targetId)) {
+            logVersionSwapRefused(sourceSong, targetSong, VersionAudioAligner.getConfidence(sourceId, targetId))
+            return null
+        }
+
         VersionAudioAligner.getCachedOffsetMs(sourceId, targetId)?.let { cached ->
+            val confidence = VersionAudioAligner.getConfidence(sourceId, targetId)
+            if (confidence != null && !VersionSwapPolicy.shouldSwap(confidence)) {
+                VersionAudioAligner.reject(sourceId, targetId)
+                logVersionSwapRefused(sourceSong, targetSong, confidence)
+                return null
+            }
             val cachedToken = VersionAudioAligner.beginAttempt(sourceId, targetId)
             VersionAudioAligner.publishPhase(
                 cachedToken,
@@ -2634,6 +2666,13 @@ class PlaybackService : MediaLibraryService() {
             val deferred = measureVersionAlignmentAsync(sourceSong, targetSong)
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.MEASURING)
             val measured = deferred.await()
+            val confidence = VersionAudioAligner.getConfidence(sourceId, targetId)
+            if (confidence != null && !VersionSwapPolicy.shouldSwap(confidence)) {
+                VersionAudioAligner.reject(sourceId, targetId)
+                logVersionSwapRefused(sourceSong, targetSong, confidence)
+                VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
+                return null
+            }
             if (measured == null) {
                 TrackLog.w(
                     "BitChord",
@@ -2653,6 +2692,14 @@ class PlaybackService : MediaLibraryService() {
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
             throw e
         }
+    }
+
+    private fun logVersionSwapRefused(sourceSong: Song, targetSong: Song, confidence: Double?) {
+        TrackLog.w(
+            "BitChord",
+            "version swap refused: ${sourceSong.title} -> ${targetSong.title} conf=${confidence ?: -1.0}",
+            sourceSong.videoId,
+        )
     }
 
     private fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer) {
