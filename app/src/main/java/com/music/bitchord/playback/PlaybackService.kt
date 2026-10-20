@@ -945,6 +945,16 @@ class PlaybackService : MediaLibraryService() {
     private val sessionSongHistory = mutableListOf<Song>()
 
     /**
+     * Video ids AutoPlay has already played or queued in this service session.
+     *
+     * Kept separately from [sessionSongHistory] because the "don't repeat
+     * suggestions" preference only controls the latter. Session de-duplication
+     * itself is not optional: without it a top-up can re-offer a favourite that
+     * just left the queue and land it immediately after the seed.
+     */
+    private val autoplaySessionIds = LinkedHashSet<String>()
+
+    /**
      * The track that most recently reached its end, if any.
      *
      * Kept for AutoPlay's second radio seed: the station that follows what the
@@ -3155,6 +3165,7 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        autoplaySessionIds += current.videoId
         if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
         // In a party the server's queue is the one being topped up, and this
         // player's copy of it lags behind by however long reconcile is held off
@@ -3188,7 +3199,13 @@ class PlaybackService : MediaLibraryService() {
                 } else {
                     queueSongs
                 }
-                val result = loadAutoplayTracks(existing, current, remaining, lastCompletedSong)
+                val result = loadAutoplayTracks(
+                    existing = existing,
+                    seedSong = current,
+                    limit = remaining,
+                    sessionSong = lastCompletedSong,
+                    sessionIds = autoplaySessionIds.toSet(),
+                )
                 val resolved = result.getOrElse {
                     TrackLog.w(
                         "BitChord",
@@ -3224,6 +3241,7 @@ class PlaybackService : MediaLibraryService() {
                             autoplaySeed = null
                             return@launch
                         }
+                        autoplaySessionIds += resolved.map { it.videoId }
                     } else {
                         // The queue may have changed while the radio request
                         // was out — a station landing behind it is the usual
@@ -3239,6 +3257,7 @@ class PlaybackService : MediaLibraryService() {
                             .take(room.coerceAtLeast(0))
                         if (fresh.isNotEmpty()) {
                             latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
+                            autoplaySessionIds += fresh.map { it.videoId }
                             TrackLog.i(
                                 "BitChord",
                                 "queue: autoplay-append n=${fresh.size} at=${latestPlayer.mediaItemCount - fresh.size} " +
@@ -6159,6 +6178,7 @@ class PlaybackService : MediaLibraryService() {
         repeatAllStash = emptyList()
         repeatAllStashSeed = null
         sessionSongHistory.clear()
+        autoplaySessionIds.clear()
         persistedQueueStart = 0
         LastPlayed.clearImmediately()
     }

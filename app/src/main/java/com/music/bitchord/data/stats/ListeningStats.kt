@@ -230,6 +230,7 @@ object ListeningStats {
                     albumId = song.albumId,
                     artistId = song.artistId,
                     art = song.thumbnailUrl,
+                    durationText = song.durationText,
                 )
             }
             track.ms += playedMs
@@ -241,6 +242,7 @@ object ListeningStats {
             if (track.albumId == null) track.albumId = song.albumId
             if (track.artistId == null) track.artistId = song.artistId
             if (track.art == null) track.art = song.thumbnailUrl
+            if (track.durationText == null) track.durationText = song.durationText
             if (countsAsPlay) track.plays++
 
             // Day-level sub-bucket for the track.
@@ -1156,6 +1158,7 @@ data class TrackEntry(
     var albumId: String? = null,
     var artistId: String? = null,
     var art: String? = null,
+    var durationText: String? = null,
     var ms: Long = 0L,
     var plays: Int = 0,
     var last: Long = 0L,
@@ -1173,6 +1176,7 @@ data class TrackEntry(
         title = title,
         artist = artist,
         thumbnailUrl = art,
+        durationText = durationText,
         artistId = artistId,
         albumId = albumId,
         albumName = album,
@@ -1187,6 +1191,7 @@ data class TrackEntry(
         if (albumId == null) albumId = other.albumId
         if (artistId == null) artistId = other.artistId
         if (art == null) art = other.art
+        if (durationText == null) durationText = other.durationText
         // Merge per-day sub-buckets.
         if (other.days.isNotEmpty()) {
             other.days.forEach { (dateKey, stats) ->

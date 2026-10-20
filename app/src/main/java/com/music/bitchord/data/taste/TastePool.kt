@@ -17,6 +17,8 @@ data class LocalTrack(
     val title: String,
     val artist: String,
     val coverSinger: String? = null,
+    val thumbnailUrl: String? = null,
+    val durationText: String? = null,
 )
 
 /** Everything one AutoPlay top-up has fetched, before any ranking. */
@@ -84,7 +86,7 @@ object TastePool {
         val favourites = favouriteTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
             candidateOf(track, CandidateSource.FAVOURITE, index)
         }
-        val rediscover = rediscoverTracks(sources.local, taste).mapIndexedNotNull { index, track ->
+        val rediscover = rediscoverTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
             candidateOf(track, CandidateSource.REDISCOVER, index)
         }
         val similar = sources.similar.mapIndexedNotNull { index, song ->
@@ -118,8 +120,11 @@ object TastePool {
         .asSequence()
         .filter { track -> taste.tracks[track.videoId]?.rating != TasteRating.DISLIKE }
         .filter { track ->
-            val last = taste.tracks[track.videoId]?.lastPlayedAt ?: 0L
-            last <= 0L || last <= nowMs - ONE_DAY_MS
+            val timestamps = taste.tracks[track.videoId]
+            val last = timestamps?.lastPlayedAt ?: 0L
+            val suggested = timestamps?.lastSuggestedAt ?: 0L
+            (last <= 0L || last <= nowMs - ONE_DAY_MS) &&
+                (suggested <= 0L || suggested <= nowMs - ONE_DAY_MS)
         }
         .sortedByDescending { track ->
             Recommender.trackAffinity(taste.tracks[track.videoId] ?: TrackTaste())
@@ -135,11 +140,15 @@ object TastePool {
     private fun rediscoverTracks(
         local: List<LocalTrack>,
         taste: TasteView,
+        nowMs: Long,
     ): List<LocalTrack> = local
         .asSequence()
         .filter { track ->
             val tasteOf = taste.tracks[track.videoId] ?: return@filter false
-            tasteOf.rating == TasteRating.LIKE && tasteOf.plays <= REDISCOVER_PLAY_LIMIT
+            val suggested = tasteOf.lastSuggestedAt
+            tasteOf.rating == TasteRating.LIKE &&
+                tasteOf.plays <= REDISCOVER_PLAY_LIMIT &&
+                (suggested <= 0L || suggested <= nowMs - ONE_DAY_MS)
         }
         .sortedBy { track -> taste.tracks[track.videoId]?.plays ?: 0.0 }
         .take(REDISCOVER_LIMIT)
@@ -164,6 +173,10 @@ object TastePool {
 
     private fun candidateOf(track: LocalTrack, source: CandidateSource, rank: Int): Candidate? {
         if (track.videoId.isBlank()) return null
+        // A rating made off a row whose metadata never arrived used to create a
+        // local entry with no title or artist. Such a row cannot be shown or
+        // matched to the seed, so it is never offered as a candidate.
+        if (track.title.isBlank() || track.artist.isBlank()) return null
         return Candidate(
             videoId = track.videoId,
             title = track.title,
@@ -187,5 +200,6 @@ fun LocalTrack.asSong(): Song = Song(
     videoId = videoId,
     title = title,
     artist = artist,
-    thumbnailUrl = null,
+    thumbnailUrl = thumbnailUrl,
+    durationText = durationText,
 )

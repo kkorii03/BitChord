@@ -59,6 +59,8 @@ data class TrackTaste(
     val likes: Double = 0.0,
     val dislikes: Double = 0.0,
     val lastPlayedAt: Long = 0L,
+    /** When a top-up last offered this local row as a favourite or rediscovery. */
+    val lastSuggestedAt: Long = 0L,
     /** Skip timestamps, newest last, kept only so the recent-skip rule can be applied. */
     val recentSkips: List<Long> = emptyList(),
     val rating: TasteRating = TasteRating.NONE,

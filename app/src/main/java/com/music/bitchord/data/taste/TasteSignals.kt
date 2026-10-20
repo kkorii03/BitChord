@@ -251,6 +251,26 @@ object TasteSignals {
         }
     }
 
+    /**
+     * Records that AutoPlay offered [videoIds] from the listener's own library.
+     *
+     * Persisted for the same reason a play is: without it, a favourite heard
+     * once a week ago but never played would be injected at every top-up of
+     * every session. A favourite is offered at most once a day.
+     */
+    fun noteSuggested(videoIds: Collection<String>, nowMs: Long = System.currentTimeMillis()) {
+        if (!ready() || videoIds.isEmpty()) return
+        synchronized(lock) {
+            var changed = false
+            videoIds.forEach { id ->
+                val track = tracks[id] ?: return@forEach
+                track.lastSuggestedAt = nowMs
+                changed = true
+            }
+            if (changed) markDirtyLocked()
+        }
+    }
+
     // ── Reading ─────────────────────────────────────────────────────────────
 
     /** The decayed snapshot [Recommender] ranks against. */
@@ -263,6 +283,7 @@ object TasteSignals {
                 likes = t.likes.read(nowMs),
                 dislikes = t.dislikes.read(nowMs),
                 lastPlayedAt = t.lastPlayedAt,
+                lastSuggestedAt = t.lastSuggestedAt,
                 recentSkips = t.recentSkips,
                 rating = when (t.rating) {
                     RATING_LIKE -> TasteRating.LIKE
@@ -313,6 +334,8 @@ object TasteSignals {
                     title = it.title,
                     artist = it.artist,
                     coverSinger = it.coverSinger,
+                    thumbnailUrl = it.art,
+                    durationText = it.durationText,
                 )
             }
         }
@@ -441,6 +464,8 @@ object TasteSignals {
         if (track.title.isBlank()) track.title = CoverTitles.read(song)?.title ?: song.title
         if (track.artist.isBlank()) track.artist = credited(song)
         if (track.coverSinger == null) track.coverSinger = singer
+        if (track.art == null) track.art = song.thumbnailUrl
+        if (track.durationText == null) track.durationText = song.durationText
         return track
     }
 
@@ -551,6 +576,8 @@ data class StoredTrack(
     var title: String = "",
     var artist: String = "",
     var coverSinger: String? = null,
+    var art: String? = null,
+    var durationText: String? = null,
     var plays: DecayedValue = DecayedValue(),
     var completes: DecayedValue = DecayedValue(),
     var skips: DecayedValue = DecayedValue(),
@@ -560,6 +587,8 @@ data class StoredTrack(
     var recentSkips: List<Long> = emptyList(),
     var lastPlayedAt: Long = 0L,
     var lastSkippedAt: Long = 0L,
+    /** When AutoPlay last offered this row as a favourite or rediscovery. */
+    var lastSuggestedAt: Long = 0L,
     /** The last explicit rating: 1 like, -1 dislike, 0 none. */
     var rating: Int = 0,
 )
