@@ -87,5 +87,15 @@ object AndroidStreamHooks {
             },
             poTokenProvider = poTokens.asTokenProvider(),
         )
+        // Which client answered last time survives a restart for a day. The
+        // direct-path bench is deliberately process-only: it is about this run.
+        StreamResolver.initLearning(
+            object : ResolutionOrder.Store {
+                override fun getString(key: String): String? = prefs.getString(key, null)
+                override fun getLong(key: String): Long? = if (prefs.contains(key)) prefs.getLong(key, 0L) else null
+                override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+                override fun putLong(key: String, value: Long) = prefs.edit().putLong(key, value).apply()
+            },
+        )
     }
 }

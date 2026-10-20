@@ -442,6 +442,18 @@ object StreamResolver {
 
     private val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * What the last few starts learned about which path answers here: the
+     * client that served the previous track is tried first, and the anonymous
+     * direct path sits out once it has been refused five times in six.
+     */
+    private val order = ResolutionOrder()
+
+    /** Hands [order] the phone's preferences so a learned winner survives a restart for a day. */
+    fun initLearning(store: ResolutionOrder.Store) {
+        order.attach(store)
+    }
+
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
         // In Korea without Premium the clients InnerTubeX leads with are the
@@ -451,13 +463,73 @@ object StreamResolver {
         // on the Korean connection (see ProxyScopeMatcher), where the Music
         // clients are refused just as when gated, so the same order applies.
         val gated = MusicGateFallback.isActive() || com.music.bitchord.data.net.YouTubeProxy.config.usable
+
+        // The path that served the last track goes first — see [ResolutionOrder].
+        // A winner that has missed twice in a row has already been forgotten, and
+        // a benched direct path is not a winner worth leading with either.
+        val learned = order.preferred()
+        val preferredItx = ResolutionOrder.itxManifest(learned)
+        val preferDirect = learned == ResolutionOrder.DIRECT
+        val orderLabel = if (learned != null) "learned" else "default"
+
+        var servedKey: String? = null
+        var servedLabel: String? = null
+        fun served(key: String, label: String) {
+            servedKey = key
+            servedLabel = label
+        }
+
+        var itxWalked = false
+        var directTried = false
+
+        suspend fun tryDirect(): Stream? {
+            if (directTried) return null
+            directTried = true
+            if (!order.directAllowed()) {
+                // Five refusals in the last six tracks: each one costs about
+                // 400ms before InnerTubeX even starts, so stop paying it until
+                // the bench expires or the process restarts.
+                TrackLog.d(TAG, "resolve: direct path is benched, skipping it for $videoId")
+                return null
+            }
+            val found = timed("$videoId direct") {
+                directStream(videoId) { client -> served(ResolutionOrder.DIRECT, "direct $client") }
+            }
+            if (found == null) {
+                order.noteDirectRefused()
+                order.noteRefused(ResolutionOrder.DIRECT)
+            } else {
+                order.noteDirectServed()
+            }
+            return found
+        }
+
+        suspend fun tryInnerTubeX(preferredManifest: String?): Stream? {
+            if (itxWalked) return null
+            itxWalked = true
+            val found = timed("$videoId InnerTubeX") {
+                innerTubeXStreamAllowingUploads(videoId, preferredManifest = preferredManifest) { key, label ->
+                    served(key, label)
+                }
+            }
+            if (found == null && preferredManifest != null) {
+                order.noteRefused(ResolutionOrder.itx(preferredManifest))
+            }
+            return found
+        }
+
         val stream = try {
-            (if (gated) timed("$videoId direct") { directStream(videoId) } else null)
-                ?: timed("$videoId InnerTubeX") { innerTubeXStreamAllowingUploads(videoId) }
-                ?: (if (!gated) timed("$videoId direct") { directStream(videoId) } else null)
+            val first = when {
+                preferredItx != null -> tryInnerTubeX(preferredItx)
+                preferDirect -> tryDirect()
+                else -> null
+            }
+            first
+                ?: (if (gated) tryDirect() ?: tryInnerTubeX(null) else tryInnerTubeX(null) ?: tryDirect())
                 ?: run {
                     TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                     timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                        ?.also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
                 }
         } catch (e: CancellationException) {
             throw e
@@ -504,7 +576,16 @@ object StreamResolver {
             }
             throw e
         }
-        TrackLog.d(TAG, "TIMING $videoId total resolve: ${MonotonicClock.nowMs() - resolveStart}ms")
+        val took = MonotonicClock.nowMs() - resolveStart
+        // Learn only paths that are cheap enough to lead with. Extraction is
+        // the failsafe: it is slow by design and must not become the default
+        // because it happened to answer once.
+        servedKey?.takeIf { it != ResolutionOrder.NEW_PIPE }?.let(order::noteServed)
+        TrackLog.d(
+            TAG,
+            "resolve: $videoId via ${servedLabel ?: "unknown"} in $took ms (order=$orderLabel)",
+        )
+        TrackLog.d(TAG, "TIMING $videoId total resolve: $took ms")
         return stream
     }
 
@@ -521,12 +602,50 @@ object StreamResolver {
         uploaded: Boolean = false,
         escalateToUpload: Boolean = true,
         playRefusedUpload: Boolean = false,
+        preferredManifest: String? = null,
+        onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         val skip = mutableSetOf<String>()
         // In a gated region WEB_REMIX is the identity that answers UNPLAYABLE
         // for every track. InnerTubeX already walks its own catalog, but
         // excluding the profile by name when it is known saves the dead ask.
         if (MusicGateFallback.isActive() || com.music.bitchord.data.net.YouTubeProxy.config.usable) skip += "WEB_REMIX"
+        // Ask the remembered winner on its own first — see [ResolutionOrder].
+        // The override makes InnerTubeX use that one client instead of walking
+        // its catalog from the top, so the profile that answered last time is
+        // no longer tried last. A miss falls through to the normal walk below.
+        if (preferredManifest != null) {
+            val found = try {
+                InnerTubeXResolver.extract(
+                    videoId,
+                    maxKbps,
+                    skip,
+                    requireM4a,
+                    uploaded,
+                    preferredClientId = preferredManifest,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "InnerTubeX $preferredManifest preferred ask failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+                null
+            }
+            if (found != null) {
+                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
+                if (verdict == Probe.OK) {
+                    TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
+                    onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
+                    return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
+                }
+                TrackLog.w(TAG, "InnerTubeX ${found.profileId} minted an unusable URL for $videoId: $verdict")
+                if (playRefusedUpload && uploaded && verdict == Probe.REFUSED) {
+                    TrackLog.w(TAG, "playing $videoId's upload stream despite the probe: it is the only copy")
+                    onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
+                    return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
+                }
+                skip += found.profileId
+            }
+        }
         repeat(INNERTUBEX_ATTEMPTS) { attempt ->
             val found = try {
                 InnerTubeXResolver.extract(videoId, maxKbps, skip, requireM4a, uploaded)
@@ -549,12 +668,16 @@ object StreamResolver {
             val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
+                val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
+                if (manifest != null) onServed(ResolutionOrder.itx(manifest), "InnerTubeX ${found.profileId}")
                 return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
             }
             TrackLog.w(TAG, "InnerTubeX ${found.profileId} minted an unusable URL for $videoId: $verdict")
 
             if (playRefusedUpload && uploaded && verdict == Probe.REFUSED) {
                 TrackLog.w(TAG, "playing $videoId's upload stream despite the probe: it is the only copy")
+                val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
+                if (manifest != null) onServed(ResolutionOrder.itx(manifest), "InnerTubeX ${found.profileId}")
                 return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
             }
             skip += found.profileId
@@ -562,7 +685,7 @@ object StreamResolver {
             if (escalateToUpload && attempt == 0 && !uploaded &&
                 verdict == Probe.REFUSED && !Innertube.cookie.isNullOrBlank()
             ) {
-                askAsUpload(videoId, maxKbps, requireM4a)?.let { return it }
+                askAsUpload(videoId, maxKbps, requireM4a, onServed)?.let { return it }
             }
         }
         return null
@@ -573,10 +696,15 @@ object StreamResolver {
      * request, or null. Each candidate is probed with the same headers the
      * real fetch will send, so a URL that would 403 mid-track is skipped here.
      */
-    private fun directStream(videoId: String, maxKbps: Int = maxKbps()): Stream? {
+    private fun directStream(
+        videoId: String,
+        maxKbps: Int = maxKbps(),
+        onServed: (client: String) -> Unit = {},
+    ): Stream? {
         for (found in DirectClientResolver.candidates(videoId, maxKbps)) {
             if (probe(found.url) == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
+                onServed(found.client)
                 return Stream(found.url, found.kbps, found.mimeType)
             }
             TrackLog.w(TAG, "direct ${found.client} URL for $videoId failed the probe")
@@ -585,7 +713,12 @@ object StreamResolver {
     }
 
     /** One ask for [videoId] as the user's own upload; a hit is remembered in [UploadedTracks]. */
-    private suspend fun askAsUpload(videoId: String, maxKbps: Int, requireM4a: Boolean): Stream? {
+    private suspend fun askAsUpload(
+        videoId: String,
+        maxKbps: Int,
+        requireM4a: Boolean,
+        onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
+    ): Stream? {
         TrackLog.d(TAG, "first stream for $videoId was refused; asking as an upload")
         val found = try {
             InnerTubeXResolver.extract(videoId, maxKbps, emptySet(), requireM4a, uploaded = true)
@@ -606,6 +739,8 @@ object StreamResolver {
         }
         TrackLog.d(TAG, "resolved $videoId as an upload via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
         UploadedTracks.mark(videoId)
+        InnerTubeXResolver.manifestIdForProfile(found.profileId)
+            ?.let { onServed(ResolutionOrder.itx(it), "InnerTubeX ${found.profileId} (upload)") }
         return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
     }
 
@@ -620,15 +755,39 @@ object StreamResolver {
         videoId: String,
         maxKbps: Int = maxKbps(),
         requireM4a: Boolean = false,
+        preferredManifest: String? = null,
+        onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         val known = UploadedTracks.contains(videoId)
         if (known) {
-            innerTubeXStream(videoId, maxKbps, requireM4a, uploaded = true, playRefusedUpload = true)
+            innerTubeXStream(
+                videoId,
+                maxKbps,
+                requireM4a,
+                uploaded = true,
+                playRefusedUpload = true,
+                preferredManifest = preferredManifest,
+                onServed = onServed,
+            )
                 ?.let { return it }
             TrackLog.w(TAG, "$videoId is marked as an upload but did not resolve as one; trying an ordinary ask")
-            return innerTubeXStream(videoId, maxKbps, requireM4a, uploaded = false, escalateToUpload = false)
+            return innerTubeXStream(
+                videoId,
+                maxKbps,
+                requireM4a,
+                uploaded = false,
+                escalateToUpload = false,
+                preferredManifest = preferredManifest,
+                onServed = onServed,
+            )
         }
-        return innerTubeXStream(videoId, maxKbps, requireM4a)
+        return innerTubeXStream(
+            videoId,
+            maxKbps,
+            requireM4a,
+            preferredManifest = preferredManifest,
+            onServed = onServed,
+        )
     }
 
     /** The headers a media fetch for [url] must carry to match whoever minted it. */

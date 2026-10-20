@@ -161,8 +161,13 @@ object AudioCache {
      * between songs for a gap at the start of one. It also collapses a burst of
      * skips into a single fetch of wherever the listener lands, and leaves the
      * player's opening burst holding the cache entry alone — see [fetchWhole].
+     *
+     * Ten seconds, not eight: by then the track has demonstrably started, and
+     * the next item's stream URL has been resolved in the background well
+     * before the queue reaches it — which is what makes a track change start
+     * instantly instead of waiting out a client walk.
      */
-    private const val PREFETCH_DELAY_MS = 8_000L
+    private const val PREFETCH_DELAY_MS = 10_000L
 
     /** How long to leave the player alone with an entry before trying again. */
     private const val RETRY_DELAY_MS = 5_000L
@@ -1346,7 +1351,14 @@ object AudioCache {
                 // Safe to fill for the same reason in both cases: either nothing
                 // outranks YouTube and read-ahead is the only writer, or a
                 // source has been pinned and every writer now resolves to it.
-                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube
+                //
+                // Bytes are on-disk data the listener may never reach, so on a
+                // metered connection only the URL half runs: resolving the next
+                // item's stream costs a few small round trips and is what keeps
+                // the track change instant; prefetching its audio would spend
+                // mobile data on a track a skip may skip over.
+                val metered = AppSettings.meteredConnection.value == true
+                val cacheBytes = !metered && (!substitutable || warmed != null) && !pinnedToYouTube
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)

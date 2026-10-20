@@ -14,6 +14,7 @@ import com.metrolist.innertubex.extraction.PoTokenResult
 import com.metrolist.innertubex.extraction.TokenProvider
 import com.metrolist.innertubex.extraction.TokenProviderCapabilities
 
+import com.metrolist.innertubex.extraction.strategy.PlaybackClientCatalog
 import com.metrolist.innertubex.extraction.strategy.PoTokenProviderKind
 import com.metrolist.innertubex.extraction.YtConfigParserImpl
 import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
@@ -225,13 +226,21 @@ object InnerTubeXResolver {
         skipClients: Set<String> = emptySet(),
         requireM4a: Boolean = false,
         uploaded: Boolean = false,
+        preferredClientId: String? = null,
     ): Extracted? {
         innerTube.cookie = Innertube.cookie
         innerTube.visitorData = Innertube.ensureVisitorData()
         innerTube.locale = YouTubeLocale(gl = Innertube.currentRegion, hl = Innertube.currentLanguage)
         val stream = extractor.extract(
             videoId = videoId,
-            hints = ContentHints(isUploaded = true.takeIf { uploaded })
+            hints = ContentHints(
+                isUploaded = true.takeIf { uploaded },
+                // InnerTubeX treats this as a manual override and asks this one
+                // client instead of walking its catalog from the top. Used to
+                // lead with the profile that served the last track — see
+                // [ResolutionOrder]; null keeps the measured default order.
+                playbackClientOverrideId = preferredClientId,
+            )
                 .withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = true),
             excludedClients = excludedFor(videoId) + skipClients,
             audioQuality = when {
@@ -256,6 +265,19 @@ object InnerTubeXResolver {
         if (minted.size >= MAX_REMEMBERED) minted.clear()
         minted[extracted.url] = extracted
         return extracted
+    }
+
+    /**
+     * The catalog id inside a profile id: `WEB_CREATOR__po` is the
+     * `WEB_CREATOR` manifest with a PoToken, and is what the override asks for.
+     * Null when [profileId] names no catalog entry (legacy ids), in which case
+     * there is nothing to remember an order for.
+     */
+    fun manifestIdForProfile(profileId: String?): String? {
+        val candidate = PlaybackClientCatalog.manifestIdFromProfileId(profileId)
+            ?: profileId?.substringBefore("__")
+            ?: return null
+        return candidate.takeIf { PlaybackClientCatalog.find(it) != null }
     }
 
     /** Headers the media fetch for [url] must carry, when InnerTubeX minted it. */
