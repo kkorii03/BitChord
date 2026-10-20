@@ -3,6 +3,7 @@ package com.music.bitchord.data
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import com.music.bitchord.R
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import java.io.File
@@ -78,7 +79,7 @@ object TvUsbMusic {
     private fun songFromFile(context: Context, file: File): Song {
         val uri = Uri.fromFile(file).toString()
         var title = file.nameWithoutExtension
-        var artist = "Unknown Artist"
+        var artist = context.getString(R.string.tv_unknown_artist)
         var albumName: String? = null
         var durationText: String? = null
 

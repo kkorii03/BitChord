@@ -1,4 +1,6 @@
 package com.music.bitchord.ui.tv.screens
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -161,7 +163,7 @@ internal fun TvArtistContent(
                 if (topRelease != null) {
                     item(key = "latest", contentType = "latest") {
                         Column {
-                            TvShelfTitle(title = "Latest Release")
+                            TvShelfTitle(title = stringResource(R.string.tv_latest_release))
                             TvLatestRelease(
                                 item = topRelease,
                                 onClick = { openShelfItem(topRelease, { onPlay(listOf(it), 0) }, onNavigateToDetail) },
@@ -180,7 +182,7 @@ internal fun TvArtistContent(
                         val top = remember(songs) { songs.take(MaxTopSongs) }
                         val columns = remember(top) { top.chunked(SongsPerColumn) }
                         Column {
-                            TvShelfTitle(title = "Top Songs")
+                            TvShelfTitle(title = stringResource(R.string.tv_top_songs))
                             TvRow(
                                 items = columns,
                                 key = { it.first().videoId },
@@ -232,7 +234,7 @@ internal fun TvArtistContent(
                 if (about != null || stats.isNotEmpty()) {
                     item(key = "about", contentType = "about") {
                         Column {
-                            TvShelfTitle(title = "About ${page?.title ?: title}")
+                            TvShelfTitle(title = stringResource(R.string.tv_about_artist, page?.title ?: title))
                             TvAbout(
                                 text = about,
                                 stats = stats,

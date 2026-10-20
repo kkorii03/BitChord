@@ -1,4 +1,6 @@
 package com.music.bitchord.ui.tv.screens
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -56,14 +58,14 @@ internal fun TvActionRow(
     ) {
         TvCircleAction(
             icon = BitChordIcons.Shuffle,
-            contentDescription = "Shuffle",
+            contentDescription = stringResource(R.string.tv_shuffle),
             size = 43.dp,
             enabled = canPlay,
             onClick = onShuffle,
         )
         TvCircleAction(
             icon = BitChordIcons.Play,
-            contentDescription = "Play",
+            contentDescription = stringResource(R.string.tv_play),
             size = 58.dp,
             iconScale = 0.5f,
             resting = playColor ?: TvGlass.AppleRed,
@@ -74,7 +76,7 @@ internal fun TvActionRow(
         if (subscribed != null) {
             TvCircleAction(
                 icon = if (subscribed) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                contentDescription = if (subscribed) "Unsubscribe" else "Subscribe",
+                contentDescription = stringResource(if (subscribed) R.string.tv_unsubscribe else R.string.tv_subscribe),
                 size = 43.dp,
                 onClick = onToggleSubscription,
             )

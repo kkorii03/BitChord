@@ -248,4 +248,11 @@
     <string name="lyrics_timing_ai_button_running">맞추는 중…</string>
     <string name="private_listening_notice">시크릿 모드 · YouTube 기록에 남지 않아요</string>
     <string name="private_listening_turn_off">끄기</string>
+    <string name="previously_played">이전에 재생함</string>
+    <string name="search_addons_empty">활성화된 모든 애드온을 한 번에 검색합니다. 노래는 애드온에서 바로 재생됩니다.</string>
+    <string name="search_addons_hint">애드온 검색</string>
+    <string name="search_addons_no_results">“%1$s”이(가) 있는 애드온이 없습니다.</string>
+    <string name="sign_in_with_google">Google로 로그인</string>
+    <string name="watch_output">워치</string>
+    <string name="watch_output_subtitle">워치 스피커나 헤드폰으로 재생</string>
 </resources>

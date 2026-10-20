@@ -1,4 +1,7 @@
 package com.music.bitchord.ui.tv.screens
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
+import androidx.annotation.StringRes
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,11 +54,14 @@ import com.music.bitchord.ui.tv.theme.TvGlass
 import kotlinx.coroutines.launch
 
 /** One entry in Library's sidebar. [key] survives the library reloading under it. */
-private sealed class LibraryCategory(val key: String, val title: String) {
-    data object RecentlyPlayed : LibraryCategory("recent", "Recently Played")
-    data object Liked : LibraryCategory("liked", "Liked Songs")
-    data object Songs : LibraryCategory("songs", "Songs")
-    class Collection(val shelf: HomeShelf) : LibraryCategory("shelf:${shelf.title}", shelf.title)
+private sealed class LibraryCategory(val key: String, @StringRes val titleRes: Int) {
+    open val title: String? = null
+    data object RecentlyPlayed : LibraryCategory("recent", R.string.tv_recently_played)
+    data object Liked : LibraryCategory("liked", R.string.tv_liked_songs)
+    data object Songs : LibraryCategory("songs", R.string.tv_songs)
+    class Collection(val shelf: HomeShelf) : LibraryCategory("shelf:${shelf.title}", 0) {
+        override val title: String get() = shelf.title
+    }
 }
 
 /**
@@ -74,6 +80,8 @@ fun TvLibraryScreen(
     modifier: Modifier = Modifier,
 ) {
     TvChromePinned()
+    val downloadedTitle = stringResource(R.string.tv_downloaded)
+    val onThisDeviceTitle = stringResource(R.string.tv_on_this_device)
     val signedIn by viewModel.signedIn.collectAsState()
     val libraryState by viewModel.library.collectAsState()
     val library = (libraryState as? UiState.Success)?.data
@@ -112,7 +120,7 @@ fun TvLibraryScreen(
         ) {
             items(categories, key = { it.key }) { category ->
                 TvListRow(
-                    title = category.title,
+                    title = category.title ?: stringResource(category.titleRes),
                     resting = if (category.key == selected.key) Color.White.copy(alpha = 0.12f) else Color.Transparent,
                     onFocused = { selectedKey = category.key },
                     onClick = { selectedKey = category.key },
@@ -120,24 +128,24 @@ fun TvLibraryScreen(
             }
             item(key = "downloads") {
                 TvListRow(
-                    title = "Downloaded",
+                    title = downloadedTitle,
                     resting = Color.Transparent,
                     trailingIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    onClick = { onNavigateToDetail("local:downloads", "Downloaded", "", null, BrowseType.PLAYLIST) },
+                    onClick = { onNavigateToDetail("local:downloads", downloadedTitle, "", null, BrowseType.PLAYLIST) },
                 )
             }
             item(key = "device") {
                 TvListRow(
-                    title = "On This Device",
+                    title = onThisDeviceTitle,
                     resting = Color.Transparent,
                     trailingIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    onClick = { onNavigateToDetail("local:all", "On This Device", "", null, BrowseType.PLAYLIST) },
+                    onClick = { onNavigateToDetail("local:all", onThisDeviceTitle, "", null, BrowseType.PLAYLIST) },
                 )
             }
             if (!signedIn) {
                 item(key = "signin") {
                     TvListRow(
-                        title = "Sign In…",
+                        title = stringResource(R.string.tv_sign_in_ellipsis),
                         resting = Color.Transparent,
                         onClick = onOpenAccount,
                     )
@@ -213,7 +221,7 @@ private fun TvRecentlyPlayed(
         UiState.Loading -> TvPaneLoading()
         is UiState.Error -> TvErrorState(message = state.message, onRetry = { viewModel.loadHistory() })
         is UiState.Success -> if (state.data.isEmpty()) {
-            TvEmptyState(title = "Nothing Played Yet", message = "Songs you play show up here.")
+            TvEmptyState(title = stringResource(R.string.tv_nothing_played), message = stringResource(R.string.tv_played_show_here))
         } else {
             TvLibrarySongs(state.data, playingId, isPlaying, onPlay, onSongMenu)
         }
@@ -229,7 +237,7 @@ private fun TvLibrarySongs(
     onSongMenu: (Song) -> Unit,
 ) {
     if (songs.isEmpty()) {
-        TvEmptyState(title = "No Songs", message = "There's nothing here yet.")
+        TvEmptyState(title = stringResource(R.string.tv_no_songs), message = stringResource(R.string.tv_nothing_here_yet))
         return
     }
     LazyColumn(
@@ -295,7 +303,7 @@ private fun TvLibraryBanner(message: String, onRetry: () -> Unit) {
                 color = TvGlass.TextSecondary,
                 maxLines = 1,
             )
-            TvButton(text = "Reload Library", onClick = onRetry)
+            TvButton(text = stringResource(R.string.tv_reload_library), onClick = onRetry)
         }
     }
 }

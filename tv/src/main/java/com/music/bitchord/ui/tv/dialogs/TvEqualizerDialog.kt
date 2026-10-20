@@ -1,4 +1,7 @@
 package com.music.bitchord.ui.tv.dialogs
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import android.view.KeyEvent
 import androidx.compose.animation.AnimatedContent
@@ -79,9 +82,9 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private enum class EqTab(val label: String) {
-    BANDS("Bands"),
-    PRESETS("Presets"),
+private enum class EqTab(@StringRes val labelRes: Int) {
+    BANDS(R.string.tv_eq_bands),
+    PRESETS(R.string.tv_eq_presets),
 }
 
 /**
@@ -98,37 +101,37 @@ fun TvEqualizerDialog(
     val bands by AppSettings.equalizerBands.collectAsState()
     var tab by remember { mutableStateOf(EqTab.BANDS) }
 
-    val presets: List<Pair<EqualizerPreset, String>> = remember {
+    val presets: List<Pair<EqualizerPreset, Int>> = remember {
         listOf(
-            EqualizerPreset.FLAT to "Flat",
-            EqualizerPreset.ACOUSTIC to "Acoustic",
-            EqualizerPreset.BASS_BOOST to "Bass Booster",
-            EqualizerPreset.BASS_CUT to "Bass Reducer",
-            EqualizerPreset.CLASSICAL to "Classical",
-            EqualizerPreset.ELECTRONIC to "Electronic",
-            EqualizerPreset.HIP_HOP to "Hip-Hop",
-            EqualizerPreset.JAZZ to "Jazz",
-            EqualizerPreset.LOUDNESS to "Loudness",
-            EqualizerPreset.ROCK to "Rock",
-            EqualizerPreset.SPOKEN_WORD to "Spoken Word",
-            EqualizerPreset.TREBLE_BOOST to "Treble Booster",
-            EqualizerPreset.TREBLE_CUT to "Treble Reducer",
-            EqualizerPreset.VOCAL to "Vocal Booster",
-            EqualizerPreset.SMALL_SPEAKERS to "Small Speakers",
-            EqualizerPreset.LATE_NIGHT to "Late Night",
+            EqualizerPreset.FLAT to R.string.tv_eq_flat,
+            EqualizerPreset.ACOUSTIC to R.string.tv_eq_acoustic,
+            EqualizerPreset.BASS_BOOST to R.string.tv_eq_bass_boost,
+            EqualizerPreset.BASS_CUT to R.string.tv_eq_bass_cut,
+            EqualizerPreset.CLASSICAL to R.string.tv_eq_classical,
+            EqualizerPreset.ELECTRONIC to R.string.tv_eq_electronic,
+            EqualizerPreset.HIP_HOP to R.string.tv_eq_hip_hop,
+            EqualizerPreset.JAZZ to R.string.tv_eq_jazz,
+            EqualizerPreset.LOUDNESS to R.string.tv_eq_loudness,
+            EqualizerPreset.ROCK to R.string.tv_eq_rock,
+            EqualizerPreset.SPOKEN_WORD to R.string.tv_eq_spoken_word,
+            EqualizerPreset.TREBLE_BOOST to R.string.tv_eq_treble_boost,
+            EqualizerPreset.TREBLE_CUT to R.string.tv_eq_treble_cut,
+            EqualizerPreset.VOCAL to R.string.tv_eq_vocal,
+            EqualizerPreset.SMALL_SPEAKERS to R.string.tv_eq_small_speakers,
+            EqualizerPreset.LATE_NIGHT to R.string.tv_eq_late_night,
         )
     }
 
-    TvDialog(title = "Equalizer", width = 512.dp, onDismissRequest = onDismiss) {
+    TvDialog(title = stringResource(R.string.tv_equalizer), width = 512.dp, onDismissRequest = onDismiss) {
         TvListRow(
-            title = "Equalizer",
-            value = if (enabled) "On" else "Off",
+            title = stringResource(R.string.tv_equalizer),
+            value = stringResource(if (enabled) R.string.tv_on else R.string.tv_off),
             modifier = Modifier.tvInitialFocus(),
             onClick = { AppSettings.setEqualizerEnabled(!enabled) },
         )
         Spacer(modifier = Modifier.height(14.dp))
         TvSegmented(
-            options = EqTab.entries.map { it.label },
+            options = EqTab.entries.map { stringResource(it.labelRes) },
             selectedIndex = tab.ordinal,
             onSelect = { tab = EqTab.entries[it] },
         )
@@ -164,13 +167,13 @@ fun TvEqualizerDialog(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Up and down set a band. Select resets it.",
+                    text = stringResource(R.string.tv_equalizer_help),
                     style = TvType.Caption,
                     color = TvGlass.TextTertiary,
                 )
                 Spacer(modifier = Modifier.height(14.dp))
                 TvButton(
-                    text = "Reset All",
+                    text = stringResource(R.string.tv_reset_all),
                     onClick = {
                         AppSettings.setEqualizerBands(List(EqLayout.MANUAL_COUNT) { 0f })
                         AppSettings.setEqualizerPreset(EqualizerPreset.FLAT)
@@ -183,14 +186,14 @@ fun TvEqualizerDialog(
                     .heightIn(max = 240.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                items(presets) { (preset, label) ->
+                items(presets) { (preset, labelRes) ->
                     val selected = if (preset == EqualizerPreset.FLAT) {
                         !enabled || currentPreset == preset
                     } else {
                         enabled && currentPreset == preset
                     }
                     TvListRow(
-                        title = label,
+                        title = stringResource(labelRes),
                         trailingIcon = if (selected) Icons.Default.Check else null,
                         onClick = {
                             AppSettings.setEqualizerEnabled(preset != EqualizerPreset.FLAT)

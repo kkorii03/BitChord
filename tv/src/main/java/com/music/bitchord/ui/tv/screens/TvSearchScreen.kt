@@ -1,4 +1,6 @@
 package com.music.bitchord.ui.tv.screens
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -151,7 +153,7 @@ fun TvSearchScreen(
                 TvTextField(
                     value = query,
                     onValueChange = viewModel::onQueryChange,
-                    placeholder = "Artists, Songs, Albums and More",
+                    placeholder = stringResource(R.string.tv_search_placeholder),
                     leadingIcon = Icons.Rounded.Search,
                     imeAction = ImeAction.Search,
                     onImeAction = {
@@ -227,8 +229,8 @@ fun TvSearchScreen(
             is UiState.Success -> if (deduped.isEmpty()) {
                 item(key = "empty") {
                     TvEmptyState(
-                        title = "No Results",
-                        message = "Nothing matched “$query”. Check the spelling or try other words.",
+                        title = stringResource(R.string.tv_no_results),
+                        message = stringResource(R.string.tv_no_results_message, query),
                         modifier = Modifier.height(256.dp),
                     )
                 }
@@ -270,8 +272,8 @@ private fun LazyListScope.idleContent(
     if (history.isEmpty()) {
         item(key = "idleEmpty") {
             TvEmptyState(
-                title = "Search BitChord",
-                message = "Find songs, albums, artists and playlists.",
+                title = stringResource(R.string.tv_search_bitchord),
+                message = stringResource(R.string.tv_search_message),
                 modifier = Modifier.height(240.dp),
             )
         }
@@ -279,8 +281,8 @@ private fun LazyListScope.idleContent(
     }
     item(key = "recentTitle") {
         TvShelfTitle(
-            title = "Recent Searches",
-            trailing = { TvButton(text = "Clear", onClick = onClearHistory) },
+            title = stringResource(R.string.tv_recent_searches),
+            trailing = { TvButton(text = stringResource(R.string.tv_clear), onClick = onClearHistory) },
             modifier = Modifier.padding(top = 6.dp, bottom = 5.dp),
         )
     }
@@ -329,24 +331,24 @@ private fun LazyListScope.groupedResults(
     val browse = results.filterIsInstance<SearchResult.Browse>().map { it.item }
 
     item(key = "top") {
-        TvShelf(title = "Top Results", items = results.take(10), key = { it.resultKey() }) { result ->
+        TvShelf(title = stringResource(R.string.tv_top_results), items = results.take(10), key = { it.resultKey() }) { result ->
             ResultLockup(result, onPlaySong, onOpen, onSongMenu)
         }
     }
     if (songs.isNotEmpty()) {
-        item(key = "songsTitle") { TvShelfTitle(title = "Songs") }
+        item(key = "songsTitle") { TvShelfTitle(title = stringResource(R.string.tv_songs)) }
         songGrid(songs.take(12), onPlaySong, onSongMenu, keyPrefix = "song")
     }
     listOf(
-        BrowseType.ARTIST to "Artists",
-        BrowseType.ALBUM to "Albums",
-        BrowseType.PLAYLIST to "Playlists",
-        BrowseType.OTHER to "More",
+        BrowseType.ARTIST to R.string.tv_artists,
+        BrowseType.ALBUM to R.string.tv_albums,
+        BrowseType.PLAYLIST to R.string.tv_playlists,
+        BrowseType.OTHER to R.string.tv_more,
     ).forEach { (type, title) ->
         val group = browse.filter { it.type == type }
         if (group.isNotEmpty()) {
             item(key = "group:$type") {
-                TvShelf(title = title, items = group, key = { it.browseId }) { item ->
+                TvShelf(title = stringResource(title), items = group, key = { it.browseId }) { item ->
                     TvLockup(
                         title = item.title,
                         subtitle = if (type == BrowseType.ARTIST) null else item.subtitle,

@@ -1,4 +1,6 @@
 package com.music.bitchord.ui.tv.screens
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import android.Manifest
 import android.os.Build
@@ -228,10 +230,10 @@ private fun TvReleaseContent(
                 is UiState.Error -> item(key = "error") {
                     if (songsState.message.contains("permission", ignoreCase = true)) {
                         TvEmptyState(
-                            title = "Allow Access to Music",
-                            message = "BitChord needs permission to read music on this TV and on connected USB drives.",
+                            title = stringResource(R.string.tv_allow_access_music),
+                            message = stringResource(R.string.tv_allow_access_message),
                             modifier = Modifier.height(224.dp),
-                            action = { TvButton(text = "Allow Access", onClick = onRequestPermission) },
+                            action = { TvButton(text = stringResource(R.string.tv_allow_access), onClick = onRequestPermission) },
                         )
                     } else {
                         TvErrorState(message = songsState.message, onRetry = onRetry, modifier = Modifier.height(224.dp))
@@ -240,8 +242,8 @@ private fun TvReleaseContent(
                 is UiState.Success -> if (songs.isEmpty()) {
                     item(key = "empty") {
                         TvEmptyState(
-                            title = "No Songs",
-                            message = "There's nothing to play here yet.",
+                            title = stringResource(R.string.tv_no_songs),
+                            message = stringResource(R.string.tv_nothing_to_play),
                             modifier = Modifier.height(208.dp),
                         )
                     }
@@ -264,7 +266,7 @@ private fun TvReleaseContent(
             // the playlist's own — as the phone does.
             if (suggested.isNotEmpty()) {
                 item(key = "suggestedTitle") {
-                    TvShelfTitle(title = "Suggestions", modifier = Modifier.padding(top = 24.dp, bottom = 6.dp))
+                    TvShelfTitle(title = stringResource(R.string.tv_suggestions), modifier = Modifier.padding(top = 24.dp, bottom = 6.dp))
                 }
                 itemsIndexed(suggested, key = { index, song -> "s:${song.videoId}#$index" }) { index, song ->
                     TvTrackLine(

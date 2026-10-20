@@ -1,4 +1,6 @@
 package com.music.bitchord.ui.tv.screens
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,8 +68,8 @@ fun TvHomeScreen(
         is UiState.Success -> {
             if (state.data.isEmpty()) {
                 TvEmptyState(
-                    title = "Nothing Here Yet",
-                    message = "Sign in from Settings, or check your connection, to see your recommendations.",
+                    title = stringResource(R.string.tv_nothing_here),
+                    message = stringResource(R.string.tv_home_empty_message),
                     modifier = modifier,
                 )
             } else {

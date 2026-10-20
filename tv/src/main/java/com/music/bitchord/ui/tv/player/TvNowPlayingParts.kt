@@ -1,4 +1,6 @@
 package com.music.bitchord.ui.tv.player
+import androidx.compose.ui.res.stringResource
+import com.music.bitchord.R
 
 import android.view.KeyEvent
 import androidx.compose.animation.AnimatedVisibility
@@ -360,25 +362,25 @@ internal fun TvTransport(
             Row(horizontalArrangement = Arrangement.spacedBy(11.dp)) {
                 TvTransportButton(
                     icon = if (isLiked) BitChordIcons.StarFilled else BitChordIcons.Star,
-                    contentDescription = if (isLiked) "Unfavorite" else "Favorite",
+                    contentDescription = stringResource(if (isLiked) R.string.tv_unfavorite else R.string.tv_favorite),
                     onClick = onToggleLike,
                 )
                 TvTransportButton(
                     icon = BitChordIcons.LyricsQuote,
-                    contentDescription = "Lyrics",
+                    contentDescription = stringResource(R.string.tv_lyrics),
                     active = lyricsOn,
                     enabled = lyricsAvailable,
                     onClick = onToggleLyrics,
                 )
                 TvTransportButton(
                     icon = BitChordIcons.Queue,
-                    contentDescription = "Up Next",
+                    contentDescription = stringResource(R.string.tv_up_next),
                     active = upNextOpen,
                     onClick = onToggleUpNext,
                 )
                 TvTransportButton(
                     icon = Icons.Rounded.MoreHoriz,
-                    contentDescription = "More",
+                    contentDescription = stringResource(R.string.tv_more),
                     onClick = onMore,
                 )
             }
@@ -589,8 +591,8 @@ private fun TvQualityLine(showStats: Boolean, modifier: Modifier = Modifier) {
     val stats = snapshot ?: return
     val label = when {
         stats.isDolbyAtmos -> "Dolby Atmos"
-        stats.isHiRes -> "Hi-Res Lossless"
-        stats.isLossless -> "Lossless"
+        stats.isHiRes -> stringResource(R.string.tv_hires_lossless)
+        stats.isLossless -> stringResource(R.string.tv_lossless)
         else -> null
     }
     val detail = if (showStats) streamDetail(stats) else null
@@ -683,7 +685,7 @@ internal fun TvUpNext(
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "Up Next",
+                text = stringResource(R.string.tv_up_next),
                 style = TvType.Headline,
                 color = TvGlass.TextPrimary,
                 modifier = Modifier.weight(1f),
@@ -691,18 +693,20 @@ internal fun TvUpNext(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TvTransportButton(
                     icon = BitChordIcons.Shuffle,
-                    contentDescription = "Shuffle",
+                    contentDescription = stringResource(R.string.tv_shuffle),
                     active = shuffle,
                     size = 32.dp,
                     onClick = onToggleShuffle,
                 )
                 TvTransportButton(
                     icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
-                    contentDescription = when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> "Repeat One"
-                        Player.REPEAT_MODE_ALL -> "Repeat All"
-                        else -> "Repeat Off"
-                    },
+                    contentDescription = stringResource(
+                        when (repeatMode) {
+                            Player.REPEAT_MODE_ONE -> R.string.tv_repeat_one
+                            Player.REPEAT_MODE_ALL -> R.string.tv_repeat_all
+                            else -> R.string.tv_repeat_off
+                        },
+                    ),
                     active = repeatMode != Player.REPEAT_MODE_OFF,
                     badge = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
                     size = 32.dp,
@@ -710,7 +714,7 @@ internal fun TvUpNext(
                 )
                 TvTransportButton(
                     icon = BitChordIcons.Infinity,
-                    contentDescription = "Autoplay",
+                    contentDescription = stringResource(R.string.tv_autoplay),
                     active = autoplay,
                     size = 32.dp,
                     onClick = onToggleAutoplay,
@@ -719,7 +723,7 @@ internal fun TvUpNext(
         }
         if (upcoming.isEmpty()) {
             Text(
-                text = if (autoplay) "Similar music will play when this song ends." else "Nothing is queued after this song.",
+                text = stringResource(if (autoplay) R.string.tv_similar_will_play else R.string.tv_nothing_queued),
                 style = TvType.Callout,
                 color = TvGlass.TextSecondary,
                 modifier = Modifier
@@ -820,16 +824,16 @@ internal fun TvNothingPlaying(onBrowse: () -> Unit, modifier: Modifier = Modifie
             modifier = Modifier.size(58.dp),
         )
         Spacer(modifier = Modifier.height(19.dp))
-        Text(text = "Not Playing", style = TvType.Title, color = TvGlass.TextPrimary)
+        Text(text = stringResource(R.string.tv_not_playing), style = TvType.Title, color = TvGlass.TextPrimary)
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Choose something from Home, Explore or your Library.",
+            text = stringResource(R.string.tv_choose_something),
             style = TvType.Callout,
             color = TvGlass.TextSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = 384.dp),
         )
         Spacer(modifier = Modifier.height(21.dp))
-        TvButton(text = "Browse Music", onClick = onBrowse, modifier = Modifier.width(208.dp).tvInitialFocus())
+        TvButton(text = stringResource(R.string.tv_browse_music), onClick = onBrowse, modifier = Modifier.width(208.dp).tvInitialFocus())
     }
 }
