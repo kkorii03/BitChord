@@ -350,6 +350,23 @@ object StreamResolver {
     }
 
     /**
+     * Whether [videoId] currently has a verdict saying no client can serve it.
+     *
+     * Read by the alternate-version search so a candidate that will be refused
+     * the moment playback asks for it is not offered as a rescue.
+     */
+    fun isUnplayable(videoId: String): Boolean = unplayableReason(videoId) != null
+
+    /**
+     * Records that [videoId] cannot be played, for callers that have already
+     * established the answer (the playback failure path). The same cache
+     * [resolve] consults, so read-ahead and the next play stop asking too.
+     */
+    fun markUnplayable(videoId: String, reason: String) {
+        rememberUnplayable(videoId, reason)
+    }
+
+    /**
      * Forget every verdict recorded above.
      *
      * Signing in is the one event that can turn an age-gated track playable,

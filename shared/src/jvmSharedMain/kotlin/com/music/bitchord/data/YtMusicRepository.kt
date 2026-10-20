@@ -8,6 +8,7 @@ import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MoodLabels
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.SearchKind
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
@@ -753,6 +754,69 @@ object YtMusicRepository {
         Log.w(TAG, "audio switch: no official song match for '${song.title}' by '${song.artist}'")
         audioVersionCache[song.videoId] = song
         return song
+    }
+
+    /**
+     * Finds a different upload of the same recording when [song] itself has
+     * been refused definitively.
+     *
+     * The catalogue counterpart first ([resolveAudio]), then a song search and
+     * a video search for "title artist". Every candidate must share an artist
+     * with [song] ([TrackMatcher.bestSameArtist]), must not be [song] itself or
+     * another id in [excluding], and must not already carry an unplayable
+     * verdict — offering one of those would send playback straight back into
+     * the failure this is meant to escape.
+     *
+     * Returns null when there is no other version, which is a normal answer:
+     * the caller then skips the track as before.
+     */
+    suspend fun findAlternateRecording(song: Song, excluding: Set<String> = emptySet()): Song? {
+        if (song.title.isBlank() || song.artist.isBlank()) return null
+        val target = TrackMatcher.targetOf(song)
+        val excluded = excluding + song.videoId
+        fun acceptable(candidate: Song): Boolean =
+            candidate.videoId.isNotBlank() &&
+                candidate.videoId !in excluded &&
+                !StreamResolver.isUnplayable(candidate.videoId) &&
+                TrackMatcher.sharesArtist(song.artist, candidate.artist)
+
+        val catalogue = try {
+            resolveAudio(song)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Log.w(TAG, "alternate: audio lookup failed for ${song.videoId}: ${failure.message}")
+            null
+        }
+        catalogue?.takeIf(::acceptable)?.let { match ->
+            Log.d(TAG, "alternate: '${song.title}' -> '${match.title}' (catalogue)")
+            return match
+        }
+
+        for ((filter, kind) in listOf(
+            SearchFilter.SONGS to SearchKind.AUDIO_SWITCH,
+            SearchFilter.VIDEOS to SearchKind.VIDEO_SWITCH,
+        )) {
+            for (query in TrackMatcher.queries(target)) {
+                val candidates = try {
+                    search(query, filter, kind).getOrNull()
+                        ?.filterIsInstance<SearchResult.Track>()
+                        ?.map { it.song }
+                        .orEmpty()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    Log.w(TAG, "alternate search failed for '$query': ${failure.message}")
+                    emptyList()
+                }
+                TrackMatcher.bestSameArtist(candidates.filter(::acceptable), target)?.let { match ->
+                    Log.d(TAG, "alternate: '${song.title}' -> '${match.title}' (search)")
+                    return match
+                }
+            }
+        }
+        Log.w(TAG, "alternate: no other recording of '${song.title}' by '${song.artist}'")
+        return null
     }
 
     /**

@@ -190,4 +190,30 @@ class SkipSegmentsTest {
         assertFalse(isYouTubeVideoId("webdav:http://example/a.flac"))
         assertFalse(isYouTubeVideoId("short"))
     }
+
+    @Test
+    fun `a definitive refusal with another version swaps instead of retrying`() {
+        val action = UnplayableRecovery.decide(definitive = true, hasAlternate = true)
+        assertEquals(UnplayableRecoveryAction.SWAP_ALTERNATE, action)
+    }
+
+    @Test
+    fun `a definitive refusal with no other version skips`() {
+        val action = UnplayableRecovery.decide(definitive = true, hasAlternate = false)
+        assertEquals(UnplayableRecoveryAction.SKIP_NEXT, action)
+    }
+
+    @Test
+    fun `a transient error stays on the retry path even when an alternate exists`() {
+        val action = UnplayableRecovery.decide(definitive = false, hasAlternate = true)
+        assertEquals(UnplayableRecoveryAction.RETRY, action)
+    }
+
+    @Test
+    fun `a permanent reason or the unplayable cache marks the failure definitive`() {
+        assertTrue(UnplayableRecovery.isDefinitive("StreamResolveException: unavailable", false))
+        assertTrue(UnplayableRecovery.isDefinitive(null, alreadyMarkedUnplayable = true))
+        assertFalse(UnplayableRecovery.isDefinitive(null, alreadyMarkedUnplayable = false))
+        assertFalse(UnplayableRecovery.isDefinitive("", alreadyMarkedUnplayable = false))
+    }
 }

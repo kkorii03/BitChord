@@ -4194,6 +4194,23 @@ class PlaybackService : MediaLibraryService() {
         // Read now, not after the delay: it describes the failure, and the
         // connection may be back by then.
         val networkFault = isNetworkFault(error)
+        // A definitive refusal is not a retry. The resolver has already ruled
+        // the id out (and remembered it), so walking the same clients again
+        // only repeats an answer that cannot change — the reported case spent
+        // ~8s per attempt and three attempts before skipping a song whose other
+        // uploads were playable all along. Look for another version of the same
+        // recording instead; only skip when there is none.
+        if (UnplayableRecovery.isDefinitive(verdict, StreamResolver.isUnplayable(mediaId))) {
+            verdict?.let { StreamResolver.markUnplayable(mediaId, it) }
+            switchToAlternateOrSkip(
+                mediaId = mediaId,
+                song = item.toSong(),
+                uri = uri,
+                reason = verdict ?: "이 트랙은 재생할 수 없습니다",
+                networkFault = networkFault,
+            )
+            return
+        }
         scope.launch(TrackLog.about(mediaId)) {
             // Long enough for the released source to let go of the cache keys
             // about to be removed, short enough to read as a stutter.
@@ -4526,6 +4543,187 @@ class PlaybackService : MediaLibraryService() {
         // would un-pause a queue they had paused.
         exoPlayer.prepare()
     }
+
+    /**
+     * A definitive refusal: find another upload of the same recording, swap it
+     * into this queue position and play it from the start. Skip only when the
+     * catalogue has no other version.
+     *
+     * The failed id is already in [StreamResolver]'s unplayable cache, so it
+     * is never offered back by the search. Nothing here retries it: the only
+     * network work is the alternate lookup itself.
+     */
+    private fun switchToAlternateOrSkip(
+        mediaId: String,
+        song: Song,
+        uri: Uri?,
+        reason: String,
+        networkFault: Boolean,
+    ) {
+        if (!alternateLookups.add(mediaId)) return
+        scope.launch(TrackLog.about(mediaId)) {
+            try {
+                val alternate = withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(ALTERNATE_LOOKUP_TIMEOUT_MS) {
+                        YtMusicRepository.findAlternateRecording(song, setOf(mediaId))
+                    }
+                }
+                // The old source is let go asynchronously; the discard still
+                // wants the same moment of quiet the retry path asks for.
+                delay(RECOVERY_DELAY_MS)
+                uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it, keepComplete = networkFault) } }
+                withContext(Dispatchers.Main) {
+                    val live = this@PlaybackService.player ?: return@withContext
+                    val currentItem = live.currentMediaItem ?: return@withContext
+                    if (currentItem.mediaId != mediaId) return@withContext
+                    val decision = UnplayableRecovery.decide(
+                        definitive = true,
+                        hasAlternate = alternate != null,
+                    )
+                    if (decision != UnplayableRecoveryAction.SWAP_ALTERNATE || alternate == null) {
+                        TrackLog.w("BitChord", "failure: $mediaId no alternate, skipping", about = mediaId)
+                        skipPastUnplayable(mediaId, reason)
+                        return@withContext
+                    }
+                    TrackLog.w(
+                        "BitChord",
+                        "failure: $mediaId unplayable -> alternate ${alternate.videoId} (${alternate.title})",
+                        about = mediaId,
+                    )
+                    val wasPlaying = live.playWhenReady
+                    live.replaceMediaItem(
+                        live.currentMediaItemIndex,
+                        currentItem.withAlternateRecording(alternate),
+                    )
+                    live.seekTo(live.currentMediaItemIndex, 0L)
+                    if (wasPlaying) live.play()
+                    live.prepare()
+                }
+            } finally {
+                alternateLookups.remove(mediaId)
+            }
+        }
+    }
+
+    /** Ids with an alternate lookup already running, so one failure starts one search. */
+    private val alternateLookups = ConcurrentHashMap.newKeySet<String>()
+
+    private var alternatePreResolveJob: Job? = null
+
+    /** The next-track id [alternatePreResolveJob] is already working on. */
+    private var alternatePreResolveFor: String? = null
+
+    /**
+     * Looks one track ahead for a definitive refusal and swaps its alternate
+     * into the queue before playback reaches it.
+     *
+     * Read-ahead resolves the upcoming track anyway (see [AudioCache.prefetchQueue]),
+     * and a refused id lands in [StreamResolver]'s verdict cache. This asks the
+     * same question directly so the answer is acted on while there is still a
+     * track playing, instead of being discovered at the transition and costing
+     * the listener a gap. The resolve is coalesced with read-ahead's own, so
+     * this adds no second walk.
+     */
+    private fun preResolveAlternateAhead(player: ExoPlayer) {
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET || nextIndex !in 0 until player.mediaItemCount) {
+            alternatePreResolveJob?.cancel()
+            alternatePreResolveFor = null
+            return
+        }
+        val song = player.getMediaItemAt(nextIndex).toSong()
+        if (song.videoId == alternatePreResolveFor && alternatePreResolveJob?.isActive == true) return
+        // Only YouTube ids are resolved here; local files and module tracks
+        // have their own fallbacks and no catalogue counterpart to search for.
+        if (song.videoId.isBlank() ||
+            song.localUri != null ||
+            song.videoId.startsWith("content://") ||
+            song.videoId.startsWith("file://") ||
+            SourceRegistry.parseTrackKey(song.videoId) != null
+        ) {
+            alternatePreResolveJob?.cancel()
+            alternatePreResolveFor = null
+            return
+        }
+        alternatePreResolveJob?.cancel()
+        alternatePreResolveFor = song.videoId
+        alternatePreResolveJob = scope.launch(TrackLog.about(song.videoId)) {
+            val definitive = StreamResolver.isUnplayable(song.videoId) || withContext(Dispatchers.IO) {
+                try {
+                    StreamResolver.resolve(song.videoId)
+                    false
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    permanentReason(failure) != null
+                }
+            }
+            if (!definitive) return@launch
+            val alternate = withContext(Dispatchers.IO) {
+                withTimeoutOrNull(ALTERNATE_LOOKUP_TIMEOUT_MS) {
+                    YtMusicRepository.findAlternateRecording(song, setOf(song.videoId))
+                }
+            } ?: return@launch
+            withContext(Dispatchers.Main) {
+                val live = this@PlaybackService.player ?: return@withContext
+                val index = live.nextMediaItemIndex
+                if (index == C.INDEX_UNSET || index !in 0 until live.mediaItemCount) return@withContext
+                if (live.getMediaItemAt(index).mediaId != song.videoId) return@withContext
+                TrackLog.w(
+                    "BitChord",
+                    "failure: ${song.videoId} unplayable -> alternate ${alternate.videoId} (${alternate.title})",
+                    about = song.videoId,
+                )
+                live.replaceMediaItem(index, live.getMediaItemAt(index).withAlternateRecording(alternate))
+                // The queue's ids changed; the next prefetch must warm the
+                // alternate rather than the id the replace left behind.
+                preferredPrefetchRequest = null
+            }
+        }
+    }
+
+    /**
+     * [this] song swapped onto [alternate] while keeping everything that says
+     * where the queue entry came from: tier, entry id, radio station and the
+     * page that queued it. Only the recording's own fields come from the
+     * alternate.
+     */
+    private fun Song.withAlternateRecording(alternate: Song): Song = copy(
+        videoId = alternate.videoId,
+        title = alternate.title,
+        artist = alternate.artist,
+        thumbnailUrl = alternate.thumbnailUrl ?: thumbnailUrl,
+        durationText = alternate.durationText,
+        artistId = alternate.artistId,
+        artists = alternate.artists,
+        albumId = alternate.albumId,
+        albumName = alternate.albumName,
+        isVideo = alternate.isVideo,
+        setVideoId = null,
+        localUri = null,
+        downloadFormat = null,
+        localPath = null,
+        localDateAddedSeconds = null,
+        localDateModifiedSeconds = null,
+        trackNumber = null,
+        sourceQuality = alternate.sourceQuality,
+        sourceHiRes = alternate.sourceHiRes,
+        isExplicit = alternate.isExplicit,
+    )
+
+    /**
+     * The queue item rebuilt on [alternate] without losing where it sits in
+     * the bounded context: entry id, canonical index, cycle and tier are all
+     * carried over from [this], exactly as an in-place edit would.
+     */
+    private fun MediaItem.withAlternateRecording(alternate: Song): MediaItem =
+        QueueShuffle.withQueueMetadata(
+            toSong().withAlternateRecording(alternate).toMediaItem(),
+            newEntryId = queueEntryId,
+            newCanonicalIndex = canonicalIndex,
+            newTier = queueTier,
+            newContextCycleId = contextCycleId,
+        )
 
     /**
      * Says, once per track, that it could not be played.
@@ -6412,6 +6610,10 @@ class PlaybackService : MediaLibraryService() {
         if (request == preferredPrefetchRequest) return
         preferredPrefetchRequest = request
         preferredPrefetchJob?.cancel()
+
+        // One track ahead: if read-ahead is about to discover a definitive
+        // refusal, swap its alternate in now rather than at the transition.
+        preResolveAlternateAhead(player)
 
         fun warm(songs: List<Song>) {
             AudioCache.prefetchQueue(
@@ -9820,6 +10022,15 @@ class PlaybackService : MediaLibraryService() {
          * before the same track is asked for again.
          */
         const val RECOVERY_DELAY_MS = 350L
+
+        /**
+         * How long an alternate-version search may take before the track is
+         * skipped. The old path spent three full resolve walks (~25s) on an id
+         * that could never play; this bounds the replacement search to less
+         * than one of those attempts while still allowing a song search and a
+         * video search to answer.
+         */
+        const val ALTERNATE_LOOKUP_TIMEOUT_MS = 12_000L
 
         /** Avoid hammering the radio endpoint while an empty AutoPlay queue heals. */
         const val AUTOPLAY_EMPTY_REFRESH_DELAY_MS = 2_000L
