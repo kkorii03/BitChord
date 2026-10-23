@@ -265,6 +265,7 @@ internal object YouTubeWebParser {
             artist = item.subtitle,
             thumbnailUrl = item.thumbnailUrl,
             durationText = duration,
+            isVideo = lockupIsVideo(lockup),
         )
     }
 
@@ -278,6 +279,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = item.thumbnailUrl,
             durationText = video.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
+            isVideo = video.isVideoRow(),
         )
     }
 
@@ -292,7 +294,45 @@ internal object YouTubeWebParser {
             durationText = video.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
             setVideoId = video.string("setVideoId"),
+            isVideo = video.isVideoRow(),
         )
+    }
+
+    /**
+     * Whether a youtube.com row is a music-video upload rather than the
+     * catalogue recording.
+     *
+     * The web renderers carry no `musicVideoType`, so this applies the same
+     * fallback [InnertubeParser.parseResponsiveListItem] uses when that field
+     * is absent: a widescreen thumbnail is an upload, square art is the
+     * catalogue release. A "Music Video" badge is the second signal; a row
+     * without either stays a song, which only costs the version lookup rather
+     * than risking a swap of a track that is already the right one.
+     */
+    private fun JsonObject.isVideoRow(): Boolean =
+        findObject("thumbnail").isWideThumbnail() ||
+            collectObjects(this, "metadataBadgeRenderer")
+                .mapNotNull { it.string("label") }
+                .any { MUSIC_BADGE.containsMatchIn(it) }
+
+    private fun lockupIsVideo(lockup: JsonObject): Boolean {
+        val image = lockup.findObject("contentImage")
+            ?.findObject("thumbnailViewModel")
+            ?.findObject("image")
+        return image.isWideThumbnail() ||
+            collectObjects(lockup, "thumbnailBadgeViewModel")
+                .mapNotNull { it.string("text") }
+                .any { MUSIC_BADGE.containsMatchIn(it) }
+    }
+
+    private fun JsonElement?.isWideThumbnail(): Boolean {
+        if (this == null) return false
+        val array = findArray("thumbnails") ?: findArray("sources") ?: return false
+        val last = array.lastOrNull() as? JsonObject ?: return false
+        val width = last.string("width")?.toDoubleOrNull() ?: return false
+        val height = last.string("height")?.toDoubleOrNull() ?: return false
+        if (width <= 0.0 || height <= 0.0) return false
+        return width / height !in 0.85..1.15
     }
 
     private fun humanDuration(label: String): String? {
@@ -530,6 +570,7 @@ internal object YouTubeWebParser {
             durationText = panel.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
             setVideoId = panel.string("playlistSetVideoId") ?: panel.string("setVideoId"),
+            isVideo = panel.isVideoRow(),
         )
     }
 

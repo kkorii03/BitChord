@@ -101,6 +101,9 @@ object YtMusicRepository {
     /** Liked Music's continuation tokens, whose later pages need the same split. */
     private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
+    /** Continuation tokens of pages read signed out (see [Innertube.browseMusicAnonymous]). */
+    private val anonymousContinuations = ConcurrentHashMap.newKeySet<String>()
+
     fun cachedAudioVersion(videoId: String): Song? = audioVersionCache[videoId]
     fun cachedVideoVersion(videoId: String): Song? = videoVersionCache[videoId]
 
@@ -953,6 +956,21 @@ object YtMusicRepository {
     private val songVersionCache = ConcurrentHashMap<String, Song>()
     private val songVersionMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /** Distinct rows whose "not a video" skip has already been logged this run. */
+    private const val SONG_VERSION_SKIP_LOG_SIZE = 256
+    private val songVersionSkipLogged =
+        object : LinkedHashMap<String, Boolean>(SONG_VERSION_SKIP_LOG_SIZE, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) =
+                size > SONG_VERSION_SKIP_LOG_SIZE
+        }
+
+    private fun logSongVersionSkipOnce(videoId: String) {
+        val first = synchronized(songVersionSkipLogged) {
+            songVersionSkipLogged.put(videoId, true) == null
+        }
+        if (first) TrackLog.i(TAG, "song version: $videoId skipped (not a video)", about = videoId)
+    }
+
     /**
      * Lookups in flight, shared by every asker for the same video id, run in
      * [lookupScope] rather than in the waiter: a queue build that gives up on
@@ -998,7 +1016,11 @@ object YtMusicRepository {
      *   pre-playback path is read by.
      */
     suspend fun songVersion(song: Song, beforeAudio: Boolean = false): Song? {
-        if (!song.isVideo || song.localUri != null) return null
+        if (song.localUri != null) return null
+        if (!song.isVideo) {
+            logSongVersionSkipOnce(song.videoId)
+            return null
+        }
         if (song.title.isBlank() || song.artist.isBlank()) {
             if (beforeAudio) {
                 logSongVersion(song.videoId, null, "none", beforeAudio = true)
@@ -1552,9 +1574,26 @@ object YtMusicRepository {
         } else {
             pageOf(response)
         }
-        // Music's anonymous browse of a `VLRDCLAK…` editorial playlist answers
-        // no rows (measured); youtube.com's WEB browse of the same id does.
+        // The signed browse of a `VLRDCLAK…` editorial playlist can answer no
+        // rows. Music's anonymous browse (through the proxy) answers them with
+        // each row's music-video type, which the youtube.com fallback cannot
+        // supply — without it every MV in the list looks like a song and is
+        // never switched to its song version. youtube.com stays the last
+        // resort for when Music has nothing either.
         if (page.songs.isEmpty() && YouTubeFallback.isOfficialMusicPlaylistId(browseId)) {
+            val anonymousPage = runCatching { pageOf(Innertube.browseMusicAnonymous(browseId)) }
+                .getOrNull()
+                ?.takeIf { it.songs.isNotEmpty() }
+            if (anonymousPage != null) {
+                anonymousPage.continuation?.let(anonymousContinuations::add)
+                TrackLog.i(
+                    TAG,
+                    "playlist: $browseId rows via music anonymous " +
+                        "(${anonymousPage.songs.size}, videos=${anonymousPage.songs.count { it.isVideo }})",
+                )
+                return@call anonymousPage
+            }
+            TrackLog.i(TAG, "playlist: $browseId rows via youtube.com (no music-video type on rows)")
             val result = YouTubeFallback.playlistPage(browseId)
             return@call SongPage(
                 songs = result.songs,
@@ -1667,6 +1706,13 @@ object YtMusicRepository {
                 hiddenSongs = result.hiddenSongs,
             )
         }
+        if (token in anonymousContinuations) {
+            // A signed-out page's token is followed signed out, and so is the
+            // token it hands on, until the list ends.
+            return@call pageOf(Innertube.browseContinuationMusicAnonymous(token)).also { page ->
+                page.continuation?.let(anonymousContinuations::add)
+            }
+        }
         pageOf(Innertube.browseContinuation(token)).let { page ->
             if (token in likedContinuations) musicOnlyLikedPage(page) else page
         }
@@ -1761,6 +1807,20 @@ object YtMusicRepository {
             val token = shelf?.continuation ?: InnertubeParser.continuationToken(response)
             if (token == null || page++ >= MAX_PAGES) break
             response = runCatching { Innertube.browseContinuation(token) }.getOrNull() ?: break
+        }
+        // The same editorial-playlist gap as [browseSongs]: when the signed
+        // browse has no rows, read the list signed out so every row keeps its
+        // music-video type.
+        if (out.isEmpty() && YouTubeFallback.isOfficialMusicPlaylistId(browseId)) {
+            var anonymous = runCatching { Innertube.browseMusicAnonymous(browseId) }.getOrNull()
+            var anonymousPage = 1
+            while (anonymous != null) {
+                val shelf = InnertubeParser.parsePlaylistShelf(anonymous)
+                (shelf?.songs ?: InnertubeParser.collectSongsDeep(anonymous)).forEach { out[it.videoId] = it }
+                val token = shelf?.continuation ?: InnertubeParser.continuationToken(anonymous)
+                if (token == null || anonymousPage++ >= MAX_PAGES) break
+                anonymous = runCatching { Innertube.browseContinuationMusicAnonymous(token) }.getOrNull()
+            }
         }
         return out.values.toList()
     }

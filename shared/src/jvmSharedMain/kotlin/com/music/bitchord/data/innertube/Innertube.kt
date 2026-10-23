@@ -778,6 +778,22 @@ object Innertube {
     }
 
     /**
+     * A YouTube Music page read without the listener's account.
+     *
+     * The signed browse of a `VLRDCLAK…` editorial playlist came back with no
+     * rows, so the page fell through to youtube.com, whose rows carry no
+     * `musicVideoType` — every music video then looked like a song and was
+     * never switched to its song version (2026-10-23, a whole shuffled
+     * playlist played as MVs). Asked anonymously through the proxy, Music's
+     * own browse answers the full list with the type on every row (measured
+     * the same day), so this is tried before youtube.com.
+     */
+    suspend fun browseMusicAnonymous(browseId: String): JsonObject =
+        postMusic("browse", browseId = browseId, forceAnonymous = true) {
+            put("browseId", browseId)
+        }
+
+    /**
      * A public youtube.com page read without the listener's account.
      *
      * Used for YouTube Music's editorial `RDCLAK` playlists: their Music page
@@ -913,6 +929,15 @@ object Innertube {
         // The web client passes the token in the body and the older query-string
         // form is still honoured; both are sent so either is enough.
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
+    ) {
+        put("continuation", token)
+    }
+
+    /** The next page of [browseMusicAnonymous]: a token minted signed out is followed signed out. */
+    suspend fun browseContinuationMusicAnonymous(token: String): JsonObject = postMusic(
+        endpoint = "browse",
+        query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
+        forceAnonymous = true,
     ) {
         put("continuation", token)
     }

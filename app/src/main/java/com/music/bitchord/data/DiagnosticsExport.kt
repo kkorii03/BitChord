@@ -113,6 +113,7 @@ object DiagnosticsExport {
                                 ""
                             },
                     )
+                    appendLine("music only: ${if (AppSettings.preferMusicOnly.value) "on" else "off"}")
                     DiagnosticsState.describe().forEach { appendLine(it) }
                     appendLine("power: ${powerState(context)}")
                     appendLine("network: ${networkType(context)}")

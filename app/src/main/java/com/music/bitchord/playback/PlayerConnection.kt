@@ -599,6 +599,10 @@ val MediaItem.isVideoOrigin: Boolean
     get() = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
 
+/** Whether this queued item is still the music-video row, not yet a swapped song. */
+internal val MediaItem.isVideoRow: Boolean
+    get() = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
+
 fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
     fromAutoplay = (0 until mediaItemCount).map { getMediaItemAt(it).fromAutoplay },
     currentIndex = currentMediaItemIndex,

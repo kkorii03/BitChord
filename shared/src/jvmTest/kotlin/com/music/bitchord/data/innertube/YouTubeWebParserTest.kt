@@ -60,6 +60,27 @@ class YouTubeWebParserTest {
         assertEquals("DisneyMusicVEVO", song.artist)
         assertEquals("3:15", song.durationText)
         assertEquals("TOKEN123", page.continuation)
+        // No dimensions in the row, so it is left as a song rather than guessed.
+        assertFalse(song.isVideo)
+    }
+
+    @Test
+    fun `a wide playlist upload is a video and square art stays a song`() {
+        val songs = YouTubeWebParser.parsePlaylist(json(PLAYLIST_ROWS)).songs
+
+        assertEquals(listOf("videoRow001", "artTrack001"), songs.map { it.videoId })
+        assertTrue(songs[0].isVideo)
+        assertTrue(songs[0].isVideoOrigin)
+        assertFalse(songs[1].isVideo)
+        assertFalse(songs[1].isVideoOrigin)
+    }
+
+    @Test
+    fun `a wide lockup upload is a video`() {
+        val song = YouTubeWebParser.parsePlaylist(json(PLAYLIST_LOCKUP_WIDE)).songs.single()
+
+        assertTrue(song.isVideo)
+        assertTrue(song.isVideoOrigin)
     }
 
     @Test
@@ -317,6 +338,51 @@ class YouTubeWebParserTest {
                 }}
               ]}},
               {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"TOKEN123"}}}}
+            ]}}}}]}}}
+        """
+
+        const val PLAYLIST_ROWS = """
+            {"contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
+              {"itemSectionRenderer":{"contents":[
+                {"playlistVideoRenderer":{
+                  "videoId":"videoRow001",
+                  "title":{"runs":[{"text":"Official Video"}]},
+                  "shortBylineText":{"runs":[{"text":"Artist"}]},
+                  "lengthText":{"simpleText":"3:20"},
+                  "thumbnail":{"thumbnails":[
+                    {"url":"https://i.ytimg.com/vi/videoRow001/hq.jpg","width":336,"height":188}
+                  ]}
+                }},
+                {"playlistVideoRenderer":{
+                  "videoId":"artTrack001",
+                  "title":{"runs":[{"text":"Catalogue Track"}]},
+                  "shortBylineText":{"runs":[{"text":"Artist - Topic"}]},
+                  "lengthText":{"simpleText":"3:10"},
+                  "thumbnail":{"thumbnails":[
+                    {"url":"https://i.ytimg.com/vi/artTrack001/hq.jpg","width":544,"height":544}
+                  ]}
+                }}
+              ]}}
+            ]}}}}]}}}
+        """
+
+        const val PLAYLIST_LOCKUP_WIDE = """
+            {"contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
+              {"itemSectionRenderer":{"contents":[
+                {"lockupViewModel":{
+                  "contentId":"lockupVid01",
+                  "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+                  "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+                    {"url":"https://i.ytimg.com/vi/lockupVid01/hq.jpg","width":336,"height":188}
+                  ]}}},
+                  "metadata":{"lockupMetadataViewModel":{
+                    "title":{"content":"Wide Lockup"},
+                    "metadata":{"contentMetadataViewModel":{"metadataRows":[
+                      {"metadataParts":[{"text":{"content":"Artist"}}]}
+                    ]}}
+                  }}
+                }}
+              ]}}
             ]}}}}]}}}
         """
 

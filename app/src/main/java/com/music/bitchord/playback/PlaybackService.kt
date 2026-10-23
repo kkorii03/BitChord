@@ -9045,7 +9045,9 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             TrackLog.d(
                 "BitChord",
-                "queue: set n=${mediaItems.size} at=0 size=${mediaItems.size} by=ui",
+                "queue: set n=${mediaItems.size} at=0 size=${mediaItems.size} " +
+                    "videos=${mediaItems.count { it.isVideoRow }} " +
+                    "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=ui",
             )
             onUserIntent()
             super.setMediaItems(mediaItems, resetPosition)
@@ -9059,7 +9061,9 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             TrackLog.d(
                 "BitChord",
-                "queue: set n=${mediaItems.size} at=$startIndex size=${mediaItems.size} by=ui",
+                "queue: set n=${mediaItems.size} at=$startIndex size=${mediaItems.size} " +
+                    "videos=${mediaItems.count { it.isVideoRow }} " +
+                    "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=ui",
             )
             onUserIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)

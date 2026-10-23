@@ -8,6 +8,7 @@ import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -693,7 +694,12 @@ class PartySync(
             // much. Taken beforehand, every track change would start this device
             // a little behind and then be hauled forward by a correcting seek.
             val startAt = ListenTogether.partyPositionMs() ?: party.playback.positionMs
-            Log.i(TAG, "queue: set n=${items.size} at=$startIndex size=${items.size} by=party")
+            Log.i(
+                TAG,
+                "queue: set n=${items.size} at=$startIndex size=${items.size} " +
+                    "videos=${items.count { it.isVideoRow }} " +
+                    "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=party",
+            )
             exo.setMediaItems(items, startIndex, startAt)
             exo.prepare()
             // Not started here even when the party is playing: the resume may be

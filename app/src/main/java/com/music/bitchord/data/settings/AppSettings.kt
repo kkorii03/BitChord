@@ -186,7 +186,12 @@ object AppSettings {
             if (key != null) {
                 val value = runCatching { prefs.all[key] }.getOrNull()
                 val shown = when (value) {
-                    is Boolean, is Int, is Long, is Float -> value.toString()
+                    is Boolean -> if (key == KEY_PREFER_MUSIC_ONLY) {
+                        if (value) "on" else "off"
+                    } else {
+                        value.toString()
+                    }
+                    is Int, is Long, is Float -> value.toString()
                     is Set<*> -> "set(${value.size})"
                     null -> "cleared"
                     else -> if (value.toString().isBlank()) "cleared" else "set"
