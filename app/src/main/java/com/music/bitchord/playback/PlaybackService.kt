@@ -100,6 +100,7 @@ import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
+import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -3179,10 +3180,12 @@ class PlaybackService : MediaLibraryService() {
     private var songVersionJob: Job? = null
 
     /**
-     * With music-only on, the next three rows are replaced by their catalogue
-     * releases as the queue approaches them. The current row was resolved when
-     * the queue was built; replacing it here would restart a track already
-     * playing, so this only ever touches what is still ahead.
+     * With music-only on, the rows either side of the current one are replaced
+     * by their catalogue releases as the queue approaches them: the next three
+     * and the previous one, so a skip backwards is as prepared as a skip
+     * forwards. The current row was resolved when the queue was built (or held
+     * before its first sound); replacing it here would restart a track already
+     * playing, so this never touches it.
      */
     private fun scheduleUpcomingSongVersions(exoPlayer: ExoPlayer) {
         if (!AppSettings.preferMusicOnly.value) return
@@ -3191,15 +3194,17 @@ class PlaybackService : MediaLibraryService() {
         songVersionJob = scope.launch {
             val current = exoPlayer.currentMediaItemIndex
             if (current !in 0 until exoPlayer.mediaItemCount) return@launch
+            val first = (current - 1).coerceAtLeast(0)
             val last = (current + 3).coerceAtMost(exoPlayer.mediaItemCount - 1)
-            for (index in (current + 1)..last) {
+            for (index in first..last) {
                 if (!isActive) return@launch
+                if (index == current) continue
                 if (index >= exoPlayer.mediaItemCount) return@launch
                 val item = exoPlayer.getMediaItemAt(index)
                 val song = item.toSong()
                 if (!song.isVideo || song.localUri != null) continue
                 val resolved = try {
-                    YtMusicRepository.songVersion(song)
+                    YtMusicRepository.songVersion(song, beforeAudio = true)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
@@ -3207,7 +3212,7 @@ class PlaybackService : MediaLibraryService() {
                     null
                 } ?: continue
                 if (resolved.videoId == song.videoId) continue
-                if (index <= exoPlayer.currentMediaItemIndex) continue
+                if (index == exoPlayer.currentMediaItemIndex) continue
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
                 if (now.mediaId != song.videoId) continue
@@ -3228,6 +3233,189 @@ class PlaybackService : MediaLibraryService() {
                     }
             }
         }
+    }
+
+    /** The pre-audio lookup for the row that just became current. */
+    private var beforeAudioVersionJob: Job? = null
+    private var versionHoldWantsPlay = false
+    private var versionHoldHeld = false
+
+    /**
+     * Decides the song version of the row that just became current, before it
+     * has made a sound.
+     *
+     * Queue builds resolve the current row up front (see
+     * [YtMusicRepository.resolveQueueAhead]); this is the safety net for every
+     * way a row can become current without that — a skip, a previous, a
+     * restored queue. The first sound is held for at most
+     * [SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS]; if no version is found in
+     * that window the video plays as it is and is never swapped mid-song. A
+     * cached answer returns without a wait.
+     */
+    private fun resolveSongVersionBeforeAudio(
+        exoPlayer: ExoPlayer,
+        mediaItem: MediaItem?,
+        alreadyAudible: Boolean,
+    ) {
+        val item = mediaItem
+        val song = item?.toSong()
+        if (alreadyAudible ||
+            !AppSettings.preferMusicOnly.value ||
+            ListenTogether.state.value.inParty ||
+            item == null ||
+            song == null ||
+            !song.isVideo ||
+            song.localUri != null
+        ) {
+            releaseVersionHold(exoPlayer)
+            return
+        }
+        val mediaId = item.mediaId
+        // A restored or crossfaded row can already be sounding; replacing it
+        // then would change the recording under the listener. `isPlaying` is
+        // checked too: it can be true before `audibleMediaId` catches up.
+        if (audibleMediaId == mediaId || exoPlayer.isPlaying) {
+            releaseVersionHold(exoPlayer)
+            return
+        }
+        // A definitive answer from the queue build needs no network wait, but
+        // the first sound is still held for the single dispatch that installs
+        // it, so the replacement cannot land after audio. Deferring it also
+        // keeps the timeline change out of the transition callback.
+        YtMusicRepository.cachedSongVersionFor(song)?.let { cached ->
+            beforeAudioVersionJob?.cancel()
+            beginVersionHold(exoPlayer)
+            beforeAudioVersionJob = scope.launch {
+                TrackLog.i(
+                    "BitChord",
+                    "song version: ${song.videoId} -> ${cached.videoId} via cache before-audio",
+                    about = song.videoId,
+                )
+                installSongVersionBeforeAudio(exoPlayer, mediaId, song, cached)
+                if (player === exoPlayer) resumeVersionHold(exoPlayer)
+            }
+            return
+        }
+        if (YtMusicRepository.isSongVersionMissing(song.videoId)) {
+            // The queue build already established this row has no song version.
+            TrackLog.i("BitChord", "song version: ${song.videoId} kept (none)", about = song.videoId)
+            releaseVersionHold(exoPlayer)
+            return
+        }
+        // A hold a transition interrupted keeps the listener's play intent, so
+        // a skip made during the wait does not leave the player paused.
+        beforeAudioVersionJob?.cancel()
+        beginVersionHold(exoPlayer)
+        beforeAudioVersionJob = scope.launch {
+            val resolved = try {
+                withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
+                    YtMusicRepository.songVersion(song, beforeAudio = true)
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                TrackLog.i("BitChord", "song version: ${song.videoId} kept (timeout)", about = song.videoId)
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                TrackLog.w(
+                    "BitChord",
+                    "song version failed before audio: ${failure.message}",
+                    about = song.videoId,
+                )
+                null
+            }
+            try {
+                if (resolved != null) {
+                    installSongVersionBeforeAudio(exoPlayer, mediaId, song, resolved)
+                }
+            } finally {
+                // The replacement itself changes the media id, so the hold is
+                // still ours when the current item is either the original
+                // video or the song version just installed.
+                val currentId = exoPlayer.currentMediaItem?.mediaId
+                if (player === exoPlayer &&
+                    (currentId == mediaId || (resolved != null && currentId == resolved.videoId))
+                ) {
+                    resumeVersionHold(exoPlayer)
+                }
+            }
+        }
+    }
+
+    /**
+     * Installs [resolved] in place of the current video row without seeking or
+     * touching the playhead. The caller has established that the track has not
+     * made a sound and is still the current item.
+     */
+    private fun installSongVersionBeforeAudio(
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        song: Song,
+        resolved: Song,
+    ) {
+        if (player !== exoPlayer ||
+            exoPlayer.currentMediaItem?.mediaId != mediaId ||
+            audibleMediaId == mediaId ||
+            exoPlayer.isPlaying ||
+            resolved.videoId == song.videoId ||
+            resolved.isVideo
+        ) return
+        val index = exoPlayer.currentMediaItemIndex
+        if (index !in 0 until exoPlayer.mediaItemCount) return
+        val now = exoPlayer.getMediaItemAt(index)
+        val replacement = QueueShuffle.withQueueMetadata(
+            resolved.toMediaItem(),
+            newEntryId = now.queueEntryId,
+            newCanonicalIndex = now.canonicalIndex,
+            newTier = now.queueTier,
+            newContextCycleId = now.contextCycleId,
+        )
+        // The same recording is already current; replacing it is a version
+        // swap, not a new track. Marking the replacement keeps the transition
+        // from booking a second history entry or scrobble for it.
+        swappingMediaId = resolved.videoId
+        runCatching { exoPlayer.replaceMediaItem(index, replacement) }
+            .onSuccess {
+                // The transition callback returns early for a version swap, so
+                // the per-id work it would have done is done here instead.
+                loadLyricsForCurrentTrack()
+                loadSkipSegmentsForCurrentTrack()
+            }
+            .onFailure {
+                swappingMediaId = null
+                TrackLog.w(
+                    "BitChord",
+                    "song version replace failed before audio: ${it.message}",
+                    about = song.videoId,
+                )
+            }
+    }
+
+    /** Gives back a hold without touching the track it was taken for. */
+    private fun releaseVersionHold(exoPlayer: ExoPlayer) {
+        beforeAudioVersionJob?.cancel()
+        beforeAudioVersionJob = null
+        resumeVersionHold(exoPlayer)
+    }
+
+    /**
+     * Holds the first sound while the song version is decided. A hold a
+     * transition interrupted keeps the listener's play intent, so a skip made
+     * during the wait does not leave the player paused.
+     */
+    private fun beginVersionHold(exoPlayer: ExoPlayer) {
+        if (!versionHoldHeld) versionHoldWantsPlay = exoPlayer.playWhenReady
+        if (versionHoldWantsPlay) {
+            exoPlayer.pause()
+            versionHoldHeld = true
+        }
+    }
+
+    /** Resumes a hold's pause without cancelling the job that owns it. */
+    private fun resumeVersionHold(exoPlayer: ExoPlayer) {
+        if (versionHoldWantsPlay && !exoPlayer.playWhenReady) exoPlayer.play()
+        versionHoldWantsPlay = false
+        versionHoldHeld = false
     }
 
     private fun toggleAutoplayFromNotification() {
@@ -3846,6 +4034,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scheduleBoundedContextTopUp()
+        resolveSongVersionBeforeAudio(exoPlayer, mediaItem, alreadyAudible)
         scheduleUpcomingSongVersions(exoPlayer)
         // A *different* track is a clean slate for [recoverFrom], and so is the
         // same track becoming current for any reason other than that method's

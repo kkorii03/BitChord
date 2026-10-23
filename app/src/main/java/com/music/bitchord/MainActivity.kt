@@ -155,11 +155,14 @@ import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyUrlParser
+import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibrarySort
@@ -1438,11 +1441,16 @@ private fun BitChordApp(
      * Returns true only when the answer is definitive: the swap was handed
      * over, or there is no distinct song version to play. A cancelled,
      * superseded or failed lookup stays retryable.
+     *
+     * @param beforeAudioOnly an automatic request: the swap is discarded if
+     *   the track became audible while the lookup was out. Manual requests
+     *   keep the old behaviour.
      */
     suspend fun switchToMusicOnly(
         song: Song,
         pauseWhileResolving: Boolean,
         alignVersion: Boolean = true,
+        beforeAudioOnly: Boolean = false,
     ): Boolean {
         if (song.title.isBlank() || song.artist.isBlank()) {
             TrackLog.w("Player", "version switch skipped: empty title/artist", song.videoId)
@@ -1467,7 +1475,9 @@ private fun BitChordApp(
         if (pauseWhileResolving) c.pause()
         try {
             TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
-            val lookup = runCatching { YtMusicRepository.songVersion(song) }
+            val lookup = runCatching {
+                YtMusicRepository.songVersion(song, beforeAudio = beforeAudioOnly)
+            }
             val audio = lookup.getOrNull()
             val stillCurrent = c.currentMediaItemIndex == index &&
                 c.currentMediaItem?.mediaId == song.videoId
@@ -1489,6 +1499,21 @@ private fun BitChordApp(
             if (!stillCurrent) {
                 TrackLog.d("Player", "audio switch discarded; listener changed track", song.videoId)
                 return false
+            }
+            // The lookup can outlive the moment the track started. An automatic
+            // request is only allowed while nothing has been heard; once the
+            // playhead moved or the player is running, the listener is hearing
+            // this recording and it must not be changed under them.
+            if (beforeAudioOnly &&
+                !SongVersionPolicy.mayAutoSwapBeforeAudio(
+                    positionMs = c.currentPosition,
+                    isPlaying = c.isPlaying,
+                    alreadyAudible = false,
+                )
+            ) {
+                TrackLog.d("Player", "audio switch kept; track already audible", song.videoId)
+                if (stillCurrent && resumeAfterResolution) c.play()
+                return true
             }
 
             convertedFromVideo = song
@@ -1712,19 +1737,29 @@ private fun BitChordApp(
 
     // Fallback for a video row that reached the player unconverted. Queues
     // already resolve their current + next rows up front (see
-    // [YtMusicRepository.resolveQueueAhead]), so this normally does nothing;
-    // it must never pause or measure alignment, because the listener is
-    // already hearing the track. Tried marks only a definitive answer, so a
-    // cancelled or superseded lookup can be retried.
+    // [YtMusicRepository.resolveQueueAhead]), and the service holds the first
+    // sound for the same decision (see its `resolveSongVersionBeforeAudio`),
+    // so this normally does nothing. It is deliberately limited to the window
+    // before the track has made a sound: once the listener is hearing it, a
+    // version swap would change the recording under them, so only the manual
+    // menu may do that. Tried marks only a definitive answer, so a cancelled
+    // or superseded lookup can be retried.
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
+        val c = controller ?: return@LaunchedEffect
         if (preferMusicOnly && !partyState.inParty && song.isVideo &&
-            song.videoId != keepVideoId && song.videoId !in musicOnlyTried
+            song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
+            SongVersionPolicy.mayAutoSwapBeforeAudio(
+                positionMs = c.currentPosition,
+                isPlaying = c.isPlaying,
+                alreadyAudible = false,
+            )
         ) {
             val settled = switchToMusicOnly(
                 song,
                 pauseWhileResolving = false,
                 alignVersion = false,
+                beforeAudioOnly = true,
             )
             if (settled) musicOnlyTried.add(song.videoId)
         }
@@ -1783,7 +1818,12 @@ private fun BitChordApp(
             val currentIndex = c.currentMediaItemIndex
             val played = if (AppSettings.preferMusicOnly.value) {
                 try {
-                    YtMusicRepository.songVersion(song) ?: song
+                    withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
+                        YtMusicRepository.songVersion(song, beforeAudio = true)
+                    } ?: song
+                } catch (timeout: TimeoutCancellationException) {
+                    TrackLog.i("BitChord", "song version: ${song.videoId} kept (timeout)")
+                    song
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
@@ -1876,7 +1916,29 @@ private fun BitChordApp(
                     activeRadioSeed = song.videoId to song.title
                 } else {
                     activeRadioSeed = null
-                    activeController.playSongs(listOf(seed) + related, 0)
+                    // The station's first track is the seed, and it is about to
+                    // become current. Resolve its song version here, before the
+                    // queue is handed over, so the music video never starts.
+                    val played = if (AppSettings.preferMusicOnly.value) {
+                        try {
+                            withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
+                                YtMusicRepository.songVersion(seed, beforeAudio = true)
+                            } ?: seed
+                        } catch (timeout: TimeoutCancellationException) {
+                            TrackLog.i("BitChord", "song version: ${seed.videoId} kept (timeout)")
+                            seed
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            TrackLog.w("BitChord", "song version failed for radio: ${failure.message}")
+                            seed
+                        }
+                    } else {
+                        seed
+                    }
+                    // A newer tap may have landed during the lookup.
+                    if (request != playRequestGeneration) return@launch
+                    activeController.playSongs(listOf(played) + related, 0)
                 }
                 // Make this station — never the queue from before it — what a
                 // fresh process restores, even if it is killed immediately.

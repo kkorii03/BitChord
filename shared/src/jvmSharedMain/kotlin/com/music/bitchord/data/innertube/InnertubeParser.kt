@@ -1244,6 +1244,16 @@ object InnertubeParser {
         parseCounterpartSong(root, videoId)?.videoId
 
     /**
+     * How many song/video pairing rows a `next` response carries.
+     *
+     * A signed-out response has none at all, which is the signal the caller
+     * uses to stop asking for the rest of the session rather than pay for a
+     * request that can only answer null.
+     */
+    fun countCounterpartWrappers(root: JsonElement): Int =
+        collectRenderers(root, "playlistPanelVideoWrapperRenderer").size
+
+    /**
      * The catalogue release a music-video row is paired with, as a full row.
      *
      * The `next` response wraps an OMV row in a

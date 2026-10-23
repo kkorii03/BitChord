@@ -12,6 +12,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
+import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
@@ -45,10 +46,13 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Suspend API over Innertube. Every call returns a Result so the UI can show a real error. */
 object YtMusicRepository {
@@ -846,6 +850,14 @@ object YtMusicRepository {
     private val counterpartAudioCache = ConcurrentHashMap<String, Song>()
     private val counterpartMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val counterpartLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+    /**
+     * Signed-out `next` responses carry no pairing rows at all, so a run of
+     * empty answers is a property of the session, not of one track. Counted
+     * across requests; any response that does carry one resets the run.
+     */
+    private val counterpartEmptyRun = AtomicInteger(0)
+    @Volatile
+    private var counterpartOffForSession = false
 
     /**
      * The catalogue release YouTube Music pairs with music-video [videoId], as
@@ -855,11 +867,16 @@ object YtMusicRepository {
      * front needs the counterpart's title, credits, art and runtime, not just
      * its id. Only a successful `next` response is cached, so an offline
      * attempt can be retried later.
+     *
+     * A run of [SongVersionPolicy.COUNTERPART_EMPTY_LIMIT] responses with no
+     * pairing rows disables this for the rest of the run: a signed-out `next`
+     * cannot answer it, and the caller's search fallback is cheaper.
      */
     suspend fun counterpartAudio(videoId: String): Song? {
         if (videoId.isBlank()) return null
         counterpartAudioCache[videoId]?.let { return it }
         if (videoId in counterpartMissing) return null
+        if (counterpartOffForSession) return null
         val mine = CompletableDeferred<Song?>()
         counterpartLookups.putIfAbsent(videoId, mine)?.let {
             return try {
@@ -870,7 +887,23 @@ object YtMusicRepository {
         }
         try {
             val found = call("counterpart:$videoId") {
-                InnertubeParser.parseCounterpartSong(Innertube.next(videoId), videoId)
+                val response = Innertube.next(videoId)
+                val wrappers = InnertubeParser.countCounterpartWrappers(response)
+                val song = InnertubeParser.parseCounterpartSong(response, videoId)
+                TrackLog.i(
+                    TAG,
+                    "counterpart: $videoId wrappers=$wrappers found=${song?.videoId ?: "none"}",
+                    about = videoId,
+                )
+                if (wrappers > 0) {
+                    counterpartEmptyRun.set(0)
+                } else if (SongVersionPolicy.counterpartDisabled(counterpartEmptyRun.incrementAndGet()) &&
+                    !counterpartOffForSession
+                ) {
+                    counterpartOffForSession = true
+                    TrackLog.i(TAG, "counterpart: off for this session (no wrappers)")
+                }
+                song
             }
             found.onSuccess { song ->
                 if (song == null) counterpartMissing.add(videoId) else counterpartAudioCache[videoId] = song
@@ -901,6 +934,17 @@ object YtMusicRepository {
     private val songVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
 
     /**
+     * A song version already resolved in this run, for callers that must decide
+     * before the first sound and cannot afford a suspension to ask again. The
+     * queue fields are taken from [song], so the answer belongs to this row.
+     */
+    fun cachedSongVersionFor(song: Song): Song? =
+        songVersionCache[song.videoId]?.withQueueFieldsOf(song)
+
+    /** True when this run has already established that [videoId] has no song version. */
+    fun isSongVersionMissing(videoId: String): Boolean = videoId in songVersionMissing
+
+    /**
      * The song version of a music-video row, resolved before it reaches the
      * queue instead of after it has started playing.
      *
@@ -911,21 +955,47 @@ object YtMusicRepository {
      *
      * Queue fields stay on the original row, so the resolved track keeps its
      * entry identity, tier, playlist slot and playback source. The answer is
-     * cached per video id; an unsuccessful pair of requests is not cached, so
-     * an offline attempt can be retried.
+     * cached per video id — found or definitively not found — so the same
+     * video is never asked about twice in one run; an unsuccessful pair of
+     * requests is not cached, so an offline attempt can be retried.
+     *
+     * @param beforeAudio the caller is resolving a track that has not made a
+     *   sound yet. Success is logged with the `before-audio` marker and a
+     *   definitive "no version" as `kept (none)`, which is the pair the
+     *   pre-playback path is read by.
      */
-    suspend fun songVersion(song: Song): Song? {
+    suspend fun songVersion(song: Song, beforeAudio: Boolean = false): Song? {
         if (!song.isVideo || song.localUri != null) return null
         if (song.title.isBlank() || song.artist.isBlank()) {
-            TrackLog.w(TAG, "song version: ${song.videoId} -> none via none (no title/artist)", about = song.videoId)
+            if (beforeAudio) {
+                logSongVersion(song.videoId, null, "none", beforeAudio = true)
+            } else {
+                TrackLog.w(
+                    TAG,
+                    "song version: ${song.videoId} -> none via none (no title/artist)",
+                    about = song.videoId,
+                )
+            }
+            // Not cached: a sparse row can gain its metadata later.
             return null
         }
         if (CoverTitles.isCover(song)) {
-            TrackLog.i(TAG, "song version: ${song.videoId} -> none via none (cover)", about = song.videoId)
+            if (beforeAudio) {
+                logSongVersion(song.videoId, null, "none", beforeAudio = true)
+            } else {
+                TrackLog.i(TAG, "song version: ${song.videoId} -> none via none (cover)", about = song.videoId)
+            }
+            songVersionMissing.add(song.videoId)
             return null
         }
-        songVersionCache[song.videoId]?.let { return it.withQueueFieldsOf(song) }
-        if (song.videoId in songVersionMissing) return null
+        songVersionCache[song.videoId]?.let {
+            logSongVersion(song.videoId, it, "cache", beforeAudio)
+            return it.withQueueFieldsOf(song)
+        }
+        if (song.videoId in songVersionMissing) {
+            logSongVersion(song.videoId, null, "cache", beforeAudio)
+            return null
+        }
         val mine = CompletableDeferred<Song?>()
         songVersionLookups.putIfAbsent(song.videoId, mine)?.let {
             return try {
@@ -941,7 +1011,10 @@ object YtMusicRepository {
             var search: Result<Song>? = null
             if (found == null) {
                 search = runCatching { resolveAudio(song) }
-                found = search.getOrNull()?.takeIf { it.videoId != song.videoId }
+                // A song search can still surface a video upload; the whole
+                // point here is to play the catalogue release, never another
+                // music video.
+                found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
                 via = if (found != null) "search" else "none"
             }
             // A pair is definitive when the counterpart answered (found or
@@ -953,11 +1026,7 @@ object YtMusicRepository {
                 if (found == null) songVersionMissing.add(song.videoId)
                 else songVersionCache[song.videoId] = found
             }
-            TrackLog.i(
-                TAG,
-                "song version: ${song.videoId} -> ${found?.videoId ?: "none"} via $via",
-                about = song.videoId,
-            )
+            logSongVersion(song.videoId, found, via, beforeAudio)
             mine.complete(found)
             return found?.withQueueFieldsOf(song)
         } catch (failure: Throwable) {
@@ -969,14 +1038,47 @@ object YtMusicRepository {
     }
 
     /**
+     * One line per answer, in the shape the pre-playback path is read by.
+     *
+     * Before audio the useful fact is either "this is the version being
+     * played" or "this video is being kept", never a mid-song replacement;
+     * elsewhere the original `-> id via source` line is kept as it was.
+     */
+    private fun logSongVersion(videoId: String, found: Song?, via: String, beforeAudio: Boolean) {
+        if (beforeAudio) {
+            if (found != null) {
+                TrackLog.i(
+                    TAG,
+                    "song version: $videoId -> ${found.videoId} via $via before-audio",
+                    about = videoId,
+                )
+            } else {
+                TrackLog.i(TAG, "song version: $videoId kept (none)", about = videoId)
+            }
+        } else {
+            TrackLog.i(
+                TAG,
+                "song version: $videoId -> ${found?.videoId ?: "none"} via $via",
+                about = videoId,
+            )
+        }
+    }
+
+    /**
      * The song versions of the queue rows around [startIndex], resolved in
      * parallel. Current + next few is the look-ahead the queue needs; rows
      * further out are resolved as playback approaches them.
+     *
+     * Each row is given [SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS] at most:
+     * a queue build must not stall behind a slow lookup, and a row that could
+     * not be answered in that window is played as its video and is not
+     * replaced mid-song later.
      */
     suspend fun resolveQueueAhead(
         songs: List<Song>,
         startIndex: Int,
         ahead: Int = 4,
+        timeoutMs: Long = SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS,
     ): List<Song> {
         if (songs.isEmpty() || ahead <= 0) return songs
         val first = startIndex.coerceIn(0, songs.lastIndex)
@@ -986,12 +1088,16 @@ object YtMusicRepository {
         val resolved = coroutineScope {
             candidates.map { index ->
                 async(Dispatchers.IO) {
+                    val song = songs[index]
                     val version = try {
-                        songVersion(songs[index])
+                        withTimeout(timeoutMs) { songVersion(song, beforeAudio = true) }
+                    } catch (timeout: TimeoutCancellationException) {
+                        TrackLog.i(TAG, "song version: ${song.videoId} kept (timeout)", about = song.videoId)
+                        null
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (failure: Throwable) {
-                        Log.w(TAG, "song version failed for ${songs[index].videoId}: ${failure.message}")
+                        Log.w(TAG, "song version failed for ${song.videoId}: ${failure.message}")
                         null
                     }
                     index to version
