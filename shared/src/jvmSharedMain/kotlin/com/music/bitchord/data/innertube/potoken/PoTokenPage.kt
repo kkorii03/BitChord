@@ -17,6 +17,7 @@ const val PO_TOKEN_HTML = """<!DOCTYPE html>
     var bgVm = null;
     var bgProgram = null;
     var poTokenMinter = null;  // Minter callback - created ONCE during init, reused for all tokens
+    var tokenSizeWarned = -1;  // Log the size warning once per size, not on every token
 
     function loadBotGuard(challengeData) {
       bgVm = window[challengeData.globalName];
@@ -212,7 +213,8 @@ const val PO_TOKEN_HTML = """<!DOCTYPE html>
       }
 
       // Validate token size (expected 110-128 bytes per BgUtils documentation)
-      if (result.length < 100 || result.length > 140) {
+      if ((result.length < 100 || result.length > 140) && result.length !== tokenSizeWarned) {
+        tokenSizeWarned = result.length;
         console.warn('[obtainPoToken] Token size ' + result.length + ' bytes may be outside expected range (110-128)');
       }
 

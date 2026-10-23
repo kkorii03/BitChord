@@ -27,6 +27,13 @@ object AiLyrics {
     private const val KEY_SILENT = "silent"
     private const val MAX_SILENT = 500
 
+    /**
+     * "Heard nothing sung" is remembered for a month: long enough that the
+     * same song isn't paid for every day, short enough that a video which
+     * gains a vocal later is tried again. Stored as "videoId|heardAt".
+     */
+    private const val SILENT_RETENTION_MS = 30L * 24L * 60L * 60L * 1000L
+
     /** Longer than this is a stream or a compilation, not a song. */
     private const val MAX_DURATION_MS = 15L * 60 * 1000
 
@@ -70,13 +77,32 @@ object AiLyrics {
 
     private fun prefs() = context?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    private fun silent(): Set<String> = prefs()?.getStringSet(KEY_SILENT, null).orEmpty()
+    /** The videos that were silent within the last month. */
+    private fun silent(): Set<String> {
+        val now = System.currentTimeMillis()
+        return prefs()?.getStringSet(KEY_SILENT, null).orEmpty().mapNotNull { entry ->
+            val split = entry.lastIndexOf('|')
+            // Entries written before the month limit had no time: keep them
+            // rather than listen again straight away. They are a small legacy
+            // set and age out as new silent videos replace them.
+            if (split < 0) entry
+            else {
+                val at = entry.substring(split + 1).toLongOrNull() ?: 0L
+                entry.substring(0, split).takeIf { now - at < SILENT_RETENTION_MS }
+            }
+        }.toSet()
+    }
 
     @Synchronized
     private fun rememberSilent(videoId: String) {
         val prefs = prefs() ?: return
-        val next = LinkedHashSet(prefs.getStringSet(KEY_SILENT, null).orEmpty())
-        next += videoId
+        val kept = prefs.getStringSet(KEY_SILENT, null).orEmpty().filter { entry ->
+            val split = entry.lastIndexOf('|')
+            if (split < 0) entry != videoId
+            else entry.substring(0, split) != videoId
+        }
+        val next = LinkedHashSet(kept)
+        next += "$videoId|${System.currentTimeMillis()}"
         while (next.size > MAX_SILENT) next.remove(next.first())
         prefs.edit().putStringSet(KEY_SILENT, next).apply()
     }

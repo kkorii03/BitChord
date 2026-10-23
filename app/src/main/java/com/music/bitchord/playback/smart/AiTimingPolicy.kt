@@ -45,12 +45,14 @@ internal object AiTimingPolicy {
     val AHEAD_ENGINES = listOf(DEEPGRAM, GEMINI)
 
     /**
-     * The agreement an answer needs to count as the answer — the same floor
-     * Deepgram and Whisper answers were already held to. Below it the answer
-     * is kept (it is still better than nothing) but the next engine may be
-     * tried once.
+     * The agreement an answer needs to count as the answer, and to be applied
+     * to the lyrics at all. Logs showed 50–67% answers pushing Korean lines
+     * seconds off time, so the floor is the same 70% used by
+     * [com.music.bitchord.data.lyrics.LyricsAiGuard]. Below it the answer is
+     * kept (another engine's may be better) but not shown, and the next engine
+     * may be tried once.
      */
-    const val MIN_ACCEPTED_MATCH = 35
+    const val MIN_ACCEPTED_MATCH = com.music.bitchord.data.lyrics.LyricsAiGuard.MIN_MATCH_PERCENT
 
     /** Whether the kept answer was made for exactly these lyrics and agreed enough to stand. */
     fun isAccepted(knowledge: AiTimingKnowledge, lyricsKey: Int): Boolean =

@@ -6,6 +6,7 @@ import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsAiGuard
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -149,9 +150,10 @@ object LyricsTiming {
         lines: List<LyricLine>,
         baseAllowed: Boolean,
         measuredAllowed: Boolean = baseAllowed,
+        isVideo: Boolean = false,
     ): Timing? {
         val entry = store(context).get(videoId) ?: return null
-        val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed) else null
+        val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo) else null
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
         val timing = Timing(base, entry.manualMs ?: 0L, bias, engine)
@@ -176,30 +178,40 @@ object LyricsTiming {
         return timing.copy(heardWords = heard).takeUnless { it.isEmpty }
     }
 
-    private fun baseOf(entry: Entry, lines: List<LyricLine>, measuredAllowed: Boolean = true): Adjustment? {
+    private fun baseOf(
+        entry: Entry,
+        lines: List<LyricLine>,
+        measuredAllowed: Boolean = true,
+        isVideo: Boolean = false,
+    ): Adjustment? {
         val measured = entry.auto?.takeIf { measuredAllowed && entry.autoVersion == AUTO_VERSION }
         // Asked for by hand, over a measurement the listener saw was off: Gemini's.
-        if (entry.aiPreferred) aiOf(entry, lines)?.let { return it }
+        if (entry.aiPreferred) aiOf(entry, lines, isVideo)?.let { return it }
         // Otherwise the measurement first: when it lines the two up it is right
         // to a tenth of a second, which Gemini's answers never are.
         measured?.toAdjustment(byAi = false)?.let { return it }
-        return aiOf(entry, lines)
+        return aiOf(entry, lines, isVideo)
     }
 
-    private fun aiOf(entry: Entry, lines: List<LyricLine>): Adjustment? {
+    private fun aiOf(entry: Entry, lines: List<LyricLine>, isVideo: Boolean = false): Adjustment? {
         if (entry.aiTextKey != null && entry.aiTextKey == textKey(lines)) {
-            entry.ai?.toAdjustment(byAi = true)?.let { return it }
-            entry.aiShiftMs?.let { return Adjustment.Shift(it, byAi = true) }
+            entry.ai?.toAdjustment(byAi = true)?.takeIf { aiMayApply(lines, it, isVideo) }?.let { return it }
+            entry.aiShiftMs?.takeIf { LyricsAiGuard.shiftAllows(isVideo, it) }
+                ?.let { return Adjustment.Shift(it, byAi = true) }
             // A ko-21/22 per-line answer: the very one that drifted. Its
             // starts go through today's fit; when they don't make a line,
             // the measurement applies instead.
             entry.aiStarts?.takeIf { it.size == lines.size }?.let { starts ->
                 val sung = lines.indices.filter { lines[it].text.isNotBlank() }
-                fitAi(lines, sung, sung.map { starts[it] })?.let { return it }
+                fitAi(lines, sung, sung.map { starts[it] })?.takeIf { aiMayApply(lines, it, isVideo) }?.let { return it }
             }
         }
         return null
     }
+
+    /** The agreement and video-shift floors an AI answer must clear to be shown. */
+    private fun aiMayApply(lines: List<LyricLine>, adjustment: Adjustment.Mapped, isVideo: Boolean): Boolean =
+        LyricsAiGuard.allowsAiTiming(isVideo, adjustment.matchPercent, shownShiftMs(lines, adjustment))
 
     /**
      * What the last measurement of [videoId] made of it, in figures — which
@@ -799,6 +811,9 @@ object LyricsTiming {
         videoId: String,
         lines: List<LyricLine>,
         automatic: Boolean = false,
+        title: String = "",
+        artist: String = "",
+        isVideo: Boolean = false,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) return null
@@ -822,7 +837,7 @@ object LyricsTiming {
         }
         // Paid for and agreed, or already spent on these lyrics: reuse it
         // without decoding the audio again or paying an engine twice.
-        if (engines.isEmpty()) return entry?.let { aiOf(it, lines) }
+        if (engines.isEmpty()) return entry?.let { aiOf(it, lines, isVideo) }
         // One request per video, lyrics and kind, whoever asks — the button,
         // the song starting, the next-song preparation. The engines are no
         // longer part of the key: two callers that read the cache a moment
@@ -830,7 +845,7 @@ object LyricsTiming {
         // manual tap is kept apart so it can still force a fresh answer.
         val flight = if (automatic) "$videoId:$key" else "$videoId:$key:manual"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            askAi(context, videoId, lines, sung, key, engines)
+            askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo)
         }
         val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
         if (running === fresh) {
@@ -857,6 +872,9 @@ object LyricsTiming {
         sung: List<IndexedValue<LyricLine>>,
         key: Int,
         engines: List<String>,
+        title: String,
+        artist: String,
+        isVideo: Boolean,
     ): Adjustment.Mapped? {
         val started = System.currentTimeMillis()
         // The sound the phone already has, when it has all of it; the YouTube
@@ -886,7 +904,11 @@ object LyricsTiming {
                 )
             }
         }
-        if (audio != null && com.music.bitchord.data.lyrics.Deepgram.usable) {
+        val deepgramWanted = LyricsAiGuard.wantsDeepgram(title, artist, texts)
+        if (!deepgramWanted && audio != null) {
+            TrackLog.d(TAG, "Deepgram skipped (${if (LyricsAiGuard.isInstrumentalTitle(title)) "instrumental" else "Korean"})", videoId)
+        }
+        if (audio != null && deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
             for ((model, name) in listOf(
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA to ENGINE_DEEPGRAM,
@@ -897,15 +919,19 @@ object LyricsTiming {
                 val asked = System.currentTimeMillis()
                 val heard = com.music.bitchord.data.lyrics.Deepgram.words(audio, language, model)
                 val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
-                val fitted = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
-                    ?.takeIf { (it.matchPercent ?: 0) >= MIN_DEEPGRAM_MATCH }
+                val raw = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+                val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
                 TrackLog.d(
                     TAG,
                     "$name timing ($language, ${(System.currentTimeMillis() - asked) / 1000}s): " + when {
                         heard == null -> "no answer"
-                        fitted == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${sung.size} lines placed: not enough"
-                        else -> "${heard.size} words, rate ${"%.3f".format(java.util.Locale.ROOT, fitted.rate)}, " +
-                            "shift ${shownShiftMs(lines, fitted)} ms, ${fitted.matchPercent}% agree"
+                        raw == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${sung.size} lines placed: not enough"
+                        !LyricsAiGuard.agreementAllows(raw.matchPercent) ->
+                            "${heard.size} words, ${raw.matchPercent}% agree: below ${LyricsAiGuard.MIN_MATCH_PERCENT}%"
+                        !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw)) ->
+                            "${heard.size} words, shift ${shownShiftMs(lines, raw)} ms: too far for a video"
+                        else -> "${heard.size} words, rate ${"%.3f".format(java.util.Locale.ROOT, raw.rate)}, " +
+                            "shift ${shownShiftMs(lines, raw)} ms, ${raw.matchPercent}% agree"
                     },
                     videoId,
                 )
@@ -929,15 +955,20 @@ object LyricsTiming {
                 sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
                 audioWav = audio,
             )
-            adjustment = answer?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+            val raw = answer?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+            adjustment = raw?.takeIf { aiMayApply(lines, it, isVideo) }
             TrackLog.d(
                 TAG,
                 "AI timing (${if (audio != null) "audio" else "video"}, ${(System.currentTimeMillis() - started) / 1000}s): " +
                     when {
                         answer == null -> "no answer"
-                        adjustment == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
-                        else -> "rate ${"%.3f".format(java.util.Locale.ROOT, adjustment.rate)}, " +
-                            "shift ${shownShiftMs(lines, adjustment)} ms, ${adjustment.matchPercent}% agree"
+                        raw == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
+                        !LyricsAiGuard.agreementAllows(raw.matchPercent) ->
+                            "${raw.matchPercent}% agree: below ${LyricsAiGuard.MIN_MATCH_PERCENT}%"
+                        !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw)) ->
+                            "shift ${shownShiftMs(lines, raw)} ms: too far for a video"
+                        else -> "rate ${"%.3f".format(java.util.Locale.ROOT, raw.rate)}, " +
+                            "shift ${shownShiftMs(lines, raw)} ms, ${raw.matchPercent}% agree"
                     },
                 videoId,
             )
@@ -1106,9 +1137,6 @@ object LyricsTiming {
             manual = false,
             measurementGaveUp = measurementGaveUp(context, videoId),
         )
-
-    /** Deepgram's answer is used only when this much of the song agrees with its line; Gemini otherwise. */
-    private val MIN_DEEPGRAM_MATCH = AiTimingPolicy.MIN_ACCEPTED_MATCH
 
     private const val BIAS_PREFS = "lyrics_timing"
     private const val BIAS_KEY = "ai_bias_samples"

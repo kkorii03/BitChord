@@ -867,9 +867,16 @@ fun NowPlayingScreen(
             else -> "pending"
         }
         val synced = lyrics?.any { it.isWordSynced || it.timeMs > 0 } == true
+        // "none" used to mean both "no provider named them" and "nothing was
+        // found" — the file's own lyrics have no provider, and the log read as
+        // a miss with lines on screen. Name the source's absence separately,
+        // and say which mode was asked for beside what came back.
+        val source = lyricsSource?.label
+            ?: if (lyrics?.isNotEmpty() == true) "file" else "none"
         TrackLog.i(
             "BitChord",
-            "lyrics: ${lyricsSource?.label ?: "none"} $state synced=$synced",
+            "lyrics: source=$source state=$state synced=$synced " +
+                "wanted=${if (syncedLyricsEnabled) "synced" else "plain"}",
         )
     }
     val seekToLyric: (Long) -> Unit = { lineTimeMs ->

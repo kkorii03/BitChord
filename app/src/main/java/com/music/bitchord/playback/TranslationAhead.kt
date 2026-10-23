@@ -224,8 +224,17 @@ internal object TranslationAhead {
             }
             val ahead = if (calibration) {
                 scope.launch {
-                    runCatching { timing.placeWithAi(context, song.videoId, found.lines, automatic = true) }
-                        .onFailure { if (it is CancellationException) throw it }
+                    runCatching {
+                        timing.placeWithAi(
+                            context,
+                            song.videoId,
+                            found.lines,
+                            automatic = true,
+                            title = query.title,
+                            artist = query.artist,
+                            isVideo = true,
+                        )
+                    }.onFailure { if (it is CancellationException) throw it }
                 }
             } else {
                 null
@@ -245,14 +254,30 @@ internal object TranslationAhead {
                 !timing.measuredTiming(context, song.videoId) &&
                 timing.wantsAi(context, song.videoId, found.lines)
             ) {
-                timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
+                timing.placeWithAi(
+                    context,
+                    song.videoId,
+                    found.lines,
+                    automatic = true,
+                    title = query.title,
+                    artist = query.artist,
+                    isVideo = true,
+                )
             }
             if ((gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 timing.measurementGaveUp(context, song.videoId) &&
                 (AppSettings.autoLyricsTiming.value || AppSettings.aiTimingAhead.value) &&
                 timing.wantsAi(context, song.videoId, found.lines)
             ) {
-                timing.placeWithAi(context, song.videoId, found.lines, automatic = true)
+                timing.placeWithAi(
+                    context,
+                    song.videoId,
+                    found.lines,
+                    automatic = true,
+                    title = query.title,
+                    artist = query.artist,
+                    isVideo = true,
+                )
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

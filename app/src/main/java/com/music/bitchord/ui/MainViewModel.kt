@@ -501,6 +501,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Switched off, or every source unticked. Nothing to look up, and
             // nothing to say about it — the player drops the lyric strip
             // rather than reporting a track with no lyrics.
+            com.music.bitchord.data.TrackLog.d("BitChord", "lyrics: no sources enabled", videoId)
             _lyricsChecked.value = true
             return
         }
@@ -632,6 +633,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (generation != lyricsGeneration) return
         if (result == null) {
+            // A miss and a disabled/blocked source look the same in the
+            // player's one-line log; name the source and the reason here.
+            com.music.bitchord.data.TrackLog.d(
+                "BitChord",
+                "lyrics: ${source.label} ${failure?.name?.lowercase() ?: "not found"}",
+            )
             _lyricsProviderStates.update {
                 it + (source to LyricsProviderState.fromFailure(failure))
             }
@@ -897,6 +904,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             lines,
             timingBaseAllowed,
             measuredAllowed = timingBaseAllowed && timingMeasureAllowed,
+            isVideo = request.isVideo,
         )
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;
@@ -933,8 +941,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!AppSettings.aiTimingAhead.value) return
         if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
         if (!LyricsTiming.wantsAi(context, videoId, lines)) return
-        runCatching { LyricsTiming.placeWithAi(context, videoId, lines, automatic = true) }
-            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+        val request = currentLyricsRequest
+        runCatching {
+            LyricsTiming.placeWithAi(
+                context,
+                videoId,
+                lines,
+                automatic = true,
+                title = request?.title.orEmpty(),
+                artist = request?.artist.orEmpty(),
+                isVideo = request?.isVideo == true,
+            )
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     /**
@@ -967,7 +985,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsTiming.update { it.copy(aiRunning = true, aiFailed = false) }
         aiTimingJob = viewModelScope.launch {
             val adjustment = try {
-                LyricsTiming.placeWithAi(context, request.videoId, lines, automatic)
+                LyricsTiming.placeWithAi(
+                    context,
+                    request.videoId,
+                    lines,
+                    automatic,
+                    title = request.title,
+                    artist = request.artist,
+                    isVideo = request.isVideo,
+                )
             } finally {
                 if (generation == lyricsGeneration && timingLines === lines) {
                     _lyricsTiming.update { it.copy(aiRunning = false) }

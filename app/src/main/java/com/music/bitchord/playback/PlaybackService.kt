@@ -8424,6 +8424,7 @@ class PlaybackService : MediaLibraryService() {
                             raw,
                             baseAllowed = timeable,
                             measuredAllowed = recordTimed,
+                            isVideo = currentSong.isVideo,
                         )
                         ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
                 } else {

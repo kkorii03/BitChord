@@ -147,7 +147,9 @@ object LyricsRepository {
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
         )
-        if (found != null || !transcribe || sources.isEmpty()) return found
+        // An upload labelled an instrumental has no words to write down: skip
+        // the paid Gemini request before it is made.
+        if (found != null || !transcribe || sources.isEmpty() || LyricsAiGuard.isInstrumentalTitle(title)) return found
         return transcribed(videoId, durationMs)?.also { heard ->
             // Kept like any answer, so the next play — today or after a
             // restart — shows it without listening again.
