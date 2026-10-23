@@ -334,7 +334,13 @@ class BoundedContextPersistenceTest {
             canonical,
             source,
             QueueWindow(1).startAt(0).snapshot(),
-            entries = listOf(entry("current", QueueTier.CONTEXT, 0, 0L)),
+            // The queued row is the same music video as the canonical one, so
+            // the round trip below has a video flag to keep.
+            entries = listOf(
+                entry("current", QueueTier.CONTEXT, 0, 0L).let {
+                    it.copy(song = it.song.copy(isVideo = true, isVideoOrigin = true))
+                },
+            ),
             currentIndex = 0,
             sourceSnapshot = context(canonical, source),
         )
