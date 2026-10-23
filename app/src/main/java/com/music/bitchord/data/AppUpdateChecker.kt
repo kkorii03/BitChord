@@ -288,7 +288,9 @@ object AppUpdateChecker {
             _download.value = if (downloadCancelled) {
                 DownloadState.Idle
             } else {
-                DownloadState.Failed(error.message ?: "Download failed")
+                DownloadState.Failed(
+                    error.message ?: context.getString(com.music.bitchord.R.string.download_failed),
+                )
             }
         }
     }

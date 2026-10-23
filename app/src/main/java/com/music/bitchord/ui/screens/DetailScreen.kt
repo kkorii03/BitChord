@@ -288,7 +288,7 @@ fun DetailScreen(
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     onSectionItemClick: (ShelfItem) -> Unit,
-    onArtistClick: (String, String) -> Unit,
+    onArtistClick: (String?, String) -> Unit,
     onAddSuggested: (Song) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -766,8 +766,10 @@ fun DetailScreen(
                     )
                 } else if (isArtist) {
                     // An artist's full song list would bury the album shelves, so
-                    // it pages sideways four at a time and stops at twenty.
-                    item {
+                    // it pages sideways four at a time and stops at twenty. A page
+                    // with no top songs still has its shelves below, so the empty
+                    // heading is skipped rather than leaving a gap above them.
+                    if (state.data.isNotEmpty()) item {
                         val top = state.data.take(MAX_ARTIST_SONGS)
                         val isCurrentRow = playingRowMatcher(top, currentSong)
                         SectionHeading(
@@ -1040,7 +1042,7 @@ private fun ReleaseHeader(
     songs: List<Song>,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
-    onArtistClick: ((String, String) -> Unit)?,
+    onArtistClick: ((String?, String) -> Unit)?,
     onToggleLibrary: (() -> Unit)?,
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
     onDownloadAll: (() -> Unit)? = null,
@@ -1124,7 +1126,7 @@ private fun ReleaseHeader(
                     .padding(horizontal = HEADER_GUTTER)
                     .let { m ->
                         val id = artist?.artistId
-                        if (id == null || onArtistClick == null) {
+                        if (onArtistClick == null || artist == null || artist.artist.isBlank()) {
                             m
                         } else {
                             m.clip(RoundedCornerShape(6.dp))

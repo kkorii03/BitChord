@@ -2080,13 +2080,30 @@ private fun BitChordApp(
             return
         }
         scope.launch {
-            val filter = if (type == BrowseType.ARTIST) {
-                SearchFilter.ARTISTS
-            } else {
-                SearchFilter.ALBUMS
+            if (type == BrowseType.ARTIST) {
+                // An artist is identified by a channel, not by a name. Taking
+                // the first search row opened a same-name channel before, so
+                // the repository's exact-or-alias and audience rule decides.
+                val found = YtMusicRepository.findArtistPageId(name).getOrNull()
+                if (found == null) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.couldnt_find, name),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    viewModel.openDetail(
+                        found,
+                        name,
+                        context.getString(R.string.artist),
+                        artwork,
+                        BrowseType.ARTIST,
+                    )
+                }
+                return@launch
             }
             val query = listOfNotNull(name, subtitle).joinToString(" ")
-            val hit = YtMusicRepository.search(query, filter).getOrNull()
+            val hit = YtMusicRepository.search(query, SearchFilter.ALBUMS).getOrNull()
                 ?.filterIsInstance<SearchResult.Browse>()
                 ?.firstOrNull()
                 ?.item
@@ -3509,7 +3526,11 @@ private fun BitChordApp(
                                 searching = detailSearching && page.browseId == detail?.browseId,
                                 onSearchingChange = { detailSearching = it },
                                 onArtistClick = { id, name ->
-                                    viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
+                                    // The row's own channel when it has one;
+                                    // otherwise the same exact-or-alias lookup
+                                    // the player uses, never an unvalidated
+                                    // first search hit.
+                                    openByName(id, name, null, BrowseType.ARTIST)
                                 },
                                 onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
                                 // Saving is an account action, so it isn't offered to a

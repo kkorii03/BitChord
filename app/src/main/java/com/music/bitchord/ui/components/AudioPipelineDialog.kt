@@ -261,7 +261,10 @@ fun AudioPipelineDialog(
                 1 -> stringResource(R.string.mono)
                 2 -> stringResource(R.string.stereo)
                 null -> "—"
-                else -> "${nerdStats?.channels} (Surround)"
+                else -> stringResource(
+                    R.string.pipeline_surround,
+                    nerdStats?.channels.toString(),
+                )
             }
 
             PipelineRule()
@@ -284,7 +287,7 @@ fun AudioPipelineDialog(
 
             // 2. Decoder Stage
             val decoderName = if (dsdRateHz != null) {
-                "DSD to PCM (native FIR decimator)"
+                stringResource(R.string.pipeline_dsd_decoder)
             } else {
                 outputStatus.decoderName ?: "—"
             }
@@ -323,15 +326,18 @@ fun AudioPipelineDialog(
                 "—"
             }
             val resamplerType = when {
-                dsdRateHz != null ->
-                    "FIR decimation ×${dsdRateHz / DsdFormat.PCM_RATE}, ${DsdFormat.tapsFor(dsdRateHz)} taps"
+                dsdRateHz != null -> stringResource(
+                    R.string.pipeline_fir_decimation,
+                    dsdRateHz / DsdFormat.PCM_RATE,
+                    DsdFormat.tapsFor(dsdRateHz),
+                )
                 inRate == null || outRate == null -> "—"
-                isPassthrough -> "None"
-                else -> "Resampler"
+                isPassthrough -> stringResource(R.string.pipeline_none)
+                else -> stringResource(R.string.pipeline_resampler)
             }
             val cutoffText = if (dsdRateHz != null) rateText(DsdFilter.CUTOFF_HZ) else "—"
             val qualityText = when {
-                dsdRateHz != null -> "DSD to PCM, full band below the cutoff"
+                dsdRateHz != null -> stringResource(R.string.pipeline_dsd_full_band)
                 inRate == null || outRate == null -> "—"
                 isPassthrough -> "패스스루"
                 else -> "리샘플링됨"
@@ -341,7 +347,11 @@ fun AudioPipelineDialog(
             PipelineSection(
                 stageIndex = 2,
                 icon = Icons.Rounded.Tune,
-                title = if (dsdRateHz != null) "DSD to PCM" else stringResource(R.string.pipeline_resampler),
+                title = if (dsdRateHz != null) {
+                    stringResource(R.string.pipeline_dsd_to_pcm)
+                } else {
+                    stringResource(R.string.pipeline_resampler)
+                },
                 columnCoordinates = columnCoordinates,
                 stageActivationProvider = stageActivation,
                 onStageIconPositioned = onStageIconPositioned,

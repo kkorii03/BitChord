@@ -403,9 +403,9 @@ private fun StoryChrome(
                 // by. A month or "All time" has no two-digit form and is spelt
                 // out rather than truncated into nonsense.
                 text = if (label.length == 4 && label.all { it.isDigit() }) {
-                    "Replay ${label.takeLast(2)}"
+                    stringResource(R.string.replay_title_year, label.takeLast(2))
                 } else {
-                    "Replay · $label"
+                    stringResource(R.string.replay_title_period, label)
                 },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.W700,
@@ -578,8 +578,12 @@ private fun ColumnScope.Minutes(summary: ReplaySummary, headline: List<HeadlineR
             ))
             // Replace period+comma with just a comma
             if (summary.peakHour != null) {
-                append(", mostly around ")
-                append(formatHour(context, summary.peakHour!!))
+                append(
+                    context.getString(
+                        R.string.replay_peak_hour,
+                        formatHour(context, summary.peakHour!!),
+                    ),
+                )
                 append(".")
             } else {
                 append(".")

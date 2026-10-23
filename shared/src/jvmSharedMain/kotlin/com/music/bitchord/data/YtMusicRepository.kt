@@ -11,6 +11,7 @@ import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.net.CounterpartSwitch
+import com.music.bitchord.data.net.bestArtistCandidate
 import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.SharedLookups
@@ -19,10 +20,8 @@ import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.ChartsPage
-import com.music.bitchord.data.model.isExactArtistMatch
 import com.music.bitchord.data.model.normalizedArtistName
 import com.music.bitchord.data.model.ArtistPage
-import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
@@ -1158,6 +1157,14 @@ object YtMusicRepository {
         artist = artist.ifBlank { source.artist },
         thumbnailUrl = thumbnailUrl ?: source.thumbnailUrl,
         durationText = durationText ?: source.durationText,
+        // A version swap replaces the recording, not the artist. A sparse
+        // search row used to lose the channel the original row carried, so the
+        // artist name then had to be searched again and could land on a
+        // same-name channel.
+        artistId = artistId ?: source.artistId,
+        artists = artists.ifEmpty { source.artists },
+        albumId = albumId ?: source.albumId,
+        albumName = albumName ?: source.albumName,
         isVideoOrigin = true,
         queueTier = source.queueTier,
         queueEntryId = source.queueEntryId,
@@ -1437,7 +1444,7 @@ object YtMusicRepository {
     }
 
     /**
-     * The page of the artist called exactly [name], or null when there is none.
+     * The page of the artist named [name], or null when there is none.
      *
      * YouTube does not link every credited artist. On a real two-artist track
      * the byline and even the album header linked only the first name, so
@@ -1446,23 +1453,24 @@ object YtMusicRepository {
      * for `2115` and the results are White 2115, Bedoes 2115, Blacha 2115 and
      * Kuqe 2115, four different people.
      *
-     * So a hit is accepted only when its own title is the name asked for. That
-     * one rule is the whole of the safety here: `Monday Waxie` finds its page,
-     * and `2115` finds nothing and opens nothing rather than somebody else.
-     * Asking for `Mate` can land on either of two artists of that name, which
-     * is the honest answer to an ambiguous question rather than a wrong one.
+     * A hit is accepted only when its own title is the name asked for, or the
+     * name followed by a parenthetical alias (`IVE (아이브)`). Among those,
+     * [bestArtistCandidate] takes the one with the largest audience the search
+     * row states, because the exact spelling can belong to a tiny channel while
+     * the artist's page carries an alias. Names that merely contain the query
+     * are still refused: `2115` opens nobody rather than White 2115, and
+     * `Monday Waxie` still finds its page.
      */
     suspend fun findArtistPageId(name: String): Result<String?> =
         call("artistByName:length=${name.length}") {
             if (normalizedArtistName(name).isEmpty()) return@call null
             val filter = SearchFilter.ARTISTS
-            InnertubeParser.parseSearchPage(
+            val candidates = InnertubeParser.parseSearchPage(
                 Innertube.search(name, filter.params, kind = SearchKind.ARTIST),
             ).rows
                 .filterIsInstance<SearchResult.Browse>()
                 .map { it.item }
-                .firstOrNull { it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name) }
-                ?.browseId
+            bestArtistCandidate(candidates, name)?.browseId
         }
 
     /**

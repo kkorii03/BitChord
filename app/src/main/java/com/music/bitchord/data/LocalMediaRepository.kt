@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import com.music.bitchord.R
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
 import com.music.bitchord.data.model.Song
@@ -308,8 +309,9 @@ object LocalMediaRepository {
                     val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
                     val title = rawTitle.cleanTag()?.removeAudioExtension()
                         ?: displayName.substringBeforeLast('.').takeIf { it.isNotBlank() }
-                        ?: "Track $id"
-                    val artist = rawArtist.takeUnless { it.isNullOrBlank() || it == "<unknown>" } ?: "Unknown Artist"
+                        ?: context.getString(R.string.local_track_fallback, id)
+                    val artist = rawArtist.takeUnless { it.isNullOrBlank() || it == "<unknown>" }
+                        ?: context.getString(R.string.unknown_artist)
                     val albumName = rawAlbum.takeUnless { it.isNullOrBlank() || it == "<unknown>" }
                     val artworkUrl = if (albumId > 0) ContentUris.withAppendedId(albumArtBaseUri, albumId).toString() else null
                     val durationText = durationMs.takeIf { it > 0 }?.let(::formatDuration)
@@ -438,7 +440,7 @@ object LocalMediaRepository {
         scanned: ScannedTags? = null,
     ): Song {
         var title = fileName.substringBeforeLast(".")
-        var artist = "Unknown Artist"
+        var artist = context.getString(R.string.unknown_artist)
         var albumName: String? = null
         var durationText: String? = null
         var trackNumber: Int? = null

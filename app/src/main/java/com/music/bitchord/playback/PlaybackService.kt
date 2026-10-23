@@ -5043,10 +5043,12 @@ class PlaybackService : MediaLibraryService() {
         artist = alternate.artist,
         thumbnailUrl = alternate.thumbnailUrl ?: thumbnailUrl,
         durationText = alternate.durationText,
-        artistId = alternate.artistId,
-        artists = alternate.artists,
-        albumId = alternate.albumId,
-        albumName = alternate.albumName,
+        // The alternate is another recording of this song, so a sparse row
+        // must not drop the channel or release the queue entry already knew.
+        artistId = alternate.artistId ?: artistId,
+        artists = alternate.artists.ifEmpty { artists },
+        albumId = alternate.albumId ?: albumId,
+        albumName = alternate.albumName ?: albumName,
         isVideo = alternate.isVideo,
         setVideoId = null,
         localUri = null,
@@ -9602,7 +9604,11 @@ class PlaybackService : MediaLibraryService() {
                         } else if (mediaId.startsWith("playlist:") || mediaId.startsWith("browse:")) {
                             createGridPlaylistItem(
                                 mediaId = mediaId,
-                                title = if (mediaId.contains("MPREb_")) "Album" else getString(R.string.playlists),
+                                title = if (mediaId.contains("MPREb_")) {
+                                    getString(R.string.album_folder)
+                                } else {
+                                    getString(R.string.playlists)
+                                },
                                 folderType = if (mediaId.contains("MPREb_")) MediaMetadata.FOLDER_TYPE_ALBUMS else MediaMetadata.FOLDER_TYPE_PLAYLISTS,
                             )
                         } else {
@@ -9845,7 +9851,16 @@ class PlaybackService : MediaLibraryService() {
                             if (cached != null) {
                                 resolved.add(cached.toMediaItem())
                             } else {
-                                resolved.add(Song(videoId = videoId, title = item.mediaMetadata.title?.toString() ?: "Track", artist = item.mediaMetadata.artist?.toString() ?: "Artist", thumbnailUrl = null).toMediaItem())
+                                resolved.add(
+                                    Song(
+                                        videoId = videoId,
+                                        title = item.mediaMetadata.title?.toString()
+                                            ?: getString(R.string.unknown_track),
+                                        artist = item.mediaMetadata.artist?.toString()
+                                            ?: getString(R.string.unknown_artist),
+                                        thumbnailUrl = null,
+                                    ).toMediaItem(),
+                                )
                             }
                         } else {
                             resolved.add(item.buildUpon().setUri(uri).build())

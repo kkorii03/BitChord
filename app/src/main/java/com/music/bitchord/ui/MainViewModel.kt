@@ -1603,7 +1603,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // surfaces that draw it leave a blank one out, so an
                         // unseeded playlist gets a card of just its name rather
                         // than a guess at what the feed will call it.
-                        subtitle = if (song != null) "1 song" else "",
+                        subtitle = if (song != null) quantity(R.plurals.song_count_plural, 1) else "",
                         thumbnailUrl = song?.thumbnailUrl,
                     )
                     // Drawn from what was just sent rather than waited for: the
@@ -1658,7 +1658,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val created = UserPlaylist(
                             playlistId = playlistId,
                             title = name,
-                            subtitle = "${videoIds.size} songs",
+                            subtitle = quantity(R.plurals.song_count_plural, videoIds.size),
                             thumbnailUrl = null,
                         )
                         _playlists.value = listOf(created) +
@@ -3436,7 +3436,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             subscriberCountText = page.subscriberCountText
                             monthlyListenerCount = page.monthlyListenerCount
                             subscription = page.subscription
-                            if (page.songs.isEmpty()) {
+                            // "No top songs" is not an empty artist page: the
+                            // albums and singles shelves below are the page.
+                            // Only a page with neither has nothing to show.
+                            if (page.songs.isEmpty() && page.sections.isEmpty()) {
                                 UiState.Error(text(R.string.no_tracks_here))
                             } else {
                                 UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
@@ -3682,7 +3685,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             Downloads.recordIdOf(browseId) != null ->
                 nonEmpty(downloadedPlaylist(browseId)) { text(R.string.downloaded_playlist_empty) }
             browseId == "local:downloads" ->
-                nonEmpty(Downloads.getDownloadedSongs(context)) { "No downloaded tracks" }
+                nonEmpty(Downloads.getDownloadedSongs(context)) { text(R.string.no_downloaded_tracks) }
             browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
             browseId == "local:all" -> if (!LocalMediaRepository.hasStoragePermission(context)) {
                 UiState.Error(text(R.string.storage_required_read))
@@ -4358,4 +4361,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun text(id: Int): String = getApplication<Application>().getString(id)
+
+    private fun quantity(id: Int, count: Int): String =
+        getApplication<Application>().resources.getQuantityString(id, count, count)
 }

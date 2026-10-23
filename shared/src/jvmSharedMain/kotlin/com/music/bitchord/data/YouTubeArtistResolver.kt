@@ -6,11 +6,10 @@ import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.BrowseItem
-import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
-import com.music.bitchord.data.model.isExactArtistMatch
 import com.music.bitchord.data.model.normalizedArtistName
+import com.music.bitchord.data.net.bestArtistCandidate
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -18,9 +17,11 @@ import kotlinx.coroutines.CancellationException
  *
  * The listening record can name an artist without ever having stored the
  * channel that page opens, which is common for rows read from a home shelf.
- * An anonymous YouTube Music artist search answers it, and only an exact
- * (folded) name match is accepted: searching `2115` finds four different
- * people, and opening the first one is worse than opening nothing.
+ * An anonymous YouTube Music artist search answers it. An exact (folded) name,
+ * or the name followed by a parenthetical alias, is accepted; of those, the
+ * one with the largest audience the search row states wins. Searching `2115`
+ * finds four different people and still opens nobody, while `IVE` opens
+ * `IVE (아이브)` rather than the tiny channel called exactly `IVE`.
  *
  * A hit is persisted with the same bounded store as the classifier's verdicts
  * and the square-cover cache, so the lookup is paid once per artist rather than
@@ -30,7 +31,7 @@ internal object YouTubeArtistResolver {
 
     data class Hit(val browseId: String, val thumbnailUrl: String?)
 
-    private const val STORE_KEY = "youtube_artist_ids_v1"
+    private const val STORE_KEY = "youtube_artist_ids_v2"
 
     private const val MAX_ENTRIES = 500
 
@@ -38,7 +39,7 @@ internal object YouTubeArtistResolver {
 
     private val cache = StoredVerdictCache(STORE_KEY, MAX_ENTRIES)
 
-    /** Replaceable so the exact-match rule can be exercised without a network. */
+    /** Replaceable so the candidate rule can be exercised without a network. */
     @Volatile
     internal var search: suspend (String) -> List<BrowseItem> = ::searchAnonymously
 
@@ -54,8 +55,8 @@ internal object YouTubeArtistResolver {
     }
 
     /**
-     * The exact artist page for [name], from the cache or one anonymous search
-     * for artists. Returns null when no result is exactly that name.
+     * The artist page for [name], from the cache or one anonymous search for
+     * artists. Returns null when no result names that artist.
      */
     suspend fun resolve(name: String): Hit? {
         if (normalizedArtistName(name).isEmpty()) return null
@@ -68,9 +69,7 @@ internal object YouTubeArtistResolver {
             Log.w(TAG, "Artist lookup failed length=${name.length}: ${failure.message}")
             return null
         }
-        val hit = results.firstOrNull {
-            it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name)
-        } ?: return null
+        val hit = bestArtistCandidate(results, name) ?: return null
         val browseId = hit.browseId.takeIf { it.isNotBlank() } ?: return null
         cache.ensureLoaded(MusicGateFallback.sharedStore())
         cache.put(normalizedArtistName(name), browseId + SEPARATOR + hit.thumbnailUrl.orEmpty())

@@ -398,9 +398,9 @@ private fun drawHeader(
 ): Float {
     val label = summary.localizedLabel(context)
     val title = if (label.length == 4 && label.all { it.isDigit() }) {
-        "Replay ${label.takeLast(2)}"
+        context.getString(R.string.replay_title_year, label.takeLast(2))
     } else {
-        "Replay · $label"
+        context.getString(R.string.replay_title_period, label)
     }
     canvas.drawText(title, MARGIN, 132f, type.heading(46f, 0xFFFFFFFF.toInt()))
     val brand = type.heading(46f, 0xE6FFFFFF.toInt()).apply {

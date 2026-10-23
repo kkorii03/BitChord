@@ -47,16 +47,28 @@ import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
+private const val MANUAL_LANGUAGE = "Manual / Other"
+
+private const val NO_PREFERENCE_LANGUAGE = "No Preference"
+
+/**
+ * A language chip: what it reads as, and the value the matcher is asked for.
+ *
+ * The label is translated, the value is not: it is a search hint, and Spotify
+ * only recognises its own English names.
+ */
+private data class ImportLanguage(val labelRes: Int, val value: String)
+
 private val IMPORT_LANGUAGES = listOf(
-    "Tamil",
-    "Telugu",
-    "Kannada",
-    "Malayalam",
-    "Hindi",
-    "English",
-    "Multilingual",
-    "No Preference",
-    "Manual / Other",
+    ImportLanguage(R.string.spotify_language_tamil, "Tamil"),
+    ImportLanguage(R.string.spotify_language_telugu, "Telugu"),
+    ImportLanguage(R.string.spotify_language_kannada, "Kannada"),
+    ImportLanguage(R.string.spotify_language_malayalam, "Malayalam"),
+    ImportLanguage(R.string.spotify_language_hindi, "Hindi"),
+    ImportLanguage(R.string.spotify_language_english, "English"),
+    ImportLanguage(R.string.spotify_language_multilingual, "Multilingual"),
+    ImportLanguage(R.string.spotify_language_no_preference, NO_PREFERENCE_LANGUAGE),
+    ImportLanguage(R.string.spotify_language_manual, MANUAL_LANGUAGE),
 )
 
 /**
@@ -81,7 +93,7 @@ fun SpotifyImportAlert(
     val scope = rememberCoroutineScope()
     var link by remember { mutableStateOf("") }
     var privacy by remember { mutableStateOf(PlaylistPrivacy.PRIVATE) }
-    var selectedLanguage by remember { mutableStateOf("No Preference") }
+    var selectedLanguage by remember { mutableStateOf(NO_PREFERENCE_LANGUAGE) }
     var customLanguageInput by remember { mutableStateOf("") }
     var working by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -95,7 +107,7 @@ fun SpotifyImportAlert(
             failed = true
             return
         }
-        val effectiveLanguage = if (selectedLanguage == "Manual / Other") {
+        val effectiveLanguage = if (selectedLanguage == MANUAL_LANGUAGE) {
             customLanguageInput.trim().ifBlank { null }
         } else {
             selectedLanguage
@@ -216,7 +228,7 @@ fun SpotifyImportAlert(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     IMPORT_LANGUAGES.forEach { lang ->
-                        val selected = lang == selectedLanguage
+                        val selected = lang.value == selectedLanguage
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(percent = 50))
@@ -225,13 +237,13 @@ fun SpotifyImportAlert(
                                     else MaterialTheme.colorScheme.surfaceVariant,
                                 )
                                 .clickable(enabled = !working) {
-                                    selectedLanguage = lang
+                                    selectedLanguage = lang.value
                                 }
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = lang,
+                                text = stringResource(lang.labelRes),
                                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 11.sp),
                                 color = if (selected) MaterialTheme.colorScheme.onPrimary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -239,7 +251,7 @@ fun SpotifyImportAlert(
                         }
                     }
                 }
-                if (selectedLanguage == "Manual / Other") {
+                if (selectedLanguage == MANUAL_LANGUAGE) {
                     Spacer(Modifier.height(8.dp))
                     PillTextField(
                         value = customLanguageInput,
