@@ -1041,6 +1041,9 @@ class PlaybackService : MediaLibraryService() {
                 // say the queue is not simply unplayable end to end.
                 audibleMediaId = exoPlayer.currentMediaItem?.mediaId
                 consecutiveErrorSkips = 0
+                // Sound is out, so the rows after this one can be prepared
+                // without competing with the current row's own lookup.
+                scheduleUpcomingSongVersions(exoPlayer)
             }
             if (isPlaying) registerCurrentPlay()
             // Nothing to read ahead for while paused, and a pause is often
@@ -3180,6 +3183,9 @@ class PlaybackService : MediaLibraryService() {
     /** Resolves the song versions of the next few queue rows before they play. */
     private var songVersionJob: Job? = null
 
+    /** The track [songVersionJob]'s look-ahead pass was started for. */
+    private var songVersionJobFor: String? = null
+
     /**
      * With music-only on, the rows either side of the current one are replaced
      * by their catalogue releases as the queue approaches them: the next three
@@ -3191,7 +3197,21 @@ class PlaybackService : MediaLibraryService() {
     private fun scheduleUpcomingSongVersions(exoPlayer: ExoPlayer) {
         if (!AppSettings.preferMusicOnly.value) return
         if (ListenTogether.state.value.inParty) return
+        // Nothing is looked ahead until this track is audible. Run at the
+        // transition this put five version searches beside the current row's
+        // own resolve and the first sound went from about 2 s to 5.5 s on a
+        // cold queue. [onIsPlayingChanged] schedules it the moment sound
+        // starts, and the in-flight guard keeps a resume from starting a
+        // second pass over the same rows.
+        val currentId = exoPlayer.currentMediaItem?.mediaId ?: return
+        if (currentId != audibleMediaId) return
+        // Only a pass for this same track is a duplicate. A pass left over from
+        // the previous track is walking the wrong rows and is replaced; the
+        // lookups it started live in the repository's own scope, so cancelling
+        // the pass does not throw their answers away.
+        if (songVersionJob?.isActive == true && songVersionJobFor == currentId) return
         songVersionJob?.cancel()
+        songVersionJobFor = currentId
         songVersionJob = scope.launch {
             val current = exoPlayer.currentMediaItemIndex
             if (current !in 0 until exoPlayer.mediaItemCount) return@launch
@@ -4116,6 +4136,9 @@ class PlaybackService : MediaLibraryService() {
             // advance would leave every track looking like it never started.
             audibleMediaId = mediaItem?.mediaId
             consecutiveErrorSkips = 0
+            // The crossfaded track never reports playing, so its look-ahead
+            // is scheduled here instead.
+            scheduleUpcomingSongVersions(exoPlayer)
         }
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].

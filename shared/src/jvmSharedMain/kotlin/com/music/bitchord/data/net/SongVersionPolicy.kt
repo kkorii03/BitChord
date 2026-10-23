@@ -20,14 +20,35 @@ object SongVersionPolicy {
      * Signed-out `next` responses carried no `playlistPanelVideoWrapperRenderer`
      * at all in the observed sessions (the pairing appears to be a premium
      * feature), so after this many empty answers in a row the counterpart
-     * lookup is pointless for the rest of the session and the search fallback
-     * is used directly.
+     * lookup is pointless and the search fallback is used directly.
      */
     const val COUNTERPART_EMPTY_LIMIT = 5
+
+    /**
+     * How long a proven-empty counterpart endpoint stays switched off.
+     *
+     * The verdict is a property of the signed-out endpoint, not of one launch,
+     * so a restart must not spend the five empty answers (0.8–1.1 s each)
+     * again. A week later it is tried five more times in case the account or
+     * the endpoint changed.
+     */
+    const val COUNTERPART_OFF_MS = 7L * 24L * 60L * 60L * 1000L
 
     /** True once the counterpart endpoint has proven it answers nothing. */
     fun counterpartDisabled(consecutiveEmptyResponses: Int): Boolean =
         consecutiveEmptyResponses >= COUNTERPART_EMPTY_LIMIT
+
+    /** The deadline recorded when the endpoint proves empty at [now]. */
+    fun counterpartOffUntil(now: Long): Long = now + COUNTERPART_OFF_MS
+
+    /**
+     * Whether the counterpart lookup is still switched off at [now].
+     *
+     * A missing or elapsed deadline means it may be tried again, and the run
+     * of empty answers starts from zero; five of them switch it off anew.
+     */
+    fun counterpartSuppressed(offUntil: Long?, now: Long): Boolean =
+        offUntil != null && now < offUntil
 
     /**
      * Whether an automatic song-version swap may still happen: only before the

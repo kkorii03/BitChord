@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
  * null — a miss is the normal answer.
  */
 @Composable
-internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
+internal fun rememberCanvasArtwork(song: Song, audible: Boolean): CanvasArtwork? {
     val canvasEnabled by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by PlayerSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by PlayerSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
@@ -61,7 +61,7 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
     var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas) {
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, audible) {
         if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect
@@ -76,6 +76,14 @@ internal fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
         // clip from being a different song's that happens to share a title.
         canvas = PlayerPlatform.host.cachedCanvas(song)
             ?: canvas?.takeIf { it.matches(song.title, song.artist, song.albumName) }
+
+        // Nothing but the cache until the track makes a sound. The clip is
+        // searched by title and artist, and that search used to leave beside
+        // the current row's stream resolve; waiting costs nothing visible
+        // (a still sleeve shows meanwhile) and keeps the first sound quick.
+        // `audible` is a key of this effect, so the search goes out as soon as
+        // playback starts.
+        if (!audible) return@LaunchedEffect
 
         // The album name is looked up separately and lands a moment after the
         // player opens, and it is the field that makes the catalogue searches

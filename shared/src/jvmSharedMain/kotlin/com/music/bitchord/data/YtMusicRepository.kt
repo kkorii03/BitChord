@@ -10,8 +10,10 @@ import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.YouTubeWebSearch
+import com.music.bitchord.data.net.CounterpartSwitch
 import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
+import com.music.bitchord.data.net.SharedLookups
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
@@ -40,7 +42,9 @@ import com.music.bitchord.data.sources.TrackMatcher
 import io.ktor.client.plugins.ResponseException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -874,8 +878,6 @@ object YtMusicRepository {
      * across requests; any response that does carry one resets the run.
      */
     private val counterpartEmptyRun = AtomicInteger(0)
-    @Volatile
-    private var counterpartOffForSession = false
 
     /**
      * The catalogue release YouTube Music pairs with music-video [videoId], as
@@ -887,14 +889,16 @@ object YtMusicRepository {
      * attempt can be retried later.
      *
      * A run of [SongVersionPolicy.COUNTERPART_EMPTY_LIMIT] responses with no
-     * pairing rows disables this for the rest of the run: a signed-out `next`
-     * cannot answer it, and the caller's search fallback is cheaper.
+     * pairing rows disables this for a week ([CounterpartSwitch]): a
+     * signed-out `next` cannot answer it, and the caller's search fallback is
+     * cheaper. The verdict outlives the process so a restart does not spend
+     * five more empty requests on it.
      */
     suspend fun counterpartAudio(videoId: String): Song? {
         if (videoId.isBlank()) return null
         counterpartAudioCache[videoId]?.let { return it }
         if (videoId in counterpartMissing) return null
-        if (counterpartOffForSession) return null
+        if (CounterpartSwitch.isSuppressed()) return null
         val mine = CompletableDeferred<Song?>()
         counterpartLookups.putIfAbsent(videoId, mine)?.let {
             return try {
@@ -916,10 +920,10 @@ object YtMusicRepository {
                 if (wrappers > 0) {
                     counterpartEmptyRun.set(0)
                 } else if (SongVersionPolicy.counterpartDisabled(counterpartEmptyRun.incrementAndGet()) &&
-                    !counterpartOffForSession
+                    !CounterpartSwitch.isSuppressed()
                 ) {
-                    counterpartOffForSession = true
-                    TrackLog.i(TAG, "counterpart: off for this session (no wrappers)")
+                    CounterpartSwitch.suppress()
+                    TrackLog.i(TAG, "counterpart: off for a week (no wrappers)")
                 }
                 song
             }
@@ -949,7 +953,19 @@ object YtMusicRepository {
     /** Song-version answers by music-video id, with "no version" cached too. */
     private val songVersionCache = ConcurrentHashMap<String, Song>()
     private val songVersionMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    private val songVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+
+    /**
+     * Lookups in flight, shared by every asker for the same video id, run in
+     * [lookupScope] rather than in the waiter: a queue build that gives up on
+     * its 1.5 s budget must not throw the work away. The service's pre-audio
+     * ask for the same track then joins it (or reads the cache it fills)
+     * instead of searching the same song from the start.
+     */
+    private val lookupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val songVersionLookups = SharedLookups<SongVersionAnswer>(lookupScope)
+
+    /** A resolved answer and the source that gave it, for the log line. */
+    private data class SongVersionAnswer(val song: Song?, val via: String)
 
     /**
      * A song version already resolved in this run, for callers that must decide
@@ -1014,45 +1030,52 @@ object YtMusicRepository {
             logSongVersion(song.videoId, null, "cache", beforeAudio)
             return null
         }
-        val mine = CompletableDeferred<Song?>()
-        songVersionLookups.putIfAbsent(song.videoId, mine)?.let {
-            return try {
-                it.await()?.withQueueFieldsOf(song)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            }
+        // Waiting is what the caller's 1.5 s budget bounds; the lookup itself
+        // keeps running in the shared scope, so a timeout here costs nothing
+        // but the wait and the answer still lands in the cache.
+        val lookup = songVersionLookups.lookup(song.videoId) { resolveSongVersion(song) }
+        val answer = try {
+            lookup.result.await()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         }
-        try {
-            val counterpart = runCatching { counterpartAudio(song.videoId) }
-            var via = "counterpart"
-            var found = counterpart.getOrNull()
-            var search: Result<Song>? = null
-            if (found == null) {
-                search = runCatching { resolveAudio(song) }
-                // A song search can still surface a video upload; the whole
-                // point here is to play the catalogue release, never another
-                // music video.
-                found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
-                via = if (found != null) "search" else "none"
-            }
-            // A pair is definitive when the counterpart answered (found or
-            // not) and, if it named none, the search also completed. A failed
-            // request is not "no version" and must be retried later.
-            val definitive = found != null ||
-                (counterpart.isSuccess && search?.isSuccess == true)
-            if (definitive) {
-                if (found == null) songVersionMissing.add(song.videoId)
-                else songVersionCache[song.videoId] = found
-            }
-            logSongVersion(song.videoId, found, via, beforeAudio)
-            mine.complete(found)
-            return found?.withQueueFieldsOf(song)
-        } catch (failure: Throwable) {
-            mine.completeExceptionally(failure)
-            throw failure
-        } finally {
-            songVersionLookups.remove(song.videoId, mine)
+        logSongVersion(
+            song.videoId,
+            answer.song,
+            if (lookup.joined) "${answer.via} shared" else answer.via,
+            beforeAudio,
+        )
+        return answer.song?.withQueueFieldsOf(song)
+    }
+
+    /**
+     * The one lookup behind [songVersion]. Runs in the shared scope, so a
+     * waiter that times out leaves it running; caches the answer here for the
+     * waiters that join it and for later asks.
+     */
+    private suspend fun resolveSongVersion(song: Song): SongVersionAnswer {
+        val counterpart = runCatching { counterpartAudio(song.videoId) }
+        var via = "counterpart"
+        var found = counterpart.getOrNull()
+        var search: Result<Song>? = null
+        if (found == null) {
+            search = runCatching { resolveAudio(song) }
+            // A song search can still surface a video upload; the whole
+            // point here is to play the catalogue release, never another
+            // music video.
+            found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
+            via = if (found != null) "search" else "none"
         }
+        // A pair is definitive when the counterpart answered (found or not)
+        // and, if it named none, the search also completed. A failed request
+        // is not "no version" and must be retried later.
+        val definitive = found != null ||
+            (counterpart.isSuccess && search?.isSuccess == true)
+        if (definitive) {
+            if (found == null) songVersionMissing.add(song.videoId)
+            else songVersionCache[song.videoId] = found
+        }
+        return SongVersionAnswer(found, via)
     }
 
     /**

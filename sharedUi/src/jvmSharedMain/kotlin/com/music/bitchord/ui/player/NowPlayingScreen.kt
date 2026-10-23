@@ -885,7 +885,7 @@ fun NowPlayingScreen(
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
-    val canvas = rememberCanvasArtwork(song)
+    val canvas = rememberCanvasArtwork(song, audible = isPlaying)
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and

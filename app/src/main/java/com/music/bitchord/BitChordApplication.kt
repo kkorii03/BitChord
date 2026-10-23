@@ -142,6 +142,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // reads one small preference file and installs a debounced writer; no
         // request is made from here.
         com.music.bitchord.data.net.ProxyPlaybackStore.init(this)
+        // Until when the counterpart endpoint is not asked again (a week after
+        // five empty answers). One small preference file, no request.
+        com.music.bitchord.data.net.CounterpartStore.init(this)
         // Opened off the main thread, alongside the stores below: none of these
         // reads a setting or the session, and between them they are the slowest
         // opens at startup — SourceRegistry's encrypted store most of all.
