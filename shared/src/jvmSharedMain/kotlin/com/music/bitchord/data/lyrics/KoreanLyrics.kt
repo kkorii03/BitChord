@@ -10,13 +10,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 
 /*
- * Line-synced lyrics from three Korean services, for the Korean catalogue the
- * others mostly miss ??indie, OST, the songs covers are made of. Each is the
+ * Line-synced lyrics from two Korean services, for the Korean catalogue the
+ * others mostly miss — indie, OST, the songs covers are made of. Both are the
  * plain, unauthenticated requests their own web players make; nothing is
  * signed or impersonated.
  *
- * Each searches by name, so each holds every hit to the title *and* the artist
- * before taking its lyrics, and picks the closest length among those that pass:
+ * Both search by name, so both hold every hit to the title *and* the artist
+ * before taking its lyrics, and pick the closest length among those that pass:
  * the wrong song's lyrics are worse than none.
  */
 
