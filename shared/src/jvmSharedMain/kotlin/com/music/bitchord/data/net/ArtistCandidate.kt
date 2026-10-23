@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.isExactArtistMatch
 import com.music.bitchord.data.model.normalizedArtistName
+import kotlin.math.roundToLong
 
 /**
  * The artist page a name search should open.
@@ -82,7 +83,8 @@ internal fun artistAudienceSize(subtitle: String): Long {
             "k", "thousand" -> 1_000.0
             else -> 1.0
         }
-        val people = (value * multiplier).toLong().coerceAtLeast(0L)
+        // Rounded, not truncated: 4.1 × 1e6 is 4099999.999… in floating point.
+        val people = (value * multiplier).roundToLong().coerceAtLeast(0L)
         if (people > best) best = people
     }
     return best
