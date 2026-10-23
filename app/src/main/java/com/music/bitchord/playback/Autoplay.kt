@@ -144,7 +144,7 @@ suspend fun loadAutoplayTracks(
     val extra = if (AppSettings.personalisedAutoplay.value) {
         rankedExtensions(existing, seedSong, sessionSong, related, limit, sessionIds)
     } else {
-        QueueBuilder.extend(existing, related, limit)
+        QueueBuilder.extend(existing, related, limit, seedArtist = seedSong.artist)
             .filterNot { it.videoId in sessionIds }
             .also { songs ->
                 TrackLog.i(
@@ -272,7 +272,7 @@ private suspend fun rankedExtensions(
     // Apply the queue's de-duplication and per-artist caps first, with room to
     // spare, so the ordering pass below sees rows that will really be playable.
     val rankedSongs = ranked.mapNotNull { known[it.videoId] }
-    val eligible = QueueBuilder.extend(existing, rankedSongs, limit * 2)
+    val eligible = QueueBuilder.extend(existing, rankedSongs, limit * 2, seedArtist = seedSong.artist)
     val eligibleIds = eligible.mapTo(HashSet()) { it.videoId }
     val ordered = AutoplayOrder.order(
         candidates = ranked.filter { it.videoId in eligibleIds },

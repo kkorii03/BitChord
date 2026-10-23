@@ -140,6 +140,7 @@ import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.discord.discordAudioQualityLine
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.stats.ListeningRecorder
+import com.music.bitchord.data.stats.WriteThrottle
 import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
@@ -175,6 +176,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
@@ -868,8 +870,81 @@ class PlaybackService : MediaLibraryService() {
         runCatching { progressWork.execute { block() } }
     }
 
+    /**
+     * A queue snapshot waiting for the sampler thread.
+     *
+     * [items] is the persisted window only — the queue itself is read on the
+     * main thread, where the player lives — and everything expensive about the
+     * snapshot (turning them into songs, the JSON, the prefs write) happens
+     * when this runs. One is pending at a time and a newer one replaces it,
+     * which is the whole point: a playlist edit can raise a dozen timeline
+     * callbacks in a row and only the last state is worth writing.
+     */
+    private class QueueSnapshot(
+        val items: List<MediaItem>,
+        val index: Int,
+        val positionMs: Long,
+        val immediate: Boolean,
+    )
+
+    private val queueSnapshotLock = Any()
+    private var pendingQueueSnapshot: QueueSnapshot? = null
+    private var queueSnapshotRunning = false
+
+    private fun requestQueueSnapshot(snapshot: QueueSnapshot) {
+        val start = synchronized(queueSnapshotLock) {
+            pendingQueueSnapshot = snapshot
+            if (queueSnapshotRunning) {
+                false
+            } else {
+                queueSnapshotRunning = true
+                true
+            }
+        }
+        if (start) postProgressWork(::drainQueueSnapshots)
+    }
+
+    private fun drainQueueSnapshots() {
+        while (true) {
+            val next = synchronized(queueSnapshotLock) {
+                val snapshot = pendingQueueSnapshot
+                pendingQueueSnapshot = null
+                if (snapshot == null) queueSnapshotRunning = false
+                snapshot
+            } ?: return
+            // Best effort: one failed write must not leave the next snapshot
+            // waiting for a drain that already gave up.
+            runCatching {
+                val songs = next.items.map { it.toSong() }
+                if (next.immediate) {
+                    LastPlayed.saveQueueImmediately(songs, next.index, next.positionMs)
+                } else {
+                    LastPlayed.saveQueue(songs, next.index)
+                }
+            }
+        }
+    }
+
     /** Last format the nerd-stats card was built from, so the sampler can skip a rebuild. */
     private var lastNerdStatsKey: Any? = null
+
+    /**
+     * Whether the player is making sound, as the sampler reads it.
+     *
+     * The sampler used to wake every five seconds for the whole life of the
+     * service, whatever the player was doing: a timer that cost battery while
+     * paused, in a service people leave paused for hours. The ticks only mean
+     * anything while audio is coming out, so this flag parks the loop between
+     * play and pause instead ([onIsPlayingChanged] is the only writer).
+     */
+    private val samplerPlaying = MutableStateFlow(false)
+
+    /**
+     * Thins the routine "where was the playhead" writes to one per half
+     * minute. Pause, track change and service stop still write immediately,
+     * so nothing on disk is older than the last of those events.
+     */
+    private val playbackStateThrottle = WriteThrottle(PLAYBACK_STATE_SAVE_MS)
 
     /**
      * The screen turning back on is the only event that can make lyric metadata
@@ -1060,6 +1135,8 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             stoppedPlayingAt = if (isPlaying) 0L else android.os.SystemClock.elapsedRealtime()
+            // Wakes or parks the sampler; see [samplerPlaying].
+            samplerPlaying.value = isPlaying
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -1112,7 +1189,9 @@ class PlaybackService : MediaLibraryService() {
             // ticks, and an unclosed one across a pause is an afternoon on the
             // lock screen arriving as an afternoon of listening. Queued on the
             // same single thread as the samples, after them.
-            if (!isPlaying) postProgressWork { ListeningRecorder.onStopped() }
+            // A pause keeps what this playthrough has already earned: only a
+            // track change starts the count again. See [ListeningRecorder.onPaused].
+            if (!isPlaying) postProgressWork { ListeningRecorder.onPaused() }
 
             // ListenBrainz: "now playing" on play/resume too, not just on
             // transition — a track started from idle or resumed from pause
@@ -1275,7 +1354,12 @@ class PlaybackService : MediaLibraryService() {
             autoplayLoadJob = null
             autoplaySeed = null
             loadAutoplayForCurrentTrack()
-            loadLyricsForCurrentTrack()
+            // Lyrics are loaded by [onTrackBecameCurrent], which every way a
+            // track becomes current goes through. Asking again here started a
+            // second lookup for the track the first one had just started --
+            // one of the two was cancelled, but it had already scheduled its
+            // translation-ahead pass and, with a settled cache, could finish
+            // and publish twice.
             if (exoPlayer.isPlaying) startLyricsTicker()
             refreshCustomLayouts()
         }
@@ -1318,7 +1402,7 @@ class PlaybackService : MediaLibraryService() {
                 // watchtime the 30-second sampler happened to have reported and
                 // is never marked finished — so the one play most likely to be
                 // a full, deliberate listen is the one recorded as abandoned.
-                PlaybackTracker.onPlaybackFinished(lastPositionSeconds)
+                PlaybackTracker.onPlaybackFinished()
                 if (summarySong != null) {
                     summaryEndedOverride = summaryEndedOverride ?: "natural"
                     logTrackSummary(true)
@@ -3571,6 +3655,21 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * Adds [songs] to the session's "already suggested" list, once each.
+     *
+     * The list exists to stop a station re-offering something that has played
+     * or been queued, so a second copy of the same video id buys nothing and
+     * made it grow every time the top-up was considered for the same track.
+     */
+    private fun rememberSessionSongs(songs: List<Song>) {
+        if (!AppSettings.dontRepeatSuggestions.value) return
+        val seen = sessionSongHistory.mapTo(HashSet()) { it.videoId }
+        for (song in songs) {
+            if (seen.add(song.videoId)) sessionSongHistory += song
+        }
+    }
+
+    /**
      * Tops the queue back up to [MAX_QUEUED_AUTOPLAY] AutoPlay-suggested tracks
      * ahead of whatever is currently playing. Run on every track change rather
      * than only once the queue runs dry, so a freshly played suggestion is
@@ -3609,7 +3708,7 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         autoplaySessionIds += current.videoId
-        if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
+        rememberSessionSongs(listOf(current))
         // In a party the server's queue is the one being topped up, and this
         // player's copy of it lags behind by however long reconcile is held off
         // — read from the copy, a batch that had already landed counted as
@@ -3709,7 +3808,7 @@ class PlaybackService : MediaLibraryService() {
                             scheduleUpcomingSongVersions(latestPlayer)
                         }
                     }
-                    if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
+                    rememberSessionSongs(resolved)
                     return@launch
                 }
 
@@ -4325,9 +4424,10 @@ class PlaybackService : MediaLibraryService() {
             about = mediaItem?.mediaId,
         )
 
-        // currentPosition already belongs to the new item by now, so
-        // the outgoing track is closed out on the last sampled value.
-        PlaybackTracker.onTrackChanged(lastPositionSeconds)
+        // The tracker closes the outgoing track out on the time it actually
+        // heard, which it accumulates from the sampler, so nothing about the
+        // new item's position can leak into the old play's watchtime.
+        PlaybackTracker.onTrackChanged()
         lastPositionSeconds = 0
 
         // Scrobbling: stop old song, start new song
@@ -6816,7 +6916,15 @@ class PlaybackService : MediaLibraryService() {
         return null
     }
 
-    /** Serialize only the bounded window needed for a future cold-start resume. */
+    /**
+     * Serialize only the bounded window needed for a future cold-start resume.
+     *
+     * The window is copied here, on the player thread; turning it into songs
+     * and writing it is queued on the sampler thread and coalesced, so a run
+     * of timeline callbacks writes the newest state once rather than once per
+     * callback. A process that dies before the queued write runs still has
+     * the state [onDestroy] writes.
+     */
     private fun saveQueueSnapshot(player: ExoPlayer) {
         if (ListenTogether.state.value.inParty) return
         if (player.mediaItemCount == 0) {
@@ -6828,9 +6936,13 @@ class PlaybackService : MediaLibraryService() {
         val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
         if (range.isEmpty()) return
         persistedQueueStart = range.first
-        LastPlayed.saveQueue(
-            songs = range.map { player.getMediaItemAt(it).toSong() },
-            index = player.currentMediaItemIndex - range.first,
+        requestQueueSnapshot(
+            QueueSnapshot(
+                items = range.map { player.getMediaItemAt(it) },
+                index = player.currentMediaItemIndex - range.first,
+                positionMs = player.currentPosition,
+                immediate = false,
+            ),
         )
         saveBoundedContextSnapshot(player)
         savePlaybackState(player)
@@ -6847,12 +6959,41 @@ class PlaybackService : MediaLibraryService() {
         }
         val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
         persistedQueueStart = range.first
-        LastPlayed.saveQueueImmediately(
-            songs = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).toSong() },
-            index = player.currentMediaItemIndex,
-            positionMs = player.currentPosition,
+        requestQueueSnapshot(
+            QueueSnapshot(
+                items = range.map { player.getMediaItemAt(it) },
+                index = player.currentMediaItemIndex - range.first,
+                positionMs = player.currentPosition,
+                immediate = true,
+            ),
         )
         saveBoundedContextSnapshot(player, immediately = true)
+    }
+
+    /**
+     * The last state, written straight to disk.
+     *
+     * Called on the way out, after the sampler thread has drained, so nothing
+     * queued before this point can land on top of it. This is the one
+     * synchronous flush in the file, and it exists so closing the app never
+     * costs the restore point.
+     */
+    private fun saveQueueSnapshotNow(player: ExoPlayer) {
+        if (ListenTogether.state.value.inParty) return
+        if (player.mediaItemCount == 0) return
+        val currentIndex = player.currentMediaItemIndex
+        val range = LastPlayed.window(player.mediaItemCount, currentIndex)
+        if (range.isEmpty()) return
+        persistedQueueStart = range.first
+        val index = currentIndex - range.first
+        val positionMs = player.currentPosition
+        LastPlayed.saveQueueImmediately(
+            songs = range.map { player.getMediaItemAt(it).toSong() },
+            index = index,
+            positionMs = positionMs,
+        )
+        saveBoundedContextSnapshot(player, immediately = true)
+        LastPlayed.savePlaybackState(index = index, positionMs = positionMs)
     }
 
     /** Capture logical state and only the materialized bounded projection. */
@@ -7190,43 +7331,62 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun reportProgress() {
         scope.launch {
-            while (isActive) {
-                // Re-read every tick rather than captured once: the session
-                // moves between two players, and a sampler pinned to the one
-                // that happened to be first would go on reporting a player that
-                // has been silent since the last crossfade.
-                val player = this@PlaybackService.player
-                if (player != null && player.isPlaying) {
-                    lastPositionSeconds = player.currentPosition / 1000
-                    player.currentMediaItem?.mediaId?.let {
-                        PlaybackTracker.onProgress(it, lastPositionSeconds)
-                    }
-                    // The device's own listening record — see [ListeningRecorder],
-                    // which counts wall-clock time between ticks rather than
-                    // reading the position. This loop is the only place in the app
-                    // that ticks exactly while audio is coming out, which is what
-                    // makes it the right place to count from. The record and the
-                    // month file it feeds are disk/JSON work, so they run on the
-                    // sampler's own thread, in tick order.
-                    player.currentMediaItem?.toSong()?.let { song ->
-                        val durationMs = player.duration
-                        postProgressWork { ListeningRecorder.onSample(song, durationMs) }
-                    }
-                    // Only two primitive preference values. Queue JSON is
-                    // written from onTimelineChanged, never from this loop.
-                    savePlaybackState(player)
-                    // The renderer can settle on its format a moment after the
-                    // track change, which no callback of ours follows up on.
-                    // Cheap to call: it returns before building a snapshot if
-                    // the renderer's format has not changed since the last one.
-                    publishNerdStats()
-                    // The second look happens on the track change and on
-                    // play/resume. It used to be repeated here as a backstop,
-                    // which meant walking the upgrade maps for every five
-                    // seconds of every track.
+            // Parked on this flow rather than on a delay: while paused there is
+            // nothing to sample, so nothing wakes at all. A play event starts
+            // the ticks again.
+            samplerPlaying.collect { playing ->
+                if (!playing) return@collect
+                while (samplerPlaying.value) {
+                    sampleWhilePlaying()
+                    // The next tick, or the pause that ends the wait.
+                    withTimeoutOrNull(PROGRESS_SAMPLE_MS) { samplerPlaying.first { !it } }
                 }
-                delay(PROGRESS_SAMPLE_MS)
             }
+        }
+    }
+
+    /** One tick of the sampler, taken only while audio is coming out. */
+    private fun sampleWhilePlaying() {
+        // Re-read every tick rather than captured once: the session
+        // moves between two players, and a sampler pinned to the one
+        // that happened to be first would go on reporting a player that
+        // has been silent since the last crossfade.
+        val player = this@PlaybackService.player
+        if (player != null && player.isPlaying) {
+            lastPositionSeconds = player.currentPosition / 1000
+            player.currentMediaItem?.mediaId?.let {
+                PlaybackTracker.onProgress(it, lastPositionSeconds)
+            }
+            // The device's own listening record — see [ListeningRecorder],
+            // which counts wall-clock time between ticks rather than
+            // reading the position. This loop is the only place in the app
+            // that ticks exactly while audio is coming out, which is what
+            // makes it the right place to count from. The record and the
+            // month file it feeds are disk/JSON work, so they run on the
+            // sampler's own thread, in tick order.
+            player.currentMediaItem?.toSong()?.let { song ->
+                val durationMs = player.duration
+                postProgressWork { ListeningRecorder.onSample(song, durationMs) }
+            }
+            // Only two primitive preference values, and no queue JSON from
+            // this loop; that is written from onTimelineChanged. The playhead
+            // moving is not news at the sampler rate, so the
+            // primitive state on disk is rewritten every half minute rather
+            // than every tick. Pause, track change and stop still write now.
+            val now = SystemClock.elapsedRealtime()
+            if (playbackStateThrottle.shouldWrite(now)) {
+                savePlaybackState(player)
+                playbackStateThrottle.wrote(now)
+            }
+            // The renderer can settle on its format a moment after the
+            // track change, which no callback of ours follows up on.
+            // Cheap to call: it returns before building a snapshot if
+            // the renderer's format has not changed since the last one.
+            publishNerdStats()
+            // The second look happens on the track change and on
+            // play/resume. It used to be repeated here as a backstop,
+            // which meant walking the upgrade maps for every five
+            // seconds of every track.
         }
     }
 
@@ -8382,9 +8542,7 @@ class PlaybackService : MediaLibraryService() {
         // on the same terms as the ListenBrainz submit below: a swipe-away never
         // fires STATE_ENDED, and the tracker's own scope outlives this service,
         // so the ping still goes out after the service scope is cancelled.
-        PlaybackTracker.onPlaybackFinished(
-            player?.currentPosition?.div(1000) ?: lastPositionSeconds,
-        )
+        PlaybackTracker.onPlaybackFinished()
         // Also the last chance to close out the track that was playing — a
         // swipe-away or stop never fires STATE_ENDED, so the session would
         // otherwise end with an un-scrobbled song. This must not ride on the
@@ -8414,6 +8572,10 @@ class PlaybackService : MediaLibraryService() {
         // order, then it is closed.
         progressWork.shutdown()
         runCatching { progressWork.awaitTermination(2, TimeUnit.SECONDS) }
+        // The restore point, last and synchronous: what was queued above has
+        // drained, so nothing older can land on top of this. Only the queue
+        // and its position — the rest of the teardown does not depend on it.
+        player?.let(::saveQueueSnapshotNow)
         ListeningRecorder.onStopped()
         // And the taste file: a backgrounded app writes on ProcessLifecycle
         // ON_STOP, but a service stopped while still in the foreground has no
@@ -10317,6 +10479,13 @@ class PlaybackService : MediaLibraryService() {
 
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
+
+        /**
+         * How often the playhead is written back while playing. The restore
+         * point only has to be roughly where the listener was; pause, track
+         * change and service stop write it exactly.
+         */
+        const val PLAYBACK_STATE_SAVE_MS = 30_000L
 
         /** Bounds on a track's normalization gain, in millibels: the range the platform LoudnessEnhancer this replaced accepted. */
         const val MIN_LOUDNESS_GAIN_MB = -1500

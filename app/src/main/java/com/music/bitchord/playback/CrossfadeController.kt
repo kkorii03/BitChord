@@ -26,9 +26,11 @@ import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.planTransition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -275,6 +277,20 @@ class CrossfadeController(
     /** Which player this class's own listener is currently attached to. */
     private var listeningTo: ExoPlayer? = null
     private var tickerJob: Job? = null
+
+    /**
+     * Wakes the tick early, when an event has made the next step due now.
+     *
+     * Conflated: a burst of callbacks is one wake, and a wake that arrives
+     * while a tick is running is kept for the next wait, which is exactly the
+     * "run again immediately" the events ask for. Null phase decisions are
+     * never made from the channel; it only shortens a wait.
+     */
+    private val tickerWake = Channel<Unit>(Channel.CONFLATED)
+
+    private fun wakeTicker() {
+        tickerWake.trySend(Unit)
+    }
 
     /** Length of the transition in flight, in ms. Fixed when it begins. */
     private var fadeMs = 0L
@@ -633,6 +649,11 @@ class CrossfadeController(
             // crossfade should survive. Nothing this class does registers here
             // any more: the handoff is a role swap, not a seek.
             if (reason == Player.DISCONTINUITY_REASON_SEEK) bail()
+            wakeTicker()
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            wakeTicker()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -646,9 +667,13 @@ class CrossfadeController(
                 Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> bail()
                 Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> bail()
             }
+            wakeTicker()
         }
 
-        override fun onPlayerError(error: PlaybackException) = bail()
+        override fun onPlayerError(error: PlaybackException) {
+            bail()
+            wakeTicker()
+        }
 
         // The session reached the end of a track [holdAtEnd] is holding, before
         // the handoff took it off that track. Only ever a late handoff, or a
@@ -656,6 +681,7 @@ class CrossfadeController(
         // either way the hold must not leave the listener paused at the end of
         // a song.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            wakeTicker()
             if (playWhenReady || reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) return
             val held = heldAtEnd ?: return
             if (held !== listeningTo) return
@@ -694,17 +720,34 @@ class CrossfadeController(
         tickerJob = scope.launch {
             while (isActive) {
                 tick()
-                delay(
-                    when (phase) {
-                        Phase.IDLE -> IDLE_STEP_MS
-                        Phase.ARMING -> ARM_STEP_MS
-                        Phase.FADING -> FADE_STEP_MS
-                        Phase.SLEEP_FADE -> FADE_STEP_MS
-                        Phase.BAILING -> BAIL_STEP_MS
-                    },
-                )
+                val step = tickStepMs()
+                if (step > 0L) {
+                    // The normal cadence, cut short by anything that made the
+                    // next step due sooner.
+                    withTimeoutOrNull(step) { tickerWake.receive() }
+                } else {
+                    // Nothing to advance: idle, and the player is not making
+                    // sound. Waking four times a second to do nothing is the
+                    // battery this loop used to spend through a whole pause,
+                    // so it waits for the event that changes that instead.
+                    tickerWake.receive()
+                }
             }
         }
+    }
+
+    /**
+     * How long to wait before the next tick, or 0 to wait for an event.
+     *
+     * Only the idle-and-silent case is parked: an armed or running transition
+     * still has to step at its own rate whatever the player is doing.
+     */
+    private fun tickStepMs(): Long = when (phase) {
+        Phase.IDLE -> if (active().isPlaying) IDLE_STEP_MS else 0L
+        Phase.ARMING -> ARM_STEP_MS
+        Phase.FADING -> FADE_STEP_MS
+        Phase.SLEEP_FADE -> FADE_STEP_MS
+        Phase.BAILING -> BAIL_STEP_MS
     }
 
     fun release() {
@@ -740,6 +783,7 @@ class CrossfadeController(
      */
     fun onSkipRequested() {
         if (phase != Phase.IDLE) bail()
+        wakeTicker()
     }
 
     // ---- Ticker -------------------------------------------------------------
@@ -1760,6 +1804,7 @@ class CrossfadeController(
         handedOff = false
         Log.d(TAG, "sleep timer due: fading out over ${fade}ms instead of transitioning")
         phase = Phase.SLEEP_FADE
+        wakeTicker()
     }
 
     /**

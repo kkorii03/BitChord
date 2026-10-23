@@ -66,6 +66,16 @@ internal object YouTubeCoverResolver {
     /** One in-flight lookup per song, so duplicate enrich callers share it. */
     private val inFlight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Match?>>()
 
+    /**
+     * The app's whole cover-lookup budget, not one per [enrich] call.
+     *
+     * A pass that made its own had the effect of multiplying the ceiling by
+     * however many shelves were filling at once — every one of them thought it
+     * was the only caller. One shared gate is what actually holds the history
+     * and search pages to four requests between them.
+     */
+    private val gate = Semaphore(MAX_CONCURRENT)
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
@@ -214,7 +224,6 @@ internal object YouTubeCoverResolver {
      */
     suspend fun enrich(songs: List<Song>, limit: Int = 30): List<Song> {
         if (songs.isEmpty() || limit <= 0) return songs
-        val gate = Semaphore(MAX_CONCURRENT)
         return coroutineScope {
             songs.mapIndexed { index, song ->
                 if (index >= limit || !isVideoThumbnail(song.thumbnailUrl)) {

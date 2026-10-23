@@ -56,6 +56,15 @@ object ListeningRecorder {
     private var samplesSinceFlush = 0
 
     /**
+     * The track whose playthrough a pause interrupted.
+     *
+     * Set by [onPaused] and cleared the moment any sample arrives: the next
+     * tick for that same id must re-anchor the clock without throwing away what
+     * was already played. Any other id is a new track and starts from zero.
+     */
+    private var pausedId: String? = null
+
+    /**
      * The playthrough private mode interrupted.
      *
      * Set while private listening is on and cleared only when a different
@@ -106,6 +115,7 @@ object ListeningRecorder {
                 // private. Flush it now, then stop the clock so the gap across
                 // the switch is not credited to either side.
                 currentId = null
+                pausedId = null
                 playedThisTrack = 0L
                 playCounted = false
                 completionCounted = false
@@ -121,13 +131,19 @@ object ListeningRecorder {
         val now = System.currentTimeMillis()
         if (song.videoId != currentId) {
             // A new track anchors the clock and contributes nothing yet — see
-            // the class note on undercounting.
+            // the class note on undercounting. The one exception is the track
+            // a pause interrupted, which carries the time it already had: the
+            // pause is a gap, not a different playthrough.
+            val resumed = song.videoId == pausedId
+            pausedId = null
             if (startReportedId != song.videoId) startReportedId = null
             currentId = song.videoId
             lastSampleAt = now
-            playedThisTrack = 0L
-            playCounted = false
-            completionCounted = false
+            if (!resumed) {
+                playedThisTrack = 0L
+                playCounted = false
+                completionCounted = false
+            }
             return
         }
         val step = (now - lastSampleAt).coerceIn(0L, MAX_STEP_MS)
@@ -183,20 +199,44 @@ object ListeningRecorder {
     }
 
     /**
-     * Playback stopped, paused, or moved on.
+     * Playback stopped or moved on to something else.
      *
      * Forgetting the current track is what makes the *next* tick anchor rather
-     * than contribute: without it, a player paused for an afternoon would hand
-     * [MAX_STEP_MS] of listening to whatever was on screen when it resumed.
+     * than contribute: without it, a player left alone for an afternoon would
+     * hand [MAX_STEP_MS] of listening to whatever was on screen when it came
+     * back. This is the full reset, for a track that is not coming back — see
+     * [onPaused] for the one that is.
      */
     @Synchronized
     fun onStopped() {
         currentId = null
+        pausedId = null
         playedThisTrack = 0L
         playCounted = false
         completionCounted = false
         samplesSinceFlush = 0
         // A pause or a stop is the one moment the tail must reach disk.
+        ListeningStats.flush(force = true)
+    }
+
+    /**
+     * The player paused on the track that is still current.
+     *
+     * Only the clock stops. The minutes and the play flag accumulated so far
+     * belong to this playthrough and survive: pausing halfway through a song
+     * and carrying on is one listen, not two short ones that never reach the
+     * play threshold. What must not survive is the gap itself, so the next
+     * tick re-anchors instead of crediting the whole pause to
+     * [MAX_STEP_MS]'s cap.
+     */
+    @Synchronized
+    fun onPaused() {
+        if (currentId == null) return
+        pausedId = currentId
+        currentId = null
+        lastSampleAt = 0L
+        samplesSinceFlush = 0
+        // A pause is still the moment the tail must reach disk.
         ListeningStats.flush(force = true)
     }
 
@@ -211,6 +251,7 @@ object ListeningRecorder {
     fun onPrivateModeEnabled() {
         if (currentId == null) return
         currentId = null
+        pausedId = null
         playedThisTrack = 0L
         playCounted = false
         completionCounted = false

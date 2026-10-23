@@ -1807,7 +1807,9 @@ private fun BitChordApp(
             showNowPlaying &&
             menuFromPlayer &&
             songActions?.videoId == song.videoId
-        if (song == null || partyState.inParty || !sheetIsOpenForThisTrack) {
+        // A file on the device has no YouTube counterpart to switch to, so
+        // there is nothing to look up and nothing to offer.
+        if (song == null || song.localUri != null || partyState.inParty || !sheetIsOpenForThisTrack) {
             hasAlternateVersion = false
             return@LaunchedEffect
         }
@@ -2693,15 +2695,28 @@ private fun BitChordApp(
     // is actually up — when the sheet is raised, so playing an album from the
     // mini player still costs nothing.
     val playerShowing = showNowPlaying
+    // One answer per track for the life of this screen. Raising the player
+    // again used to ask the watch queue the same question, and the answer is
+    // the same recording's album and artist page either way.
+    val trackLinksCache = remember { mutableMapOf<String, Song?>() }
     var links by remember { mutableStateOf<Song?>(null) }
     LaunchedEffect(player.song?.videoId, playerShowing) {
         links = null
         linksLoading = false
         if (!playerShowing) return@LaunchedEffect
         val current = player.song ?: return@LaunchedEffect
+        // A file on the device is not in YouTube's catalogue, so the lookup
+        // cannot answer and must not be made.
+        if (current.localUri != null) return@LaunchedEffect
         if (current.albumId != null && current.artistId != null) return@LaunchedEffect
+        if (trackLinksCache.containsKey(current.videoId)) {
+            links = trackLinksCache[current.videoId]
+            return@LaunchedEffect
+        }
         linksLoading = true
-        links = YtMusicRepository.trackLinks(current.videoId).getOrNull()
+        val found = YtMusicRepository.trackLinks(current.videoId).getOrNull()
+        trackLinksCache[current.videoId] = found
+        links = found
         linksLoading = false
     }
     val playerSong = player.song?.let { current ->

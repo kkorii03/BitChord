@@ -117,6 +117,34 @@ class PartyPersonalQueueStashTest {
     }
 
     @Test
+    fun testStashIndexCorrectsForDeviceFilesRemovedBeforeIt() {
+        val songs = listOf(
+            Song(videoId = "a", title = "A", artist = "Art", thumbnailUrl = null),
+            Song(videoId = "content://local/1", title = "L1", artist = "Art", thumbnailUrl = null),
+            Song(videoId = "b", title = "B", artist = "Art", thumbnailUrl = null),
+            Song(videoId = "file://local/2", title = "L2", artist = "Art", thumbnailUrl = null),
+            Song(videoId = "c", title = "C", artist = "Art", thumbnailUrl = null),
+        )
+
+        // Device files are dropped on the way into the stash, so the player's
+        // index no longer names the same row: two removed before "c".
+        assertEquals(2, PartyPersonalQueueStash.stashIndexOf(songs, 4))
+        assertEquals(1, PartyPersonalQueueStash.stashIndexOf(songs, 2))
+        assertEquals(0, PartyPersonalQueueStash.stashIndexOf(songs, 0))
+    }
+
+    @Test
+    fun testStashIndexIsClampedToTheKeptRows() {
+        val songs = listOf(
+            Song(videoId = "content://local/1", title = "L1", artist = "Art", thumbnailUrl = null),
+            Song(videoId = "a", title = "A", artist = "Art", thumbnailUrl = null),
+        )
+
+        assertEquals(0, PartyPersonalQueueStash.stashIndexOf(songs, 0))
+        assertEquals(0, PartyPersonalQueueStash.stashIndexOf(songs, 99))
+    }
+
+    @Test
     fun testJoinerPersonalQueueStashedAndRestoredOnExit() {
         val joinerPersonalQueue = listOf(
             Song(videoId = "personal-1", title = "P1", artist = "Artist", thumbnailUrl = null),

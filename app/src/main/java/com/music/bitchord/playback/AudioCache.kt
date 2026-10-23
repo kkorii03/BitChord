@@ -1449,9 +1449,13 @@ object AudioCache {
                         }
                     }
                 }
+                // Metered, only the immediate next track's URL is worth
+                // minting: it is the one a skip most likely lands on, and every
+                // resolve past it is a request the listener pays for.
+                val urlLookahead = if (metered) 1 else QUEUE_LOOKAHEAD + 1
                 launch {
                     delay(PREFETCH_DELAY_MS)
-                    for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
+                    for (id in videoIds.take(urlLookahead).let { if (cacheBytes) it.drop(1) else it }) {
                         // A track already pinned to another source has no use
                         // for a YouTube URL: nothing will ask for one, and
                         // minting it spends a client walk to fill a cache entry

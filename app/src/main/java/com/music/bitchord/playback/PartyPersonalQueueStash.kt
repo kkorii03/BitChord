@@ -51,11 +51,10 @@ object PartyPersonalQueueStash {
             }
             return false
         }
-        val songs = (0 until player.mediaItemCount).mapNotNull { idx ->
-            player.getMediaItemAt(idx).toSong().takeUnless { it.isDeviceFile() }
-        }
+        val all = (0 until player.mediaItemCount).map { idx -> player.getMediaItemAt(idx).toSong() }
+        val songs = all.filterNot { it.isDeviceFile() }
         if (songs.isEmpty()) return false
-        val safeIndex = player.currentMediaItemIndex.coerceIn(0, songs.size - 1)
+        val safeIndex = stashIndexOf(all, player.currentMediaItemIndex)
         stash(
             songs = songs,
             index = safeIndex,
@@ -191,6 +190,24 @@ object PartyPersonalQueueStash {
 
     private fun Song.isDeviceFile(): Boolean =
         videoId.startsWith("content://") || videoId.startsWith("file://")
+
+    /**
+     * Where the stash's own entry zero lands in the filtered list.
+     *
+     * Device files are dropped on the way in, so the player's index no longer
+     * names the same row: every removed file *before* it shifts it down by
+     * one. Left uncorrected, a listener on the row after a local track came
+     * back to a different song — and one far enough down was clamped to the
+     * last entry instead of failing loudly.
+     */
+    internal fun stashIndexOf(songs: List<Song>, currentIndex: Int): Int {
+        if (songs.isEmpty()) return 0
+        val safeCurrent = currentIndex.coerceIn(0, songs.size - 1)
+        val removedBefore = (0 until safeCurrent).count { songs[it].isDeviceFile() }
+        val kept = songs.size - songs.count { it.isDeviceFile() }
+        if (kept <= 0) return 0
+        return (safeCurrent - removedBefore).coerceIn(0, kept - 1)
+    }
 
     /** 2: keeps the music-video type and refuses stashes written without it. */
     private const val SNAPSHOT_VERSION = 2

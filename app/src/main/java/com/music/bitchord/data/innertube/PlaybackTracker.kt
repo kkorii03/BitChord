@@ -62,6 +62,15 @@ object PlaybackTracker {
     private const val OPEN_RETRY_DELAY_MS = 2_000L
 
     /**
+     * The most one sample may add to the watched total.
+     *
+     * The sampler ticks every five seconds; this is a shade over that, so a
+     * late tick is still counted in full while a seek forward — and the gap
+     * either side of a pause — cannot be mistaken for listening.
+     */
+    private const val MAX_STEP_SECONDS = 8L
+
+    /**
      * A videoId, as opposed to anything else that can be a media id.
      *
      * Local files carry their `content://` URI as an id, and a module source
@@ -77,12 +86,41 @@ object PlaybackTracker {
         val cpn: String,
         val tracking: Innertube.PlaybackTracking,
     ) {
+        /** How much of the track has actually been reported to Google. */
         var reportedSeconds = 0L
 
         /** Set before the network call, so a slow flush can't stack up behind itself. */
         var flushingTo = 0L
 
         var atrSent = false
+
+        /**
+         * Seconds of this track that were really heard.
+         *
+         * The sampler's position is where the playhead is, not how much was
+         * listened to: a jump forward to the last chorus used to report the
+         * whole gap as watched time, so one tap on the seek bar could turn a
+         * thirty-second listen into a three-minute one. Each sample adds only
+         * the distance the playhead actually moved, and only up to
+         * [MAX_STEP_SECONDS] of it, which also drops the gap either side of a
+         * pause. Seeking backwards adds nothing; replaying a section does.
+         */
+        @Volatile
+        var watchedSeconds = 0L
+
+        /** The position the previous sample saw, or -1 before the first one. */
+        @Volatile
+        var lastPositionSeconds = -1L
+
+        fun advance(positionSeconds: Long) {
+            watchedSeconds = advanceWatchedSeconds(
+                watched = watchedSeconds,
+                fromPosition = lastPositionSeconds,
+                toPosition = positionSeconds,
+                maxStepSeconds = MAX_STEP_SECONDS,
+            )
+            lastPositionSeconds = positionSeconds
+        }
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -165,7 +203,7 @@ object PlaybackTracker {
      * watched time is flushed before it is dropped, so a track skipped at the
      * two-minute mark is reported as two minutes rather than lost.
      */
-    fun onTrackChanged(positionSeconds: Long) {
+    fun onTrackChanged() {
         // A real transition ends the suppressed playthrough, whatever private
         // listening does next.
         suppressedVideoId = null
@@ -179,7 +217,7 @@ object PlaybackTracker {
         val closing = session ?: return
         session = null
         scope.launch(TrackLog.about(closing.videoId)) {
-            runCatching { flush(closing, positionSeconds, final = true) }
+            runCatching { flush(closing, final = true) }
                 .onFailure {
                     TrackLog.w(TAG, "final watchtime ping failed for ${closing.videoId}: ${it.message}")
                 }
@@ -199,6 +237,7 @@ object PlaybackTracker {
         }
         val current = session ?: return
         if (current.videoId != videoId) return
+        current.advance(positionSeconds)
         if (!current.atrSent && positionSeconds >= current.tracking.atrAfterSeconds) {
             current.atrSent = true
             val atrUrl = current.tracking.atrUrl
@@ -220,9 +259,9 @@ object PlaybackTracker {
         // five seconds and a ping takes longer than that on a bad connection,
         // so gating on a value only written *after* the request returned fired
         // the same report several times over.
-        if (positionSeconds - maxOf(current.reportedSeconds, current.flushingTo) < REPORT_INTERVAL_SECONDS) return
+        if (current.watchedSeconds - maxOf(current.reportedSeconds, current.flushingTo) < REPORT_INTERVAL_SECONDS) return
         scope.launch(TrackLog.about(videoId)) {
-            runCatching { flush(current, positionSeconds) }
+            runCatching { flush(current) }
                 .onFailure { TrackLog.w(TAG, "watchtime ping failed for $videoId: ${it.message}") }
         }
     }
@@ -236,7 +275,7 @@ object PlaybackTracker {
      * says it finished. [withContext] `NonCancellable` because the usual caller
      * is a teardown that is about to cancel everything in sight.
      */
-    fun onPlaybackFinished(positionSeconds: Long) {
+    fun onPlaybackFinished() {
         if (!trackingAllowed()) {
             session = null
             opening = null
@@ -246,7 +285,7 @@ object PlaybackTracker {
         session = null
         scope.launch(TrackLog.about(closing.videoId)) {
             withContext(NonCancellable) {
-                runCatching { flush(closing, positionSeconds, final = true) }
+                runCatching { flush(closing, final = true) }
                     .onFailure {
                         TrackLog.w(TAG, "closing watchtime ping failed for ${closing.videoId}: ${it.message}")
                     }
@@ -313,34 +352,68 @@ object PlaybackTracker {
             tracking.clientName,
             tracking.clientVersion,
         )
+        // The track may have moved on while the request was out. Publishing
+        // this session then would overwrite the current one with a play that
+        // is no longer the one being listened to — and leave the *new* track
+        // with no session at all, because its own transition already cleared
+        // `opening`. `opening` is the claim on being the current track.
+        if (opening != videoId) {
+            TrackLog.d(TAG, "history entry for $videoId was superseded while opening")
+            return@withLock true
+        }
         session = fresh
         _registeredPlays.value++
         TrackLog.d(TAG, "history entry created for $videoId (HTTP $status)")
         true
     }
 
-    private suspend fun flush(target: Session, positionSeconds: Long, final: Boolean = false) {
+    private suspend fun flush(target: Session, final: Boolean = false) {
         val url = target.tracking.watchtimeUrl ?: return
-        // A final report is worth sending even at a position already covered:
-        // it is the `final=1` that matters, not the number.
-        if (!final && positionSeconds <= target.reportedSeconds) return
-        target.flushingTo = maxOf(target.flushingTo, positionSeconds)
+        // What was heard, not where the playhead sits: see
+        // [Session.watchedSeconds]. A final report is worth sending even at a
+        // total already covered — it is the `final=1` that matters, not the
+        // number.
+        val watched = target.watchedSeconds
+        if (!final && watched <= target.reportedSeconds) return
+        target.flushingTo = maxOf(target.flushingTo, watched)
         lock.withLock {
             val status = Innertube.pingWatchtime(
                 url,
                 target.cpn,
-                positionSeconds,
+                watched,
                 final,
                 target.tracking.origin,
                 target.tracking.clientName,
                 target.tracking.clientVersion,
             )
-            target.reportedSeconds = maxOf(target.reportedSeconds, positionSeconds)
+            target.reportedSeconds = maxOf(target.reportedSeconds, watched)
             TrackLog.d(
                 TAG,
-                "watchtime ${positionSeconds}s reported for ${target.videoId}" +
+                "watchtime ${watched}s reported for ${target.videoId}" +
                     "${if (final) " (final)" else ""} (HTTP $status)",
             )
         }
     }
 }
+
+/**
+ * [watched] after the playhead moved from [fromPosition] to [toPosition].
+ *
+ * Only forward movement counts, and no single step counts for more than
+ * [maxStepSeconds]: a seek forward and the gap either side of a pause are both
+ * one long jump, and neither was listening. Negative [fromPosition] means this
+ * is the first sample for the play, which only anchors the clock.
+ *
+ * Pure so the rule can be tested without a player or a network.
+ */
+internal fun advanceWatchedSeconds(
+    watched: Long,
+    fromPosition: Long,
+    toPosition: Long,
+    maxStepSeconds: Long,
+): Long =
+    if (fromPosition >= 0L && toPosition > fromPosition) {
+        watched + (toPosition - fromPosition).coerceAtMost(maxStepSeconds)
+    } else {
+        watched
+    }

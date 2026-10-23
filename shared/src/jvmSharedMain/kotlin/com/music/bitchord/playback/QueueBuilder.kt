@@ -35,11 +35,25 @@ object QueueBuilder {
     /**
      * The subset of [candidates] worth appending after [existing]: nothing
      * already queued, nothing repeated, at most [limit] tracks.
+     *
+     * [seedArtist] is the artist the station was started for. Left out, the
+     * last entry of [existing] stands in, which is only right when the list
+     * *is* the station build. AutoPlay passes the queue plus the session's own
+     * history, so that last entry is usually the autoplay track that played
+     * just before the seed — and the seed's own artist then got the ordinary
+     * two-track cap instead of the four a station is seeded on.
      */
-    fun extend(existing: List<Song>, candidates: List<Song>, limit: Int): List<Song> {
+    fun extend(
+        existing: List<Song>,
+        candidates: List<Song>,
+        limit: Int,
+        seedArtist: String? = null,
+    ): List<Song> {
         val taken = existing.toMutableList()
         val perArtist = mutableMapOf<String, Int>()
-        val seedArtists = existing.lastOrNull()?.artist?.let(::artistSet).orEmpty()
+        val seedArtists = (seedArtist?.takeIf { it.isNotBlank() } ?: existing.lastOrNull()?.artist)
+            ?.let(::artistSet)
+            .orEmpty()
         val out = mutableListOf<Song>()
 
         // A mix pairs all but every track with its own music-video upload —

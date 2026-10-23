@@ -2,6 +2,12 @@ package com.music.bitchord.data
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.innertube.MusicGateFallback
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -38,10 +44,32 @@ internal class StoredVerdictCache(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Where the debounced write runs.
+     *
+     * Every put used to rewrite the whole map — up to a few thousand entries of
+     * JSON — on whatever thread asked. A shelf resolving its rows does that
+     * several times in a second, so one write is enough and the rest were the
+     * same bytes again. [schedulePersist] keeps a single pending job instead:
+     * the state it writes is the map as it stands when the job runs, so the
+     * newest put is always the one on disk.
+     */
+    private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** The one coalesced write waiting to run, if any. */
+    private var pendingWrite: Job? = null
+
     /** Reads the saved map once per store; null keeps the cache memory-only. */
     @Synchronized
     fun ensureLoaded(store: MusicGateFallback.Store?) {
         if (store == null || store === loadedStore) return
+        // Nothing may be lost by moving to another store: whatever is still
+        // waiting reaches the old one first.
+        if (loadedStore != null) {
+            pendingWrite?.cancel()
+            pendingWrite = null
+            persist()
+        }
         loadedStore = store
         entries.clear()
         val raw = runCatching { store.getString(storeKey) }.getOrNull() ?: return
@@ -70,7 +98,7 @@ internal class StoredVerdictCache(
     @Synchronized
     fun put(key: String, value: String, at: Long = System.currentTimeMillis()) {
         entries[key] = Entry(value, at)
-        persist()
+        schedulePersist()
     }
 
     @Synchronized
@@ -79,14 +107,37 @@ internal class StoredVerdictCache(
     @Synchronized
     fun clear() {
         entries.clear()
+        pendingWrite?.cancel()
+        pendingWrite = null
         persist()
     }
 
     /** Tests start from a blank cache and a fresh store. */
     @Synchronized
     fun resetForTest() {
+        pendingWrite?.cancel()
+        pendingWrite = null
+        // The last put has to reach the store before the test forgets it.
+        persist()
         entries.clear()
         loadedStore = null
+    }
+
+    /**
+     * One pending write, covering every put until it runs.
+     *
+     * A put landing while the job is waiting changes nothing: the job reads the
+     * map when it finally runs, so it writes the newest state either way.
+     */
+    private fun schedulePersist() {
+        if (pendingWrite?.isActive == true) return
+        pendingWrite = writer.launch {
+            delay(PERSIST_DELAY_MS)
+            synchronized(this@StoredVerdictCache) {
+                persist()
+                pendingWrite = null
+            }
+        }
     }
 
     @Synchronized
@@ -109,5 +160,12 @@ internal class StoredVerdictCache(
 
     private companion object {
         const val TAG = "BitChord"
+
+        /**
+         * How long the coalesced write waits. Long enough that one shelf's
+         * worth of puts is a single write, short enough that the answer is on
+         * disk before the next launch.
+         */
+        const val PERSIST_DELAY_MS = 1_500L
     }
 }

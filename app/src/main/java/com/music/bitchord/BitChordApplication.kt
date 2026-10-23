@@ -275,7 +275,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         if (AppSettings.consumeVersionUpdate(BuildConfig.VERSION_CODE)) {
             SingletonImageLoader.get(this).let { loader ->
                 loader.memoryCache?.clear()
-                loader.diskCache?.clear()
+                // Deleting the image cache directory is file I/O for however
+                // many thousands of files the old build left, and this is
+                // onCreate: on the main thread it was part of the first frame
+                // after an update. Nothing reads the cache before the first
+                // image request, so it can finish in the background.
+                CoroutineScope(Dispatchers.IO).launch { loader.diskCache?.clear() }
             }
         }
         // Initialize LastFM with saved settings if available
