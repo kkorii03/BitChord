@@ -451,6 +451,23 @@ object TrackMatcher {
     }
 
     /**
+     * Whether both rows carry the same recording title, with packaging and
+     * artist credits set aside.
+     *
+     * Used by the alternate-version rescue: a different upload may be the same
+     * song only if its title is genuinely the same one, not a lyric video, a
+     * remix or a differently named stage performance that happens to share a
+     * word.
+     */
+    fun sameTitle(a: Song, b: Song): Boolean {
+        val wanted = parseTitle(a.title, a.artist)
+        val got = parseTitle(b.title, b.artist)
+        return wanted.core.isNotEmpty() &&
+            wanted.core == got.core &&
+            wanted.versions == got.versions
+    }
+
+    /**
      * Whether [candidate] states a runtime, and one within [seconds] of
      * [target]'s.
      *

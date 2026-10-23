@@ -159,4 +159,18 @@ object Http {
      * makes when the proxy route is found dead.
      */
     internal val directClient: OkHttpClient = buildClient(withProxy = false)
+
+    /**
+     * The same stack again, with every YouTube request pinned to the proxy.
+     *
+     * Used only for a stream whose player request was made through the proxy:
+     * googlevideo ties its URLs to that address, so the media bytes — and the
+     * probe that clears them — have to leave the same way. Its own connection
+     * pool is the point: a direct socket to googlevideo must never be reused
+     * for a request that has to arrive from somewhere else.
+     */
+    val proxyMediaClient: OkHttpClient = buildClient(withProxy = false).newBuilder()
+        .proxySelector(com.music.bitchord.data.net.YouTubeProxy.forceYouTubeProxySelector)
+        .proxyAuthenticator(com.music.bitchord.data.net.YouTubeProxy.proxyAuthenticator)
+        .build()
 }

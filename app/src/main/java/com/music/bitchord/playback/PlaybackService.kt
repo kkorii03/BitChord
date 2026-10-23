@@ -44,7 +44,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -1861,7 +1860,7 @@ class PlaybackService : MediaLibraryService() {
             // Innermost, so it chunks the real googlevideo URL the resolver
             // above has already substituted in — see [ChunkedDataSource] for
             // why an open-ended read of one is worth avoiding.
-            ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
+            ChunkedDataSource.Factory(ProxyAwareDataSourceFactory(), STREAM_CHUNK_BYTES),
         ) { dataSpec ->
             // Wrapped rather than folded into the resolver above so the record
             // is made in one place for every branch of it, and made from what

@@ -5,6 +5,10 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.net.LogUrl
+import com.music.bitchord.data.net.ProxyFailure
+import com.music.bitchord.data.net.ProxyHealthMonitor
+import com.music.bitchord.data.net.ProxyPlayback
+import com.music.bitchord.data.net.ProxyPlaybackPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -31,6 +35,7 @@ import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException
 import org.schabi.newpipe.extractor.exceptions.PaidContentException
 import org.schabi.newpipe.extractor.exceptions.PrivateContentException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.exceptions.SoundCloudGoPlusContentException
 import org.schabi.newpipe.extractor.exceptions.UnsupportedContentInCountryException
 import org.schabi.newpipe.extractor.exceptions.YoutubeMusicPremiumContentException
@@ -38,6 +43,8 @@ import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerMana
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import java.io.IOException
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -263,9 +270,17 @@ object StreamResolver {
     suspend fun resolve(videoId: String): String {
         init
 
-        recent[videoId]
-            ?.takeIf { MonotonicClock.nowMs() - it.at < URL_TTL_MS }
-            ?.let { return it.url }
+        val cached = recent[videoId]
+        if (cached != null && MonotonicClock.nowMs() - cached.at < URL_TTL_MS) {
+            // A URL minted through the proxy is only playable while the proxy
+            // route is still usable. If the proxy was switched off, past its
+            // health window, or the scope changed back, forget it and let the
+            // ordinary path resolve a fresh direct URL instead.
+            if (!ProxyPlayback.isProxiedUrl(cached.url) || ProxyPlayback.canResolveViaProxy()) {
+                return cached.url
+            }
+            recent.remove(videoId)
+        }
 
         // A verdict, not a failure: asking again cannot change the answer, so
         // every caller after the first is told so without a request being sent.
@@ -456,6 +471,23 @@ object StreamResolver {
 
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
+        // A track that has already played through the proxy is known to be
+        // refused here, so asking the direct clients again only spends the
+        // eleven seconds this memory exists to save. A proxy miss falls
+        // through to the ordinary ladder rather than failing the track.
+        var proxyAttempted = false
+        if (ProxyPlayback.canResolveViaProxy() && ProxyPlayback.isRemembered(videoId)) {
+            proxyAttempted = true
+            TrackLog.d(TAG, "proxy-playback: $videoId remembered")
+            try {
+                return resolveViaProxy(videoId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // resolveViaProxy has already logged the reason.
+            }
+        }
+
         // In Korea without Premium the clients InnerTubeX leads with are the
         // refused ones; the anonymous IOS/ANDROID request is what plays there,
         // so it goes first once the gate is known, and last for everyone else.
@@ -482,6 +514,11 @@ object StreamResolver {
         var itxWalked = false
         var directTried = false
 
+        // The direct path's answer, in the one form the proxy retry cares
+        // about: a client said UNPLAYABLE/LOGIN_REQUIRED rather than merely
+        // being slow. Read by the failure handler below.
+        var directUnplayable = false
+
         suspend fun tryDirect(): Stream? {
             if (directTried) return null
             directTried = true
@@ -493,7 +530,9 @@ object StreamResolver {
                 return null
             }
             val found = timed("$videoId direct") {
-                directStream(videoId) { client -> served(ResolutionOrder.DIRECT, "direct $client") }
+                directStream(videoId, onUnplayable = { directUnplayable = true }) { client ->
+                    served(ResolutionOrder.DIRECT, "direct $client")
+                }
             }
             if (found == null) {
                 order.noteDirectRefused()
@@ -565,6 +604,36 @@ object StreamResolver {
                     "${e.javaClass.name}: ${e.message}",
                 e,
             )
+            // A direct refusal that reads like the Korean-IP gate gets exactly
+            // one more walk, with this single player request pinned to the
+            // proxy. The player response's stream URL is then bound to the
+            // proxy's address, which is why [ProxyPlayback] remembers the URL
+            // and the media fetch follows it there.
+            if (!proxyAttempted &&
+                ProxyPlayback.canResolveViaProxy() &&
+                ProxyPlaybackPolicy.isRegionRefusal(
+                    signInConfirmNotBot = e.isSignInConfirmNotBot(),
+                    directUnplayable = directUnplayable,
+                )
+            ) {
+                proxyAttempted = true
+                TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy")
+                try {
+                    return resolveViaProxy(videoId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (proxyFailure: Exception) {
+                    // A dead proxy is a network fault, not a verdict about the
+                    // track: undo the health window and let the usual retry
+                    // path try the direct route again once it has cleared.
+                    if (ProxyFailure.isProxyDown(proxyFailure)) throw proxyFailure
+                    val reason = permanentReason(proxyFailure)
+                        ?: "이 국가에서는 이용할 수 없는 트랙입니다"
+                    rememberUnplayable(videoId, reason)
+                    TrackLog.w(TAG, "$videoId is not playable: $reason; not asking again for 10 minutes")
+                    throw PermanentlyUnplayableException(reason)
+                }
+            }
             // Recorded before it is rethrown, so the retries stacked above this
             // — ExoPlayer's, the service's, read-ahead's — are answered from
             // memory instead of each one asking InnerTubeX and extracting three
@@ -590,6 +659,59 @@ object StreamResolver {
     }
 
     /**
+     * One more walk for [videoId], with the player ask and the media probe
+     * pinned to the proxy.
+     *
+     * The caller has already established that the direct route was refused
+     * in the Korean-IP pattern, and that a proxy is configured, usable and not
+     * in its unreachable window. This method makes no such decision again: a
+     * failure here is either handed back as a network fault or recorded as a
+     * verdict by the caller.
+     */
+    private suspend fun resolveViaProxy(videoId: String): Stream {
+        val start = MonotonicClock.nowMs()
+        val found = try {
+            timed("$videoId proxy InnerTubeX") {
+                innerTubeXStreamAllowingUploads(videoId, viaProxy = true)
+            } ?: timed("$videoId proxy direct") {
+                directStream(videoId, viaProxy = true)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "proxy-playback: $videoId failed: ${e.javaClass.simpleName}: ${e.message}")
+            if (ProxyFailure.isProxyDown(e)) {
+                ProxyHealthMonitor.recordUnreachable()
+            }
+            throw e
+        }
+        if (found == null) {
+            TrackLog.w(TAG, "proxy-playback: $videoId failed: no stream")
+            throw IOException("stream resolution found no stream for $videoId")
+        }
+        ProxyHealthMonitor.recordSuccess()
+        val first = ProxyPlayback.markResolved(videoId, found.url)
+        TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
+        if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
+        return found
+    }
+
+    /**
+     * Whether [this] is NewPipe's "sign in to prove you are not a bot" answer,
+     * however many layers wrapped it on the way out.
+     */
+    private fun Throwable.isSignInConfirmNotBot(): Boolean {
+        var current: Throwable? = this
+        val seen = Collections.newSetFromMap(IdentityHashMap<Throwable, Boolean>())
+        while (current != null) {
+            if (!seen.add(current)) return false
+            if (current is SignInConfirmNotBotException) return true
+            current = current.cause
+        }
+        return false
+    }
+
+    /**
      * A probed stream from [InnerTubeXResolver], or null to fall through to extraction.
      *
      * A client whose URL fails the probe is skipped and InnerTubeX asked again, up
@@ -603,6 +725,7 @@ object StreamResolver {
         escalateToUpload: Boolean = true,
         playRefusedUpload: Boolean = false,
         preferredManifest: String? = null,
+        viaProxy: Boolean = false,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         val skip = mutableSetOf<String>()
@@ -623,6 +746,7 @@ object StreamResolver {
                     requireM4a,
                     uploaded,
                     preferredClientId = preferredManifest,
+                    viaProxy = viaProxy,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -631,7 +755,7 @@ object StreamResolver {
                 null
             }
             if (found != null) {
-                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
+                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
                 if (verdict == Probe.OK) {
                     TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                     onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
@@ -648,7 +772,14 @@ object StreamResolver {
         }
         repeat(INNERTUBEX_ATTEMPTS) { attempt ->
             val found = try {
-                InnerTubeXResolver.extract(videoId, maxKbps, skip, requireM4a, uploaded)
+                InnerTubeXResolver.extract(
+                    videoId,
+                    maxKbps,
+                    skip,
+                    requireM4a,
+                    uploaded,
+                    viaProxy = viaProxy,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -665,7 +796,7 @@ object StreamResolver {
                 }
                 return null
             } ?: return null
-            val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
+            val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                 val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
@@ -685,7 +816,7 @@ object StreamResolver {
             if (escalateToUpload && attempt == 0 && !uploaded &&
                 verdict == Probe.REFUSED && !Innertube.cookie.isNullOrBlank()
             ) {
-                askAsUpload(videoId, maxKbps, requireM4a, onServed)?.let { return it }
+                askAsUpload(videoId, maxKbps, requireM4a, viaProxy, onServed)?.let { return it }
             }
         }
         return null
@@ -699,10 +830,12 @@ object StreamResolver {
     private fun directStream(
         videoId: String,
         maxKbps: Int = maxKbps(),
+        viaProxy: Boolean = false,
+        onUnplayable: () -> Unit = {},
         onServed: (client: String) -> Unit = {},
     ): Stream? {
-        for (found in DirectClientResolver.candidates(videoId, maxKbps)) {
-            if (probe(found.url) == Probe.OK) {
+        for (found in DirectClientResolver.candidates(videoId, maxKbps, viaProxy, onUnplayable)) {
+            if (probe(found.url, viaProxy) == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
                 onServed(found.client)
                 return Stream(found.url, found.kbps, found.mimeType)
@@ -717,11 +850,19 @@ object StreamResolver {
         videoId: String,
         maxKbps: Int,
         requireM4a: Boolean,
+        viaProxy: Boolean,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         TrackLog.d(TAG, "first stream for $videoId was refused; asking as an upload")
         val found = try {
-            InnerTubeXResolver.extract(videoId, maxKbps, emptySet(), requireM4a, uploaded = true)
+            InnerTubeXResolver.extract(
+                videoId,
+                maxKbps,
+                emptySet(),
+                requireM4a,
+                uploaded = true,
+                viaProxy = viaProxy,
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -732,7 +873,7 @@ object StreamResolver {
             TrackLog.w(TAG, "no stream for $videoId when asked as an upload")
             return null
         }
-        val verdict = timed("$videoId InnerTubeX ${found.profileId} upload probe") { probe(found.url) }
+        val verdict = timed("$videoId InnerTubeX ${found.profileId} upload probe") { probe(found.url, viaProxy) }
         if (verdict != Probe.OK) {
             TrackLog.w(TAG, "InnerTubeX ${found.profileId} as an upload for $videoId: $verdict")
             return null
@@ -756,6 +897,7 @@ object StreamResolver {
         maxKbps: Int = maxKbps(),
         requireM4a: Boolean = false,
         preferredManifest: String? = null,
+        viaProxy: Boolean = false,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         val known = UploadedTracks.contains(videoId)
@@ -767,6 +909,7 @@ object StreamResolver {
                 uploaded = true,
                 playRefusedUpload = true,
                 preferredManifest = preferredManifest,
+                viaProxy = viaProxy,
                 onServed = onServed,
             )
                 ?.let { return it }
@@ -778,6 +921,7 @@ object StreamResolver {
                 uploaded = false,
                 escalateToUpload = false,
                 preferredManifest = preferredManifest,
+                viaProxy = viaProxy,
                 onServed = onServed,
             )
         }
@@ -786,6 +930,7 @@ object StreamResolver {
             maxKbps,
             requireM4a,
             preferredManifest = preferredManifest,
+            viaProxy = viaProxy,
             onServed = onServed,
         )
     }
@@ -908,6 +1053,22 @@ object StreamResolver {
             // no client has an MP4 for will not have one in five minutes either,
             // while an MP4 that won't probe is a bad afternoon on Google's side.
             var offered = false
+            var proxyTried = false
+
+            // The same rule as playback: a download of a track whose player
+            // request is known to need the proxy starts there, and a direct
+            // walk that fails in the Korean-IP pattern gets one proxy attempt.
+            val canProxy = ProxyPlayback.canResolveViaProxy()
+            var proxyFallback: Stream? = null
+            if (canProxy && ProxyPlayback.isRemembered(videoId)) {
+                proxyTried = true
+                TrackLog.d(TAG, "proxy-playback: $videoId remembered")
+                val rememberedStream = proxyDownloadStream(videoId, maxKbps, requireM4a)
+                proxyFallback = rememberedStream
+                if (rememberedStream != null && rememberedStream.kbps <= maxKbps) {
+                    return@withContext rememberedStream
+                }
+            }
 
             // InnerTubeX hands back its best rung of the container asked for, and
             // has no ceiling of its own. Within the setting's ceiling it is the
@@ -925,7 +1086,7 @@ object StreamResolver {
             // destination can accept.
             val format = if (requireM4a) "MP4" else "Opus"
             if (found == null) TrackLog.w(TAG, "InnerTubeX found no usable $format for $videoId; extracting")
-            runCatching {
+            val extracted = runCatching {
                 newPipeStream(videoId) { candidates ->
                     // Capped the same way as the player-response selection, off
                     // the same setting, or the failsafe would quietly hand back
@@ -936,14 +1097,69 @@ object StreamResolver {
                     underCeiling(matching, maxKbps)
                         ?.also { offered = true }
                 }
-            }.onSuccess { return@withContext it }
-                .onFailure { TrackLog.w(TAG, "extraction found no $format for $videoId: ${it.message}") }
+            }
+            extracted.getOrNull()?.let { return@withContext it }
+            val extractionFailure = extracted.exceptionOrNull()
+            if (extractionFailure is CancellationException) throw extractionFailure
+            if (extractionFailure != null) {
+                TrackLog.w(TAG, "extraction found no $format for $videoId: ${extractionFailure.message}")
+                if (!proxyTried && canProxy &&
+                    ProxyPlaybackPolicy.isRegionRefusal(
+                        signInConfirmNotBot = extractionFailure.isSignInConfirmNotBot(),
+                        directUnplayable = false,
+                    )
+                ) {
+                    proxyTried = true
+                    TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy")
+                    proxyDownloadStream(videoId, maxKbps, requireM4a)
+                        ?.let { return@withContext it }
+                }
+            }
 
             // A rung above the ceiling beats no download at all; extraction does the same.
+            proxyFallback?.let { return@withContext it }
             found?.let { return@withContext it }
             if (offered) error("지금은 다운로드 가능한 사본에 연결할 수 없습니다 — 다시 시도하십시오")
             error("이 트랙에는 다운로드 가능한 오디오가 없습니다")
         }
+
+    /**
+     * A download's stream, asked through the proxy once.
+     *
+     * Only InnerTubeX is walked here: the extraction failsafe reads the watch
+     * page through the app's direct client, and a proxy walk of it would need a
+     * second extractor. The player request is the step the gate refuses, and
+     * InnerTubeX is what the successful measurement used.
+     */
+    private suspend fun proxyDownloadStream(
+        videoId: String,
+        maxKbps: Int,
+        requireM4a: Boolean,
+    ): Stream? {
+        val start = MonotonicClock.nowMs()
+        val found = try {
+            innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "proxy-playback: $videoId failed: ${e.javaClass.simpleName}: ${e.message}")
+            if (ProxyFailure.isProxyDown(e)) ProxyHealthMonitor.recordUnreachable()
+            return null
+        } ?: run {
+            TrackLog.w(TAG, "proxy-playback: $videoId failed: no stream")
+            return null
+        }
+        val wantedExtension = if (requireM4a) "m4a" else "webm"
+        if (found.downloadExtension != wantedExtension) {
+            TrackLog.w(TAG, "proxy-playback: $videoId failed: ${found.mimeType} is not $wantedExtension")
+            return null
+        }
+        ProxyHealthMonitor.recordSuccess()
+        val first = ProxyPlayback.markResolved(videoId, found.url)
+        TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
+        if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
+        return found
+    }
 
     // ---- Format selection ---------------------------------------------------
 
@@ -1047,7 +1263,7 @@ object StreamResolver {
      * [PlayerClient.forStreamUrl] — so this tests the request that matters
      * rather than a more favourable version of it.
      */
-    private fun probe(url: String): Probe {
+    private fun probe(url: String, viaProxy: Boolean = false): Probe {
         val length = url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
         val start = if (length != null && length > AUTH_BOUNDARY_BYTES + PROBE_READ_BYTES) AUTH_BOUNDARY_BYTES else 0L
         // A host with no range cap of its own reports Long.MAX_VALUE, which
@@ -1065,7 +1281,7 @@ object StreamResolver {
         val sentHeaders = mediaHeadersFor(url)
         sentHeaders.forEach { (name, value) -> builder.header(name, value) }
         return try {
-            prober.newCall(builder.build()).execute().use { response ->
+            (if (viaProxy) proxyProber else prober).newCall(builder.build()).execute().use { response ->
                 val contentType = response.header("Content-Type")
                 val verdict = when {
                     response.code in REFUSAL_CODES -> Probe.REFUSED
@@ -1118,6 +1334,17 @@ object StreamResolver {
      */
     private val prober by lazy {
         Http.client.newBuilder()
+            .callTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * The probe for a URL minted through the proxy. googlevideo authorises it
+     * only from the proxy's address, so a direct probe would turn a perfectly
+     * good stream into a REFUSED verdict.
+     */
+    private val proxyProber by lazy {
+        Http.proxyMediaClient.newBuilder()
             .callTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
     }
@@ -1260,6 +1487,10 @@ object StreamResolver {
             }
         is GeographicRestrictionException -> "이 국가에서는 이용할 수 없는 트랙입니다"
         is UnsupportedContentInCountryException -> "이 국가에서는 이용할 수 없는 트랙입니다"
+        // The direct path's own signal for this same gate. It is classified
+        // only after [resolveUncached] has had its one chance to re-ask through
+        // the proxy, so a configured proxy still gets to play the track.
+        is SignInConfirmNotBotException -> "YouTube가 이 네트워크에서 봇 확인을 요구합니다"
         is PaidContentException -> "유료 콘텐츠 트랙입니다"
         is YoutubeMusicPremiumContentException -> {
             // This is the class NewPipe throws when the web player is served

@@ -57,6 +57,9 @@ object YtMusicRepository {
 
     /** A repository call slower than this gets its own line in the log. */
     private const val SLOW_CALL_MS = 3_000L
+
+    /** How far a rescue copy's stated runtime may be from the refused track. */
+    private const val ALTERNATE_DURATION_TOLERANCE_SEC = 3
     private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
     /** Battery over latency: Explore resolves at most three tile covers at once. */
     private val moodGenreArtworkLock = Semaphore(3)
@@ -767,6 +770,15 @@ object YtMusicRepository {
      * verdict — offering one of those would send playback straight back into
      * the failure this is meant to escape.
      *
+     * A rescue is a *song*, not a video: the queue may be playing an official
+     * audio track and a search's top hit can be its MV, a live fancam or a
+     * fan upload. Those differ in runtime by more than the three seconds a
+     * same-recording replacement is allowed, so this accepts only rows flagged
+     * `isVideo = false` (an Art Track included) whose title matches, whose
+     * artist shares a credit, and whose stated length is within
+     * [ALTERNATE_DURATION_TOLERANCE_SEC]. Anything else means "no alternate",
+     * and the caller moves on to the next track.
+     *
      * Returns null when there is no other version, which is a normal answer:
      * the caller then skips the track as before.
      */
@@ -777,8 +789,11 @@ object YtMusicRepository {
         fun acceptable(candidate: Song): Boolean =
             candidate.videoId.isNotBlank() &&
                 candidate.videoId !in excluded &&
+                !candidate.isVideo &&
                 !StreamResolver.isUnplayable(candidate.videoId) &&
-                TrackMatcher.sharesArtist(song.artist, candidate.artist)
+                TrackMatcher.sharesArtist(song.artist, candidate.artist) &&
+                TrackMatcher.sameTitle(song, candidate) &&
+                TrackMatcher.withinSeconds(candidate, target, ALTERNATE_DURATION_TOLERANCE_SEC)
 
         val catalogue = try {
             resolveAudio(song)

@@ -34,6 +34,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -149,8 +150,8 @@ object InnerTubeXResolver {
         }
     }
 
-    private val http = HttpClient(OkHttp) {
-        engine { preconfigured = Http.client }
+    private fun httpClient(client: OkHttpClient) = HttpClient(OkHttp) {
+        engine { preconfigured = client }
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true })
         }
@@ -161,6 +162,8 @@ object InnerTubeXResolver {
         }
         expectSuccess = false
     }
+
+    private val http = httpClient(Http.client)
 
     private val logger = InnerTubeLogger { event ->
         if (event.level == InnerTubeLogLevel.DEBUG && !debugLogging) return@InnerTubeLogger
@@ -198,6 +201,52 @@ object InnerTubeXResolver {
         logger = logger,
     )
 
+    /**
+     * The same extraction stack, wired to a client that pins every YouTube
+     * request to the proxy.
+     *
+     * Lazy because the overwhelming majority of tracks never need it, and
+     * separate because the client choice is made when InnerTubeX is built,
+     * not per request: there is no public seam to swap it for one walk.
+     */
+    private val proxyHttp by lazy { httpClient(Http.proxyMediaClient) }
+    private val proxyInnerTube by lazy { InnerTube(proxyHttp, logger = logger) }
+    private val proxyRemoteStore by lazy { RemotePlayerConfigStore(proxyHttp, repository, logger) }
+    private val proxyCipherService by lazy { YouTubeCipherService(proxyHttp, proxyRemoteStore, logger) }
+    private val proxyExtractor by lazy {
+        InnerTubeExtractor(
+            configParser = YtConfigParserImpl(proxyHttp, proxyInnerTube, proxyRemoteStore, logger),
+            cipherService = proxyCipherService,
+            innerTube = proxyInnerTube,
+            tokenProvider = tokenProvider,
+            logger = logger,
+        )
+    }
+
+    @Volatile
+    private var proxyPlayerCacheLinked = false
+
+    /**
+     * Shares the direct stack's preprocessed-player cache with the proxy stack.
+     *
+     * The setter is suspend, so it cannot live in [proxyExtractor]'s lazy
+     * initializer; doing it on the first proxied walk still avoids the
+     * multi-second cold solve on every later one.
+     */
+    private suspend fun linkProxyPlayerCache() {
+        if (proxyPlayerCacheLinked) return
+        proxyPlayerCacheLinked = true
+        try {
+            proxyCipherService.setPreprocessedPlayerCache(::readPlayer, ::writePlayer)
+        } catch (e: CancellationException) {
+            proxyPlayerCacheLinked = false
+            throw e
+        } catch (e: Exception) {
+            proxyPlayerCacheLinked = false
+            TrackLog.w(TAG, "proxy player cache link failed: ${e.message}")
+        }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** What each minted URL was, so its fetch can be dressed and its refusal attributed. */
@@ -217,6 +266,9 @@ object InnerTubeXResolver {
      *
      * @return a stream for [videoId], or null when every client InnerTubeX would
      *   try is refused or [skipClients] has ruled it out.
+     * @param viaProxy sends this one walk, and the media fetch it mints,
+     *   through the configured proxy. Used only for a track the direct route
+     *   refused from a Korean IP.
      * @throws com.metrolist.innertubex.extraction.StreamResolveException with a
      *   reason when InnerTubeX exhausted its catalog.
      */
@@ -227,11 +279,15 @@ object InnerTubeXResolver {
         requireM4a: Boolean = false,
         uploaded: Boolean = false,
         preferredClientId: String? = null,
+        viaProxy: Boolean = false,
     ): Extracted? {
-        innerTube.cookie = Innertube.cookie
-        innerTube.visitorData = Innertube.ensureVisitorData()
-        innerTube.locale = YouTubeLocale(gl = Innertube.currentRegion, hl = Innertube.currentLanguage)
-        val stream = extractor.extract(
+        val itx = if (viaProxy) proxyInnerTube else innerTube
+        val walker = if (viaProxy) proxyExtractor else extractor
+        if (viaProxy) linkProxyPlayerCache()
+        itx.cookie = Innertube.cookie
+        itx.visitorData = Innertube.ensureVisitorData()
+        itx.locale = YouTubeLocale(gl = Innertube.currentRegion, hl = Innertube.currentLanguage)
+        val stream = walker.extract(
             videoId = videoId,
             hints = ContentHints(
                 isUploaded = true.takeIf { uploaded },

@@ -4,6 +4,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.sources.StreamFormat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -204,7 +205,7 @@ object Downloader {
         }
     }
 
-    private fun open(url: String, position: Long, length: Long) = Http.client
+    private fun open(url: String, position: Long, length: Long) = ProxyPlayback.mediaClientFor(url)
         .newCall(
             Request.Builder()
                 .url(url)

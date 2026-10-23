@@ -51,7 +51,14 @@ object YouTubeProxy {
         // Off the caller's thread: closing a pooled TLS socket writes its
         // close_notify, and the settings dialog saves on the main thread, where
         // Android kills the app for network I/O (crashed on the S24, ko-74).
-        Thread({ runCatching { Http.client.connectionPool.evictAll() } }, "proxy-evict")
+        Thread({
+            runCatching {
+                Http.client.connectionPool.evictAll()
+                // The proxy-pinned client keeps its own pool; stale sockets
+                // there still point at the route being replaced.
+                Http.proxyMediaClient.connectionPool.evictAll()
+            }
+        }, "proxy-evict")
             .apply { isDaemon = true }
             .start()
     }
@@ -81,12 +88,34 @@ object YouTubeProxy {
      */
     internal val forceProxySelector: ProxySelector = selector(ignoreHealth = true)
 
-    private fun selector(ignoreHealth: Boolean): ProxySelector = object : ProxySelector() {
+    /**
+     * The same selector, but every YouTube host — `player` included — is sent
+     * through the proxy regardless of scope.
+     *
+     * This exists for the one track whose direct player request a Korean IP
+     * refused: its stream URL is bound to the proxy's address, so both the
+     * player ask that mints it and the googlevideo fetch afterwards must leave
+     * from there. Non-YouTube hosts (InnerTubeX's remote player config, for
+     * one) keep their direct connection. Health is ignored because a URL that
+     * was already minted through the proxy cannot be fetched directly; the
+     * caller decides whether to start a new proxy request at all.
+     */
+    internal val forceYouTubeProxySelector: ProxySelector =
+        selector(ignoreHealth = true, forceYouTubeHosts = true)
+
+    private fun selector(
+        ignoreHealth: Boolean,
+        forceYouTubeHosts: Boolean = false,
+    ): ProxySelector = object : ProxySelector() {
         override fun select(uri: URI): List<Proxy> {
             val config = current
             if (!config.usable) return listOf(Proxy.NO_PROXY)
             if (!ignoreHealth && ProxyHealthMonitor.shouldBypassProxy()) return listOf(Proxy.NO_PROXY)
-            if (!ProxyScopeMatcher.matches(uri.host, uri.path, config.scope)) {
+            if (forceYouTubeHosts) {
+                if (!ProxyScopeMatcher.matches(uri.host, uri.path, ProxyScope.ALL_YOUTUBE)) {
+                    return listOf(Proxy.NO_PROXY)
+                }
+            } else if (!ProxyScopeMatcher.matches(uri.host, uri.path, config.scope)) {
                 return listOf(Proxy.NO_PROXY)
             }
             val type = when (config.mode) {

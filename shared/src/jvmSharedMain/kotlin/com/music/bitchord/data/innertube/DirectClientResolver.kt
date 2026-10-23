@@ -86,13 +86,34 @@ internal object DirectClientResolver {
     }
 
     /**
+     * The same anonymous ask through the proxy, for a URL that must be minted
+     * on the proxy's address to be fetchable afterwards.
+     */
+    private val proxyClient by lazy {
+        Http.proxyMediaClient.newBuilder()
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .callTimeout(8, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
      * Candidate audio URLs for [videoId], best first under [maxKbps], one
      * client after another. Each candidate still has to pass the caller's
      * probe; this only asks.
+     *
+     * [onRefused] fires when a client answered with a playability status other
+     * than OK, which is how the Korea-IP gate reads here. It is a callback
+     * rather than part of the return value because the sequence stops at the
+     * first usable URL and the failure still has to be visible to the caller.
      */
-    fun candidates(videoId: String, maxKbps: Int): Sequence<Found> = sequence {
+    fun candidates(
+        videoId: String,
+        maxKbps: Int,
+        viaProxy: Boolean = false,
+        onRefused: () -> Unit = {},
+    ): Sequence<Found> = sequence {
         for (spec in SPECS) {
-            val found = runCatching { ask(spec, videoId, maxKbps) }
+            val found = runCatching { ask(spec, videoId, maxKbps, viaProxy, onRefused) }
                 .onFailure {
                     if (it is CancellationException) throw it
                     TrackLog.w(TAG, "direct ${spec.name} failed for $videoId: ${it.message}")
@@ -102,7 +123,13 @@ internal object DirectClientResolver {
         }
     }
 
-    private fun ask(spec: Spec, videoId: String, maxKbps: Int): Found? {
+    private fun ask(
+        spec: Spec,
+        videoId: String,
+        maxKbps: Int,
+        viaProxy: Boolean,
+        onRefused: () -> Unit,
+    ): Found? {
         val body = buildJsonObject {
             putJsonObject("context") {
                 putJsonObject("client") {
@@ -128,7 +155,7 @@ internal object DirectClientResolver {
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
-        val text = client.newCall(request).execute().use { response ->
+        val text = (if (viaProxy) proxyClient else client).newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 TrackLog.w(TAG, "direct ${spec.name} HTTP ${response.code} for $videoId")
                 return null
@@ -136,16 +163,23 @@ internal object DirectClientResolver {
             response.body?.string() ?: return null
         }
         val root = json.parseToJsonElement(text).jsonObject
-        return pickAudio(root, maxKbps, spec.name, videoId)
+        return pickAudio(root, maxKbps, spec.name, videoId, onRefused)
     }
 
     /** The best direct (unciphered) audio format under [maxKbps]; pure, so it can be tested. */
-    internal fun pickAudio(root: JsonObject, maxKbps: Int, client: String, videoId: String = ""): Found? {
+    internal fun pickAudio(
+        root: JsonObject,
+        maxKbps: Int,
+        client: String,
+        videoId: String = "",
+        onRefused: () -> Unit = {},
+    ): Found? {
         val playability = root["playabilityStatus"] as? JsonObject
         val status = (playability?.get("status") as? JsonPrimitive)?.contentOrNull
         if (status != "OK") {
             val reason = (playability?.get("reason") as? JsonPrimitive)?.contentOrNull
             TrackLog.w(TAG, "direct $client $status for $videoId: ${reason.orEmpty().take(80)}")
+            onRefused()
             return null
         }
         val formats = ((root["streamingData"] as? JsonObject)?.get("adaptiveFormats") as? JsonArray)

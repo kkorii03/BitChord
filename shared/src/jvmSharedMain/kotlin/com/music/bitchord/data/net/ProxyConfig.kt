@@ -22,7 +22,9 @@ enum class ProxyMode { OFF, HTTP, SOCKS5 }
 enum class ProxyScope {
     /**
      * music.youtube.com and youtubei.googleapis.com, minus any `/player`
-     * request. Stream resolution always uses the direct connection.
+     * request. Stream resolution uses the direct connection, except for the
+     * one track whose direct player request was refused: that track is re-asked
+     * through the proxy, and only its stream URL follows that route.
      */
     MUSIC_ONLY,
 
@@ -103,7 +105,9 @@ object ProxyScopeMatcher {
      * googlevideo binds a stream URL to the IP of the `player` request that
      * minted it, so a player response fetched through the overseas proxy
      * returns URLs the phone then cannot use from Korea. Player negotiation
-     * therefore never goes through the proxy, on any host, in MUSIC_ONLY.
+     * therefore stays on the direct connection in MUSIC_ONLY, except when the
+     * caller deliberately asks one refused track through the proxy and follows
+     * its URL there as well.
      */
     private fun isStreamResolution(path: String): Boolean {
         val lower = path.lowercase()
