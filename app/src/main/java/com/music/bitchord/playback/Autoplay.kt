@@ -127,7 +127,20 @@ suspend fun loadAutoplayTracks(
     sessionIds: Set<String> = emptySet(),
 ): Result<List<Song>> {
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
-    val related = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+    val radio = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+    // A radio station returns the cover, karaoke and tribute uploads filed
+    // under the seed's title as readily as the recordings; the queue used to
+    // take them as they came. Filter at the front so the TASTE ranking below
+    // only ever chooses between recordings, and so the non-personalised path
+    // (queue exactly as YouTube returned it) is held to the same rule.
+    val related = radio.filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
+    if (related.size != radio.size) {
+        TrackLog.d(
+            "BitChord",
+            "autoplay: dropped ${radio.size - related.size} cover/karaoke rows",
+            about = seedSong.videoId,
+        )
+    }
     val extra = if (AppSettings.personalisedAutoplay.value) {
         rankedExtensions(existing, seedSong, sessionSong, related, limit, sessionIds)
     } else {
@@ -146,10 +159,21 @@ suspend fun loadAutoplayTracks(
 
     // Whatever a source offered, a queue row with no name is unplayable to the
     // listener and indistinguishable from a broken player. Drop it here as the
-    // final gate as well as at the source, and say which id it was.
-    val playable = extra.filter { it.title.isNotBlank() && it.artist.isNotBlank() }
+    // final gate as well as at the source, and say which id it was. The cover
+    // filter is repeated for the sources that did not pass through the radio
+    // list above (similar rows and favourites), so every path is held to it.
+    val playable = extra.filter {
+        it.title.isNotBlank() && it.artist.isNotBlank() &&
+            !TrackMatcher.isCoverArrangement(it, seedSong)
+    }
     extra.filterNot { it.title.isNotBlank() && it.artist.isNotBlank() }.forEach {
         TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (no metadata)", about = seedSong.videoId)
+    }
+    extra.filter {
+        it.title.isNotBlank() && it.artist.isNotBlank() &&
+            TrackMatcher.isCoverArrangement(it, seedSong)
+    }.forEach {
+        TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (cover/karaoke)", about = seedSong.videoId)
     }
     if (playable.isEmpty()) return Result.success(emptyList())
 
@@ -204,6 +228,7 @@ private suspend fun rankedExtensions(
     sessionIds: Set<String>,
 ): List<Song> {
     val sessionRadio = sessionRadioFor(seedSong, sessionSong)
+        .filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
     val now = System.currentTimeMillis()
     val taste = TasteSignals.taste(now)
     val local = localTracksWithMetadata(seedSong)

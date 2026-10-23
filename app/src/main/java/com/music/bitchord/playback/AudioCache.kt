@@ -1178,6 +1178,8 @@ object AudioCache {
         val upstreamDs = upstream.createDataSource()
         object : DataSource {
             private var activeDs: DataSource = cacheDs
+            private var heldKey: String? = null
+            private var heldVideoId: String? = null
 
             override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
                 cacheDs.addTransferListener(transferListener)
@@ -1185,13 +1187,34 @@ object AudioCache {
             }
 
             override fun open(dataSpec: DataSpec): Long {
+                // A DataSource instance is normally closed before it is opened
+                // again, but the hold must not be counted twice if it is not.
+                releaseHeld()
                 val scheme = dataSpec.uri.scheme
                 activeDs = if (scheme == "file" || scheme == "content") {
                     upstreamDs
                 } else {
                     cacheDs
                 }
-                return activeDs.open(dataSpec)
+                if (scheme != "file" && scheme != "content") {
+                    // Remember that the player — including the item it buffers
+                    // ahead in its playlist — owns this cache entry. Read-ahead
+                    // and the analysis head ask before touching it; Media3
+                    // gives an entry to one writer, so anything else spends the
+                    // listener's data writing nowhere.
+                    val key = cacheKeyOf(dataSpec.uri)
+                    val videoId = dataSpec.uri.getQueryParameter("v")
+                    heldKey = key
+                    heldVideoId = videoId
+                    retain(playbackKeysInUse, key)
+                    videoId?.let { retain(playbackVideoIdsInUse, it) }
+                }
+                return try {
+                    activeDs.open(dataSpec)
+                } catch (failure: Throwable) {
+                    releaseHeld()
+                    throw failure
+                }
             }
 
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
@@ -1200,10 +1223,56 @@ object AudioCache {
             override fun getUri(): Uri? = activeDs.uri
 
             override fun close() {
-                activeDs.close()
+                try {
+                    activeDs.close()
+                } finally {
+                    releaseHeld()
+                }
+            }
+
+            private fun releaseHeld() {
+                heldKey?.let { release(playbackKeysInUse, it) }
+                heldVideoId?.let { release(playbackVideoIdsInUse, it) }
+                heldKey = null
+                heldVideoId = null
             }
         }
     }
+
+    /**
+     * Cache entries the player (or its read-ahead inside ExoPlayer's playlist)
+     * is currently reading, as open counts. Tracking rather than asking
+     * `Cache.isCached` is what makes "the player already has it" visible before
+     * a competing writer has to discover it by failing to write.
+     */
+    private val playbackKeysInUse = ConcurrentHashMap<String, Int>()
+    private val playbackVideoIdsInUse = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Tracks whose bytes read-ahead is writing right now. The analysis head is
+     * another writer of the same entry, and Media3 allows one: without this it
+     * requested the range read-ahead already held, wrote nothing, and logged
+     * `held=0` over a track that was being cached at that moment.
+     */
+    private val readAheadWrites = ConcurrentHashMap<String, Int>()
+
+    private fun retain(counts: ConcurrentHashMap<String, Int>, key: String) {
+        counts.merge(key, 1) { open, added -> open + added }
+    }
+
+    private fun release(counts: ConcurrentHashMap<String, Int>, key: String) {
+        counts.compute(key) { _, open -> if (open == null || open <= 1) null else open - 1 }
+    }
+
+    private fun playerHoldsKey(cacheKey: String): Boolean =
+        (playbackKeysInUse[cacheKey] ?: 0) > 0
+
+    private fun playerHoldsVideo(videoId: String): Boolean =
+        (playbackVideoIdsInUse[videoId] ?: 0) > 0
+
+    /** Another writer — the player or read-ahead — already owns [videoId]'s entry. */
+    private fun anotherWriterHas(videoId: String): Boolean =
+        playerHoldsVideo(videoId) || (readAheadWrites[videoId] ?: 0) > 0
 
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
         .setCache(cache)
@@ -1293,6 +1362,10 @@ object AudioCache {
             // then cache it under a key playback is never going to ask for —
             // it plays the download instead. See [Song.toMediaItem].
             .filter { it !in Downloads.saved.value }
+            // The player may already be buffering this item (it buffers the
+            // next playlist entry ahead of reach); there is no entry left for
+            // read-ahead to own. Re-checked when the fetch actually runs.
+            .filterNot(::playerHoldsVideo)
         // With substitution possible, only the *bytes* half drops out. Read-
         // ahead builds its own spec below from an id alone and carries none of
         // the title and artist a substitution is matched on — so it resolves
@@ -1362,8 +1435,18 @@ object AudioCache {
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
-                        fetch(next, 0, PRELOAD_BYTES)
-                        fetchWhole(next)
+                        // Visible to [requestAnalysisHead] while these bytes are
+                        // being written: an analysis round for the same track
+                        // would meet this writer's lock and come up empty. Not
+                        // set during the grace delay above, when no write exists
+                        // to collide with yet.
+                        retain(readAheadWrites, next)
+                        try {
+                            fetch(next, 0, PRELOAD_BYTES)
+                            fetchWhole(next)
+                        } finally {
+                            release(readAheadWrites, next)
+                        }
                     }
                 }
                 launch {
@@ -1416,6 +1499,14 @@ object AudioCache {
      */
     private suspend fun fetchWhole(videoId: String) {
         repeat(MAX_ATTEMPTS) {
+            // The player may have reached this item while the read-ahead was
+            // walking it — ExoPlayer buffers the next playlist entry as soon as
+            // its buffer allows. The player's copy is the one that will play,
+            // so the rest of this track is its work, not read-ahead's.
+            if (playerHoldsVideo(videoId)) {
+                TrackLog.d(TAG, "$videoId is being read by the player; read-ahead stops", about = videoId)
+                return
+            }
             // The race this retry loop exists to cover is the *queue's own*:
             // cancelling [job] tells a blocking network read to stop, but that
             // takes until its next checkpoint, not instantly — so the walk
@@ -1449,14 +1540,19 @@ object AudioCache {
             // and a queue change mid-pass is exactly the "the player has it
             // now" case the guard in [fetchWhole] exists for.
             if (pendingQueue.firstOrNull() != videoId) return false
+            if (playerHoldsVideo(videoId)) return true
             val length = minOf(CHUNK_BYTES, total - position)
             if (cache.getCachedBytes(videoId, position, length) < length) {
                 fetch(videoId, position, length)
                 // Written nowhere means the entry is held elsewhere; the rest
                 // of this pass would be just as wasted. See [fetch] for why
                 // this can be true even though the fetch just above returned
-                // without error.
-                if (cache.getCachedBytes(videoId, position, length) < length) return false
+                // without error. When the holder is the player, the bytes will
+                // arrive through its own read and there is nothing left for
+                // read-ahead to do.
+                if (cache.getCachedBytes(videoId, position, length) < length) {
+                    return playerHoldsVideo(videoId)
+                }
             }
             position += length
         }
@@ -1648,8 +1744,24 @@ object AudioCache {
         var rounds = 1
         var askedAt = SystemClock.elapsedRealtime()
         val deadline = askedAt + timeoutMs
+        // The player is the likeliest writer of this track's entry — it is
+        // either playing it or buffering it ahead in its playlist — and
+        // read-ahead is the other. While either holds the entry, racing them
+        // for the same key can only fail, so wait for the bytes already being
+        // brought in and let [alignmentPrefixBytes] decide when there are
+        // enough. One round is still allowed after they let go: the entry is
+        // free then even if the other writer wrote nothing.
+        var waitedForWriter = anotherWriterHas(videoId)
         while (SystemClock.elapsedRealtime() < deadline) {
             if (alignmentHeadComplete(videoId)) return true
+            if (anotherWriterHas(videoId)) {
+                waitedForWriter = true
+                // Bounded by [deadline]; a quarter second is fine-grained enough
+                // for an analysis that is not on the audible path, and keeps a
+                // whole track's wait from waking the CPU 25 times a second.
+                delay(250)
+                continue
+            }
             if (videoId !in analysisHeadsInFlight) {
                 if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return alignmentHeadComplete(videoId)
                 val now = SystemClock.elapsedRealtime()
@@ -1671,12 +1783,19 @@ object AudioCache {
                     // in two seconds.
                     val held = alignmentPrefixBytes(videoId)
                     if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
-                        if (!analysisHeadShouldRetry(lastHeld, held, rounds, MAX_ALIGNMENT_HEAD_ROUNDS, MIN_ALIGNMENT_PREFIX_BYTES)) {
-                            return false
-                        }
+                        val progressed = analysisHeadShouldRetry(
+                            heldBefore = lastHeld,
+                            heldAfter = held,
+                            roundsStarted = rounds,
+                            maxRounds = MAX_ALIGNMENT_HEAD_ROUNDS,
+                            minBytes = MIN_ALIGNMENT_PREFIX_BYTES,
+                        )
+                        if (!progressed && !waitedForWriter) return false
+                        if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return false
                         lastHeld = held
                         analysisHeads.remove(videoId)
                         requestAnalysisHead(opus)
+                        waitedForWriter = false
                         rounds++
                     }
                     askedAt = now
@@ -1768,6 +1887,16 @@ object AudioCache {
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape.
         if (analysisHeads.putIfAbsent(videoId, true) != null) return
+        // A player read, or read-ahead's own write, holds the entry and is
+        // already bringing the bytes in. Fetching the same range here would
+        // fail the write and leave this round "short" over data that went on
+        // to be cached. Keep the claim so the analyzer's per-tick calls do not
+        // repeat this line; the wait that matters clears it before retrying —
+        // see [awaitAnalysisHead].
+        if (anotherWriterHas(videoId)) {
+            TrackLog.d(TAG, "analysis head for $videoId deferred: another writer has it", videoId)
+            return
+        }
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
         // top of a fetch that is still running.
@@ -2210,10 +2339,22 @@ object AudioCache {
         pinKey: Boolean = false,
     ) {
         if (upstreamFactory == null) return
-        if (cache.getCachedBytes(cacheKey, position, length) >= length) return
 
         val about = mediaIdIn(uri)
         val label = about ?: cacheKey
+        // The entry this fetch would actually write, which is not always the
+        // [cacheKey] used for the "already here" check: without [pinKey],
+        // [keyFactory] chooses it from the URI and settings. If the player is
+        // reading that entry, there is nothing to win — Media3 grants one
+        // writer, and the read-ahead that tried anyway was observed fetching
+        // 0.1 MB at a time onto the floor 226 times in one run.
+        val writeKey = if (pinKey) cacheKey else keyFactory.buildCacheKey(DataSpec(uri))
+        if (playerHoldsKey(writeKey)) {
+            TrackLog.d(TAG, "read-ahead $label: skipped (player is reading it)", about = about)
+            return
+        }
+        if (cache.getCachedBytes(cacheKey, position, length) >= length) return
+
         val fetchStart = SystemClock.elapsedRealtime()
         var probes = 0
         var bytes = 0L

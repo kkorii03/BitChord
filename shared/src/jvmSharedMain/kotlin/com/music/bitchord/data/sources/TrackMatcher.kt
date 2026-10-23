@@ -174,6 +174,28 @@ object TrackMatcher {
         return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
     }
 
+    /**
+     * Whether [candidate] is a cover, karaoke, tribute or instrumental upload
+     * rather than the recording the listener would expect.
+     *
+     * AutoPlay receives rows from a radio station, not a search for one known
+     * song, so there is no [Target] to compare a marker against. [seed] stands
+     * in for it when the caller has one: a seed that is itself called "Cover
+     * Me" keeps that word out of the filter, exactly as [isCoverOf] does.
+     *
+     * The rule is the same marker list that already keeps covers out of source
+     * matching, so one vocabulary decides both. It cannot recognise a cover
+     * upload that names neither the original nor the arrangement (a children's
+     * cover group titled plainly), and deliberately does not try to infer one
+     * from an unfamiliar artist: a radio station is expected to move to other
+     * artists, and guessing would discard legitimate suggestions.
+     */
+    fun isCoverArrangement(candidate: Song, seed: Song? = null): Boolean {
+        val got = (candidate.title + " " + candidate.artist).lowercase(Locale.ROOT)
+        val wanted = seed?.let { (it.title + " " + it.artist).lowercase(Locale.ROOT) }.orEmpty()
+        return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
+    }
+
     private val COVER_MARKERS = listOf(
         Regex("""originally performed"""),
         Regex("""in the style of"""),

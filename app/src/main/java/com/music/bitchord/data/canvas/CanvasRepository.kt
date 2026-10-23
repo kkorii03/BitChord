@@ -72,6 +72,12 @@ object CanvasRepository {
      * ([NowPlayingScreen], which checks [AppSettings.canvasOverCellular]).
      */
     suspend fun canvasFor(song: Song): CanvasArtwork? {
+        // The player already skips this when the decoration is off; making it
+        // a property of the lookup too means no caller can spend a search on
+        // a clip the listener has turned off (or on a device in low power,
+        // where the video decoder is the most expensive thing the player can
+        // start). The still sleeve is the answer, not an error.
+        if (!AppSettings.animatedCanvas.value || AppSettings.lowPower.value) return null
         // Only skip when there is no catalogue identity to search on.
         if (song.videoId.isBlank() && (song.localUri != null || song.localPath != null)) return null
 
@@ -195,6 +201,7 @@ object CanvasRepository {
      * the right edition.
      */
     suspend fun canvasForAlbum(album: String, artist: String): CanvasArtwork? {
+        if (!AppSettings.animatedCanvas.value || AppSettings.lowPower.value) return null
         val name = album.cleaned()
         val credit = artist.cleaned()
         if (name.isBlank() || credit.isBlank()) return null

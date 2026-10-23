@@ -64,6 +64,12 @@ object YtMusicRepository {
 
     /** How far a rescue copy's stated runtime may be from the refused track. */
     private const val ALTERNATE_DURATION_TOLERANCE_SEC = 3
+
+    /** Distinct AutoPlay seeds whose radio answers are kept for this run. */
+    private const val RADIO_CACHE_SIZE = 32
+
+    /** Distinct audio tracks remembered as having no video version. */
+    private const val VIDEO_VERSION_MISSING_SIZE = 256
     private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
     /** Battery over latency: Explore resolves at most three tile covers at once. */
     private val moodGenreArtworkLock = Semaphore(3)
@@ -72,11 +78,23 @@ object YtMusicRepository {
     // answer makes the eventual player switch use the exact rendition whose
     // bytes were warmed, without repeating a 10–30 second catalogue search.
     private val audioVersionCache = ConcurrentHashMap<String, Song>()
-    // Cache for video version lookups from audio tracks (null means no video found).
-    private val videoVersionCache = ConcurrentHashMap<String, Song?>()
+    // Cache for video version lookups from audio tracks. A miss has its own
+    // set rather than a null value: ConcurrentHashMap does not store null, so
+    // the old `ConcurrentHashMap<String, Song?>` accepted the type, threw on
+    // the write, and re-searched every time a track had no video version.
+    private val videoVersionCache = ConcurrentHashMap<String, Song>()
+    // Bounded like the other answer caches: a long run meets a lot of tracks
+    // that have no video version, and remembering every one for ever would
+    // only grow.
+    private val videoVersionMissing =
+        object : LinkedHashMap<String, Boolean>(VIDEO_VERSION_MISSING_SIZE, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) =
+                size > VIDEO_VERSION_MISSING_SIZE
+        }
     // A lookup in flight, so the queue prefetcher and the player's switch
     // share one search instead of sending the same request twice at once.
     private val audioLookups = ConcurrentHashMap<String, CompletableDeferred<Song>>()
+    private val videoVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
     /** Liked Music's continuation tokens, whose later pages need the same split. */
     private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
@@ -1182,25 +1200,48 @@ object YtMusicRepository {
             return null
         }
         videoVersionCache[song.videoId]?.let { return it }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH)
-                .getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            TrackMatcher.bestForVideoSwitch(candidates, target)?.let { match ->
-                Log.d(
-                    TAG,
-                    "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
-                )
-                videoVersionCache[song.videoId] = match
-                return match
+        if (synchronized(videoVersionMissing) { song.videoId in videoVersionMissing }) return null
+
+        // The alternate-version check and a manual switch can ask for the same
+        // track at once; one search answers both.
+        val mine = CompletableDeferred<Song?>()
+        videoVersionLookups.putIfAbsent(song.videoId, mine)?.let {
+            return try {
+                it.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             }
         }
-        Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
-        videoVersionCache[song.videoId] = null
-        return null
+        try {
+            val target = TrackMatcher.targetOf(song)
+            for (query in TrackMatcher.queries(target)) {
+                val candidates = search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH)
+                    .getOrNull()
+                    ?.filterIsInstance<SearchResult.Track>()
+                    ?.map { it.song }
+                    .orEmpty()
+                TrackMatcher.bestForVideoSwitch(candidates, target)?.let { match ->
+                    Log.d(
+                        TAG,
+                        "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
+                    )
+                    videoVersionCache[song.videoId] = match
+                    mine.complete(match)
+                    return match
+                }
+            }
+            Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
+            // Cached for the run, like a hit: a second search would ask the
+            // same question of the same index and get the same answer.
+            synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
+            mine.complete(null)
+            return null
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            videoVersionLookups.remove(song.videoId, mine)
+        }
     }
 
     /** Signed-in profile for the settings header. Null when signed out. */
@@ -1350,10 +1391,26 @@ object YtMusicRepository {
     /**
      * What YouTube Music would play on after [videoId]. Feeds AutoPlay; the
      * seed track itself comes back first, so callers filter what they have.
+     *
+     * Answers are kept for the run, misses included only as long as the cache
+     * slot lives. AutoPlay tops up from the same seed across several track
+     * changes, and every one of those used to be another `next` round trip for
+     * an answer the station had already given.
      */
-    suspend fun radio(videoId: String): Result<List<Song>> = call("radio:$videoId") {
-        if (ensureGateKnown()) return@call YouTubeFallback.radio(videoId)
-        InnertubeParser.parseWatchQueue(Innertube.next(videoId))
+    suspend fun radio(videoId: String): Result<List<Song>> {
+        synchronized(radioCache) { radioCache[videoId] }?.let { return Result.success(it) }
+        return call("radio:$videoId") {
+            if (ensureGateKnown()) return@call YouTubeFallback.radio(videoId)
+            InnertubeParser.parseWatchQueue(Innertube.next(videoId))
+        }.onSuccess { songs ->
+            synchronized(radioCache) { radioCache[videoId] = songs }
+        }
+    }
+
+    /** Radio answers by seed id, least recently asked first out; a bounded LRU. */
+    private val radioCache = object : LinkedHashMap<String, List<Song>>(RADIO_CACHE_SIZE, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Song>>) =
+            size > RADIO_CACHE_SIZE
     }
 
     /**

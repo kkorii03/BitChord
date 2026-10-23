@@ -1225,6 +1225,10 @@ private fun BitChordApp(
     var optimisticVersionSong by remember { mutableStateOf<Song?>(null) }
     // Track whether alternate (film/video vs release/audio) version exists for current track
     var hasAlternateVersion by remember { mutableStateOf(false) }
+    // Answers already found this run, misses included. The lookup is only made
+    // when the player's actions sheet asks for it (see below), so reopening the
+    // sheet must not re-search the same track.
+    val alternateVersionCache = remember { mutableMapOf<String, Boolean>() }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off applies to
@@ -1769,21 +1773,43 @@ private fun BitChordApp(
         }
     }
 
-    // Check if alternate (video vs audio) version exists in background.
+    // Check if alternate (video vs audio) version exists, but only when the
+    // player's actions sheet is actually open on this track. This used to run
+    // on every track change while the app was composing, whether or not the
+    // player was on screen: one `next`/VIDEO_SWITCH search per song, and one
+    // of the biggest sources of YouTube requests during ordinary playback
+    // (the toggle it feeds is drawn only in that sheet).
+    //
     // Skipped entirely in a Listen Together party: the track playing there is
     // shared by everyone in it, and a per-listener version switch would put
     // each member on their own cut of what is supposed to be one song — see
     // [ListenTogether] and the matching guard server-side in
     // [PlaybackService.smoothSwapCurrentTrackVersion].
-    LaunchedEffect(player.song?.videoId, convertedAudioId, convertedVideoId, partyState.inParty) {
+    LaunchedEffect(
+        player.song?.videoId,
+        songActions?.videoId,
+        menuFromPlayer,
+        showNowPlaying,
+        convertedAudioId,
+        convertedVideoId,
+        partyState.inParty,
+    ) {
         val song = player.song
-        if (song == null || partyState.inParty) {
+        val sheetIsOpenForThisTrack = song != null &&
+            showNowPlaying &&
+            menuFromPlayer &&
+            songActions?.videoId == song.videoId
+        if (song == null || partyState.inParty || !sheetIsOpenForThisTrack) {
             hasAlternateVersion = false
             return@LaunchedEffect
         }
         if ((convertedFromVideo != null && convertedAudioId == song.videoId) ||
             (convertedFromAudio != null && convertedVideoId == song.videoId)) {
             hasAlternateVersion = true
+            return@LaunchedEffect
+        }
+        alternateVersionCache[song.videoId]?.let { known ->
+            hasAlternateVersion = known
             return@LaunchedEffect
         }
         hasAlternateVersion = false
@@ -1799,7 +1825,8 @@ private fun BitChordApp(
                 }.getOrDefault(false)
             }
         }
-        if (player.song?.videoId == song.videoId) {
+        alternateVersionCache[song.videoId] = exists
+        if (player.song?.videoId == song.videoId && songActions?.videoId == song.videoId) {
             hasAlternateVersion = exists
         }
     }

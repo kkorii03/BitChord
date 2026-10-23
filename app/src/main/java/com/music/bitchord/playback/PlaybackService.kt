@@ -101,6 +101,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.autoplayTopUpNeeded
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -3459,8 +3460,27 @@ class PlaybackService : MediaLibraryService() {
     private fun loadAutoplayForCurrentTrack() {
         val exoPlayer = player ?: return
         val party = ListenTogether.state.value
-        if (!autoplayEnabled(party) ||
-            exoPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+        val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        // Every track after the current one, not just AutoPlay's own tail.
+        // Counting only suggestions meant ten were topped back up to ten on
+        // every change, so a station was fetched for nearly every track played
+        // even when the queue had minutes left. Five tracks ahead is enough
+        // that the listener cannot reach the end before the next change, which
+        // considers the top-up again.
+        val queuedAhead = if (party.inParty) {
+            if (partyQueueIndexOf(party.queue, party.playback, current.videoId) >= 0) {
+                partyUpcomingAfter(party.queue, party.playback, current.videoId).size
+            } else {
+                0
+            }
+        } else {
+            (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount).count()
+        }
+        if (!autoplayTopUpNeeded(
+                enabled = autoplayEnabled(party),
+                repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+                queuedAhead = queuedAhead,
+            ) ||
             (party.inParty && autoplaySupplierId(party) != party.you?.memberId)
         ) {
             return
@@ -3468,7 +3488,6 @@ class PlaybackService : MediaLibraryService() {
         if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) {
             return
         }
-        val current = exoPlayer.currentMediaItem?.toSong() ?: return
         autoplaySessionIds += current.videoId
         if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
         // In a party the server's queue is the one being topped up, and this

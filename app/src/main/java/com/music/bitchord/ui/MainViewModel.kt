@@ -20,6 +20,10 @@ import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
+import com.music.bitchord.data.net.TYPEAHEAD_CACHE_ENTRIES
+import com.music.bitchord.data.net.TYPEAHEAD_DEBOUNCE_MS
+import com.music.bitchord.data.net.typeaheadCacheKey
+import com.music.bitchord.data.net.typeaheadLookupTarget
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
 import com.music.bitchord.data.spotify.SpotifyImporter
 import com.music.bitchord.data.spotify.SpotifyLibrary
@@ -299,6 +303,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+
+    /**
+     * Answers already fetched for an input, so typing the same word again —
+     * or backing up over a letter and retyping it — costs no request. Both
+     * pipelines keep their own because one answers text and the other rows.
+     * Bounded like every other cache here: the Search tab is long-lived.
+     */
+    private val suggestionCache = object : LinkedHashMap<String, List<String>>(TYPEAHEAD_CACHE_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>) =
+            size > TYPEAHEAD_CACHE_ENTRIES
+    }
+    private val typeaheadMediaCache =
+        object : LinkedHashMap<String, List<SearchResult>>(TYPEAHEAD_CACHE_ENTRIES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<SearchResult>>) =
+                size > TYPEAHEAD_CACHE_ENTRIES
+        }
 
     private val newestRequestId = AtomicLong(0L)
 
@@ -3050,34 +3070,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     @OptIn(FlowPreview::class)
     private fun startSuggestPipeline() = viewModelScope.launch {
-        // Whether a list for [input] is still wanted. False once the field has
-        // moved on: typed further, or searched — which empties [_suggestions],
-        // and a late answer writing to it would reopen the suggestions over
-        // the results the user is by then reading.
-        fun stillWanted(input: String) = _query.value == input && !searchSubmitted
-
         suggestRequests
-            .debounce(SUGGEST_DEBOUNCE_MS)
+            .debounce(TYPEAHEAD_DEBOUNCE_MS)
             .collectLatest { input ->
-                if (!stillWanted(input)) return@collectLatest
-                val fetched = YtMusicRepository.searchSuggestions(input).getOrNull()
+                // The field moves while a keystroke is waiting out the timer;
+                // only the text still on screen is worth asking about.
+                val target = typeaheadLookupTarget(input, _query.value, searchSubmitted)
+                    ?: return@collectLatest
+                val key = typeaheadCacheKey(target)
+                synchronized(suggestionCache) { suggestionCache[key] }?.let { cached ->
+                    _suggestions.value = cached
+                    return@collectLatest
+                }
+                val fetched = YtMusicRepository.searchSuggestions(target).getOrNull()
                     ?: return@collectLatest
                 // Asked again on the way back; the field is live throughout.
-                if (!stillWanted(input)) return@collectLatest
-                _suggestions.value = listOf(input) +
-                    fetched.filterNot { it.equals(input, ignoreCase = true) }
+                if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
+                    return@collectLatest
+                }
+                val rows = listOf(target) +
+                    fetched.filterNot { it.equals(target, ignoreCase = true) }
+                synchronized(suggestionCache) { suggestionCache[key] = rows }
+                _suggestions.value = rows
             }
     }
 
     /**
      * Parallel pipeline that fetches live media results (tracks, artists,
      * albums) for the current query text. Runs alongside [startSuggestPipeline]
-     * with its own debounce so a fast typist doesn't saturate the network.
+     * with the same debounce, so a pause in typing sends one of each rather
+     * than one per keystroke.
      */
     @OptIn(FlowPreview::class)
     private fun startTypeaheadMediaPipeline() = viewModelScope.launch {
         suggestRequests
-            .debounce(TYPEAHEAD_MEDIA_DEBOUNCE_MS)
+            .debounce(TYPEAHEAD_DEBOUNCE_MS)
             .collectLatest { input ->
                 if (input.isBlank()) {
                     _typeaheadResults.value = emptyList()
@@ -3088,18 +3115,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // own isn't enough: a late suggestion callback can repopulate
                 // _suggestions after submission, and we must not re-open the
                 // typeahead dropdown under an already-committed search.
-                if (searchSubmitted) {
-                    _typeaheadResults.value = emptyList()
+                val target = typeaheadLookupTarget(input, _query.value, searchSubmitted)
+                if (target == null) {
+                    if (searchSubmitted) _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
-                val result = YtMusicRepository.searchTypeahead(input).getOrNull()
+                val key = typeaheadCacheKey(target)
+                synchronized(typeaheadMediaCache) { typeaheadMediaCache[key] }?.let { cached ->
+                    _typeaheadResults.value = cached
+                    return@collectLatest
+                }
+                val result = YtMusicRepository.searchTypeahead(target).getOrNull()
                 // If the field moved on, drop the result silently.
-                if (_query.value != input) {
+                if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
                 // Cap results so the dropdown doesn't grow unbounded.
-                _typeaheadResults.value = result?.rows.orEmpty().take(TYPEAHEAD_MAX_RESULTS)
+                val rows = result?.rows.orEmpty().take(TYPEAHEAD_MAX_RESULTS)
+                synchronized(typeaheadMediaCache) { typeaheadMediaCache[key] = rows }
+                _typeaheadResults.value = rows
             }
     }
 
@@ -3186,25 +3221,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         /** How many Spotify tracks are looked up on YouTube Music at once. */
         private const val SPOTIFY_MATCH_PARALLELISM = 6
-
-        /**
-         * How long a keystroke waits before the typeahead is asked about it.
-         *
-         * Not the search's timer — searches aren't on a timer any more. This
-         * one only stops a fast typist spending a round trip per letter, so it
-         * wants to be as short as it can be while still collapsing a burst:
-         * long enough that "cold" isn't four lookups, short enough that the
-         * list is up by the time the thumb has left the key.
-         */
-        const val SUGGEST_DEBOUNCE_MS = 180L
-
-        /**
-         * Debounce for the parallel media-search pipeline. Slightly longer than
-         * text suggestions so it doesn't fire on every single keystroke — a
-         * full search is heavier than a suggestion request, and the UI only
-         * needs a few results to fill the dropdown.
-         */
-        const val TYPEAHEAD_MEDIA_DEBOUNCE_MS = 350L
 
         /**
          * Maximum number of live media results shown in the typeahead dropdown.
