@@ -1164,6 +1164,9 @@ private fun BitChordApp(
     // control taken away — see [ListenTogether.State.controlsLocked].
     val hostOnlyMessage = stringResource(R.string.listen_together_host_only_notice)
     val showHostOnlyNotice: () -> Unit = { showQueueNotice(hostOnlyMessage) }
+    // The same strip acknowledges a collection tap while its first song version
+    // is resolved; playback replaces it within the 1.5 s budget.
+    val playbackPreparing = stringResource(R.string.playback_preparing)
 
     /**
      * Whether the host has taken the music, and say so if they have.
@@ -1663,14 +1666,15 @@ private fun BitChordApp(
                 )
                 c.playSongs(timeline, 0)
             } else {
-                // Music-only preference: the current row and the next three
-                // carry the catalogue release before either reaches the
-                // player, so playback never starts the music video and then
-                // hot-swaps it. A failed lookup keeps the video row, never
-                // silence. In a party the shared queue is not version-switched.
+                // Music-only preference: only the current row carries the
+                // catalogue release before it reaches the player, so playback
+                // starts immediately and the service's look-ahead resolves the
+                // rest as it approaches them. A failed lookup keeps the video
+                // row, never silence. In a party the shared queue is not
+                // version-switched.
                 val queueSongs = if (AppSettings.preferMusicOnly.value) {
                     try {
-                        YtMusicRepository.resolveQueueAhead(songs, index)
+                        YtMusicRepository.resolveQueueAhead(songs, index, ahead = 1)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (failure: Throwable) {
@@ -3352,12 +3356,14 @@ private fun BitChordApp(
                             // page snapshot; Cast deliberately keeps the old full
                             // queue path.
                             fun playDetailSongs(songs: List<Song>, index: Int) {
+                                TrackLog.i("BitChord", "cmd: play-collection from ui")
                                 // Do not cancel a page's fill-in merely because a
                                 // listener tapped while the host owns playback.
                                 if (ListenTogether.state.value.controlsLocked) {
                                     refusedByHost()
                                     return
                                 }
+                                showQueueNotice(playbackPreparing)
                                 val source = QueueSource(
                                     page.title,
                                     PlaybackSourceType.BROWSE,
@@ -3399,11 +3405,13 @@ private fun BitChordApp(
                             // row; playSongs() calls play(), so the button
                             // always starts playback.
                             fun shuffleDetailSongs(loaded: List<Song>) {
+                                TrackLog.i("BitChord", "cmd: shuffle-play from ui")
                                 if (loaded.isEmpty()) return
                                 if (ListenTogether.state.value.controlsLocked) {
                                     refusedByHost()
                                     return
                                 }
+                                showQueueNotice(playbackPreparing)
                                 val request = ++playRequestGeneration
                                 val source = QueueSource(
                                     page.title,

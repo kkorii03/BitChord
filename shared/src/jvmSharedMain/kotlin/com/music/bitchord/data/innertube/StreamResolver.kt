@@ -9,6 +9,7 @@ import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.ProxyPlaybackPolicy
+import com.music.bitchord.data.net.raceForFirstSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -558,18 +559,59 @@ object StreamResolver {
         }
 
         val stream = try {
+            // The first ask is the cheap one (the learned or preferred route,
+            // ~0.3 s). Most tracks are served right there and never involve the
+            // proxy; racing every track would double the player requests and
+            // send playable tracks through Tokyo.
             val first = when {
                 preferredItx != null -> tryInnerTubeX(preferredItx)
                 preferDirect -> tryDirect()
                 else -> null
             }
-            first
-                ?: (if (gated) tryDirect() ?: tryInnerTubeX(null) else tryInnerTubeX(null) ?: tryDirect())
-                ?: run {
-                    TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
-                        .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
-                }
+            // Parenthesised so the extraction failsafe below applies to every
+            // branch, the race included, not only to the last `else`.
+            (if (first != null) {
+                first
+            } else if ((preferredItx != null || preferDirect) &&
+                ProxyPlayback.canResolveViaProxy() && !proxyAttempted
+            ) {
+                // The first ask was refused (with no first ask there is nothing
+                // to read yet, and the ordinary ladder plus the refusal handler
+                // below still route a gated track to the proxy). A Korea-gated track would now spend
+                // five or more seconds on the rest of the direct ladder before
+                // the proxy got its turn (Sorry, 9.4 s to first sound), so the
+                // proxy starts beside the rest of it and the first stream wins.
+                proxyAttempted = true
+                TrackLog.i(
+                    TAG,
+                    "proxy-playback: $videoId early race (first refusal at ${MonotonicClock.nowMs() - resolveStart}ms)",
+                )
+                val (winner, won) = raceForFirstSuccess(
+                    direct = {
+                        if (gated) tryDirect() ?: tryInnerTubeX(null) else tryInnerTubeX(null) ?: tryDirect()
+                    },
+                    proxy = {
+                        try {
+                            resolveViaProxy(videoId)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (e: Exception) {
+                            null
+                        }
+                    },
+                )
+                TrackLog.i(
+                    TAG,
+                    "proxy-playback: $videoId race won by $winner in ${MonotonicClock.nowMs() - resolveStart}ms",
+                )
+                won
+            } else {
+                if (gated) tryDirect() ?: tryInnerTubeX(null) else tryInnerTubeX(null) ?: tryDirect()
+            }) ?: run {
+                TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
+                timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                    .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: LinkageError) {

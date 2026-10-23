@@ -1379,4 +1379,5 @@
     <string name="export_diagnostic_log">Export diagnostic log</string>
     <string name="export_diagnostic_log_subtitle">Send this file when reporting playback, home or search problems.</string>
     <string name="diagnostic_log_saved">Saved to the Downloads folder: %1$s</string>
+    <string name="playback_preparing">Preparing playback…</string>
 </resources>

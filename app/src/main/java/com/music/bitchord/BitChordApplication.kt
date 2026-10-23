@@ -138,6 +138,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // from Korea is exactly what stores a GATED verdict even though a
         // working proxy is configured. This is only the small proxy read.
         AppSettings.initProxy(this, authStore)
+        // The refused-track memory that decides "proxy first" next launch. It
+        // reads one small preference file and installs a debounced writer; no
+        // request is made from here.
+        com.music.bitchord.data.net.ProxyPlaybackStore.init(this)
         // Opened off the main thread, alongside the stores below: none of these
         // reads a setting or the session, and between them they are the slowest
         // opens at startup — SourceRegistry's encrypted store most of all.
