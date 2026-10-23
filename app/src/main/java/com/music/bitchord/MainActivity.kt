@@ -3428,11 +3428,11 @@ private fun BitChordApp(
                                     (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
                                         selected?.contextEntryKey()?.let(pageSongKeys::contains) == true &&
                                         !CastController.state.value.casting
-                                val latestPage = if (useBounded) {
-                                    viewModel.takePlaybackContext(page.browseId)
-                                } else {
-                                    null
-                                }
+                                // The page snapshot on screen can be one fill-in
+                                // behind, or an older visit restored from the
+                                // saved context. The view model's newest list
+                                // is what the tap is meant to play.
+                                val latestPage = viewModel.takePlaybackContext(page.browseId)
                                 val latestSongs = latestPage
                                     ?.let { (it.songs as? UiState.Success)?.data.orEmpty() }
                                     ?.map(withAlbum)
@@ -3470,6 +3470,13 @@ private fun BitChordApp(
                                     PlaybackSourceType.BROWSE,
                                     page.browseId,
                                 )
+                                // A refresh that landed while the screen was
+                                // composing has already replaced the view model's
+                                // page; shuffle what is newest, not the list the
+                                // button was drawn with.
+                                val latestPage = viewModel.takePlaybackContext(page.browseId)
+                                val newest = (latestPage?.songs as? UiState.Success)?.data
+                                    ?.takeIf { it.isNotEmpty() }
                                 fun start(all: List<Song>) {
                                     if (request != playRequestGeneration) return
                                     val queue = all.map(withAlbum)
@@ -3485,12 +3492,14 @@ private fun BitChordApp(
                                 }
                                 val remote = (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
                                     !page.browseId.startsWith("local:")
-                                if (!remote || page.continuation == null) {
-                                    start(loaded)
+                                val loadedNow = newest ?: loaded
+                                val continuation = latestPage?.continuation ?: page.continuation
+                                if (!remote || continuation == null) {
+                                    start(loadedNow)
                                 } else {
                                     viewModel.collectSongs(page.browseId) { result ->
                                         val all = result.getOrNull().orEmpty()
-                                        start(all.takeIf { it.isNotEmpty() } ?: loaded)
+                                        start(all.takeIf { it.isNotEmpty() } ?: loadedNow)
                                     }
                                 }
                             }

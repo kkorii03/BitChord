@@ -148,7 +148,7 @@ object DiagnosticsExport {
                             "translation=$translationSetting",
                     )
                     appendLine("proxy memory: ${ProxyPlayback.rememberedCount()} tracks")
-                    appendLine("counterpart: ${counterpartState(now)}")
+                    appendLine("song pairing: ${counterpartState(now)}")
                     appendLine("log retention: ~5 MB across 3 files, oldest $oldestLine")
                     DiagnosticsState.describe().forEach { appendLine(it) }
                     appendLine("power: ${powerState(context)}")

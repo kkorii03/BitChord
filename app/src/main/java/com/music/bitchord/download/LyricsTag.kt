@@ -108,7 +108,7 @@ internal object LyricsTag {
         // knows whether they are the record's (to be put on a cover video's
         // clock) or already the video's own.
         val header = if (found.lines.any { it.timeMs > 0 }) {
-            com.music.bitchord.data.lyrics.EmbeddedLyrics.sourceHeader(found.source)
+            com.music.bitchord.data.lyrics.EmbeddedLyrics.sourceHeader(found.source, track.videoId)
         } else {
             ""
         }

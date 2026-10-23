@@ -755,12 +755,17 @@ object YtMusicRepository {
 
     private suspend fun resolveAudioUncached(song: Song): Song {
         val target = TrackMatcher.targetOf(song)
+        var searched = false
+        var videoRowsOnly = false
         for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
-                .getOrNull()
+            val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
+            if (page.isSuccess) searched = true
+            val rows = page.getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
+            val candidates = rows.filterNot { it.isVideo }
+            if (rows.isNotEmpty() && candidates.isEmpty()) videoRowsOnly = true
             TrackMatcher.bestSameArtist(candidates, target)?.let { match ->
                 Log.d(
                     TAG,
@@ -782,8 +787,25 @@ object YtMusicRepository {
                 return match
             }
         }
-        Log.w(TAG, "audio switch: no official song match for '${song.title}' by '${song.artist}'")
-        audioVersionCache[song.videoId] = song
+        // The search answered with uploads only, or nothing at all: the
+        // catalogue's own album listing still names the release behind a
+        // video, even where Korea's Songs filter refuses the anonymous
+        // search. This is the same mapping the gated search uses, asked
+        // directly for this one row.
+        val catalogue = runCatching { CatalogSongMapper.map(song)?.toSong(song) }.getOrNull()
+        if (catalogue != null && catalogue.videoId != song.videoId && !catalogue.isVideo) {
+            Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
+            audioVersionCache[song.videoId] = catalogue
+            return catalogue
+        }
+        Log.w(
+            TAG,
+            "audio switch: no official song match for '${song.title}' by '${song.artist}'" +
+                if (videoRowsOnly) " (video rows only)" else "",
+        )
+        // A search that failed outright is no verdict: leave it retryable
+        // instead of remembering the video as having no catalogue release.
+        if (searched) audioVersionCache[song.videoId] = song
         return song
     }
 
@@ -1075,23 +1097,18 @@ object YtMusicRepository {
      * waiters that join it and for later asks.
      */
     private suspend fun resolveSongVersion(song: Song): SongVersionAnswer {
-        val counterpart = runCatching { counterpartAudio(song.videoId) }
-        var via = "counterpart"
-        var found = counterpart.getOrNull()
-        var search: Result<Song>? = null
-        if (found == null) {
-            search = runCatching { resolveAudio(song) }
-            // A song search can still surface a video upload; the whole
-            // point here is to play the catalogue release, never another
-            // music video.
-            found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
-            via = if (found != null) "search" else "none"
-        }
-        // A pair is definitive when the counterpart answered (found or not)
-        // and, if it named none, the search also completed. A failed request
+        // One search, no counterpart request. The `next` pairing answer never
+        // named a catalogue release in three days of logs (0.8–1.1 s each),
+        // and it spent the first song's whole 1.5 s budget before the search
+        // that does find one could even start.
+        val search = runCatching { resolveAudio(song) }
+        // A song search can still surface a video upload; the whole point
+        // here is to play the catalogue release, never another music video.
+        val found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
+        val via = if (found != null) "search" else "none"
+        // A completed search is the verdict, found or not. A failed request
         // is not "no version" and must be retried later.
-        val definitive = found != null ||
-            (counterpart.isSuccess && search?.isSuccess == true)
+        val definitive = found != null || search.isSuccess
         if (definitive) {
             if (found == null) songVersionMissing.add(song.videoId)
             else songVersionCache[song.videoId] = found

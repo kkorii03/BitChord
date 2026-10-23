@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
@@ -293,7 +294,25 @@ object LyricsTiming {
      * against the opening of its recording the moment that much has arrived
      * — a first answer is kept and shown then — and again against all of it.
      */
-    suspend fun measure(context: Context, video: Song, names: List<Pair<String, String>>, videoMs: Long) {
+    suspend fun measure(
+        context: Context,
+        video: Song,
+        names: List<Pair<String, String>>,
+        videoMs: Long,
+        /**
+         * The catalogue release already known for [video] (its ATV). It is
+         * measured first and the search is skipped: YouTube itself paired the
+         * two, so there is nothing better to look for.
+         */
+        preferredOriginal: Song? = null,
+    ) {
+        // The song version already resolved for this row. Measuring against
+        // the right recording first is what stops a karaoke arrangement or a
+        // namesake by the same artist from being taken as the reference.
+        val preferred = preferredOriginal
+            ?.takeIf { it.videoId.isNotBlank() && it.videoId != video.videoId }
+            ?: YtMusicRepository.cachedSongVersionFor(video)
+                ?.takeIf { it.videoId.isNotBlank() && it.videoId != video.videoId }
         val lock = measuring.getOrPut(video.videoId) { Mutex() }
         // Off the caller's thread — the lyrics screen asks from the main one —
         // since the kept records are read from disk along the way; and in
@@ -302,7 +321,7 @@ object LyricsTiming {
             lock.withLock {
                 if (!worthMeasuring(context, video.videoId)) return@async
                 val outcome = try {
-                    measureFresh(context, video, names, videoMs) { early ->
+                    measureFresh(context, video, names, videoMs, preferred) { early ->
                         // A quick answer only where there is none yet: a second pass
                         // (more of the video has arrived) must not trade an answer from
                         // the whole record for one from its opening, even for a minute.
@@ -322,6 +341,29 @@ object LyricsTiming {
                 keep(context, video.videoId, outcome)
             }
         }.await()
+    }
+
+    /**
+     * A music video whose song version was found only after its first sound
+     * has already started. The recording is not swapped — that rule stands —
+     * but its lyrics can now be measured against the right release instead of
+     * being left unaligned.
+     */
+    suspend fun measureLateVersion(context: Context, video: Song, original: Song, videoMs: Long) {
+        if (original.videoId.isBlank() || original.videoId == video.videoId) return
+        if (!worthMeasuring(context, video.videoId)) return
+        TrackLog.i(
+            "BitChord",
+            "lyrics-sync: ${video.videoId} late version ${original.videoId} -> measuring",
+            video.videoId,
+        )
+        measure(
+            context,
+            video,
+            listOf(video.title to video.artist),
+            videoMs,
+            preferredOriginal = original,
+        )
     }
 
     private suspend fun keep(context: Context, videoId: String, done: Measured.Done) {
@@ -376,6 +418,7 @@ object LyricsTiming {
         video: Song,
         names: List<Pair<String, String>>,
         videoMs: Long,
+        preferredOriginal: Song?,
         early: suspend (Measured.Done) -> Unit,
     ): Measured {
         val began = System.currentTimeMillis()
@@ -386,9 +429,12 @@ object LyricsTiming {
             times.append(label).append(' ').append(seconds(now - since))
             return now
         }
-        // Searched once per video: later passes over the same video ask again
-        // only if the first search found nothing.
-        val candidates = synchronized(picks) { picks[video.videoId] }
+        // The song version pair YouTube already gave us is the reference; only
+        // when there is none is a recording searched for. Searched once per
+        // video: later passes over the same video ask again only if the first
+        // search found nothing.
+        val candidates = preferredOriginal?.let { listOf(it) }
+            ?: synchronized(picks) { picks[video.videoId] }
             ?: RecordingPick.find(names, videoMs, max = MAX_CANDIDATES).also { found ->
                 if (found.isNotEmpty()) synchronized(picks) {
                     picks[video.videoId] = found
@@ -577,6 +623,12 @@ object LyricsTiming {
      * playing, and the player is already fetching it.
      */
     private suspend fun awaitVideoOpening(video: Song): AudioCache.Rendition? {
+        // A downloaded file is already the whole recording: there is no cache
+        // rendition to wait for and [VersionAudioAligner.openDataSource] reads
+        // it directly.
+        if (video.localUri != null) {
+            return AudioCache.Rendition(key = "local:${video.videoId}", contentLength = 0L, cachedPrefix = 0L)
+        }
         val deadline = System.currentTimeMillis() + VIDEO_TIMEOUT_MS
         while (true) {
             val copy = VersionAudioAligner.renditionToMeasure(video.videoId)
@@ -779,10 +831,14 @@ object LyricsTiming {
     private const val GIVE_UP_AFTER_SECONDS = 150.0
 
     /** ko-27: covers read singer-first, title-only searches for covers that don't name the original. */
-    private const val SEARCH_VERSION = 2 // ko-36: a search that failed outright is no longer kept as "no original"
+    private const val SEARCH_VERSION = 3 // ko-97: reference rows are now the same song and the same artist
 
-    /** Measurements kept before this version (the loudness one) are measured again. */
-    private const val AUTO_VERSION = 3 // ko-36: bass-heavy songs were refused as "no contrast"
+    /**
+     * Measurements kept before this version are measured again. ko-97: the
+     * reference recording rules changed, so a kept shift may describe a
+     * karaoke arrangement or a namesake by the same artist (The Hills).
+     */
+    private const val AUTO_VERSION = 4
 
     // ---- AI ----------------------------------------------------------------------------
 

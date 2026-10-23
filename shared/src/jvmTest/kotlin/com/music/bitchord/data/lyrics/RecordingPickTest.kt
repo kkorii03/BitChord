@@ -83,6 +83,28 @@ class RecordingPickTest {
     }
 
     @Test
+    fun karaokeAndNamesakeRowsAreNotTheRecord() {
+        // The Hills' failed alignment (2026-10-23) measured against a Party
+        // Tyme karaoke arrangement and The Weeknd's unrelated "Lost in the
+        // Fire". Neither is the record; only the plain catalogue row is.
+        val rows = listOf(
+            row("k", "The Hills (Made Popular By The Weeknd) [Vocal Version]", "Party Tyme Karaoke", "3:55"),
+            row("w", "The Hills", "The Weeknd", "3:55"),
+            row("o", "Lost in the Fire", "The Weeknd", "3:42"),
+        )
+        assertEquals(listOf("w"), pick("The Hills", "The Weeknd", rows, videoMs = 243_000L))
+    }
+
+    @Test
+    fun withoutTheRecordThereIsNothingToMeasureAgainst() {
+        val rows = listOf(
+            row("k", "The Hills (Made Popular By The Weeknd) [Vocal Version]", "Party Tyme Karaoke", "3:55"),
+            row("o", "Lost in the Fire", "The Weeknd", "3:42"),
+        )
+        assertEquals(emptyList(), pick("The Hills", "The Weeknd", rows, videoMs = 243_000L))
+    }
+
+    @Test
     fun videosAndStrangersAreNotRecords() {
         val rows = listOf(
             row("v", "Flashlight", "Jessie J", video = true),

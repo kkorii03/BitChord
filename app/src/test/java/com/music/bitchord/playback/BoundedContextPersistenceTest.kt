@@ -326,6 +326,28 @@ class BoundedContextPersistenceTest {
         }
     }
 
+    @Test
+    fun `a snapshot from before the video type was trusted is refused`() {
+        val source = QueueSource("Release", PlaybackSourceType.BROWSE, "release-1")
+        val canonical = listOf(song("track-0").copy(isVideo = true, isVideoOrigin = true))
+        val state = state(
+            canonical,
+            source,
+            QueueWindow(1).startAt(0).snapshot(),
+            entries = listOf(entry("current", QueueTier.CONTEXT, 0, 0L)),
+            currentIndex = 0,
+            sourceSnapshot = context(canonical, source),
+        )
+        val raw = requireNotNull(BoundedContextPersistence.encode(state))
+        // Schema 1 rows are the ones written before ko-97; their isVideo can be
+        // false for a music video, so they must not come back.
+        val legacy = raw.replace(Regex("\"schemaVersion\"\\s*:\\s*2"), "\"schemaVersion\":1")
+        assertNull(BoundedContextPersistence.decode(legacy))
+        assertNotNull(BoundedContextPersistence.decode(raw)?.entries?.single()?.song)
+        assertTrue(requireNotNull(BoundedContextPersistence.decode(raw)).entries.single().song.isVideo)
+        assertTrue(requireNotNull(BoundedContextPersistence.decode(raw)).context.songs.single().isVideoOrigin)
+    }
+
     private fun context(
         songs: List<Song>,
         source: QueueSource,

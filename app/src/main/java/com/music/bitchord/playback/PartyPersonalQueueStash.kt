@@ -69,6 +69,7 @@ object PartyPersonalQueueStash {
         if (!::prefs.isInitialized || songs.isEmpty()) return
         val safeIndex = index.coerceIn(songs.indices)
         val stored = StoredQueue(
+            version = SNAPSHOT_VERSION,
             tracks = songs.map { StoredTrack.from(it) },
             index = safeIndex,
             positionMs = positionMs.coerceAtLeast(0L),
@@ -90,6 +91,7 @@ object PartyPersonalQueueStash {
         val raw = prefs.getString(KEY_STASH, null) ?: return null
         val stored = runCatching { json.decodeFromString<StoredQueue>(raw) }.getOrNull()
             ?: return null
+        if (stored.version < SNAPSHOT_VERSION) return null
         if (stored.tracks.isEmpty()) return null
         val songs = stored.tracks.map(StoredTrack::toSong)
         return Snapshot(
@@ -107,6 +109,8 @@ object PartyPersonalQueueStash {
 
     @Serializable
     private data class StoredQueue(
+        /** Missing on stashes written before ko-97. */
+        val version: Int = 1,
         val tracks: List<StoredTrack>,
         val index: Int = 0,
         val positionMs: Long = 0L,
@@ -128,6 +132,8 @@ object PartyPersonalQueueStash {
         val album: String? = null,
         val explicit: Boolean? = null,
         val video: Boolean = false,
+        /** Video origin, kept when a video row was swapped to its catalogue release. */
+        val videoOrigin: Boolean? = null,
         val radio: String? = null,
         val source: String? = null,
         val sourceType: String? = null,
@@ -145,6 +151,7 @@ object PartyPersonalQueueStash {
                 albumName = album,
                 isExplicit = explicit,
                 isVideo = video,
+                isVideoOrigin = videoOrigin ?: video,
                 queueTier = resolvedTier,
                 queueEntryId = entryId,
                 radioName = radio,
@@ -173,6 +180,7 @@ object PartyPersonalQueueStash {
                 album = song.albumName,
                 explicit = song.isExplicit,
                 video = song.isVideo,
+                videoOrigin = song.isVideoOrigin,
                 radio = song.radioName,
                 source = song.playbackSource,
                 sourceType = song.playbackSourceType?.name,
@@ -183,6 +191,9 @@ object PartyPersonalQueueStash {
 
     private fun Song.isDeviceFile(): Boolean =
         videoId.startsWith("content://") || videoId.startsWith("file://")
+
+    /** 2: keeps the music-video type and refuses stashes written without it. */
+    private const val SNAPSHOT_VERSION = 2
 
     private const val PREFS_NAME = "bitchord_party_queue_stash"
     private const val KEY_STASH = "stashed_queue"

@@ -627,7 +627,15 @@ object BoundedContextPersistence {
     private fun String.toPlaybackSourceType(): PlaybackSourceType? =
         runCatching { PlaybackSourceType.valueOf(this) }.getOrNull()
 
-    private const val SCHEMA_VERSION = 1
+    /**
+     * 2: rows written before the music-video type was carried by every
+     * playlist page (ko-97) can say `isVideo = false` for tracks that are
+     * music videos. A restored page is what a shuffle builds its queue from,
+     * so trusting one of those snapshots plays a whole playlist as videos and
+     * skips every song-version lookup. Older snapshots are refused rather than
+     * repaired: the page reloads, which is the only source that knows the type.
+     */
+    private const val SCHEMA_VERSION = 2
     // A complete 10k-song canonical context plus all physical tails can exceed
     // the old 4 MiB cutoff.  This remains a bounded prefs record while leaving
     // enough room for real metadata and long user/autoplay tails.

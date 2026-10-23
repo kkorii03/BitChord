@@ -111,7 +111,9 @@ internal object CatalogSongMapper {
     const val MAX_DURATION_DRIFT_SEC = 10
 
     private const val CACHE_ENTRIES = 3_000
-    private const val STORE_KEY = "catalog_song_mapping_v1"
+    // v2: the video-source runtime window changed, so an old "not in the
+    // catalogue" verdict (The Hills) must not outrank a fresh lookup.
+    private const val STORE_KEY = "catalog_song_mapping_v2"
     private const val NONE = "none"
     private const val FIELD = "\u001F"
     private const val TAG = "BitChord"
@@ -176,7 +178,7 @@ internal object CatalogSongMapper {
         if (!budget.take()) return null
 
         val outcome = try {
-            inFlight.withPermit { resolve(song.videoId, title, artist, song.durationText) }
+            inFlight.withPermit { resolve(song.videoId, title, artist, song.durationText, song.isVideo) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -358,6 +360,12 @@ internal object CatalogSongMapper {
         title: String,
         artist: String,
         duration: String?,
+        /**
+         * The source is a music-video upload. Its stated runtime includes a
+         * visual intro/outro, so the album track may legitimately be a minute
+         * shorter; a song-to-song comparison keeps the tight window.
+         */
+        sourceIsVideo: Boolean = false,
     ): Outcome {
         val query = "$artist $title".replace(Regex("""\s+"""), " ").trim()
         val albums = searchAlbums(query) ?: return Outcome.Failed
@@ -371,7 +379,7 @@ internal object CatalogSongMapper {
             title = title,
             artist = artist,
             durationSec = TrackMatcher.secondsOf(duration),
-            isVideo = false,
+            isVideo = sourceIsVideo,
         )
         // A Korean release often files the same song under the other spelling:
         // the upload says "Friday(금요일에 만나요)" and the album row says only
@@ -396,7 +404,13 @@ internal object CatalogSongMapper {
                 .asSequence()
                 .filter { it.videoId != sourceVideoId }
                 .filter { !isCoverTitle(it.title) }
-                .filter { durationCompatible(duration, it.durationText) }
+                .filter {
+                    durationCompatible(
+                        duration,
+                        it.durationText,
+                        if (sourceIsVideo) TrackMatcher.VIDEO_DURATION_LIMIT_SEC else MAX_DURATION_DRIFT_SEC,
+                    )
+                }
                 .toList()
             val match = targets.firstNotNullOfOrNull { wanted ->
                 TrackMatcher.best(candidates, wanted)
@@ -404,6 +418,13 @@ internal object CatalogSongMapper {
             val catalog = catalogOf(match, album, artist) ?: continue
             if (catalog.videoId.isBlank()) continue
             return Outcome.Found(catalog)
+        }
+        if (opened) {
+            Log.i(
+                TAG,
+                "catalogue mapping: no matching track for '$title' / '$artist'" +
+                    if (sourceIsVideo) " (video source)" else "",
+            )
         }
         return if (opened) Outcome.NotFound else if (failed) Outcome.Failed else Outcome.NotFound
     }
@@ -479,10 +500,14 @@ internal object CatalogSongMapper {
         CoverTitles.isCover(song) || isCoverTitle(song.title)
 
     /** Both runtimes stated and no further apart than [MAX_DURATION_DRIFT_SEC]. */
-    internal fun durationCompatible(source: String?, candidate: String?): Boolean {
+    internal fun durationCompatible(
+        source: String?,
+        candidate: String?,
+        limitSec: Int = MAX_DURATION_DRIFT_SEC,
+    ): Boolean {
         val wanted = TrackMatcher.secondsOf(source) ?: return true
         val got = TrackMatcher.secondsOf(candidate) ?: return true
-        return abs(wanted - got) <= MAX_DURATION_DRIFT_SEC
+        return abs(wanted - got) <= limitSec
     }
 
     /** A stored miss is re-asked only after [MISS_RETRY_MS]. */

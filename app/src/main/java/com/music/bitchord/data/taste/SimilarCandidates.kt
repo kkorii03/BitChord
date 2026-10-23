@@ -85,6 +85,9 @@ object SimilarCandidates {
     private const val MIN_CALL_INTERVAL_MS = 1_100L
 
     private const val MAX_CACHE_ENTRIES = 40
+
+    /** 2: cached rows now keep the music-video type; older files are ignored. */
+    private const val CACHE_VERSION = 2
     private const val TAG = "BitChordSimilar"
     private const val CACHE_FILE = "taste/similar.json"
 
@@ -572,7 +575,7 @@ object SimilarCandidates {
             if (raw != null) {
                 runCatching {
                     jsonFormat.decodeFromString(SimilarCacheFile.serializer(), raw)
-                }.getOrNull()?.let { stored ->
+                }.getOrNull()?.takeIf { it.version == CACHE_VERSION }?.let { stored ->
                     synchronized(lock) {
                         memory.clear()
                         stored.entries.forEach { memory[it.key] = it }
@@ -620,6 +623,8 @@ object SimilarCandidates {
         artist = artist,
         thumbnailUrl = thumbnailUrl,
         durationText = durationText,
+        isVideo = isVideo,
+        isVideoOrigin = isVideoOrigin,
     )
 
     private fun CachedSong.asSong(): Song? {
@@ -630,6 +635,8 @@ object SimilarCandidates {
             artist = artist,
             thumbnailUrl = thumbnailUrl,
             durationText = durationText,
+            isVideo = isVideo,
+            isVideoOrigin = isVideoOrigin,
         )
     }
 
@@ -656,6 +663,8 @@ object SimilarCandidates {
         val artist: String = "",
         val thumbnailUrl: String? = null,
         val durationText: String? = null,
+        val isVideo: Boolean = false,
+        val isVideoOrigin: Boolean = false,
     )
 
     @Serializable
@@ -667,7 +676,7 @@ object SimilarCandidates {
 
     @Serializable
     internal data class SimilarCacheFile(
-        val version: Int = 1,
+        val version: Int = 2,
         val entries: List<SimilarCacheEntry> = emptyList(),
     )
 }

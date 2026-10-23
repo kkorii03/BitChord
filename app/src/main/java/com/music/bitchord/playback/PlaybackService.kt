@@ -3243,6 +3243,37 @@ class PlaybackService : MediaLibraryService() {
     private var songVersionJobFor: String? = null
 
     /**
+     * The version lookup outlived the first-sound budget. This video is
+     * playing and stays playing; if the shared lookup still lands while it is
+     * current, its lyrics are measured against that release.
+     */
+    private fun watchForLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song) {
+        if (!AppSettings.preferMusicOnly.value) return
+        if (YtMusicRepository.isSongVersionMissing(song.videoId)) return
+        lateVersionMeasureJob = scope.launch {
+            val late = try {
+                YtMusicRepository.songVersion(song)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                TrackLog.w("BitChord", "late song version failed: ${failure.message}", about = song.videoId)
+                null
+            } ?: return@launch
+            if (late.videoId == song.videoId) return@launch
+            if (player !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != mediaId) return@launch
+            // Nothing to move if the lyrics never arrived; the normal lyrics
+            // path then measures against the answer already in the cache.
+            if (TrackDiagnostics.lyricsFor(song.videoId) == null) return@launch
+            com.music.bitchord.playback.smart.LyricsTiming.measureLateVersion(
+                this@PlaybackService,
+                song.copy(isVideo = true),
+                late,
+                song.durationMillis(),
+            )
+        }
+    }
+
+    /**
      * With music-only on, the rows either side of the current one are replaced
      * by their catalogue releases as the queue approaches them: the next three
      * and the previous one, so a skip backwards is as prepared as a skip
@@ -3314,6 +3345,14 @@ class PlaybackService : MediaLibraryService() {
 
     /** The pre-audio lookup for the row that just became current. */
     private var beforeAudioVersionJob: Job? = null
+
+    /**
+     * Waits for a version lookup that outlived the 1.5 s budget. The queue
+     * plays the video meanwhile; when the answer arrives, its lyrics are
+     * measured against the catalogue release. The recording itself is never
+     * swapped once it is audible.
+     */
+    private var lateVersionMeasureJob: Job? = null
     private var versionHoldWantsPlay = false
     private var versionHoldHeld = false
 
@@ -3334,6 +3373,7 @@ class PlaybackService : MediaLibraryService() {
         mediaItem: MediaItem?,
         alreadyAudible: Boolean,
     ) {
+        lateVersionMeasureJob?.cancel()
         val item = mediaItem
         val song = item?.toSong()
         if (alreadyAudible ||
@@ -3390,6 +3430,10 @@ class PlaybackService : MediaLibraryService() {
                 }
             } catch (timeout: TimeoutCancellationException) {
                 TrackLog.i("BitChord", "song version: ${song.videoId} kept (timeout)", about = song.videoId)
+                // The lookup itself keeps running in the repository's shared
+                // scope. If it lands while this video is still playing, use it
+                // as the lyrics reference (never as a mid-song swap).
+                watchForLateVersion(exoPlayer, mediaId, song)
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -57,6 +57,10 @@ class CatalogSongMapperTest {
         assertFalse(CatalogSongMapper.durationCompatible("4:12", "3:45"))
         assertTrue(CatalogSongMapper.durationCompatible(null, "3:41"))
         assertTrue(CatalogSongMapper.durationCompatible("3:30", null))
+        // A music video's visual intro can make it a minute longer than its
+        // album track; the video-source window admits that (The Hills).
+        assertFalse(CatalogSongMapper.durationCompatible("4:07", "3:55"))
+        assertTrue(CatalogSongMapper.durationCompatible("4:07", "3:55", 90))
     }
 
     @Test

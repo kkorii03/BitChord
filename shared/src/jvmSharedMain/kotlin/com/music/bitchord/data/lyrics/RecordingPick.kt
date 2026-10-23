@@ -7,6 +7,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.sources.TrackMatcher
 import java.text.Normalizer
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
@@ -114,11 +115,63 @@ object RecordingPick {
         val wantedTitles = titles.flatMap(::readings).toSet()
         val wantedArtists = artists.flatMap(::artistReadings).toSet()
         val askedVersion = titles.any { versionWord(it) }
+        val seed = titles.firstOrNull()?.let { title ->
+            Song(
+                videoId = "",
+                title = title,
+                artist = artists.firstOrNull().orEmpty(),
+                thumbnailUrl = null,
+            )
+        }
+        fun sameRecordingAsAny(row: Song): Boolean = titles.indices.any { index ->
+            TrackMatcher.sameRecording(
+                row,
+                TrackMatcher.Target(
+                    title = titles[index],
+                    artist = artists.getOrNull(index).orEmpty(),
+                    durationSec = TrackMatcher.secondsOf(row.durationText),
+                    isVideo = true,
+                ),
+            )
+        }
+        fun artistMatchesAny(row: Song): Boolean = artists.any { artist ->
+            artist.isNotBlank() && row.artist.isNotBlank() && TrackMatcher.sharesArtist(artist, row.artist)
+        }
+        // "i hate u, i love u" and "I Hate You, I Love You" are one title written
+        // two ways; "Lost in the Fire" and "The Hills" are not, even though the
+        // same artist sings both. A shared title core is the strict rule; this
+        // catches only spelling variants.
+        fun closeTitle(row: Song): Boolean = titles.any { title ->
+            titleSimilarity(title, row.title) >= TITLE_SIMILARITY
+        }
+        // The one cross-script case the readings cannot express: a Korean or
+        // Japanese title answered by a catalogue row filed only in English.
+        // It is allowed for the leading answer and a comparable length, never
+        // for a second title in the same script — which is how "The Hills"
+        // pulled in The Weeknd's unrelated "Lost in the Fire".
+        fun crossScriptTranslation(row: Song, order: Int): Boolean {
+            if (order != 0) return false
+            val wanted = titles.firstOrNull() ?: return false
+            val otherScript = TrackMatcher.hasOtherScript(wanted) && TrackMatcher.hasLatinLetters(row.title) ||
+                TrackMatcher.hasOtherScript(row.title) && TrackMatcher.hasLatinLetters(wanted)
+            if (!otherScript) return false
+            val ms = row.durationMillis()
+            val length = if (ms <= 0L || videoMs <= 0L) 0L else abs(ms - videoMs)
+            return videoMs <= 0L || ms <= 0L || length <= 90_000L
+        }
         val scored = rows
             .asSequence()
             .filter { !it.isVideo }
+            .filter { row -> seed == null || !TrackMatcher.isCoverArrangement(row, seed) }
+            // A take the query did not ask for is not the reference record.
+            .filter { row -> askedVersion || !versionWord(row.title) }
             .distinctBy { it.videoId }
-            .mapIndexedNotNull { order, row -> score(row, order, wantedTitles, wantedArtists, askedVersion, videoMs)?.let { row to it } }
+            .mapIndexedNotNull { order, row ->
+                val sameSong = sameRecordingAsAny(row) ||
+                    (artistMatchesAny(row) && closeTitle(row))
+                if (!sameSong && !crossScriptTranslation(row, order)) return@mapIndexedNotNull null
+                score(row, order, wantedTitles, wantedArtists, askedVersion, videoMs)?.let { row to it }
+            }
             .toList()
         // When some row is by the artist asked for, a namesake by someone else
         // is not the record however exactly its title matches: "I Hate You I
@@ -202,6 +255,39 @@ object RecordingPick {
         Normalizer.normalize(text, Normalizer.Form.NFKC)
             .lowercase()
             .filter { it.isLetterOrDigit() }
+
+    /**
+     * How alike two titles are after folding, 0…1.0. Used only to admit spelling
+     * variants ("u" for "you") beside an agreeing artist; a different song by
+     * the same artist stays well under [TITLE_SIMILARITY].
+     */
+    private fun titleSimilarity(a: String, b: String): Double {
+        val left = TrackMatcher.parseTitle(a).core
+        val right = TrackMatcher.parseTitle(b).core
+        if (left.isEmpty() || right.isEmpty()) return 0.0
+        if (left == right) return 1.0
+        val longest = maxOf(left.length, right.length)
+        return 1.0 - levenshtein(left, right).toDouble() / longest
+    }
+
+    private fun levenshtein(a: String, b: String): Int {
+        var previous = IntArray(b.length + 1) { it }
+        var current = IntArray(b.length + 1)
+        for (i in 1..a.length) {
+            current[0] = i
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                current[j] = minOf(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost)
+            }
+            val swap = previous
+            previous = current
+            current = swap
+        }
+        return previous[b.length]
+    }
+
+    /** Titles at least this alike are the same one written differently. */
+    private const val TITLE_SIMILARITY = 0.72
 
     private fun contains(a: String, b: String): Boolean {
         val (long, short) = if (a.length >= b.length) a to b else b to a

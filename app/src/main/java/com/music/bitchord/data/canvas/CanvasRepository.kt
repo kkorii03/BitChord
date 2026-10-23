@@ -149,13 +149,12 @@ object CanvasRepository {
      */
     private suspend fun videoLoopFor(song: Song, seconds: Int?): CanvasArtwork? {
         if (!AppSettings.videoCanvas.value) return null
-        // A track's music video only as YouTube Music itself pairs them — never
-        // one found by searching, which turns up lyric videos and fan uploads.
+        // A track's music video, from the channel-guarded search: no counterpart
+        // (`next`) request is made anywhere any more (see YtMusicRepository).
         val videoId = if (song.isVideo) {
             song.videoId
         } else {
-            runCatching { com.music.bitchord.data.YtMusicRepository.officialVideo(song.videoId) }.getOrNull()
-                ?: runCatching { com.music.bitchord.data.YtMusicRepository.officialVideoBySearch(song) }.getOrNull()
+            runCatching { com.music.bitchord.data.YtMusicRepository.officialVideoBySearch(song) }.getOrNull()
         }
         if (videoId.isNullOrBlank() || videoId.contains(':')) return null
         val loop = com.music.bitchord.data.innertube.StreamResolver.videoLoop(videoId) ?: return null

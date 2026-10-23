@@ -168,11 +168,55 @@ object TrackMatcher {
      * Catalogues file them under the original title ("Peaches (Originally
      * performed by Justin Bieber)"), so the title alone cannot rule them out.
      */
-    internal fun isCoverOf(candidate: Song, target: Target): Boolean {
-        val wanted = (target.title + " " + target.artist).lowercase()
-        val got = (candidate.title + " " + candidate.artist).lowercase()
-        return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
+    internal fun isCoverOf(candidate: Song, target: Target): Boolean =
+        isCoverArrangement(candidate, seedOf(target))
+
+    /**
+     * Whether [candidate] and [target] name the same recording: the title
+     * identity agrees, the take markers agree, the credit names one of the
+     * same artists, and the row is not a cover/karaoke/tribute arrangement.
+     *
+     * The rule behind it is the one the catalogue matcher already uses. It is
+     * exposed for callers that compare a recording against a video without
+     * going through [score] (lyrics alignment picks a reference recording),
+     * so both places refuse the same rows.
+     */
+    fun sameRecording(candidate: Song, target: Target): Boolean {
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return false
+        if (wanted.versions != got.versions) return false
+        val sameTitle = when {
+            wanted.core == got.core -> true
+            romajiOf(wanted.core) == romajiOf(got.core) -> true
+            wanted.core.length <= 3 || got.core.length <= 3 -> false
+            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
+        }
+        if (!sameTitle) return false
+        if (isCoverArrangement(candidate, seedOf(target))) return false
+        if (target.artist.isNotBlank() && candidate.artist.isNotBlank() &&
+            !sharesArtist(target.artist, candidate.artist)
+        ) {
+            return false
+        }
+        return true
     }
+
+    /** The target as a row, for comparisons that take a seed rather than a title. */
+    private fun seedOf(target: Target) = Song(
+        videoId = "",
+        title = target.title,
+        artist = target.artist,
+        thumbnailUrl = null,
+    )
+
+    /** Whether [text] carries Latin letters, the script catalogues file in. */
+    fun hasLatinLetters(text: String): Boolean =
+        text.any { it in 'a'..'z' || it in 'A'..'Z' }
+
+    /** Whether [text] carries a non-Latin script (CJK, Hangul, kana, ...). */
+    fun hasOtherScript(text: String): Boolean =
+        text.any { it.code > 0x2E80 }
 
     /**
      * Whether [candidate] is a cover, karaoke, tribute or instrumental upload
@@ -200,6 +244,12 @@ object TrackMatcher {
         Regex("""originally performed"""),
         Regex("""in the style of"""),
         Regex("""made famous by"""),
+        // Karaoke catalogue naming: "The Hills (Made Popular By The Weeknd)
+        // [Vocal Version]" by Party Tyme Karaoke is the arrangement, not the
+        // record, however exactly its title reads.
+        Regex("""made popular by"""),
+        Regex("""\bvocal version\b"""),
+        Regex("""\bparty tyme\b"""),
         Regex("""\bkaraoke\b"""),
         Regex("""\btribute\b"""),
         Regex("""\bcover\b"""),
@@ -966,7 +1016,7 @@ object TrackMatcher {
     }
 
     /** Visual intros/outros can make the video substantially longer than its audio master. */
-    private const val VIDEO_DURATION_LIMIT_SEC = 90
+    const val VIDEO_DURATION_LIMIT_SEC = 90
 
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3

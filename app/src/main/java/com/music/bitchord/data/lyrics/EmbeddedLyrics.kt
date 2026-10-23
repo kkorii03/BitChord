@@ -68,7 +68,12 @@ object EmbeddedLyrics {
     suspend fun forUri(context: Context, uriString: String): List<LyricLine>? = withSource(context, uriString)?.lines
 
     /** A file's lyrics, and — for those this app wrote — which source they came from. */
-    class Embedded(val lines: List<LyricLine>, val source: LyricsSource?)
+    class Embedded(
+        val lines: List<LyricLine>,
+        val source: LyricsSource?,
+        /** Which video id the lyrics were fetched for; null on older files. */
+        val videoId: String? = null,
+    )
 
     /**
      * [forUri], with the source named in the `[re:BitChord …]` line this
@@ -86,17 +91,29 @@ object EmbeddedLyrics {
             val lines = LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
                 ?.withBackgroundVocals()
                 ?: return@withContext null
-            val source = SOURCE_TAG.find(raw)?.groupValues?.get(1)?.let { name ->
+            val header = SOURCE_TAG.find(raw)
+            val source = header?.groupValues?.get(1)?.let { name ->
                 LyricsSource.entries.firstOrNull { it.name == name }
             }
-            Embedded(lines, source)
+            val videoId = header?.groupValues?.getOrNull(2)
+                ?.removePrefix("@")
+                ?.takeIf { it.isNotBlank() }
+            Embedded(lines, source, videoId)
         }
 
     /** `[re:BitChord LRCLIB]`: the header a download writes naming where its lyrics came from. */
-    private val SOURCE_TAG = Regex("""(?m)^\[re:BitChord ([A-Z_]+)]""")
+    private val SOURCE_TAG = Regex("""(?m)^\[re:BitChord ([A-Z_]+)(?: @([A-Za-z0-9_-]+))?]""")
 
-    /** The header line naming [source], for a download's LRC. */
-    fun sourceHeader(source: LyricsSource): String = "[re:BitChord ${source.name}]\n"
+    /**
+     * The header line naming [source] and the recording the times belong to,
+     * for a download's LRC. Older headers carry no id; the reader accepts both.
+     */
+    fun sourceHeader(source: LyricsSource, videoId: String? = null): String =
+        if (videoId.isNullOrBlank()) {
+            "[re:BitChord ${source.name}]\n"
+        } else {
+            "[re:BitChord ${source.name} @$videoId]\n"
+        }
 
     /** The raw LRC text for the file, preferring this app's word-timed field. */
     private fun read(context: Context, uri: Uri): String? =

@@ -418,11 +418,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val artistKnown: Boolean = true,
         /** Played from a file: there is no stream on disk to measure against. */
         val localUri: String? = null,
+        /**
+         * The file's lyrics were timed for another recording (a music video
+         * this catalogue track was swapped from). They still need measuring.
+         */
+        val fileTimingForeign: Boolean = false,
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
     private var lyricsGeneration = 0L
     private var selectedLyricsSource: LyricsSource? = null
+
+    /**
+     * `file:<provider>@<videoId>` when the lyrics on screen came out of a
+     * downloaded file, so the sync line names the recording they were timed
+     * for. Null for every network answer.
+     */
+    private var fileLyricsLabel: String? = null
 
     /**
      * What the loaded lyrics are for. Both the track *and* the settings that
@@ -476,6 +488,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val generation = lyricsGeneration
         currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives, artistKnown, localUri)
         selectedLyricsSource = null
+        fileLyricsLabel = null
         manualLyricsJobs.values.forEach(Job::cancel)
         manualLyricsJobs.clear()
         lyricsProviderResults.clear()
@@ -519,22 +532,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     _lyrics.value = embedded
                     // No source to name: what the file records is the lyrics,
                     // not which of the eight services they came from months ago.
+                    // The download wrote that source and the id it was timed for
+                    // into the file header; name both in the sync line.
                     _lyricsSource.value = null
+                    fileLyricsLabel = com.music.bitchord.data.lyrics.FileLyricsOrigin.label(
+                        file.source?.label,
+                        file.videoId,
+                    )
                     _lyricsChecked.value = true
                     // A song's own file is timed for it already: only a correction
                     // by hand. A downloaded video (a cover) carries its lyrics as
                     // they were found — the record's, which the video's timing
                     // kept for it still moves, unless they were the video's own;
                     // and whatever they are, Gemini can be asked to place them.
-                    val onVideo = isVideo && embedded.any { it.timeMs > 0 }
+                    val timed = embedded.any { it.timeMs > 0 }
+                    val foreign = timed && com.music.bitchord.data.lyrics.FileLyricsOrigin
+                        .timingBelongsToAnotherRecording(file.videoId, videoId)
+                    if (foreign) {
+                        currentLyricsRequest = currentLyricsRequest?.copy(fileTimingForeign = true)
+                    }
+                    val onVideo = isVideo && timed
                     val recordTimed = onVideo && file.source != null && !LyricsTiming.timedToVideo(file.source)
                     startTiming(
                         embedded,
-                        adjustable = onVideo,
+                        adjustable = onVideo || foreign,
                         searchedAs = null,
-                        measure = recordTimed,
-                        measureNow = false,
-                        videoOwn = onVideo && file.source != null && !recordTimed,
+                        measure = recordTimed || foreign,
+                        measureNow = true,
+                        videoOwn = onVideo && !foreign && file.source != null && !recordTimed,
                     )
                     return@launch
                 }
@@ -810,7 +835,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             refreshTiming(generation, lines)
-            if (!adjustable || !measure || !measureNow || !request.isVideo) return@launch
+            if (!adjustable || !measure || !measureNow ||
+                (!request.isVideo && !request.fileTimingForeign)
+            ) return@launch
             // AI after the free measurement, not alongside it: each request
             // uploads the whole song (twice — Deepgram, then Gemini), and the
             // measurement times most covers on its own. A few videos still ask
@@ -844,6 +871,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 artist = request.artist,
                 thumbnailUrl = null,
                 isVideo = true,
+                // A file's lyrics timed for another recording are measured
+                // against the file that is actually playing.
+                localUri = request.localUri.takeIf { request.fileTimingForeign },
             )
             var attempts = 0
             val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
@@ -931,6 +961,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val provider = selectedLyricsSource?.label
             ?: _lyricsSource.value?.label
+            ?: fileLyricsLabel
             ?: if (_lyrics.value?.isNotEmpty() == true) "file" else "none"
         TrackDiagnostics.noteLyricsSync(
             videoId = request.videoId,

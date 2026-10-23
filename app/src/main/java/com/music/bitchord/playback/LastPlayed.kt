@@ -50,6 +50,7 @@ object LastPlayed {
         val safeIndex = index.coerceIn(songs.indices)
         val bounds = window(songs.size, safeIndex)
         val stored = StoredQueue(
+            version = SNAPSHOT_VERSION,
             tracks = songs.subList(bounds.first, bounds.last + 1).map { StoredTrack.from(it) },
             shuffleOrder = QueueShuffle.persistedOrder(),
         )
@@ -75,6 +76,7 @@ object LastPlayed {
         val safeIndex = index.coerceIn(songs.indices)
         val bounds = window(songs.size, safeIndex)
         val stored = StoredQueue(
+            version = SNAPSHOT_VERSION,
             tracks = songs.subList(bounds.first, bounds.last + 1).map { StoredTrack.from(it) },
             shuffleOrder = QueueShuffle.persistedOrder(),
         )
@@ -101,6 +103,9 @@ object LastPlayed {
         val raw = prefs.getString(KEY_QUEUE, null) ?: return null
         val stored = runCatching { json.decodeFromString<StoredQueue>(raw) }.getOrNull()
             ?: return null
+        // Written before the music-video type was trustworthy: its `video`
+        // flag can call a music video a song, so the whole snapshot is stale.
+        if (stored.version < SNAPSHOT_VERSION) return null
         if (stored.tracks.isEmpty()) return null
         val songs = stored.tracks.map(StoredTrack::toSong)
         val index = if (prefs.contains(KEY_INDEX)) {
@@ -132,6 +137,8 @@ object LastPlayed {
 
     @Serializable
     private data class StoredQueue(
+        /** Missing on snapshots written before ko-97; read as the oldest format. */
+        val version: Int = 1,
         val tracks: List<StoredTrack>,
         /** Compatibility with queue snapshots written before scalar state was separated. */
         val index: Int? = null,
@@ -162,6 +169,13 @@ object LastPlayed {
         val album: String? = null,
         val explicit: Boolean? = null,
         val video: Boolean = false,
+        /**
+         * Whether the recording came from a video upload even when it has
+         * since been swapped to its catalogue release. Null on snapshots
+         * written before this field existed, where [video] is the best answer
+         * available.
+         */
+        val videoOrigin: Boolean? = null,
         val radio: String? = null,
         val source: String? = null,
         val sourceType: String? = null,
@@ -189,6 +203,7 @@ object LastPlayed {
                 albumName = album,
                 isExplicit = explicit,
                 isVideo = video,
+                isVideoOrigin = videoOrigin ?: video,
                 queueTier = resolvedTier,
                 queueEntryId = entryId,
                 radioName = radio,
@@ -222,6 +237,7 @@ object LastPlayed {
                 album = song.albumName,
                 explicit = song.isExplicit,
                 video = song.isVideo,
+                videoOrigin = song.isVideoOrigin,
                 radio = song.radioName,
                 source = song.playbackSource,
                 sourceType = song.playbackSourceType?.name,
@@ -234,6 +250,9 @@ object LastPlayed {
             )
         }
     }
+
+    /** 2: a `video` flag before ko-97 could be false for a music video. */
+    private const val SNAPSHOT_VERSION = 2
 
     private const val KEEP_AHEAD = 50
     private const val PREFS_NAME = "bitchord_last_played"
