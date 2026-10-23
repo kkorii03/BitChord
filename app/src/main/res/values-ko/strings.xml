@@ -801,6 +801,7 @@
     <string name="unpin">고정 해제</string>
     <string name="rename">이름 변경</string>
     <string name="downloading">다운로드 중</string>
+    <string name="playlist_action_failed">플레이리스트를 변경하지 못했습니다</string>
     <string name="delete_playlist">재생목록 삭제</string>
     <string name="delete_download">다운로드 제거</string>
     <string name="delete_playlist_confirmation">‘%1$s’ 재생목록을 삭제하겠습니까? 확인하려면 다시 탭하십시오.</string>

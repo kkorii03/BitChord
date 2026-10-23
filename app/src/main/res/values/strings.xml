@@ -862,6 +862,7 @@
     <string name="unpin">Unpin</string>
     <string name="rename">Rename</string>
     <string name="downloading">Downloading</string>
+    <string name="playlist_action_failed">Couldn\'t update this playlist</string>
     <string name="delete_playlist">Delete playlist</string>
     <string name="delete_download">Delete download</string>
     <string name="delete_playlist_confirmation">Delete “%1$s”? Tap again to confirm.</string>

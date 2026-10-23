@@ -85,9 +85,20 @@ class AuthStore(context: Context) {
         activeProfileId = profileId
     }
 
+    /**
+     * Removes one Google login and reports the session that is active after it.
+     *
+     * Only a removal of the *active* login switches identities: deleting another
+     * account from the list must not make that account's neighbour current.
+     */
     fun removeAccount(accountId: String): GoogleAccountSession? {
+        val active = activeAccountId
+        val removedActive = active == accountId
         val remaining = sessions.filterNot { it.accountId == accountId }
         replaceSessions(remaining)
+        if (!removedActive) {
+            return remaining.firstOrNull { it.accountId == active } ?: remaining.firstOrNull()
+        }
         val fallback = remaining.firstOrNull()
         select(fallback?.accountId.orEmpty(), fallback?.activeProfileId)
         prefs.edit().putString(KEY_COOKIE, fallback?.cookie).apply()

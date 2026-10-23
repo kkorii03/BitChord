@@ -397,6 +397,10 @@ object StreamResolver {
         InnerTubeXResolver.onSessionChanged()
         unplayable.clear()
         UploadedTracks.clear()
+        // The remembered URLs were minted for the identity that just left: a
+        // signed-in walk and an anonymous one are not handed the same streams.
+        // Kept, one would play the old session's URL for up to [URL_TTL_MS].
+        recent.clear()
     }
 
     private const val UNPLAYABLE_TTL_MS = 10 * 60 * 1000L

@@ -101,9 +101,11 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.autoplayTopUpNeeded
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
@@ -397,12 +399,17 @@ class PlaybackService : MediaLibraryService() {
      * [YtMusicRepository.recents] cached for Android Auto's browse tree.
      */
     private var cachedRecents: Pair<Long, List<Song>>? = null
+    /** The session [cachedRecents] belongs to — see [sessionScopedCacheHit]. */
+    private var cachedRecentsKey: String? = null
     private val recentsMutex = Mutex()
     private val RECENTS_CACHE_TTL_MS = 30_000L
 
     private suspend fun cachedRecentsSongs(): List<Song> = recentsMutex.withLock {
+        val key = Innertube.sessionKey()
         cachedRecents?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < RECENTS_CACHE_TTL_MS && songs.isNotEmpty()) return songs
+            if (sessionScopedCacheHit(cachedRecentsKey, key, at, SystemClock.elapsedRealtime(), RECENTS_CACHE_TTL_MS) &&
+                songs.isNotEmpty()
+            ) return songs
         }
         val songs = try {
             withTimeoutOrNull(4000L) {
@@ -413,6 +420,7 @@ class PlaybackService : MediaLibraryService() {
         }
         if (songs.isNotEmpty()) {
             cachedRecents = SystemClock.elapsedRealtime() to songs
+            cachedRecentsKey = key
             songs.forEach { songCache[it.videoId] = it }
         }
         songs
@@ -423,14 +431,19 @@ class PlaybackService : MediaLibraryService() {
      * Excludes listening history songs to guarantee strictly unique data.
      */
     private var cachedQuickPicks: Pair<Long, List<Song>>? = null
+    /** The session [cachedQuickPicks] belongs to — see [sessionScopedCacheHit]. */
+    private var cachedQuickPicksKey: String? = null
     private val quickPicksMutex = Mutex()
     private val QUICK_PICKS_CACHE_TTL_MS = 60_000L
 
     private suspend fun cachedQuickPicksSongs(): List<Song> = quickPicksMutex.withLock {
+        val key = Innertube.sessionKey()
         cachedQuickPicks?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < QUICK_PICKS_CACHE_TTL_MS && songs.isNotEmpty()) return songs
+            if (sessionScopedCacheHit(cachedQuickPicksKey, key, at, SystemClock.elapsedRealtime(), QUICK_PICKS_CACHE_TTL_MS) &&
+                songs.isNotEmpty()
+            ) return songs
         }
-        val recentsIds = cachedRecents?.second?.mapTo(HashSet()) { it.videoId } ?: emptySet()
+        val recentsIds = snapshotRecents().mapTo(HashSet()) { it.videoId }
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.quickPicks(excludeSongIds = recentsIds).getOrNull()
@@ -440,6 +453,7 @@ class PlaybackService : MediaLibraryService() {
         }
         if (songs.isNotEmpty()) {
             cachedQuickPicks = SystemClock.elapsedRealtime() to songs
+            cachedQuickPicksKey = key
             songs.forEach { songCache[it.videoId] = it }
         }
         songs
@@ -495,13 +509,18 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private var cachedHome: Pair<Long, com.music.bitchord.data.model.HomeFeed>? = null
+    /** The session [cachedHome] belongs to — see [sessionScopedCacheHit]. */
+    private var cachedHomeKey: String? = null
     private val homeMutex = Mutex()
     private val HOME_CACHE_TTL_MS = 60_000L
     private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
+        val key = Innertube.sessionKey()
         cachedHome?.let { (at, feed) ->
-            if (SystemClock.elapsedRealtime() - at < HOME_CACHE_TTL_MS) return feed
+            if (sessionScopedCacheHit(cachedHomeKey, key, at, SystemClock.elapsedRealtime(), HOME_CACHE_TTL_MS)) {
+                return feed
+            }
         }
         val feed = try {
             withTimeoutOrNull(HOME_NETWORK_TIMEOUT_MS) {
@@ -511,6 +530,7 @@ class PlaybackService : MediaLibraryService() {
             null
         } ?: return null
         cachedHome = SystemClock.elapsedRealtime() to feed
+        cachedHomeKey = key
         feed
     }
 
@@ -557,8 +577,16 @@ class PlaybackService : MediaLibraryService() {
         cards
     }
 
-    private fun snapshotRecents(): List<Song> = cachedRecents?.second.orEmpty()
-    private fun snapshotQuickPicks(): List<Song> = cachedQuickPicks?.second.orEmpty()
+    /**
+     * The cached rows for the listener now asking. Another session's rows are
+     * no answer at all: Auto's browse tree would show them to the account that
+     * just took over until the TTL ran out.
+     */
+    private fun snapshotRecents(): List<Song> =
+        if (cachedRecentsKey == Innertube.sessionKey()) cachedRecents?.second.orEmpty() else emptyList()
+
+    private fun snapshotQuickPicks(): List<Song> =
+        if (cachedQuickPicksKey == Innertube.sessionKey()) cachedQuickPicks?.second.orEmpty() else emptyList()
     private fun snapshotLiked(): List<Song> {
         val cookie = com.music.bitchord.data.innertube.Innertube.cookie
         return if (cookie != null && cookie == cachedLikedCookie) cachedLiked?.second.orEmpty() else emptyList()
@@ -567,16 +595,17 @@ class PlaybackService : MediaLibraryService() {
         val cookie = com.music.bitchord.data.innertube.Innertube.cookie
         return if (cookie != null && cookie == cachedPlaylistCookie) cachedPlaylistCards?.second.orEmpty() else emptyList()
     }
-    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? = cachedHome?.second
+    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? =
+        cachedHome?.takeIf { cachedHomeKey == Innertube.sessionKey() }?.second
 
     private fun isFresh(at: Long, ttlMs: Long): Boolean =
         SystemClock.elapsedRealtime() - at < ttlMs
 
     private fun isRecentsFresh(): Boolean =
-        cachedRecents?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, RECENTS_CACHE_TTL_MS) } ?: false
+        snapshotRecents().isNotEmpty() && cachedRecents?.let { (at, _) -> isFresh(at, RECENTS_CACHE_TTL_MS) } == true
 
     private fun isQuickPicksFresh(): Boolean =
-        cachedQuickPicks?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, QUICK_PICKS_CACHE_TTL_MS) } ?: false
+        snapshotQuickPicks().isNotEmpty() && cachedQuickPicks?.let { (at, _) -> isFresh(at, QUICK_PICKS_CACHE_TTL_MS) } == true
 
     private fun isLikedFresh(): Boolean =
         snapshotLiked().isNotEmpty() && cachedLiked?.let { (at, _) -> isFresh(at, LIKED_CACHE_TTL_MS) } == true

@@ -1138,6 +1138,13 @@ private fun BitChordApp(
     }
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
+    // An emptied queue — the last track removed, the queue cleared, playback
+    // stopped for good — leaves the sheet with nothing to show. Left raised, it
+    // is only hidden by `playerRaised` until the next track starts from a list,
+    // and then opens by itself over it. Event-driven: this runs on the change.
+    LaunchedEffect(player.song?.videoId) {
+        if (player.song == null && showNowPlaying) dismissPlayer()
+    }
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -3533,7 +3540,11 @@ private fun BitChordApp(
                                     // first search hit.
                                     openByName(id, name, null, BrowseType.ARTIST)
                                 },
-                                onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
+                                onAddSuggested = { song ->
+                                    viewModel.addSuggestedSong(page.browseId, song) {
+                                        showQueueNotice(context.getString(R.string.playlist_action_failed))
+                                    }
+                                },
                                 // Saving is an account action, so it isn't offered to a
                                 // guest at all — same as the like and add-to-playlist rows
                                 // in the track menu.
@@ -3983,8 +3994,13 @@ private fun BitChordApp(
                             detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
                             detail != null -> detail.title
                             selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                            else -> tabs[selectedTab].let {
-                                if (it.label == "Play") stringResource(R.string.listen_now) else it.label
+                            // Play's tab is labelled with the listener's own
+                            // translation, so the bar's compact title is chosen
+                            // by the tab, not by comparing that label's text.
+                            else -> if (selectedTab == TAB_HOME) {
+                                stringResource(R.string.listen_now)
+                            } else {
+                                tabs[selectedTab].label
                             }
                         }
                     },
@@ -4817,7 +4833,9 @@ private fun BitChordApp(
                 onRemoveFromPlaylist = editable?.let {
                     {
                         songActions = null
-                        viewModel.removeFromPlaylist(it.browseId, song)
+                        viewModel.removeFromPlaylist(it.browseId, song) {
+                            showQueueNotice(context.getString(R.string.playlist_action_failed))
+                        }
                     }
                 },
                 onRemoveFromCache = if (inCache) {
@@ -5080,7 +5098,9 @@ private fun BitChordApp(
                         dismiss()
                     },
                     onCreate = { title, privacy ->
-                        viewModel.createPlaylist(title, privacy, target)
+                        viewModel.createPlaylist(title, privacy, target) {
+                            showQueueNotice(context.getString(R.string.playlist_action_failed))
+                        }
                         dismiss()
                     },
                 )
@@ -5261,7 +5281,9 @@ private fun BitChordApp(
                 onRename = playlist?.let { p ->
                     { name: String ->
                         browseActions = null
-                        viewModel.renamePlaylist(p, name)
+                        viewModel.renamePlaylist(p, name) {
+                            showQueueNotice(context.getString(R.string.playlist_action_failed))
+                        }
                     }
                 },
                 onReorder = playlist?.let { p ->
@@ -5294,7 +5316,9 @@ private fun BitChordApp(
                 onDelete = playlist?.let { p ->
                     {
                         browseActions = null
-                        viewModel.deletePlaylist(p)
+                        viewModel.deletePlaylist(p) {
+                            showQueueNotice(context.getString(R.string.playlist_action_failed))
+                        }
                     }
                 },
                 onDeleteDownload = target.downloadId?.let { id ->

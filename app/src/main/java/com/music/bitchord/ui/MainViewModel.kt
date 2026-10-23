@@ -1100,6 +1100,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val channels: StateFlow<List<AccountChannel>> = _channels.asStateFlow()
 
     private val _channelsLoading = MutableStateFlow(false)
+    private var channelsJob: Job? = null
 
     /**
      * The chosen channel's [AccountChannel.key], or null while the app is
@@ -1608,7 +1609,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * track's menu — one request, so it can't half-succeed into an empty
      * playlist the user has to add to again.
      */
-    fun createPlaylist(title: String, privacy: PlaylistPrivacy, song: Song? = null) {
+    fun createPlaylist(
+        title: String,
+        privacy: PlaylistPrivacy,
+        song: Song? = null,
+        /** Told when YouTube refused the write, so the surface can say so. */
+        onFailure: () -> Unit = {},
+    ) {
         if (!requireSignIn()) return
         val name = title.trim().ifBlank { text(R.string.new_playlist) }
         viewModelScope.launch {
@@ -1653,7 +1660,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         ) + items.filterNot { it.browseId == created.browseId }
                     }
                 },
-                onFailure = {},
+                onFailure = { onFailure() },
             )
         }
     }
@@ -1720,7 +1727,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Drops [song] from the playlist page it is being read on, and takes the
      * row out from under the reader rather than waiting for a re-fetch.
      */
-    fun removeFromPlaylist(browseId: String, song: Song) {
+    fun removeFromPlaylist(
+        browseId: String,
+        song: Song,
+        /** Told when YouTube refused the write, so the surface can say so. */
+        onFailure: () -> Unit = {},
+    ) {
         val setVideoId = song.setVideoId ?: return
         if (!requireSignIn()) return
         val playlistId = browseId.removePrefix("VL")
@@ -1744,7 +1756,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 },
-                onFailure = {},
+                onFailure = { onFailure() },
             )
         }
     }
@@ -1766,7 +1778,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * than after a re-fetch. A response that named no id still adds the row;
      * it just can't offer to take it back out yet.
      */
-    fun addSuggestedSong(browseId: String, song: Song) {
+    fun addSuggestedSong(
+        browseId: String,
+        song: Song,
+        /** Told when YouTube refused the write, so the surface can say so. */
+        onFailure: () -> Unit = {},
+    ) {
         if (!requireSignIn()) return
         val playlistId = browseId.removePrefix("VL")
         viewModelScope.launch {
@@ -1785,7 +1802,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     appendToOpenPlaylist(browseId, song, added[song.videoId])
                 },
-                onFailure = {},
+                onFailure = { onFailure() },
             )
         }
     }
@@ -1832,7 +1849,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * own page or its card, so there is always something on screen still
      * showing the old name.
      */
-    fun renamePlaylist(playlist: UserPlaylist, title: String) {
+    fun renamePlaylist(
+        playlist: UserPlaylist,
+        title: String,
+        /** Told when YouTube refused the write, so the surface can say so. */
+        onFailure: () -> Unit = {},
+    ) {
         if (!requireSignIn()) return
         val name = title.trim()
         if (name.isBlank() || name == playlist.title) return
@@ -1842,7 +1864,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     setPlaylistTitle(playlist, name)
                     libraryStale = true
                 },
-                onFailure = {},
+                onFailure = { onFailure() },
             )
         }
     }
@@ -1893,7 +1915,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deletePlaylist(playlist: UserPlaylist) {
+    fun deletePlaylist(
+        playlist: UserPlaylist,
+        /** Told when YouTube refused the write, so the surface can say so. */
+        onFailure: () -> Unit = {},
+    ) {
         if (!requireSignIn()) return
         viewModelScope.launch {
             YtMusicRepository.deletePlaylist(playlist.playlistId).fold(
@@ -1914,7 +1940,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     navigator.onDetailStackShrunk(_detailStack.value.size)
                     libraryStale = true
                 },
-                onFailure = {},
+                onFailure = { onFailure() },
             )
         }
     }
@@ -2071,6 +2097,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (failure: Throwable) {
                     com.music.bitchord.data.DebugLog.w("BitChord", "proxy re-check failed: ${failure.message}")
                 }
+                // The answers this route gave before may be the ones it gated.
+                invalidateSearchCaches()
                 refresh(Feed.HOME, force = true, replaceShelves = true, reason = "proxy")
                 refresh(Feed.EXPLORE)
             }
@@ -2408,12 +2436,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         navigator.onDetailStackShrunk(0)
     }
 
-    fun loadHome() = loadHome("startup")
-
     /** The Home error state's Retry button: a tab load, not a fresh launch. */
     fun retryHome() = loadHome("tab")
 
-    private fun loadHome(reason: String) {
+    /** A full load; [reason] names the trigger in the log — see [refreshHome]. */
+    fun loadHome(reason: String = "startup") {
         com.music.bitchord.data.TrackLog.d("BitChord", "home: refresh by $reason")
         val identity = listenerKey()
         val generation = homeLoadGeneration.incrementAndGet()
@@ -3089,16 +3116,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_searchLoadingMore.value) return
         _searchLoadingMore.value = true
         viewModelScope.launch {
-            val next = YtMusicRepository.searchContinuation(token, session.filter)
-            val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
-            if (stillCurrent) {
-                next.onSuccess { page ->
-                    val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows).distinctBy(::searchResultKey)
-                    searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
-                    searchSession = session.copy(continuation = page.continuation)
-                    _results.value = UiState.Success(merged)
+            try {
+                val next = YtMusicRepository.searchContinuation(token, session.filter)
+                val stillCurrent = searchSession == session && session.requestId == newestRequestId.get()
+                if (stillCurrent) {
+                    next.onSuccess { page ->
+                        val current = (_results.value as? UiState.Success)?.data.orEmpty()
+                        val merged = (current + page.rows).distinctBy(::searchResultKey)
+                        searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
+                        searchSession = session.copy(continuation = page.continuation)
+                        _results.value = UiState.Success(merged)
+                    }
                 }
+            } finally {
+                // Cleared even when a newer search replaced this one: the flag
+                // gates the *next* continuation, which belongs to that search.
                 _searchLoadingMore.value = false
             }
         }
@@ -3986,21 +4018,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Loads the channel list, unless it is already in hand.
      *
-     * @param force refetch even if it is — after a switch, since the list
-     *   itself reports which channel is active.
+     * @param force refetch even if it is ??after a switch, since the list
+     *   itself reports which channel is active. A load still running belongs
+     *   to the identity being left, so it is cancelled and replaced rather
+     *   than allowed to answer after the new one.
      */
     fun loadChannels(force: Boolean = false) {
         if (!_signedIn.value) return
-        if (_channelsLoading.value) return
-        if (!force && _channels.value.isNotEmpty()) return
-        viewModelScope.launch {
+        if (force) {
+            // After a switch the list itself is the question, so a load still
+            // running under the identity being left is replaced, not dropped.
+            channelsJob?.cancel()
+        } else {
+            if (_channelsLoading.value) return
+            if (_channels.value.isNotEmpty()) return
+        }
+        channelsJob = viewModelScope.launch {
             _channelsLoading.value = true
-            YtMusicRepository.accountChannels()
-                .onSuccess {
-                    _channels.value = it
-                    persistDetectedProfiles(it)
-                }
-            _channelsLoading.value = false
+            try {
+                YtMusicRepository.accountChannels()
+                    .onSuccess {
+                        _channels.value = it
+                        persistDetectedProfiles(it)
+                    }
+            } finally {
+                // Only this job may clear it; a cancelled predecessor must not
+                // clear the spinner of the load that replaced it.
+                if (channelsJob === currentCoroutineContext()[Job]) _channelsLoading.value = false
+            }
         }
     }
 
@@ -4193,6 +4238,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Every resolver verdict and personalised page belongs to the
             // identity that was active before validation succeeded.
             StreamResolver.onSessionChanged()
+            invalidateSearchCaches()
             if (wasSignedIn) clearListenerState()
             reloadForAccount()
             loadChannels(force = true)
@@ -4248,8 +4294,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun removeAccount(accountId: String) {
+        // Removing an account the app was not acting as is only a list edit:
+        // the identity on screen stays, and its pages stay with it.
+        val wasActive = accountId == _activeAccountId.value
         val fallback = authStore.removeAccount(accountId)
         _googleAccounts.value = authStore.sessions
+        if (!wasActive) return
         if (fallback == null) { signOut(); return }
         selectProfile(fallback.accountId, fallback.activeProfileId ?: fallback.profiles.firstOrNull()?.profileId ?: return)
     }
@@ -4316,6 +4366,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _songMenu.value = null
         _library.value = UiState.Loading
         _history.value = UiState.Loading
+        // Pushed pages and the saved badges on their cards were answered for
+        // the listener being left, so they go with the rest of their state.
+        clearDetail()
+        _releaseLibrary.value = emptyMap()
+        invalidateSearchCaches()
         if (restoreCached) listenerCache[listenerKey()]?.let { cached ->
             _account.value = cached.account
             _library.value = cached.library
@@ -4323,6 +4378,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _playlists.value = cached.playlists
             _playlistOwned.value = cached.owned
         }
+    }
+
+    /**
+     * Search answers and completions belong to the identity — and the route —
+     * that asked for them. A query repeated after a switch or a proxy change
+     * has to be asked again rather than answered from the old session.
+     */
+    private fun invalidateSearchCaches() {
+        searchCache.evictAll()
+        synchronized(suggestionCache) { suggestionCache.clear() }
+        synchronized(typeaheadMediaCache) { typeaheadMediaCache.clear() }
+        searchSession = null
     }
 
     /**
@@ -4337,7 +4404,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun reloadForAccount() {
         viewModelScope.launch {
             Innertube.ensureSessionScope()
-            loadHome()
+            loadHome("session")
             loadLibrary()
             loadAccount()
             loadPlaylists()
@@ -4377,7 +4444,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _playlistOwned.value = emptyMap()
         ownershipInFlight.clear()
         _songMenu.value = null
-        loadHome()
+        // The stack and the saved badges are the departed listener's pages.
+        clearDetail()
+        _releaseLibrary.value = emptyMap()
+        invalidateSearchCaches()
+        loadHome("session")
     }
 
     private fun Throwable.friendly(): String = when {

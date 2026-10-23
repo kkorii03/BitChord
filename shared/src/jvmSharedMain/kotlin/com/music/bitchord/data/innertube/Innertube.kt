@@ -438,14 +438,16 @@ object Innertube {
     }
 
     /**
-     * The identity the music-gate verdict belongs to.
+     * The identity a per-session answer belongs to — the music-gate verdict,
+     * and anything else cached across a switch (Auto's Recents, Quick Picks,
+     * Home).
      *
      * A channel override wins because the same Google login can act as several
      * listeners, and one of them being gated says nothing about another. Before
      * the shell has answered, the cookie is hashed so the entry still cannot
      * leak across accounts; an anonymous session has one shared entry.
      */
-    internal fun sessionKey(): String {
+    fun sessionKey(): String {
         val chosen = channelOverride
         val id = chosen?.dataSyncId?.takeIf { it.isNotBlank() }
             ?: chosen?.pageId?.takeIf { it.isNotBlank() }
