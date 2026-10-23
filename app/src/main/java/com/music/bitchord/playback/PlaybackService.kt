@@ -130,7 +130,10 @@ import com.music.bitchord.auth.SignedIn
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.DiagnosticsState
+import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.ResolutionFacts
+import com.music.bitchord.data.net.TrackSummaryFormat
 import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.discord.discordAudioQualityLine
 import com.music.bitchord.data.innertube.PlaybackTracker
@@ -713,6 +716,17 @@ class PlaybackService : MediaLibraryService() {
     /** When the current track was chosen, for the time-to-first-audio log. */
     private var trackSelectedAt: Long? = null
 
+    /** The track the one-line summary will be about when it stops being current. */
+    private var summarySong: Song? = null
+
+    /** Its queue origin, route and first sound, gathered while it plays. */
+    private var summarySource: String = "none"
+    private var summaryResolve: String = "direct"
+    private var summaryFirstAudioMs: Long? = null
+
+    /** Set when the track is left for a reason other than the queue advancing. */
+    private var summaryEndedOverride: String? = null
+
     /**
      * The last track that actually made a sound, which is how [recoverFrom]
      * tells "this never started" from "this died in the middle".
@@ -1029,11 +1043,15 @@ class PlaybackService : MediaLibraryService() {
             // background for tracks nobody was waiting on.
             if (isPlaying) {
                 trackSelectedAt?.let {
+                    val tookMs = SystemClock.elapsedRealtime() - it
                     TrackLog.d(
                         "BitChord",
-                        "TIMING first audio: ${SystemClock.elapsedRealtime() - it}ms since track selected",
+                        "TIMING first audio: ${tookMs}ms since track selected",
                         about = exoPlayer.currentMediaItem?.mediaId,
                     )
+                    if (summarySong?.videoId == exoPlayer.currentMediaItem?.mediaId) {
+                        summaryFirstAudioMs = tookMs
+                    }
                     trackSelectedAt = null
                 }
                 // Sound is out of the speaker, so whatever happens to this track
@@ -1272,6 +1290,10 @@ class PlaybackService : MediaLibraryService() {
                 // is never marked finished — so the one play most likely to be
                 // a full, deliberate listen is the one recorded as abandoned.
                 PlaybackTracker.onPlaybackFinished(lastPositionSeconds)
+                if (summarySong != null) {
+                    summaryEndedOverride = summaryEndedOverride ?: "natural"
+                    logTrackSummary(true)
+                }
                 lastPositionSeconds = 0
                 // The last track finished with nothing after it, so no
                 // transition will ever close it out. Scrobble it now.
@@ -2805,6 +2827,11 @@ class PlaybackService : MediaLibraryService() {
                 boundedEditState,
                 desiredShuffle = target,
             )
+            TrackLog.d(
+                "BitChord",
+                "cmd: shuffle ${if (target) "on" else "off"} from notification",
+                about = player?.currentMediaItem?.mediaId,
+            )
             if (crossfade?.isTransitioning() != true) applyDeferredBoundedQueueEdit()
             return
         }
@@ -3975,6 +4002,67 @@ class PlaybackService : MediaLibraryService() {
         player?.currentMediaItem?.mediaId?.let(PlaybackTracker::onPlaying)
     }
 
+    /** Remembers the facts the one-line summary will need when this track ends. */
+    private fun startTrackSummary(song: Song?, alreadyAudible: Boolean) {
+        summarySong = song
+        if (song == null) {
+            summarySource = "none"
+            summaryResolve = "direct"
+            summaryFirstAudioMs = null
+            return
+        }
+        summarySource = TrackDiagnostics.sourceLabel(song)
+        val route = ResolutionFacts.routeFor(song.videoId)
+        summaryResolve = if (song.localUri != null) "cache" else route ?: "direct"
+        // A track served whole from the disk cache resolves nothing, so it has
+        // no route to report. The cache index is read off the main thread, and
+        // only for the track still current when the answer arrives.
+        if (song.localUri == null && route == null) {
+            val videoId = song.videoId
+            scope.launch {
+                val cached = withContext(Dispatchers.IO) {
+                    runCatching { AudioCache.holds(videoId) }.getOrDefault(false)
+                }
+                if (cached && summarySong?.videoId == videoId) summaryResolve = "cache"
+            }
+        }
+        // A crossfaded track has been sounding since before it became current.
+        summaryFirstAudioMs = if (alreadyAudible) 0L else null
+    }
+
+    /**
+     * Writes the outgoing track's one line. Everything in it was already known
+     * — the route from [ResolutionFacts], the lyrics from [TrackDiagnostics],
+     * the rest from this service — so this adds no work of its own.
+     */
+    private fun logTrackSummary(previousEnded: Boolean) {
+        val song = summarySong ?: return
+        val lyrics = TrackDiagnostics.lyricsFor(song.videoId)
+        val ended = summaryEndedOverride ?: if (previousEnded) "natural" else "skipped"
+        TrackLog.i(
+            "BitChord",
+            TrackSummaryFormat.format(
+                id = song.videoId,
+                title = song.title,
+                video = song.isVideo,
+                source = summarySource,
+                resolve = summaryResolve,
+                firstAudioMs = summaryFirstAudioMs,
+                playedSeconds = lastPositionSeconds,
+                lyrics = lyrics?.provider ?: "none",
+                sync = lyrics?.sync ?: "none",
+                shiftMs = lyrics?.shiftMs,
+                matchPercent = lyrics?.matchPercent,
+                manualOffsetMs = lyrics?.manualOffsetMs ?: 0L,
+                ended = ended,
+            ),
+            about = song.videoId,
+        )
+        summarySong = null
+        summaryFirstAudioMs = null
+        summaryEndedOverride = null
+    }
+
     /**
      * Everything that has to happen when a different song becomes the one
      * playing: history, scrobbles, ListenBrainz, the sleep timer, read-ahead
@@ -4002,6 +4090,10 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        // The outgoing track's story ends here. Its own lines are already in
+        // the log; this is the one line that ties them together for a reader
+        // who was not watching while it played.
+        logTrackSummary(previousEnded)
         syncBoundedContextCursor(exoPlayer, mediaItem)
         if (boundedContextWindow != null && !ListenTogether.state.value.inParty) {
             saveBoundedContextSnapshot(exoPlayer)
@@ -4103,6 +4195,7 @@ class PlaybackService : MediaLibraryService() {
         // black player with an empty title is told apart from a cover that
         // simply failed to load.
         val played = mediaItem?.toSong()
+        startTrackSummary(played, alreadyAudible)
         TrackLog.i(
             "BitChord",
             "play: -> ${played?.title?.take(80).orEmpty()} - ${played?.artist?.take(80).orEmpty()} " +
@@ -4885,6 +4978,7 @@ class PlaybackService : MediaLibraryService() {
         }
         TrackLog.w("BitChord", "$reason — skipping to the next track", about = mediaId)
         TrackLog.d("BitChord", "cmd: next from failure", about = mediaId)
+        if (summarySong?.videoId == mediaId) summaryEndedOverride = "error"
         reportPlaybackFailure(mediaId, R.string.playback_unplayable_skipped)
         exoPlayer.seekToNextMediaItem()
         // No play() here: an error does not clear playWhenReady, so prepare()

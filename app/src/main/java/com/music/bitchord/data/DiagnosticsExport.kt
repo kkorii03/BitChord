@@ -14,7 +14,10 @@ import androidx.core.content.FileProvider
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.net.CounterpartSwitch
 import com.music.bitchord.data.net.ProxyMode
+import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -88,6 +91,14 @@ object DiagnosticsExport {
                     store.activeSession?.cookie ?: store.cookie
                 }.getOrNull()
                 val authCookieNames = cookieNames(cookie)
+                val logText = LogRedactor.redact(TrackLog.exportText())
+                val oldestLine = oldestLineAt(logText)
+                val translationSetting = if (AppSettings.autoTranslateLyrics.value) {
+                    "auto" + AppSettings.translationLanguage.value
+                        .takeIf { it.isNotBlank() }?.let { "->$it" }.orEmpty()
+                } else {
+                    "off"
+                }
                 val header = buildString {
                     appendLine("BitChord diagnostic log")
                     appendLine("exported: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(now)}")
@@ -114,6 +125,31 @@ object DiagnosticsExport {
                             },
                     )
                     appendLine("music only: ${if (AppSettings.preferMusicOnly.value) "on" else "off"}")
+                    appendLine(
+                        "playback settings: " +
+                            "autoplay=${onOff(AppSettings.autoplay.value)} " +
+                            "personalisedAutoplay=${onOff(AppSettings.personalisedAutoplay.value)} " +
+                            "crossfade=${AppSettings.crossfadeSeconds.value}s " +
+                            "smartFade=${onOff(AppSettings.smartFadeEnabled.value)} " +
+                            "quality=${AppSettings.audioQualityWifi.value.name.lowercase(Locale.US)}/" +
+                            "${AppSettings.audioQualityCellular.value.name.lowercase(Locale.US)} " +
+                            "lowPower=${AppSettings.lowPowerMode.value.name.lowercase(Locale.US)} " +
+                            "canvas=${onOff(AppSettings.animatedCanvas.value)}" +
+                            "/video=${onOff(AppSettings.videoCanvas.value)} " +
+                            "skipSilence=${onOff(AppSettings.skipSilence.value)} " +
+                            "skipNonMusic=${onOff(AppSettings.skipNonMusicParts.value)} " +
+                            "skipSponsor=${onOff(AppSettings.skipSponsorParts.value)}",
+                    )
+                    appendLine(
+                        "lyrics settings: synced=${onOff(AppSettings.syncedLyrics.value)} " +
+                            "providers=${lyricsProviders()} " +
+                            "aiTiming=${onOff(AppSettings.autoLyricsTiming.value)} " +
+                            "aiTimingAhead=${onOff(AppSettings.aiTimingAhead.value)} " +
+                            "translation=$translationSetting",
+                    )
+                    appendLine("proxy memory: ${ProxyPlayback.rememberedCount()} tracks")
+                    appendLine("counterpart: ${counterpartState(now)}")
+                    appendLine("log retention: ~5 MB across 3 files, oldest $oldestLine")
                     DiagnosticsState.describe().forEach { appendLine(it) }
                     appendLine("power: ${powerState(context)}")
                     appendLine("network: ${networkType(context)}")
@@ -129,7 +165,7 @@ object DiagnosticsExport {
                     webViewNames.forEach { appendLine(it) }
                     appendLine("---")
                 }
-                val content = header + LogRedactor.redact(TrackLog.exportText()) + "\n"
+                val content = header + logText + "\n"
                 val downloadsUri = saveToDownloads(context, fileName, content)
                 val uri = downloadsUri ?: FileProvider.getUriForFile(
                     context,
@@ -167,6 +203,42 @@ object DiagnosticsExport {
             runCatching { resolver.delete(uri, null, null) }
             null
         }
+    }
+
+    private fun onOff(value: Boolean): String = if (value) "on" else "off"
+
+    /** Enabled lyric providers in the order they are asked, labels only. */
+    private fun lyricsProviders(): String {
+        val enabled = AppSettings.lyricsSources.value
+        val order = (AppSettings.lyricsSourceOrder.value + LyricsSource.offered).distinct()
+        return order.filter { it in enabled && !it.hidden }
+            .joinToString(">") { it.label }
+            .ifEmpty { "(none)" }
+    }
+
+    private fun counterpartState(now: Date): String {
+        val until = CounterpartSwitch.offUntil() ?: return "on"
+        val at = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(until))
+        return if (CounterpartSwitch.isSuppressed(now.time)) "off until $at" else "on (stale deadline $at)"
+    }
+
+    /**
+     * The wall-clock time of the oldest line in the exported text, so a reader
+     * knows how far back the file actually reaches. Persisted lines carry a
+     * date; an in-memory ring only has a clock, which is still better than
+     * saying nothing.
+     */
+    private fun oldestLineAt(text: String): String {
+        val first = text.lineSequence().firstOrNull { it.isNotBlank() } ?: return "(none)"
+        return runCatching {
+            if (first.length >= 23 && first[4] == '-' && first[10] == ' ') {
+                val at = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+                    .parse(first.substring(0, 23))
+                SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(at!!)
+            } else {
+                first.substringBefore(' ')
+            }
+        }.getOrElse { "(unknown)" }
     }
 
     private fun powerState(context: Context): String {

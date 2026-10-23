@@ -9,6 +9,13 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
+ * Three files of this size hold about five megabytes together — sized to keep
+ * at least a day of ordinary play in the export while still being a file
+ * someone can attach to a report.
+ */
+private const val DEFAULT_MAX_BYTES = 1_700_000L
+
+/**
  * The on-disk half of [TrackLog]: a small set of rotating text files that
  * outlive the process.
  *
@@ -27,7 +34,7 @@ import java.util.concurrent.TimeUnit
  */
 class TrackLogPersistence(
     private val directory: File,
-    private val maxBytes: Long = 1_048_576L,
+    private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val fileCount: Int = 3,
 ) {
     private val queue = LinkedBlockingQueue<Any>()

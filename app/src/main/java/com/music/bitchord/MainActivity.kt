@@ -137,6 +137,7 @@ import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
@@ -4942,6 +4943,34 @@ private fun BitChordApp(
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
+                    }
+                } else {
+                    null
+                },
+                // A pin in the moment the listener is looking at, written to
+                // the same log the export carries off the phone. Only for the
+                // track that is actually playing: marking a row in a list
+                // would name a moment that never happened to it.
+                onReportProblem = if (fromPlayer && controller?.currentMediaItem?.mediaId == song.videoId) {
+                    {
+                        val positionMs = player.position.positionMs
+                        val timed = lyrics.orEmpty()
+                        val index = timed.indexOfLast { it.timeMs > 0 && it.timeMs <= positionMs }
+                        val lineTimeMs = timed.getOrNull(index)?.timeMs ?: -1L
+                        val base = when {
+                            lyricsTiming.byAi -> "ai"
+                            lyricsTiming.shiftMs != null || lyricsTiming.rate != null -> "measured"
+                            else -> "none"
+                        }
+                        TrackDiagnostics.mark(
+                            song = song,
+                            positionMs = positionMs,
+                            lyricIndex = index,
+                            lyricTimeMs = lineTimeMs,
+                            sync = TrackDiagnostics.syncLabel(base, lyricsTiming.manualMs),
+                        )
+                        Toast.makeText(context, R.string.problem_marked, Toast.LENGTH_SHORT).show()
+                        songActions = null
                     }
                 } else {
                     null

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
@@ -201,6 +202,11 @@ fun SongActionsSheet(
      * except the player, where "this track" means something.
      */
     onCopyLog: (() -> Unit)? = null,
+    /**
+     * Writes this moment into the diagnostic log so a problem the listener can
+     * see can be found again afterwards. Null everywhere except the player.
+     */
+    onReportProblem: (() -> Unit)? = null,
     /** Opens the timing control offered only by the main player's menu. */
     onLyricsOffset: (() -> Unit)? = null,
     /**
@@ -463,6 +469,16 @@ fun SongActionsSheet(
         // the one row here nobody reaches for by accident.
         onCopyLog?.let {
             ActionRow(Icons.Rounded.BugReport, stringResource(R.string.copy_log), accent = palette.accent, onClick = it)
+        }
+        // Beside Copy log: that one hands over the whole story, this one puts
+        // a pin in the moment the listener is looking at.
+        onReportProblem?.let {
+            ActionRow(
+                icon = Icons.Rounded.Flag,
+                label = stringResource(R.string.problem_mark),
+                accent = palette.accent,
+                onClick = it,
+            )
         }
     }
 

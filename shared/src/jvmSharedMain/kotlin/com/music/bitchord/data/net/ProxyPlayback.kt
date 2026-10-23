@@ -153,6 +153,11 @@ object ProxyPlayback {
         return true
     }
 
+    /** How many tracks are remembered as having played through the proxy. */
+    @Synchronized
+    fun rememberedCount(now: Long = System.currentTimeMillis()): Int =
+        rememberedTimestamps.count { (_, at) -> now - at <= MAX_AGE_MS }
+
     /** Drops persisted ids older than [MAX_AGE_MS]; pure so the cutoff is tested. */
     internal fun filterFresh(entries: Map<String, Long>, now: Long): Map<String, Long> =
         entries.filterValues { now - it <= MAX_AGE_MS }

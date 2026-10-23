@@ -1294,4 +1294,6 @@
     <string name="pipeline_none">없음</string>
     <string name="pipeline_dsd_full_band">DSD → PCM, 컧오프 아래 전 대역</string>
     <string name="pipeline_surround">%1$s (서라운드)</string>
+    <string name="problem_mark">문제 표시(진단 로그에 기록)</string>
+    <string name="problem_marked">진단 로그에 표시했어요</string>
 </resources>

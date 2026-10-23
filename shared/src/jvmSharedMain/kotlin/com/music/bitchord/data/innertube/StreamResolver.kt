@@ -9,6 +9,7 @@ import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.ProxyPlaybackPolicy
+import com.music.bitchord.data.net.ResolutionFacts
 import com.music.bitchord.data.net.raceForFirstSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -697,6 +698,7 @@ object StreamResolver {
             "resolve: $videoId via ${servedLabel ?: "unknown"} in $took ms (order=$orderLabel)",
         )
         TrackLog.d(TAG, "TIMING $videoId total resolve: $took ms")
+        ResolutionFacts.note(videoId, "direct")
         return stream
     }
 
@@ -733,6 +735,7 @@ object StreamResolver {
         }
         ProxyHealthMonitor.recordSuccess()
         val first = ProxyPlayback.markResolved(videoId, found.url)
+        ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
         return found
@@ -1198,6 +1201,7 @@ object StreamResolver {
         }
         ProxyHealthMonitor.recordSuccess()
         val first = ProxyPlayback.markResolved(videoId, found.url)
+        ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
         return found

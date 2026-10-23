@@ -1024,11 +1024,13 @@ fun NowPlayingScreen(
     // open but the half-player was not, so every trip into lyrics briefly
     // started an exit animation and reversed it on the following frame.
     val openLyrics: () -> Unit = {
+        if (!lyricsOpen) TrackLog.d("BitChord", "cmd: lyrics open from ui", about = song.videoId)
         lyricsControlsOpen = true
         lyricsOpen = true
         queueOpen = false
     }
     val closeLyrics: () -> Unit = {
+        if (lyricsOpen) TrackLog.d("BitChord", "cmd: lyrics close from ui", about = song.videoId)
         lyricsControlsOpen = false
         lyricsOpen = false
     }
@@ -1042,6 +1044,11 @@ fun NowPlayingScreen(
         // gives: left to the effect above, it was a second recomposition of
         // the whole player on the sleeve's first frame of moving.
         if (opening) queueControlsOpen = true
+        TrackLog.d(
+            "BitChord",
+            "cmd: queue ${if (opening) "open" else "close"} from ui",
+            about = song.videoId,
+        )
         queueOpen = opening
         if (opening) closeLyrics()
     }

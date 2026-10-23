@@ -15,6 +15,8 @@ import com.music.bitchord.auth.sessionId
 import com.music.bitchord.auth.adjacentProfile
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.TrackDiagnostics
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.YtMusicRepository
@@ -568,6 +570,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun selectLyricsProvider(source: LyricsSource) {
         val request = currentLyricsRequest ?: return
         if (source.hidden || source !in AppSettings.lyricsSources.value) return
+        TrackLog.i("BitChord", "cmd: lyrics-provider ${source.label} from ui", about = request.videoId)
         when (_lyricsProviderStates.value[source]) {
             LyricsProviderState.FOUND -> {
                 selectedLyricsSource = source
@@ -916,15 +919,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val base = timing?.base
         val note = if (timingBaseAllowed && timingMeasureAllowed) LyricsTiming.note(getApplication(), request.videoId) else null
         if (generation != lyricsGeneration || timingLines !== lines) return
+        val shiftMs = base?.let { adjustment ->
+            LyricsTiming.shownShiftMs(lines, adjustment) - if (adjustment.byAi) (timing?.aiBiasMs ?: 0L) else 0L
+        }
+        val matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent
+        val manualMs = timing?.manualMs ?: 0L
+        val baseLabel = when {
+            base == null -> "none"
+            base.byAi -> "ai"
+            else -> "measured"
+        }
+        val provider = selectedLyricsSource?.label
+            ?: _lyricsSource.value?.label
+            ?: if (_lyrics.value?.isNotEmpty() == true) "file" else "none"
+        TrackDiagnostics.noteLyricsSync(
+            videoId = request.videoId,
+            provider = provider,
+            base = baseLabel,
+            sync = TrackDiagnostics.syncLabel(baseLabel, manualMs),
+            shiftMs = shiftMs,
+            matchPercent = matchPercent,
+            biasMs = timing?.aiBiasMs ?: 0L,
+            manualOffsetMs = manualMs,
+            video = request.isVideo,
+        )
         _lyricsTiming.update {
             it.copy(
-                shiftMs = base?.let { adjustment ->
-                    LyricsTiming.shownShiftMs(lines, adjustment) - if (adjustment.byAi) timing.aiBiasMs else 0L
-                },
+                shiftMs = shiftMs,
                 byAi = base?.byAi == true,
                 rate = (base as? LyricsTiming.Adjustment.Mapped)?.rate?.takeIf { rate -> rate != 1.0 },
-                matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
-                manualMs = timing?.manualMs ?: 0L,
+                matchPercent = matchPercent,
+                manualMs = manualMs,
                 note = note,
                 aiEngine = timing?.aiEngine,
                 // Empty unless the answer showing is the transcript's, and
@@ -1052,6 +1077,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val lines = timingLines ?: return
         val generation = lyricsGeneration
         val value = ms.coerceIn(-LyricsTiming.MAX_MANUAL_MS, LyricsTiming.MAX_MANUAL_MS)
+        if (_lyricsTiming.value.manualMs != value) {
+            TrackLog.i("BitChord", "cmd: lyrics-offset ${value}ms from ui", about = request.videoId)
+        }
         // Shown at once, so a run of taps on "+" counts from each other.
         _lyricsTiming.update { it.copy(manualMs = value) }
         viewModelScope.launch {
