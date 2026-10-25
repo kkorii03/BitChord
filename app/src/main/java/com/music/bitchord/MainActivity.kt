@@ -102,6 +102,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -156,7 +157,9 @@ import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import com.music.bitchord.data.model.durationMillis
@@ -1657,15 +1660,15 @@ private fun BitChordApp(
         source: QueueSource,
         boundedContext: Boolean = false,
         continuationToken: String? = null,
-    ) {
+    ): Job? {
         // A Spotify page lists songs it has not found on YouTube Music yet (or
         // never will); those can't be queued, so play the rest in their order.
-        if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return
+        if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return null
         val songs = allSongs.filterNot { it.isUnresolvedSpotify }
         val index = songs.indexOf(allSongs.getOrNull(allIndex)).coerceAtLeast(0)
         val request = ++playRequestGeneration
         activeRadioSeed = null
-        scope.launch {
+        return scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
@@ -3440,6 +3443,52 @@ private fun BitChordApp(
                                     song
                                 }
                             }
+                            var shuffleStarting by remember(key) { mutableStateOf(false) }
+                            var detailCoversArmed by remember(key) { mutableStateOf(false) }
+                            val pageSongs = (page.songs as? UiState.Success)?.data.orEmpty()
+                            val playingFromThisPage = player.song?.let { song ->
+                                song.playbackSourceId == page.browseId ||
+                                    pageSongs.any { it.videoId == song.videoId }
+                            } == true
+                            LaunchedEffect(
+                                playingFromThisPage,
+                                player.isPlaying,
+                                page.browseId,
+                                live?.browseId == page.browseId,
+                            ) {
+                                if (playingFromThisPage && player.isPlaying &&
+                                    live?.browseId == page.browseId
+                                ) {
+                                    detailCoversArmed = true
+                                }
+                            }
+                            LaunchedEffect(
+                                page.browseId,
+                                detailCoversArmed,
+                                live?.browseId == page.browseId,
+                                pageDetailListState,
+                                pageSongs,
+                            ) {
+                                if (!detailCoversArmed || live?.browseId != page.browseId) {
+                                    return@LaunchedEffect
+                                }
+                                snapshotFlow {
+                                    val byId = pageSongs.associateBy { it.videoId }
+                                    pageDetailListState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
+                                        val itemKey = item.key as? String ?: return@mapNotNull null
+                                        val videoId = if (itemKey.firstOrNull()?.isDigit() == true) {
+                                            itemKey.substringAfter('_')
+                                        } else {
+                                            itemKey
+                                        }
+                                        byId[videoId]
+                                    }.distinctBy { it.contextEntryKey() }
+                                }.collect { visible ->
+                                    if (visible.isNotEmpty()) {
+                                        viewModel.enrichVisibleDetailCovers(page.browseId, visible)
+                                    }
+                                }
+                            }
                             // The visible list can be one render behind the page
                             // while fill-in is completing. For a local release
                             // handoff, cancel that fill and use the newest complete
@@ -3463,10 +3512,17 @@ private fun BitChordApp(
                                 val request = ++playRequestGeneration
                                 scope.launch {
                                     // A page opened from its downloaded copy can be
-                                    // tapped before the network listing lands. Wait
-                                    // for it (bounded) so the queue is built from
-                                    // rows that know whether they are videos.
-                                    val settled = viewModel.awaitDetailListing(page.browseId)
+                                    // tapped before the network listing lands. Start
+                                    // from what is on screen; only wait when there
+                                    // is nothing to play yet.
+                                    val immediate = viewModel.takePlaybackContext(page.browseId)
+                                    val hasImmediate =
+                                        (immediate?.songs as? UiState.Success)?.data?.isNotEmpty() == true
+                                    val settled = if (hasImmediate) {
+                                        immediate
+                                    } else {
+                                        viewModel.awaitDetailListing(page.browseId)
+                                    }
                                     if (request != playRequestGeneration) return@launch
                                     val preview = settled?.songsArePreview == true
                                     val settledSongs = (settled?.songs as? UiState.Success)?.data
@@ -3501,19 +3557,18 @@ private fun BitChordApp(
                                     )
                                 }
                             }
-                            // Apple Music-style shuffle: the whole release, not
-                            // the first bounded window. A long playlist is
-                            // collected to its last continuation first, then
-                            // shuffled as one queue and started from a random
-                            // row; playSongs() calls play(), so the button
-                            // always starts playback.
+                            // Apple Music-style shuffle: the first page starts
+                            // playing at once, and the service keeps following
+                            // the continuation behind it, mixing each new page
+                            // into what has not played yet.
                             fun shuffleDetailSongs(loaded: List<Song>) {
                                 TrackLog.i("BitChord", "cmd: shuffle-play from ui")
-                                if (loaded.isEmpty()) return
+                                if (loaded.isEmpty() || shuffleStarting) return
                                 if (ListenTogether.state.value.controlsLocked) {
                                     refusedByHost()
                                     return
                                 }
+                                shuffleStarting = true
                                 showQueueNotice(playbackPreparing)
                                 val request = ++playRequestGeneration
                                 val source = QueueSource(
@@ -3522,44 +3577,41 @@ private fun BitChordApp(
                                     page.browseId,
                                 )
                                 scope.launch {
-                                    val settled = viewModel.awaitDetailListing(page.browseId)
-                                    if (request != playRequestGeneration) return@launch
-                                    val preview = settled?.songsArePreview == true
-                                    // A refresh that landed while the screen was
-                                    // composing has already replaced the view model's
-                                    // page; shuffle what is newest, not the list the
-                                    // button was drawn with.
-                                    val latestPage = viewModel.takePlaybackContext(page.browseId)
-                                    val newest = (latestPage?.songs as? UiState.Success)?.data
-                                        ?.takeIf { it.isNotEmpty() }
-                                    fun start(all: List<Song>) {
-                                        if (request != playRequestGeneration) return
-                                        val rows = all.map(withAlbum)
-                                        if (rows.isEmpty()) return
+                                    try {
+                                        // A refresh that landed while the screen was
+                                        // composing has already replaced the view model's
+                                        // page; shuffle what is newest, not the list the
+                                        // button was drawn with.
+                                        val latestPage = viewModel.takePlaybackContext(page.browseId)
+                                        if (request != playRequestGeneration) return@launch
+                                        val preview = latestPage?.songsArePreview == true
+                                        val newest = (latestPage?.songs as? UiState.Success)?.data
+                                            ?.takeIf { it.isNotEmpty() }
+                                        val rows = (newest ?: loaded).map(withAlbum)
+                                        if (rows.isEmpty()) return@launch
                                         val queue = if (preview) rows.asTypeUnknown() else rows
                                         QueueShuffle.enableForNextQueue()
+                                        val remote =
+                                            (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
+                                                !page.browseId.startsWith("local:")
+                                        val continuation = latestPage?.continuation ?: page.continuation
+                                        val bounded = remote && !preview &&
+                                            continuation != null &&
+                                            !CastController.state.value.casting
+                                        TrackLog.i(
+                                            "BitChord",
+                                            "queue: shuffle start n=${queue.size} " +
+                                                "pending pages=${if (bounded) 1 else 0}",
+                                        )
                                         playFrom(
                                             queue,
                                             queue.indices.random(),
                                             source,
-                                            boundedContext = false,
-                                            continuationToken = null,
-                                        )
-                                    }
-                                    val remote = (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
-                                        !page.browseId.startsWith("local:")
-                                    val loadedNow = newest ?: loaded
-                                    val continuation = latestPage?.continuation ?: page.continuation
-                                    // The preview copy is what the 3 s wait gave
-                                    // up on: play it now, marked type-unknown,
-                                    // rather than waiting on a continuation.
-                                    if (preview || !remote || continuation == null) {
-                                        start(loadedNow)
-                                    } else {
-                                        viewModel.collectSongs(page.browseId) { result ->
-                                            val all = result.getOrNull().orEmpty()
-                                            start(all.takeIf { it.isNotEmpty() } ?: loadedNow)
-                                        }
+                                            boundedContext = bounded,
+                                            continuationToken = if (bounded) continuation else null,
+                                        )?.join()
+                                    } finally {
+                                        shuffleStarting = false
                                     }
                                 }
                             }
@@ -3586,6 +3638,7 @@ private fun BitChordApp(
                                 onSongLongPress = { openSongMenu(withAlbum(it)) },
                                 onSongSwipe = { onSongSwipe(withAlbum(it)) },
                                 onShuffle = { songs -> shuffleDetailSongs(songs) },
+                                shuffleLoading = shuffleStarting,
                                 onSectionItemClick = { item ->
                                     item.browseId?.let { id ->
                                         viewModel.openDetail(

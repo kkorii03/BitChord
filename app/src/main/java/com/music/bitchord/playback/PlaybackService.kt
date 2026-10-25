@@ -835,7 +835,16 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             val window = boundedContextWindow ?: return@launch
             if (snapshot.contextToken != boundedContextToken) return@launch
-            window.extendTo(snapshot.songs.size)
+            val before = window.canonicalSize
+            val shuffled = window.isShuffleEnabled
+            window.extendTo(snapshot.songs.size, shuffleIntoUpcoming = shuffled)
+            val appended = window.canonicalSize - before
+            if (appended > 0) {
+                TrackLog.i(
+                    "BitChord",
+                    "queue: appended n=$appended" + if (shuffled) " shuffled" else "",
+                )
+            }
             boundedContextRequest?.let { BoundedContextRequests.publish(it, snapshot) }
             player?.let(::saveBoundedContextSnapshot)
             scheduleBoundedContextTopUp()
@@ -3216,10 +3225,15 @@ class PlaybackService : MediaLibraryService() {
         val window = boundedContextWindow ?: return
         val snapshot = boundedContextRegistry.snapshot() ?: return
         if (snapshot.contextToken != boundedContextToken) return
-        window.extendTo(snapshot.songs.size)
+        window.extendTo(snapshot.songs.size, shuffleIntoUpcoming = window.isShuffleEnabled)
         val currentIndex = boundedContextAnchor(exoPlayer) ?: window.currentCanonicalIndex ?: return
         if (window.currentCanonicalIndex != currentIndex) {
             window.jumpTo(currentIndex)
+        }
+        if (window.isShuffleEnabled) {
+            replaceBoundedUpcoming(exoPlayer, window)
+            scheduleUpcomingSongVersions(exoPlayer)
+            return
         }
         val now = exoPlayer.currentMediaItemIndex
         val afterCurrent = if (now in 0 until exoPlayer.mediaItemCount) {

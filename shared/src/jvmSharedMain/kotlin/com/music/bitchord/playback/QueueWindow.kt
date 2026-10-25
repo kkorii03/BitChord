@@ -249,8 +249,11 @@ class QueueWindow(
         fun fromSnapshot(snapshot: QueueWindowSnapshot): QueueWindow = restore(snapshot)
     }
 
-    /** Add canonical indices [canonicalN, newCanonicalSize) without rebuilding old order. */
-    fun extendTo(newCanonicalSize: Int): QueueWindow {
+    /** Add canonical indices [canonicalN, newCanonicalSize), optionally mixing them into the unplayed tail. */
+    fun extendTo(
+        newCanonicalSize: Int,
+        shuffleIntoUpcoming: Boolean = false,
+    ): QueueWindow {
         require(newCanonicalSize >= canonicalCount) {
             "cannot shrink a QueueWindow from $canonicalCount to $newCanonicalSize"
         }
@@ -258,7 +261,21 @@ class QueueWindow(
 
         val firstNew = canonicalCount
         canonicalCount = newCanonicalSize
-        logicalOrder += freshOrder(firstNew, activeCycleId)
+        val fresh = freshOrder(firstNew, activeCycleId)
+        logicalOrder = if (shuffleIntoUpcoming && shuffled && currentIndex != null) {
+            val split = (logicalCursor + 1).coerceIn(0, logicalOrder.size)
+            val head = logicalOrder.copyOfRange(0, split)
+            val tail = logicalOrder.copyOfRange(split, logicalOrder.size).toList()
+            val merged = ShuffleAppend.mergeRemaining(
+                remaining = tail,
+                added = fresh.toList(),
+                key = { it.toString() },
+                random = Random(seedForExtension(activeCycleId, firstNew)),
+            )
+            (head.toList() + merged).toIntArray()
+        } else {
+            logicalOrder + fresh
+        }
         plannedCycles.entries.forEach { planned ->
             planned.setValue(planned.value + freshOrder(firstNew, planned.key))
         }

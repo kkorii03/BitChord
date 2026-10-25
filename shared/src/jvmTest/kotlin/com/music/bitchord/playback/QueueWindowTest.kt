@@ -121,6 +121,21 @@ class QueueWindowTest {
     }
 
     @Test
+    fun shuffledExtensionMixesFreshIndicesIntoUnplayedPartOnly() {
+        val window = QueueWindow(8, shuffleSeed = 2L).startAt(3, shuffle = true)
+        val history = window.order.take(window.cursor)
+        val oldUpcoming = window.upcoming(25).map { it.canonicalIndex }
+
+        window.extendTo(13, shuffleIntoUpcoming = true)
+
+        assertEquals(history, window.order.take(window.cursor))
+        val upcoming = window.upcoming(25).map { it.canonicalIndex }
+        assertEquals((oldUpcoming + (8 until 13)).toSet(), upcoming.toSet())
+        assertEquals(upcoming.size, upcoming.toSet().size)
+        assertEquals(oldUpcoming, upcoming.filter { it in oldUpcoming })
+    }
+
+    @Test
     fun explicitNavigationMayReplayButDoesNotClearConsumedShuffleState() {
         val window = QueueWindow(6, shuffleSeed = 1L).startAt(0, shuffle = true)
         val first = window.advanceAutomatically()!!

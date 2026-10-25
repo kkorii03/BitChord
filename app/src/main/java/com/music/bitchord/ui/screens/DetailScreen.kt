@@ -60,6 +60,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -296,6 +297,7 @@ fun DetailScreen(
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
+    shuffleLoading: Boolean = false,
     onSectionItemClick: (ShelfItem) -> Unit,
     onArtistClick: (String?, String) -> Unit,
     onAddSuggested: (Song) -> Unit,
@@ -631,6 +633,7 @@ fun DetailScreen(
                         albumSubtitle = albumSubtitle,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
+                        shuffleLoading = shuffleLoading,
                         // A folder's credit says where its tracks live, not who made them.
                         onArtistClick = onArtistClick.takeIf { folder == null },
                         onToggleLibrary = onToggleLibrary,
@@ -690,6 +693,7 @@ fun DetailScreen(
                     ActionRow(
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
+                        shuffleLoading = shuffleLoading,
                         subscription = page.subscription?.takeIf { onToggleSubscription != null },
                         onToggleSubscription = onToggleSubscription,
                         bottomSpace = 22.dp,
@@ -1097,6 +1101,7 @@ private fun ReleaseHeader(
     albumSubtitle: AlbumSubtitle? = null,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
+    shuffleLoading: Boolean = false,
     onArtistClick: ((String?, String) -> Unit)?,
     onToggleLibrary: (() -> Unit)?,
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
@@ -1248,6 +1253,7 @@ private fun ReleaseHeader(
                     filled = false,
                     size = RELEASE_SIDE_BUTTON,
                     accent = palette.accent,
+                    loading = shuffleLoading,
                     modifier = Modifier.weight(1f),
                 )
                 // The song cache's copies, saved to Downloads in one go — from
@@ -1738,6 +1744,7 @@ private val SOFT_FOOT_BLUR = 48.dp
 private fun ActionRow(
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
+    shuffleLoading: Boolean = false,
     bottomSpace: Dp = 22.dp,
     /** The artist header's subscribe state, or null where it isn't offered. */
     subscription: SubscriptionState? = null,
@@ -1758,6 +1765,7 @@ private fun ActionRow(
             onClick = onShuffle,
             haptic = Haptic.Resume,
             size = ARTIST_SIDE_BUTTON,
+            loading = shuffleLoading,
         )
 
         PlayCircle(
@@ -1805,6 +1813,7 @@ private fun ActionPill(
     modifier: Modifier = Modifier,
     size: Dp = 50.dp,
     accent: Color? = null,
+    loading: Boolean = false,
 ) {
     // Resume rather than a flat tap: both start a queue, and the rising pair
     // says so.
@@ -1824,7 +1833,7 @@ private fun ActionPill(
                         .border(1.dp, Color.White.copy(alpha = TOP_RELEASE_EDGE_ALPHA), CircleShape)
                 },
             )
-            .clickable {
+            .clickable(enabled = !loading) {
                 haptics.play(Haptic.Resume)
                 onClick()
             }
@@ -1832,12 +1841,20 @@ private fun ActionPill(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = content,
-            modifier = Modifier.size(18.dp),
-        )
+        if (loading) {
+            CircularProgressIndicator(
+                color = content,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = content,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         Spacer(Modifier.width(8.dp))
         Text(
             text = label,
@@ -1918,6 +1935,7 @@ private fun CircleIconButton(
      * Dimmed rather than dropped, so the row keeps its shape.
      */
     enabled: Boolean = true,
+    loading: Boolean = false,
 ) {
     val haptics = rememberHaptics()
     Box(
@@ -1930,18 +1948,26 @@ private fun CircleIconButton(
             // only: over the page's flat tint a blurred fill would look the same.
             .liquidGlassRim(CircleShape)
             .border(1.dp, Color.White.copy(alpha = TOP_RELEASE_EDGE_ALPHA), CircleShape)
-            .clickable(enabled = enabled) {
+            .clickable(enabled = enabled && !loading) {
                 haptics.play(haptic)
                 onClick()
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(size * 0.44f),
-        )
+        if (loading) {
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.onSurface,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(size * 0.36f),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(size * 0.44f),
+            )
+        }
     }
 }
 

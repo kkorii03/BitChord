@@ -1680,6 +1680,9 @@ object YtMusicRepository {
     suspend fun enrichDetailCovers(songs: List<Song>, limit: Int = 20): List<Song> =
         YouTubeCoverResolver.enrich(songs, limit)
 
+    fun needsDetailCover(song: Song): Boolean =
+        YouTubeCoverResolver.isVideoThumbnail(song.thumbnailUrl)
+
     /**
      * The first response of the playlist backing an album, or null when the
      * album page's own rows are the better listing.

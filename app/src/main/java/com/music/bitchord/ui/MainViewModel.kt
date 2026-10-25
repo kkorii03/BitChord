@@ -1280,6 +1280,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** UI-side continuation fetches that can be handed to the playback service. */
     private val fillInJobs = mutableMapOf<String, Job>()
 
+    /** Visible detail rows whose cover lookup is already running. */
+    private val detailCoverLookups = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
 
     /**
@@ -3556,8 +3559,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var credit: String? = null
             /** Set when the track list carries on past its first response. */
             var more: String? = null
-            /** Whether this page came from a remote playlist/album listing. */
-            var remoteListing = false
             /** Tracks YouTube offers to round the playlist out — see [DetailPage.suggestedSongs]. */
             var suggested: List<Song> = emptyList()
             /** Liked Music's video rows — see [DetailPage.hiddenSongs]. */
@@ -3658,7 +3659,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             if (page.songs.isEmpty()) {
                                 UiState.Error(text(R.string.no_tracks_here))
                             } else {
-                                remoteListing = true
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
                                 hidden = page.hiddenSongs.withArtwork(thumbnailUrl ?: artwork)
@@ -3698,28 +3698,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             // The rows are already on screen. Their video frames are square-
-            // cropped in the meantime, and the first visible page's worth is
-            // swapped for real album art without holding the first paint.
-            val visible = (state as? UiState.Success<List<Song>>)?.data.orEmpty()
-            if (remoteListing && visible.isNotEmpty()) {
-                launch {
-                    val enriched = YtMusicRepository.enrichDetailCovers(visible)
-                    if (enriched != visible) {
-                        _detailStack.value = _detailStack.value.map { page ->
-                            if (page.browseId != browseId) return@map page
-                            val current = (page.songs as? UiState.Success<List<Song>>)?.data
-                                ?: return@map page
-                            page.copy(
-                                songs = UiState.Success(
-                                    current.mapIndexed { index, song ->
-                                        enriched.getOrNull(index) ?: song
-                                    },
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
+            // cropped in the meantime; square album art is filled in later,
+            // after this page starts playing and only for the rows in view.
             // Only once the first page is on screen: [fillIn] appends to it,
             // and has nothing to append to before this.
             more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork) }
@@ -4055,6 +4035,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 songs = UiState.Success(existing + added),
                 continuation = continuation,
             )
+        }
+    }
+
+    /**
+     * Fills square covers for the rows currently in view, once playback from
+     * this page has actually started. The resolver's shared cache and request
+     * gate keep repeat calls cheap and the number of lookups bounded.
+     */
+    fun enrichVisibleDetailCovers(browseId: String, songs: List<Song>) {
+        val pending = songs.filter { song ->
+            YtMusicRepository.needsDetailCover(song) &&
+                detailCoverLookups.add("$browseId|${song.contextEntryKey()}")
+        }
+        if (pending.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val enriched = YtMusicRepository.enrichDetailCovers(pending, pending.size)
+                if (enriched == pending) return@launch
+                val byKey = enriched.associateBy { it.contextEntryKey() }
+                _detailStack.value = _detailStack.value.map { page ->
+                    if (page.browseId != browseId) return@map page
+                    val current = (page.songs as? UiState.Success<List<Song>>)?.data
+                        ?: return@map page
+                    page.copy(
+                        songs = UiState.Success(
+                            current.map { song -> byKey[song.contextEntryKey()] ?: song },
+                        ),
+                    )
+                }
+            } finally {
+                pending.forEach {
+                    detailCoverLookups.remove("$browseId|${it.contextEntryKey()}")
+                }
+            }
         }
     }
 
