@@ -6846,8 +6846,13 @@ class PlaybackService : MediaLibraryService() {
             // from scratch after the swap, and it was reaching the network to do
             // it — the one read nothing can start without. Ahead of the audition
             // rather than beside it, since Media3 locks a cache entry to a
-            // single writer.
-            AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES)
+            // single writer. No lock probe: the entry was just discarded above
+            // (or holds this very URL's bytes), and no player reads the marked
+            // rendition yet, so the probe would only add a range request and a
+            // round trip before the header the audition needs. What remains is
+            // the opening here and the seek point the audition player reads
+            // next.
+            AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES, probeLock = false)
         }
         val audition = withContext(Dispatchers.Main) {
             buildAuditionPlayer(meter).apply {

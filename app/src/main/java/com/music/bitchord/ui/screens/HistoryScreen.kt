@@ -92,7 +92,10 @@ fun HistoryScreen(
                 // The videoId alone is not a key here: the feed is deduplicated
                 // on it, but a list keyed on something that could repeat is one
                 // bad response away from a crash. The index makes it total.
-                itemsIndexed(songs) { index, song ->
+                itemsIndexed(
+                    songs,
+                    key = { index, song -> "${index}_${song.videoId}" },
+                ) { index, song ->
                     SongRow(
                         song = song,
                         onClick = { onSongClick(songs, index) },

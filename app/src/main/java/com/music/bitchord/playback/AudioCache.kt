@@ -1617,24 +1617,6 @@ object AudioCache {
     }
 
     /**
-     * Pulls [length] bytes of whatever [uri] names into the cache, under [uri]'s
-     * own key rather than the plain videoId.
-     *
-     * For the opening of a rendition that is about to be swapped in — see
-     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s audition.
-     * A player preparing a progressive source has to parse the container from
-     * byte zero before it can seek anywhere, and for a FLAC that is not a few
-     * bytes: STREAMINFO, the seek table, the tags and an embedded cover can run
-     * to hundreds of kilobytes. Measured here, the audition itself cached only
-     * `[0, 8192)` before seeking away to the playing position, so the real
-     * player's very first read after the swap — the one nothing can start
-     * without — was a cache miss and a round trip to the CDN, in silence.
-     *
-     * Call it *before* the audition rather than alongside: Media3 locks a cache
-     * entry to one writer, and two writers on the same rendition means one of
-     * them spends the listener's data caching nothing.
-     */
-    /**
      * What is actually on disk for [uri]'s rendition, as a log line.
      *
      * Here because "the audition cached it" is an assumption that has already
@@ -1653,9 +1635,35 @@ object AudioCache {
         return "$key holds ${total / 1024}kB in ${spans.size} spans: $ranges"
     }
 
-    suspend fun warmRange(uri: Uri, position: Long, length: Long) {
+    /**
+     * Pulls [length] bytes at [position] into [uri]'s cache entry, under
+     * [uri]'s own key rather than the plain videoId.
+     *
+     * For the opening of a rendition that is about to be swapped in — see
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s audition.
+     * A player preparing a progressive source has to parse the container from
+     * byte zero before it can seek anywhere, and for a FLAC that is not a few
+     * bytes: STREAMINFO, the seek table, the tags and an embedded cover can run
+     * to hundreds of kilobytes. Measured here, the audition itself cached only
+     * `[0, 8192)` before seeking away to the playing position, so the real
+     * player's very first read after the swap — the one nothing can start
+     * without — was a cache miss and a round trip to the CDN, in silence.
+     *
+     * Call it *before* the audition rather than alongside: Media3 locks a cache
+     * entry to one writer, and two writers on the same rendition means one of
+     * them spends the listener's data caching nothing.
+     *
+     * [probeLock] false skips the small "is another writer holding this entry"
+     * probe [fetch] otherwise makes first. The audition is the one caller that
+     * can say so for free: it has just discarded the entry (or knows the bytes
+     * under it came from this very URL) and no player is reading the marked
+     * rendition yet, so the probe would only add a range request and a round
+     * trip ahead of the header the audition cannot start without. See
+     * `auditionUpgrade`.
+     */
+    suspend fun warmRange(uri: Uri, position: Long, length: Long, probeLock: Boolean = true) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
-        fetch(key, uri, position, length)
+        fetch(key, uri, position, length, probeLock = probeLock)
     }
 
     /**
@@ -2394,6 +2402,7 @@ object AudioCache {
         position: Long,
         length: Long,
         pinKey: Boolean = false,
+        probeLock: Boolean = true,
     ) {
         if (upstreamFactory == null) return
 
@@ -2446,7 +2455,7 @@ object AudioCache {
         // without writing anything, and the whole track was then read onto the
         // floor. Watched on a playing video: three head rounds, 5.3 MB each,
         // nothing kept.
-        if (length > LOCK_PROBE_BYTES) {
+        if (probeLock && length > LOCK_PROBE_BYTES) {
             val ready = cache.getCachedLength(cacheKey, position, length).coerceAtLeast(0L)
             val hole = position + ready
             val probe = minOf(LOCK_PROBE_BYTES, position + length - hole)

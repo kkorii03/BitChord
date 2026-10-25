@@ -171,6 +171,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val homeRecentlyPlayedLoading: StateFlow<Boolean> = _homeRecentlyPlayedLoading.asStateFlow()
     private val homeLoadGeneration = AtomicLong(0L)
 
+    /**
+     * The first-page load in flight, if any.
+     *
+     * A load and a refresh ask the same endpoints (core feed, recently played)
+     * and used to be able to run together: the refresh guard below only knew
+     * about other refreshes. A tab shown while the launch load was still
+     * arriving therefore started a second copy of both requests. The refresh
+     * joins this load instead: it does not bump the generation, so the load's
+     * own answer is still the one that lands.
+     */
+    private var homeLoadJob: Job? = null
+
     private val _explore = MutableStateFlow<UiState<List<MoodGenreSection>>>(UiState.Loading)
     val explore: StateFlow<UiState<List<MoodGenreSection>>> = _explore.asStateFlow()
 
@@ -2424,6 +2436,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val identity = listenerKey()
         var started: Job? = null
         synchronized(refreshLock) {
+            // A first-page load is already asking the same endpoints. Joining
+            // it is what stops the launch load and the tab-shown refresh from
+            // sending the core feed and the recently-played request twice.
+            // A forced refresh (pull, or a proxy route change) still runs: it
+            // exists to replace what the old route answered, not to join it.
+            if (feed == Feed.HOME && !force && homeLoadJob?.isActive == true) return
             if (refreshJobs[feed]?.isCompleted == false) return
             _refreshing.value = _refreshing.value + feed
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
@@ -2595,7 +2613,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // out: it has its own skeleton at the head of the page rather than the
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
-        viewModelScope.launch {
+        homeLoadJob = viewModelScope.launch {
             launch {
                 try {
                     YtMusicRepository.home()

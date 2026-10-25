@@ -1035,17 +1035,21 @@ object SourceResolver {
                 for (done in ready) {
                     val (source, stream) = done.await()
                     if (stream == null) continue
-                    if (!accept(source, stream)) continue
                     val current = best
-                    val candidateBetter = isBetter(stream.format, current?.second?.format)
-                    val currentBetter = current != null &&
-                        isBetter(current.second.format, stream.format)
                     val earlierSource = current != null &&
                         (order[source.configId] ?: Int.MAX_VALUE) <
                         (order[current.first.configId] ?: Int.MAX_VALUE)
-                    if (candidateBetter || (current != null && !currentBetter && earlierSource)) {
-                        best = source to stream
+                    // Only an answer that could actually win needs the expensive
+                    // gate. That gate is the ninety-second sound comparison for
+                    // the read-ahead, and running it for a candidate already
+                    // beaten on rendition cost a decode *and* added it to the
+                    // tail of the race, after even the slowest search had
+                    // finished — see [HqQuality.couldWin].
+                    if (!HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)) {
+                        continue
                     }
+                    if (!accept(source, stream)) continue
+                    best = source to stream
                 }
                 // Playback needs the first usable answer so sound can start.
                 // An upgrade is different: it runs while audio is already

@@ -23,6 +23,10 @@ import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.ProxyAwareDataSourceFactory
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -88,6 +92,18 @@ object HqAudioVerify {
     private val referenceCache = HqReferenceCache()
 
     /**
+     * One reference decode per YouTube id at a time.
+     *
+     * The read-ahead asks every source at once, and every candidate needs the
+     * same reference. Without this, candidates that started before the first
+     * profile landed each decoded the same ninety seconds; the cache only
+     * helped the ones that arrived after it. The second candidate now waits for
+     * the first's profile instead of paying for it again. Pair locks are always
+     * taken before this one, so the two cannot deadlock.
+     */
+    private val referenceLocks = ConcurrentHashMap<String, Mutex>()
+
+    /**
      * The verified answer for [stream] against [youtubeId], or null when the
      * candidate must not be used.
      *
@@ -128,37 +144,50 @@ object HqAudioVerify {
         val lock = locks.getOrPut(key) { Mutex() }
         try {
             return@withContext lock.withLock {
-                HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let { return@withLock it }
-                if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
-                    return@withLock null
+                coroutineScope {
+                    HqVerificationStore.get(context, youtubeId, sourceId, trackId)
+                        ?.let { return@coroutineScope it }
+                    if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
+                        return@coroutineScope null
+                    }
+                    // The two ninety-second reads do not depend on each other:
+                    // the reference comes from the cached YouTube opening and
+                    // the candidate from its own URL. Started together, a cold
+                    // verification costs the slower of the two rather than
+                    // their sum — the verification in front of the reported
+                    // 2.2–8.4 s prove times had the same sequential shape. A
+                    // missing reference cancels the candidate read before
+                    // anything waits on it.
+                    val candidateDeferred = async { candidateFeatures(stream) }
+                    val reference = referenceFeatures(context, youtubeId)
+                    if (reference == null) {
+                        candidateDeferred.cancel()
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                        TrackLog.d(TAG, "hq-verify: '${target.title}' no reference audio; keeping YouTube", youtubeId)
+                        return@coroutineScope null
+                    }
+                    val candidate = candidateDeferred.await()
+                    if (candidate == null) {
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                        return@coroutineScope null
+                    }
+                    val result = runCatching {
+                        ChromaAlignment.align(reference, candidate, videoComplete = false)
+                    }.getOrNull()
+                    val match = result?.matchPercent ?: 0
+                    val offset = result?.map?.map(0L) ?: 0L
+                    val rate = result?.rate ?: 1.0
+                    val verdict = HqMatchPolicy.verdict(match, offset, rate)
+                    logVerdict(target.title, sourceName, match, offset, verdict.accepted, about = youtubeId)
+                    if (!verdict.accepted) {
+                        reject(context, youtubeId, sourceId, trackId)
+                        return@coroutineScope null
+                    }
+                    val tier = HqQuality.tierOf(stream.format)
+                    val verified = HqVerificationStore.Verified(offset, rate, match, tier)
+                    HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
+                    verified
                 }
-                val reference = referenceFeatures(context, youtubeId)
-                if (reference == null) {
-                    logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-                    TrackLog.d(TAG, "hq-verify: '${target.title}' no reference audio; keeping YouTube", youtubeId)
-                    return@withLock null
-                }
-                val candidate = candidateFeatures(stream)
-                if (candidate == null) {
-                    logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-                    return@withLock null
-                }
-                val result = runCatching {
-                    ChromaAlignment.align(reference, candidate, videoComplete = false)
-                }.getOrNull()
-                val match = result?.matchPercent ?: 0
-                val offset = result?.map?.map(0L) ?: 0L
-                val rate = result?.rate ?: 1.0
-                val verdict = HqMatchPolicy.verdict(match, offset, rate)
-                logVerdict(target.title, sourceName, match, offset, verdict.accepted, about = youtubeId)
-                if (!verdict.accepted) {
-                    reject(context, youtubeId, sourceId, trackId)
-                    return@withLock null
-                }
-                val tier = HqQuality.tierOf(stream.format)
-                val verified = HqVerificationStore.Verified(offset, rate, match, tier)
-                HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
-                verified
             }
         } finally {
             // The entry only has to live as long as the work it serialises.
@@ -208,12 +237,33 @@ object HqAudioVerify {
         noReference[youtubeId] = now
     }
 
-    /** The YouTube song version's opening, from the cache or a local file. */
+    /**
+     * The YouTube song version's opening, from the cache or a local file.
+     *
+     * The cache answers a repeat, and [referenceLocks] makes the first one
+     * answer for every candidate racing beside it. Only the wrapper touches
+     * either; [referenceFeaturesUncached] is the one decode.
+     */
     private suspend fun referenceFeatures(
         context: Context,
         youtubeId: String,
     ): ChromaAlignment.Features? {
         referenceCache.get(youtubeId)?.let { return it }
+        val lock = referenceLocks.getOrPut(youtubeId) { Mutex() }
+        try {
+            return lock.withLock {
+                referenceCache.get(youtubeId)?.let { return@withLock it }
+                referenceFeaturesUncached(context, youtubeId)
+            }
+        } finally {
+            referenceLocks.remove(youtubeId, lock)
+        }
+    }
+
+    private suspend fun referenceFeaturesUncached(
+        context: Context,
+        youtubeId: String,
+    ): ChromaAlignment.Features? {
         val now = System.currentTimeMillis()
         val failedAt = noReference[youtubeId]
         if (failedAt != null && now - failedAt < NO_REFERENCE_TTL_MS) return null
@@ -237,9 +287,12 @@ object HqAudioVerify {
             return null
         }
         return try {
-            val features = featuresOf(source)
+            val coroutine = currentCoroutineContext()
+            val features = featuresOf(source) { coroutine.isActive }
             if (features == null) {
-                noteNoReference(youtubeId)
+                // A cancelled decode is not a missing reference: the next
+                // playback must be free to try again.
+                if (coroutine.isActive) noteNoReference(youtubeId)
             } else {
                 // A partial head is returned for this comparison but not kept:
                 // the rest of the bytes may still arrive, and freezing a short
@@ -256,11 +309,12 @@ object HqAudioVerify {
     }
 
     /** The candidate's opening, read straight from its stream URL. */
-    private fun candidateFeatures(stream: SourceStream): ChromaAlignment.Features? {
+    private suspend fun candidateFeatures(stream: SourceStream): ChromaAlignment.Features? {
         val dataSource = ProxyAwareDataSourceFactory().createDataSource()
         val source = UrlMediaDataSource(dataSource, Uri.parse(stream.url), stream.headers)
         return try {
-            featuresOf(source)
+            val coroutine = currentCoroutineContext()
+            featuresOf(source) { coroutine.isActive }
         } finally {
             runCatching { source.close() }
         }
@@ -269,13 +323,25 @@ object HqAudioVerify {
     /**
      * The first [COMPARE_SECONDS] of [source] as a chroma profile, using the
      * same extractor and decoder as the lyrics measurement.
+     *
+     * [abort] is polled by the decoder loop, so a verification the caller has
+     * given up on (the queue moved, or the reference turned out to be missing)
+     * stops reading instead of finishing ninety seconds of work nobody wants.
      */
-    private fun featuresOf(source: MediaDataSource): ChromaAlignment.Features? {
+    private fun featuresOf(
+        source: MediaDataSource,
+        abort: () -> Boolean = { false },
+    ): ChromaAlignment.Features? {
         var extractor: ChromaAlignment.Extractor? = null
         var sampleRate = 0
         var startSeconds = 0.0
         try {
-            AudioDecoder.decodeMonoStream(source, 0.0, COMPARE_SECONDS + 1.0) { samples, rate, at ->
+            val decoded = AudioDecoder.decodeMonoStream(
+                source,
+                0.0,
+                COMPARE_SECONDS + 1.0,
+                abort = abort,
+            ) { samples, rate, at ->
                 val current = extractor
                 if (current == null) {
                     sampleRate = rate
@@ -285,6 +351,10 @@ object HqAudioVerify {
                     current.push(samples)
                 }
             }
+            // Null means the decode was aborted or produced nothing. A partial
+            // profile is not a shorter answer: it would be compared as if the
+            // recording were that short.
+            if (decoded == null) return null
         } catch (e: Exception) {
             TrackLog.w(TAG, "hq-verify: could not read candidate audio: ${e.message}")
             return null

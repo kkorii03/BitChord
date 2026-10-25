@@ -141,6 +141,29 @@ object HqQuality {
     fun rungsGained(candidate: StreamFormat?, current: StreamFormat?): Int =
         tierOf(current).rank - tierOf(candidate).rank
 
+    /**
+     * Whether [candidate] could still win a race whose best answer so far is
+     * [current], given that [candidateEarlier] sits earlier in the user's
+     * source order.
+     *
+     * The rule the source race uses to choose between answers, in one place: a
+     * better rendition wins outright, and an equally good one wins only by
+     * being ranked earlier. Asking it *before* an expensive proof (the
+     * ninety-second sound comparison) is what keeps a candidate that cannot
+     * win from being decoded and from holding the race open while it is.
+     */
+    fun couldWin(
+        candidate: StreamFormat?,
+        current: StreamFormat?,
+        candidateEarlier: Boolean,
+    ): Boolean {
+        if (candidate == null) return false
+        if (current == null) return true
+        val candidateBetter = isBetter(candidate, current)
+        val currentBetter = isBetter(current, candidate)
+        return candidateBetter || (!currentBetter && candidateEarlier)
+    }
+
     /** A short label for logs: the rung and, when stated, the rate. */
     fun label(format: StreamFormat?): String {
         val tier = tierOf(format)

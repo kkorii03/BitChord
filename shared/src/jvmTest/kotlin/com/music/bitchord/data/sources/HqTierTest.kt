@@ -97,4 +97,24 @@ class HqTierTest {
         assertEquals(HqTier.HIGH_LOSSY, HqQuality.tierOfDeclared("HIGH", hiRes = false))
         assertEquals(HqTier.NORMAL, HqQuality.tierOfDeclared(null, hiRes = false))
     }
+
+    @Test
+    fun `a candidate that cannot win is not worth proving`() {
+        val opus = format("opus", 160)
+        val aac = format("aac", 320)
+        val flac = format("flac", 1411, 44_100, 16)
+        // Nothing found yet: anything may win.
+        assertTrue(HqQuality.couldWin(opus, null, candidateEarlier = false))
+        // No candidate is never a winner.
+        assertFalse(HqQuality.couldWin(null, null, candidateEarlier = true))
+        assertFalse(HqQuality.couldWin(null, aac, candidateEarlier = true))
+        // A better rendition wins whatever the source order.
+        assertTrue(HqQuality.couldWin(flac, aac, candidateEarlier = false))
+        assertTrue(HqQuality.couldWin(flac, aac, candidateEarlier = true))
+        // A worse one cannot, even when its source is ranked first.
+        assertFalse(HqQuality.couldWin(opus, aac, candidateEarlier = true))
+        // An equal rendition wins only by being ranked earlier.
+        assertTrue(HqQuality.couldWin(aac, format("aac", 320), candidateEarlier = true))
+        assertFalse(HqQuality.couldWin(aac, format("aac", 320), candidateEarlier = false))
+    }
 }

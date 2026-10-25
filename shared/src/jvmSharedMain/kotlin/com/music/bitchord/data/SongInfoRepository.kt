@@ -187,7 +187,42 @@ object SongInfoRepository {
     /** The album link is also a nicety; the watch description already has the facts. */
     private const val LINK_LOOKUP_MS = 5_000L
 
-    suspend fun load(song: Song): SongInfo = withContext(Dispatchers.IO) {
+    /**
+     * How long a settled panel answer is reused.
+     *
+     * Song Info is opened, closed and opened again from the same menu, and the
+     * two entry points (the held-row dialog and the sheet's page) ask for the
+     * same track. Each load used to repeat the player request, the watch
+     * `next` request, the album link and the header parse. The facts here —
+     * release date, credits, album — do not change between two looks at the
+     * same upload; the counts can, which is why the window is short.
+     */
+    private const val CACHE_TTL_MS = 300_000L
+    private const val CACHE_MAX = 64
+
+    private data class Cached(val info: SongInfo, val at: Long)
+
+    private val cache = object : LinkedHashMap<String, Cached>(CACHE_MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Cached>) =
+            size > CACHE_MAX
+    }
+
+    suspend fun load(song: Song): SongInfo {
+        val key = song.videoId
+        synchronized(cache) { cache[key] }
+            ?.takeIf { System.currentTimeMillis() - it.at < CACHE_TTL_MS }
+            ?.let { return it.info }
+        val info = loadUncached(song)
+        // A failure is not an answer: the retry button and the next open must
+        // be able to ask again. A blank key would collide with every other
+        // row that has no identity, so it is never cached either.
+        if (!info.failed && key.isNotBlank()) {
+            synchronized(cache) { cache[key] = Cached(info, System.currentTimeMillis()) }
+        }
+        return info
+    }
+
+    private suspend fun loadUncached(song: Song): SongInfo = withContext(Dispatchers.IO) {
         val direct = SongInfoTarget.youtubeId(song)
         val resolved = if (direct == null && SongInfoTarget.needsCatalogueLookup(song)) {
             withTimeoutOrNull(CATALOGUE_LOOKUP_MS) { resolveCatalogueTarget(song) }
