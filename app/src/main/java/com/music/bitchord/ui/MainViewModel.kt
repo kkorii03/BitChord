@@ -1,6 +1,7 @@
 package com.music.bitchord.ui
 
 import com.music.bitchord.playback.smart.LyricsTiming
+import com.music.bitchord.playback.smart.SyncTestMode
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -1056,9 +1057,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;
         // the lines are only rebuilt when what applies actually changed.
+        var shown = _lyrics.value
         if (timing != appliedTiming || _lyrics.value == null) {
             appliedTiming = timing
-            _lyrics.value = if (timing == null) lines else LyricsTiming.apply(lines, timing)
+            shown = if (timing == null) lines else LyricsTiming.apply(lines, timing)
+            _lyrics.value = shown
         }
         val base = timing?.base
         val note = if (timingBaseAllowed && timingMeasureAllowed) LyricsTiming.note(getApplication(), request.videoId) else null
@@ -1076,7 +1079,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val provider = selectedLyricsSource?.label
             ?: _lyricsSource.value?.label
             ?: fileLyricsLabel
-            ?: if (_lyrics.value?.isNotEmpty() == true) "file" else "none"
+            ?: if (shown?.isNotEmpty() == true) "file" else "none"
         TrackDiagnostics.noteLyricsSync(
             videoId = request.videoId,
             provider = provider,
@@ -1087,6 +1090,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             biasMs = timing?.aiBiasMs ?: 0L,
             manualOffsetMs = manualMs,
             video = request.isVideo,
+        )
+        // Sync-test mode only: the lines as they are now on screen, so a phone
+        // scoring run can compare every displayed start with the audio.
+        SyncTestMode.report(
+            context = getApplication(),
+            videoId = request.videoId,
+            source = provider,
+            base = baseLabel,
+            shiftMs = shiftMs ?: 0L,
+            matchPercent = matchPercent,
+            lines = shown ?: lines,
         )
         _lyricsTiming.update {
             it.copy(

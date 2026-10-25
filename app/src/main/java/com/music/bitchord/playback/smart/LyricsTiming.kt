@@ -1243,6 +1243,9 @@ object LyricsTiming {
             songLog(song.videoId, "no-audio", null, null, 0)
             return@withLock false
         }
+        // Sync-test mode only: the ninety seconds the check already decoded,
+        // kept for the phone's scoring run. Off, this is a no-op.
+        SyncTestMode.saveWav(context, song.videoId, audio)
         val windowMs = SongCheckWindow.wavMs(audio.size)
         val indices = SongCheckWindow.indices(lines.map { it.timeMs }, windowMs)
             .filter { lines[it].text.isNotBlank() }
