@@ -86,6 +86,7 @@ object AndroidStreamHooks {
                 override fun putLong(key: String, value: Long) = prefs.edit().putLong(key, value).apply()
             },
             poTokenProvider = poTokens.asTokenProvider(),
+            poTokenPrewarm = { visitorData -> poTokens.prewarm(visitorData) },
         )
         // Which client answered last time survives a restart for a day. The
         // direct-path bench is deliberately process-only: it is about this run.

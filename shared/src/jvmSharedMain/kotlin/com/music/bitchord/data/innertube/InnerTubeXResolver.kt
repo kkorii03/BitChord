@@ -75,16 +75,25 @@ object InnerTubeXResolver {
     private var poTokens: TokenProvider? = null
     private var playerDir: File? = null
     private var warmup: Job? = null
+    private var poTokenPrewarm: (suspend (String?) -> Unit)? = null
 
     /**
      * @param filesDir where the preprocessed EJS players are kept.
      * @param poTokenProvider the platform's BotGuard minter — the phone's
      *   WebView one. Null where there is none, which leaves the clients that
      *   need a PoToken out of the catalog.
+     * @param poTokenPrewarm loads the minter ahead of the first track, with the
+     *   same visitor id the walk will use. Called once per warm, never on a timer.
      */
-    fun init(filesDir: File, store: ConfigStore, poTokenProvider: TokenProvider?) {
+    fun init(
+        filesDir: File,
+        store: ConfigStore,
+        poTokenProvider: TokenProvider?,
+        poTokenPrewarm: (suspend (String?) -> Unit)? = null,
+    ) {
         prefs = store
         poTokens = poTokenProvider
+        this.poTokenPrewarm = poTokenPrewarm
         playerDir = File(filesDir, "innertubex_players").apply { mkdirs() }
         scope.launch {
             cipherService.setPreprocessedPlayerCache(::readPlayer, ::writePlayer)
@@ -111,6 +120,14 @@ object InnerTubeXResolver {
             }.onFailure { if (it is CancellationException) throw it }
                 .onFailure { TrackLog.w(TAG, "InnerTubeX warm-up failed: ${it.message}") }
                 .onSuccess { TrackLog.d(TAG, "InnerTubeX warmed in ${MonotonicClock.nowMs() - start}ms") }
+            val visitor = innerTube.visitorData ?: Innertube.ensureVisitorData()
+            try {
+                poTokenPrewarm?.invoke(visitor)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "PoToken prewarm failed type=${e::class.simpleName ?: "unknown"}")
+            }
         }
     }
 

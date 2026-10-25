@@ -33,11 +33,12 @@ interface PoTokenMinter {
 /**
  * BotGuard PoTokens for YouTube's web clients, minted in a browser page.
  *
- * Keeps one loaded page per session (visitor data): the session's streaming
- * token is minted once when the page is made, and each track's player token is
- * minted from the same page. A page that has expired, died or belongs to
- * another session is replaced; a mint that fails on an old page gets one retry
- * on a fresh one.
+ * Keeps one loaded page: the session's streaming token is minted when the page
+ * is made and re-minted from that same page when the visitor id changes, and
+ * each track's player token is minted from the page too. Only a page that has
+ * expired or died is replaced; a mint that fails on a live page gets one retry
+ * on a fresh one. Reloading the page for a new visitor would repeat the cold
+ * BotGuard Create/GenerateIT round trips on the first track after start-up.
  *
  * @param createMinter loads a new BotGuard page; the platform's browser.
  * @param available whether this platform can host a page at all.
@@ -81,6 +82,39 @@ class PoTokenGenerator(
         }
     }
 
+    /**
+     * Loads the BotGuard page ahead of the first track, so the play path never
+     * pays the page's Create/GenerateIT round trips (about half a second cold).
+     *
+     * Called once when the app starts in the foreground, and once more when a
+     * sign-in changes the session; never on a timer.
+     */
+    suspend fun prewarm(sessionId: String?) {
+        if (sessionId.isNullOrBlank()) {
+            TrackLog.d(TAG, "potoken: prewarm skipped (no visitor id)")
+            return
+        }
+        if (!available() || webViewBadImpl) {
+            TrackLog.d(TAG, "potoken: prewarm skipped (WebView unavailable)")
+            return
+        }
+        val start = System.nanoTime()
+        try {
+            val token = getWebClientPoToken(PREWARM_VIDEO_ID, sessionId)
+            val took = (System.nanoTime() - start) / 1_000_000
+            if (token == null) {
+                TrackLog.w(TAG, "potoken: prewarm failed after ${took}ms")
+            } else {
+                TrackLog.d(TAG, "potoken: prewarmed in ${took}ms")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val took = (System.nanoTime() - start) / 1_000_000
+            TrackLog.w(TAG, "potoken: prewarm failed type=${e::class.simpleName ?: "unknown"} after ${took}ms")
+        }
+    }
+
     suspend fun close() {
         clearGenerator()
     }
@@ -100,39 +134,90 @@ class PoTokenGenerator(
 
     private companion object {
         const val POTOKEN_TIMEOUT_MS = 8_000L
+        const val PREWARM_VIDEO_ID = "dQw4w9WgXcQ"
+    }
+
+    private class LoadedPage(
+        val minter: PoTokenMinter,
+        val streamingPot: String,
+        val recreated: Boolean,
+    )
+
+    /**
+     * Builds the page in place, or replaces it when there is none or it can no
+     * longer mint. Must be called under [webPoTokenGenLock].
+     */
+    private suspend fun createPage(sessionId: String, forceRecreate: Boolean, reason: String): LoadedPage {
+        TrackLog.d(TAG, "potoken: creating page (forceRecreate=$forceRecreate, reason=$reason)")
+        webPoTokenGenerator?.close()
+        webPoTokenGenerator = null
+        webPoTokenStreamingPot = null
+        webPoTokenSessionId = null
+        val newGenerator = createMinter()
+        val newStreamingPot = try {
+            newGenerator.generatePoToken(sessionId)
+        } catch (t: Throwable) {
+            runCatching { newGenerator.close() }
+            throw t
+        }
+        webPoTokenGenerator = newGenerator
+        webPoTokenStreamingPot = newStreamingPot
+        webPoTokenSessionId = sessionId
+        return LoadedPage(newGenerator, newStreamingPot, true)
     }
 
     private suspend fun getWebClientPoToken(videoId: String, sessionId: String, forceRecreate: Boolean): PoTokenResult {
         val mintStart = System.nanoTime()
-        val (poTokenGenerator, streamingPot, hasBeenRecreated) =
+        val page =
             webPoTokenGenLock.withLock {
-                val shouldRecreate =
-                    forceRecreate || webPoTokenGenerator == null || webPoTokenGenerator!!.isExpired ||
-                        webPoTokenGenerator!!.isDead ||
-                        webPoTokenSessionId != sessionId
-                if (shouldRecreate) {
-                    TrackLog.d(TAG, "potoken: creating page (forceRecreate=$forceRecreate)")
-                    webPoTokenGenerator?.close()
-                    webPoTokenGenerator = null
-                    webPoTokenStreamingPot = null
-                    webPoTokenSessionId = null
-                    val newGenerator = createMinter()
-                    val newStreamingPot = try {
-                        newGenerator.generatePoToken(sessionId)
-                    } catch (t: Throwable) {
-                        runCatching { newGenerator.close() }
-                        throw t
+                val existing = webPoTokenGenerator
+                val action = poTokenPageAction(
+                    forceRecreate = forceRecreate,
+                    hasPage = existing != null,
+                    expired = existing?.isExpired == true,
+                    dead = existing?.isDead == true,
+                    sessionChanged = webPoTokenSessionId != sessionId,
+                )
+                when (action) {
+                    PoTokenPageAction.Create -> createPage(
+                        sessionId = sessionId,
+                        forceRecreate = forceRecreate,
+                        reason = poTokenPageReason(
+                            forceRecreate = forceRecreate,
+                            hasPage = existing != null,
+                            expired = existing?.isExpired == true,
+                            dead = existing?.isDead == true,
+                            sessionChanged = webPoTokenSessionId != sessionId,
+                        ),
+                    )
+
+                    PoTokenPageAction.Retoken -> {
+                        TrackLog.d(TAG, "potoken: reusing page for a changed session id")
+                        val retoken = try {
+                            existing!!.generatePoToken(sessionId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            TrackLog.w(TAG, "potoken: session token failed on the live page; rebuilding")
+                            null
+                        }
+                        if (retoken == null) {
+                            createPage(sessionId = sessionId, forceRecreate = false, reason = "retoken-failed")
+                        } else {
+                            webPoTokenStreamingPot = retoken
+                            webPoTokenSessionId = sessionId
+                            LoadedPage(existing!!, retoken, false)
+                        }
                     }
-                    webPoTokenGenerator = newGenerator
-                    webPoTokenStreamingPot = newStreamingPot
-                    webPoTokenSessionId = sessionId
+
+                    PoTokenPageAction.Keep ->
+                        LoadedPage(existing!!, webPoTokenStreamingPot!!, false)
                 }
-                Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreate)
             }
         val playerPot = try {
-            poTokenGenerator.generatePoToken(videoId)
+            page.minter.generatePoToken(videoId)
         } catch (throwable: Throwable) {
-            if (hasBeenRecreated) {
+            if (page.recreated) {
                 throw throwable
             } else {
                 TrackLog.e(TAG, "PO-token generation failed; recreating WebView")
@@ -143,10 +228,10 @@ class PoTokenGenerator(
         TrackLog.d(
             TAG,
             "potoken: minted in ${(System.nanoTime() - mintStart) / 1_000_000}ms" +
-                (if (hasBeenRecreated) " (new page)" else ""),
+                (if (page.recreated) " (new page)" else ""),
         )
         return PoTokenResult(
-            playerRequestPoToken = streamingPot,
+            playerRequestPoToken = page.streamingPot,
             streamingDataPoToken = playerPot,
         )
     }
@@ -175,4 +260,34 @@ class PoTokenGenerator(
             this@PoTokenGenerator.close()
         }
     }
+}
+
+internal enum class PoTokenPageAction { Create, Retoken, Keep }
+
+/** What to do with the loaded page for this request. Pure so it can be tested off-device. */
+internal fun poTokenPageAction(
+    forceRecreate: Boolean,
+    hasPage: Boolean,
+    expired: Boolean,
+    dead: Boolean,
+    sessionChanged: Boolean,
+): PoTokenPageAction = when {
+    forceRecreate || !hasPage || expired || dead -> PoTokenPageAction.Create
+    sessionChanged -> PoTokenPageAction.Retoken
+    else -> PoTokenPageAction.Keep
+}
+
+private fun poTokenPageReason(
+    forceRecreate: Boolean,
+    hasPage: Boolean,
+    expired: Boolean,
+    dead: Boolean,
+    sessionChanged: Boolean,
+): String = when {
+    forceRecreate -> "forced"
+    !hasPage -> "none"
+    expired -> "expired"
+    dead -> "dead"
+    sessionChanged -> "session"
+    else -> "none"
 }

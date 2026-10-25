@@ -1,5 +1,7 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.innertube.potoken.PoTokenPageAction
+import com.music.bitchord.data.innertube.potoken.poTokenPageAction
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
@@ -217,5 +219,45 @@ class DirectClientResolverTest {
         assertNull(order.preferred())
         clock += ResolutionOrder.DIRECT_BENCH_MS
         assertEquals(ResolutionOrder.DIRECT, order.preferred())
+    }
+
+    /**
+     * The cold-start fix: a live BotGuard page is reused and re-minted for a new
+     * visitor id instead of paying Google's Create/GenerateIT round trips again.
+     */
+    @Test
+    fun `a live page is kept for the same visitor`() {
+        assertEquals(
+            PoTokenPageAction.Keep,
+            poTokenPageAction(forceRecreate = false, hasPage = true, expired = false, dead = false, sessionChanged = false),
+        )
+    }
+
+    @Test
+    fun `a changed visitor re-mints on the live page`() {
+        assertEquals(
+            PoTokenPageAction.Retoken,
+            poTokenPageAction(forceRecreate = false, hasPage = true, expired = false, dead = false, sessionChanged = true),
+        )
+    }
+
+    @Test
+    fun `a missing expired or dead page is rebuilt`() {
+        assertEquals(
+            PoTokenPageAction.Create,
+            poTokenPageAction(forceRecreate = false, hasPage = false, expired = false, dead = false, sessionChanged = false),
+        )
+        assertEquals(
+            PoTokenPageAction.Create,
+            poTokenPageAction(forceRecreate = false, hasPage = true, expired = true, dead = false, sessionChanged = true),
+        )
+        assertEquals(
+            PoTokenPageAction.Create,
+            poTokenPageAction(forceRecreate = false, hasPage = true, expired = false, dead = true, sessionChanged = false),
+        )
+        assertEquals(
+            PoTokenPageAction.Create,
+            poTokenPageAction(forceRecreate = true, hasPage = true, expired = false, dead = false, sessionChanged = false),
+        )
     }
 }
