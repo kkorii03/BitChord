@@ -186,6 +186,8 @@
     <string name="converting_to_audio">오디오로 전환 중…</string>
     <string name="revert_to_original">원래대로 되돌리기</string>
     <string name="upgrade_quality">품질 업그레이드</string>
+    <string name="redownload_higher_quality">고음질로 다시 받기</string>
+    <string name="download_already_best_quality">이미 최고 음질</string>
     <string name="quality_upgrade_done">고음질로 바꿨어요</string>
     <string name="quality_upgrade_already_best">이미 이 곡의 최고 음질이에요</string>
     <string name="quality_upgrade_no_better">더 높은 음질을 찾지 못했어요</string>

@@ -91,6 +91,7 @@ import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.webdav.WebDavUploads
@@ -114,11 +115,12 @@ import java.util.Locale
  * always the fallback for "I meant to do something with this song".
  *
  * Everything that writes to the account is hidden outright when [signedIn] is
- * false rather than shown and refused. The same goes for a track that is
- * playing from a local file or a finished download (`song.localUri != null`):
- * rating, playlists, downloading it again and sharing all assume a YouTube
- * identity the file doesn't carry, so those rows drop out regardless of
- * [signedIn].
+ * false rather than shown and refused. The same goes for a track that is a
+ * plain device or file-library row (`SongOrigins.isLocalFile`): rating,
+ * playlists, downloading it again and sharing all assume a YouTube identity
+ * the file doesn't carry, so those rows drop out regardless of [signedIn].
+ * A *downloaded* YouTube track is not one of those — it still carries its id,
+ * so it keeps every account row.
  *
  * [showSleepTimer] and [onShare] are the player's extras: a sleep timer isn't a
  * property of some row in a list, so it only appears where it means something.
@@ -195,6 +197,14 @@ fun SongActionsSheet(
     /** Keeps the upgrade row visible but untappable while its lookup is running. */
     upgradeQualityInProgress: Boolean = false,
     /**
+     * Fetches this downloaded track again at a higher grade and replaces the
+     * file, rather than swapping the stream that is playing. Null everywhere
+     * except a finished download with a YouTube id behind it.
+     */
+    onRedownloadQuality: (() -> Unit)? = null,
+    /** True when nothing higher was verified, so the row says it is already best. */
+    redownloadQualityAtBest: Boolean = false,
+    /**
      * Switches the playing track between its video and audio-only cuts. Null
      * hides the row — offered only from the player, and only once an
      * alternate cut is known to exist. See
@@ -254,16 +264,17 @@ fun SongActionsSheet(
     }
     val liked = likeStatus == LikeStatus.LIKE
     val disliked = likeStatus == LikeStatus.DISLIKE
-    // A local file or a finished download has no YouTube identity behind it to
-    // rate, save, queue into a playlist, fetch again, or share a link for.
-    val isOffline = song.localUri != null
+    // A plain device or file-library row has no YouTube identity behind it to
+    // rate, save, queue into a playlist, fetch again, or share a link for. A
+    // downloaded YouTube track does, and keeps every account row.
+    val isLocalFile = SongOrigins.isLocalFile(song)
 
     val rows: @Composable ColumnScope.() -> Unit = {
         // The account's own actions lead, in the order Apple Music writes
         // them: library, playlist, queue, share, navigation, rating. A guest
-        // or a local file skips only the rows that need an account; the queue
-        // and navigation still work for both.
-        if (signedIn && !isOffline) {
+        // or a plain local file skips only the rows that need an account; the
+        // queue and navigation still work for both.
+        if (signedIn && !isLocalFile) {
             onToggleLibrary?.let {
                 ActionRow(
                     icon = if (inLibrary) Icons.Rounded.Check else Icons.Rounded.Add,
@@ -303,34 +314,36 @@ fun SongActionsSheet(
             accent = palette.accent,
             onClick = onAddToQueue,
         )
-        if (!isOffline) {
+        if (!isLocalFile) {
             onShare?.let {
                 ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
             }
         }
 
-        when (val id = song.albumId) {
-            null -> if (resolvingLinks) {
-                LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
+        if (!isLocalFile) {
+            when (val id = song.albumId) {
+                null -> if (resolvingLinks) {
+                    LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
+                }
+                else -> ActionRow(
+                    Icons.Rounded.Album,
+                    stringResource(R.string.open_album),
+                    accent = palette.accent,
+                ) { onOpenAlbum(id) }
             }
-            else -> ActionRow(
-                Icons.Rounded.Album,
-                stringResource(R.string.open_album),
-                accent = palette.accent,
-            ) { onOpenAlbum(id) }
-        }
-        when (val id = song.artistId) {
-            null -> if (resolvingLinks) {
-                LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
+            when (val id = song.artistId) {
+                null -> if (resolvingLinks) {
+                    LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
+                }
+                else -> ActionRow(
+                    Icons.Rounded.Person,
+                    stringResource(R.string.open_artist),
+                    accent = palette.accent,
+                ) { onOpenArtist(id) }
             }
-            else -> ActionRow(
-                Icons.Rounded.Person,
-                stringResource(R.string.open_artist),
-                accent = palette.accent,
-            ) { onOpenArtist(id) }
         }
 
-        if (signedIn && !isOffline) {
+        if (signedIn && !isLocalFile) {
             ActionRow(
                 icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
@@ -352,7 +365,22 @@ fun SongActionsSheet(
         // Everything else: offline copies, the recording itself, and the
         // player's own extras. Kept below the actions above, as Apple puts
         // them under "Other".
-        DownloadRow(song, palette, isOffline, onDownload)
+        DownloadRow(song, palette, isLocalFile, onDownload)
+        onRedownloadQuality?.let {
+            ActionRow(
+                icon = Icons.Rounded.HighQuality,
+                label = stringResource(
+                    if (redownloadQualityAtBest) {
+                        R.string.download_already_best_quality
+                    } else {
+                        R.string.redownload_higher_quality
+                    },
+                ),
+                accent = palette.accent,
+                enabled = !redownloadQualityAtBest,
+                onClick = it,
+            )
+        }
         onRemoveFromCache?.let {
             ActionRow(
                 icon = Icons.Rounded.DeleteSweep,
@@ -361,7 +389,7 @@ fun SongActionsSheet(
                 onClick = it,
             )
         }
-        WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
+        WebDavUploadRow(song, palette, isLocalFile, onUploadToWebDav)
         ActionRow(
             icon = Icons.Rounded.Radio,
             label = stringResource(R.string.start_radio),
@@ -420,7 +448,7 @@ fun SongActionsSheet(
         // A channel whose uploads are covers, read as such even without the
         // date tag their titles usually end on.
         val channelId = song.artistId
-        if (song.isVideo && !isOffline && !channelId.isNullOrBlank()) {
+        if (song.isVideo && !isLocalFile && !channelId.isNullOrBlank()) {
             val context = LocalContext.current
             val coverChannels by com.music.bitchord.data.settings.AppSettings.coverChannels.collectAsStateWithLifecycle()
             val designated = channelId in coverChannels
@@ -669,7 +697,7 @@ private val SHEET_SHAPE = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
  * arrangement the sleep timer row already uses.
  */
 @Composable
-private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean, onDownload: () -> Unit) {
+private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolean, onDownload: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val active by Downloads.active.collectAsStateWithLifecycle()
@@ -742,7 +770,7 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
                     }
                 }
             }
-        } else if (!isOffline) {
+        } else if (!isLocalFile) {
             ActionRow(
                 icon = Icons.Rounded.Download,
                 label = stringResource(R.string.download),
@@ -766,11 +794,11 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
 private fun WebDavUploadRow(
     song: Song,
     palette: ArtworkPalette,
-    isOffline: Boolean,
+    isLocalFile: Boolean,
     onUpload: (() -> Unit)?,
 ) {
     onUpload ?: return
-    if (!isOffline || !WebDavUploads.isUploadable(song)) return
+    if (!isLocalFile || !WebDavUploads.isUploadable(song)) return
     val active by WebDavUploads.active.collectAsStateWithLifecycle()
     when (val state = active[song.videoId]) {
         is WebDavUploads.TrackState.Running -> ActionRow(
@@ -1171,7 +1199,7 @@ internal fun SheetTrackHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = song.artworkAt(ROW_ART_PX),
+            model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier

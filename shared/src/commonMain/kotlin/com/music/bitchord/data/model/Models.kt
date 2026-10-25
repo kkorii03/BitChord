@@ -239,8 +239,10 @@ fun Song.artworkAt(px: Int): String? =
         // A row can reach the UI with no thumbnail at all (a liked playlist
         // row whose renderer omitted `thumbnail`, a queue item restored from
         // an older snapshot). YouTube always has the video's still, and that
-        // is better than the black square the image loader would draw.
-        ?: videoThumbnailUrl(videoId)?.takeIf { localUri == null }?.artworkAt(px)
+        // is better than the black square the image loader would draw. A
+        // finished download keeps its YouTube id too, so it gets the same
+        // fallback; only a file with no id of its own is left without one.
+        ?: videoThumbnailUrl(videoId)?.takeIf { !SongOrigins.isLocalFile(this) }?.artworkAt(px)
 
 /**
  * Whether a row is the track the player is on, for the now-playing highlight.

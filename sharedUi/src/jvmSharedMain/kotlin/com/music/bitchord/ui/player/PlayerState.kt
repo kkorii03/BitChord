@@ -194,15 +194,18 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
 }
 
 @Composable
-internal fun rememberPlayerArtwork(remoteArt: String?): PlayerArtwork {
+internal fun rememberPlayerArtwork(
+    remoteArt: String?,
+    maxRetries: Int = ART_RETRIES,
+): PlayerArtwork {
     val context = LocalPlatformContext.current
     val artUrl = remoteArt?.artworkAt(ART_PX)
     val art = remember(artUrl) { PlayerArtwork(artUrl, context) }
-    LaunchedEffect(artUrl, art.failed) {
+    LaunchedEffect(artUrl, art.failed, maxRetries) {
         // A track with no artwork at all fails immediately and would fail
-        // identically three more times: there is no request to make, so there is
-        // nothing a second go could do differently.
-        if (artUrl == null || !art.failed || art.attempt >= ART_RETRIES) return@LaunchedEffect
+        // identically on every further go: there is no request to make, so
+        // there is nothing a second go could do differently.
+        if (artUrl == null || !art.failed || art.attempt >= maxRetries) return@LaunchedEffect
         delay(ART_RETRY_DELAY_MS)
         art.retry()
     }

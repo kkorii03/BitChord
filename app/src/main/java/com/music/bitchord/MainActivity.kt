@@ -150,6 +150,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
@@ -231,8 +232,10 @@ import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.playback.revertToOriginal
 import com.music.bitchord.playback.swapToVersion
 import com.music.bitchord.playback.smart.VersionAudioAligner
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
+import com.music.bitchord.download.DownloadedQuality
 import com.music.bitchord.download.MediaTagger
 import com.music.bitchord.download.DownloadTarget
 import com.music.bitchord.download.Downloads
@@ -1825,13 +1828,14 @@ private fun BitChordApp(
             showNowPlaying &&
             menuFromPlayer &&
             songActions?.videoId == song.videoId
-        // A downloaded song (or the listener's own file) has no YouTube
-        // counterpart to switch to. A downloaded *video* row does: it is still
-        // a music video, and the version switch is how it becomes the
-        // catalogue release.
+        // A plain local file has no YouTube counterpart to switch to. A
+        // downloaded YouTube track does — its file is still that song's id, so
+        // the version lookup and switch are offered exactly as for a stream.
+        // A downloaded *video* row does too: it is still a music video, and
+        // the version switch is how it becomes the catalogue release.
         if (song == null ||
             SongVersionPolicy.keepsLocalFile(
-                song.localUri != null,
+                SongOrigins.isLocalFile(song),
                 song.isVideo,
                 song.typeUnknown,
             ) ||
@@ -2732,9 +2736,11 @@ private fun BitChordApp(
         linksLoading = false
         if (!playerShowing) return@LaunchedEffect
         val current = player.song ?: return@LaunchedEffect
-        // A file on the device is not in YouTube's catalogue, so the lookup
-        // cannot answer and must not be made.
-        if (current.localUri != null) return@LaunchedEffect
+        // A plain file on the device is not in YouTube's catalogue, so the
+        // lookup cannot answer and must not be made. A downloaded YouTube
+        // track still is, and needs the same album/artist backfill as a
+        // streamed one.
+        if (SongOrigins.isLocalFile(current)) return@LaunchedEffect
         if (current.albumId != null && current.artistId != null) return@LaunchedEffect
         if (trackLinksCache.containsKey(current.videoId)) {
             links = trackLinksCache[current.videoId]
@@ -4773,8 +4779,8 @@ private fun BitChordApp(
             // way to get there. Ask as the menu opens, the way the player
             // backfills its own track — the player's copy is already kept in
             // sync above, so it is left alone here.
-            val needsLinks = !fromPlayer && heldSong.localUri == null &&
-                heldSong.videoId.isNotBlank() &&
+            val needsLinks = !fromPlayer && !SongOrigins.isLocalFile(heldSong) &&
+                SongOrigins.hasYouTubeIdentity(heldSong.videoId) &&
                 (heldSong.albumId == null || heldSong.artistId == null)
             var menuLinks by remember(heldSong.videoId) { mutableStateOf<Song?>(null) }
             var menuLinksLoading by remember(heldSong.videoId) { mutableStateOf(needsLinks) }
@@ -4791,6 +4797,17 @@ private fun BitChordApp(
                     albumName = heldSong.albumName ?: extra.albumName,
                 )
             } ?: heldSong
+            // A finished download keeps its YouTube identity; only a device or
+            // file-library row has none. Everything below asks this rather than
+            // testing `localUri` on its own.
+            val songIsLocalFile = SongOrigins.isLocalFile(song)
+            val songIsDownloaded = SongOrigins.isDownloadedYouTube(song)
+            val verifiedTier = remember(song.videoId, song.downloadFormat) {
+                if (songIsDownloaded) HqVerificationStore.bestTier(context, song.videoId) else null
+            }
+            val redownloadAtBest = remember(song.videoId, song.downloadFormat, verifiedTier) {
+                songIsDownloaded && DownloadedQuality.isAtBest(song.downloadFormat, verifiedTier)
+            }
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
@@ -4932,7 +4949,7 @@ private fun BitChordApp(
                 // The app's library entry for a song is its liked state, so
                 // the menu's first row writes the same answer as the heart
                 // below it — one labelled as the library, one as the rating.
-                onToggleLibrary = if (signedIn && song.localUri == null) {
+                onToggleLibrary = if (signedIn && !songIsLocalFile) {
                     { viewModel.toggleLike(song.videoId) }
                 } else {
                     null
@@ -4957,7 +4974,8 @@ private fun BitChordApp(
                 // server. Closed first, unlike a download — progress and
                 // the summary notice live outside the sheet.
                 onUploadToWebDav =
-                    if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
+                    if (songIsLocalFile &&
+                        com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
                         com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
                     ) {
                         {
@@ -5092,13 +5110,32 @@ private fun BitChordApp(
                     null
                 },
                 upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
+                // A downloaded track is replaced on disk, never mid-playback:
+                // this goes through the ordinary download queue, and its
+                // "replace the old file" half takes over once the new bytes
+                // have landed.
+                onRedownloadQuality = if (songIsDownloaded) {
+                    {
+                        Downloads.enqueue(
+                            context,
+                            song,
+                            allowMetered = true,
+                            quality = DownloadedQuality.qualityForUpgrade(
+                                song.downloadFormat,
+                                HqVerificationStore.bestTier(context, song.videoId),
+                            ),
+                        )
+                    }
+                } else {
+                    null
+                },
+                redownloadQualityAtBest = redownloadAtBest,
                 onToggleAudioVersion = onToggleVersion,
                 isAudioVersion = menuIsAudioVersion,
                 // Hidden outright when there's no real YouTube id behind
-                // this row to build a link from — SongActionsSheet already
-                // drops it for a local file via `isOffline`, this catches
-                // the rest.
-                onShare = share.takeIf { song.videoId.isNotBlank() },
+                // this row to build a link from — a plain local file has none,
+                // while a finished download still has its own.
+                onShare = share.takeIf { SongOrigins.hasYouTubeIdentity(song.videoId) },
                 onCopyLog = if (fromPlayer) {
                     {
                         songActions = null

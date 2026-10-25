@@ -148,6 +148,7 @@ import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.scrobbling.LastFM
@@ -2331,10 +2332,11 @@ class PlaybackService : MediaLibraryService() {
     /**
      * Whether Like is offered for [item] — the player's own rule, so no surface
      * shows a heart the player doesn't: there has to be an account to record it
-     * against, and a local file or a download has no YouTube identity to rate.
+     * against, and a plain local file has no YouTube identity to rate. A
+     * finished download still does, so it keeps its heart.
      */
     private fun canLike(item: MediaItem?): Boolean =
-        item != null && SignedIn.state(this).value && item.toSong().localUri == null
+        item != null && SignedIn.state(this).value && !SongOrigins.isLocalFile(item.toSong())
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {

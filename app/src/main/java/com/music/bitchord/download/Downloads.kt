@@ -160,6 +160,13 @@ object Downloads {
     /** Waiting, in the order asked for. Guarded by [lock]. */
     private val pending = LinkedHashMap<String, Song>()
 
+    /**
+     * A rung asked for by a deliberate replacement — see [enqueue] — rather
+     * than the standing [AppSettings.downloadQuality]. Guarded by [lock] while
+     * written, and only read by [prepare] for the track it names.
+     */
+    private val qualityOverrides = HashMap<String, DownloadQuality>()
+
     private val lock = Any()
 
     /**
@@ -244,12 +251,17 @@ object Downloads {
      * @param allowMetered a replacement the listener asked for, or one the
      *   automatic repair is doing: data is not the constraint, so the
      *   Wi-Fi-only rule does not apply.
+     * @param quality the rung this particular replacement should fetch, when it
+     *   is a deliberate upgrade rather than the standing download setting. It
+     *   stays with the track across a failed retry and is dropped once the
+     *   download succeeds or is cancelled.
      */
     fun enqueue(
         context: Context,
         song: Song,
         from: String? = null,
         allowMetered: Boolean = false,
+        quality: DownloadQuality? = null,
     ) {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
@@ -269,6 +281,7 @@ object Downloads {
         synchronized(lock) {
             if (id in pending || id in running) return
             pending[id] = song
+            if (quality != null) qualityOverrides[id] = quality
         }
         _active.update { it + (id to DownloadState.Queued) }
         DownloadSession.queued(song, from)
@@ -281,7 +294,10 @@ object Downloads {
             // means the queue has nothing to drain it and would sit there
             // looking accepted forever.
             Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) { pending.remove(id) }
+            synchronized(lock) {
+                pending.remove(id)
+                qualityOverrides.remove(id)
+            }
             fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
     }
@@ -1345,8 +1361,10 @@ object Downloads {
         // and the re-resolve inside [Downloader.fetch] have to agree on
         // which rung they are fetching, and re-reading the setting per call
         // would let a change made mid-download splice two renditions into
-        // one file.
-        val quality = AppSettings.downloadQuality.value
+        // one file. A replacement asked for at a specific rung keeps that
+        // rung instead of the standing setting.
+        val quality = synchronized(lock) { qualityOverrides[song.videoId] }
+            ?: AppSettings.downloadQuality.value
 
         // Asked before the lookup rather than after it, unlike the check on the
         // route's own filename below. A file already sitting in Music under a
@@ -1746,6 +1764,7 @@ object Downloads {
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
     private fun clear(videoId: String) {
         _active.update { it - videoId }
+        synchronized(lock) { qualityOverrides.remove(videoId) }
     }
 
     private fun fail(videoId: String, reason: String) {

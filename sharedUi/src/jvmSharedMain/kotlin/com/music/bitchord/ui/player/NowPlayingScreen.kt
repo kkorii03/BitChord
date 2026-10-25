@@ -163,6 +163,7 @@ import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
@@ -1360,10 +1361,20 @@ fun NowPlayingScreen(
     // had and never re-emits, so the `onState` that is the sole writer here
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
-    val art = rememberPlayerArtwork(remoteArt)
+    // A downloaded track's cover ladder is already resolved to one local file
+    // or one YouTube still. It gets a single further go, not three: the dead
+    // path that used to be retried every 1.5 seconds is exactly what this
+    // bounds, and a second look is enough for a connection that blinked.
+    val art = rememberPlayerArtwork(
+        remoteArt,
+        maxRetries = if (SongOrigins.isDownloadedYouTube(song)) 1 else ART_RETRIES,
+    )
     // What the artwork area is actually showing, once per change rather than
     // per frame: the black-player reports need to say whether the item had no
-    // artwork, the cover failed, or the metadata itself was empty.
+    // artwork, the cover failed, or the metadata itself was empty. The reason
+    // is remembered so a retry that passes back through Loading does not write
+    // the same line again.
+    var lastArtReason by remember(song.videoId) { mutableStateOf<String?>(null) }
     LaunchedEffect(song.videoId, canvas?.url, art.loaded, art.failed) {
         val reason = when {
             canvas != null -> "canvas"
@@ -1373,7 +1384,10 @@ fun NowPlayingScreen(
             art.failed -> "placeholder (load failed)"
             else -> "placeholder (loading)"
         }
-        TrackLog.d("BitChord", "player art: $reason for ${song.videoId}")
+        if (reason != lastArtReason) {
+            lastArtReason = reason
+            TrackLog.d("BitChord", "player art: $reason for ${song.videoId}")
+        }
     }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
@@ -3479,9 +3493,9 @@ fun NowPlayingScreen(
                             // liking is about *this song*, and the row below is about
                             // how the queue plays. Guests get nothing to tap, since
                             // there's no account to record it against — and neither
-                            // does a local file or a finished download, which carries
-                            // no YouTube identity to rate.
-                            if (signedIn && song.localUri == null) {
+                            // does a plain local file, which carries no YouTube
+                            // identity to rate. A finished download still does.
+                            if (signedIn && !SongOrigins.isLocalFile(song)) {
                                 val liked = likeStatus == LikeStatus.LIKE
                                 CircleGlyph(
                                     icon = if (liked) BitChordIcons.StarFilled else BitChordIcons.Star,
