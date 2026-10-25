@@ -23,7 +23,13 @@ object SongCheckWindow {
     fun wavMs(sizeBytes: Int): Long =
         (sizeBytes - WAV_HEADER_BYTES).coerceAtLeast(0) / BYTES_PER_MS.toLong()
 
-    /** The indices of lines whose recorded start lies inside `[0, untilMs]`. */
+    /**
+     * The indices of lines whose recorded start lies inside `[0, untilMs]`.
+     *
+     * A window of zero (or less) is no audio at all — the header alone, or
+     * nothing — so there is nothing to check even for a line timed at zero.
+     */
     fun indices(timesMs: List<Long>, untilMs: Long): List<Int> =
-        timesMs.indices.filter { timesMs[it] in 0..untilMs }
+        if (untilMs <= 0L) emptyList()
+        else timesMs.indices.filter { timesMs[it] in 0..untilMs }
 }
