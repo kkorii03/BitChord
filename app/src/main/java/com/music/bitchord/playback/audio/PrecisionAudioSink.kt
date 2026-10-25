@@ -66,6 +66,15 @@ class PrecisionAudioSink(
     val directAudioOutput: DirectAudioOutput? = null,
     private val preferredOutputEncodingProvider: ((Format) -> PcmEncoding?)? = null,
     /**
+     * The rate the delegate should open AudioTrack at, or null to keep the
+     * decoder's rate. When this names a different rate the sink encodes to
+     * 16-bit so Media3's own processor chain — where
+     * [ResamplingAudioProcessor] lives — runs on the 16-bit branch. The float
+     * branch bypasses that chain, so a float track on a route that cannot
+     * carry its native rate would otherwise stay silent.
+     */
+    private val resampleRateProvider: ((Int) -> Int?)? = null,
+    /**
      * Whether this sink is the one the listener can currently hear.
      *
      * A crossfade keeps two players alive, each with its own sink, both writing
@@ -387,6 +396,21 @@ class PrecisionAudioSink(
             // Process normalized Float32 samples through custom DSP chain
             dspChain.process(audioBlock)
 
+            if (isAudible() && audioBlock.frameCount > 0) {
+                // Sampled rather than every sample: this meter only needs to
+                // know "audible or not", and the DSP chain has already touched
+                // every sample once.
+                var peak = 0f
+                val step = (audioBlock.channelCount * HEALTH_SAMPLE_STRIDE).coerceAtLeast(1)
+                var index = 0
+                while (index < audioBlock.sampleCount) {
+                    val magnitude = kotlin.math.abs(audioBlock.samples[index])
+                    if (magnitude > peak) peak = magnitude
+                    index += step
+                }
+                AudioOutputHealth.onBuffer(decodedFrames, peak)
+            }
+
             val blockTimeUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput)
             // A replayed tail from an earlier block begins after this block's
             // first input frame, so the emitted block needs a later timestamp.
@@ -667,6 +691,13 @@ class PrecisionAudioSink(
      * what it is, a request for float, and honoured only where float is real.
      */
     private fun resolveTargetEncoding(preferred: PcmEncoding?, floatFormat: Format): PcmEncoding {
+        val targetRate = runCatching { resampleRateProvider?.invoke(floatFormat.sampleRate) }.getOrNull()
+        if (targetRate != null && targetRate > 0 && targetRate != floatFormat.sampleRate) {
+            // The float branch of DefaultAudioSink does not run the custom
+            // processor chain, so it cannot reach ResamplingAudioProcessor.
+            // PCM16 keeps the buffer in the branch that does.
+            return PcmEncoding.PCM_16BIT
+        }
         val wantsAbove16Bit = when (preferred) {
             PcmEncoding.PCM_16BIT -> return PcmEncoding.PCM_16BIT
             PcmEncoding.PCM_FLOAT, PcmEncoding.PCM_24BIT_PACKED, PcmEncoding.PCM_32BIT -> true
@@ -784,6 +815,9 @@ class PrecisionAudioSink(
     companion object {
         private const val TAG = "PrecisionAudioSink"
         const val DEFAULT_CAPACITY_FRAMES: Int = 4096
+
+        /** One in this many frames is enough for the output-health meter. */
+        private const val HEALTH_SAMPLE_STRIDE: Int = 16
 
         /**
          * Widest channel layout the precision path will take on. Eight covers

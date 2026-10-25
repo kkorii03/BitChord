@@ -132,6 +132,15 @@ class CrossfadeController(
      */
     private val analysisFor: (MediaItem) -> TrackAnalysis = { TrackAnalysis() },
     /**
+     * Whether the two tracks' decoded formats can share an output path.
+     *
+     * Unknown formats answer true: arming is allowed to discover the format,
+     * and the timeout is the backstop. Only a pair that is known to be
+     * incompatible skips arming outright, so the outgoing track is never
+     * filtered or ducked for a blend that could not have rendered.
+     */
+    private val canMix: (outgoing: MediaItem, incoming: MediaItem) -> Boolean = { _, _ -> true },
+    /**
      * Queues background analysis for a media item that will soon need it.
      * Cheap to call on every tick: a track already analysed, already in
      * flight, or not yet fully cached is a no-op.
@@ -485,6 +494,16 @@ class CrossfadeController(
     private var bailStartedAt = 0L
     private var armDeadline = 0L
 
+    /** When the current arming attempt started, for the duration log. */
+    private var armStartedAt = 0L
+
+    /**
+     * The pair that has already been refused for this outgoing track, so an
+     * arm timeout or an incompatible format is not retried every tick until
+     * the track ends. Cleared as soon as the outgoing track changes.
+     */
+    private var skippedPair: Pair<String?, String?>? = null
+
     /** Length of the fade-out driven by [Phase.SLEEP_FADE], in ms. Fixed when it begins. */
     private var sleepFadeMs = 0L
 
@@ -760,6 +779,7 @@ class CrossfadeController(
         active().volume = 1f
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
+        skippedPair = null
         filters.open()
         filters.parkEchoes()
         onBlendHeadroom(1f)
@@ -839,6 +859,27 @@ class CrossfadeController(
         if (!holdWanted && phase == Phase.IDLE) releaseHold()
     }
 
+    /** Records the pair a skip was logged for, so it is logged once and never retried. */
+    private fun rememberSkipped(
+        pair: Pair<String?, String?>,
+        reason: CrossfadeSkipReason,
+        outgoing: MediaItem?,
+        incoming: MediaItem?,
+    ) {
+        skippedPair = pair
+        logSkipped(outgoing?.mediaId, incoming?.mediaId, reason)
+    }
+
+    /** One line for every transition abandoned before it became audible. */
+    private fun logSkipped(outgoingId: String?, incomingId: String?, reason: CrossfadeSkipReason) {
+        Log.d(TAG, "crossfade: skipped $outgoingId->$incomingId reason=${reason.wire}")
+        TrackLog.d(
+            "BitChord",
+            "crossfade: skipped $outgoingId->$incomingId reason=${reason.wire}",
+            about = incomingId,
+        )
+    }
+
     private fun planAutoTransition(player: ExoPlayer) {
         // Not while a version swap owns the standby player — see
         // [versionSwapActive]. Nothing to clean up on the way out unlike the
@@ -879,6 +920,34 @@ class CrossfadeController(
 
         val duration = player.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
+
+        val currentItem = player.currentMediaItem ?: return
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return
+        val nextItem = player.getMediaItemAt(nextIndex)
+
+        // A pair this outgoing track has already failed to arm is left to the
+        // ordinary gapless advance. Without this, a cold stream that missed
+        // the deadline is retried on every idle tick, each attempt opening a
+        // decoder and each miss re-arming the outgoing filter for a blend that
+        // is never going to happen.
+        val pair = currentItem.mediaId to nextItem.mediaId
+        if (skippedPair == pair) {
+            // A pair already refused has no transition window to advertise.
+            AppSettings.smartTransitionWindow.value = null
+            return
+        }
+        // A different outgoing track is a fresh pair; forget the old verdict.
+        if (skippedPair?.first != null && skippedPair?.first != currentItem.mediaId) {
+            skippedPair = null
+        }
+
+        if (!canMix(currentItem, nextItem)) {
+            rememberSkipped(pair, CrossfadeSkipReason.FORMAT_MISMATCH, currentItem, nextItem)
+            AppSettings.smartTransitionWindow.value = null
+            AppSettings.smartMixInProgress.value = false
+            return
+        }
 
         // Repeating one track would crossfade it into itself, so nothing is
         // armed and no window is marked — but the queue behind the loop has not
@@ -1279,6 +1348,21 @@ class CrossfadeController(
         if (out === into) return false
         val nextIndex = out.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return false
+        val nextItem = out.getMediaItemAt(nextIndex)
+        val currentItem = out.currentMediaItem
+        // A queue that points at the song already playing has nothing to fade
+        // into. This is also what a natural advance during an earlier ARMING
+        // leaves behind, so refuse it before touching either player.
+        if (currentItem != null && nextItem.mediaId == currentItem.mediaId) {
+            rememberSkipped(
+                currentItem.mediaId to nextItem.mediaId,
+                CrossfadeSkipReason.SAME_ITEM,
+                currentItem,
+                nextItem,
+            )
+            releaseHold()
+            return false
+        }
         // The last blend's stretch, if it is somehow still easing off: this
         // player is about to be the outgoing side of a new one.
         endEase(clickless = false)
@@ -1295,7 +1379,8 @@ class CrossfadeController(
         rampStartMs = endMs - fade - rampSteps * beatMs
         rampStep = 0
         render = renderStyle
-        armDeadline = SystemClock.elapsedRealtime() + ARM_TIMEOUT_MS + rampSteps * beatMs
+        armStartedAt = SystemClock.elapsedRealtime()
+        armDeadline = armStartedAt + CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         handedOff = false
         outgoing = out
         incoming = into
@@ -1465,11 +1550,30 @@ class CrossfadeController(
     private fun driveArming() {
         val out = outgoing ?: return bail()
         val into = incoming ?: return bail()
+
+        // The outgoing player can run out of its own item while the standby is
+        // still buffering. At that point both players hold the incoming song
+        // and there is no blend left to make — the natural advance is the
+        // transition. This is also where the old code produced the confusing
+        // `abort out=in` line twelve seconds later.
+        val outId = out.currentMediaItem?.mediaId
+        val inId = into.currentMediaItem?.mediaId
+        if (out.currentMediaItemIndex != outgoingItemIndex || (outId != null && outId == inId)) {
+            return bail(CrossfadeSkipReason.OUTGOING_MOVED)
+        }
         if (!stillWorthFading()) return bail()
         // Paused while armed: the transition is no longer imminent, and holding
         // a prepared decoder open against a stopped player is worse than arming
         // again when playback resumes.
         if (!out.playWhenReady) return bail()
+
+        // An earlier interrupted transition must not leave the audible track
+        // at a gain the listener cannot hear. Nothing in ARMING automates this
+        // player's volume; full level is the only correct state until FADING.
+        if (out.volume <= 0.01f) {
+            Log.w(TAG, "arm: outgoing volume was ${out.volume}; restoring full level")
+            out.volume = 1f
+        }
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
@@ -1477,7 +1581,14 @@ class CrossfadeController(
         // A standby that never got the incoming track ready has nothing to fade
         // up. Give up and let the queue move on plainly rather than fading into
         // silence.
-        if (expired && !ready) return bail()
+        if (expired && !ready) {
+            Log.d(
+                TAG,
+                "arm timeout after ${SystemClock.elapsedRealtime() - armStartedAt}ms " +
+                    "out=$outId in=$inId state=${into.playbackState}",
+            )
+            return bail(CrossfadeSkipReason.ARM_TIMEOUT)
+        }
 
         // Both sinks write seconds ahead of the speaker. The standby fills its
         // whole buffer while it waits here, so its filter has to be at the
@@ -1485,13 +1596,23 @@ class CrossfadeController(
         // fade starts — otherwise the incoming track's first seconds are heard
         // unfiltered. The outgoing sink crosses into the blend its lead before
         // the listener does, and its filter has to start moving then.
-        val outgoingAt = if (fadeMs > 0L && fadeEndMs > 0L) {
-            (out.currentPosition + tracks.outgoingLeadMs() - (fadeEndMs - fadeMs)).toFloat() / fadeMs
+        // Crucially, that outgoing ride only starts once the incoming side is
+        // ARMED. Before then the transition may still be abandoned, and moving
+        // the outgoing filter (or an echo's dry gain) toward the blend while a
+        // cold stream is still being resolved is what made a failed ARMING
+        // audible as several seconds of near-silence.
+        if (ready) {
+            val outgoingAt = if (fadeMs > 0L && fadeEndMs > 0L) {
+                (out.currentPosition + tracks.outgoingLeadMs() - (fadeEndMs - fadeMs)).toFloat() / fadeMs
+            } else {
+                0f
+            }
+            rideFilters(0f, outgoingAt.takeIf { it > 0f }?.coerceAtMost(1f))
+            if (rampSteps > 0) rampOutgoing(out)
         } else {
-            0f
+            // Incoming opening only; the outgoing side is left completely open.
+            rideFilters(0f, null)
         }
-        rideFilters(0f, outgoingAt.takeIf { it > 0f }?.coerceAtMost(1f))
-        if (rampSteps > 0) rampOutgoing(out)
 
         // Wait for the track to actually reach the fade point. [fadeEndMs] is
         // the track's own duration in standard mode, or a Automix plan's
@@ -1534,6 +1655,11 @@ class CrossfadeController(
         incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
 
         Log.d(TAG, "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
+        Log.d(
+            TAG,
+            "arm ready out=${out.currentMediaItem?.mediaId} in=${into.currentMediaItem?.mediaId} " +
+                "took=${SystemClock.elapsedRealtime() - armStartedAt}ms",
+        )
 
         // Published before the mix flag, in the same tick: the scrubber shows
         // the old sheen for a mix flag with no blend beside it, and would flash
@@ -1563,6 +1689,11 @@ class CrossfadeController(
         reconcileQueue(out, into)
 
         Log.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
+        Log.d(
+            TAG,
+            "handoff levels inVol=${into.volume} outVol=${out.volume} " +
+                "inRate=${into.playbackParameters.speed} outRate=${out.playbackParameters.speed}",
+        )
 
         // Before the swap, so the listener follows the session rather than
         // firing on a player this class is about to demote.
@@ -1871,13 +2002,28 @@ class CrossfadeController(
      * has been announced), so the only thing left is to take the outgoing track
      * away gracefully.
      */
-    private fun bail() {
+    private fun bail(reason: CrossfadeSkipReason? = null) {
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
+        val outId = outgoing?.currentMediaItem?.mediaId
+        val inId = incoming?.currentMediaItem?.mediaId
+        if (reason != null) {
+            if (phase == Phase.ARMING && outId != null && inId != null) {
+                // Remembered so the same pair is not re-armed on the next idle
+                // tick; a miss is a plain gapless advance, not a retry loop.
+                rememberSkipped(
+                    outId to inId,
+                    reason,
+                    outgoing?.currentMediaItem,
+                    incoming?.currentMediaItem,
+                )
+            } else {
+                logSkipped(outId, inId, reason)
+            }
+        }
         Log.d(TAG, "bail from $phase")
         TrackLog.d(
             "BitChord",
-            "crossfade: abort out=${outgoing?.currentMediaItem?.mediaId} " +
-                "in=${incoming?.currentMediaItem?.mediaId} phase=$phase handedOff=$handedOff",
+            "crossfade: abort out=$outId in=$inId phase=$phase handedOff=$handedOff",
         )
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
@@ -1905,6 +2051,10 @@ class CrossfadeController(
         val wasTransitioning = phase != Phase.IDLE
         if (phase != Phase.IDLE) {
             Log.d(TAG, "finish from $phase")
+            Log.d(
+                TAG,
+                "finish levels inVol=${incoming?.volume} outVol=${outgoing?.volume} handedOff=$handedOff",
+            )
             // Stamped under this guard rather than beside the assignment at the
             // bottom, because this function is idempotent and gets called with
             // nothing in flight: marking every one of those as a transition
@@ -2843,13 +2993,6 @@ class CrossfadeController(
             TrackAnalysisState.ANALYSED,
             TrackAnalysisState.REFINING,
         )
-
-        /**
-         * Longest a transition will wait on an incoming track that will not
-         * become ready. Past this the queue is left to move on plainly, which is
-         * a missed crossfade rather than a broken one.
-         */
-        const val ARM_TIMEOUT_MS = 12_000L
 
         /**
          * Where the outgoing low-pass sits the instant a filter ride begins.

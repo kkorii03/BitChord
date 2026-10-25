@@ -80,6 +80,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
+import com.music.bitchord.playback.audio.AudioOutputHealth
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
@@ -88,6 +89,7 @@ import com.music.bitchord.playback.cast.RemoteSpeaker
 import com.music.bitchord.playback.cast.Speakers
 import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
+import com.music.bitchord.playback.audio.ResamplingAudioProcessor
 import com.music.bitchord.playback.audio.SilenceSkipper
 import com.music.bitchord.playback.dsd.DsdExtractorsFactory
 import com.music.bitchord.playback.audio.DirectAudioProbe
@@ -745,6 +747,16 @@ class PlaybackService : MediaLibraryService() {
 
     /** Last sampled position of the playing track, in seconds. */
     private var lastPositionSeconds = 0L
+
+    /**
+     * Output-health state, advanced by the existing progress sampler rather
+     * than a new timer. [silenceCheckFrames] is the sink's frame counter at
+     * the previous tick; [silenceRecoveries] bounds how many times one track
+     * may rebuild its output path.
+     */
+    private var silenceCheckFrames = -1L
+    private var silenceRecoveries = 0
+    private var silenceRecoveryFor: String? = null
 
     /** When the current track was chosen, for the time-to-first-audio log. */
     private var trackSelectedAt: Long? = null
@@ -2245,6 +2257,12 @@ class PlaybackService : MediaLibraryService() {
             standby = { requireNotNull(spare) },
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
+            canMix = { outgoingItem, incomingItem ->
+                CrossfadeArmPolicy.canMix(
+                    crossfadeFormatFor(outgoingItem, outgoing = true),
+                    crossfadeFormatFor(incomingItem, outgoing = false),
+                )
+            },
             requestAnalysis = { item, durationMs ->
                 item.localConfiguration?.uri?.let { uri ->
                     trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
@@ -4656,6 +4674,7 @@ class PlaybackService : MediaLibraryService() {
         // URI, so a size measured for the last track isn't kept past it.
         measuredBitrateCache.clear()
         AudioOutputStatus.onTrackTransition()
+        AudioOutputHealth.reset()
         // The entry this track is read from now counts as played — the only
         // kind the Cached songs folder lists. See [AudioCache.Origin].
         mediaItem?.let { AudioCache.notePlayed(it.toSong(), it.localConfiguration?.uri) }
@@ -8144,11 +8163,93 @@ class PlaybackService : MediaLibraryService() {
             // Cheap to call: it returns before building a snapshot if
             // the renderer's format has not changed since the last one.
             publishNerdStats()
+            // The same tick is the only output-health poll: no new timer.
+            checkOutputHealth(player)
             // The second look happens on the track change and on
             // play/resume. It used to be repeated here as a backstop,
             // which meant walking the upgrade maps for every five
             // seconds of every track.
         }
+    }
+
+    /**
+     * Notices a sink that has stopped producing frames, or one that is
+     * producing nothing but zeros, and puts the audible path back together.
+     *
+     * A paused/buffering player and a crossfade in flight are left alone: the
+     * first has no audio to judge, and the second legitimately has one side
+     * silent. Only after a full transition has settled does a zero gain mean
+     * a bug rather than a fader.
+     */
+    private fun checkOutputHealth(player: ExoPlayer) {
+        val id = player.currentMediaItem?.mediaId
+        if (silenceRecoveryFor != id) {
+            silenceRecoveryFor = id
+            silenceRecoveries = 0
+            silenceCheckFrames = -1L
+        }
+        if (!player.isPlaying ||
+            player.playbackState != Player.STATE_READY ||
+            crossfade?.isTransitioning() == true ||
+            versionSwapJob?.isActive == true
+        ) {
+            silenceCheckFrames = -1L
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        // Between transitions the session player is never meant to be muted.
+        if (player.volume <= 0.01f) {
+            TrackLog.w(
+                "AUDIO_OUT",
+                "silence detected: player volume=${player.volume}; restoring gains",
+                about = id,
+            )
+            silenceCheckFrames = -1L
+            recoverAudibleGains()
+            return
+        }
+
+        val frames = AudioOutputHealth.processedFrames()
+        if (silenceCheckFrames < 0L) {
+            silenceCheckFrames = frames
+            return
+        }
+        val stalled = frames == silenceCheckFrames &&
+            AudioOutputHealth.lastBufferAtMs > 0L &&
+            now - AudioOutputHealth.lastBufferAtMs > OUTPUT_STALL_MS
+        val silent = AudioOutputHealth.lastNonSilentAtMs > 0L &&
+            now - AudioOutputHealth.lastNonSilentAtMs > OUTPUT_SILENT_MS
+        if (!stalled && !silent) {
+            silenceCheckFrames = frames
+            return
+        }
+        if (silenceRecoveries >= MAX_SILENCE_RECOVERIES) return
+        silenceRecoveries++
+        TrackLog.w(
+            "AUDIO_OUT",
+            "silence detected id=$id stalled=$stalled silent=$silent " +
+                "frames=$frames sinceBuffer=${now - AudioOutputHealth.lastBufferAtMs}ms; rebuilding",
+            about = id,
+        )
+        silenceCheckFrames = -1L
+        recoverAudibleGains()
+        if (stalled) {
+            // A frozen sink needs a new AudioTrack, not just a new gain.
+            rebuildPlayersForOutput(shouldEnableFloatOutput())
+        }
+    }
+
+    /** Puts the gains and filters a finished transition may have left down back to normal. */
+    private fun recoverAudibleGains() {
+        player?.volume = 1f
+        transitionFilterA.open()
+        transitionFilterB.open()
+        transitionFilterA.parkEcho()
+        transitionFilterB.parkEcho()
+        loudnessA.setBlendTrim(1f)
+        loudnessB.setBlendTrim(1f)
+        AudioOutputHealth.reset()
     }
 
     /**
@@ -8327,7 +8428,11 @@ class PlaybackService : MediaLibraryService() {
                 )
                 .setAudioProcessorChain(
                     DefaultAudioSink.DefaultAudioProcessorChain(
-                        emptyArray<AudioProcessor>(),
+                        arrayOf<AudioProcessor>(
+                            ResamplingAudioProcessor { inputRate ->
+                                resampleTargetRate(inputRate)
+                            },
+                        ),
                         SilenceSkippingAudioProcessor(
                             MIN_SILENCE_US,
                             SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
@@ -8354,6 +8459,7 @@ class PlaybackService : MediaLibraryService() {
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
                 preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
+                resampleRateProvider = { rate -> resampleTargetRate(rate) },
                 // Which of the two sinks the listener can hear, told by the
                 // role its transition filter currently holds — [activeFilter]
                 // and [spareFilter] trade places at every handoff. Only the
@@ -8452,6 +8558,32 @@ class PlaybackService : MediaLibraryService() {
         if (format != null) {
             resolvePreferredOutputEncoding(format)
         }
+    }
+
+    /**
+     * The format facts the crossfade policy can decide on before arming.
+     *
+     * The outgoing side is the decoder's own Format for the track that is
+     * playing. The incoming side usually has no decoder yet, so its declared
+     * source format is the best available answer; null means "not known", and
+     * the policy lets arming discover it rather than refusing on a guess.
+     */
+    private fun crossfadeFormatFor(item: MediaItem, outgoing: Boolean): CrossfadeTrackFormat? {
+        if (outgoing) {
+            currentAudioInputFormat?.let { format ->
+                return CrossfadeTrackFormat(
+                    sampleRateHz = format.sampleRate.takeIf { it > 0 },
+                    channelCount = format.channelCount.takeIf { it > 0 },
+                    // A direct track owns the hardware route; two of them
+                    // cannot be summed at different rates.
+                    direct = AudioOutputStatus.current.value.directPlaybackActual,
+                )
+            }
+        }
+        val declared = NerdStats.declaredFormat(item.mediaId) ?: return null
+        return CrossfadeTrackFormat(
+            sampleRateHz = declared.sampleRateHz?.takeIf { it > 0 },
+        )
     }
 
     private fun resolvePreferredOutputEncoding(format: Format): PcmEncoding? {
@@ -8638,6 +8770,7 @@ class PlaybackService : MediaLibraryService() {
 
         oldActive.release()
         oldSpare.release()
+        AudioOutputHealth.reset()
         TrackLog.i(
             "AUDIO_OUT",
             "live output switch: ${if (enableFloat) "PCM_FLOAT" else "PCM_16BIT"}",
@@ -8683,6 +8816,20 @@ class PlaybackService : MediaLibraryService() {
             requestedMode = AppSettings.outputPcmMode.value,
             routeKind = routeKind,
             advertisesPcmFloat = advertisesFloat || directFloatSupported,
+        )
+    }
+
+    /**
+     * The rate the resampler should open AudioTrack at, or null to keep the
+     * decoder's rate. See [AudioOutputPolicy.outputSampleRateFor].
+     */
+    private fun resampleTargetRate(inputRateHz: Int): Int? {
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+        return AudioOutputPolicy.outputSampleRateFor(
+            sourceRateHz = inputRateHz,
+            routeKind = routeKind,
+            advertisedSampleRates = activeDevice?.sampleRates?.toList().orEmpty(),
         )
     }
 
@@ -11248,6 +11395,15 @@ class PlaybackService : MediaLibraryService() {
 
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
+
+        /** A sink that has not accepted a buffer for this long is stalled. */
+        const val OUTPUT_STALL_MS = 4_000L
+
+        /** Frames arriving, but all zero, for this long is a silent output path. */
+        const val OUTPUT_SILENT_MS = 12_000L
+
+        /** One track may rebuild its output path at most this many times. */
+        const val MAX_SILENCE_RECOVERIES = 2
 
         /**
          * How often the playhead is written back while playing. The restore
