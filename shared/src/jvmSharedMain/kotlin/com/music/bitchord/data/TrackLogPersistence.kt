@@ -71,9 +71,15 @@ class TrackLogPersistence(
         }
     }
 
-    /** Blocks until every queued line has reached the file. */
+    /**
+     * Blocks until every queued line has reached the file.
+     *
+     * The signal is queued even when the queue looks empty: the writer may have
+     * taken the last line but not reached the disk yet, and flushing on this
+     * side would then return before that line landed.
+     */
     fun flush() {
-        if (queue.isEmpty()) {
+        if (!running) {
             synchronized(lock) { runCatching { writer?.flush() } }
             return
         }
@@ -117,52 +123,121 @@ class TrackLogPersistence(
     }
 
     private fun drain() {
+        var lastFlushAt = nowMs()
+        var bufferedChars = 0
         while (true) {
             val first = try {
-                queue.take()
+                // With nothing buffered there is nothing to flush, so the writer
+                // blocks indefinitely (no idle wake-up). Once a line is waiting,
+                // the wait is the coalescing window: lines that arrive inside it
+                // are written before the next flush, and the interval cap keeps
+                // a continuous stream from holding them longer.
+                if (bufferedChars == 0) {
+                    queue.take()
+                } else {
+                    queue.poll(
+                        TrackLogFlushPolicy.waitMs(nowMs(), lastFlushAt),
+                        TimeUnit.MILLISECONDS,
+                    )
+                }
             } catch (_: InterruptedException) {
                 if (!running) break else continue
             }
-            if (first === STOP_MARKER) break
+            if (first == null) {
+                if (bufferedChars > 0) {
+                    flushWriter()
+                    lastFlushAt = nowMs()
+                    bufferedChars = 0
+                }
+                if (!running) break
+                continue
+            }
+            if (first === STOP_MARKER) {
+                flushWriter()
+                return
+            }
             if (first is FlushSignal) {
-                synchronized(lock) { runCatching { writer?.flush() } }
+                flushWriter()
                 first.done.countDown()
+                lastFlushAt = nowMs()
+                bufferedChars = 0
                 continue
             }
             synchronized(lock) {
-                writeLocked(first as String)
-                // A burst of lines (a track start, a resolve) arrives together.
-                // Coalesce it into one flush rather than one per line.
+                bufferedChars = writeBatch(first as String, bufferedChars, lastFlushAt) { at ->
+                    lastFlushAt = at
+                }
                 while (true) {
                     val next = queue.poll() ?: break
                     if (next === STOP_MARKER) {
-                        writer?.flush()
+                        runCatching { writer?.flush() }
                         return
                     }
                     if (next is FlushSignal) {
-                        writer?.flush()
+                        runCatching { writer?.flush() }
                         next.done.countDown()
+                        lastFlushAt = nowMs()
+                        bufferedChars = 0
                         continue
                     }
-                    writeLocked(next as String)
+                    bufferedChars = writeBatch(next as String, bufferedChars, lastFlushAt) { at ->
+                        lastFlushAt = at
+                    }
                 }
-                writer?.flush()
+                if (TrackLogFlushPolicy.shouldFlush(nowMs(), lastFlushAt, bufferedChars)) {
+                    runCatching { writer?.flush() }
+                    lastFlushAt = nowMs()
+                    bufferedChars = 0
+                }
             }
             if (!running) break
         }
-        synchronized(lock) {
-            runCatching { writer?.flush() }
-        }
+        flushWriter()
     }
 
-    private fun writeLocked(line: String) {
+    /**
+     * Writes one line and returns the new buffered-character count, flushing
+     * first when rotation has already put the old buffer on disk.
+     */
+    private fun writeBatch(
+        line: String,
+        bufferedChars: Int,
+        lastFlushAt: Long,
+        flushedAt: (Long) -> Unit,
+    ): Int {
+        var pending = bufferedChars
+        if (writeLocked(line)) {
+            // Rotation flushed and closed the previous writer, so nothing it
+            // held is still waiting.
+            pending = 0
+            flushedAt(nowMs())
+        }
+        pending += line.length + 1
+        if (TrackLogFlushPolicy.shouldFlush(nowMs(), lastFlushAt, pending)) {
+            runCatching { writer?.flush() }
+            flushedAt(nowMs())
+            return 0
+        }
+        return pending
+    }
+
+    private fun flushWriter() {
+        synchronized(lock) { runCatching { writer?.flush() } }
+    }
+
+    private fun nowMs(): Long = System.nanoTime() / 1_000_000L
+
+    /** @return true when this write rotated the file, which flushed the old buffer. */
+    private fun writeLocked(line: String): Boolean {
         val current = fileFor(0)
-        if (current.length() >= maxBytes) rotateLocked()
+        val rotated = current.length() >= maxBytes
+        if (rotated) rotateLocked()
         val out = writer ?: BufferedWriter(
             OutputStreamWriter(FileOutputStream(fileFor(0), true), Charsets.UTF_8),
         ).also { writer = it }
         out.write(line)
         out.newLine()
+        return rotated
     }
 
     private fun rotateLocked() {
@@ -188,6 +263,41 @@ class TrackLogPersistence(
         class FlushSignal {
             val done = CountDownLatch(1)
         }
+    }
+}
+
+/**
+ * When the trail writer may flush.
+ *
+ * A flush is a write syscall, and the diagnostic log is written by whichever
+ * playback path happens to be logging. Flushing per line made a quiet stream
+ * pay one write per line; waiting for a short quiet window turns a burst into
+ * one write, and the interval/size bounds keep a continuous stream from holding
+ * lines indefinitely. The content is unchanged; only the moment it reaches the
+ * file moves, and an explicit [TrackLog.flush], a crash, a background transition
+ * and a process exit still flush immediately.
+ */
+internal object TrackLogFlushPolicy {
+
+    /** A stream that goes quiet for this long is flushed. */
+    const val IDLE_MS = 1_500L
+
+    /** Even a stream that never goes quiet is flushed at least this often. */
+    const val MAX_INTERVAL_MS = 3_000L
+
+    /** Or once this many characters are waiting, whichever comes first. */
+    const val MAX_BUFFERED_CHARS = 64 * 1024
+
+    fun shouldFlush(nowMs: Long, lastFlushMs: Long, bufferedChars: Int): Boolean =
+        bufferedChars >= MAX_BUFFERED_CHARS || nowMs - lastFlushMs >= MAX_INTERVAL_MS
+
+    /**
+     * How long the writer may wait for another line before flushing what it
+     * has: the quiet window, cut short by whatever remains of the interval cap.
+     */
+    fun waitMs(nowMs: Long, lastFlushMs: Long): Long {
+        val untilIntervalCap = MAX_INTERVAL_MS - (nowMs - lastFlushMs)
+        return untilIntervalCap.coerceIn(1L, IDLE_MS)
     }
 }
 

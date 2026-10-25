@@ -82,6 +82,7 @@ import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.player.StandaloneLyricsPanel
 import com.music.bitchord.ui.player.ThinSlider
+import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.theme.SFProDisplay
 import com.music.bitchord.sharedui.resources.Res as SharedRes
 import com.music.bitchord.sharedui.resources.ic_player_next
@@ -455,9 +456,13 @@ private const val COVER_ART_PX = 720
 @Composable
 private fun Clock() {
     val context = LocalContext.current
+    val foreground = rememberIsForeground()
     // Hours and minutes only: woken on the minute, not every second — this
-    // screen sits under a dark display through whole albums.
-    val now by produceState(System.currentTimeMillis()) {
+    // screen sits under a dark display through whole albums. Parked entirely
+    // while the screen is off, so a composition kept alive behind the lock
+    // does not wake once a minute for a clock nobody can see.
+    val now by produceState(System.currentTimeMillis(), foreground) {
+        if (!foreground) return@produceState
         while (true) {
             value = System.currentTimeMillis()
             delay(60_000L - value % 60_000L)

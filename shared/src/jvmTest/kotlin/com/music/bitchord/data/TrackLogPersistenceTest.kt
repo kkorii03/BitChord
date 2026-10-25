@@ -59,6 +59,45 @@ class TrackLogPersistenceTest {
     }
 
     @Test
+    fun `queued lines are batched and all reach disk on flush`() {
+        val directory = Files.createTempDirectory("bitchord-trail-batch").toFile()
+        try {
+            val store = TrackLogPersistence(directory)
+            repeat(100) { index -> store.append("line-" + index.toString().padStart(3, '0')) }
+            store.flush()
+
+            val lines = store.readOldestFirst()
+            assertEquals(100, lines.size)
+            assertEquals("line-099", lines.last())
+            store.close()
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `flush policy waits for the interval or the buffer cap`() {
+        // Nothing to flush yet.
+        assertTrue(!TrackLogFlushPolicy.shouldFlush(nowMs = 1_000, lastFlushMs = 1_000, bufferedChars = 0))
+        // A line inside the interval stays buffered.
+        assertTrue(!TrackLogFlushPolicy.shouldFlush(nowMs = 3_999, lastFlushMs = 1_000, bufferedChars = 10))
+        // The interval forces it out even if the stream never goes quiet.
+        assertTrue(TrackLogFlushPolicy.shouldFlush(nowMs = 4_000, lastFlushMs = 1_000, bufferedChars = 10))
+        // So does a burst big enough to matter on its own.
+        assertTrue(
+            TrackLogFlushPolicy.shouldFlush(
+                nowMs = 1_000,
+                lastFlushMs = 1_000,
+                bufferedChars = TrackLogFlushPolicy.MAX_BUFFERED_CHARS,
+            ),
+        )
+        // The wait is the quiet window, shortened near the interval cap.
+        assertEquals(TrackLogFlushPolicy.IDLE_MS, TrackLogFlushPolicy.waitMs(nowMs = 1_000, lastFlushMs = 1_000))
+        assertEquals(500L, TrackLogFlushPolicy.waitMs(nowMs = 3_500, lastFlushMs = 1_000))
+        assertEquals(1L, TrackLogFlushPolicy.waitMs(nowMs = 5_000, lastFlushMs = 1_000))
+    }
+
+    @Test
     fun `debug javascript and read-ahead brackets are dropped but warnings are kept`() {
         assertTrue(!TrackLogNoise.keep('D', "PoTokenWebView", "JS: [createPoTokenMinter] ENTER"))
         assertTrue(TrackLogNoise.keep('W', "PoTokenWebView", "JS: Uncaught TypeError"))

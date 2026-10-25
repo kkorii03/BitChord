@@ -12,6 +12,7 @@ import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqReferenceCache
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -68,6 +69,17 @@ object HqAudioVerify {
      */
     private val noReference = ConcurrentHashMap<String, Long>()
     private const val NO_REFERENCE_TTL_MS = 10 * 60_000L
+
+    /**
+     * The reference profiles already measured in this session, by YouTube id.
+     *
+     * The reference is the same song version for every candidate of a track, so
+     * a second candidate (a different source in the same race, or the same
+     * track reached again from the upgrade path) does not have to decode the
+     * same ninety seconds over. Only a complete-enough profile is stored; see
+     * [HqReferenceCache].
+     */
+    private val referenceCache = HqReferenceCache()
 
     /**
      * The verified answer for [stream] against [youtubeId], or null when the
@@ -175,6 +187,7 @@ object HqAudioVerify {
         context: Context,
         youtubeId: String,
     ): ChromaAlignment.Features? {
+        referenceCache.get(youtubeId)?.let { return it }
         val now = System.currentTimeMillis()
         val failedAt = noReference[youtubeId]
         if (failedAt != null && now - failedAt < NO_REFERENCE_TTL_MS) return null
@@ -198,10 +211,19 @@ object HqAudioVerify {
             return null
         }
         return try {
-            featuresOf(source).also { features ->
-                if (features == null) noReference[youtubeId] = System.currentTimeMillis()
-                else noReference.remove(youtubeId)
+            val features = featuresOf(source)
+            if (features == null) {
+                noReference[youtubeId] = System.currentTimeMillis()
+            } else {
+                // A partial head is returned for this comparison but not kept:
+                // the rest of the bytes may still arrive, and freezing a short
+                // profile would make every later candidate compare against it.
+                if (HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
+                    referenceCache.put(youtubeId, features)
+                }
+                noReference.remove(youtubeId)
             }
+            features
         } finally {
             runCatching { source.close() }
         }

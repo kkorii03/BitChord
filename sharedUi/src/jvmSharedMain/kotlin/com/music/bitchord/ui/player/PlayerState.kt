@@ -27,6 +27,7 @@ import coil3.request.ImageRequest
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.ui.rememberIsForeground
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +54,10 @@ internal fun rememberCanvasArtwork(song: Song, audible: Boolean): CanvasArtwork?
     // player draws. Null is the still sleeve, which is what low power shows.
     val canvasAllowedNow = canvasEnabled && !lowPower &&
         (meteredConnection != true || canvasOverCellular)
+    // The clip is decoration, and the player composition outlives the app being
+    // on screen. The cache is read regardless so a return shows the last clip
+    // at once; only the search that would go to the network waits for a viewer.
+    val foreground = rememberIsForeground()
     // Keyed on the song's identity rather than its videoId: a version switch
     // swaps the videoId for another cut of the *same* song, and a canvas is
     // searched for by title and artist — resetting here threw the clip out
@@ -61,7 +66,7 @@ internal fun rememberCanvasArtwork(song: Song, audible: Boolean): CanvasArtwork?
     // clean; the same-titled-impostor case is guarded where the clip is
     // adopted, by [CanvasArtwork.matches].
     var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, audible) {
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas, audible, foreground) {
         if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect
@@ -84,6 +89,12 @@ internal fun rememberCanvasArtwork(song: Song, audible: Boolean): CanvasArtwork?
         // `audible` is a key of this effect, so the search goes out as soon as
         // playback starts.
         if (!audible) return@LaunchedEffect
+
+        // Nothing is fetched for a clip nobody can see. Playback keeps going in
+        // the background, so without this the search (and the album lookup it
+        // waits on) would run with the phone in a pocket. The effect restarts
+        // when the app comes back.
+        if (!foreground) return@LaunchedEffect
 
         // The album name is looked up separately and lands a moment after the
         // player opens, and it is the field that makes the catalogue searches
