@@ -409,11 +409,23 @@ internal object CatalogSongMapper {
                         duration,
                         it.durationText,
                         if (sourceIsVideo) TrackMatcher.VIDEO_DURATION_LIMIT_SEC else MAX_DURATION_DRIFT_SEC,
+                        allowVideoLongerThanSong = sourceIsVideo,
                     )
                 }
                 .toList()
             val match = targets.firstNotNullOfOrNull { wanted ->
+                // The ordinary matcher first, so every mapping that works today
+                // keeps working unchanged. A video's runtime is visual timing,
+                // though: its album track may be minutes shorter
+                // (intro/skit/outro) and is still the song, which the ordinary
+                // matcher rightly refuses. Only that gap uses the video-switch
+                // rule, and only when title, versions and artist agree.
                 TrackMatcher.best(candidates, wanted)
+                    ?: if (sourceIsVideo) {
+                        TrackMatcher.bestOfficialAudioForVideo(candidates, wanted)
+                    } else {
+                        null
+                    }
             } ?: continue
             val catalog = catalogOf(match, album, artist) ?: continue
             if (catalog.videoId.isBlank()) continue
@@ -499,14 +511,22 @@ internal object CatalogSongMapper {
     internal fun isCover(song: Song): Boolean =
         CoverTitles.isCover(song) || isCoverTitle(song.title)
 
-    /** Both runtimes stated and no further apart than [MAX_DURATION_DRIFT_SEC]. */
+    /** Both runtimes stated and no further apart than [limitSec]. */
     internal fun durationCompatible(
         source: String?,
         candidate: String?,
         limitSec: Int = MAX_DURATION_DRIFT_SEC,
+        /**
+         * The source is a music-video upload. Its stated runtime includes a
+         * visual intro/outro, so the album track may be shorter by any amount;
+         * only an album cut much *longer* than the video is a different edit.
+         * The title/artist identity is checked afterwards by [TrackMatcher].
+         */
+        allowVideoLongerThanSong: Boolean = false,
     ): Boolean {
         val wanted = TrackMatcher.secondsOf(source) ?: return true
         val got = TrackMatcher.secondsOf(candidate) ?: return true
+        if (allowVideoLongerThanSong && got <= wanted) return true
         return abs(wanted - got) <= limitSec
     }
 

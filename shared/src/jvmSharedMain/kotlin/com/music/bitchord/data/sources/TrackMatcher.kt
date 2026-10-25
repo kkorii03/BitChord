@@ -54,6 +54,10 @@ object TrackMatcher {
         val isVideo: Boolean = false,
         /** The artist's own channel, when the queue row knew it. */
         val artistId: String? = null,
+        /** Every credited artist's channel the row stated, [artistId] included. */
+        val artistIds: List<String> = emptyList(),
+        /** The release's browse id, when the queue row knew it. */
+        val albumId: String? = null,
     )
 
     fun targetOf(song: Song) = Target(
@@ -65,6 +69,10 @@ object TrackMatcher {
         song.isExplicit,
         song.isVideo,
         song.artistId,
+        (song.artists.mapNotNull { it.browseId } + listOfNotNull(song.artistId))
+            .filter { it.isNotBlank() }
+            .distinct(),
+        song.albumId,
     )
 
     // ── Asking ──────────────────────────────────────────────────────────────
@@ -162,6 +170,65 @@ object TrackMatcher {
         val have = artistNames(got)
         return artistNames(wanted).any { it in have }
     }
+
+    /**
+     * Whether the two rows point at the same artist even though the printed
+     * names differ.
+     *
+     * YouTube sometimes credits a music video to the band's earlier name
+     * ("Kara's Flowers" for Maroon 5's "She Will Be Loved") while the
+     * catalogue song is filed under the current one. The channel ids are the
+     * fact behind the display strings, so equal ids are proof that both rows
+     * are the same act — something a title-only match can never establish, and
+     * the reason this is not used to bypass the name check for different acts.
+     */
+    internal fun sharesArtistChannel(target: Target, candidate: Song): Boolean {
+        val wanted = (target.artistIds + listOfNotNull(target.artistId))
+            .filter { it.isNotBlank() }
+            .toSet()
+        val have = (candidate.artists.mapNotNull { it.browseId } + listOfNotNull(candidate.artistId))
+            .filter { it.isNotBlank() }
+            .toSet()
+        return wanted.isNotEmpty() && have.isNotEmpty() && wanted.any { it in have }
+    }
+
+    /**
+     * Whether both rows name the same release. A video upload and its
+     * catalogue song can be credited to different artist spellings while
+     * still coming off the same album, which is a safe signal that they are
+     * the same recording — unlike a shared album *name*, an id is exact.
+     */
+    internal fun sharesRelease(target: Target, candidate: Song): Boolean {
+        val wanted = target.albumId?.takeIf { it.isNotBlank() } ?: return false
+        val have = candidate.albumId?.takeIf { it.isNotBlank() } ?: return false
+        return wanted == have
+    }
+
+    /**
+     * Whether a music video of [target] may be matched to [candidate] despite
+     * their runtimes.
+     *
+     * A video can carry an intro, a skit or an outro the audio master does
+     * not, so the song being shorter than the video — by any amount — is not
+     * a disagreement about the recording. The reverse is: a catalogue track
+     * well longer than the video is a different cut (an extended mix, a
+     * full-album upload), so the existing [VIDEO_DURATION_LIMIT_SEC] window
+     * still governs that direction.
+     */
+    internal fun videoRuntimeAllows(target: Target, candidate: Song): Boolean {
+        val wanted = target.durationSec ?: return true
+        val got = secondsOf(candidate.durationText) ?: return true
+        if (got <= wanted) return true
+        return got - wanted <= VIDEO_DURATION_LIMIT_SEC
+    }
+
+    /**
+     * Whether a catalogue row belongs to the same act as [target] by a
+     * signal that survives a display-name difference: the same artist channel
+     * or the same release.
+     */
+    private fun sameArtistIdentity(target: Target, candidate: Song): Boolean =
+        sharesArtistChannel(target, candidate) || sharesRelease(target, candidate)
 
     /**
      * A cover, karaoke or tribute row the target does not itself describe.
@@ -332,9 +399,15 @@ object TrackMatcher {
      * a stream without anyone watching it. The player audio switch is a
      * different contract: it asks YouTube Music's *Songs* shelf for the
      * official release of a known video. Here an exact recording title,
-     * identical version markers and a shared artist are enough to establish
-     * that relationship; duration only ranks equivalent releases and never
-     * vetoes one.
+     * identical version markers and the same artist are enough to establish
+     * that relationship; a video being longer only ranks equivalent releases
+     * and never vetoes one. A song much longer than the video is still a
+     * different edit and is refused as before.
+     *
+     * The same artist must be established by a name that matches exactly or
+     * by the same artist channel / release id. A merely non-comparable credit
+     * ("f(x)" has no words to compare) is not "same artist": that was how
+     * Justin Bieber's "Sorry" could have become f(x)'s song of the same name.
      *
      * This remains deliberately stricter than a search engine's first row.
      * A cover, remix or karaoke version still cannot cross the switch just
@@ -344,10 +417,24 @@ object TrackMatcher {
         val wanted = parseTitle(target.title, target.artist)
         if (wanted.core.isEmpty()) return null
         return candidates
+            .filterNot { isCoverOf(it, target) }
             .mapNotNull { candidate ->
                 val got = parseTitle(candidate.title, candidate.artist)
                 if (wanted.core != got.core || wanted.versions != got.versions) return@mapNotNull null
-                val artist = artistScore(target.artist, candidate.artist) ?: return@mapNotNull null
+                // A vocal song must not be switched to the instrumental or
+                // karaoke row of an "… (Instrumental Edition)" album.
+                if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
+                        .any { it !in wanted.versions }
+                ) {
+                    return@mapNotNull null
+                }
+                val credited = artistScore(target.artist, candidate.artist)
+                val artist = when {
+                    namesTheSameArtist(target.artist, candidate.artist) -> credited ?: ARTIST_SHARED
+                    sameArtistIdentity(target, candidate) -> ARTIST_SHARED
+                    else -> return@mapNotNull null
+                }
+                if (!videoRuntimeAllows(target, candidate)) return@mapNotNull null
                 val duration = target.durationSec?.let { expected ->
                     secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) }
                         ?: -120

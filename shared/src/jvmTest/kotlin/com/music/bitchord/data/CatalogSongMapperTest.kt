@@ -61,6 +61,26 @@ class CatalogSongMapperTest {
         // album track; the video-source window admits that (The Hills).
         assertFalse(CatalogSongMapper.durationCompatible("4:07", "3:55"))
         assertTrue(CatalogSongMapper.durationCompatible("4:07", "3:55", 90))
+        // A video can be minutes longer than its song ("Born This Way" 7:19
+        // video, 4:20 album) and still be the same recording; an album cut
+        // much *longer* than the video is a different edit and stays refused.
+        assertFalse(CatalogSongMapper.durationCompatible("7:19", "4:20", 90))
+        assertTrue(
+            CatalogSongMapper.durationCompatible(
+                "7:19",
+                "4:20",
+                90,
+                allowVideoLongerThanSong = true,
+            ),
+        )
+        assertFalse(
+            CatalogSongMapper.durationCompatible(
+                "3:20",
+                "5:20",
+                90,
+                allowVideoLongerThanSong = true,
+            ),
+        )
     }
 
     @Test
