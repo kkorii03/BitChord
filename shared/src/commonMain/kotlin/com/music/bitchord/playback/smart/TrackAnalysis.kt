@@ -66,6 +66,12 @@ data class TrackAnalysis(
 
     val key: String = "",
     val keyConfidence: Double = 0.0,
+    /**
+     * Integrated loudness approximation for the whole track, in LUFS. Zero
+     * means the analyzer did not report one, which the transition planner
+     * reads as "no evidence" rather than as a very quiet track.
+     */
+    val loudnessLufs: Double = 0.0,
 
     /** Where the file starts making sound, and where the first musical event lands. */
     val audibleStartTime: Double? = null,

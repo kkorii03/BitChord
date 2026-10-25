@@ -403,6 +403,9 @@ class CrossfadeController(
         lockPhase: Boolean = false,
         /** The plan's echo time; 0 for no echo out. */
         echoSeconds: Double = 0.0,
+        /** Transition-only loudness match; both return to 1 when the blend ends. */
+        val incomingGain: Double = 1.0,
+        val outgoingGain: Double = 1.0,
     ) {
         private val grid = if (advanced && beats >= 2.0) beats else 0.0
         val clash = vocalOverlap.coerceIn(0.0, 1.0)
@@ -1089,7 +1092,7 @@ class CrossfadeController(
         )
         // One line per distinct verdict rather than one per 250ms tick, so the
         // log says what the planner decided for this pair without burying it.
-        val verdict = "${plan.reason}|${plan.transitionStyle}|fade=${plan.fadeMs}" +
+        val verdict = "${currentItem.mediaId}->${nextItem.mediaId}|${plan.reason}|${plan.transitionStyle}|fade=${plan.fadeMs}" +
             "|cue=${plan.incomingCueTime}|rate=${plan.incomingPlaybackRate}" +
             "|vocalOverlap=${"%.2f".format(Locale.ROOT, plan.vocalOverlap)}" +
             "|advanced=$advanced|lock=${plan.phaseLock}|variant=${plan.filterVariant}|echo=${plan.echoSeconds}" +
@@ -1101,6 +1104,21 @@ class CrossfadeController(
                 "plan ${currentItem.mediaId}->${nextItem.mediaId}: $verdict " +
                     "bpm=${currentAnalysis.bpm}/${nextAnalysis.bpm} " +
                     "conf=${currentAnalysis.beatConfidence}/${nextAnalysis.beatConfidence}",
+            )
+            Log.d(
+                TAG,
+                "automix: ${currentItem.mediaId}->${nextItem.mediaId} " +
+                    "beatAligned=${if (plan.beatAligned) "y" else "n"} " +
+                    "phrase=${if (plan.phraseAligned) "y" else "n"} " +
+                    "key=${plan.keyRelation.wire} " +
+                    "loudness=${"%+.1f".format(Locale.ROOT, plan.loudnessGainDb)}dB " +
+                    "style=${plan.transitionStyle.name.lowercase(Locale.ROOT)}" +
+                    (if (plan.transitionStyle == TransitionStyle.DJ_FILTER) {
+                        "/${plan.filterVariant.name.lowercase(Locale.ROOT)}"
+                    } else {
+                        ""
+                    }) +
+                    " character=${plan.character.wire}",
             )
         }
 
@@ -1192,6 +1210,8 @@ class CrossfadeController(
                 beats = if (plan.beatSeconds > 0) plan.fadeSeconds / plan.beatSeconds else 0.0,
                 lockPhase = plan.phaseLock,
                 echoSeconds = plan.echoSeconds,
+                incomingGain = plan.incomingGain,
+                outgoingGain = plan.outgoingGain,
             ),
         )
     }
@@ -1810,10 +1830,19 @@ class CrossfadeController(
 
         val rise = mixRise(progress)
         val fall = mixFall(progress)
-        player.volume = rise
-        out.volume = if (ranOn(out)) 0f else fall
+        // The match is eased back to unity over the last third of the blend so
+        // the incoming player is at its own gain before [finish] hands it over,
+        // rather than stepping up at the boundary.
+        val matchWeight = ((1f - progress) / LOUDNESS_MATCH_RELEASE).coerceIn(0f, 1f).toDouble()
+        val incomingGain = (1.0 + (render.incomingGain - 1.0) * matchWeight).toFloat().coerceIn(0f, 1f)
+        val outgoingGain = (1.0 + (render.outgoingGain - 1.0) * matchWeight).toFloat().coerceIn(0f, 1f)
+        player.volume = (rise * incomingGain).coerceIn(0f, 1f)
+        out.volume = if (ranOn(out)) 0f else (fall * outgoingGain).coerceIn(0f, 1f)
         onBlendHeadroom(
-            headroomFor(mixRise(outgoingAt), outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan)),
+            headroomFor(
+                mixRise(outgoingAt) * incomingGain,
+                outgoingLevel(elapsed / wallSpan + tracks.outgoingLeadMs() / span.toFloat(), wallSpan) * outgoingGain,
+            ),
         )
         if (render.phaseLock) holdPhase(out, player, progress)
 
@@ -2335,7 +2364,7 @@ class CrossfadeController(
      */
     private fun rideVocalSeparation(progress: Float) {
         val amount = render.vocalOverlap.coerceIn(0.0, 1.0)
-        if (amount <= 0.0) {
+        if (amount <= 0.0 && !render.bassSwap) {
             filters.open()
             return
         }
@@ -2344,13 +2373,25 @@ class CrossfadeController(
         // and a full one is properly separated, rather than everything getting
         // the same treatment at different speeds.
         val floor = glide(open, VOCAL_SEPARATION_FLOOR_HZ, amount)
-        tracks.outgoing(
-            glide(open, floor, progress.toDouble().pow(FILTER_SWEEP_SHAPE)).toFloat(),
-            TransitionFilterProcessor.OFF_HZ,
-        )
+        val handover = if (render.bassSwap) {
+            ((progress - render.swapFrom) / render.swapWidth).coerceIn(0.0, 1.0)
+        } else {
+            0.0
+        }
+        val outgoingLow = if (render.bassSwap) bassCutoff(handover) else TransitionFilterProcessor.OFF_HZ
+        val incomingLow = if (render.bassSwap) bassCutoff(1.0 - handover) else TransitionFilterProcessor.OFF_HZ
+        val outgoingTone = if (amount <= 0.0) {
+            TransitionFilterProcessor.OPEN_HZ
+        } else {
+            glide(open, floor, progress.toDouble().pow(FILTER_SWEEP_SHAPE)).toFloat()
+        }
+        tracks.outgoing(outgoingTone, outgoingLow)
         tracks.incoming(
             TransitionFilterProcessor.OPEN_HZ,
-            entryHighPass(progress, amount, VOCAL_SEPARATION_HIGH_PASS_HZ, ENTRY_OPEN_BY),
+            maxOf(
+                entryHighPass(progress, amount, VOCAL_SEPARATION_HIGH_PASS_HZ, ENTRY_OPEN_BY),
+                incomingLow,
+            ),
         )
     }
 
@@ -3029,10 +3070,13 @@ class CrossfadeController(
          * kill — high enough to clear the kick and the sub, low enough to leave
          * the body of the vocal alone.
          */
-        const val BASS_SWAP_HZ = 200.0
+        const val BASS_SWAP_HZ = 150.0
 
         /** How much of the fade the low end takes to change hands. */
         const val BASS_SWAP_WIDTH = 0.10
+
+        /** The last fraction of a blend over which a loudness match returns to unity. */
+        const val LOUDNESS_MATCH_RELEASE = 0.33f
 
         // ---- Advanced Automix ----------------------------------------------
 

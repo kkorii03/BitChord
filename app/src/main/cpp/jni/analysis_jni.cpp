@@ -28,9 +28,10 @@
 // against than a hand-packed buffer.
 //
 // Only the subset the transition policy actually reads is emitted. Chroma,
-// the mid and high energy curves, loudness, peak and dynamic range are
-// computed by the analyzer but nothing downstream consumes them, and emitting
-// them would mean three more float arrays per track for no reader.
+// the mid and high energy curves, peak and dynamic range are computed by the
+// analyzer but nothing downstream consumes them, and emitting them would mean
+// three more float arrays per track for no reader. The scalar loudness figure
+// is emitted because the planner uses it to match the two sides of a blend.
 
 #include <jni.h>
 
@@ -145,6 +146,7 @@ Java_com_music_bitchord_playback_smart_TrackFeatures_nativeAnalyze(
   AppendField(json, "firstBeat", result.first_beat);
   AppendField(json, "beatConfidence", result.beat_confidence);
   AppendField(json, "keyConfidence", result.key_confidence);
+  AppendField(json, "loudnessLufs", result.loudness_lufs);
   AppendField(json, "audibleStartTime", result.audible_start_time);
   AppendField(json, "pickupTime", result.pickup_time);
   AppendField(json, "introEndTime", result.intro_end_time);

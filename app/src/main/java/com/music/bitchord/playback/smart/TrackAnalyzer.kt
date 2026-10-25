@@ -277,11 +277,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (trackId in running) return
         // Whatever an earlier session already measured comes back first: it is
         // a disk read, not a decode. Everything past this point — the
-        // catalogue lookup, the head fetch, the analysis itself — is the
-        // background work low power defers until the phone is charging or no
-        // longer saving power.
+        // catalogue lookup, the head fetch, the analysis itself — runs once per
+        // track and is cached, so preparing the next track is the only cost.
+        // Low power lowers the worker's thread priority (see [AutomixPerformanceMode]);
+        // it never defers the analysis itself.
         restoreOnce(trackId)
-        if (!AppSettings.heavyWorkAllowed) return
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
         // Only the canonical YouTube rendition of this recording will do, not
@@ -1086,6 +1086,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 phraseBoundaries = features.phraseBoundaries,
                 key = features.key,
                 keyConfidence = features.keyConfidence,
+                loudnessLufs = features.loudnessLufs,
                 audibleStartTime = features.audibleStartTime,
                 pickupTime = features.pickupTime,
                 introEndTime = features.introEndTime,

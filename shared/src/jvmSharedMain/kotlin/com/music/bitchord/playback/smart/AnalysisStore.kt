@@ -185,6 +185,7 @@ class AnalysisStore(
         val phraseBoundaries: List<Double> = emptyList(),
         val key: String = "",
         val keyConfidence: Double = 0.0,
+        val loudnessLufs: Double = 0.0,
         val audibleStartTime: Double? = null,
         val pickupTime: Double? = null,
         val introEndTime: Double = 0.0,
@@ -211,6 +212,7 @@ class AnalysisStore(
             phraseBoundaries = phraseBoundaries,
             key = key,
             keyConfidence = keyConfidence,
+            loudnessLufs = loudnessLufs,
             audibleStartTime = audibleStartTime,
             pickupTime = pickupTime,
             introEndTime = introEndTime,
@@ -237,6 +239,7 @@ class AnalysisStore(
                 phraseBoundaries = analysis.phraseBoundaries.map(::round),
                 key = analysis.key,
                 keyConfidence = analysis.keyConfidence,
+                loudnessLufs = analysis.loudnessLufs,
                 audibleStartTime = analysis.audibleStartTime,
                 pickupTime = analysis.pickupTime,
                 introEndTime = analysis.introEndTime,
@@ -280,8 +283,10 @@ class AnalysisStore(
          * Entries from an older schema are ignored rather than migrated: a
          * re-analysis costs seconds, and a beat grid interpreted under the wrong
          * assumptions is silently wrong for the life of the file.
+         *
+         * 2 added the whole-track loudness figure used for transition matching.
          */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
 
         /** A few thousand tracks' worth, at tens of kilobytes each. */
         const val MAX_ENTRIES = 2_000
