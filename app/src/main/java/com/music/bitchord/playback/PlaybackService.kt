@@ -3486,7 +3486,8 @@ class PlaybackService : MediaLibraryService() {
             releaseVersionHold(exoPlayer)
             return
         }
-        val mediaId = item!!.mediaId
+        if (item == null || song == null) return
+        val mediaId = item.mediaId
         // A definitive answer from the queue build needs no network wait, but
         // the first sound is still held for the single dispatch that installs
         // it, so the replacement cannot land after audio. Deferring it also
