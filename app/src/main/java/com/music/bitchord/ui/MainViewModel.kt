@@ -840,15 +840,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsTimingJob?.cancel()
         if (cancelAi) aiTimingJob?.cancel()
         timingLines = lines
-        val request = currentLyricsRequest
-        // A substituted recording is a different file under the same video id:
-        // its clock is not the one any measurement or AI answer for the YouTube
-        // upload was made against. Neither apply it nor spend an engine
-        // checking it; the plain provider timing is what this play shows.
-        val substituted = request != null && !request.isVideo &&
-            StreamChoice.isSubstitute(request.videoId)
-        timingBaseAllowed = adjustable && !substituted
-        timingMeasureAllowed = measure && !substituted
+        timingBaseAllowed = adjustable
+        timingMeasureAllowed = measure
         val timed = lines != null && lines.any { it.timeMs > 0 }
         // As the source timed them, until [refreshTiming] says otherwise.
         appliedTiming = null
@@ -858,6 +851,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             manualAvailable = timed,
             videoOwn = videoOwn,
         )
+        val request = currentLyricsRequest
         if (!timed || request == null || lines == null) return
         val generation = lyricsGeneration
         val context = getApplication<Application>()
@@ -939,7 +933,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // [cancelAi] false is the AI button taking its answer back: the
             // listener asked for it to go, so the automatic check must not
             // buy it again on the way out.
-            if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
+            if (!adjustable || videoOwn || !cancelAi) return@launch
             val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
             if (!LyricsAiGuard.songTimingWanted(
                     isVideo = request.isVideo,
@@ -1014,18 +1008,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Puts what [LyricsTiming] knows for the current video onto [lines] and the line under them. */
     private suspend fun refreshTiming(generation: Long, lines: List<LyricLine>) {
         val request = currentLyricsRequest ?: return
-        // A substituted file has a different clock from the YouTube upload the
-        // saved measurement/AI answer was made against. Checked here as well as
-        // at [startTiming] because the stream may be chosen after the lyrics
-        // were first shown.
-        val substituted = !request.isVideo && StreamChoice.isSubstitute(request.videoId)
-        val baseAllowed = timingBaseAllowed && !substituted
         val timing = LyricsTiming.timing(
             getApplication(),
             request.videoId,
             lines,
-            baseAllowed,
-            measuredAllowed = baseAllowed && timingMeasureAllowed,
+            timingBaseAllowed,
+            measuredAllowed = timingBaseAllowed && timingMeasureAllowed,
             isVideo = request.isVideo,
             audioSource = if (request.isVideo) {
                 null

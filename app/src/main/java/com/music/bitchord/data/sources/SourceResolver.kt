@@ -12,8 +12,6 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Turns a queued track into an openable stream, using whichever source can
@@ -42,124 +40,6 @@ import java.util.concurrent.ConcurrentHashMap
 object SourceResolver {
 
     private const val TAG = "BitChord"
-
-    /**
-     * Sources that have failed repeatedly, and when they may be asked again.
-     *
-     * A dead addon must not cost every track in the queue its full timeout.
-     * The rest is a timestamp comparison rather than a timer: nothing runs in
-     * the background, and the source simply becomes eligible again on the
-     * first request after [COOLDOWN_MS].
-     */
-    internal object SourceCooldown {
-        private class State(var failures: Int = 0, var untilMs: Long = 0L)
-
-        private val states = ConcurrentHashMap<String, State>()
-
-        fun isResting(configId: String): Boolean {
-            val state = states[configId] ?: return false
-            if (state.untilMs > System.currentTimeMillis()) return true
-            if (state.untilMs != 0L) states.remove(configId)
-            return false
-        }
-
-        fun failed(configId: String) {
-            val state = states.computeIfAbsent(configId) { State() }
-            state.failures += 1
-            if (state.failures >= FAILURES_BEFORE_REST) {
-                state.untilMs = System.currentTimeMillis() + COOLDOWN_MS
-                TrackLog.w(
-                    "BitChord",
-                    "source $configId failed ${state.failures} times; resting for ${COOLDOWN_MS / 60_000} minutes",
-                )
-            }
-        }
-
-        fun succeeded(configId: String) {
-            states.remove(configId)
-        }
-
-        internal fun resetForTest() = states.clear()
-
-        private const val FAILURES_BEFORE_REST = 2
-        private const val COOLDOWN_MS = 30 * 60 * 1000L
-    }
-
-    /**
-     * Search answers already in hand, so the same source is not asked the same
-     * question again for the same track — the live path, the ahead-of-playback
-     * pass and the second look all arrive at the same query.
-     */
-    private data class SearchKey(
-        val sourceId: String,
-        val target: String,
-        val request: String,
-        val waitForAll: Boolean,
-        val query: String,
-    )
-
-    private class SearchAnswer(val rows: List<Song>, val at: Long)
-
-    private val searchAnswers = ConcurrentHashMap<SearchKey, SearchAnswer>()
-
-    /** Distinguishes a source that answered with nothing from one that timed out. */
-    private class Answer(val stream: SourceStream?)
-
-    /** A substitute stream already judged to be the original recording. */
-    private class Remembered(val stream: SourceStream, val at: Long)
-
-    private val remembered = ConcurrentHashMap<String, Remembered>()
-
-    internal fun clearSearchAnswers() {
-        searchAnswers.clear()
-        remembered.clear()
-    }
-
-    /**
-     * A source's own failure path, for sources that turn a transport fault into
-     * an empty answer instead of throwing. A 5xx or a timeout that reaches
-     * [attempt] is counted there; this is for the ones swallowed before it.
-     */
-    internal fun reportSourceFailure(configId: String) {
-        SourceCooldown.failed(configId)
-    }
-
-    /** Keeps [stream] as the verified original for [target], for a later play. */
-    fun rememberOriginal(target: TrackMatcher.Target, stream: SourceStream) {
-        if (target.title.isBlank()) return
-        val now = System.currentTimeMillis()
-        remembered.entries.removeIf { now - it.value.at > REMEMBERED_TTL_MS }
-        if (remembered.size >= REMEMBERED_MAX) {
-            remembered.minByOrNull { it.value.at }?.let { remembered.remove(it.key) }
-        }
-        remembered[targetKey(target)] = Remembered(stream, now)
-    }
-
-    /** The verified original already found for [target], if it is still fresh. */
-    fun rememberedOriginal(target: TrackMatcher.Target): SourceStream? {
-        val key = targetKey(target)
-        val entry = remembered[key] ?: return null
-        if (System.currentTimeMillis() - entry.at > REMEMBERED_TTL_MS) {
-            remembered.remove(key)
-            return null
-        }
-        return entry.stream
-    }
-
-    private fun targetKey(target: TrackMatcher.Target): String = listOf(
-        target.title,
-        target.artist,
-        target.durationSec,
-        target.album,
-        target.isExplicit,
-        target.isVideo,
-    ).joinToString("\u0001")
-
-    private fun requestKey(request: StreamRequest): String = when (request) {
-        is StreamRequest.Lossless -> "lossless"
-        is StreamRequest.Best -> "best"
-        is StreamRequest.Capped -> "capped:${request.maxKbps}"
-    }
 
     /**
      * What to ask a source for, right now.
@@ -304,7 +184,7 @@ object SourceResolver {
         if (!picked && request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
-                val upgraded = matchAndStream(source, target, request, strictOriginal = true) ?: continue
+                val upgraded = matchAndStream(source, target, request) ?: continue
                 // Only a genuinely lossless answer is an upgrade. A source that
                 // *can* serve lossless but settled for a transcode of this
                 // particular track has not beaten the pinned source at anything
@@ -340,46 +220,54 @@ object SourceResolver {
         val fallbacks = active.filterNot {
             it.configId == configId || (pickedMix != null && it.kind == SourceKind.YOUTUBE)
         }
-        val (fallbackSource, stream) = bestAcross(fallbacks, target, request, strictOriginal = true) ?: return null
+        val (fallbackSource, stream) = bestAcross(fallbacks, target, request) ?: return null
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
     }
 
     /**
      * The stream for a YouTube track from a source the user ranked above
-     * YouTube, or null when nothing has been verified for it yet.
+     * YouTube, or null when none of them has the recording.
      *
-     * The first note never waits for a catalogue search. A stream already
-     * proved to be the original recording — found by [prefetchSubstitute]
-     * ahead of this track, or by an earlier play's second look — is returned;
-     * otherwise this returns null at once and the caller starts YouTube. The
-     * search that would have delayed the start runs under the music instead,
-     * and its answer is used from the next play.
+     * A YouTube track keeps its bare video id rather than a
+     * [SourceRegistry.trackKey] — see [YouTubeSource] for why — so it reaches
+     * playback as `bitchord://watch?v=…` and never passes through [resolve].
+     * Without this, ordering a source above YouTube did nothing for anything
+     * *queued* from YouTube: the library, a playlist, radio, the home feed —
+     * which is very nearly everything. The list said "prefer my server" and
+     * only search results honoured it.
+     *
+     * The match is the same strict one [resolve] uses, for the same reason:
+     * this substitutes something else for the track the user picked, and a
+     * loose match plays the wrong song under the right title.
+     *
+     * Every ranked source is asked at once and the first playable answer is
+     * taken — see [bestAcross]. This is the latency-critical half of the pair:
+     * it is racing YouTube's own walk, and a stream that arrives after that race
+     * is lost cannot start a track. The unhurried half is [upgradeFor], which
+     * runs with sound already playing and is where a slow source's better answer
+     * gets its hearing.
      */
     suspend fun substituteForYouTube(target: TrackMatcher.Target): SourceStream? {
         // Video rows always use YouTube's own stream unless the listener
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
-        // The first note never waits for a catalogue search. A stream already
-        // proved to be the original — found ahead of the previous track or
-        // during a previous play — is used; otherwise this track starts on
-        // YouTube and the search runs under it (see [prefetchSubstitute] and
-        // the second look), so its answer is ready for the next play.
-        val remembered = rememberedOriginal(target) ?: run {
-            TrackLog.d(TAG, "substitute: '${target.title}' no verified original; keeping YouTube")
-            return null
-        }
-        val sourceName = remembered.sourceConfigId
-            ?.let { SourceRegistry.config(it)?.displayName }
-            ?: "source"
+        val active = SourceRegistry.activeForPlayback()
+        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val request = requestForNow()
+        val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request)
+            ?: return null
+        // Says what was found, not what the caller will do with it. This
+        // line used to read "substituted" unconditionally, including for
+        // streams the caller went on to refuse — which made a log of a
+        // track that played on YouTube look like a track that hadn't.
         TrackLog.d(
             TAG,
-            "substituted: '${target.title}' served by $sourceName over YouTube" +
-                " at ${remembered.format.summary}" +
-                if (remembered.belowRequest) " (below request)" else "",
+            "substituted: '${target.title}' served by ${source.displayName} over YouTube" +
+                " at ${stream.format.summary}" + if (stream.belowRequest) " (below request)" else "",
         )
-        return remembered
+        return stream
     }
 
     /**
@@ -402,61 +290,46 @@ object SourceResolver {
             request = StreamRequest.Best,
             strictLength = target.durationSec != null,
             requireSharedArtist = true,
-            strictOriginal = true,
         )?.also {
             TrackLog.d(TAG, "YouTube fallback matched '${target.title}' after its higher-quality source failed")
         }
     }
 
     /**
-     * Finds and verifies the original recording for the track *after* the one
-     * playing, so the next transition can start on it.
+     * The copy of [target] held by a source quick enough to ask about *before*
+     * the track is played — or null when no such source is enabled, or none of
+     * them has it.
      *
-     * Runs only after the current row has made a sound (report 60). Every
-     * enabled source ranked above YouTube is asked in parallel with a
-     * per-source timeout; only candidates that pass
-     * [TrackMatcher.isOriginalRecording] are considered, and the best of those
-     * is returned. The caller pins it through
-     * [StreamChoice][com.music.bitchord.playback.StreamChoice] and caches its
-     * opening, which is what makes the next track start high-quality with no
-     * mid-song swap.
+     * This is the same substitution [substituteForYouTube] makes, moved earlier.
+     * The difference is only which sources are asked: [SourceKind.worthPrefetching]
+     * narrows it to the ones that answer in a round trip rather than in ten
+     * seconds, because this runs speculatively for a track nobody has reached
+     * yet and a slow lookup would still be going when they did.
      *
-     * A returned stream is only useful if the *same* stream is what playback
-     * goes on to open, and the caller is expected to record it before caching a
+     * ### What the caller must do with the answer
+     *
+     * Pin it. A returned stream is only useful if the *same* stream is what
+     * playback goes on to open, and the caller is expected to record it with
+     * [StreamChoice][com.music.bitchord.playback.StreamChoice] before caching a
      * byte of it. Without that, playback re-runs the race, may land on a
      * different source, and writes a second file into the cache entry the warm
      * one already half-filled — which is the exact corruption
      * [StreamChoice] exists to prevent, arrived at from a new direction.
      *
-     * Returning null is not a failure: nothing has been pinned, so playback
-     * starts on YouTube as usual.
+     * Returning null is not a failure and needs no handling beyond falling back
+     * to YouTube, which is what the caller would have done anyway: nothing has
+     * been pinned, so the ordinary resolve at playback time is untouched.
      */
     suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        val candidates = rankedAbove(youtube.configId, active)
-        if (candidates.isEmpty()) {
-            TrackLog.d(TAG, "upgrade ahead: '${target.title}' none (keeping YouTube)")
-            return null
-        }
-        val found = bestAcross(
-            candidates,
-            target,
-            requestForNow(),
-            waitForAll = true,
-            strictOriginal = true,
-        )
-        if (found == null) {
-            TrackLog.d(TAG, "upgrade ahead: '${target.title}' none (keeping YouTube)")
-            TrackLog.d(TAG, "substitute: '${target.title}' no original on any configured source; keeping YouTube")
-            return null
-        }
-        val (source, stream) = found
-        rememberOriginal(target, stream)
+        val quick = rankedAbove(youtube.configId, active).filter { it.kind.worthPrefetching }
+        if (quick.isEmpty()) return null
+        val (source, stream) = bestAcross(quick, target, requestForNow()) ?: return null
         TrackLog.d(
             TAG,
-            "upgrade ahead: '${target.title}' ready at ${stream.format.summary} from ${source.displayName}",
+            "warmed: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
         )
         return stream
     }
@@ -556,7 +429,6 @@ object SourceResolver {
             waitForAll = true,
             strictLength = true,
             requireSharedArtist = true,
-            strictOriginal = true,
         ) { candidate, stream ->
             worthSwapping(stream.format, playing).also { worth ->
                 // Named rather than skipped silently. This is the one refusal
@@ -714,8 +586,6 @@ object SourceResolver {
                 StreamRequest.Best,
                 waitForAll = true,
                 strictLength = strictLength,
-                strictOriginal = true,
-                sourceTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
             ) { source, stream ->
                 // Bit-exact audio is *over* budget on the High rung, not a
                 // bonus on it. Someone who picked High over Lossless picked the
@@ -748,7 +618,6 @@ object SourceResolver {
                 request,
                 waitForAll = true,
                 strictLength = strictLength,
-                strictOriginal = true,
             ) ?: continue
             // Dolby Atmos is not bit-exact PCM, but it is the native premium
             // rendition that playback already prefers.  Keep it on the same
@@ -938,52 +807,19 @@ object SourceResolver {
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
-        strictOriginal: Boolean = false,
-        sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
         accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
-        val usable = sources.filterNot { source ->
-            SourceCooldown.isResting(source.configId).also { resting ->
-                if (resting) {
-                    TrackLog.d(
-                        TAG,
-                        "${source.displayName} is resting after repeated failures; skipping for this track",
-                    )
-                }
-            }
-        }
-        if (usable.isEmpty()) return@coroutineScope null
-        val order = usable.mapIndexed { index, source -> source.configId to index }.toMap()
-        val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = usable
+        val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = sources
             .map { source ->
                 async {
-                    val answer = withTimeoutOrNull(sourceTimeoutMs) {
-                        Answer(
-                            matchAndStream(
-                                source,
-                                target,
-                                request,
-                                waitForAll,
-                                strictLength,
-                                requireSharedArtist,
-                                strictOriginal,
-                            ),
-                        )
-                    }
-                    if (answer == null) {
-                        SourceCooldown.failed(source.configId)
-                        TrackLog.d(
-                            TAG,
-                            "${source.displayName} timed out after ${sourceTimeoutMs}ms; " +
-                                "skipping for this track",
-                        )
-                        source to null
-                    } else {
-                        // A stream is proof the source is healthy. A miss is
-                        // neither proof of health nor a failure: it answered.
-                        if (answer.stream != null) SourceCooldown.succeeded(source.configId)
-                        source to answer.stream
-                    }
+                    source to matchAndStream(
+                        source,
+                        target,
+                        request,
+                        waitForAll,
+                        strictLength,
+                        requireSharedArtist,
+                    )
                 }
             }
             .toMutableList()
@@ -1003,16 +839,7 @@ object SourceResolver {
                     val (source, stream) = done.await()
                     if (stream == null) continue
                     if (!accept(source, stream)) continue
-                    val current = best
-                    val candidateBetter = isBetter(stream.format, current?.second?.format)
-                    val currentBetter = current != null &&
-                        isBetter(current.second.format, stream.format)
-                    val earlierSource = current != null &&
-                        (order[source.configId] ?: Int.MAX_VALUE) <
-                        (order[current.first.configId] ?: Int.MAX_VALUE)
-                    if (candidateBetter || (current != null && !currentBetter && earlierSource)) {
-                        best = source to stream
-                    }
+                    if (isBetter(stream.format, best?.second?.format)) best = source to stream
                 }
                 // Playback needs the first usable answer so sound can start.
                 // An upgrade is different: it runs while audio is already
@@ -1055,19 +882,9 @@ object SourceResolver {
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
-        strictOriginal: Boolean = false,
     ): SourceStream? {
         for (query in TrackMatcher.queries(target)) {
-            val key = SearchKey(
-                sourceId = source.configId,
-                target = targetKey(target),
-                request = requestKey(request),
-                waitForAll = waitForAll,
-                query = query,
-            )
-            val now = System.currentTimeMillis()
-            val cached = searchAnswers[key]?.takeIf { now - it.at < SEARCH_MEMO_TTL_MS }?.rows
-            val candidates = cached ?: attempt(source) {
+            val candidates = attempt(source) {
                 source.search(
                     query,
                     limit = MATCH_CANDIDATES,
@@ -1077,14 +894,8 @@ object SourceResolver {
                     // them at the tier this is about to ask for.
                     request = request,
                 )
-            }?.also { rows ->
-                if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
-                searchAnswers[key] = SearchAnswer(rows, System.currentTimeMillis())
             } ?: return null
             var matches = TrackMatcher.ranked(candidates, target)
-            if (strictOriginal) {
-                matches = matches.filter { TrackMatcher.isOriginalRecording(it, target) }
-            }
             if (requireSharedArtist) {
                 matches = matches.filter { TrackMatcher.sharesArtist(target.artist, it.artist) }
             }
@@ -1281,18 +1092,6 @@ object SourceResolver {
         // this listener both want.
         if (candidate.isDolbyAtmos != current.isDolbyAtmos) return candidate.isDolbyAtmos
         if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
-        if (candidate.isLossless == true) {
-            // A file claiming lossless at a bitrate a lossy encode would use
-            // loses to a copy that states a real lossless rate. It is still
-            // playable, so this is a preference rather than a refusal.
-            if (candidate.isSuspectLossless != current.isSuspectLossless) {
-                return !candidate.isSuspectLossless
-            }
-            val depth = (candidate.bitDepth ?: 0).compareTo(current.bitDepth ?: 0)
-            if (depth != 0) return depth > 0
-            val rate = (candidate.sampleRateHz ?: 0).compareTo(current.sampleRateHz ?: 0)
-            if (rate != 0) return rate > 0
-        }
         return (candidate.kbps ?: 0) > (current.kbps ?: 0)
     }
 
@@ -1325,7 +1124,6 @@ object SourceResolver {
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        if (source.kind != SourceKind.YOUTUBE) SourceCooldown.failed(source.configId)
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")
         null
     }
@@ -1396,27 +1194,4 @@ object SourceResolver {
      * much smaller would start firing on differences no one can hear.
      */
     private const val UPGRADE_MIN_GAIN_KBPS = 96
-
-    /**
-     * How long one source may take before this track gives up on it.
-     *
-     * Sources are asked in parallel, so this is a ceiling rather than a sum.
-     * A source that needs longer is not lost for good: it is simply not part
-     * of this track's answer, and the next track asks it again.
-     */
-    private const val SOURCE_LOOKUP_TIMEOUT_MS = 4_000L
-
-    /**
-     * The same ceiling for a download, where nobody is waiting on a first note
-     * and a module's patient window is worth using.
-     */
-    private const val DOWNLOAD_SOURCE_TIMEOUT_MS = 25_000L
-
-    /** How long a source's search answer is reused for the same track. */
-    private const val SEARCH_MEMO_TTL_MS = 10 * 60 * 1000L
-    private const val SEARCH_MEMO_MAX = 256
-
-    /** How long a verified original is kept for a later play of the same track. */
-    private const val REMEMBERED_TTL_MS = 30 * 60 * 1000L
-    private const val REMEMBERED_MAX = 64
 }

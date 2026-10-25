@@ -25,7 +25,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import kotlin.system.measureTimeMillis
 
@@ -37,17 +36,6 @@ import kotlin.system.measureTimeMillis
  * error, it plays a different recording under the right title.
  */
 class SourcesTest {
-
-    /**
-     * Each test stands up fresh fake sources under the same names. The memo
-     * and cooldown are process-wide in production because the registry holds
-     * one instance per config id; here every test is a new process's worth.
-     */
-    @Before
-    fun resetSourceMemory() {
-        SourceResolver.clearSearchAnswers()
-        SourceResolver.SourceCooldown.resetForTest()
-    }
 
     private companion object {
         /** What the raced fakes below all claim to hold, so the matcher accepts them. */

@@ -9,7 +9,6 @@ import com.music.bitchord.data.sources.addon.AddonManifest
 import com.music.bitchord.data.sources.addon.AddonNotFound
 import com.music.bitchord.data.sources.addon.AddonStream
 import com.music.bitchord.data.sources.addon.AddonTrack
-import com.music.bitchord.data.sources.addon.AddonUnavailable
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -195,7 +194,6 @@ class AddonSource(
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
             val tracks = client.search(query, tier).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
-                if (failure is AddonUnavailable) SourceResolver.reportSourceFailure(config.id)
                 return@withContext emptyList()
             }
             tracks.asSequence()
@@ -259,7 +257,6 @@ class AddonSource(
                 if (failure !is AddonNotFound) {
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
                 }
-                if (failure is AddonUnavailable) SourceResolver.reportSourceFailure(config.id)
                 return@withContext fromRow(trackId, tier)
             }
 
