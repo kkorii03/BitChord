@@ -3434,6 +3434,25 @@ class PlaybackService : MediaLibraryService() {
     /** The pre-audio lookup for the row that just became current. */
     private var beforeAudioVersionJob: Job? = null
 
+    /** The last id whose mismatched download was announced, so one track logs once. */
+    private var streamingSongFileLoggedFor: String? = null
+
+    /**
+     * Says that [playId]'s saved file is the video's sound, not the song's.
+     *
+     * The file stays on the device as the offline fallback; this is only the
+     * explanation for why the online playback is a stream.
+     */
+    private fun logStreamingSongFile(playId: String, about: String) {
+        if (streamingSongFileLoggedFor == playId) return
+        streamingSongFileLoggedFor = playId
+        TrackLog.i(
+            "BitChord",
+            "song version: $playId file is the video's sound; streaming the song",
+            about = about,
+        )
+    }
+
     /**
      * Waits for a version lookup that outlived the 1.5 s budget. The queue
      * plays the video meanwhile; when the answer arrives, its lyrics are
@@ -3470,6 +3489,24 @@ class PlaybackService : MediaLibraryService() {
         lateVersionMeasureJob?.cancel()
         val item = mediaItem
         val song = item?.toSong()
+        val localFile = song?.localUri != null
+        val offline = AudioCache.isOffline()
+        // A catalogue row whose file was recorded from another upload's stream
+        // must not play that sound. Online, the row's own recording is
+        // streamed and the file stays only as the offline fallback; a file with
+        // no provenance is left alone because its source cannot be known.
+        if (!alreadyAudible && item != null && song != null && localFile &&
+            !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
+            SongVersionPolicy.downloadedFileUse(
+                song.videoId,
+                Downloads.savedSoundSourceFor(song.videoId),
+                online = !offline,
+            ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+        ) {
+            logStreamingSongFile(song.videoId, about = song.videoId)
+            installStreamedRecording(exoPlayer, item.mediaId, song)
+            return
+        }
         val skipReason = when {
             alreadyAudible -> "already audible"
             !AppSettings.preferMusicOnly.value -> "music only off"
@@ -3500,18 +3537,25 @@ class PlaybackService : MediaLibraryService() {
         }
         if (item == null || song == null) return
         val mediaId = item.mediaId
-        val localFile = song.localUri != null
-        // A downloaded file is the only thing that can play with no connection,
-        // so a local video row must not spend its first-sound hold on a lookup
-        // that cannot finish. This is the same connectivity check the recovery
-        // path uses; nothing here polls.
-        val offline = localFile && AudioCache.isOffline()
         // A definitive answer from the queue build needs no network wait, but
         // the first sound is still held for the single dispatch that installs
         // it, so the replacement cannot land after audio. Deferring it also
         // keeps the timeline change out of the transition callback.
         val cached = YtMusicRepository.cachedSongVersionFor(song)
-        val cachedFile = cached?.let { Downloads.verifiedSavedUri(it.videoId) }
+        val cachedUse = cached?.let {
+            SongVersionPolicy.downloadedFileUse(
+                it.videoId,
+                Downloads.savedSoundSourceFor(it.videoId),
+                online = !offline,
+            )
+        }
+        val cachedFile = if (cached != null &&
+            cachedUse != SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+        ) {
+            Downloads.verifiedSavedUri(cached.videoId)
+        } else {
+            null
+        }
         if (cached != null && cachedFile != null) {
             // A cached answer whose recording is already on the device plays
             // from that file, with no network, even offline.
@@ -3528,13 +3572,15 @@ class PlaybackService : MediaLibraryService() {
             // The download record can name this file's song version even when
             // this run has not looked it up ? see Downloads.remember. Playing
             // that id needs no network at all.
-            downloadedSongVersionFor(song)?.let { downloaded ->
+            downloadedSongVersionFor(song, offline)?.let { downloaded ->
+                val streamOnly = downloaded.localUri == null
                 installPreResolvedVersion(
                     exoPlayer,
                     mediaId,
                     song,
                     downloaded,
-                    viaDownload = true,
+                    viaDownload = !streamOnly,
+                    forceStream = streamOnly,
                 )
                 return
             }
@@ -3543,12 +3589,15 @@ class PlaybackService : MediaLibraryService() {
             // Offline, a cached answer is only usable when its recording is
             // already on the device. Otherwise the downloaded video file keeps
             // playing rather than being replaced by a stream that cannot open.
+            val streamOnly = cachedUse == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+            if (streamOnly && !localFile) logStreamingSongFile(cached.videoId, song.videoId)
             installPreResolvedVersion(
                 exoPlayer,
                 mediaId,
                 song,
                 cached,
                 viaDownload = false,
+                forceStream = streamOnly,
             )
             return
         }
@@ -3621,9 +3670,31 @@ class PlaybackService : MediaLibraryService() {
             }
             try {
                 if (resolved != null) {
-                    val resolvedFile = Downloads.verifiedSavedUri(resolved.videoId)
-                    val version = if (resolvedFile != null) resolved.copy(localUri = resolvedFile) else resolved
-                    installSongVersionBeforeAudio(exoPlayer, mediaId, song, version)
+                    val resolvedUse = SongVersionPolicy.downloadedFileUse(
+                        resolved.videoId,
+                        Downloads.savedSoundSourceFor(resolved.videoId),
+                        online = !offline,
+                    )
+                    val streamOnly =
+                        resolvedUse == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+                    if (streamOnly) logStreamingSongFile(resolved.videoId, song.videoId)
+                    val resolvedFile = if (streamOnly) {
+                        null
+                    } else {
+                        Downloads.verifiedSavedUri(resolved.videoId)
+                    }
+                    val version = if (resolvedFile != null) {
+                        resolved.copy(localUri = resolvedFile)
+                    } else {
+                        resolved
+                    }
+                    installSongVersionBeforeAudio(
+                        exoPlayer,
+                        mediaId,
+                        song,
+                        version,
+                        forceStream = streamOnly,
+                    )
                 } else if (localFile && !lookupFailed) {
                     // The lookup answered "there is no version" rather than
                     // failing; keep the downloaded video with a reason that

@@ -680,7 +680,12 @@ private fun Song.pickedMixQuery(configId: String): String {
     return "&${SourceResolver.MIX_PARAM}=$mix"
 }
 
-fun Song.toMediaItem(): MediaItem {
+/**
+ * @param useDownloadedFile false builds an item that streams this recording even
+ *   when a file is recorded for it. Used when the file is known to be another
+ *   upload's sound (see [com.music.bitchord.data.net.SongVersionPolicy]).
+ */
+fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // A cover upload is shown as its song — see [CoverTitles]. Only what the
     // item *shows* changes; the URI below is still built from the upload.
     val shown = CoverTitles.applyTo(this)
@@ -709,8 +714,10 @@ fun Song.toMediaItem(): MediaItem {
     // [MediaItem.toSong], so an item waiting in the live queue can carry a URI
     // that has become stale since it was created. Checking only the lookup
     // leaves that path unguarded.
-    val offlineUri = localUri?.takeUnless(Downloads::isMissingLocalFile)
-        ?: Downloads.verifiedSavedUri(videoId)
+    val offlineUri = if (!useDownloadedFile) null else {
+        localUri?.takeUnless(Downloads::isMissingLocalFile)
+            ?: Downloads.verifiedSavedUri(videoId)
+    }
     val uriString = offlineUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
         // Title, artist and runtime ride along in the URI because they are what

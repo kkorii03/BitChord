@@ -91,6 +91,62 @@ object SongVersionPolicy {
     ): Boolean = localFile && !wantsSongVersion(isVideo, typeUnknown)
 
     /**
+     * Whether choosing a download for this row has to fetch the song version.
+     *
+     * A music video's own stream is its video's sound, never what the app plays
+     * as the song. A row already decided to have no catalogue release keeps its
+     * own id rather than paying for a lookup that cannot change the answer.
+     */
+    fun downloadIsSongVersion(
+        isVideo: Boolean,
+        typeUnknown: Boolean,
+        knownMissing: Boolean,
+    ): Boolean = wantsSongVersion(isVideo, typeUnknown) && !knownMissing
+
+    /** What a downloaded file may be used for, once its sound source is known. */
+    enum class DownloadedFileUse {
+        /** The file's recorded source is the recording being played. */
+        PLAY_FILE,
+
+        /** The file is the video's sound under a song id; stream the song. */
+        STREAM_SONG,
+
+        /** No provenance was recorded (a file from an older version); keep the file. */
+        UNKNOWN_PLAY_FILE,
+    }
+
+    /**
+     * How a saved file may be used for [playId].
+     *
+     * [soundSourceId] is the id whose stream produced the bytes, recorded when
+     * the download was made. A mismatch means the row is a song id but the file
+     * is the music video's sound; online, the song is streamed and the file is
+     * kept only as the offline fallback. A null source is an older record whose
+     * provenance is unknown — never guessed at, so it keeps playing as before.
+     */
+    fun downloadedFileUse(
+        playId: String,
+        soundSourceId: String?,
+        online: Boolean,
+    ): DownloadedFileUse = when {
+        soundSourceId == null -> DownloadedFileUse.UNKNOWN_PLAY_FILE
+        soundSourceId == playId -> DownloadedFileUse.PLAY_FILE
+        !online -> DownloadedFileUse.PLAY_FILE
+        else -> DownloadedFileUse.STREAM_SONG
+    }
+
+    /**
+     * Whether an existing file may be adopted as [targetId]'s download.
+     *
+     * Only a file this app recorded as having been fetched from [targetId]'s
+     * own stream qualifies. A legacy record (no provenance) is not assumed to
+     * be the right recording, because adopting the music video's sound under the
+     * song id is exactly the mix-up this field exists to prevent.
+     */
+    fun mayAdoptDownloadedFile(targetId: String, soundSourceId: String?): Boolean =
+        soundSourceId == targetId
+
+    /**
      * Whether the row [mediaId] has made its first sound. The only evidence is
      * this row's own audible id: while a *previous* track is still sounding,
      * the player is playing, but the new row has not been heard yet — a jump

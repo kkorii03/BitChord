@@ -7,7 +7,9 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -394,6 +396,34 @@ object Downloads {
     }
 
     /**
+     * The id whose stream produced the file saved for [videoId], when it was
+     * recorded. Null for a download made before provenance was kept.
+     *
+     * A music video is filed under both its own id and the catalogue release it
+     * resolved to, so this is the only way to tell the two apart afterwards:
+     * the ids name two uploads, the file can only be the sound of one of them.
+     */
+    internal fun savedSoundSourceFor(videoId: String): String? {
+        open()
+        return _savedMetadata.value[videoId]?.soundSourceVideoId
+    }
+
+    /**
+     * Whether the file [uri] is recorded as [videoId]'s own downloaded
+     * recording, rather than a same-named file that merely happens to be there.
+     *
+     * Download adoption asks this before treating an existing file as the
+     * answer: the file manager's folder is not ours, and the old bug was a
+     * music video's sound being adopted under the catalogue song's id.
+     */
+    internal fun savedFileIsRecording(videoId: String, uri: String): Boolean {
+        open()
+        val meta = _savedMetadata.value[videoId] ?: return false
+        return meta.uri == uri &&
+            SongVersionPolicy.mayAdoptDownloadedFile(videoId, meta.soundSourceVideoId)
+    }
+
+    /**
      * Delete the file saved for [videoId] and forget it.
      *
      * The record is dropped only once the file is really gone. Forgetting it
@@ -676,6 +706,7 @@ object Downloads {
         uri: Uri,
         downloadFormat: String? = null,
         artworkUri: String? = null,
+        soundSourceVideoId: String = fetched.videoId,
     ) {
         val ids = setOf(asked.videoId, fetched.videoId)
         // MediaStore supplies this for exported downloads, but app-private and
@@ -714,6 +745,7 @@ object Downloads {
             uri = uri.toString(),
             downloadFormat = downloadFormat,
             dateAddedSeconds = dateAddedSeconds,
+            soundSourceVideoId = soundSourceVideoId,
         )
         val metaFetched = SavedSongMetadata(
             videoId = fetched.videoId,
@@ -725,6 +757,7 @@ object Downloads {
             uri = uri.toString(),
             downloadFormat = downloadFormat,
             dateAddedSeconds = dateAddedSeconds,
+            soundSourceVideoId = soundSourceVideoId,
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -1010,10 +1043,21 @@ object Downloads {
      * before its turn — and a preparation is not a download.
      */
     internal suspend fun prepare(context: Context, song: Song): Prepared = withContext(Dispatchers.IO) {
-        // Downloads preserve the exact item the listener picked. Catalogue
-        // matching is a manual playback action and must not silently change a
-        // download or its filename.
-        val track = song
+        // A music video keeps the video's sound if downloaded as its own row.
+        // The catalogue release is the recording the app plays, so a video row
+        // is resolved first and the bytes, the name and the record all follow
+        // that id. A row already known to have no version keeps its own, and a
+        // catalogue row is never looked up at all.
+        val track = if (SongVersionPolicy.downloadIsSongVersion(
+                song.isVideo,
+                song.typeUnknown,
+                YtMusicRepository.isSongVersionMissing(song.videoId),
+            )
+        ) {
+            runCatching { YtMusicRepository.songVersion(song) }.getOrNull() ?: song
+        } else {
+            song
+        }
         // Read once, here, for the whole of this track. Both routes below
         // and the re-resolve inside [Downloader.fetch] have to agree on
         // which rung they are fetching, and re-reading the setting per call
@@ -1033,16 +1077,16 @@ object Downloads {
         if (quality.keepsLossless) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
                 DownloadStore.existing(context, DownloadStore.fileNameFor(track, extension))
-            }?.let { uri ->
+            }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
                 return@withContext Prepared(song.videoId, track, route = null, alreadyAt = uri)
             }
         }
 
         // Asked for from the Cached songs folder: the copy already on disk is
         // the answer, if it is whole. See [fromCache].
-        if (fromCache.remove(song.videoId)) {
-            AudioCache.completeCopyOf(song.videoId)?.let(::cachedRoute)?.let { route ->
-                Log.d(TAG, "downloading ${song.videoId} from the song cache as .${route.extension}")
+        if (fromCache.remove(song.videoId) || fromCache.remove(track.videoId)) {
+            AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)?.let { route ->
+                Log.d(TAG, "downloading ${track.videoId} from the song cache as .${route.extension}")
                 return@withContext Prepared(song.videoId, track, route = route, alreadyAt = null)
             }
         }
@@ -1053,11 +1097,11 @@ object Downloads {
         } catch (e: Exception) {
             // No connection, or nothing would resolve. A complete copy in the
             // song cache is still the song, and better saved than refused.
-            AudioCache.completeCopyOf(song.videoId)?.let(::cachedRoute)
-                ?.also { Log.w(TAG, "${song.videoId} could not be fetched (${e.message}); saving the cached copy") }
+            AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)
+                ?.also { Log.w(TAG, "${track.videoId} could not be fetched (${e.message}); saving the cached copy") }
                 ?: throw e
         }
-        Log.d(TAG, "downloading ${song.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
+        Log.d(TAG, "downloading ${track.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
         Prepared(song.videoId, track, route = route, alreadyAt = null)
     }
 
@@ -1128,13 +1172,21 @@ object Downloads {
 
                 val name = DownloadStore.fileNameFor(track, route.extension)
                 val alreadyThere = DownloadStore.existing(context, name)
-                if (alreadyThere != null) {
+                if (alreadyThere != null &&
+                    savedFileIsRecording(track.videoId, alreadyThere.toString())
+                ) {
                     Log.d(TAG, "$name is already in Music; adopting it")
                     remember(song, track, alreadyThere)
                     TranslationAhead.downloaded(context, track, alreadyThere.toString())
                     DownloadSession.done(id)
                     clear(id)
                     return@coroutineScope
+                }
+                if (alreadyThere != null) {
+                    // Same name, but not a file this record knows to be the
+                    // requested recording. A video's sound sitting under the
+                    // song's name is exactly what used to be adopted here.
+                    Log.d(TAG, "$name exists but is not ${track.videoId}'s verified recording; downloading it")
                 }
 
                 val manifest = route.offlineHls
@@ -1524,6 +1576,15 @@ internal data class SavedSongMetadata(
     val downloadFormat: String? = null,
     /** Stable creation time for downloads that MediaStore does not index. */
     val dateAddedSeconds: Long? = null,
+    /**
+     * The id whose stream produced the file's bytes.
+     *
+     * A music video is filed under its own id and the catalogue release it
+     * resolved to, so the two ids alone cannot say which recording is on disk.
+     * Defaulted for records written before this field existed: those keep
+     * playing their file because their provenance is genuinely unknown.
+     */
+    val soundSourceVideoId: String? = null,
 )
 
 /**
