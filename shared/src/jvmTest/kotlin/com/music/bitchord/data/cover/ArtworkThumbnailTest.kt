@@ -89,7 +89,7 @@ class ArtworkThumbnailTest {
     @Test
     fun `a local row gets no YouTube fallback`() {
         val song = Song(
-            videoId = "dQw4w9WgXcQ",
+            videoId = "content://media/1",
             title = "Local",
             artist = "Artist",
             thumbnailUrl = null,
