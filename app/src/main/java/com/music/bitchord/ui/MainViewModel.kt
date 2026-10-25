@@ -95,6 +95,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -3498,7 +3499,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (onDevice.isNotEmpty()) {
                 _detailStack.value = _detailStack.value.map {
-                    if (it.browseId == browseId && it.songs is UiState.Loading) it.copy(songs = UiState.Success(onDevice)) else it
+                    if (it.browseId == browseId && it.songs is UiState.Loading) {
+                        it.copy(songs = UiState.Success(onDevice), songsArePreview = true)
+                    } else {
+                        it
+                    }
                 }
             }
             if (localPlaylist != null) {
@@ -3588,6 +3593,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 ) {
                     it.copy(
                         songs = state,
+                        songsArePreview = false,
                         sections = sections,
                         thumbnailUrl = artwork ?: it.thumbnailUrl,
                         title = name ?: it.title,
@@ -3984,6 +3990,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return _detailStack.value.getOrNull(index)
         }
         return stack[index]
+    }
+
+    /**
+     * The newest snapshot of [browseId] once its real track listing has landed.
+     *
+     * A playlist opened with a downloaded copy on screen shows that copy before
+     * the network response; playing from it queued local/preview rows that
+     * carried no upload type at all. Waits on the stack flow instead of polling
+     * — the page updates exactly once when the response (or its error) arrives.
+     * On timeout the caller gets whatever is on screen and marks those rows as
+     * type-unknown, so the song-version lookup still asks about them.
+     */
+    suspend fun awaitDetailListing(browseId: String, timeoutMs: Long = 3_000L): DetailPage? {
+        fun latest(): DetailPage? = _detailStack.value.lastOrNull { it.browseId == browseId }
+        val current = latest() ?: return null
+        if (!current.songsArePreview && current.songs !is UiState.Loading) return current
+        withTimeoutOrNull(timeoutMs) {
+            _detailStack.first { stack ->
+                stack.lastOrNull { it.browseId == browseId }?.let {
+                    !it.songsArePreview && it.songs !is UiState.Loading
+                } == true
+            }
+        }
+        return latest() ?: current
     }
 
     /**

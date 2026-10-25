@@ -61,4 +61,22 @@ object SongVersionPolicy {
         isPlaying: Boolean,
         alreadyAudible: Boolean,
     ): Boolean = !alreadyAudible && !isPlaying && positionMs <= 0L
+
+    /**
+     * Whether this row is worth a song-version lookup. A confirmed catalogue
+     * track is not; a music video is, and so is a preview row whose type is not
+     * known yet — it may well be a video, and assuming it is not is what left
+     * such a row playing its MV.
+     */
+    fun wantsSongVersion(isVideo: Boolean, typeUnknown: Boolean): Boolean =
+        isVideo || typeUnknown
+
+    /**
+     * Whether the row [mediaId] has made its first sound. The only evidence is
+     * this row's own audible id: while a *previous* track is still sounding,
+     * the player is playing, but the new row has not been heard yet — a jump
+     * made in that moment must still be allowed to install its song version.
+     */
+    fun hasMadeFirstSound(mediaId: String?, audibleMediaId: String?): Boolean =
+        mediaId != null && audibleMediaId == mediaId
 }

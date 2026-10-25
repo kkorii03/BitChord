@@ -60,4 +60,15 @@ class SilenceSkipOffsetTest {
             ),
         )
     }
+
+    @Test
+    fun `skipped frames map to whole milliseconds for diagnostics`() {
+        assertEquals(1_000L, SilenceSkipOffset.skippedMillis(48_000L, 48_000))
+        assertEquals(0L, SilenceSkipOffset.skippedMillis(0L, 48_000))
+        assertEquals(0L, SilenceSkipOffset.skippedMillis(48_000L, 0))
+        assertEquals(
+            Util.sampleCountToDurationUs(12_345L, 44_100) / 1_000L,
+            SilenceSkipOffset.skippedMillis(12_345L, 44_100),
+        )
+    }
 }

@@ -27,4 +27,34 @@ object SilenceSkipOffset {
         }
         return outputStreamOffsetUs + Util.sampleCountToDurationUs(skippedFrames, sampleRate)
     }
+
+    /**
+     * The same conversion, in whole milliseconds, for diagnostics. The lyric
+     * sync log states how much audio has been cut so a late line can be told
+     * apart from a position that simply does not include the cut.
+     */
+    fun skippedMillis(skippedFrames: Long, sampleRate: Int): Long {
+        if (skippedFrames <= 0L || sampleRate <= 0) return 0L
+        return Util.sampleCountToDurationUs(skippedFrames, sampleRate) / 1_000L
+    }
+}
+
+/**
+ * How much silence has been cut from the stream currently being written,
+ * published for the diagnostics lines. Written by [PrecisionAudioSink] on the
+ * audio path and read by the logger on its own thread; every field is volatile
+ * and nothing here schedules work.
+ */
+object SilenceSkipStats {
+    @Volatile
+    var skippedMs: Long = 0L
+        private set
+
+    fun set(skippedFrames: Long, sampleRate: Int) {
+        skippedMs = SilenceSkipOffset.skippedMillis(skippedFrames, sampleRate)
+    }
+
+    fun reset() {
+        skippedMs = 0L
+    }
 }

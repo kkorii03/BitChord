@@ -52,6 +52,16 @@ data class Song(
     /** A music-video upload rather than the catalogue track. */
     val isVideo: Boolean = false,
     /**
+     * A preview row whose upload type has not been confirmed yet.
+     *
+     * A detail page can be played from the downloaded copy (or another preview
+     * listing) before the network response that says which rows are videos has
+     * landed. Such a row reads as [isVideo] = false but is not a known
+     * catalogue track, so the song-version lookup must still ask about it —
+     * see [com.music.bitchord.data.net.SongVersionPolicy.wantsSongVersion].
+     */
+    val typeUnknown: Boolean = false,
+    /**
      * True for a video upload and for its manually selected catalogue match.
      * The latter remains video-origin so playback policies such as AutoMix do
      * not mistake a converted video for a normal music track.
@@ -631,6 +641,13 @@ data class DetailPage(
     val thumbnailUrl: String?,
     val songs: UiState<List<Song>>,
     val type: BrowseType = BrowseType.OTHER,
+    /**
+     * [songs] is a preview stand-in (the downloaded copy of this release, shown
+     * while the network listing is still on its way) rather than the response
+     * itself. Playback should wait briefly for the real listing; if it does not
+     * arrive, its rows are queued as [Song.typeUnknown].
+     */
+    val songsArePreview: Boolean = false,
     /** Continuation behind the currently visible songs, if the listing can grow. */
     val continuation: String? = null,
     /** Albums / singles carousels, populated for artist pages. */

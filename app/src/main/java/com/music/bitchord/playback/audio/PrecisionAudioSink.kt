@@ -368,6 +368,7 @@ class PrecisionAudioSink(
                 val skipped = silenceSkipper.skippedFrames - skippedBefore
                 if (skipped > 0L) {
                     skippedFramesForStream += skipped
+                    SilenceSkipStats.set(skippedFramesForStream, configuredSampleRate)
                     if (outputStreamOffsetUs != C.TIME_UNSET) {
                         // Keep the delegate's frame position mapped onto media time:
                         // it writes the compacted frames but is told the media
@@ -462,6 +463,7 @@ class PrecisionAudioSink(
     override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
         this.outputStreamOffsetUs = outputStreamOffsetUs
         skippedFramesForStream = 0L
+        SilenceSkipStats.reset()
         silenceSkipper.reset()
         if (streaming) dspChain.onStreamBoundary()
         super.setOutputStreamOffsetUs(outputStreamOffsetUs)
@@ -523,6 +525,7 @@ class PrecisionAudioSink(
         accessUnitsReportedForInput = false
         silenceSkipper.reset()
         skippedFramesForStream = 0L
+        SilenceSkipStats.reset()
         if (isPrecisionActive) {
             dspChain.flush()
         }
@@ -549,6 +552,7 @@ class PrecisionAudioSink(
         accessUnitsReportedForInput = false
         silenceSkipper.reset()
         skippedFramesForStream = 0L
+        SilenceSkipStats.reset()
         outputStreamOffsetUs = C.TIME_UNSET
         if (isPrecisionActive) {
             dspChain.reset()

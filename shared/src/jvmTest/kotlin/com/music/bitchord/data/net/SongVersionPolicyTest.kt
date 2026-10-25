@@ -77,4 +77,18 @@ class SongVersionPolicyTest {
     fun `the before-audio wait is one and a half seconds`() {
         assertEquals(1_500L, SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS)
     }
+
+    @Test
+    fun `a previous track playing is not this row's first sound`() {
+        assertFalse(SongVersionPolicy.hasMadeFirstSound("new", "old"))
+        assertFalse(SongVersionPolicy.hasMadeFirstSound("new", null))
+        assertTrue(SongVersionPolicy.hasMadeFirstSound("new", "new"))
+    }
+
+    @Test
+    fun `only videos and type-unknown preview rows need a lookup`() {
+        assertTrue(SongVersionPolicy.wantsSongVersion(isVideo = true, typeUnknown = false))
+        assertTrue(SongVersionPolicy.wantsSongVersion(isVideo = false, typeUnknown = true))
+        assertFalse(SongVersionPolicy.wantsSongVersion(isVideo = false, typeUnknown = false))
+    }
 }

@@ -1039,7 +1039,7 @@ object YtMusicRepository {
      */
     suspend fun songVersion(song: Song, beforeAudio: Boolean = false): Song? {
         if (song.localUri != null) return null
-        if (!song.isVideo) {
+        if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
             logSongVersionSkipOnce(song.videoId)
             return null
         }
@@ -1162,7 +1162,9 @@ object YtMusicRepository {
         if (songs.isEmpty() || ahead <= 0) return songs
         val first = startIndex.coerceIn(0, songs.lastIndex)
         val last = (first + ahead - 1).coerceAtMost(songs.lastIndex)
-        val candidates = (first..last).filter { songs[it].isVideo }
+        val candidates = (first..last).filter {
+            SongVersionPolicy.wantsSongVersion(songs[it].isVideo, songs[it].typeUnknown)
+        }
         if (candidates.isEmpty()) return songs
         val resolved = coroutineScope {
             candidates.map { index ->

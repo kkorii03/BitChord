@@ -3,6 +3,7 @@ package com.music.bitchord.data
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.TrackSummaryFormat
+import com.music.bitchord.playback.audio.SilenceSkipStats
 import java.util.Locale
 
 /** What the lyrics engine applied to the track that is playing. */
@@ -59,6 +60,7 @@ object TrackDiagnostics {
             append(" match=").append(matchPercent ?: "-").append('%')
             append(" bias=").append(biasMs).append("ms")
             append(" manual=").append(manualOffsetMs).append("ms")
+            append(" silenceSkipMs=").append(SilenceSkipStats.skippedMs)
             append(" video=").append(if (video) "y" else "n")
         }
         val changed = synchronized(this) {
@@ -99,6 +101,7 @@ object TrackDiagnostics {
                 video = song.isVideo,
                 source = sourceLabel(song),
                 sync = sync,
+                silenceSkipMs = SilenceSkipStats.skippedMs,
             ),
             about = song.videoId,
         )

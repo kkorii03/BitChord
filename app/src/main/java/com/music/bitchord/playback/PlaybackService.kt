@@ -3394,7 +3394,9 @@ class PlaybackService : MediaLibraryService() {
                 if (index >= exoPlayer.mediaItemCount) return@launch
                 val item = exoPlayer.getMediaItemAt(index)
                 val song = item.toSong()
-                if (!song.isVideo || song.localUri != null) continue
+                if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) ||
+                    song.localUri != null
+                ) continue
                 val resolved = try {
                     YtMusicRepository.songVersion(song, beforeAudio = true)
                 } catch (cancelled: CancellationException) {
@@ -3460,25 +3462,31 @@ class PlaybackService : MediaLibraryService() {
         lateVersionMeasureJob?.cancel()
         val item = mediaItem
         val song = item?.toSong()
-        if (alreadyAudible ||
-            !AppSettings.preferMusicOnly.value ||
-            ListenTogether.state.value.inParty ||
-            item == null ||
-            song == null ||
-            !song.isVideo ||
-            song.localUri != null
-        ) {
+        val skipReason = when {
+            alreadyAudible -> "already audible"
+            !AppSettings.preferMusicOnly.value -> "music only off"
+            ListenTogether.state.value.inParty -> "listen together"
+            item == null || song == null -> "no row"
+            !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) -> "not a video"
+            song.localUri != null -> "local file"
+            SongVersionPolicy.hasMadeFirstSound(item.mediaId, audibleMediaId) -> "first sound"
+            else -> null
+        }
+        if (skipReason != null) {
+            val id = song?.videoId ?: item?.mediaId
+            if (id != null && song != null &&
+                SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
+            ) {
+                TrackLog.i(
+                    "BitChord",
+                    "song version: $id hold skipped ($skipReason)",
+                    about = id,
+                )
+            }
             releaseVersionHold(exoPlayer)
             return
         }
-        val mediaId = item.mediaId
-        // A restored or crossfaded row can already be sounding; replacing it
-        // then would change the recording under the listener. `isPlaying` is
-        // checked too: it can be true before `audibleMediaId` catches up.
-        if (audibleMediaId == mediaId || exoPlayer.isPlaying) {
-            releaseVersionHold(exoPlayer)
-            return
-        }
+        val mediaId = item!!.mediaId
         // A definitive answer from the queue build needs no network wait, but
         // the first sound is still held for the single dispatch that installs
         // it, so the replacement cannot land after audio. Deferring it also
@@ -3560,8 +3568,7 @@ class PlaybackService : MediaLibraryService() {
     ) {
         if (player !== exoPlayer ||
             exoPlayer.currentMediaItem?.mediaId != mediaId ||
-            audibleMediaId == mediaId ||
-            exoPlayer.isPlaying ||
+            SongVersionPolicy.hasMadeFirstSound(mediaId, audibleMediaId) ||
             resolved.videoId == song.videoId ||
             resolved.isVideo
         ) return

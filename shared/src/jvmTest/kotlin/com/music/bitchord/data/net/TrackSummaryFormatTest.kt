@@ -87,7 +87,7 @@ class TrackSummaryFormatTest {
         )
         assertEquals(
             "MARK by user: abc123 'Song' pos=42000 lyricLine=7/41500 " +
-                "video=y source=history sync=measured",
+                "video=y source=history sync=measured silenceSkipMs=0",
             line,
         )
     }

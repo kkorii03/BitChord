@@ -233,6 +233,7 @@ fun Song.toSongBundle(): Bundle = bundleOf(
     "albumId" to albumId,
     "albumName" to albumName,
     "isVideo" to isVideo,
+    "typeUnknown" to typeUnknown,
     "isVideoOrigin" to isVideoOrigin,
     "setVideoId" to setVideoId,
     "fromAutoplay" to fromAutoplay,
@@ -273,6 +274,7 @@ fun songFromBundle(b: Bundle): Song {
         albumId = b.getString("albumId"),
         albumName = b.getString("albumName"),
         isVideo = b.getBoolean("isVideo"),
+        typeUnknown = b.getBoolean("typeUnknown"),
         isVideoOrigin = b.getBoolean("isVideoOrigin"),
         setVideoId = b.getString("setVideoId"),
         radioName = b.getString("radioName"),
@@ -465,6 +467,7 @@ fun MediaItem.toSong() = Song(
     isExplicit = mediaMetadata.extras?.takeIf { it.containsKey(EXTRA_EXPLICIT) }
         ?.getBoolean(EXTRA_EXPLICIT),
     isVideo = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
+    typeUnknown = mediaMetadata.extras?.getBoolean(EXTRA_TYPE_UNKNOWN) == true,
     isVideoOrigin = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
@@ -585,6 +588,7 @@ private const val EXTRA_EXPLICIT = "bitchord.explicit"
 private const val EXTRA_SOURCE_QUALITY = "bitchord.sourceQuality"
 private const val EXTRA_SOURCE_HI_RES = "bitchord.sourceHiRes"
 private const val EXTRA_IS_VIDEO = "bitchord.isVideo"
+private const val EXTRA_TYPE_UNKNOWN = "bitchord.typeUnknown"
 private const val EXTRA_VIDEO_ORIGIN = "bitchord.isVideoOrigin"
 private const val EXTRA_ORIGINAL_TITLE = "bitchord.originalTitle"
 private const val EXTRA_ORIGINAL_ARTIST = "bitchord.originalArtist"
@@ -777,7 +781,7 @@ fun Song.toMediaItem(): MediaItem {
                 if (queueTier != QueueTier.CONTEXT || queueEntryId != null || fromAutoplay ||
                     offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
-                    isExplicit != null || isVideo || isVideoOrigin || radioName != null ||
+                    isExplicit != null || isVideo || typeUnknown || isVideoOrigin || radioName != null ||
                     sourceQuality != null ||
                     playbackSource != null || playbackSourceType != null || playbackSourceId != null ||
                     shown.originalTitle != null
@@ -799,6 +803,7 @@ fun Song.toMediaItem(): MediaItem {
                             EXTRA_SET_VIDEO_ID to setVideoId,
                             EXTRA_EXPLICIT to isExplicit,
                             EXTRA_IS_VIDEO to isVideo,
+                            EXTRA_TYPE_UNKNOWN to typeUnknown,
                             EXTRA_VIDEO_ORIGIN to isVideoOrigin,
                             EXTRA_SOURCE_QUALITY to sourceQuality,
                             EXTRA_SOURCE_HI_RES to sourceHiRes,

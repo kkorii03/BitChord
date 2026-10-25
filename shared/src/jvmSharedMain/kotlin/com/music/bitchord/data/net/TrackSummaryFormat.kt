@@ -69,6 +69,7 @@ object TrackSummaryFormat {
         video: Boolean,
         source: String,
         sync: String,
+        silenceSkipMs: Long = 0L,
     ): String = buildString {
         append("MARK by user: ").append(id)
         append(" '").append(oneLine(title)).append("'")
@@ -78,6 +79,7 @@ object TrackSummaryFormat {
         append(" video=").append(if (video) "y" else "n")
         append(" source=").append(oneLine(source).ifBlank { "none" })
         append(" sync=").append(sync)
+        append(" silenceSkipMs=").append(silenceSkipMs.coerceAtLeast(0L))
     }
 
     /** A log line is one line: titles and origins must not smuggle newlines in. */
