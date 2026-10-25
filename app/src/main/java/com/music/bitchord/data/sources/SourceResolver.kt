@@ -312,7 +312,7 @@ object SourceResolver {
                 // track's own source, which is the one the user picked and may
                 // well hold something better. It falls through to the pinned
                 // source instead, and to [bestAcross] below if that fails.
-                if (upgraded.format.isLossless != true) continue
+                if (!HqQuality.isLosslessTier(upgraded.format)) continue
                 TrackLog.d(TAG, "lossless upgrade: '${target.title}' served by ${source.displayName}")
                 return upgraded
             }
@@ -431,7 +431,25 @@ object SourceResolver {
      * Returning null is not a failure: nothing has been pinned, so playback
      * starts on YouTube as usual.
      */
-    suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
+    suspend fun prefetchSubstitute(
+        target: TrackMatcher.Target,
+        /**
+         * Whether to keep the answer as the verified original immediately.
+         *
+         * False for callers that verify the audio first: remembering an
+         * unverified stream here is how a cover would reach the next play
+         * before the sound comparison had a chance to refuse it. Those callers
+         * use [rememberOriginal] once the verification passes.
+         */
+        remember: Boolean = true,
+        /**
+         * The sound comparison itself, when the caller has one. Every
+         * candidate is offered to it before it can win, so a cover from a fast
+         * source is skipped and the real recording from a slower one is still
+         * found — rather than the fastest answer becoming the only answer.
+         */
+        accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
+    ): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
@@ -446,6 +464,7 @@ object SourceResolver {
             requestForNow(),
             waitForAll = true,
             strictOriginal = true,
+            accept = accept,
         )
         if (found == null) {
             TrackLog.d(TAG, "upgrade ahead: '${target.title}' none (keeping YouTube)")
@@ -453,7 +472,7 @@ object SourceResolver {
             return null
         }
         val (source, stream) = found
-        rememberOriginal(target, stream)
+        if (remember) rememberOriginal(target, stream)
         TrackLog.d(
             TAG,
             "upgrade ahead: '${target.title}' ready at ${stream.format.summary} from ${source.displayName}",
@@ -754,7 +773,7 @@ object SourceResolver {
             // rendition that playback already prefers.  Keep it on the same
             // first-class download path instead of throwing it away and
             // falling back to YouTube solely because it has no bitrate tag.
-            if (stream.format.isLossless == true || stream.format.isDolbyAtmos) {
+            if (HqQuality.isLosslessTier(stream.format) || stream.format.isDolbyAtmos) {
                 TrackLog.d(
                     TAG,
                     "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
@@ -832,7 +851,21 @@ object SourceResolver {
         // so this is the belt to that braces — it also covers the late answer
         // that arrives from a pass started before the Atmos stream landed.
         if (playing?.isDolbyAtmos == true && !candidate.isDolbyAtmos) return false
-        if (candidate.isLossless == true || candidate.isDolbyAtmos) return true
+        if (candidate.isDolbyAtmos) return true
+        // An unknown floor is not evidence of an improvement. Lossless and
+        // Atmos still are: they are better than anything lossy by definition.
+        if (playing == null) return HqQuality.isLosslessTier(candidate)
+        // An unstated lossy bitrate on either side cannot be weighed.
+        if (playing.isLossless != true && playing.kbps == null &&
+            !HqQuality.isLosslessTier(candidate) &&
+            !candidate.isDolbyAtmos
+        ) {
+            return false
+        }
+        val candidateTier = HqQuality.tierOf(candidate)
+        val playingTier = HqQuality.tierOf(playing)
+        if (candidateTier.rank < playingTier.rank) return true
+        if (candidateTier.rank > playingTier.rank) return false
         val gain = (candidate.kbps ?: return false) - (playing?.kbps ?: return false)
         return gain >= UPGRADE_MIN_GAIN_KBPS
     }
@@ -940,7 +973,7 @@ object SourceResolver {
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
         sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
-        accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
+        accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val usable = sources.filterNot { source ->
             SourceCooldown.isResting(source.configId).also { resting ->
@@ -1172,6 +1205,7 @@ object SourceResolver {
      *     reason to prefer one copy of a recording over another; it is not a
      *     reason to play a different recording.
      */
+    @Suppress("UNUSED_PARAMETER")
     internal fun preferred(
         matches: List<Song>,
         target: TrackMatcher.Target,
@@ -1188,14 +1222,24 @@ object SourceResolver {
         // [streamBest] stops at the first row that answers, and an Atmos
         // answer on a device that cannot play it was already refused upstream
         // by [ModuleSource.unplayable].
-        if (atmosWanted()) {
+        val wantsAtmos = atmosWanted()
+        if (wantsAtmos) {
             val immersiveFirst = eligible.sortedByDescending { it.sourceQuality == ModuleSource.DOLBY }
             if (immersiveFirst.firstOrNull()?.sourceQuality == ModuleSource.DOLBY) return immersiveFirst
         }
-        if (!wantsLossless) return eligible
+        // An Atmos row the listener did not ask for is just a row, and not a
+        // top one: the immersive rung is only ahead of lossless when the mix is
+        // wanted. See [atmosWanted].
+        fun tierOf(song: Song): HqTier =
+            if (!wantsAtmos && song.sourceQuality == ModuleSource.DOLBY) {
+                HqTier.NORMAL
+            } else {
+                HqQuality.tierOfDeclared(song.sourceQuality, song.sourceHiRes)
+            }
         // Stable, so the confidence order [TrackMatcher.ranked] produced
-        // survives inside each tier.
-        return eligible.sortedByDescending { it.sourceQuality == ModuleSource.LOSSLESS }
+        // survives inside each tier. A 320kbps row is a better place to ask
+        // than a 128kbps one even when the request is merely "best".
+        return eligible.sortedBy { tierOf(it).rank }
     }
 
     /**
@@ -1225,9 +1269,10 @@ object SourceResolver {
             val stream = opened.copy(
                 durationSec = TrackMatcher.secondsOf(match.durationText),
                 sourceConfigId = source.configId,
+                trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId,
             )
             val served = stream.format
-            if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
+            if (!wantsLossless || HqQuality.isLosslessTier(served) || served.isDolbyAtmos || served.statesNothingLossy) {
                 TrackLog.d(
                     TAG,
                     "${source.displayName} matched '${match.title}' by '${match.artist}' " +
@@ -1267,38 +1312,12 @@ object SourceResolver {
      * better; that one asks whether the difference is worth a break in the
      * audio, which is a much higher bar and only meaningful mid-playback.
      */
-    internal fun isBetter(candidate: StreamFormat, current: StreamFormat?): Boolean {
-        if (current == null) return true
-        // Immersive first, and ahead of lossless rather than behind it. This
-        // used to sit *after* the lossless test, which made it unreachable in
-        // the only comparison it exists for: an Atmos stream is E-AC-3 and so
-        // answers `isLossless == false`, so a FLAC won on the line above and
-        // the Atmos line below never ran. A track offered as both then played
-        // as the FLAC no matter what the Atmos setting said — and worse, a
-        // mid-playback upgrade would cut the FLAC in over an Atmos stream
-        // already playing. Anything immersive that reaches here has already
-        // cleared [ModuleSource.unplayable], so it is a mix this device and
-        // this listener both want.
-        if (candidate.isDolbyAtmos != current.isDolbyAtmos) return candidate.isDolbyAtmos
-        if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
-        if (candidate.isLossless == true) {
-            // A file claiming lossless at a bitrate a lossy encode would use
-            // loses to a copy that states a real lossless rate. It is still
-            // playable, so this is a preference rather than a refusal.
-            if (candidate.isSuspectLossless != current.isSuspectLossless) {
-                return !candidate.isSuspectLossless
-            }
-            val depth = (candidate.bitDepth ?: 0).compareTo(current.bitDepth ?: 0)
-            if (depth != 0) return depth > 0
-            val rate = (candidate.sampleRateHz ?: 0).compareTo(current.sampleRateHz ?: 0)
-            if (rate != 0) return rate > 0
-        }
-        return (candidate.kbps ?: 0) > (current.kbps ?: 0)
-    }
+    internal fun isBetter(candidate: StreamFormat, current: StreamFormat?): Boolean =
+        HqQuality.isBetter(candidate, current)
 
     /** The higher-quality of two streams — see [isBetter]. */
     private fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream =
-        if (current == null || isBetter(candidate.format, current.format)) candidate else current
+        HqQuality.betterOf(current, candidate)
 
     /**
      * Whether a format has said nothing that rules lossless out.

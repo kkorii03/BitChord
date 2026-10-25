@@ -3414,23 +3414,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // that loses. Pinned through [StreamChoice] so playback opens
                 // this very stream rather than racing for it again — see
                 // [SourceResolver.prefetchSubstitute], which requires it.
-                val warmed = SourceResolver.prefetchSubstitute(
-                    TrackMatcher.Target(
-                        title = audio.title,
-                        artist = audio.artist,
-                        durationSec = TrackMatcher.secondsOf(audio.durationText),
-                        album = audio.albumName,
-                        isExplicit = audio.isExplicit,
-                        isVideo = audio.isVideo,
-                    ),
-                )
+                val version = YtMusicRepository.cachedSongVersionFor(audio)
+                // A video whose song version is not known yet has no correct
+                // reference to compare against; warm YouTube instead of pinning
+                // a substitute to the video's clock.
+                if (audio.isVideo && version == null) {
+                    StreamResolver.resolve(audio.videoId)
+                    return@runCatching
+                }
+                val playSong = version ?: audio
+                val target = TrackMatcher.targetOf(playSong)
+                // The same sound check the queue's read-ahead runs, applied
+                // inside the race so a refused cover does not hide a slower
+                // source's real recording.
+                val warmed = SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
+                    com.music.bitchord.playback.smart.HqAudioVerify
+                        .verify(getApplication(), playSong.videoId, target, candidate) != null
+                }
                 if (warmed != null) {
-                    StreamChoice.remember(audio.videoId, warmed, substituted = true)
+                    SourceResolver.rememberOriginal(target, warmed)
+                    StreamChoice.remember(playSong.videoId, warmed, substituted = true)
                     return@runCatching
                 }
                 // Disabled, or hasn't got it: the tap path falls back to
                 // YouTube, so that is what is worth having ready.
-                StreamResolver.resolve(audio.videoId)
+                StreamResolver.resolve(playSong.videoId)
             }
         }
     }

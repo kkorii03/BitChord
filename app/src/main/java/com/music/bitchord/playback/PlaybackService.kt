@@ -160,11 +160,15 @@ import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.settings.PrivateListening
 import com.music.bitchord.data.sources.QualityUpgradeAdvice
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
+import com.music.bitchord.playback.smart.HqAudioVerify
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.playback.smart.VersionSwapPolicy
 import com.music.bitchord.widget.MediaWidget
@@ -1947,7 +1951,7 @@ class PlaybackService : MediaLibraryService() {
                 // YouTube URL has no source result to promote, and a lossless
                 // module result already satisfies the request.
                 if (StreamChoice.isSubstitute(videoId) &&
-                    serving.format.isLossless != true &&
+                    !HqQuality.isLosslessTier(serving.format) &&
                     QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
                 ) {
                     val pending = QualityUpgrade.settledForLess(
@@ -6025,8 +6029,14 @@ class PlaybackService : MediaLibraryService() {
                         // A stream found earlier is still valid, but it must not
                         // replace the audio under a track that is already
                         // playing. Keep it for the next play instead.
-                        uri?.let { SourceResolver.targetIn(it) }?.let {
-                            SourceResolver.rememberOriginal(it, shelved)
+                        uri?.let { SourceResolver.targetIn(it) }?.let { target ->
+                            val currentTier = currentFormatForNotice(mediaId)?.let { HqQuality.tierOf(it) }
+                                ?: HqVerificationStore.bestTier(this@PlaybackService, mediaId)
+                                ?: HqTier.NORMAL
+                            if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved) != null) {
+                                logHqTier(mediaId, target.title, shelved, currentTier)
+                                SourceResolver.rememberOriginal(target, shelved)
+                            }
                         }
                         QualityUpgrade.forget(mediaId)
                         TrackLog.d(
@@ -6115,8 +6125,14 @@ class PlaybackService : MediaLibraryService() {
                 // made by hand is still honoured — that is the one swap the
                 // listener explicitly asked for.
                 if (!manual) {
-                    uri?.let { SourceResolver.targetIn(it) }?.let {
-                        SourceResolver.rememberOriginal(it, better)
+                    uri?.let { SourceResolver.targetIn(it) }?.let { target ->
+                        val currentTier = currentFormatForNotice(mediaId)?.let { HqQuality.tierOf(it) }
+                            ?: HqVerificationStore.bestTier(this@PlaybackService, mediaId)
+                            ?: HqTier.NORMAL
+                        if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, better) != null) {
+                            logHqTier(mediaId, target.title, better, currentTier)
+                            SourceResolver.rememberOriginal(target, better)
+                        }
                     }
                     QualityUpgrade.forget(mediaId)
                     TrackLog.d(
@@ -6256,7 +6272,7 @@ class PlaybackService : MediaLibraryService() {
     /** What the decoder says is playing, or what the source claimed when it has not spoken yet. */
     private fun currentIsLossless(mediaId: String): Boolean =
         NerdStats.current.value?.takeIf { it.mediaId == mediaId }?.isLossless == true ||
-            NerdStats.declaredFormat(mediaId)?.isLossless == true
+            NerdStats.declaredFormat(mediaId)?.let { HqQuality.isLosslessTier(it) } == true
 
     private fun currentIsAtmos(mediaId: String): Boolean =
         NerdStats.current.value?.takeIf { it.mediaId == mediaId }?.isDolbyAtmos == true ||
@@ -6281,6 +6297,29 @@ class PlaybackService : MediaLibraryService() {
 
     private fun currentQualityLabel(mediaId: String): String =
         QualityUpgradeAdvice.label(currentFormatForNotice(mediaId))
+
+    /**
+     * One line when an upgrade kept for the next play is on a different rung
+     * from what is playing now. The stream is not swapped mid-song; this is
+     * only the memory of what the next play should open.
+     */
+    private fun logHqTier(
+        mediaId: String,
+        title: String,
+        stream: SourceStream,
+        current: HqTier,
+    ) {
+        val next = HqQuality.tierOf(stream.format)
+        if (current == next) return
+        val source = stream.sourceConfigId
+            ?.let { SourceRegistry.config(it)?.displayName }
+            ?: "source"
+        TrackLog.i(
+            "BitChord",
+            "hq-tier: $title ${current.label} -> ${next.label} from $source",
+            mediaId,
+        )
+    }
 
     /** "고음질로 바꿨어요 · AAC 256kbps" — the detail is dropped when unknown. */
     private fun upgradeMessage(template: Int, detail: String?): String {
@@ -6451,6 +6490,21 @@ class PlaybackService : MediaLibraryService() {
         if (at.duration > 0 && at.duration - at.position < UPGRADE_MIN_REMAINING_MS) {
             TrackLog.d("BitChord", "upgrade abandoned: only ${at.duration - at.position}ms of the track left")
             return SwapOutcome.TOO_LATE
+        }
+        // Nothing is cut in until the sound comparison says this is the same
+        // recording as the YouTube song version. A manual request is no
+        // exception: the listener asked for a better copy, not a different
+        // song. The answer is cached per pair, so a stream verified during
+        // next-song preparation costs only a map lookup here.
+        val target = runCatching { SourceResolver.targetIn(Uri.parse(at.uri)) }.getOrNull()
+        if (target != null && HqAudioVerify.verify(this, mediaId, target, stream) == null) {
+            TrackLog.d(
+                "BitChord",
+                "upgrade refused for $mediaId: '${target.title}' did not match the YouTube version",
+                about = mediaId,
+            )
+            QualityUpgrade.forget(mediaId)
+            return SwapOutcome.NOT_PROVEN
         }
 
         val upgradedUri = QualityUpgrade.upgradedUri(at.uri)
@@ -6626,6 +6680,10 @@ class PlaybackService : MediaLibraryService() {
             NerdStats.recordSource(mediaId, upgradedSourceName)
             player.seekTo(player.currentMediaItemIndex, now.position)
             player.prepare()
+            // The continuation reads for this item must keep resolving to the
+            // upgraded copy, and the lyric clock reads the same record to find
+            // the verified offset. See [StreamChoice] and [LyricsTiming].
+            StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)

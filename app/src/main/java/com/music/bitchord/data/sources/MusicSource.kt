@@ -52,6 +52,15 @@ data class SourceStream(
      * reproduces the stream already playing.
      */
     val sourceConfigId: String? = null,
+    /**
+     * The source's own id for the track this URL serves, when the caller knows.
+     *
+     * Set by [SourceResolver] from the matched search row. Kept because the
+     * audio verification remembers a verdict per (YouTube id, source track id)
+     * — the same catalogue can hold two rows under one title, and one of them
+     * may be the cover that the other is not.
+     */
+    val trackId: String? = null,
 )
 
 /**

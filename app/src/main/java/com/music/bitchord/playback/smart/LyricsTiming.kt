@@ -18,7 +18,9 @@ import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.StreamChoice
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
@@ -112,8 +114,18 @@ object LyricsTiming {
          * words came with. See [LyricsWordAlign.Heard] and `heardWords`.
          */
         val heardWords: List<LyricsWordAlign.Heard> = emptyList(),
+        /**
+         * YouTube song version → the high-quality copy actually playing.
+         *
+         * Set only when the current stream is a substitute that passed the
+         * sound comparison. The lyrics are timed against the YouTube version
+         * (that is the clock the measurement and every lyric provider agree
+         * on), so this map is applied after [base] to put them on the copy's
+         * own clock. Null means the clocks are the same.
+         */
+        val hq: Adjustment.Mapped? = null,
     ) {
-        val isEmpty: Boolean get() = base == null && manualMs == 0L
+        val isEmpty: Boolean get() = base == null && manualMs == 0L && hq == null
 
         /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
@@ -155,11 +167,20 @@ object LyricsTiming {
         isVideo: Boolean = false,
         audioSource: String? = null,
     ): Timing? {
-        val entry = store(context).get(videoId) ?: return null
+        // A missing entry is not "nothing to do": the stream may still be a
+        // verified high-quality copy whose clock differs from YouTube's, and
+        // that map applies even when no measurement or AI answer exists.
+        val entry = store(context).get(videoId) ?: Entry()
         val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo, audioSource) else null
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
-        val timing = Timing(base, entry.manualMs ?: 0L, bias, engine)
+        val timing = Timing(
+            base = base,
+            manualMs = entry.manualMs ?: 0L,
+            aiBiasMs = bias,
+            aiEngine = engine,
+            hq = hqAdjustment(context, videoId),
+        )
         // The transcript is kept on the video's own clock, and a displayed line
         // is map(record) + extraMs; the words are already video time, so only
         // [Timing.extraMs] is still missing. Read it here rather than bake it
@@ -167,12 +188,15 @@ object LyricsTiming {
         // lateness, must move the heard words with their line.
         val heard = if (base?.byAi == true && entry.aiTextKey == textKey(lines, audioSource)) {
             val shift = timing.extraMs
+            val hqMap = timing.hq?.map
+            fun heardAt(ms: Long): Long =
+                ((hqMap?.map(ms) ?: ms) + shift).coerceAtLeast(0L)
             entry.heardWords.map { word ->
-                val start = (word.s + shift).coerceAtLeast(0L)
+                val start = heardAt(word.s)
                 LyricsWordAlign.Heard(
                     text = word.t,
                     startMs = start,
-                    endMs = maxOf(start, (word.e + shift).coerceAtLeast(0L)),
+                    endMs = maxOf(start, heardAt(word.e)),
                 )
             }
         } else {
@@ -230,11 +254,51 @@ object LyricsTiming {
     suspend fun note(context: Context, videoId: String): String? = store(context).get(videoId)?.autoNote
 
     /** [lines] as [timing] puts them; words, syllables and backing vocals move with their line. */
-    fun apply(lines: List<LyricLine>, timing: Timing): List<LyricLine> = when (val base = timing.base) {
-        null -> lines.timedBy(null, timing.extraMs)
-        is Adjustment.Shift -> lines.timedBy(LyricsTimeMap.shift(base.ms), timing.extraMs)
-        is Adjustment.Mapped -> lines.timedBy(base.map, timing.extraMs)
+    fun apply(lines: List<LyricLine>, timing: Timing): List<LyricLine> {
+        val baseMap = when (val base = timing.base) {
+            null -> null
+            is Adjustment.Shift -> LyricsTimeMap.shift(base.ms)
+            is Adjustment.Mapped -> base.map
+        }
+        val hq = timing.hq?.map
+        // The HQ map is the second half of the clock: YouTube song version →
+        // the copy playing. A manual correction belongs on top of both, in the
+        // clock the listener is actually hearing.
+        return if (hq == null) {
+            lines.timedBy(baseMap, timing.extraMs)
+        } else {
+            lines.timedBy(baseMap).timedBy(hq, timing.extraMs)
+        }
     }
+
+    /**
+     * The YouTube → high-quality map for the stream serving [videoId], when it
+     * is a substitute that was verified. Read from [StreamChoice] rather than
+     * passed by every caller: the player and the lyrics screen both already
+     * record and read that choice, and a caller that forgot would silently
+     * show the lyrics on the wrong clock.
+     */
+    private suspend fun hqAdjustment(context: Context, videoId: String): Adjustment.Mapped? =
+        withContext(Dispatchers.IO) {
+            val choice = StreamChoice.of(videoId) ?: return@withContext null
+            if (!StreamChoice.isSubstitute(videoId)) return@withContext null
+            val sourceId = choice.sourceConfigId ?: return@withContext null
+            val trackId = choice.trackId ?: return@withContext null
+            val verified = HqVerificationStore.get(
+                context,
+                videoId,
+                sourceId,
+                trackId,
+            ) ?: return@withContext null
+            val map = HqMatchPolicy.mapFor(verified.offsetMs, verified.rate)
+                ?: return@withContext null
+            Adjustment.Mapped(
+                map = map,
+                byAi = false,
+                rate = verified.rate,
+                matchPercent = verified.matchPercent,
+            )
+        }
 
     /** How far [adjustment] moves the first sung line of [lines] — the figure worth showing. */
     fun shownShiftMs(lines: List<LyricLine>, adjustment: Adjustment): Long {

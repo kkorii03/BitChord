@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -105,7 +106,7 @@ object QualityUpgrade {
 
     internal fun needsLosslessFollowUp(format: StreamFormat): Boolean =
         SourceResolver.requestForNow() is StreamRequest.Lossless &&
-            format.isLossless != true &&
+            !HqQuality.isLosslessTier(format) &&
             !format.isDolbyAtmos
 
     /**

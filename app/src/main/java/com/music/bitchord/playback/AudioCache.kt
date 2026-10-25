@@ -9,6 +9,8 @@ import android.os.SystemClock
 import com.music.bitchord.R
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
+import com.music.bitchord.playback.smart.HqAudioVerify
+import com.music.bitchord.playback.smart.HqVerificationStore
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -26,9 +28,12 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
@@ -1342,6 +1347,7 @@ object AudioCache {
      * of skips only wherever the listener actually lands is worth chasing.
      */
     fun prefetchQueue(upcoming: List<Upcoming>) {
+        val context = appContext ?: return
         val mediaIds = upcoming.map { it.mediaId }
         if (mediaIds == pendingQueue) return
         android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
@@ -1414,10 +1420,27 @@ object AudioCache {
                 // URL-only warm-up it did before — YouTube resolves the track at
                 // playback time as usual.
                 val warmed = if (substitutable && target != null && !pinnedToYouTube) {
-                    runCatching { SourceResolver.prefetchSubstitute(target) }
+                    // The sound comparison is the gate: a candidate that is a
+                    // cover, a live take or a different edit is refused here,
+                    // before it can be pinned for the next play. Because it is
+                    // applied inside the race, a refused fast answer does not
+                    // stop a slower source's real recording from winning. The
+                    // first sound then stays YouTube if nothing passes.
+                    val currentTier = StreamChoice.of(next)?.format?.let { HqQuality.tierOf(it) }
+                        ?: HqVerificationStore.bestTier(context, next)
+                        ?: HqTier.NORMAL
+                    runCatching {
+                        SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
+                            HqAudioVerify.verify(context, next, target, candidate) != null
+                        }
+                    }
                         .onFailure { TrackLog.d(TAG, "warm-up substitute failed for $next: ${it.message}", about = next) }
                         .getOrNull()
-                        ?.also { StreamChoice.remember(next, it, substituted = true) }
+                        ?.also { candidate ->
+                            SourceResolver.rememberOriginal(target, candidate)
+                            StreamChoice.remember(next, candidate, substituted = true)
+                            logHqTier(next, target.title, candidate, currentTier)
+                        }
                 } else {
                     null
                 }
@@ -1468,6 +1491,29 @@ object AudioCache {
                 }
             }
         }
+    }
+
+    /**
+     * One line when the copy prepared for the next play is on a different rung
+     * from the one already remembered — the user's ladder, not a raw bitrate.
+     *
+     * The current rung is the stream serving this id right now, or the best
+     * verified copy from an earlier play, or YouTube's own normal rung when
+     * neither is known. A higher rung is kept through [StreamChoice] and is
+     * what the next play opens; nothing is swapped mid-song.
+     */
+    private fun logHqTier(
+        youtubeId: String,
+        title: String,
+        candidate: SourceStream,
+        current: HqTier,
+    ) {
+        val next = HqQuality.tierOf(candidate.format)
+        if (current == next) return
+        val source = candidate.sourceConfigId
+            ?.let { SourceRegistry.config(it)?.displayName }
+            ?: "source"
+        TrackLog.i(TAG, "hq-tier: $title ${current.label} -> ${next.label} from $source", youtubeId)
     }
 
     /**
