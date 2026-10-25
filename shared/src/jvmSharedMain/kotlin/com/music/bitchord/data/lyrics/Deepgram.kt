@@ -70,7 +70,12 @@ object Deepgram {
      * timeout, or a key that was never asked with). Callers tell a real
      * refusal from a request that never completed by the code.
      */
-    data class Answer(val words: List<LyricsWordAlign.Heard>?, val httpCode: Int? = null)
+    data class Answer(
+        val words: List<LyricsWordAlign.Heard>?,
+        val httpCode: Int? = null,
+        /** `Retry-After` in ms when the answer carried one; null otherwise. */
+        val retryAfterMs: Long? = null,
+    )
 
     /**
      * The words heard in [audioWav] by [model], timed; null when Deepgram
@@ -99,7 +104,13 @@ object Deepgram {
                         keyRejected.value = true
                         return@withContext Answer(null, response.code)
                     }
-                    if (!response.isSuccessful) return@withContext Answer(null, response.code)
+                    if (!response.isSuccessful) {
+                        return@withContext Answer(
+                            null,
+                            response.code,
+                            retryAfterMs(response.header("Retry-After")),
+                        )
+                    }
                     val body = response.body?.string() ?: return@withContext Answer(null, response.code)
                     Answer(parse(body), response.code)
                 }
@@ -139,6 +150,10 @@ object Deepgram {
             null
         }
     }
+
+    /** `Retry-After` as milliseconds when the server sent a delay in seconds. */
+    private fun retryAfterMs(header: String?): Long? =
+        header?.trim()?.toDoubleOrNull()?.takeIf { it > 0 }?.times(1000)?.toLong()
 
     /** `results.channels[0].alternatives[0].words[]`: word, start, end (seconds). */
     internal fun parse(body: String): List<LyricsWordAlign.Heard>? = runCatching {

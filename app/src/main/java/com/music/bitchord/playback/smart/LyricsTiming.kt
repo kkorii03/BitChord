@@ -14,6 +14,7 @@ import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.SongCheckWindow
+import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
@@ -1146,8 +1147,11 @@ object LyricsTiming {
      *
      * No timer or poll: the caller runs this when the lyrics arrive, once per
      * playback. Missing audio is not written to the store — the next playback
-     * may have it — and the caller keeps it to one try per session. Returns
-     * true when an engine was actually asked.
+     * may have it — and the caller keeps it to one try per session. A 429 is
+     * not spent as an answer: it is retried at most twice, then held until its
+     * `Retry-After` has passed so the next playback tries again. Returns true
+     * when an engine answered and its answer was recorded; false when there
+     * was nothing to ask, or the song was held for a 429.
      */
     suspend fun verifySong(
         context: Context,
@@ -1169,8 +1173,15 @@ object LyricsTiming {
             lines,
             audioSourceKey(song.videoId, song.localUri != null),
         )
+        val entry = store(context).get(song.videoId)
+        // A 429 is not a failed answer: the engine was never really asked, so
+        // it is not recorded as spent. The song waits instead until the
+        // server's own delay has passed, and the next playback (an event, not
+        // a timer) tries again.
+        val retryAt = entry?.songRetryAtMs
+        if (entry?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) return false
         val engines = AiTimingPolicy.nextEngines(
-            knowledge(store(context).get(song.videoId)),
+            knowledge(entry),
             key,
             manual = false,
             // There is no measurement for a song version; the song pool
@@ -1198,6 +1209,19 @@ object LyricsTiming {
 
     private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
 
+    /**
+     * The one song-sync request allowed at a time. A 429 is an account-wide
+     * statement, so serialising the checks keeps a queue of skipped songs from
+     * re-tripping the limiter while another check is in flight. Nothing polls:
+     * waiters are suspended on this mutex, and a wait longer than
+     * [SongSyncRetry.MAX_INLINE_WAIT_MS] is deferred to the next playback.
+     */
+    private val songSyncGate = Mutex()
+
+    /** No song check may be sent before this, after a 429; 0 when clear. */
+    @Volatile
+    private var songQuietUntilMs = 0L
+
     /** The request itself, outliving its caller; see [verifySong]. */
     private suspend fun verifySongRequest(
         context: Context,
@@ -1205,12 +1229,19 @@ object LyricsTiming {
         lines: List<LyricLine>,
         key: Int,
         engine: String,
-    ): Boolean {
+    ): Boolean = songSyncGate.withLock {
+        // Checked again under the gate: another song's 429 may have marked
+        // this one while its flight was waiting here.
+        val pending = store(context).get(song.videoId)
+        val retryAt = pending?.songRetryAtMs
+        if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+            return@withLock false
+        }
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
         val audio = VideoAudio.songWav(context, song) ?: run {
             songLog(song.videoId, "no-audio", null, null, 0)
-            return false
+            return@withLock false
         }
         val windowMs = SongCheckWindow.wavMs(audio.size)
         val indices = SongCheckWindow.indices(lines.map { it.timeMs }, windowMs)
@@ -1218,44 +1249,41 @@ object LyricsTiming {
         val seconds = (windowMs / 1000.0).roundToInt()
         if (indices.size < MIN_AI_LINES) {
             songLog(song.videoId, "no-words", null, null, seconds)
-            return false
+            return@withLock false
         }
         val texts = indices.map { lines[it].text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
-        val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
-            audio,
-            language,
-            com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
-        )
+        val answer = listenForSong(context, song.videoId, key, audio, language) ?: return@withLock false
         // Spent once Deepgram actually answered — success or refusal. A
         // cancellation or a request that never reached it is not recorded,
         // so the next playback may try again; nothing is recorded before the
         // answer either, which used to leave a song never checked again when
-        // its screen job was cancelled mid-request.
+        // its screen job was cancelled mid-request. A 429 never gets here:
+        // [listenForSong] either retried it or deferred the song.
         if (answer.httpCode != null) noteAttempt(context, song.videoId, key, engine)
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
-            return true
+            return@withLock true
         }
         if (heard.size < MIN_AI_LINES) {
             songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
-            return true
+            return@withLock true
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
         val fitted = fitAi(lines, indices, starts) ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
-            return true
+            return@withLock true
         }
         val match = fitted.matchPercent
         val shift = shownShiftMs(lines, fitted)
         when {
             !LyricsAiGuard.agreementAllows(match) -> {
                 songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
-                return true
+                return@withLock true
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
-                return true
+                return@withLock true
             }
         }
         store(context).update(song.videoId) {
@@ -1270,11 +1298,70 @@ object LyricsTiming {
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
                 biasSampled = false,
                 aiEngine = engine,
+                songRetryKey = null,
+                songRetryAtMs = null,
             )
         }
         _changes.tryEmit(song.videoId)
         songLog(song.videoId, "applied", match, shift, seconds, words = heard.size, http = answer.httpCode)
-        return true
+        true
+    }
+
+    /**
+     * Whisper with the 429 rules applied: at most two retries, `Retry-After`
+     * believed (exponential otherwise), and a long wait deferred rather than
+     * held. Null means the song was rate-limited and marked for later.
+     */
+    private suspend fun listenForSong(
+        context: Context,
+        videoId: String,
+        key: Int,
+        audio: ByteArray,
+        language: String,
+    ): com.music.bitchord.data.lyrics.Deepgram.Answer? {
+        val quiet = songQuietUntilMs - System.currentTimeMillis()
+        if (quiet > 0) {
+            if (!SongSyncRetry.canWaitInline(quiet)) {
+                markRateLimited(context, videoId, key, quiet)
+                rateLimitedLog(videoId, quiet)
+                return null
+            }
+            delay(quiet)
+        }
+        var attempt = 0
+        while (true) {
+            val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
+                audio,
+                language,
+                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
+            )
+            if (answer.httpCode != 429) {
+                songQuietUntilMs = 0L
+                return answer
+            }
+            val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
+            songQuietUntilMs = System.currentTimeMillis() + wait
+            rateLimitedLog(videoId, wait)
+            if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
+                !SongSyncRetry.canWaitInline(wait)
+            ) {
+                markRateLimited(context, videoId, key, wait)
+                return null
+            }
+            delay(wait)
+            attempt++
+        }
+    }
+
+    /** Keeps a rate-limited song until its server-stated wait has passed; next playback retries. */
+    private suspend fun markRateLimited(context: Context, videoId: String, key: Int, delayMs: Long) {
+        val retryAt = System.currentTimeMillis() + delayMs.coerceAtLeast(0L)
+        store(context).update(videoId) { it.copy(songRetryKey = key, songRetryAtMs = retryAt) }
+    }
+
+    /** The one line the phone log needs for a 429, without words or keys. */
+    private fun rateLimitedLog(videoId: String, retryAfterMs: Long) {
+        TrackLog.d(TAG, "song-sync: rate-limited retryAfter=${retryAfterMs}ms", videoId)
     }
 
     /** One line about a song check, without the words, the search or any key. */
@@ -1302,6 +1389,8 @@ object LyricsTiming {
             entry.copy(
                 aiAttemptedKey = key,
                 aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + engine).distinct(),
+                songRetryKey = null,
+                songRetryAtMs = null,
             )
         }
     }
@@ -1346,6 +1435,8 @@ object LyricsTiming {
                 aiAttemptedKey = null,
                 aiAttemptedEngines = emptyList(),
                 whisperKey = null,
+                songRetryKey = null,
+                songRetryAtMs = null,
             )
         }
         _changes.tryEmit(videoId)
@@ -1629,6 +1720,13 @@ object LyricsTiming {
          */
         val aiAttemptedKey: Int? = null,
         val aiAttemptedEngines: List<String> = emptyList(),
+        /**
+         * A 429 did not spend the engine; the song is only held until
+         * [songRetryAtMs], then the next playback asks again. The key is the
+         * lyrics text the hold was made for.
+         */
+        val songRetryKey: Int? = null,
+        val songRetryAtMs: Long? = null,
         /** This video's once-ever calibration sample has been claimed; see [claimCalibrationSample]. */
         val calibrationSampled: Boolean = false,
     )
