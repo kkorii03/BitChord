@@ -262,7 +262,7 @@ object AppSettings {
      *
      * On by default: the wrong sound is a defect in a file the app wrote, and
      * the listener's data and storage are not the constraint. The repair runs
-     * only while charging, and ignores [wifiOnlyDownloads] for that reason.
+     * in the background and ignores [wifiOnlyDownloads] for that reason.
      */
     val autoRedownloadMvSound = MutableStateFlow(true)
 

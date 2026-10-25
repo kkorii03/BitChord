@@ -341,10 +341,10 @@ dependencies {
     // media3-decoder, which media3-exoplayer already brings.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
-    // ---- Deferred download repair: charging-constrained one-shot work ----
+    // ---- Background download repair: one-shot work ----
     // The repair of a download that turned out to hold a music video's sound
-    // must wait for the charger without polling. The work itself is the
-    // ordinary download queue; this only provides the constraint.
+    // is scheduled without polling and without a charger constraint. The work
+    // itself is the ordinary download queue; this only provides the trigger.
     implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     // ---- Images: Coil 3 + Palette (dominant colors for the mesh gradient) ----

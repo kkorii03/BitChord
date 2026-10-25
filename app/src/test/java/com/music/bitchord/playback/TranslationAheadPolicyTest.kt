@@ -13,7 +13,7 @@ class TranslationAheadPolicyTest {
             TranslationAheadPolicy.plan(
                 metered = true,
                 lowPower = true,
-                charging = false,
+                allowHeavy = false,
                 autoplayUncertain = false,
             ),
         )
@@ -26,42 +26,46 @@ class TranslationAheadPolicyTest {
             TranslationAheadPolicy.plan(
                 metered = true,
                 lowPower = false,
-                charging = false,
+                allowHeavy = true,
                 autoplayUncertain = false,
             ),
         )
     }
 
     @Test
-    fun `wifi while charging gets the whole pass`() {
+    fun `wifi gets the whole pass without a charger`() {
         assertEquals(
             Plan.FULL,
             TranslationAheadPolicy.plan(
                 metered = false,
                 lowPower = false,
-                charging = true,
+                allowHeavy = true,
                 autoplayUncertain = false,
             ),
         )
+    }
+
+    @Test
+    fun `wifi while charging still relaxes low power`() {
         assertEquals(
             Plan.FULL,
             TranslationAheadPolicy.plan(
                 metered = false,
                 lowPower = true,
-                charging = true,
+                allowHeavy = true,
                 autoplayUncertain = false,
             ),
         )
     }
 
     @Test
-    fun `wifi off the charger only fetches lyrics`() {
+    fun `wifi in low power off the charger only fetches lyrics`() {
         assertEquals(
             Plan.LYRICS_ONLY,
             TranslationAheadPolicy.plan(
                 metered = false,
-                lowPower = false,
-                charging = false,
+                lowPower = true,
+                allowHeavy = false,
                 autoplayUncertain = false,
             ),
         )
@@ -74,7 +78,7 @@ class TranslationAheadPolicyTest {
             TranslationAheadPolicy.plan(
                 metered = null,
                 lowPower = false,
-                charging = true,
+                allowHeavy = true,
                 autoplayUncertain = false,
             ),
         )
@@ -87,7 +91,7 @@ class TranslationAheadPolicyTest {
             TranslationAheadPolicy.plan(
                 metered = false,
                 lowPower = false,
-                charging = true,
+                allowHeavy = true,
                 autoplayUncertain = true,
             ),
         )

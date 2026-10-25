@@ -619,7 +619,7 @@ fun SettingsScreen(
                 )
             }
             val autoRedownloadMvSoundTitle = stringResource(R.string.auto_redownload_mv_sound)
-            row(autoRedownloadMvSoundTitle, "mv", "video", "download", "charging", divided = false) {
+            row(autoRedownloadMvSoundTitle, "mv", "video", "download", "automatic", divided = false) {
                 SettingsSubRow(
                     title = autoRedownloadMvSoundTitle,
                     checked = autoRedownloadMvSound,

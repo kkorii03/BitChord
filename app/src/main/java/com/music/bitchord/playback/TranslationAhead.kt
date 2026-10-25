@@ -24,9 +24,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Lyric translations made before anyone taps the button.
  *
  *  - [nextTrack]: while a song plays, the next one's lyrics are looked up —
- *    and, only on unmetered power (see [TranslationAheadPolicy]), timed and
- *    translated too. The lyrics land in [LyricsRepository]'s memo, which is
- *    what makes the player show the very lines the translation was made from.
+ *    and, only on an unmetered connection when heavy work is allowed (see
+ *    [TranslationAheadPolicy]), timed and translated too. The lyrics land in
+ *    [LyricsRepository]'s memo, which is what makes the player show the very
+ *    lines the translation was made from.
  *  - [trackStarted]: the same heavy pass for the track that has just become
  *    current, for the cases where doing it during the previous one was not
  *    worth the data or the battery.
@@ -114,7 +115,7 @@ internal object TranslationAhead {
      * if AutoPlay skipped that), so this is normally the memoised answer.
      *
      * On power saving the heavy part stays deferred ([AppSettings.heavyWorkAllowed]);
-     * the player's own pass picks it up when charging, exactly as before.
+     * the player's own pass picks it up when heavy work is allowed again.
      */
     fun trackStarted(context: Context, song: Song?) {
         if (song == null || !AppSettings.syncedLyrics.value) {
@@ -193,8 +194,8 @@ internal object TranslationAhead {
     private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
         // Low power defers the whole ahead-of-time pass: it uploads or streams
         // for a track nobody is listening to yet. The next track's own
-        // automatic pass picks it up once the phone is charging or no longer
-        // saving power; the manual button is unaffected.
+        // automatic pass picks it up once heavy work is allowed again; the
+        // manual button is unaffected.
         if (!AppSettings.heavyWorkAllowed) return
         val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
         if (!query.isVideo || song.localUri != null) return

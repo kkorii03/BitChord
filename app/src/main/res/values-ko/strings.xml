@@ -179,7 +179,7 @@
     <string name="download_quality">다운로드 품질</string>
     <string name="download_wifi_only">Wi-Fi에서만 다운로드</string>
     <string name="auto_redownload_mv_sound">MV 소리로 저장된 곡 자동으로 노래로 다시 받기</string>
-    <string name="auto_redownload_mv_sound_subtitle">다운로드가 MV 소리로 판별되면 충전 중에 노래 버전을 다시 받습니다. Wi-Fi 전용 설정은 적용되지 않습니다.</string>
+    <string name="auto_redownload_mv_sound_subtitle">다운로드가 MV 소리로 판별되면 노래 버전을 자동으로 다시 받습니다. Wi-Fi 전용 설정은 적용되지 않습니다.</string>
     <string name="mv_sound_suspect_banner">MV 소리로 저장된 곡 %1$d개 · 노래로 다시 받기</string>
     <string name="convert_to_audio">오디오로 전환</string>
     <string name="convert_to_video">비디오로 전환</string>

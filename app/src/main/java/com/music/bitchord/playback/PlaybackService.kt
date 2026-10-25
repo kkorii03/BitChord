@@ -9385,7 +9385,8 @@ class PlaybackService : MediaLibraryService() {
      * after a transition, and a song added to play next counts too.
      *
      * Lyrics are always worth fetching ahead; timing and translation only on
-     * unmetered power (see [TranslationAheadPolicy]). A slot AutoPlay may
+     * an unmetered connection when heavy work is allowed (see
+     * [TranslationAheadPolicy]). A slot AutoPlay may
      * replace is not prepared at all, and the heavy pass for the track that is
      * actually playing is made when it starts — [scheduleCurrentTranslationAhead].
      */
@@ -9396,7 +9397,7 @@ class PlaybackService : MediaLibraryService() {
         val plan = TranslationAheadPolicy.plan(
             metered = AppSettings.meteredConnection.value,
             lowPower = AppSettings.lowPower.value,
-            charging = AppSettings.charging.value,
+            allowHeavy = AppSettings.heavyWorkAllowed,
             autoplayUncertain = fromAutoplay,
         )
         if (plan == TranslationAheadPolicy.Plan.NONE) return

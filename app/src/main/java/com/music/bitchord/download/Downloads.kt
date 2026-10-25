@@ -242,7 +242,7 @@ object Downloads {
      *   one of many. Carried no further than [DownloadSession], which is the
      *   only thing that has to say *why* forty tracks are in the queue.
      * @param allowMetered a replacement the listener asked for, or one the
-     *   charging-time repair is doing: data is not the constraint, so the
+     *   automatic repair is doing: data is not the constraint, so the
      *   Wi-Fi-only rule does not apply.
      */
     fun enqueue(

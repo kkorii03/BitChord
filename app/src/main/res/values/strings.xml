@@ -189,7 +189,7 @@
     <string name="download_quality">Download quality</string>
     <string name="download_wifi_only">Download over Wi-Fi only</string>
     <string name="auto_redownload_mv_sound">Re-download music-video sound as the song automatically</string>
-    <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version while charging. Wi-Fi only does not apply.</string>
+    <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version automatically. Wi-Fi only does not apply.</string>
     <string name="mv_sound_suspect_banner">%1$d downloaded song(s) have the music video\'s sound · Re-download as the song</string>
     <string name="convert_to_audio">Convert to audio</string>
     <string name="convert_to_video">Convert to video</string>

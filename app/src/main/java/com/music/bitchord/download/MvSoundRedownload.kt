@@ -16,11 +16,13 @@ import com.music.bitchord.data.settings.AppSettings
  * video's sound, when the listener has left the repair to the app.
  *
  * One one-shot piece of work, not a poll: it is scheduled when a verdict is
- * first remembered and runs once the phone is charging. Wi-Fi is deliberately
- * not a constraint — the setting exists because data and storage are not the
- * scarce thing here; the battery is. The download itself goes through the
- * ordinary [Downloads] queue and [DownloadService], so it is the same work a
- * tap would have started.
+ * first remembered, on app start and on playback. It runs as soon as a network
+ * is available, whatever the charger is doing. Wi-Fi is deliberately not a
+ * constraint — the setting exists because data and storage are not the scarce
+ * thing here. The download itself goes through the ordinary [Downloads] queue
+ * and [DownloadService], so it is the same work a tap would have started: one
+ * file at a time, and the next app start or playback picks up whatever is still
+ * remembered after an interruption.
  */
 object MvSoundRedownload {
 
@@ -31,7 +33,6 @@ object MvSoundRedownload {
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiresCharging(true)
                     .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build(),
             )
@@ -60,7 +61,7 @@ class MvSoundRedownloadWorker(
         if (!AppSettings.autoRedownloadMvSound.value) return Result.success()
         val queued = Downloads.redownloadSuspected(applicationContext)
         if (queued > 0) {
-            TrackLog.i("BitChord", "song version: repairing $queued downloaded file(s) on charge")
+            TrackLog.i("BitChord", "song version: repairing $queued downloaded file(s) in the background")
         }
         return Result.success()
     }
