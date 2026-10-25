@@ -3730,19 +3730,44 @@ class PlaybackService : MediaLibraryService() {
         song: Song,
         version: Song,
         viaDownload: Boolean,
+        forceStream: Boolean = false,
     ) {
         beforeAudioVersionJob?.cancel()
         beginVersionHold(exoPlayer)
         beforeAudioVersionJob = scope.launch {
-            val via = if (viaDownload) "download" else "cache"
+            val via = when {
+                forceStream -> "stream"
+                viaDownload -> "download"
+                else -> "cache"
+            }
             TrackLog.i(
                 "BitChord",
                 "song version: ${song.videoId} -> ${version.videoId} via $via before-audio",
                 about = song.videoId,
             )
-            installSongVersionBeforeAudio(exoPlayer, mediaId, song, version)
+            installSongVersionBeforeAudio(exoPlayer, mediaId, song, version, forceStream)
             if (player === exoPlayer) resumeVersionHold(exoPlayer)
         }
+    }
+
+    /**
+     * Replaces a row whose saved file is another upload's sound with the same
+     * recording streamed from the network. The file is kept as the offline
+     * fallback; only this play avoids it.
+     */
+    private fun installStreamedRecording(
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        song: Song,
+    ) {
+        installPreResolvedVersion(
+            exoPlayer,
+            mediaId,
+            song,
+            song.copy(localUri = null, localPath = null),
+            viaDownload = false,
+            forceStream = true,
+        )
     }
 
     /**
@@ -3751,10 +3776,15 @@ class PlaybackService : MediaLibraryService() {
      * [Downloads.remember]. Null for a file saved on its own, which is every
      * ordinary download; the caller then falls back to the network lookup.
      */
-    private fun downloadedSongVersionFor(song: Song): Song? {
+    private fun downloadedSongVersionFor(song: Song, offline: Boolean): Song? {
         val alias = Downloads.savedAliasFor(song.videoId) ?: return null
         val uri = Downloads.verifiedSavedUri(alias) ?: return null
         val meta = Downloads.savedMetadataFor(alias)
+        val streamOnly = SongVersionPolicy.downloadedFileUse(
+            alias,
+            Downloads.savedSoundSourceFor(alias),
+            online = !offline,
+        ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
         return Song(
             videoId = alias,
             title = meta?.title?.takeIf { it.isNotBlank() } ?: song.title,
@@ -3772,7 +3802,7 @@ class PlaybackService : MediaLibraryService() {
             playbackSource = song.playbackSource,
             playbackSourceType = song.playbackSourceType,
             playbackSourceId = song.playbackSourceId,
-            localUri = uri,
+            localUri = if (streamOnly) null else uri,
             isVideoOrigin = true,
         )
     }
@@ -3787,18 +3817,19 @@ class PlaybackService : MediaLibraryService() {
         mediaId: String,
         song: Song,
         resolved: Song,
+        forceStream: Boolean = false,
     ) {
         if (player !== exoPlayer ||
             exoPlayer.currentMediaItem?.mediaId != mediaId ||
             SongVersionPolicy.hasMadeFirstSound(mediaId, audibleMediaId) ||
-            resolved.videoId == song.videoId ||
+            (resolved.videoId == song.videoId && !forceStream) ||
             resolved.isVideo
         ) return
         val index = exoPlayer.currentMediaItemIndex
         if (index !in 0 until exoPlayer.mediaItemCount) return
         val now = exoPlayer.getMediaItemAt(index)
         val replacement = QueueShuffle.withQueueMetadata(
-            resolved.toMediaItem(),
+            resolved.toMediaItem(useDownloadedFile = !forceStream),
             newEntryId = now.queueEntryId,
             newCanonicalIndex = now.canonicalIndex,
             newTier = now.queueTier,
