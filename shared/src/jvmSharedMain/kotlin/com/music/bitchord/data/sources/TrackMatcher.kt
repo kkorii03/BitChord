@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources
 
+import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import kotlin.math.abs
@@ -40,6 +41,20 @@ import java.util.Locale
  * rules a candidate out however well its title reads.
  */
 object TrackMatcher {
+
+    /**
+     * Title/credit normalisation is pure but not free: a version search asks
+     * the same question of every source and every answer, and the lyrics,
+     * cover and canvas paths ask it again for the same row. These small LRUs
+     * make that one calculation per distinct input rather than one per caller.
+     * Only pure results are kept; anything that reads [ArtistNameIndex] stays
+     * out of the caches.
+     */
+    private const val MEMO_ENTRIES = 256
+    private val titleMemo = BoundedMemo<Pair<String, String>, TitleParts>(MEMO_ENTRIES)
+    private val artistMemo = BoundedMemo<String, List<String>>(MEMO_ENTRIES)
+    private val artistNamesMemo = BoundedMemo<String, Set<List<String>>>(MEMO_ENTRIES)
+    private val queryMemo = BoundedMemo<Pair<String, String>, List<String>>(MEMO_ENTRIES)
 
     /** The recording being looked for, as much of it as the queue knows. */
     data class Target(
@@ -93,7 +108,10 @@ object TrackMatcher {
      * and would otherwise score every result down. A kana title gets a third,
      * in the other script (below).
      */
-    fun queries(target: Target): List<String> {
+    fun queries(target: Target): List<String> =
+        queryMemo.getOrPut(target.title to target.artist) { queriesUncached(target) }
+
+    private fun queriesUncached(target: Target): List<String> {
         val titles = titleVariants(target.title, target.artist)
         val title = titles.firstOrNull().orEmpty()
         if (title.isBlank()) return emptyList()
@@ -165,7 +183,10 @@ object TrackMatcher {
      * neither. A bracket that is not a name ("f(x)", whose base is one letter)
      * is left alone rather than cut into nonsense.
      */
-    internal fun artistVariants(artist: String): List<String> {
+    internal fun artistVariants(artist: String): List<String> =
+        artistMemo.getOrPut(artist) { artistVariantsUncached(artist) }
+
+    private fun artistVariantsUncached(artist: String): List<String> {
         val out = LinkedHashSet<String>()
         splitTopLevel(normalize(artist), ARTIST_SEPARATORS).forEach { part ->
             expandArtistName(part).forEach { name -> out += name }
@@ -807,7 +828,10 @@ object TrackMatcher {
         fun cores(): List<String> = (listOf(core) + altCores).filter { it.isNotBlank() }.distinct()
     }
 
-    internal fun parseTitle(raw: String, artist: String = ""): TitleParts {
+    internal fun parseTitle(raw: String, artist: String = ""): TitleParts =
+        titleMemo.getOrPut(raw to artist) { parseTitleUncached(raw, artist) }
+
+    private fun parseTitleUncached(raw: String, artist: String = ""): TitleParts {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
         // A playlist row prints its position in front of the name ("3.여수밤바다",
@@ -1187,7 +1211,10 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> = artistVariants(value)
+    internal fun artistNames(value: String): Set<List<String>> =
+        artistNamesMemo.getOrPut(value) { artistNamesUncached(value) }
+
+    private fun artistNamesUncached(value: String): Set<List<String>> = artistVariants(value)
         .map { name ->
             name.split(WORD_SPLIT)
                 .map { it.replace(NON_ALNUM, "") }

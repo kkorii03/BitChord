@@ -1,5 +1,6 @@
 package com.music.bitchord.data.cover
 
+import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.lyrics.ArtistAliases
 import com.music.bitchord.data.model.Song
 
@@ -49,6 +50,16 @@ import com.music.bitchord.data.model.Song
  * while what is shown stays the upload's own title.
  */
 object CoverTitles {
+
+    /**
+     * Clip-title tidying is pure regex work, and one row is read by the lyrics
+     * lookup, the canvas search, the scrobble and the matcher. Keep the tidied
+     * form per raw title so those callers do not repeat the same substitutions.
+     * The reading that follows still applies the current channel/singer/original
+     * facts, which are not cached here.
+     */
+    private const val TIDY_MEMO_ENTRIES = 256
+    private val tidyMemo = BoundedMemo<String, Tidy>(TIDY_MEMO_ENTRIES)
 
     /** A cover, read. */
     data class Cover(
@@ -306,7 +317,10 @@ object CoverTitles {
      * official channel would have written. Whether it said "Live Cover" is
      * kept: "X - Y Live Cover" names the singer first.
      */
-    private fun normalize(title: String): Tidy {
+    private fun normalize(title: String): Tidy =
+        tidyMemo.getOrPut(title) { normalizeUncached(title) }
+
+    private fun normalizeUncached(title: String): Tidy {
         val live = LIVE_WORD.containsMatchIn(title)
         var text = BAR.replace(title, " | ")
         while (true) {

@@ -479,11 +479,14 @@ object AppSettings {
     val charging = MutableStateFlow(true)
 
     /**
-     * Automatic AI timing and the background analysis fetch may run: either the
-     * phone is not saving power, or it is plugged in and can afford them.
-     * Manual asks never read this.
+     * Automatic AI timing and the background analysis fetch may run while the
+     * phone is not saving power. The charger is deliberately not consulted:
+     * being plugged in must never be the condition that lets a feature run,
+     * and being unplugged must never be the reason it waits. Low power is the
+     * listener's own choice, the system saver, or a low battery, so it still
+     * defers this work until power saving is off. Manual asks never read this.
      */
-    val heavyWorkAllowed: Boolean get() = !lowPower.value || charging.value
+    val heavyWorkAllowed: Boolean get() = !lowPower.value
 
     /** What the last battery broadcast said; kept to recompute [lowPower]. */
     private var powerSaveMode = false

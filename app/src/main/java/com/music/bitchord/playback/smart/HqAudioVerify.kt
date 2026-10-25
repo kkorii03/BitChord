@@ -30,6 +30,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
@@ -90,6 +91,20 @@ object HqAudioVerify {
      * [HqReferenceCache].
      */
     private val referenceCache = HqReferenceCache()
+
+    /**
+     * The same profiles across app restarts, in a few dozen kilobytes each.
+     *
+     * The memory cache only helps within one run. A candidate first seen in a
+     * later session — a source added since, or a search that found a different
+     * row — would otherwise decode the same ninety seconds of the YouTube
+     * reference again. The answer is a property of that recording and cannot
+     * change, so it is worth the small file. Bounded and oldest-first; a
+     * partial profile is never written, for the same reason it is not kept in
+     * memory (see [HqReferenceCache]).
+     */
+    private const val REFERENCE_DIR = "hq_reference"
+    private const val MAX_REFERENCE_FILES = 64
 
     /**
      * One reference decode per YouTube id at a time.
@@ -237,12 +252,64 @@ object HqAudioVerify {
         noReference[youtubeId] = now
     }
 
+    /** A stored reference profile for [youtubeId], or null when there is none usable. */
+    private fun diskReference(context: Context, youtubeId: String): ChromaAlignment.Features? {
+        val file = referenceFile(context, youtubeId)
+        if (!file.exists()) return null
+        val features = runCatching {
+            ChromaAlignment.Features.fromBytes(file.readBytes())
+        }.getOrNull()
+        if (features == null || !HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
+            runCatching { file.delete() }
+            return null
+        }
+        file.setLastModified(System.currentTimeMillis())
+        return features
+    }
+
+    /** Keeps [features] for the next session; a failed write is not worth failing the verification over. */
+    private fun storeReference(context: Context, youtubeId: String, features: ChromaAlignment.Features) {
+        runCatching {
+            val dir = File(context.filesDir, REFERENCE_DIR)
+            dir.mkdirs()
+            val file = referenceFile(context, youtubeId)
+            val temporary = File(dir, file.name + ".tmp")
+            temporary.writeBytes(features.toBytes())
+            try {
+                if (!temporary.renameTo(file)) {
+                    file.delete()
+                    temporary.renameTo(file)
+                }
+            } finally {
+                temporary.delete()
+            }
+            val files = dir.listFiles { candidate -> candidate.name.endsWith(".bin") }.orEmpty()
+            if (files.size > MAX_REFERENCE_FILES) {
+                files.sortedBy { it.lastModified() }
+                    .take(files.size - MAX_REFERENCE_FILES)
+                    .forEach { it.delete() }
+            }
+        }.onFailure {
+            TrackLog.d(TAG, "hq-verify: could not keep reference for $youtubeId: ${it.message}", youtubeId)
+        }
+    }
+
+    private fun referenceFile(context: Context, youtubeId: String): File {
+        val safe = youtubeId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+            .ifBlank { "id" }
+        return File(
+            File(context.filesDir, REFERENCE_DIR),
+            "$safe-${youtubeId.hashCode().toUInt()}.bin",
+        )
+    }
+
     /**
-     * The YouTube song version's opening, from the cache or a local file.
+     * The YouTube song version's opening, from memory, disk or a local file.
      *
-     * The cache answers a repeat, and [referenceLocks] makes the first one
-     * answer for every candidate racing beside it. Only the wrapper touches
-     * either; [referenceFeaturesUncached] is the one decode.
+     * The memory cache answers a repeat within this run, the disk cache one
+     * from an earlier run, and [referenceLocks] makes the first decode answer
+     * for every candidate racing beside it. Only the wrapper touches the
+     * caches; [referenceFeaturesUncached] is the one decode.
      */
     private suspend fun referenceFeatures(
         context: Context,
@@ -253,6 +320,11 @@ object HqAudioVerify {
         try {
             return lock.withLock {
                 referenceCache.get(youtubeId)?.let { return@withLock it }
+                diskReference(context, youtubeId)?.let { cached ->
+                    referenceCache.put(youtubeId, cached)
+                    noReference.remove(youtubeId)
+                    return@withLock cached
+                }
                 referenceFeaturesUncached(context, youtubeId)
             }
         } finally {
@@ -299,6 +371,7 @@ object HqAudioVerify {
                 // profile would make every later candidate compare against it.
                 if (HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
                     referenceCache.put(youtubeId, features)
+                    storeReference(context, youtubeId, features)
                 }
                 noReference.remove(youtubeId)
             }
