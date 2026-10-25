@@ -45,6 +45,13 @@ internal object AiTimingPolicy {
     val AHEAD_ENGINES = listOf(DEEPGRAM, GEMINI)
 
     /**
+     * What a song check may spend. There is no video edit to tell apart from
+     * the record, so the only thing worth asking for is a word timing — and
+     * Whisper is a paid-per-minute upgrade the song path does not take.
+     */
+    val SONG_ENGINES = listOf(DEEPGRAM)
+
+    /**
      * The agreement an answer needs to count as the answer, and to be applied
      * to the lyrics at all. Logs showed 50–67% answers pushing Korean lines
      * seconds off time, so the floor is the same 70% used by
@@ -69,12 +76,17 @@ internal object AiTimingPolicy {
      * low-agreement answer therefore gets the next engine once, never the
      * same one again. [measurementGaveUp] widens the pool to Whisper, whose
      * cost is only worth paying once the free measurement has nothing.
+     *
+     * [songOnly] is the record-timed song check: its pool is [SONG_ENGINES],
+     * so Whisper and Gemini are never spent there — not even as the
+     * post-measurement upgrade. The manual button is unchanged.
      */
     fun nextEngines(
         knowledge: AiTimingKnowledge,
         lyricsKey: Int,
         manual: Boolean,
         measurementGaveUp: Boolean,
+        songOnly: Boolean = false,
     ): List<String> {
         if (manual) return ALL_ENGINES
         val spent = spentOn(knowledge, lyricsKey)
@@ -82,10 +94,15 @@ internal object AiTimingPolicy {
             // Once the free measurement has given up, the answer is all the
             // timing this song has, and a quicker engine's is coarser than
             // Whisper's word stamps: Whisper may still upgrade it — once.
-            val upgrade = measurementGaveUp && knowledge.answerEngine != WHISPER && WHISPER !in spent
+            val upgrade = !songOnly && measurementGaveUp &&
+                knowledge.answerEngine != WHISPER && WHISPER !in spent
             return if (upgrade) listOf(WHISPER) else emptyList()
         }
-        val pool = if (measurementGaveUp) ALL_ENGINES else AHEAD_ENGINES
+        val pool = when {
+            songOnly -> SONG_ENGINES
+            measurementGaveUp -> ALL_ENGINES
+            else -> AHEAD_ENGINES
+        }
         return pool.filter { it !in spent }
     }
 
@@ -106,5 +123,6 @@ internal object AiTimingPolicy {
         lyricsKey: Int,
         manual: Boolean,
         measurementGaveUp: Boolean,
-    ): Boolean = nextEngines(knowledge, lyricsKey, manual, measurementGaveUp).isNotEmpty()
+        songOnly: Boolean = false,
+    ): Boolean = nextEngines(knowledge, lyricsKey, manual, measurementGaveUp, songOnly).isNotEmpty()
 }

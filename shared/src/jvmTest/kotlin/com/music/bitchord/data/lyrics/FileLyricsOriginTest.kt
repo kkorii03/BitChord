@@ -25,4 +25,16 @@ class FileLyricsOriginTest {
         assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording(null, "JucvYrdSIcM"))
         assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("PMivT7MJ41M", ""))
     }
+
+    @Test
+    fun `an older file without an id has never been verified`() {
+        // No id is not a mismatch for the existing rule, but it is the reason
+        // the song check runs once: nothing ever confirmed these times.
+        assertTrue(FileLyricsOrigin.timingIsUnverified(null, "JucvYrdSIcM"))
+        assertTrue(FileLyricsOrigin.timingIsUnverified("", "JucvYrdSIcM"))
+        assertTrue(FileLyricsOrigin.timingIsUnverified("PMivT7MJ41M", "JucvYrdSIcM"))
+        assertFalse(FileLyricsOrigin.timingIsUnverified("PMivT7MJ41M", "PMivT7MJ41M"))
+        assertFalse(FileLyricsOrigin.timingIsUnverified(null, ""))
+        assertFalse(FileLyricsOrigin.timingIsUnverified("PMivT7MJ41M", ""))
+    }
 }

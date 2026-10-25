@@ -32,4 +32,15 @@ object FileLyricsOrigin {
         val stored = storedVideoId?.takeIf { it.isNotBlank() } ?: return false
         return playingVideoId.isNotBlank() && stored != playingVideoId
     }
+
+    /**
+     * Whether these lyrics' times have never been checked against what is
+     * playing. Wider than [timingBelongsToAnotherRecording] on purpose: a file
+     * whose header names no id (written before the id was recorded) has never
+     * been verified at all, so it is worth one check — the song path spends at
+     * most one per lyrics text and refuses shifts past the song floor.
+     */
+    fun timingIsUnverified(storedVideoId: String?, playingVideoId: String): Boolean =
+        playingVideoId.isNotBlank() &&
+            (storedVideoId.isNullOrBlank() || storedVideoId != playingVideoId)
 }

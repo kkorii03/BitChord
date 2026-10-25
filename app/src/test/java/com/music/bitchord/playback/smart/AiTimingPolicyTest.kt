@@ -128,4 +128,44 @@ class AiTimingPolicyTest {
             AiTimingPolicy.nextEngines(knowledge, key, manual = false, measurementGaveUp = true),
         )
     }
+
+    @Test
+    fun songCheckSpendsDeepgramOnly() {
+        assertEquals(
+            listOf("Deepgram"),
+            AiTimingPolicy.nextEngines(AiTimingKnowledge(), key, manual = false, measurementGaveUp = false, songOnly = true),
+        )
+        assertEquals(
+            AiTimingPolicy.SONG_ENGINES,
+            AiTimingPolicy.nextEngines(AiTimingKnowledge(), key, manual = false, measurementGaveUp = true, songOnly = true),
+        )
+        val spent = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf("Deepgram"))
+        assertEquals(
+            emptyList<String>(),
+            AiTimingPolicy.nextEngines(spent, key, manual = false, measurementGaveUp = true, songOnly = true),
+        )
+        assertFalse(AiTimingPolicy.shouldAskAgain(spent, key, manual = false, measurementGaveUp = false, songOnly = true))
+    }
+
+    @Test
+    fun songCheckNeverUpgradesToWhisper() {
+        val accepted = AiTimingKnowledge(answerKey = key, answerEngine = "Deepgram", answerMatch = 95)
+        assertEquals(
+            emptyList<String>(),
+            AiTimingPolicy.nextEngines(accepted, key, manual = false, measurementGaveUp = true, songOnly = true),
+        )
+        // The same entry on the video path still gets its one Whisper upgrade.
+        assertEquals(
+            listOf("Whisper"),
+            AiTimingPolicy.nextEngines(accepted, key, manual = false, measurementGaveUp = true),
+        )
+    }
+
+    @Test
+    fun songCheckLeavesTheManualButtonAlone() {
+        assertEquals(
+            AiTimingPolicy.ALL_ENGINES,
+            AiTimingPolicy.nextEngines(AiTimingKnowledge(), key, manual = true, measurementGaveUp = false, songOnly = true),
+        )
+    }
 }

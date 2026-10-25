@@ -44,6 +44,66 @@ class LyricsAiGuardTest {
     }
 
     @Test
+    fun aSongCheckIsWantedOnlyForTimedSongsWithWordsToHear() {
+        val english = listOf("I know you love me", "and I don't know what to do", "with all of it", "so I wait")
+        assertTrue(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false, timed = true, sungLines = 4, title = "Loved", artist = "IU", texts = english,
+            ),
+        )
+        // A video is measured against the record instead.
+        assertFalse(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = true, timed = true, sungLines = 4, title = "Loved", artist = "IU", texts = english,
+            ),
+        )
+        // Nothing to fit a line through.
+        assertFalse(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false, timed = true, sungLines = 2, title = "Loved", artist = "IU", texts = english,
+            ),
+        )
+        // Untimed lyrics have no times to check.
+        assertFalse(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false, timed = false, sungLines = 4, title = "Loved", artist = "IU", texts = english,
+            ),
+        )
+        // Korean songs and instrumentals are refused by the same test as on video.
+        assertFalse(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false,
+                timed = true,
+                sungLines = 4,
+                title = "사랑해",
+                artist = "아이유",
+                texts = listOf("사랑해 너를 영원히", "이 밤이 지나면", "다시 만나"),
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false,
+                timed = true,
+                sungLines = 4,
+                title = "River Flows in You (Inst.)",
+                artist = "Yiruma",
+                texts = english,
+            ),
+        )
+    }
+
+    @Test
+    fun aSongCheckMayNotStartTheWordsFifteenSecondsOff() {
+        assertTrue(LyricsAiGuard.songShiftAllows(15_000L))
+        assertTrue(LyricsAiGuard.songShiftAllows(-15_000L))
+        assertTrue(LyricsAiGuard.songShiftAllows(0L))
+        assertFalse(LyricsAiGuard.songShiftAllows(15_001L))
+        assertFalse(LyricsAiGuard.songShiftAllows(-15_001L))
+        // The video rule is unchanged: record-timed audio still has no limit there.
+        assertTrue(LyricsAiGuard.shiftAllows(isVideo = false, firstLineShiftMs = 60_000L))
+    }
+
+    @Test
     fun instrumentalTitlesSkipTranscriptionAndDeepgram() {
         assertTrue(LyricsAiGuard.isInstrumentalTitle("River Flows in You (Instrumental)"))
         assertTrue(LyricsAiGuard.isInstrumentalTitle("River Flows in You [Inst.]"))

@@ -68,6 +68,28 @@ class LyricsTimingAlignTest {
         assertNull(TimingFit.fit(points))
     }
 
+    @Test
+    fun aShortAnswerSpanCanOnlySayShiftNotPace() {
+        // Three seconds of answers are all within one pair-span floor of each
+        // other, so no slope is claimed: the result is the plain shift it is.
+        val points = listOf(12_000L to 17_000L, 13_000L to 18_000L, 15_000L to 20_100L)
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.0, line.rate)
+        assertEquals(5_000L, line.offsetMs)
+        assertEquals(points.size, line.inliers)
+    }
+
+    @Test
+    fun aNinetySecondAnswerSpanStillReadsAsTheSameShift() {
+        // The song check's sample length must not change what a plain offset
+        // means: a spread this wide still snaps to the record's pace.
+        val points = listOf(10_000L, 40_000L, 70_000L, 100_000L).map { it to it + 4_000L }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.0, line.rate)
+        assertEquals(4_000L, line.offsetMs)
+        assertEquals(points.size, line.inliers)
+    }
+
     // ---- The time map ------------------------------------------------------------------
 
     @Test

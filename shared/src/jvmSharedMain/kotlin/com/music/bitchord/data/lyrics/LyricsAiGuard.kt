@@ -29,6 +29,15 @@ object LyricsAiGuard {
      */
     const val VIDEO_MAX_SHIFT_MS = 20_000L
 
+    /**
+     * How far a song check may move the words. The song is played from the
+     * record itself, so its first sung line is the record's: an answer that
+     * starts the words later than this is following something else (a live
+     * version, a different edit) and is refused. Deliberately a policy on
+     * applying the answer, not a change to the fitting arithmetic.
+     */
+    const val SONG_MAX_SHIFT_MS = 15_000L
+
     /** An answer whose agreement was never recorded (older entries) is left as it was. */
     fun agreementAllows(matchPercent: Int?): Boolean =
         matchPercent == null || matchPercent >= MIN_MATCH_PERCENT
@@ -36,6 +45,14 @@ object LyricsAiGuard {
     /** The first sung line's movement; a video may not be pushed further than [VIDEO_MAX_SHIFT_MS]. */
     fun shiftAllows(isVideo: Boolean, firstLineShiftMs: Long): Boolean =
         !isVideo || abs(firstLineShiftMs) <= VIDEO_MAX_SHIFT_MS
+
+    /**
+     * The same floor for a record-timed song: [SONG_MAX_SHIFT_MS], whichever
+     * way the answer wants to move it. Kept apart from [shiftAllows] so the
+     * video rule and every existing record-timed path keep behaving as before.
+     */
+    fun songShiftAllows(firstLineShiftMs: Long): Boolean =
+        abs(firstLineShiftMs) <= SONG_MAX_SHIFT_MS
 
     /** Whether this AI answer may be applied to these lyrics at all. */
     fun allowsAiTiming(isVideo: Boolean, matchPercent: Int?, firstLineShiftMs: Long): Boolean =
@@ -49,6 +66,23 @@ object LyricsAiGuard {
      */
     fun wantsDeepgram(title: String, artist: String, lyricsTexts: List<String>): Boolean =
         !isKoreanSong(title, artist, lyricsTexts) && !isInstrumentalTitle(title)
+
+    /**
+     * Whether a record-timed song's own lyrics are worth checking against its
+     * audio. A video's timing is measured against the record instead (chroma),
+     * so this is only for the song version: timed words, at least three sung
+     * lines to fit a line through, and words Deepgram can hear — the same test
+     * the video path already uses. Instrumentals and Korean songs are refused
+     * there, and the song check pays for nothing else.
+     */
+    fun songTimingWanted(
+        isVideo: Boolean,
+        timed: Boolean,
+        sungLines: Int,
+        title: String,
+        artist: String,
+        texts: List<String>,
+    ): Boolean = !isVideo && timed && sungLines >= 3 && wantsDeepgram(title, artist, texts)
 
     /** Korean when the name is written in Hangul or the words themselves are. */
     fun isKoreanSong(title: String, artist: String, lyricsTexts: List<String>): Boolean =
