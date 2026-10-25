@@ -194,6 +194,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // After AppSettings, whose flows it feeds: the power-save switch and
         // the battery can change while the app is in the background.
         com.music.bitchord.playback.LowPowerDevice.start(this)
+        // The screen state the playback service's receiver will keep current;
+        // read once here so analysis started before the service is up (or in a
+        // process reused with the screen already off) is not misinformed.
+        com.music.bitchord.playback.PowerState.initialize(this)
         // Before anything resolves a track: an addon with `checkValidLossless`
         // is gated on this, and the gate reads "no" until it has looked.
         com.music.bitchord.playback.audio.LosslessOutput.init(this)

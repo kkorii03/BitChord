@@ -600,8 +600,9 @@ internal fun CurrentLyricStrip(
     var activeText by remember { mutableStateOf("") }
     if (isSynced) {
         val clock = rememberLyricClock(trackKey, playhead, isPlaying)
-        val index by remember(lines) {
-            derivedStateOf { lines.indexOfLast { it.timeMs <= clock.longValue } }
+        val rowIndex = remember(lines) { LyricLineIndex(lines) }
+        val index by remember(lines, rowIndex) {
+            derivedStateOf { rowIndex.lineAt(clock.longValue) }
         }
         val current = lines.getOrNull(index)
         val instrumental = current == null || current.isGap
@@ -749,6 +750,7 @@ private fun rememberLyricClock(
     LaunchedEffect(engine, playhead, isPlaying, foreground) {
         if (!isPlaying || !foreground) return@LaunchedEffect
         engine.restart()
+        var lastDrawnNanos = 0L
         while (true) {
             withFrameNanos { frameNanos ->
                 // Readings are stamped on the System.nanoTime clock. The frame
@@ -757,6 +759,14 @@ private fun rememberLyricClock(
                 // two are seconds apart and the real clock is used instead.
                 val system = System.nanoTime()
                 val now = if (abs(system - frameNanos) < SAME_CLOCK_NANOS) frameNanos else system
+                // A 120 Hz panel is a request to redraw a text sweep twice as
+                // often as the eye can use, at twice the drawing cost. One
+                // update per 60 Hz frame is the whole of the visual change; the
+                // skipped frames are simply a larger dt in the next one.
+                if (lastDrawnNanos != 0L && now - lastDrawnNanos < LYRIC_FRAME_INTERVAL_NANOS) {
+                    return@withFrameNanos
+                }
+                lastDrawnNanos = now
                 val sampledAt = playhead.sampledAtNanos
                 clock.longValue = engine.frame(
                     nowMs = nanosToMs(now),
@@ -769,6 +779,9 @@ private fun rememberLyricClock(
     }
     return clock
 }
+
+/** The fastest lyric highlight is redrawn, whatever the display refresh rate. */
+private const val LYRIC_FRAME_INTERVAL_NANOS = 16_000_000L
 
 /** A frame time this close to [System.nanoTime] is on the same clock. */
 private const val SAME_CLOCK_NANOS = 250_000_000L

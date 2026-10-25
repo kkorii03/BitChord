@@ -204,6 +204,16 @@ class CrossfadeController(
      * [Phase.IDLE] is the only phase that can still be preempted for free.
      */
     private val versionSwapActive: () -> Boolean = { false },
+    /**
+     * Whether the screen is interactive.
+     *
+     * The standby player's decoder and Automix's planner both exist to make a
+     * blend look right, and nobody sees a blend with the phone in a pocket. Off
+     * screen the planner is skipped (the manual fade, if any, still runs) and
+     * the standby is armed much later, so its decoder is open for a second or
+     * two rather than for the whole arm window. Playback itself is untouched.
+     */
+    private val screenOn: () -> Boolean = { true },
     /** Invoked after [finish] has completed cleanup and returned to IDLE. */
     private val onSettled: () -> Unit = {},
 ) {
@@ -765,7 +775,15 @@ class CrossfadeController(
      * still has to step at its own rate whatever the player is doing.
      */
     private fun tickStepMs(): Long = when (phase) {
-        Phase.IDLE -> if (active().isPlaying) IDLE_STEP_MS else 0L
+        // Off screen the planner has nothing to plan (see [screenOn]) and the
+        // marker is not being watched. The track still has to be noticed
+        // running out, but once a second is plenty for that; the four-a-second
+        // cadence exists to keep a visible marker and a mix decision current.
+        Phase.IDLE -> if (active().isPlaying) {
+            if (screenOn()) IDLE_STEP_MS else SCREEN_OFF_IDLE_STEP_MS
+        } else {
+            0L
+        }
         Phase.ARMING -> ARM_STEP_MS
         Phase.FADING -> FADE_STEP_MS
         Phase.SLEEP_FADE -> FADE_STEP_MS
@@ -967,7 +985,7 @@ class CrossfadeController(
         // measurement is the same either way, so it may as well be made during
         // the loop rather than after it.
         if (player.repeatMode == Player.REPEAT_MODE_ONE) {
-            if (AppSettings.smartFadeEnabled.value) requestAnalysisAround(player, duration)
+            if (AppSettings.smartFadeEnabled.value && screenOn()) requestAnalysisAround(player, duration)
             // Stale otherwise: the marker would keep describing the transition
             // planned for this pair before the loop went on, at a point the
             // playhead now runs past on every lap without anything happening.
@@ -990,7 +1008,7 @@ class CrossfadeController(
             player.currentMediaItem?.isVideoOrigin == true ||
                 player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
             )
-        if (AppSettings.smartFadeEnabled.value && !videoPair) {
+        if (AppSettings.smartFadeEnabled.value && !videoPair && screenOn()) {
             considerSmartTransition(duration)
             return
         }
@@ -1023,7 +1041,7 @@ class CrossfadeController(
         // Arm early: the standby has to open the incoming track and buffer to
         // its cue point, and that work has to be finished by the time the fade
         // is due rather than started then.
-        if (remaining > fade + ARM_LEAD_MS) return
+        if (remaining > fade + armLeadMs()) return
 
         begin(fade, endMs = duration, smart = false, automixFallback = fallbackLength)
     }
@@ -1189,7 +1207,7 @@ class CrossfadeController(
         // starts that much earlier, from arming.
         val beatMs = (plan.beatSeconds * 1000).roundToLong()
         val rampMs = if (beatMs > 0L) rampStepsFor(plan.outgoingPlaybackRate) * beatMs else 0L
-        if (remaining > ARM_LEAD_MS + rampMs) return
+        if (remaining > armLeadMs() + rampMs) return
 
         begin(
             fade,
@@ -1229,6 +1247,7 @@ class CrossfadeController(
      * the loop is switched off.
      */
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
+        if (!screenOn()) return
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
@@ -2181,6 +2200,16 @@ class CrossfadeController(
     private fun configuredFadeMs(): Long = AppSettings.crossfadeSeconds.value * 1000L
 
     /**
+     * How early the standby is loaded before the fade. Off screen this is cut
+     * to the shortest lead that still lets a cached incoming track stand up its
+     * decoder: the standby is the second decoder the measurement saw running
+     * alongside playback, and there is no listener watching the blend it exists
+     * for.
+     */
+    private fun armLeadMs(): Long =
+        if (screenOn()) ARM_LEAD_MS else SCREEN_OFF_ARM_LEAD_MS
+
+    /**
      * The configured length, kept off tracks too short to spend it on. A fade
      * that swallows a third of a song stops being a transition and starts being
      * the arrangement.
@@ -2999,6 +3028,16 @@ class CrossfadeController(
         const val ARM_LEAD_MS = 4_000L
 
         /**
+         * The same head start with the screen off. Long enough for a cached
+         * incoming track to stand its decoder up, short enough that the standby
+         * is not a second decoder running through the whole arm window while
+         * nobody is watching. A cold stream that misses it falls back to the
+         * ordinary gapless advance, which is the same trade the arm timeout
+         * already makes.
+         */
+        const val SCREEN_OFF_ARM_LEAD_MS = 1_500L
+
+        /**
          * The earliest, in wall-clock ms before the next item starts, that
          * Media3 1.11 lets a player's renderers move on to reading it:
          * `ExoPlayerImplInternal.DURATION_TO_ADVANCE_READING_THRESHOLD_US`,
@@ -3377,6 +3416,14 @@ class CrossfadeController(
         const val TEMPO_TOLERANCE = 0.005f
 
         const val IDLE_STEP_MS = 250L
+
+        /**
+         * The idle cadence with the screen off. The planner and its marker are
+         * skipped there (see [screenOn]), so the only thing this tick has to
+         * notice is the track running out — and it is still measured in
+         * seconds, not in quarters of one.
+         */
+        const val SCREEN_OFF_IDLE_STEP_MS = 1_000L
 
         /**
          * Arming only waits on a buffer now — nothing is being converged — so

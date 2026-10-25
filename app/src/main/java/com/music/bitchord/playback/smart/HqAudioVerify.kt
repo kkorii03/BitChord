@@ -20,6 +20,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.ProxyAwareDataSourceFactory
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
@@ -147,6 +148,12 @@ object HqAudioVerify {
         if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
             return@withContext null
         }
+        // Verification is a ninety-second decode on each side. A verdict
+        // already on disk is returned above; with the screen off there is
+        // nobody waiting on a fresh one — the next-song read-ahead can ask
+        // again once it is on — so this is exactly the work to leave undone
+        // rather than to spend battery on.
+        if (!PowerState.screenOn) return@withContext null
         val sourceName = SourceRegistry.config(sourceId)?.displayName ?: "source"
         // A manifest is a container the decoder here cannot read; it cannot be
         // proved and must not be swapped in blind.
@@ -336,6 +343,7 @@ object HqAudioVerify {
         context: Context,
         youtubeId: String,
     ): ChromaAlignment.Features? {
+        if (!PowerState.screenOn) return null
         val now = System.currentTimeMillis()
         val failedAt = noReference[youtubeId]
         if (failedAt != null && now - failedAt < NO_REFERENCE_TTL_MS) return null
@@ -360,11 +368,12 @@ object HqAudioVerify {
         }
         return try {
             val coroutine = currentCoroutineContext()
-            val features = featuresOf(source) { coroutine.isActive }
+            val features = featuresOf(source) { coroutine.isActive && PowerState.screenOn }
             if (features == null) {
                 // A cancelled decode is not a missing reference: the next
-                // playback must be free to try again.
-                if (coroutine.isActive) noteNoReference(youtubeId)
+                // playback must be free to try again. The screen going off is
+                // the same kind of interruption, not a verdict about the audio.
+                if (coroutine.isActive && PowerState.screenOn) noteNoReference(youtubeId)
             } else {
                 // A partial head is returned for this comparison but not kept:
                 // the rest of the bytes may still arrive, and freezing a short
@@ -387,7 +396,7 @@ object HqAudioVerify {
         val source = UrlMediaDataSource(dataSource, Uri.parse(stream.url), stream.headers)
         return try {
             val coroutine = currentCoroutineContext()
-            featuresOf(source) { coroutine.isActive }
+            featuresOf(source) { coroutine.isActive && PowerState.screenOn }
         } finally {
             runCatching { source.close() }
         }
@@ -414,6 +423,7 @@ object HqAudioVerify {
                 0.0,
                 COMPARE_SECONDS + 1.0,
                 abort = abort,
+                label = "hq-verify",
             ) { samples, rate, at ->
                 val current = extractor
                 if (current == null) {

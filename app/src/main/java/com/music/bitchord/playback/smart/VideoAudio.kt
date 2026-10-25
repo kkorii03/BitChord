@@ -6,6 +6,7 @@ import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -59,6 +60,7 @@ object VideoAudio {
 
     suspend fun wav(context: Context, videoId: String): ByteArray? = withContext(Dispatchers.IO) {
         synchronized(recent) { recent[videoId] }?.let { return@withContext it }
+        if (!PowerState.screenOn) return@withContext null
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         AudioCache.keepForTiming(videoId)
         if (!AudioCache.awaitAnalysisTrack(opus, FETCH_TIMEOUT_MS)) return@withContext null
@@ -94,6 +96,7 @@ object VideoAudio {
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
         val key = songCacheKey(song, until)
         synchronized(recentSongs) { recentSongs[key] }?.let { return@withContext it }
+        if (!PowerState.screenOn) return@withContext null
         val opened = openSongSource(context, song) ?: return@withContext null
         synchronized(songLocks.getOrPut(key) { Any() }) {
             synchronized(recentSongs) { recentSongs[key] }?.let {
@@ -133,13 +136,20 @@ object VideoAudio {
         "${song.videoId}\u0000${song.localUri.orEmpty()}\u0000$untilSeconds"
 
     private fun decode(context: Context, videoId: String): ByteArray? {
+        if (!PowerState.screenOn) return null
         val source = VersionAudioAligner.openDataSource(
             context,
             Song(videoId = videoId, title = "", artist = "", thumbnailUrl = null, isVideo = true),
         ) ?: return null
         val resampler = Resampler(RATE * 2 * 240)
         try {
-            AudioDecoder.decodeMonoStream(source, 0.0, MAX_SECONDS + 1) { samples, sampleRate, _ ->
+            AudioDecoder.decodeMonoStream(
+                source,
+                0.0,
+                MAX_SECONDS + 1,
+                abort = { !PowerState.screenOn },
+                label = "video-wav",
+            ) { samples, sampleRate, _ ->
                 if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
             } ?: return null
         } catch (e: Exception) {
@@ -163,11 +173,18 @@ object VideoAudio {
         fromFile: Boolean,
         untilSeconds: Double,
     ): ByteArray? {
+        if (!PowerState.screenOn) return null
         // One second past the window, then cut at the sample: a decoded chunk
         // that starts inside the window may run past its end.
         val resampler = Resampler(minOf(RATE * 2 * untilSeconds.toInt(), RATE * 2 * 120))
         try {
-            AudioDecoder.decodeMonoStream(source, 0.0, untilSeconds + 1) { samples, sampleRate, _ ->
+            AudioDecoder.decodeMonoStream(
+                source,
+                0.0,
+                untilSeconds + 1,
+                abort = { !PowerState.screenOn },
+                label = "video-wav",
+            ) { samples, sampleRate, _ ->
                 if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
             } ?: return null
         } catch (e: Exception) {

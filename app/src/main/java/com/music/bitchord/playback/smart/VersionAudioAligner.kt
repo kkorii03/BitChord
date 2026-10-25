@@ -8,6 +8,7 @@ import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -165,6 +166,7 @@ object VersionAudioAligner {
         if (sourceSong.videoId == targetSong.videoId) return@withContext 0L
         val cached = offsetCache[sourceSong.videoId to targetSong.videoId]
         if (cached != null) return@withContext cached
+        if (!PowerState.screenOn) return@withContext null
 
         val sourceDs = openDataSource(context, sourceSong)
         val targetDs = openDataSource(context, targetSong)
@@ -193,10 +195,22 @@ object VersionAudioAligner {
             val decodeMs = measureTimeMillis {
                 decodes = coroutineScope {
                     val source = async(Dispatchers.IO) {
-                        AudioDecoder.decodeRegion(sourceDs, 0.0, 45.0)
+                        AudioDecoder.decodeRegion(
+                            sourceDs,
+                            0.0,
+                            45.0,
+                            abort = { !PowerState.screenOn },
+                            label = "align",
+                        )
                     }
                     val target = async(Dispatchers.IO) {
-                        AudioDecoder.decodeRegion(targetDs, 0.0, 45.0)
+                        AudioDecoder.decodeRegion(
+                            targetDs,
+                            0.0,
+                            45.0,
+                            abort = { !PowerState.screenOn },
+                            label = "align",
+                        )
                     }
                     source.await() to target.await()
                 }

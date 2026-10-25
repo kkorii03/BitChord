@@ -28,6 +28,8 @@ import android.media.MediaDataSource
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
+import com.music.bitchord.playback.DecoderMonitor
+import com.music.bitchord.playback.PowerState
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.max
@@ -112,9 +114,10 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean = { false },
+        label: String = "analysis",
     ): Pair<Pcm, Double>? {
         val chunks = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             chunks += toMono(buffer, info, channels)
         } ?: return null
         return Pcm(flatten(chunks), decoded.first) to decoded.second
@@ -137,9 +140,10 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean = { false },
+        label: String = "analysis",
         onChunk: (samples: FloatArray, sampleRate: Int, atSeconds: Double) -> Unit,
     ): Double? {
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, rate ->
             onChunk(toMono(buffer, info, channels), rate, info.presentationTimeUs / 1_000_000.0)
         } ?: return null
         return decoded.second
@@ -158,10 +162,11 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean = { false },
+        label: String = "analysis",
     ): Pair<StereoPcm, Double>? {
         val left = ArrayList<FloatArray>()
         val right = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
         return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
@@ -191,10 +196,20 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
+        label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) return null
-        val extractor = MediaExtractor()
+        // No analysis decode starts with the screen off. Every caller has its
+        // own deferral too, but this is the one gate every path through the
+        // decoder shares, including one queued a moment before the screen went
+        // dark.
+        if (!PowerState.screenOn) return null
+        DecoderMonitor.start(label)
+        val extractor = runCatching { MediaExtractor() }.getOrElse {
+            DecoderMonitor.stop(label)
+            return null
+        }
         var codec: MediaCodec? = null
         try {
             extractor.setDataSource(source)
@@ -229,7 +244,11 @@ object AudioDecoder {
                 // it, and on a long track that is most of what the analysis
                 // costs in both time and heap. `finally` still tears the codec
                 // and extractor down.
-                if (abort()) return null
+                //
+                // The screen going off is the same kind of abort: this is
+                // background work, nobody is looking at the result, and the
+                // next request after the screen comes back starts it again.
+                if (!PowerState.screenOn || abort()) return null
                 if (!inputDone) {
                     val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
                     if (inputIndex >= 0) {
@@ -285,6 +304,7 @@ object AudioDecoder {
             runCatching { codec?.stop() }
             runCatching { codec?.release() }
             runCatching { extractor.release() }
+            DecoderMonitor.stop(label)
         }
     }
 

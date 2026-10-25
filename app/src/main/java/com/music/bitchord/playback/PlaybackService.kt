@@ -979,8 +979,14 @@ class PlaybackService : MediaLibraryService() {
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_ON -> startLyricsTicker()
-                Intent.ACTION_SCREEN_OFF -> if (!lyricMetadataWanted()) stopLyricsTicker()
+                Intent.ACTION_SCREEN_ON -> {
+                    PowerState.update(true)
+                    startLyricsTicker()
+                }
+                Intent.ACTION_SCREEN_OFF -> {
+                    PowerState.update(false)
+                    if (!lyricMetadataWanted()) stopLyricsTicker()
+                }
             }
         }
     }
@@ -1688,6 +1694,11 @@ class PlaybackService : MediaLibraryService() {
         localBitrateCache.clear()
         measuredBitrateCache.clear()
         QualityUpgrade.forgetLastSession()
+        // The process can be reused after a service stop, so the decoder ledger
+        // starts empty; and a service started with the screen already off has
+        // to know that before the first crossfade tick asks.
+        DecoderMonitor.clear()
+        PowerState.initialize(this)
         com.music.bitchord.lockscreen.LockScreenLyrics.attach(this) { player?.currentMediaItem != null }
         // The lyric ticker is off while the screen is off and nothing is
         // showing lines; this is what tells it the screen came back.
@@ -2314,6 +2325,7 @@ class PlaybackService : MediaLibraryService() {
                 }
             },
             versionSwapActive = { versionSwapJob?.isActive == true },
+            screenOn = { PowerState.screenOn },
         )
 
     /**
@@ -3834,6 +3846,34 @@ class PlaybackService : MediaLibraryService() {
         // press before that steps to the previous one.
         .setMaxSeekToPreviousPositionMs(BACK_RESTARTS_AFTER_MS)
         .build()
+        .also { it.addAnalyticsListener(DecoderTrackingListener(if (ownsSession) "player-a" else "player-b")) }
+
+    /**
+     * Reports each renderer decoder's life to [DecoderMonitor].
+     *
+     * Separate from [formatListener], which only ever rides the session player:
+     * the standby and the silent audition have decoders too, and those are
+     * precisely the ones that run beside playback without being heard.
+     */
+    private class DecoderTrackingListener(
+        private val playerLabel: String,
+    ) : AnalyticsListener {
+        override fun onAudioDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            DecoderMonitor.start("$playerLabel:$decoderName")
+        }
+
+        override fun onAudioDecoderReleased(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+        ) {
+            DecoderMonitor.stop("$playerLabel:$decoderName")
+        }
+    }
 
     /**
      * Moves the session onto the player the crossfade has just started the
@@ -5795,6 +5835,15 @@ class PlaybackService : MediaLibraryService() {
      * and quietly keep playing the old stream.
      */
     private suspend fun swapIn(mediaId: String, stream: SourceStream): SwapOutcome {
+        // A quality upgrade is an audible interruption bought with an audition
+        // and a ninety-second verification decode. With the screen off nobody
+        // asked for it and nobody is watching; shelve the stream so it can be
+        // offered again rather than spending that on a pocket.
+        if (!PowerState.screenOn) {
+            QualityUpgrade.shelve(mediaId, stream)
+            TrackLog.d("BitChord", "upgrade for $mediaId deferred: screen off", about = mediaId)
+            return SwapOutcome.UNAVAILABLE
+        }
         val at = withContext(Dispatchers.Main) { swapPointFor(mediaId) } ?: return SwapOutcome.UNAVAILABLE
         if (at.duration > 0 && at.duration - at.position < UPGRADE_MIN_REMAINING_MS) {
             TrackLog.d("BitChord", "upgrade abandoned: only ${at.duration - at.position}ms of the track left")
@@ -6340,6 +6389,7 @@ class PlaybackService : MediaLibraryService() {
                 .build(),
         )
         .build()
+        .also { it.addAnalyticsListener(DecoderTrackingListener("audition")) }
         .apply {
             playWhenReady = false
             volume = 0f
@@ -8797,6 +8847,7 @@ class PlaybackService : MediaLibraryService() {
         // is not a reason to leave either behind.
         spare?.release()
         spare = null
+        DecoderMonitor.clear()
         AudioOutputStatus.reset()
         NerdStats.forgetLastSession()
         localBitrateCache.clear()

@@ -38,6 +38,7 @@ import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -115,6 +116,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
     private val running = ConcurrentHashMap.newKeySet<String>()
+    /**
+     * Tracks with a reconsideration already queued on [executor].
+     *
+     * The crossfade ticker asks four times a second, but what the answer
+     * depends on — the cache index, the bytes on disk, a rendition's header —
+     * changes on the scale of downloads rather than ticks. One queued question
+     * per track is enough, and it is what keeps the cache walk off the
+     * playback thread.
+     */
+    private val requestPending = ConcurrentHashMap.newKeySet<String>()
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
     private val sourceResolutionAttempted = ConcurrentHashMap.newKeySet<String>()
@@ -282,6 +293,34 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Low power lowers the worker's thread priority (see [AutomixPerformanceMode]);
         // it never defers the analysis itself.
         restoreOnce(trackId)
+        // With the screen off nobody is watching a transition marker, and the
+        // whole-track pass is the single most expensive decode the app runs.
+        // Deferred rather than cancelled: the crossfade ticker asks again the
+        // moment the screen comes back, and anything already stored stays in
+        // [results].
+        if (!PowerState.screenOn) return
+        // Everything below reads the cache index and, through it, the
+        // filesystem. It used to run here, on the playback thread, four times a
+        // second — see [AudioCache.renditionsOf]. One queued reconsideration
+        // per track is enough, and the single-threaded executor keeps them in
+        // order with the analysis they may start.
+        if (!requestPending.add(trackId)) return
+        executor.execute {
+            try {
+                requestNow(trackId, uri, durationSeconds)
+            } catch (error: Throwable) {
+                Log.w(TAG, "Analysis request for $trackId failed", error)
+            } finally {
+                requestPending.remove(trackId)
+            }
+        }
+    }
+
+    /** [request]'s body, on the analysis thread rather than the playback thread. */
+    private fun requestNow(trackId: String, uri: Uri, durationSeconds: Double) {
+        if (stopped) return
+        if (trackId in running) return
+        if (!PowerState.screenOn) return
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
         // Only the canonical YouTube rendition of this recording will do, not
@@ -397,6 +436,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // task behind that one turns into this return, which drains the
                 // backlog without needing to reach into the executor's queue.
                 if (stopped) return@execute
+                // Queued before the screen went off. Nothing is recorded in
+                // this case: an aborted decode is not a track that cannot be
+                // analysed, and the next request after the screen comes back
+                // starts it again.
+                if (!PowerState.screenOn) return@execute
                 if (usableComplete) {
                     val outcome = analyze(trackId, analysisUri, durationSeconds)
                     val whole = outcome.analysis
@@ -450,13 +494,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 if (usableComplete) {
                     // Recorded as ready-but-empty so a track that cannot be
                     // analysed is not retried on every tick for the rest of the
-                    // session.
-                    results[trackId] = TrackAnalysis(
-                        status = TrackAnalysis.STATUS_READY,
-                        trackId = trackId,
-                        duration = durationSeconds,
-                    )
-                    provisional.remove(trackId)
+                    // session. Not when the screen went off mid-pass: that is an
+                    // interruption, not a verdict, and writing it down would
+                    // stop the retry the next screen-on deserves.
+                    if (PowerState.screenOn) {
+                        results[trackId] = TrackAnalysis(
+                            status = TrackAnalysis.STATUS_READY,
+                            trackId = trackId,
+                            duration = durationSeconds,
+                        )
+                        provisional.remove(trackId)
+                    }
                 }
             } finally {
                 running.remove(trackId)
@@ -651,7 +699,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // [stopped]. Nothing is recorded either way — the caller
                 // publishes only a non-null result — so the track is simply
                 // left unmeasured, which is what it is.
-                if (stopped) return null
+                if (stopped || !PowerState.screenOn) return null
                 Log.d(TAG, "Head pass for $trackId could not decode rendition ${rendition.key}")
                 return null
             }
@@ -670,6 +718,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             Log.d(TAG, "Head pass for $trackId produced nothing usable")
             return null
         }
+        if (!PowerState.screenOn) return null
 
         Log.d(
             TAG,
@@ -907,9 +956,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         effectiveDuration: Double,
     ): Structural {
         val structRate = TrackFeatures.sampleRate
-        val decoded = copy.open()?.use { AudioDecoder.decodeRegion(it, 0.0, effectiveDuration) { stopped } }
-            ?: return Structural(null)
+        val decoded = copy.open()?.use {
+            AudioDecoder.decodeRegion(it, 0.0, effectiveDuration, abort = { stopped }, label = "automix")
+        } ?: return Structural(null)
         val (pcm, _) = decoded
+        if (!PowerState.screenOn) return Structural(null)
 
         // A decode that stops early is indistinguishable, downstream, from a
         // track that simply goes quiet: [TrackFeatures] is handed the
@@ -1030,7 +1081,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Read *before* the two lines below, not after, because an abort comes
         // back from [structure] as a decode that produced nothing, and that is
         // exactly what those lines write a permanent "cannot be analysed" for.
-        if (stopped) return WholeTrack(null)
+        // The screen going off is the same kind of interruption.
+        if (stopped || !PowerState.screenOn) return WholeTrack(null)
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
         val features = structural.features ?: return WholeTrack(empty(trackId, effectiveDuration))
 
@@ -1046,13 +1098,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // folded into the `tail` condition below: a head-only result would be
         // written *and persisted* as if it were a whole-track one, freezing a
         // deliberately partial answer in place of the complete one.
-        if (stopped) return WholeTrack(null)
+        if (stopped || !PowerState.screenOn) return WholeTrack(null)
         val tail = if (tailStart > window / 2) region(openSource, tailStart, effectiveDuration, features) else null
         // Last of the three. An abort during the tail pass leaves `tail` null,
         // which is indistinguishable from a window the models found nothing in
         // — and that one gets published, with the DSP estimate standing in. A
         // result assembled out of a half-finished analysis is worse than none.
-        if (stopped) return WholeTrack(null)
+        if (stopped || !PowerState.screenOn) return WholeTrack(null)
 
         val headGrid = head?.grid
         val tailGrid = tail?.grid
@@ -1142,8 +1194,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean = false,
     ): Region? {
-        val decoded = openSource()?.use { AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds) { stopped } }
-            ?: run {
+        val decoded = openSource()?.use {
+            AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds, abort = { stopped }, label = "automix")
+        } ?: run {
                 // The two ways this comes back empty mean opposite things and
                 // were reported identically, which cost a round of guessing:
                 // this one is the extractor refusing the container outright, so
@@ -1152,6 +1205,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 return null
             }
         val (stereo, actualStart) = decoded
+        if (!PowerState.screenOn) return null
         if (stereo.left.size < stereo.sampleRate) {
             // And this one is a container that parsed fine and yielded under a
             // second of audio — a decode that started and ran out, not one that
@@ -1290,6 +1344,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headSkipLogged.clear()
         provisional.clear()
         restoreAttempted.clear()
+        requestPending.clear()
         shortDecodes.clear()
         badRenditions.clear()
         triedRenditions.clear()

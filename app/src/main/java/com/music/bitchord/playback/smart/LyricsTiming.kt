@@ -21,6 +21,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -810,6 +811,7 @@ object LyricsTiming {
         job: Job?,
         untilSeconds: Double = MAX_SECONDS,
     ): ChromaAlignment.Features? {
+        if (!PowerState.screenOn) return null
         var reading = synchronized(videoReadings) { videoReadings[video.videoId] }?.takeIf { it.copyKey == copyKey }
         val from = reading?.untilSeconds ?: 0.0
         // Already read this far (an opening pass asked for less than is there): nothing new to decode.
@@ -818,7 +820,13 @@ object LyricsTiming {
         }
         val source = VersionAudioAligner.openDataSource(context, video) ?: return null
         try {
-            AudioDecoder.decodeMonoStream(source, from, minOf(MAX_SECONDS, untilSeconds), abort = { job?.isActive == false }) { chunk, sampleRate, at ->
+            AudioDecoder.decodeMonoStream(
+                source,
+                from,
+                minOf(MAX_SECONDS, untilSeconds),
+                abort = { job?.isActive == false || !PowerState.screenOn },
+                label = "lyrics-timing",
+            ) { chunk, sampleRate, at ->
                 val r = reading ?: VideoReading(copyKey, ChromaAlignment.Extractor(sampleRate), sampleRate, at, at)
                     .also { reading = it }
                 if (sampleRate != r.rate) return@decodeMonoStream
@@ -834,6 +842,10 @@ object LyricsTiming {
             runCatching { source.close() }
         }
         if (job?.isActive == false) return null
+        // The screen going off aborts the decoder mid-read; what is in
+        // [videoReadings] is a prefix, not a measurement, and must not be
+        // published as one. The next screen-on pass resumes from it.
+        if (!PowerState.screenOn) return null
         val done = reading ?: return null
         synchronized(videoReadings) {
             videoReadings.remove(video.videoId)
