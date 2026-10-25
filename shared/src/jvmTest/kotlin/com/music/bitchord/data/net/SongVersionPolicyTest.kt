@@ -93,6 +93,67 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `an undecided video is not prefetched by its own id`() {
+        assertEquals(
+            SongVersionPolicy.AheadSongVersion.UNDECIDED,
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = true,
+                typeUnknown = false,
+                hasVersion = false,
+                knownMissing = false,
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.AheadSongVersion.UNDECIDED,
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = false,
+                typeUnknown = true,
+                hasVersion = false,
+                knownMissing = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a decided version points the prefetch at the version`() {
+        assertEquals(
+            SongVersionPolicy.AheadSongVersion.FOUND,
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = true,
+                typeUnknown = false,
+                hasVersion = true,
+                knownMissing = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a decided absence keeps the row's own id`() {
+        assertEquals(
+            SongVersionPolicy.AheadSongVersion.NONE,
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = true,
+                typeUnknown = false,
+                hasVersion = false,
+                knownMissing = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a catalogue row needs no version wait`() {
+        assertEquals(
+            SongVersionPolicy.AheadSongVersion.NOT_WANTED,
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = false,
+                typeUnknown = false,
+                hasVersion = false,
+                knownMissing = false,
+            ),
+        )
+    }
+
+    @Test
     fun `a downloaded video still gets its song version`() {
         assertFalse(
             SongVersionPolicy.keepsLocalFile(

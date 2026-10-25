@@ -4651,7 +4651,12 @@ class PlaybackService : MediaLibraryService() {
         }
         if (exoPlayer.isPlaying) registerCurrentPlay()
         savePlaybackState(exoPlayer)
-        prefetchAround(exoPlayer)
+        // Not before this row has made a sound: read-ahead and its alternate
+        // pre-resolve would compete with the resolve that starts it. A cold
+        // start reaches here with isPlaying still false and is picked up by
+        // [playbackListener]'s first-sound callback; a gapless advance and a
+        // crossfade are already sounding, so they prefetch here as before.
+        if (exoPlayer.isPlaying || alreadyAudible) prefetchAround(exoPlayer)
         // The second look belongs to the track it was started for; the
         // queue moving on ends it — unless it is already proving what it
         // found, see [cancelStaleUpgradeJob] — and starts the new
@@ -5406,6 +5411,28 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         val song = player.getMediaItemAt(nextIndex).toSong()
+        // An undecided video's own id is not the recording that will play, and
+        // a found version's id differs from this row's. Resolving either here
+        // would be a walk (and possibly a proxy race) spent on an id the
+        // answer replaces; the row is checked once its version is settled and
+        // the queue has been rebuilt on that id.
+        val ahead = if (AppSettings.preferMusicOnly.value) {
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = song.isVideo,
+                typeUnknown = song.typeUnknown,
+                hasVersion = YtMusicRepository.cachedSongVersionFor(song) != null,
+                knownMissing = YtMusicRepository.isSongVersionMissing(song.videoId),
+            )
+        } else {
+            SongVersionPolicy.AheadSongVersion.NOT_WANTED
+        }
+        if (ahead == SongVersionPolicy.AheadSongVersion.UNDECIDED ||
+            ahead == SongVersionPolicy.AheadSongVersion.FOUND
+        ) {
+            alternatePreResolveJob?.cancel()
+            alternatePreResolveFor = null
+            return
+        }
         if (song.videoId == alternatePreResolveFor && alternatePreResolveJob?.isActive == true) return
         // Only YouTube ids are resolved here; local files and module tracks
         // have their own fallbacks and no catalogue counterpart to search for.
@@ -7428,10 +7455,6 @@ class PlaybackService : MediaLibraryService() {
         preferredPrefetchRequest = request
         preferredPrefetchJob?.cancel()
 
-        // One track ahead: if read-ahead is about to discover a definitive
-        // refusal, swap its alternate in now rather than at the transition.
-        preResolveAlternateAhead(player)
-
         fun warm(songs: List<Song>) {
             AudioCache.prefetchQueue(
                 songs.map { song ->
@@ -7447,29 +7470,71 @@ class PlaybackService : MediaLibraryService() {
         }
 
         val next = upcomingSongs.firstOrNull()
-        if (!preferAudio || next?.isVideo != true) {
-            preferredPrefetchJob = null
-            warm(upcomingSongs)
-            return
+        val ahead = if (preferAudio && next != null) {
+            SongVersionPolicy.aheadSongVersion(
+                isVideo = next.isVideo,
+                typeUnknown = next.typeUnknown,
+                hasVersion = YtMusicRepository.cachedSongVersionFor(next) != null,
+                knownMissing = YtMusicRepository.isSongVersionMissing(next.videoId),
+            )
+        } else {
+            SongVersionPolicy.AheadSongVersion.NOT_WANTED
         }
 
-        // Do not warm the video's bytes while its catalogue lookup is in
-        // flight: if that lookup succeeds, playback will ask for a different
-        // media id and every byte spent on the video would be wasted. An
-        // unchanged result is the fallback and is warmed on the same path.
-        AudioCache.cancel()
-        preferredPrefetchJob = scope.launch {
-            val preferred = runCatching { YtMusicRepository.resolveAudio(next) }
-                .onFailure {
-                    TrackLog.d(
-                        "BitChord",
-                        "music-only queue warm-up fell back to video: ${it.message}",
-                        about = next.videoId,
-                    )
+        // One track ahead: if read-ahead is about to discover a definitive
+        // refusal, swap its alternate in now rather than at the transition.
+        // It stands down while a version is undecided (or a found version has
+        // not reached the queue yet) because the MV id is not the id that will
+        // play — resolving it is what started a proxy race before first sound
+        // (report 60).
+        preResolveAlternateAhead(player)
+
+        when (ahead) {
+            SongVersionPolicy.AheadSongVersion.NOT_WANTED,
+            SongVersionPolicy.AheadSongVersion.NONE -> {
+                preferredPrefetchJob = null
+                warm(upcomingSongs)
+            }
+            SongVersionPolicy.AheadSongVersion.FOUND -> {
+                preferredPrefetchJob = null
+                val version = next?.let(YtMusicRepository::cachedSongVersionFor)
+                // A version row is audio and needs no wait; warming it rather
+                // than the video id is what makes the eventual row swap land
+                // on bytes already on disk.
+                if (version == null || version.videoId == next?.videoId) {
+                    warm(upcomingSongs)
+                } else {
+                    AudioCache.cancel()
+                    warm(listOf(version) + upcomingSongs.drop(1))
                 }
-                .getOrDefault(next)
-            if (preferredPrefetchRequest != request) return@launch
-            warm(listOf(preferred) + upcomingSongs.drop(1))
+            }
+            SongVersionPolicy.AheadSongVersion.UNDECIDED -> {
+                val waiting = next ?: return
+                // Do not warm the video's bytes while its catalogue lookup is
+                // in flight: if that lookup succeeds, playback will ask for a
+                // different media id and every byte spent on the video, and
+                // any proxy race its resolve starts, would be wasted. An
+                // unchanged result is the fallback and is warmed here too.
+                AudioCache.cancel()
+                preferredPrefetchJob = scope.launch {
+                    val preferred = runCatching {
+                        YtMusicRepository.songVersion(waiting, beforeAudio = true)
+                    }
+                        .onFailure {
+                            TrackLog.d(
+                                "BitChord",
+                                "music-only queue warm-up fell back to video: ${it.message}",
+                                about = waiting.videoId,
+                            )
+                        }
+                        .getOrNull() ?: waiting
+                    if (preferredPrefetchRequest != request) return@launch
+                    warm(listOf(preferred) + upcomingSongs.drop(1))
+                    // The answer is in, so the id that will actually play can
+                    // now be checked for a definitive refusal.
+                    if (preferred.videoId == waiting.videoId) preResolveAlternateAhead(player)
+                }
+            }
         }
     }
 

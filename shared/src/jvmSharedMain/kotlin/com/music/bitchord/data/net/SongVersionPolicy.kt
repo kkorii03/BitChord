@@ -98,4 +98,41 @@ object SongVersionPolicy {
      */
     fun hasMadeFirstSound(mediaId: String?, audibleMediaId: String?): Boolean =
         mediaId != null && audibleMediaId == mediaId
+
+    /**
+     * What the row after the current one is, as far as its pre-playback version
+     * lookup goes.
+     *
+     * Read-ahead needs this answer before it mints anything for that row. An
+     * undecided music video's own id is not what will play, so resolving it
+     * spends a client walk — and, on a gated connection, a proxy race — on an
+     * id the answer replaces moments later. That was a 13 s proxy race in front
+     * of an unrelated first sound (report 60).
+     */
+    enum class AheadSongVersion {
+        /** Not a video, so the row's own id is the recording to warm. */
+        NOT_WANTED,
+
+        /** A song version is known; warm that id instead. */
+        FOUND,
+
+        /** Already established that this row has none; its own id is right. */
+        NONE,
+
+        /** The lookup has not answered yet; warm neither id until it does. */
+        UNDECIDED,
+    }
+
+    /** The prefetch decision for the row after the current one. */
+    fun aheadSongVersion(
+        isVideo: Boolean,
+        typeUnknown: Boolean,
+        hasVersion: Boolean,
+        knownMissing: Boolean,
+    ): AheadSongVersion = when {
+        !wantsSongVersion(isVideo, typeUnknown) -> AheadSongVersion.NOT_WANTED
+        hasVersion -> AheadSongVersion.FOUND
+        knownMissing -> AheadSongVersion.NONE
+        else -> AheadSongVersion.UNDECIDED
+    }
 }
