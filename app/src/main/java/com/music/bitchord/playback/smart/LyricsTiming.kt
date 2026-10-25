@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
+import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
@@ -1056,6 +1057,134 @@ object LyricsTiming {
         sampleBias(context, videoId)
         _changes.tryEmit(videoId)
         return adjustment
+    }
+
+    /**
+     * Checks a record-timed song's own lyrics against its audio, once.
+     *
+     * A song version plays the record itself, so there is no other recording
+     * to measure against (chroma): the provider's times may still be wrong for
+     * this file, so Deepgram's word timings are fitted to them with the same
+     * [fitAi] and the same 70% floor as a video. Only the opening the phone
+     * has audio for is asked about, and only [LyricsAiGuard.SONG_MAX_SHIFT_MS]
+     * may move the words. The answer is kept like any other AI answer, so the
+     * screen and the lock screen read it without another request; an engine is
+     * spent at most once per lyrics text ([AiTimingPolicy.nextEngines] with
+     * `songOnly`).
+     *
+     * No timer or poll: the caller runs this when the lyrics arrive, once per
+     * playback. Missing audio is not written to the store — the next playback
+     * may have it — and the caller keeps it to one try per session. Returns
+     * true when an engine was actually asked.
+     */
+    suspend fun verifySong(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+    ): Boolean {
+        val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
+        val timed = lines.any { it.timeMs > 0 }
+        if (!LyricsAiGuard.songTimingWanted(
+                isVideo = song.isVideo,
+                timed = timed,
+                sungLines = sung.size,
+                title = song.title,
+                artist = song.artist,
+                texts = sung.map { it.value.text },
+            )
+        ) return false
+        val key = textKey(lines)
+        val engines = AiTimingPolicy.nextEngines(
+            knowledge(store(context).get(song.videoId)),
+            key,
+            manual = false,
+            // There is no measurement for a song version; the song pool
+            // already holds only Deepgram.
+            measurementGaveUp = false,
+            songOnly = true,
+        )
+        val engine = AiTimingPolicy.DEEPGRAM
+        if (engine !in engines || !com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        // Straight off the file, or the streaming copy's opening; null when
+        // there is nothing to listen to yet.
+        val audio = VideoAudio.songWav(context, song) ?: run {
+            songLog(song.videoId, "no-audio", null, null, 0)
+            return false
+        }
+        val windowMs = SongCheckWindow.wavMs(audio.size)
+        val indices = SongCheckWindow.indices(lines.map { it.timeMs }, windowMs)
+            .filter { lines[it].text.isNotBlank() }
+        val seconds = (windowMs / 1000.0).roundToInt()
+        if (indices.size < MIN_AI_LINES) {
+            songLog(song.videoId, "no-words", null, null, seconds)
+            return false
+        }
+        val texts = indices.map { lines[it].text }
+        // Kept before the call: a request that fails or is cancelled has
+        // still been paid for, and must not be made again for these lyrics.
+        noteAttempt(context, song.videoId, key, engine)
+        val heard = com.music.bitchord.data.lyrics.Deepgram.words(
+            audio,
+            com.music.bitchord.data.lyrics.Deepgram.languageFor(texts),
+            com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA,
+        ) ?: run {
+            songLog(song.videoId, "no-words", null, null, seconds)
+            return true
+        }
+        val starts = LyricsWordAlign.placeLines(texts, heard)
+        val fitted = fitAi(lines, indices, starts) ?: run {
+            songLog(song.videoId, "no-words", null, null, seconds)
+            return true
+        }
+        val match = fitted.matchPercent
+        val shift = shownShiftMs(lines, fitted)
+        when {
+            !LyricsAiGuard.agreementAllows(match) -> {
+                songLog(song.videoId, "refused-match", match, shift, seconds)
+                return true
+            }
+            !LyricsAiGuard.songShiftAllows(shift) -> {
+                songLog(song.videoId, "refused-shift", match, shift, seconds)
+                return true
+            }
+        }
+        store(context).update(song.videoId) {
+            it.copy(
+                aiTextKey = key,
+                ai = savedOf(fitted),
+                aiShiftMs = null,
+                aiStarts = null,
+                aiFailedKey = null,
+                heardWords = heard.take(MAX_HEARD_WORDS)
+                    .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                aiPreferred = it.aiPreferred && it.aiTextKey == key,
+                biasSampled = false,
+                aiEngine = engine,
+            )
+        }
+        _changes.tryEmit(song.videoId)
+        songLog(song.videoId, "applied", match, shift, seconds)
+        return true
+    }
+
+    /** One line about a song check, without the words, the search or any key. */
+    private fun songLog(videoId: String, result: String, match: Int?, shift: Long?, seconds: Int) {
+        TrackLog.d(
+            TAG,
+            "song-sync: $videoId result=$result match=${match ?: 0}% shift=${shift ?: 0} secs=$seconds",
+            videoId,
+        )
+    }
+
+    /** Records that [engine] was spent on these lyrics for [videoId]; once per text. */
+    private suspend fun noteAttempt(context: Context, videoId: String, key: Int, engine: String) {
+        store(context).update(videoId) { entry ->
+            val sameLyrics = entry.aiAttemptedKey == key
+            entry.copy(
+                aiAttemptedKey = key,
+                aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + engine).distinct(),
+            )
+        }
     }
 
     /** Forgets the AI answer for [videoId] (and a correction made on top of it); the measurement applies again. */

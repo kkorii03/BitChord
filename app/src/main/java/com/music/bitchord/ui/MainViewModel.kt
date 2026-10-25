@@ -32,6 +32,7 @@ import com.music.bitchord.data.spotify.SpotifyLibrary
 import com.music.bitchord.data.spotify.SpotifyTrack
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsAiGuard
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -383,6 +384,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
 
+    /**
+     * The song whose check was started in this playback. It keeps a check that
+     * found no audio from being tried again on every lyrics delivery in the
+     * same playback; a different track (or coming back to this one later)
+     * clears it, so the next playback may have the audio.
+     */
+    private var songCheckStartedFor: String? = null
+
     /** Which of the four databases [lyrics] came from, for the panel's credit. */
     private val _lyricsSource = MutableStateFlow<LyricsSource?>(null)
     val lyricsSource: StateFlow<LyricsSource?> = _lyricsSource.asStateFlow()
@@ -484,6 +493,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // by nobody — which is what left a paused track loading for ever, since
         // pausing is when the duration is most likely to arrive a frame late.
         if (localUri == null && durationMs <= 0L) return
+        if (currentLyricsRequest?.videoId != videoId) songCheckStartedFor = null
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
@@ -541,11 +551,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         file.videoId,
                     )
                     _lyricsChecked.value = true
-                    // A song's own file is timed for it already: only a correction
-                    // by hand. A downloaded video (a cover) carries its lyrics as
-                    // they were found — the record's, which the video's timing
-                    // kept for it still moves, unless they were the video's own;
-                    // and whatever they are, Gemini can be asked to place them.
+                    // A song's own file whose header names it is timed for it
+                    // already: only a correction by hand. One with no id (an
+                    // older download) is checked once below. A downloaded video
+                    // (a cover) carries its lyrics as they were found — the
+                    // record's, which the video's timing kept for it still moves,
+                    // unless they were the video's own; and whatever they are,
+                    // Gemini can be asked to place them.
                     val timed = embedded.any { it.timeMs > 0 }
                     val foreign = timed && com.music.bitchord.data.lyrics.FileLyricsOrigin
                         .timingBelongsToAnotherRecording(file.videoId, videoId)
@@ -554,9 +566,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val onVideo = isVideo && timed
                     val recordTimed = onVideo && file.source != null && !LyricsTiming.timedToVideo(file.source)
+                    // A song's file header names the recording its times were
+                    // written for. Without that id — an older download — nothing
+                    // ever checked these times, so the song check may run once.
+                    // (A video keeps its existing foreign/measure treatment.)
+                    val unverified = !isVideo && timed && !LyricsTiming.timedToVideo(file.source) &&
+                        com.music.bitchord.data.lyrics.FileLyricsOrigin.timingIsUnverified(file.videoId, videoId)
                     startTiming(
                         embedded,
-                        adjustable = onVideo || foreign,
+                        adjustable = onVideo || foreign || unverified,
                         searchedAs = null,
                         measure = recordTimed || foreign,
                         measureNow = true,
@@ -836,65 +854,107 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             refreshTiming(generation, lines)
-            if (!adjustable || !measure || !measureNow ||
-                (!request.isVideo && !request.fileTimingForeign)
-            ) return@launch
-            // AI after the free measurement, not alongside it: each request
-            // uploads the whole song (twice — Deepgram, then Gemini), and the
-            // measurement times most covers on its own. A few videos still ask
-            // alongside it, so how late each engine runs keeps being learned.
-            // Each video is sampled at most once ever, so a replay or a lyrics
-            // re-delivery does not buy the same sample again.
-            var calibration = LyricsTiming.calibrationSample(request.videoId) &&
-                AppSettings.aiTimingAhead.value &&
-                (LyricsTranslation.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
-                LyricsTiming.wantsAi(context, request.videoId, lines)
-            if (calibration && !LyricsTiming.claimCalibrationSample(context, request.videoId)) {
-                calibration = false
-            }
-            if (calibration) launch { aiAhead(context, request.videoId, lines) }
-            // The record is searched for under every name the lyrics know:
-            // what they were found as first, then the video's own readings.
-            val names = buildList {
-                // A cover that names the original's artist is searched under
-                // that first; one that doesn't, under what its lyrics were found as.
-                if (request.artistKnown) add(request.title to request.artist)
-                // Found under the singer's name is no lead to the original.
-                searchedAs?.takeIf { request.artistKnown || it.second != request.artist }?.let(::add)
-                // A cover that never names the original: its title alone.
-                if (!request.artistKnown) add(request.title to "")
-                add(request.title to request.artist)
-                addAll(request.alternatives)
-            }.distinct()
-            val video = Song(
-                videoId = request.videoId,
-                title = request.title,
-                artist = request.artist,
-                thumbnailUrl = null,
-                isVideo = true,
-                // A file's lyrics timed for another recording are measured
-                // against the file that is actually playing.
-                localUri = request.localUri.takeIf { request.fileTimingForeign },
-            )
-            var attempts = 0
-            val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
-            while (attempts < MAX_MEASURE_ATTEMPTS && System.currentTimeMillis() < giveUpAt &&
-                !LyricsTiming.measured(context, request.videoId)
-            ) {
-                if (LyricsTiming.worthMeasuring(context, request.videoId)) {
-                    attempts++
-                    LyricsTiming.measure(context, video, names, request.durationMs)
-                    refreshTiming(generation, lines)
-                    autoAiIfNeeded(generation, lines)
-                    if (LyricsTiming.measured(context, request.videoId)) break
+            if (request.isVideo || request.fileTimingForeign) {
+                if (!adjustable || !measure || !measureNow) return@launch
+                // AI after the free measurement, not alongside it: each request
+                // uploads the whole song (twice — Deepgram, then Gemini), and the
+                // measurement times most covers on its own. A few videos still ask
+                // alongside it, so how late each engine runs keeps being learned.
+                // Each video is sampled at most once ever, so a replay or a lyrics
+                // re-delivery does not buy the same sample again.
+                var calibration = LyricsTiming.calibrationSample(request.videoId) &&
+                    AppSettings.aiTimingAhead.value &&
+                    (LyricsTranslation.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
+                    LyricsTiming.wantsAi(context, request.videoId, lines)
+                if (calibration && !LyricsTiming.claimCalibrationSample(context, request.videoId)) {
+                    calibration = false
                 }
-                delay(REMEASURE_CHECK_MS)
+                if (calibration) launch { aiAhead(context, request.videoId, lines) }
+                // The record is searched for under every name the lyrics know:
+                // what they were found as first, then the video's own readings.
+                val names = buildList {
+                    // A cover that names the original's artist is searched under
+                    // that first; one that doesn't, under what its lyrics were found as.
+                    if (request.artistKnown) add(request.title to request.artist)
+                    // Found under the singer's name is no lead to the original.
+                    searchedAs?.takeIf { request.artistKnown || it.second != request.artist }?.let(::add)
+                    // A cover that never names the original: its title alone.
+                    if (!request.artistKnown) add(request.title to "")
+                    add(request.title to request.artist)
+                    addAll(request.alternatives)
+                }.distinct()
+                val video = Song(
+                    videoId = request.videoId,
+                    title = request.title,
+                    artist = request.artist,
+                    thumbnailUrl = null,
+                    isVideo = true,
+                    // A file's lyrics timed for another recording are measured
+                    // against the file that is actually playing.
+                    localUri = request.localUri.takeIf { request.fileTimingForeign },
+                )
+                var attempts = 0
+                val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
+                while (attempts < MAX_MEASURE_ATTEMPTS && System.currentTimeMillis() < giveUpAt &&
+                    !LyricsTiming.measured(context, request.videoId)
+                ) {
+                    if (LyricsTiming.worthMeasuring(context, request.videoId)) {
+                        attempts++
+                        LyricsTiming.measure(context, video, names, request.durationMs)
+                        refreshTiming(generation, lines)
+                        autoAiIfNeeded(generation, lines)
+                        if (LyricsTiming.measured(context, request.videoId)) break
+                    }
+                    delay(REMEASURE_CHECK_MS)
+                }
+                if (!calibration && !LyricsTiming.measuredTiming(context, request.videoId)) {
+                    aiAhead(context, request.videoId, lines)
+                    refreshTiming(generation, lines)
+                }
+                autoAiIfNeeded(generation, lines)
+                return@launch
             }
-            if (!calibration && !LyricsTiming.measuredTiming(context, request.videoId)) {
-                aiAhead(context, request.videoId, lines)
-                refreshTiming(generation, lines)
-            }
-            autoAiIfNeeded(generation, lines)
+            // A song version plays the record itself, so there is no other
+            // recording to measure against; check the provider's times directly
+            // against the words heard, once per playback, only when the song is
+            // one a check can help (not the video's own captions, not already
+            // verified, English and not instrumental, timed) and the phone is
+            // not saving power. [refreshTiming] then shows a kept answer.
+            // [cancelAi] false is the AI button taking its answer back: the
+            // listener asked for it to go, so the automatic check must not
+            // buy it again on the way out.
+            if (!adjustable || videoOwn || !cancelAi) return@launch
+            val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
+            if (!LyricsAiGuard.songTimingWanted(
+                    isVideo = request.isVideo,
+                    timed = timed,
+                    sungLines = sung.size,
+                    title = request.title,
+                    artist = request.artist,
+                    texts = sung.map { it.value.text },
+                )
+            ) return@launch
+            if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
+                !com.music.bitchord.data.lyrics.Deepgram.usable
+            ) return@launch
+            // Missing audio is not kept on disk (the next playback may have
+            // it), so this session keeps it to one try rather than one per
+            // lyrics delivery.
+            if (songCheckStartedFor == request.videoId) return@launch
+            songCheckStartedFor = request.videoId
+            LyricsTiming.verifySong(
+                context,
+                Song(
+                    videoId = request.videoId,
+                    title = request.title,
+                    artist = request.artist,
+                    thumbnailUrl = null,
+                    isVideo = false,
+                    localUri = request.localUri,
+                ),
+                lines,
+            )
+            refreshTiming(generation, lines)
         }
     }
 
