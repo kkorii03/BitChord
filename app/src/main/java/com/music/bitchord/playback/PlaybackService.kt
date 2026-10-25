@@ -6030,9 +6030,7 @@ class PlaybackService : MediaLibraryService() {
                         // replace the audio under a track that is already
                         // playing. Keep it for the next play instead.
                         uri?.let { SourceResolver.targetIn(it) }?.let { target ->
-                            val currentTier = currentFormatForNotice(mediaId)?.let { HqQuality.tierOf(it) }
-                                ?: HqVerificationStore.bestTier(this@PlaybackService, mediaId)
-                                ?: HqTier.NORMAL
+                            val currentTier = currentTierFor(mediaId)
                             if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved) != null) {
                                 logHqTier(mediaId, target.title, shelved, currentTier)
                                 SourceResolver.rememberOriginal(target, shelved)
@@ -6126,9 +6124,7 @@ class PlaybackService : MediaLibraryService() {
                 // listener explicitly asked for.
                 if (!manual) {
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
-                        val currentTier = currentFormatForNotice(mediaId)?.let { HqQuality.tierOf(it) }
-                            ?: HqVerificationStore.bestTier(this@PlaybackService, mediaId)
-                            ?: HqTier.NORMAL
+                        val currentTier = currentTierFor(mediaId)
                         if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, better) != null) {
                             logHqTier(mediaId, target.title, better, currentTier)
                             SourceResolver.rememberOriginal(target, better)
@@ -6297,6 +6293,21 @@ class PlaybackService : MediaLibraryService() {
 
     private fun currentQualityLabel(mediaId: String): String =
         QualityUpgradeAdvice.label(currentFormatForNotice(mediaId))
+
+    /**
+     * The rung serving [mediaId] now, or the best one already proved for it.
+     *
+     * The stored-verdict read parses the whole verification map, so it is a
+     * prefs read and belongs off the main thread. This runs inside the upgrade
+     * coroutine, which is on Main; keeping it here means neither call site has
+     * to remember the dispatcher.
+     */
+    private suspend fun currentTierFor(mediaId: String): HqTier =
+        currentFormatForNotice(mediaId)?.let { HqQuality.tierOf(it) }
+            ?: withContext(Dispatchers.IO) {
+                HqVerificationStore.bestTier(this@PlaybackService, mediaId)
+            }
+            ?: HqTier.NORMAL
 
     /**
      * One line when an upgrade kept for the next play is on a different rung

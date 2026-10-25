@@ -59,7 +59,7 @@ object HqAudioVerify {
     /** How long to wait for the reference's opening to reach the cache. */
     private const val REFERENCE_HEAD_TIMEOUT_MS = 20_000L
 
-    /** One verification per pair at a time, whichever caller asks first. */
+    /** One verification per pair at a time while that verification is running. */
     private val locks = ConcurrentHashMap<String, Mutex>()
 
     /**
@@ -69,6 +69,12 @@ object HqAudioVerify {
      */
     private val noReference = ConcurrentHashMap<String, Long>()
     private const val NO_REFERENCE_TTL_MS = 10 * 60_000L
+
+    /**
+     * A failure is only useful until the bytes have had a chance to arrive;
+     * this bounds the map even in a session that never sees a reference again.
+     */
+    private const val MAX_NO_REFERENCE = 256
 
     /**
      * The reference profiles already measured in this session, by YouTube id.
@@ -120,38 +126,48 @@ object HqAudioVerify {
 
         val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
         val lock = locks.getOrPut(key) { Mutex() }
-        lock.withLock {
-            HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let { return@withLock it }
-            if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
-                return@withLock null
+        try {
+            return@withContext lock.withLock {
+                HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let { return@withLock it }
+                if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
+                    return@withLock null
+                }
+                val reference = referenceFeatures(context, youtubeId)
+                if (reference == null) {
+                    logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                    TrackLog.d(TAG, "hq-verify: '${target.title}' no reference audio; keeping YouTube", youtubeId)
+                    return@withLock null
+                }
+                val candidate = candidateFeatures(stream)
+                if (candidate == null) {
+                    logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                    return@withLock null
+                }
+                val result = runCatching {
+                    ChromaAlignment.align(reference, candidate, videoComplete = false)
+                }.getOrNull()
+                val match = result?.matchPercent ?: 0
+                val offset = result?.map?.map(0L) ?: 0L
+                val rate = result?.rate ?: 1.0
+                val verdict = HqMatchPolicy.verdict(match, offset, rate)
+                logVerdict(target.title, sourceName, match, offset, verdict.accepted, about = youtubeId)
+                if (!verdict.accepted) {
+                    reject(context, youtubeId, sourceId, trackId)
+                    return@withLock null
+                }
+                val tier = HqQuality.tierOf(stream.format)
+                val verified = HqVerificationStore.Verified(offset, rate, match, tier)
+                HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
+                verified
             }
-            val reference = referenceFeatures(context, youtubeId)
-            if (reference == null) {
-                logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-                TrackLog.d(TAG, "hq-verify: '${target.title}' no reference audio; keeping YouTube", youtubeId)
-                return@withLock null
-            }
-            val candidate = candidateFeatures(stream)
-            if (candidate == null) {
-                logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-                return@withLock null
-            }
-            val result = runCatching {
-                ChromaAlignment.align(reference, candidate, videoComplete = false)
-            }.getOrNull()
-            val match = result?.matchPercent ?: 0
-            val offset = result?.map?.map(0L) ?: 0L
-            val rate = result?.rate ?: 1.0
-            val verdict = HqMatchPolicy.verdict(match, offset, rate)
-            logVerdict(target.title, sourceName, match, offset, verdict.accepted, about = youtubeId)
-            if (!verdict.accepted) {
-                reject(context, youtubeId, sourceId, trackId)
-                return@withLock null
-            }
-            val tier = HqQuality.tierOf(stream.format)
-            val verified = HqVerificationStore.Verified(offset, rate, match, tier)
-            HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
-            verified
+        } finally {
+            // The entry only has to live as long as the work it serialises.
+            // Keeping every pair for the session was a slow leak on a long
+            // queue; a caller already waiting keeps its reference, so removing
+            // it cannot let a second decode of this pair start alongside that
+            // one. At worst a third caller arriving after the wait starts a
+            // fresh lock, and the verdict cache still answers it.
+            locks.remove(key, lock)
         }
     }
 
@@ -182,6 +198,16 @@ object HqAudioVerify {
         HqVerificationStore.reject(context, youtubeId, sourceId, trackId)
     }
 
+    /** Remembers a missing reference, pruning expired failures first. */
+    private fun noteNoReference(youtubeId: String) {
+        val now = System.currentTimeMillis()
+        if (noReference.size >= MAX_NO_REFERENCE) {
+            noReference.entries.removeIf { now - it.value >= NO_REFERENCE_TTL_MS }
+            if (noReference.size >= MAX_NO_REFERENCE) noReference.clear()
+        }
+        noReference[youtubeId] = now
+    }
+
     /** The YouTube song version's opening, from the cache or a local file. */
     private suspend fun referenceFeatures(
         context: Context,
@@ -195,7 +221,7 @@ object HqAudioVerify {
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(youtubeId))
         AudioCache.requestAnalysisHead(opus)
         if (!AudioCache.awaitAnalysisHead(opus, REFERENCE_HEAD_TIMEOUT_MS)) {
-            noReference[youtubeId] = System.currentTimeMillis()
+            noteNoReference(youtubeId)
             TrackLog.d(TAG, "hq-verify: reference opening for $youtubeId did not arrive", youtubeId)
             return null
         }
@@ -207,13 +233,13 @@ object HqAudioVerify {
             isVideo = false,
         )
         val source = VersionAudioAligner.openDataSource(context, song) ?: run {
-            noReference[youtubeId] = System.currentTimeMillis()
+            noteNoReference(youtubeId)
             return null
         }
         return try {
             val features = featuresOf(source)
             if (features == null) {
-                noReference[youtubeId] = System.currentTimeMillis()
+                noteNoReference(youtubeId)
             } else {
                 // A partial head is returned for this comparison but not kept:
                 // the rest of the bytes may still arrive, and freezing a short
@@ -263,6 +289,10 @@ object HqAudioVerify {
             TrackLog.w(TAG, "hq-verify: could not read candidate audio: ${e.message}")
             return null
         }
+        // A container that never states its rate would make the chroma clock
+        // infinite; it cannot be compared, so it is refused here rather than
+        // carried into the aligner as a bogus profile.
+        if (sampleRate <= 0) return null
         return extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
     }
 

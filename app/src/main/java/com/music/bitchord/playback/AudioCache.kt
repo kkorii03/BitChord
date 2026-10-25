@@ -37,6 +37,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1429,18 +1430,24 @@ object AudioCache {
                     val currentTier = StreamChoice.of(next)?.format?.let { HqQuality.tierOf(it) }
                         ?: HqVerificationStore.bestTier(context, next)
                         ?: HqTier.NORMAL
-                    runCatching {
+                    val found = try {
                         SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
                             HqAudioVerify.verify(context, next, target, candidate) != null
                         }
+                    } catch (cancelled: CancellationException) {
+                        // A cancelled read-ahead is not a failed lookup: let
+                        // the job unwind instead of carrying on to the URL
+                        // warm-up after the queue has already moved on.
+                        throw cancelled
+                    } catch (failed: Exception) {
+                        TrackLog.d(TAG, "warm-up substitute failed for $next: ${failed.message}", about = next)
+                        null
                     }
-                        .onFailure { TrackLog.d(TAG, "warm-up substitute failed for $next: ${it.message}", about = next) }
-                        .getOrNull()
-                        ?.also { candidate ->
-                            SourceResolver.rememberOriginal(target, candidate)
-                            StreamChoice.remember(next, candidate, substituted = true)
-                            logHqTier(next, target.title, candidate, currentTier)
-                        }
+                    found?.also { candidate ->
+                        SourceResolver.rememberOriginal(target, candidate)
+                        StreamChoice.remember(next, candidate, substituted = true)
+                        logHqTier(next, target.title, candidate, currentTier)
+                    }
                 } else {
                     null
                 }

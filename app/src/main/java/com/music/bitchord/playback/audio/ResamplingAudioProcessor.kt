@@ -74,7 +74,7 @@ class ResamplingAudioProcessor(
             return inputAudioFormat
         }
 
-        outputRateHz = target!!
+        outputRateHz = target ?: inputRateHz
         resampling = true
         if (previousFrame.size != channelCount) previousFrame = FloatArray(channelCount)
         phase = 0.0
@@ -146,7 +146,7 @@ class ResamplingAudioProcessor(
         for (channel in 0 until channelCount) {
             previousFrame[channel] = readSample(inputBuffer, frames - 1, channel)
         }
-        phase = position - frames
+        phase = (position - frames).coerceAtLeast(0.0)
         inputBuffer.position(inputBuffer.limit())
         output.flip()
     }
