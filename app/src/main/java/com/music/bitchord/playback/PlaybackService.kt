@@ -121,6 +121,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.MvSoundRedownload
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ExecutorService
@@ -1391,6 +1392,25 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            if (state == Player.STATE_READY && beforeAudioVersionJob?.isActive != true) {
+                // A local file's own length is known from here, which is the
+                // first moment a legacy download can be judged without reading
+                // anything. Still before sound: a row already audible is left
+                // alone, exactly as every other version decision is.
+                val item = exoPlayer.currentMediaItem
+                val song = item?.toSong()
+                if (item != null && song != null &&
+                    !SongVersionPolicy.hasMadeFirstSound(item.mediaId, audibleMediaId)
+                ) {
+                    streamLongDownloadedSong(
+                        exoPlayer,
+                        item.mediaId,
+                        song,
+                        AudioCache.isOffline(),
+                        exoPlayer.duration.takeIf { it > 0L },
+                    )
+                }
+            }
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
                 // The queue ran dry, so no transition will ever close the last
@@ -3454,6 +3474,72 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
+    /** The last id whose length verdict was announced, so one track logs once. */
+    private var mvSoundFileLoggedFor: String? = null
+
+    private fun logMvSoundFile(playId: String, deltaMs: Long) {
+        if (mvSoundFileLoggedFor == playId) return
+        mvSoundFileLoggedFor = playId
+        TrackLog.i(
+            "BitChord",
+            "song version: $playId file longer than the song by ${deltaMs}ms; streaming the song",
+            about = playId,
+        )
+    }
+
+    /**
+     * Treats a downloaded song whose file is longer than the catalogue track as
+     * a music video's sound.
+     *
+     * The verdict is remembered on the device the first time it is reached, so
+     * the same file is not re-measured and its song version is not re-requested
+     * on every play. Online the song is streamed through the same path as a
+     * recorded provenance mismatch; offline the file stays, because it is the
+     * only sound there is.
+     *
+     * @return true when the row was handled and the caller must not fall
+     *   through to the ordinary song-version lookup.
+     */
+    private fun streamLongDownloadedSong(
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        song: Song,
+        offline: Boolean,
+        fileDurationMs: Long?,
+    ): Boolean {
+        if (song.isVideo || song.typeUnknown || song.localUri == null) return false
+        if (!Downloads.isDownloaded(song.videoId)) return false
+        // A downloaded video and its song share one file; the shorter id is
+        // the recording the app calls the song.
+        val playId = Downloads.songIdForFile(song.videoId)
+        val remembered = Downloads.mvSoundSuspectMs(playId)
+        val delta = remembered ?: run {
+            if (Downloads.savedSoundSourceFor(song.videoId) != null) return false
+            val catalog = listOfNotNull(
+                Downloads.catalogDurationMs(song.videoId, song.durationMillis()),
+                YtMusicRepository.cachedSongVersionFor(song)
+                    ?.durationMillis()
+                    ?.takeIf { it > 0L },
+            ).minOrNull() ?: return false
+            val file = fileDurationMs?.takeIf { it > 0L } ?: return false
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = file,
+                catalogDurationMs = catalog,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ) ?: return false
+        }
+        if (remembered == null) {
+            Downloads.markMvSoundSuspect(playId, delta)
+            MvSoundRedownload.scheduleIfEnabled(this)
+        }
+        if (offline) return true
+        logMvSoundFile(playId, delta)
+        installStreamedRecording(exoPlayer, mediaId, song, playId)
+        return true
+    }
+
     /**
      * Waits for a version lookup that outlived the 1.5 s budget. The queue
      * plays the video meanwhile; when the answer arrives, its lyrics are
@@ -3497,16 +3583,28 @@ class PlaybackService : MediaLibraryService() {
         // streamed and the file stays only as the offline fallback; a file with
         // no provenance is left alone because its source cannot be known.
         if (!alreadyAudible && item != null && song != null && localFile &&
-            !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
-            SongVersionPolicy.downloadedFileUse(
-                song.videoId,
-                Downloads.savedSoundSourceFor(song.videoId),
-                online = !offline,
-            ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+            !SongVersionPolicy.hasMadeFirstSound(item.mediaId, audibleMediaId) &&
+            !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
         ) {
-            logStreamingSongFile(song.videoId, about = song.videoId)
-            installStreamedRecording(exoPlayer, item.mediaId, song)
-            return
+            // A file saved before provenance was recorded is judged by length:
+            // a music video is longer than the song it carries. The player's
+            // own duration is preferred; the recorded durations are what the
+            // Downloads page compares without opening anything.
+            val playerDuration = exoPlayer.duration
+                .takeIf { exoPlayer.playbackState == Player.STATE_READY && it > 0L }
+            if (streamLongDownloadedSong(exoPlayer, item.mediaId, song, offline, playerDuration)) {
+                return
+            }
+            if (SongVersionPolicy.downloadedFileUse(
+                    song.videoId,
+                    Downloads.savedSoundSourceFor(song.videoId),
+                    online = !offline,
+                ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+            ) {
+                logStreamingSongFile(song.videoId, about = song.videoId)
+                installStreamedRecording(exoPlayer, item.mediaId, song)
+                return
+            }
         }
         val skipReason = when {
             alreadyAudible -> "already audible"
@@ -3760,12 +3858,14 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer: ExoPlayer,
         mediaId: String,
         song: Song,
+        streamId: String? = null,
     ) {
+        val id = streamId ?: Downloads.songIdForFile(song.videoId)
         installPreResolvedVersion(
             exoPlayer,
             mediaId,
             song,
-            song.copy(localUri = null, localPath = null),
+            song.copy(videoId = id, localUri = null, localPath = null),
             viaDownload = false,
             forceStream = true,
         )
@@ -9253,6 +9353,12 @@ class PlaybackService : MediaLibraryService() {
                             baseAllowed = timeable,
                             measuredAllowed = recordTimed,
                             isVideo = currentSong.isVideo,
+                            audioSource = if (currentSong.isVideo) {
+                                null
+                            } else {
+                                com.music.bitchord.playback.smart.LyricsTiming
+                                    .audioSourceKey(currentSong.videoId, currentSong.localUri != null)
+                            },
                         )
                         ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
                 } else {

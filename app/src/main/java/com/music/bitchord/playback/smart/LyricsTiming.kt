@@ -153,9 +153,10 @@ object LyricsTiming {
         baseAllowed: Boolean,
         measuredAllowed: Boolean = baseAllowed,
         isVideo: Boolean = false,
+        audioSource: String? = null,
     ): Timing? {
         val entry = store(context).get(videoId) ?: return null
-        val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo) else null
+        val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo, audioSource) else null
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
         val timing = Timing(base, entry.manualMs ?: 0L, bias, engine)
@@ -164,7 +165,7 @@ object LyricsTiming {
         // [Timing.extraMs] is still missing. Read it here rather than bake it
         // into the kept words: a correction by hand, or a newly learned engine
         // lateness, must move the heard words with their line.
-        val heard = if (base?.byAi == true && entry.aiTextKey == textKey(lines)) {
+        val heard = if (base?.byAi == true && entry.aiTextKey == textKey(lines, audioSource)) {
             val shift = timing.extraMs
             entry.heardWords.map { word ->
                 val start = (word.s + shift).coerceAtLeast(0L)
@@ -185,18 +186,24 @@ object LyricsTiming {
         lines: List<LyricLine>,
         measuredAllowed: Boolean = true,
         isVideo: Boolean = false,
+        audioSource: String? = null,
     ): Adjustment? {
         val measured = entry.auto?.takeIf { measuredAllowed && entry.autoVersion == AUTO_VERSION }
         // Asked for by hand, over a measurement the listener saw was off: Gemini's.
-        if (entry.aiPreferred) aiOf(entry, lines, isVideo)?.let { return it }
+        if (entry.aiPreferred) aiOf(entry, lines, isVideo, audioSource)?.let { return it }
         // Otherwise the measurement first: when it lines the two up it is right
         // to a tenth of a second, which Gemini's answers never are.
         measured?.toAdjustment(byAi = false)?.let { return it }
-        return aiOf(entry, lines, isVideo)
+        return aiOf(entry, lines, isVideo, audioSource)
     }
 
-    private fun aiOf(entry: Entry, lines: List<LyricLine>, isVideo: Boolean = false): Adjustment? {
-        if (entry.aiTextKey != null && entry.aiTextKey == textKey(lines)) {
+    private fun aiOf(
+        entry: Entry,
+        lines: List<LyricLine>,
+        isVideo: Boolean = false,
+        audioSource: String? = null,
+    ): Adjustment? {
+        if (entry.aiTextKey != null && entry.aiTextKey == textKey(lines, audioSource)) {
             entry.ai?.toAdjustment(byAi = true)?.takeIf { aiMayApply(lines, it, isVideo) }?.let { return it }
             entry.aiShiftMs?.takeIf { LyricsAiGuard.shiftAllows(isVideo, it) }
                 ?.let { return Adjustment.Shift(it, byAi = true) }
@@ -871,10 +878,11 @@ object LyricsTiming {
         title: String = "",
         artist: String = "",
         isVideo: Boolean = false,
+        audioSource: String? = null,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) return null
-        val key = textKey(lines)
+        val key = textKey(lines, audioSource)
         // One decision for every automatic caller, made from what is kept —
         // the screen, the next-song preparation and the calibration sample
         // used to each guard on their own and each miss a case.
@@ -894,7 +902,7 @@ object LyricsTiming {
         }
         // Paid for and agreed, or already spent on these lyrics: reuse it
         // without decoding the audio again or paying an engine twice.
-        if (engines.isEmpty()) return entry?.let { aiOf(it, lines, isVideo) }
+        if (engines.isEmpty()) return entry?.let { aiOf(it, lines, isVideo, audioSource) }
         // One request per video, lyrics and kind, whoever asks — the button,
         // the song starting, the next-song preparation. The engines are no
         // longer part of the key: two callers that read the cache a moment
@@ -1093,7 +1101,10 @@ object LyricsTiming {
                 texts = sung.map { it.value.text },
             )
         ) return false
-        val key = textKey(lines)
+        val key = textKey(
+            lines,
+            audioSourceKey(song.videoId, song.localUri != null),
+        )
         val engines = AiTimingPolicy.nextEngines(
             knowledge(store(context).get(song.videoId)),
             key,
@@ -1242,6 +1253,35 @@ object LyricsTiming {
                 heardWords = emptyList(),
                 manualMs = null,
                 aiPreferred = false,
+            )
+        }
+        _changes.tryEmit(videoId)
+    }
+
+    /**
+     * Forgets the song check's answer and the engines it spent for [videoId],
+     * leaving the listener's own correction alone.
+     *
+     * Called when a downloaded file judged to hold the video's sound is
+     * replaced by the song version: the answer was measured against the old
+     * recording, and the same lyrics must be checked again against the new
+     * one. The text key already names file vs stream, but a replaced file can
+     * keep the same path, so the record itself has to be dropped.
+     */
+    suspend fun resetSongCheck(context: Context, videoId: String) {
+        store(context).update(videoId) {
+            it.copy(
+                aiTextKey = null,
+                ai = null,
+                aiShiftMs = null,
+                aiStarts = null,
+                aiFailedKey = null,
+                heardWords = emptyList(),
+                aiPreferred = false,
+                aiEngine = null,
+                aiAttemptedKey = null,
+                aiAttemptedEngines = emptyList(),
+                whisperKey = null,
             )
         }
         _changes.tryEmit(videoId)
@@ -1406,7 +1446,22 @@ object LyricsTiming {
     }
 
     /** Ties an AI answer to the words it was made for: other lyrics, other answer. */
-    private fun textKey(lines: List<LyricLine>): Int = lines.joinToString("\n") { it.text }.hashCode()
+    private fun textKey(lines: List<LyricLine>, audioSource: String? = null): Int {
+        val words = lines.joinToString("\n") { it.text }.hashCode()
+        return audioSource?.let { 31 * it.hashCode() + words } ?: words
+    }
+
+    /**
+     * Which sound a song check is listening to.
+     *
+     * A downloaded file and the song streamed from the network can be two
+     * different recordings under the same row id — that is the whole reason
+     * the length verdict exists. A timing answer made against one must not be
+     * applied to the other, so the check's key names the source as well as the
+     * words. Videos keep their old key: their own file is the video.
+     */
+    fun audioSourceKey(videoId: String, localFile: Boolean): String =
+        "$videoId|${if (localFile) "file" else "stream"}"
 
     /** The kept entry as the pure ask-again rule sees it; a missing entry is an empty one. */
     private fun knowledge(entry: Entry?): AiTimingKnowledge = entry?.let {
@@ -1503,7 +1558,11 @@ object LyricsTiming {
         val whisperKey: Int? = null,
         /** The words behind the AI answer, on the video's clock; see [timing]. */
         val heardWords: List<SavedWord> = emptyList(),
-        /** The lyrics the last automatic request was for, and the engines it has spent on them; see [AiTimingPolicy]. */
+        /**
+         * The lyrics the last automatic request was for, and the engines it
+         * has spent on them; see [AiTimingPolicy]. A song check's key also
+         * names the audio source, so a file-to-stream swap is a new request.
+         */
         val aiAttemptedKey: Int? = null,
         val aiAttemptedEngines: List<String> = emptyList(),
         /** This video's once-ever calibration sample has been claimed; see [claimCalibrationSample]. */

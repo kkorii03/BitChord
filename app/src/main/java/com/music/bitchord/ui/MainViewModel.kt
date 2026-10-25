@@ -450,9 +450,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * What the loaded lyrics are for. Both the track *and* the settings that
      * chose them, so switching a source on or off re-runs the lookup rather
      * than leaving the last answer sitting on a player that would now find a
-     * different one.
+     * different one. The audio source is part of it too: a song row can switch
+     * from its downloaded file to the song stream, and the check of the old
+     * recording must not stand for the new one.
      */
-    private var lyricsFor: Pair<String, Set<LyricsSource>>? = null
+    private var lyricsFor: Triple<String, String?, Set<LyricsSource>>? = null
 
     /**
      * Called as the playing track changes; cheap no-op when already loaded.
@@ -483,7 +485,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             emptySet()
         }
-        val key = videoId to sources
+        val key = Triple(
+            videoId,
+            if (isVideo) null else LyricsTiming.audioSourceKey(videoId, localUri != null),
+            sources,
+        )
         if (lyricsFor == key) return
         // The duration lands a beat after the track, and a database match needs
         // it. Turned away here rather than inside the job below: claiming the
@@ -493,7 +499,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // by nobody — which is what left a paused track loading for ever, since
         // pausing is when the duration is most likely to arrive a frame late.
         if (localUri == null && durationMs <= 0L) return
-        if (currentLyricsRequest?.videoId != videoId) songCheckStartedFor = null
+        if (currentLyricsRequest?.videoId != videoId ||
+            (currentLyricsRequest?.localUri != null) != (localUri != null)
+        ) {
+            songCheckStartedFor = null
+        }
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
@@ -938,10 +948,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 !com.music.bitchord.data.lyrics.Deepgram.usable
             ) return@launch
             // Missing audio is not kept on disk (the next playback may have
-            // it), so this session keeps it to one try rather than one per
-            // lyrics delivery.
-            if (songCheckStartedFor == request.videoId) return@launch
-            songCheckStartedFor = request.videoId
+            // it), so this session keeps it to one try per audio source rather
+            // than one per lyrics delivery. A file-to-stream swap is a new
+            // source and is checked again.
+            val checkKey = if (request.isVideo) {
+                request.videoId
+            } else {
+                LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
+            }
+            if (songCheckStartedFor == checkKey) return@launch
+            songCheckStartedFor = checkKey
             LyricsTiming.verifySong(
                 context,
                 Song(
@@ -999,6 +1015,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             timingBaseAllowed,
             measuredAllowed = timingBaseAllowed && timingMeasureAllowed,
             isVideo = request.isVideo,
+            audioSource = if (request.isVideo) {
+                null
+            } else {
+                LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
+            },
         )
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;
@@ -1110,6 +1131,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     title = request.title,
                     artist = request.artist,
                     isVideo = request.isVideo,
+                    audioSource = if (request.isVideo) {
+                        null
+                    } else {
+                        LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
+                    },
                 )
             } finally {
                 if (generation == lyricsGeneration && timingLines === lines) {

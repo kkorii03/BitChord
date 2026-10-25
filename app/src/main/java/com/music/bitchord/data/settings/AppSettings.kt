@@ -257,6 +257,16 @@ object AppSettings {
     val wifiOnlyDownloads = MutableStateFlow(true)
 
     /**
+     * Whether a download judged to hold a music video's sound is fetched again
+     * as its song version without the listener asking.
+     *
+     * On by default: the wrong sound is a defect in a file the app wrote, and
+     * the listener's data and storage are not the constraint. The repair runs
+     * only while charging, and ignores [wifiOnlyDownloads] for that reason.
+     */
+    val autoRedownloadMvSound = MutableStateFlow(true)
+
+    /**
      * Keep ordinary downloads in Music/BitChord where other music apps can see
      * them. Off (the default) keeps downloads in this app's private storage.
      * HLS downloads always stay private because they are a playlist package,
@@ -1119,6 +1129,7 @@ object AppSettings {
         migrateDownloadQuality()
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
+        autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
@@ -1562,6 +1573,11 @@ object AppSettings {
     fun setWifiOnlyDownloads(value: Boolean) {
         wifiOnlyDownloads.value = value
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
+    }
+
+    fun setAutoRedownloadMvSound(value: Boolean) {
+        autoRedownloadMvSound.value = value
+        prefs.edit().putBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, value).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -2783,6 +2799,7 @@ object AppSettings {
     private const val KEY_UPGRADE_LENGTH_SLACK_SECONDS = "upgrade_length_slack_seconds"
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
+    private const val KEY_AUTO_REDOWNLOAD_MV_SOUND = "auto_redownload_mv_sound"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"

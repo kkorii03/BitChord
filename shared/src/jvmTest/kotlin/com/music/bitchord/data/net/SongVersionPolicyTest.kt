@@ -3,6 +3,7 @@ package com.music.bitchord.data.net
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -178,6 +179,81 @@ class SongVersionPolicyTest {
                 localFile = true,
                 isVideo = false,
                 typeUnknown = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a file four seconds longer than the song is the video's sound`() {
+        assertEquals(
+            4_000L,
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 210_700L,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a file less than two and a half seconds longer is not suspected`() {
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 207_500L,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `missing either length is not evidence`() {
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = null,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 210_700L,
+                catalogDurationMs = null,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a video row is not a song-version length question`() {
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 210_700L,
+                catalogDurationMs = 206_700L,
+                isVideo = true,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a recorded sound source is left to the provenance rule`() {
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 210_700L,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = "JucvYrdSIcM",
             ),
         )
     }

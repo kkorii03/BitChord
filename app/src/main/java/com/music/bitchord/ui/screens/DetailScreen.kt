@@ -98,6 +98,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -148,6 +149,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
@@ -546,6 +548,15 @@ fun DetailScreen(
         }
     }
 
+    // Opening Downloads is the event that refreshes the length verdicts from
+    // what is already recorded — no network, no timer.
+    val downloadsContext = LocalContext.current
+    LaunchedEffect(page.browseId) {
+        if (page.browseId == "local:downloads") {
+            Downloads.scanForMvSoundSuspects(downloadsContext)
+        }
+    }
+
     AnimatedContent(
         targetState = activeShelf,
         transitionSpec = {
@@ -625,6 +636,12 @@ fun DetailScreen(
                         onToggleLibrary = onToggleLibrary,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
                     )
+                }
+            }
+
+            if (page.browseId == "local:downloads") {
+                item(key = "mv-sound-suspects") {
+                    MvSoundSuspectBanner(palette)
                 }
             }
 

@@ -217,6 +217,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
+        // A verdict remembered by an earlier launch is repaired on the next
+        // charge without waiting for the Downloads page or another play.
+        com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
         com.music.bitchord.download.LikedAutoDownload.init(this)
         // The device's own listening record. Opened here rather than in
         // PlaybackService because the Replay page reads it from the UI side and

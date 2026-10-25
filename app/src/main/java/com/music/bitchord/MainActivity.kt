@@ -1243,7 +1243,13 @@ private fun BitChordApp(
     // the track already playing rather than only the next one.
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    LaunchedEffect(player.song?.videoId, player.durationMs, syncedLyricsEnabled, lyricsSources) {
+    LaunchedEffect(
+        player.song?.videoId,
+        player.song?.localUri,
+        player.durationMs,
+        syncedLyricsEnabled,
+        lyricsSources,
+    ) {
         player.song?.let {
             // A cover is looked up as the song it covers — see CoverTitles.
             val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(it)

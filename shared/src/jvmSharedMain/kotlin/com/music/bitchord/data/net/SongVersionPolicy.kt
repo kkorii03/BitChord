@@ -103,6 +103,39 @@ object SongVersionPolicy {
         knownMissing: Boolean,
     ): Boolean = wantsSongVersion(isVideo, typeUnknown) && !knownMissing
 
+    /**
+     * How much longer than the catalogue track a downloaded song's file may be
+     * before it is taken to be the music video's sound.
+     *
+     * A song and its video are the same recording, but the video carries an
+     * intro, an outro, or both. Two and a half seconds is far beyond the
+     * container's own rounding and well inside the shortest video-only intro
+     * seen on a real report (a 4 s difference on 'That's What I Like').
+     */
+    const val MV_SOUND_SLACK_MS = 2_500L
+
+    /**
+     * How much longer [fileDurationMs] is than the catalogue track, when that
+     * difference is enough to suspect the file is a music video's sound.
+     *
+     * Only files whose provenance was never recorded are considered: a record
+     * that names its sound source is already answered by [downloadedFileUse].
+     * A video row is not a song version question at all, and missing either
+     * length is not evidence — null, never a guess.
+     */
+    fun mvSoundDeltaMs(
+        fileDurationMs: Long?,
+        catalogDurationMs: Long?,
+        isVideo: Boolean,
+        localFile: Boolean,
+        soundSourceId: String?,
+    ): Long? {
+        if (isVideo || !localFile || soundSourceId != null) return null
+        val file = fileDurationMs?.takeIf { it > 0L } ?: return null
+        val catalog = catalogDurationMs?.takeIf { it > 0L } ?: return null
+        return (file - catalog).takeIf { it >= MV_SOUND_SLACK_MS }
+    }
+
     /** What a downloaded file may be used for, once its sound source is known. */
     enum class DownloadedFileUse {
         /** The file's recorded source is the recording being played. */
@@ -122,7 +155,8 @@ object SongVersionPolicy {
      * the download was made. A mismatch means the row is a song id but the file
      * is the music video's sound; online, the song is streamed and the file is
      * kept only as the offline fallback. A null source is an older record whose
-     * provenance is unknown — never guessed at, so it keeps playing as before.
+     * provenance is unknown — it is not guessed at here; [mvSoundDeltaMs] is
+     * the length evidence that may still identify it.
      */
     fun downloadedFileUse(
         playId: String,

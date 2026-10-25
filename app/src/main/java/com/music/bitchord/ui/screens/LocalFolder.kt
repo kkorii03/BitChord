@@ -46,6 +46,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +55,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.launch
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalGroup
 import com.music.bitchord.data.LocalGroups
@@ -357,6 +360,46 @@ internal fun LazyListScope.localFolderItems(
                 FolderDivider(palette)
             }
         }
+    }
+}
+
+/**
+ * The Downloads page's repair notice: how many saved songs were judged to hold
+ * the music video's sound, and a tap that fetches their song versions through
+ * the ordinary download queue.
+ *
+ * Drawing the notice scans nothing; the list is the verdict remembered when a
+ * file was played or when this page was opened. Only the tap queues work.
+ */
+@Composable
+internal fun MvSoundSuspectBanner(palette: ArtworkPalette) {
+    val suspects by Downloads.mvSoundSuspects.collectAsStateWithLifecycle()
+    if (suspects.isEmpty()) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER)
+            .padding(bottom = 14.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.accent.copy(alpha = 0.14f))
+            .clickable { scope.launch { Downloads.redownloadSuspected(context) } }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Download,
+            contentDescription = null,
+            tint = palette.accent,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = stringResource(R.string.mv_sound_suspect_banner, suspects.size),
+            color = palette.onBackground,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 

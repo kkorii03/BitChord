@@ -12,6 +12,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.SourceResolver
@@ -76,6 +77,7 @@ object Downloads {
     private const val TAG = "BitChord"
     private const val KEY_SAVED_METADATA = "downloaded_tracks_metadata"
     private const val KEY_SAVED_COLLECTIONS = "downloaded_collections"
+    private const val KEY_MV_SOUND_SUSPECTS = "downloaded_mv_sound_suspects"
     private lateinit var prefs: SharedPreferences
 
     /** Where the settings file is opened from, once [init] has been told. */
@@ -91,6 +93,7 @@ object Downloads {
     private val serializer = MapSerializer(String.serializer(), String.serializer())
     private val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
     private val collectionSerializer = MapSerializer(String.serializer(), SavedCollection.serializer())
+    private val suspectSerializer = MapSerializer(String.serializer(), Long.serializer())
 
     private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
@@ -124,6 +127,22 @@ object Downloads {
     val saved: StateFlow<Map<String, String>> = _saved.asStateFlow()
 
     private val _savedMetadata = MutableStateFlow<Map<String, SavedSongMetadata>>(emptyMap())
+
+    /**
+     * Downloaded song ids whose file is longer than the catalogue track, by how
+     * much, as judged once and kept across launches.
+     *
+     * A file saved before provenance was recorded cannot be told from the song
+     * by id alone; its length can. The verdict is remembered so the same file
+     * is neither re-measured nor re-requested on every play, and so the
+     * Downloads page can offer to fetch the song version without a network
+     * request of its own.
+     */
+    private val _mvSoundSuspects = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val mvSoundSuspects: StateFlow<Map<String, Long>> = _mvSoundSuspects.asStateFlow()
+
+    /** Serialises the suspect map's update-and-write, so a later verdict is not overwritten. */
+    private val suspectLock = Any()
 
     private val _collections = MutableStateFlow<Map<String, SavedCollection>>(emptyMap())
 
@@ -193,6 +212,9 @@ object Downloads {
             _savedMetadata.value = runCatching {
                 json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
             }.getOrDefault(emptyMap())
+            _mvSoundSuspects.value = runCatching {
+                json.decodeFromString(suspectSerializer, prefs.getString(KEY_MV_SOUND_SUSPECTS, null) ?: "{}")
+            }.getOrDefault(emptyMap())
             _collections.value = runCatching {
                 json.decodeFromString(collectionSerializer, prefs.getString(KEY_SAVED_COLLECTIONS, null) ?: "{}")
             }.getOrDefault(emptyMap())
@@ -219,12 +241,20 @@ object Downloads {
      * @param from what release this track was asked for as part of, when it was
      *   one of many. Carried no further than [DownloadSession], which is the
      *   only thing that has to say *why* forty tracks are in the queue.
+     * @param allowMetered a replacement the listener asked for, or one the
+     *   charging-time repair is doing: data is not the constraint, so the
+     *   Wi-Fi-only rule does not apply.
      */
-    fun enqueue(context: Context, song: Song, from: String? = null) {
+    fun enqueue(
+        context: Context,
+        song: Song,
+        from: String? = null,
+        allowMetered: Boolean = false,
+    ) {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
         // rule has nothing to say about it.
-        if (!AppSettings.downloadsAllowedNow && !servableFromCache(id)) {
+        if (!allowMetered && !AppSettings.downloadsAllowedNow && !servableFromCache(id)) {
             // Distinct from the duplicate-tap no-op below: nothing is in flight
             // here to leave alone, and a refusal nobody is told about reads as a
             // dead button. A download already queued or running started on a
@@ -395,6 +425,12 @@ object Downloads {
         return _savedMetadata.value[videoId]
     }
 
+    /** Whether [videoId] is one of this app's downloads, rather than a local file. */
+    fun isDownloaded(videoId: String): Boolean {
+        open()
+        return videoId in _saved.value || videoId in _savedMetadata.value
+    }
+
     /**
      * The id whose stream produced the file saved for [videoId], when it was
      * recorded. Null for a download made before provenance was kept.
@@ -406,6 +442,177 @@ object Downloads {
     internal fun savedSoundSourceFor(videoId: String): String? {
         open()
         return _savedMetadata.value[videoId]?.soundSourceVideoId
+    }
+
+    /** How much longer than the song this file was judged to be, or null. */
+    fun mvSoundSuspectMs(videoId: String): Long? {
+        open()
+        return _mvSoundSuspects.value[videoId]
+    }
+
+    /** Keeps the length verdict for [videoId] across launches. */
+    fun markMvSoundSuspect(videoId: String, deltaMs: Long) {
+        open()
+        synchronized(suspectLock) {
+            val next = _mvSoundSuspects.updateAndGet { it + (videoId to deltaMs) }
+            if (::prefs.isInitialized) {
+                prefs.edit()
+                    .putString(KEY_MV_SOUND_SUSPECTS, json.encodeToString(suspectSerializer, next))
+                    .apply()
+            }
+        }
+    }
+
+    private fun clearMvSoundSuspects(videoIds: Collection<String>) {
+        if (videoIds.isEmpty()) return
+        synchronized(suspectLock) {
+            val next = _mvSoundSuspects.updateAndGet { it - videoIds.toSet() }
+            if (::prefs.isInitialized) {
+                prefs.edit()
+                    .putString(KEY_MV_SOUND_SUSPECTS, json.encodeToString(suspectSerializer, next))
+                    .apply()
+            }
+        }
+    }
+
+    /**
+     * The song id for the file [videoId] names: the shortest of the ids filed
+     * against it.
+     *
+     * A music video and the catalogue release it resolved to share one file,
+     * and only the shorter row is the recording the app plays as the song.
+     * [videoId] itself when there is no second id.
+     */
+    fun songIdForFile(videoId: String): String {
+        open()
+        val uri = _saved.value[videoId] ?: _savedMetadata.value[videoId]?.uri ?: return videoId
+        return _saved.value
+            .filterValues { it == uri }
+            .keys
+            .minByOrNull { candidate ->
+                _savedMetadata.value[candidate]?.durationText?.durationMillis()
+                    ?: Long.MAX_VALUE
+            } ?: videoId
+    }
+
+    /**
+     * The shortest duration known for [videoId]'s song: the row's own catalogue
+     * length, or a shorter length recorded against the same file (the song
+     * version the video was resolved to).
+     */
+    fun catalogDurationMs(videoId: String, rowDurationMs: Long?): Long? {
+        open()
+        val uri = _saved.value[videoId] ?: _savedMetadata.value[videoId]?.uri
+        val recorded = if (uri != null) {
+            _savedMetadata.value.values
+                .filter { it.uri == uri }
+                .mapNotNull { it.durationText?.durationMillis()?.takeIf { ms -> ms > 0L } }
+        } else {
+            emptyList()
+        }
+        return (recorded + listOfNotNull(rowDurationMs?.takeIf { it > 0L })).minOrNull()
+    }
+
+    /**
+     * Scans the downloads whose provenance is unknown for files longer than
+     * their song, using only lengths already written down. No network; the
+     * file's own metadata is read only for records that have a catalogue
+     * length to compare it with.
+     */
+    suspend fun scanForMvSoundSuspects(context: Context) = withContext(Dispatchers.IO) {
+        open()
+        val found = LinkedHashMap<String, Long>()
+        _savedMetadata.value.values.groupBy { it.uri }.forEach { (_, entries) ->
+            if (entries.isEmpty() || entries.any { it.soundSourceVideoId != null }) return@forEach
+            val durations = entries.mapNotNull { meta ->
+                meta.durationText?.durationMillis()
+                    ?.takeIf { ms -> ms > 0L }
+                    ?.let { meta.videoId to it }
+            }
+            if (durations.isEmpty()) return@forEach
+            val fileUri = entries.first().uri
+            if (!DownloadStore.exists(context, fileUri.toUri())) return@forEach
+            val (catalogId, catalogMs) = durations.minBy { it.second }
+            // The recorded lengths say this file might be the video's sound;
+            // the file's own metadata is the one that says whether it is.
+            // Read only for the candidates, never for every download.
+            val fileMs = localDurationMs(context, fileUri)
+                ?: durations.maxOf { it.second }
+            val delta = SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = fileMs,
+                catalogDurationMs = catalogMs,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ) ?: return@forEach
+            found[songIdForFile(catalogId)] = delta
+        }
+        var changed = false
+        synchronized(suspectLock) {
+            val before = _mvSoundSuspects.value
+            val next = _mvSoundSuspects.updateAndGet { current ->
+                val kept = current.filter { (id, _) ->
+                    val meta = _savedMetadata.value[id] ?: return@filter false
+                    val uri = _saved.value[id] ?: meta.uri
+                    meta.soundSourceVideoId == null &&
+                        DownloadStore.exists(context, uri.toUri())
+                }
+                kept + found
+            }
+            changed = next != before
+            if (changed && ::prefs.isInitialized) {
+                prefs.edit()
+                    .putString(KEY_MV_SOUND_SUSPECTS, json.encodeToString(suspectSerializer, next))
+                    .apply()
+            }
+        }
+        if (_mvSoundSuspects.value.isNotEmpty()) MvSoundRedownload.scheduleIfEnabled(context)
+    }
+
+    /** The file's own length from its container metadata, or null if it cannot be read. */
+    private fun localDurationMs(context: Context, uriString: String): Long? = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uriString.toUri())
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        } finally {
+            retriever.release()
+        }
+    }.getOrNull()?.takeIf { it > 0L }
+
+    /** The downloaded rows still on disk that are remembered as the video's sound. */
+    suspend fun suspectedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
+        open()
+        _mvSoundSuspects.value.keys.mapNotNull { id ->
+            val meta = _savedMetadata.value[id] ?: return@mapNotNull null
+            val uri = _saved.value[id] ?: meta.uri
+            if (!DownloadStore.exists(context, uri.toUri())) return@mapNotNull null
+            // The verdict names a file, and the same file may be filed under
+            // the video and the song. Fetch the shorter name: that is the song
+            // id, whose own stream is the recording to keep.
+            val target = songIdForFile(id)
+            val targetMeta = _savedMetadata.value[target] ?: meta
+            Song(
+                videoId = target,
+                title = targetMeta.title,
+                artist = targetMeta.artist,
+                thumbnailUrl = targetMeta.thumbnailUrl,
+                durationText = targetMeta.durationText,
+                albumName = targetMeta.albumName,
+                localUri = uri,
+            )
+        }.distinctBy { it.localUri }
+    }
+
+    /**
+     * Queues every remembered suspect as its song version. The old file is
+     * replaced once the new recording is on disk; until then the banner stays,
+     * so a failure is visible rather than silently forgotten.
+     */
+    suspend fun redownloadSuspected(context: Context): Int {
+        val songs = suspectedSongs(context)
+        songs.forEach { enqueue(context, it, allowMetered = true) }
+        return songs.size
     }
 
     /**
@@ -437,15 +644,26 @@ object Downloads {
      */
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         open()
+        val wasSuspect = mvSoundSuspectMs(videoId) != null
         val uri = _saved.value[videoId]?.toUri() ?: return@withContext false
         if (!DownloadStore.exists(context, uri)) {
             Log.d(TAG, "$videoId was already gone; forgetting the record")
             forget(videoId)
+            if (wasSuspect) {
+                runCatching {
+                    com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, videoId)
+                }
+            }
             return@withContext true
         }
         val deleted = DownloadStore.delete(context, uri)
         if (deleted) {
             forget(videoId)
+            if (wasSuspect) {
+                runCatching {
+                    com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, videoId)
+                }
+            }
         } else {
             Log.w(TAG, "$videoId could not be deleted; keeping the record")
         }
@@ -454,6 +672,7 @@ object Downloads {
 
     private fun forget(videoId: String) {
         record(saved = { it - videoId }, meta = { it - videoId })
+        clearMvSoundSuspects(listOf(videoId))
     }
 
     /**
@@ -700,7 +919,7 @@ object Downloads {
      * still know it is already on the device. A stale id costs nothing: the
      * verification in [savedUri] prunes whichever one stops resolving.
      */
-    private fun remember(
+    private suspend fun remember(
         asked: Song,
         fetched: Song,
         uri: Uri,
@@ -708,7 +927,15 @@ object Downloads {
         artworkUri: String? = null,
         soundSourceVideoId: String = fetched.videoId,
     ) {
+        open()
         val ids = setOf(asked.videoId, fetched.videoId)
+        val previousUris = ids.mapNotNull { id ->
+            _savedMetadata.value[id]?.uri ?: _saved.value[id]
+        }.toSet()
+        val previousSuspects = _mvSoundSuspects.value.keys.filter { id ->
+            val old = _savedMetadata.value[id]?.uri ?: _saved.value[id]
+            old != null && (old == uri.toString() || old in previousUris)
+        }
         // MediaStore supplies this for exported downloads, but app-private and
         // legacy file:// downloads never pass through that index. Keep the
         // creation time in our own record so "Date added" remains stable if a
@@ -765,6 +992,62 @@ object Downloads {
                 it + mapOf(asked.videoId to metaAsked, fetched.videoId to metaFetched)
             },
         )
+        // A file whose recorded source is one of these ids is the recording
+        // these rows asked for, so a length verdict from the old file no longer
+        // applies. When the new file landed elsewhere, remove the old one once
+        // nothing else names it — that is the "replace the old file" half of a
+        // re-download.
+        if (soundSourceVideoId in ids) {
+            clearMvSoundSuspects(previousSuspects + ids)
+            val context = appContext
+            val fileReplaced = previousUris.any { it != uri.toString() }
+            if (context != null && (fileReplaced || previousSuspects.isNotEmpty())) {
+                // A song's file was replaced. Any AI timing answer was measured
+                // against the old bytes, so drop it (and the spent engine
+                // record) and let the song check run against the new
+                // recording. Video rows keep their own timing.
+                buildSet {
+                    if (!asked.isVideo) add(asked.videoId)
+                    if (!fetched.isVideo) add(fetched.videoId)
+                    addAll(previousSuspects)
+                }.forEach { id ->
+                    runCatching {
+                        com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, id)
+                    }
+                }
+            }
+            // Other ids that named the old file are aliases of the same
+            // download (a music video and its song). Point them at the new
+            // file rather than dropping them, so a playlist that was filed
+            // under the old id keeps its track.
+            val staleIds = _saved.value
+                .filterValues { value -> value != uri.toString() && value in previousUris }
+                .keys.toList()
+            if (staleIds.isNotEmpty()) {
+                record(
+                    saved = { it + staleIds.associateWith { uri.toString() } },
+                    meta = { meta ->
+                        meta.mapValues { (id, value) ->
+                            if (id in staleIds) {
+                                value.copy(
+                                    uri = uri.toString(),
+                                    soundSourceVideoId = soundSourceVideoId,
+                                )
+                            } else {
+                                value
+                            }
+                        }
+                    },
+                )
+            }
+            if (context != null) {
+                previousUris.forEach { old ->
+                    if (old != uri.toString() && _saved.value.values.none { it == old }) {
+                        runCatching { DownloadStore.delete(context, old.toUri()) }
+                    }
+                }
+            }
+        }
     }
 
     /**

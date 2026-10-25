@@ -121,6 +121,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.music.bitchord.download.MvSoundRedownload
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -286,6 +287,7 @@ fun SettingsScreen(
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
+    val autoRedownloadMvSound by AppSettings.autoRedownloadMvSound.collectAsStateWithLifecycle()
     val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -614,6 +616,22 @@ fun SettingsScreen(
                     checked = wifiOnlyDownloads,
                     onCheckedChange = AppSettings::setWifiOnlyDownloads,
                     badge = stringResource(R.string.blocking).takeIf { wifiOnlyDownloads && metered == true },
+                )
+            }
+            val autoRedownloadMvSoundTitle = stringResource(R.string.auto_redownload_mv_sound)
+            row(autoRedownloadMvSoundTitle, "mv", "video", "download", "charging", divided = false) {
+                SettingsSubRow(
+                    title = autoRedownloadMvSoundTitle,
+                    checked = autoRedownloadMvSound,
+                    onCheckedChange = { checked ->
+                        AppSettings.setAutoRedownloadMvSound(checked)
+                        if (checked) {
+                            MvSoundRedownload.scheduleIfEnabled(context)
+                        } else {
+                            MvSoundRedownload.cancel(context)
+                        }
+                    },
+                    subtitle = stringResource(R.string.auto_redownload_mv_sound_subtitle),
                 )
             }
             val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)
