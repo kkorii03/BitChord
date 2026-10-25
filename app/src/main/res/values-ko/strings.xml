@@ -765,6 +765,8 @@
     <string name="use_all_audio_folders">모든 오디오 폴더 사용</string>
     <string name="use_all_audio_folders_subtitle">폴더 제한을 없애고 기기 전체에서 음악을 검색합니다.</string>
     <string name="album">앨범</string>
+    <string name="album_release_year">%1$s년</string>
+    <string name="album_release_date">%1$d년 %2$d월 %3$d일</string>
     <string name="artist">아티스트</string>
     <string name="webdav">WebDAV</string>
     <string name="webdav_subtitle">내 서버의 음악</string>

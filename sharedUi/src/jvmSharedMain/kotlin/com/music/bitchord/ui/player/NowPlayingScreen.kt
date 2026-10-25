@@ -208,6 +208,9 @@ internal const val ALBUM_SETTLE_MS = 700L
 /** Long enough for the post-upgrade rollback cue to be noticed without lingering. */
 private const val REVERT_CUE_MS = 2_600L
 
+/** How long a tap on the artwork keeps the stream / analysis stats on screen. */
+private const val NERD_STATS_REVEAL_MS = 4_000L
+
 /**
  * How close the player's reported position has to get to a released scrub
  * handle before the handle stops being drawn where it was dropped. Wide enough
@@ -1097,6 +1100,18 @@ fun NowPlayingScreen(
         showRevertCue = true
         delay(REVERT_CUE_MS)
         showRevertCue = false
+    }
+
+    // A tap on the sleeve asks for the stream / analysis lines for a few
+    // seconds. The tick, not the boolean, is the effect key: tapping again
+    // while they are up restarts the countdown instead of being swallowed.
+    var nerdStatsRevealTick by remember(song.videoId) { mutableIntStateOf(0) }
+    var nerdStatsRevealed by remember(song.videoId) { mutableStateOf(false) }
+    LaunchedEffect(nerdStatsRevealTick) {
+        if (nerdStatsRevealTick == 0) return@LaunchedEffect
+        nerdStatsRevealed = true
+        delay(NERD_STATS_REVEAL_MS)
+        nerdStatsRevealed = false
     }
 
     // Lyrics are meant to be read continuously, so hold off the device's normal
@@ -2014,19 +2029,25 @@ fun NowPlayingScreen(
                                 }
                                 // With a panel up the sleeve is the way back to
                                 // the player, as the portrait thumbnail is.
+                                // Otherwise a tap asks for the stats for a few
+                                // seconds without disturbing playback.
                                 .clickable(
-                                    enabled = panelOpen,
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                 ) {
-                                    queueOpen = false
-                                    closeLyrics()
+                                    if (panelOpen) {
+                                        queueOpen = false
+                                        closeLyrics()
+                                    } else {
+                                        nerdStatsRevealTick++
+                                    }
                                 },
                         ) {
                             // The stats belong to the player, not to the sleeve, so
                             // they leave it along with the rest of the player.
                             SleeveNerdStats(
                                 song = song,
+                                revealed = nerdStatsRevealed,
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .padding(horizontal = 10.dp, vertical = 8.dp)
@@ -3263,6 +3284,8 @@ fun NowPlayingScreen(
                                 }
                                 // Collapsed, the sleeve is the way back: tapping the
                                 // thumbnail puts the queue or the lyrics away again.
+                                // Otherwise a tap asks for the stats for a few
+                                // seconds without disturbing playback.
                                 .then(
                                     if (queueOpen || lyricsOpen) {
                                         Modifier.clickable {
@@ -3270,7 +3293,12 @@ fun NowPlayingScreen(
                                             closeLyrics()
                                         }
                                     } else {
-                                        Modifier
+                                        Modifier.clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                        ) {
+                                            nerdStatsRevealTick++
+                                        }
                                     },
                                 ),
                             contentAlignment = Alignment.Center,
@@ -3281,6 +3309,7 @@ fun NowPlayingScreen(
                             WhileShown({ !collapsePastHalf }) {
                                 SleeveNerdStats(
                                     song = song,
+                                    revealed = nerdStatsRevealed,
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
                                         .padding(horizontal = 10.dp, vertical = 8.dp)

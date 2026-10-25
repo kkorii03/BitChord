@@ -150,6 +150,9 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.artistCountValue
+import com.music.bitchord.data.model.AlbumSubtitle
+import com.music.bitchord.data.model.parseAlbumSubtitle
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
@@ -386,6 +389,11 @@ fun DetailScreen(
         rawSongs.withIndex().associate { (i, s) -> s.videoId to ((if (byTag) s.trackNumber else null) ?: (i + 1)) }
     }
     val isArtist = page.type == BrowseType.ARTIST
+    // An album's header and footer share one reading of the server's subtitle:
+    // the artist line, the kind/year meta, and the release date when stated.
+    val albumSubtitle = remember(page.subtitle, page.type) {
+        if (page.type == BrowseType.ALBUM) parseAlbumSubtitle(page.subtitle) else null
+    }
     // A smart playlist with nothing to show is an empty shelf, not a release
     // with a missing sleeve: the tall artwork header would push the title into
     // the middle of the screen and leave the explanation stranded below it.
@@ -495,8 +503,11 @@ fun DetailScreen(
     val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
-    // which case the tracks themselves know who it is.
-    val credit = page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
+    // which case the tracks themselves know who it is. An album's parsed
+    // subtitle is the better reading — it drops the Korean 년 suffix and the
+    // "앨범" word the plain split would otherwise keep in the credit.
+    val credit = albumSubtitle?.credit?.takeIf { it.isNotBlank() }
+        ?: page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
     var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
     LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas) {
         // An artist's clip is set below, by the lookup that finds it.
@@ -602,6 +613,7 @@ fun DetailScreen(
                         sleeveSize = sleeveSize,
                         canvas = canvas,
                         songs = songs,
+                        albumSubtitle = albumSubtitle,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
                         // A folder's credit says where its tracks live, not who made them.
@@ -691,7 +703,8 @@ fun DetailScreen(
             // The artist's counts close it, under the text, so a page whose blurb is
             // empty still gets the section for them.
             val hasStats = isArtist &&
-                (page.subscriberCountText != null || page.monthlyListenerCount != null)
+                (artistCountValue(page.subscriberCountText) != null ||
+                    artistCountValue(page.monthlyListenerCount) != null)
             // The header holds Apple's logo here, so the ink goes at the foot of the page instead.
             val aboutSignature = if (isArtist && appleArt?.logoUrl != null) signature else null
             val showAbout = (!description.isNullOrBlank() &&
@@ -836,6 +849,14 @@ fun DetailScreen(
                             // The track's place on the release, not its place in
                             // what the filter — or a sort — left standing.
                             trackNumber = originalTrackNumbers[song.videoId].takeIf { numbered },
+                            // An album row repeats the artist only when this
+                            // track's credit differs from the album's; the
+                            // running time is left off the rows entirely.
+                            showArtist = !numbered ||
+                                albumSubtitle == null ||
+                                albumSubtitle.credit.isBlank() ||
+                                !song.artist.trim().equals(albumSubtitle.credit.trim(), ignoreCase = true),
+                            showDuration = !numbered,
                             subtitleColor = palette.onBackgroundVariant,
                             downloadedTint = downloadedTint,
                             isCurrent = isCurrent,
@@ -850,6 +871,17 @@ fun DetailScreen(
                                 ),
                                 thickness = 0.5.dp,
                                 color = palette.divider,
+                            )
+                        }
+                    }
+                    // An album's release date and running time close the list,
+                    // the way Apple Music's do, rather than repeating above it.
+                    if (numbered && query.isBlank() && songs.isNotEmpty()) {
+                        item(key = "album-footer") {
+                            AlbumFooter(
+                                songs = songs,
+                                albumSubtitle = albumSubtitle,
+                                palette = palette,
                             )
                         }
                     }
@@ -1040,6 +1072,8 @@ private fun ReleaseHeader(
     sleeveSize: Dp,
     canvas: CanvasArtwork?,
     songs: List<Song>,
+    /** The album subtitle split into credit / year, or null on any other page. */
+    albumSubtitle: AlbumSubtitle? = null,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     onArtistClick: ((String?, String) -> Unit)?,
@@ -1047,7 +1081,17 @@ private fun ReleaseHeader(
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
     onDownloadAll: (() -> Unit)? = null,
 ) {
-    val (credit, meta) = page.headerLines(songs.size, songs.playtime())
+    // An album leads with the artist and "Album · 2026"; its track count and
+    // running time moved to the foot of the list. Every other release keeps the
+    // single meta line it had.
+    val (credit, meta) = if (albumSubtitle != null) {
+        albumSubtitle.credit.ifBlank { songs.firstOrNull()?.artist.orEmpty() } to listOfNotNull(
+            page.type.localizedLabel()?.capitalizeWords(),
+            albumSubtitle.year?.toString(),
+        ).joinToString(" · ")
+    } else {
+        page.headerLines(songs.size, songs.playtime())
+    }
     // Every row on a release carries the same credit — see [pageCredit] — so
     // the first one speaks for the whole page, the same source the rows'
     // own long-press "Open artist" already reads from.
@@ -1118,7 +1162,7 @@ private fun ReleaseHeader(
                     fontWeight = FontWeight.Normal,
                     fontSize = 19.sp,
                 ),
-                color = palette.onBackgroundVariant,
+                color = if (albumSubtitle != null) palette.accent else palette.onBackgroundVariant,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1235,6 +1279,61 @@ private fun ReleaseHeader(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * The small grey note under an album's last track: its release date when the
+ * header states one, then "9 tracks, 31 min". Both are read from the album,
+ * not from whatever a filter left in the list, so narrowing the running order
+ * never rewrites the record's own figures.
+ */
+@Composable
+private fun AlbumFooter(
+    songs: List<Song>,
+    albumSubtitle: AlbumSubtitle?,
+    palette: ArtworkPalette,
+) {
+    val date = albumSubtitle?.let { parts ->
+        val year = parts.year
+        val month = parts.month
+        val day = parts.day
+        when {
+            year == null -> null
+            month != null && day != null ->
+                stringResource(R.string.album_release_date, year, month, day)
+            else -> stringResource(R.string.album_release_year, year.toString())
+        }
+    }
+    val summary = listOfNotNull(
+        pluralStringResource(R.plurals.track_count_plural, songs.size, songs.size),
+        songs.playtime(),
+    ).joinToString(", ")
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = PAGE_GUTTER,
+                end = PAGE_GUTTER,
+                top = 18.dp,
+                bottom = 30.dp,
+            ),
+    ) {
+        if (date != null) {
+            Text(
+                text = date,
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.onBackgroundVariant,
+            )
+            Spacer(Modifier.height(3.dp))
+        }
+        if (summary.isNotBlank()) {
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.onBackgroundVariant,
+            )
         }
     }
 }
@@ -1877,21 +1976,21 @@ private fun ArtistStatsRow(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         horizontalAlignment = Alignment.Start,
     ) {
-        // YouTube's own count text already reads "1.2M subscribers" in full,
-        // so only the number is kept and the label re-said in the app's own
-        // words — the one way to fit both stats on one line on a narrow
-        // screen without either wrapping into two.
-        subscriberCountText?.let {
+        // YouTube's own count text already reads "1.2M subscribers" in English
+        // and "구독자 73명" in Korean, so only the figure is kept and the label
+        // re-said in the app's own words. A line with no figure at all hides
+        // its chip rather than showing the label twice.
+        artistCountValue(subscriberCountText)?.let {
             StatChip(
                 icon = Icons.Rounded.Person,
-                text = stringResource(R.string.subscribers, it.substringBefore(' ')),
+                text = stringResource(R.string.subscribers, it),
                 palette = palette,
             )
         }
-        monthlyListenerCount?.let {
+        artistCountValue(monthlyListenerCount)?.let {
             StatChip(
                 icon = Icons.Rounded.GraphicEq,
-                text = stringResource(R.string.monthly_listeners, it.substringBefore(' ')),
+                text = stringResource(R.string.monthly_listeners, it),
                 palette = palette,
             )
         }
@@ -2378,6 +2477,11 @@ private fun SectionCard(
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
     onLongPress: (() -> Unit)? = null,
 ) {
+    val shape = if (item.isArtist || item.browseId?.startsWith("UC") == true) {
+        CircleShape
+    } else {
+        RoundedCornerShape(LARGE_CARD_CORNER)
+    }
     Column(
         modifier = modifier
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress),
@@ -2389,8 +2493,8 @@ private fun SectionCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(LARGE_CARD_CORNER))
-                .thumbnailBorder(RoundedCornerShape(LARGE_CARD_CORNER))
+                .clip(shape)
+                .thumbnailBorder(shape)
                 .background(palette.elevated),
         )
         Spacer(Modifier.height(8.dp))

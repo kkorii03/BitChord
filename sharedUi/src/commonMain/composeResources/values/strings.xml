@@ -159,6 +159,7 @@
     <string name="playlist">playlist</string>
     <string name="playlist_action">Playlist</string>
     <string name="playlists">Playlists</string>
+    <string name="podcasts">Podcasts</string>
     <string name="recent_search_edit">Edit “%1$s”</string>
     <string name="recent_search_remove">Remove “%1$s” from recent searches</string>
     <string name="recent_searches">Recent searches</string>

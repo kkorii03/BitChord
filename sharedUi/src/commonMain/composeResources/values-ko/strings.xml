@@ -156,6 +156,7 @@
     <string name="playlist">재생목록</string>
     <string name="playlist_action">재생목록</string>
     <string name="playlists">재생목록</string>
+    <string name="podcasts">팟캐스트</string>
     <string name="recent_search_edit">‘%1$s’ 편집</string>
     <string name="recent_search_remove">최근 검색에서 ‘%1$s’ 제거</string>
     <string name="recent_searches">최근 검색</string>

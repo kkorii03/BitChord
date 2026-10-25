@@ -431,6 +431,13 @@ data class ShelfItem(
     val thumbnailUrl: String?,
     val videoId: String?,
     val browseId: String?,
+    /**
+     * True when the card opens an artist page, whatever its browse id looks
+     * like. YouTube's library artist feed sometimes serves a card whose id is
+     * not the usual `UC…`, and an artist is drawn round wherever it appears —
+     * including when its picture had to fall back to an album cover.
+     */
+    val isArtist: Boolean = false,
 )
 
 /** The signed-in Google account, as YouTube Music reports it. */

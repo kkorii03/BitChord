@@ -336,6 +336,14 @@ fun SongRow(
      */
     trackNumber: Int? = null,
     /**
+     * Whether the artist is repeated on the row's second line. An album's
+     * listing turns this off unless the track's own credit differs from the
+     * album's, so the page does not say the same name on every line.
+     */
+    showArtist: Boolean = true,
+    /** Whether the running time is drawn at the row's trailing edge. */
+    showDuration: Boolean = true,
+    /**
      * The artist line, and the track number when there is one.
      *
      * A page tinted from its artwork wants this brighter than the flat feeds
@@ -387,6 +395,8 @@ fun SongRow(
             onMore = onMore ?: onLongPress,
             modifier = if (onSwipeToQueue != null) Modifier.background(rowBackground) else modifier,
             trackNumber = trackNumber,
+            showArtist = showArtist,
+            showDuration = showDuration,
             subtitleColor = subtitleColor,
             downloadedTint = downloadedTint,
             isCurrent = isCurrent,
@@ -528,6 +538,8 @@ private fun SongRowContent(
     onMore: (() -> Unit)?,
     modifier: Modifier = Modifier,
     trackNumber: Int? = null,
+    showArtist: Boolean = true,
+    showDuration: Boolean = true,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     downloadedTint: Color? = MaterialTheme.colorScheme.primary,
     isCurrent: Boolean = false,
@@ -613,27 +625,29 @@ private fun SongRowContent(
                 style = MaterialTheme.typography.titleMedium,
                 color = titleColor,
             )
-            Spacer(Modifier.height(2.dp))
-            val subtitle = listOfNotNull(
-                song.artist.takeIf { it.isNotBlank() },
-                song.downloadFormat,
-            ).joinToString(" · ")
-            val quality = if (showSourceQuality) song.sourceQualityBadge() else null
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (quality != null) {
-                    SourceQualityBadge(
-                        quality = quality,
-                        color = subtitleColor,
+            val subtitle = buildList {
+                if (showArtist) song.artist.takeIf { it.isNotBlank() }?.let(::add)
+                song.downloadFormat?.let(::add)
+            }.joinToString(" · ")
+            if (subtitle.isNotEmpty() || showArtist) {
+                Spacer(Modifier.height(2.dp))
+                val quality = if (showSourceQuality) song.sourceQualityBadge() else null
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (quality != null) {
+                        SourceQualityBadge(
+                            quality = quality,
+                            color = subtitleColor,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    Text(
+                        text = if (quality != null && subtitle.isNotEmpty()) " · $subtitle" else subtitle,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = subtitleColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text(
-                    text = if (quality != null && subtitle.isNotEmpty()) " · $subtitle" else subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = subtitleColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
         }
         if (downloadedTint != null) {
@@ -665,7 +679,7 @@ private fun SongRowContent(
                 color = subtitleColor,
             )
         } else {
-            song.durationText?.let {
+            if (showDuration) song.durationText?.let {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = it,

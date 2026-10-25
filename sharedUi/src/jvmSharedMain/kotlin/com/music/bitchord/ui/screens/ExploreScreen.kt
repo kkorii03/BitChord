@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.ExploreCategoryFilter
+import com.music.bitchord.data.ExploreCategoryNames
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.MoodGenreSection
@@ -63,6 +64,7 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.ShimmerBox
 import com.music.bitchord.ui.components.feedSkeleton
+import com.music.bitchord.ui.player.appLanguageTag
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -150,6 +152,7 @@ fun ExploreScreen(
     }
 
     pendingHide?.let { item ->
+        val displayTitle = ExploreCategoryNames.displayTitle(item.title, appLanguageTag())
         AlertDialog(
             onDismissRequest = { pendingHide = null },
             title = { Text(stringResource(Res.string.hide_explore_category)) },
@@ -157,7 +160,7 @@ fun ExploreScreen(
                 Text(
                     stringResource(
                         Res.string.hide_explore_category_message,
-                        item.title,
+                        displayTitle,
                     ),
                 )
             },
@@ -281,7 +284,7 @@ fun MoodGenreSleeve(
                 .background(Brush.verticalGradient(0f to Color.Black.copy(alpha = .24f), .62f to Color.Transparent)),
         )
         Text(
-            text = item.title,
+            text = ExploreCategoryNames.displayTitle(item.title, appLanguageTag()),
             style = titleStyle.copy(
                 shadow = Shadow(Color.Black.copy(alpha = .35f), offset = Offset(0f, 1f), blurRadius = 6f),
             ),

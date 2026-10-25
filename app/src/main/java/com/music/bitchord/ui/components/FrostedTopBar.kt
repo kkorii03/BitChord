@@ -54,7 +54,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -638,12 +637,13 @@ private fun RefreshPuck(refreshing: Boolean, pullFraction: () -> Float, modifier
                     translationY = travel * eased - PUCK_SIZE.toPx()
                     alpha = (f * 3f).coerceAtMost(1f)
                 }
-                .shadow(6.dp, CircleShape)
-                .size(PUCK_SIZE)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
+                .size(PUCK_SIZE),
             contentAlignment = Alignment.Center,
         ) {
-            val indicatorModifier = Modifier.size(22.dp)
+            // No surface behind it: the bar's own scrim is the only backdrop,
+            // so this reads as the small spinner iOS pulls down rather than a
+            // Material puck sitting on the glass.
+            val indicatorModifier = Modifier.size(18.dp)
             if (refreshing) {
                 CircularProgressIndicator(
                     modifier = indicatorModifier,

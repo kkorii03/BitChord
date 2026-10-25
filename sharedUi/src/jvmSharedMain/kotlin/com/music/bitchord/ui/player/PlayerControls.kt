@@ -352,12 +352,20 @@ internal fun PlaybackQualityLabel(
 
 /**
  * Stats for nerds, on the foot of the sleeve: the measured stream, and under
- * it what Automix's analysis is doing. Nothing at all while the setting is off.
+ * it what Automix's analysis is doing.
+ *
+ * Hidden while the setting is off, except for the few seconds after the
+ * artwork was tapped ([revealed]) — Apple Music's equivalent line is not
+ * permanently on the sleeve, and a tap on the cover is the way to ask for it.
  */
 @Composable
-internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
+internal fun SleeveNerdStats(
+    song: Song,
+    modifier: Modifier = Modifier,
+    revealed: Boolean = false,
+) {
     val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
-    if (!showNerdStats) return
+    if (!showNerdStats && !revealed) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val automixVideos by PlayerSettings.automixVideos.collectAsStateWithLifecycle()
@@ -1295,6 +1303,47 @@ private val MARQUEE_GAP = 48.dp
 /** How long a line sits back at its start before the next pass — the "5 seconds" rest. */
 private const val MARQUEE_REST_MS = 5_000L
 
+/** Width of the soft edge a crawling line fades through instead of being cut. */
+private val MARQUEE_FADE = 18.dp
+
+/**
+ * Masks a crawling line's two viewport edges so letters dissolve rather than
+ * being sliced by the clip.
+ *
+ * The mask is drawn in the line's own coordinates, which are wider than the
+ * viewport and move with [offsetPx]; the viewport edges are therefore
+ * `-offset` and `viewportWidth - offset`. Reading the offset in the draw phase
+ * keeps the fade in step with the crawl without recomposing on every frame.
+ * Only ever applied to a line that actually overflows — short text keeps its
+ * first and last letters whole.
+ */
+private fun Modifier.marqueeEdgeFade(
+    viewportWidthPx: Int,
+    offsetPx: () -> Float,
+): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        if (size.width <= 0f) return@drawWithContent
+        val offset = offsetPx()
+        val left = -offset
+        val right = viewportWidthPx - offset
+        val fade = MARQUEE_FADE.toPx().coerceAtMost((right - left) / 2f)
+        if (fade <= 0f) return@drawWithContent
+        val start = ((left + fade) / size.width).coerceIn(0f, 1f)
+        val end = ((right - fade) / size.width).coerceIn(0f, 1f)
+        if (end <= start) return@drawWithContent
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0f to Color.Transparent,
+                start to Color.Black,
+                end to Color.Black,
+                1f to Color.Transparent,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
 /** Artist's head start is ceded to the title when both are scrolling, so they don't start as one block. */
 internal const val MARQUEE_ARTIST_STAGGER_MS = 3_000L
 
@@ -1418,7 +1467,14 @@ internal fun MarqueeText(
                 // it sideways just moves an already-cut string.
                 modifier = Modifier
                     .wrapContentWidth(align = Alignment.Start, unbounded = true)
-                    .offset { IntOffset(offsetX.value.roundToInt(), 0) },
+                    .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                    .then(
+                        if (overflowing) {
+                            Modifier.marqueeEdgeFade(maxWidthPx) { offsetX.value }
+                        } else {
+                            Modifier
+                        },
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MarqueeLine(text = text, style = style, color = color)
@@ -1531,7 +1587,14 @@ internal fun ArtistCreditsMarquee(
             Row(
                 modifier = Modifier
                     .wrapContentWidth(align = Alignment.Start, unbounded = true)
-                    .offset { IntOffset(offsetX.value.roundToInt(), 0) },
+                    .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                    .then(
+                        if (overflowing) {
+                            Modifier.marqueeEdgeFade(maxWidthPx) { offsetX.value }
+                        } else {
+                            Modifier
+                        },
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist)

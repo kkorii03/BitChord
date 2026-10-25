@@ -3037,18 +3037,22 @@ private fun CurrentLyricLine(
                         SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })
                     )
                 } else {
+                    // A full-height slide rather than a crossfade: the outgoing
+                    // line leaves through the top while the incoming one comes
+                    // up from the bottom, so the two never sit on the same
+                    // baseline and read as one garbled line mid-transition.
                     (fadeIn(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
-                        slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> (height * 0.35f).toInt() })
+                        slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> height })
                         .togetherWith(
                             fadeOut(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
-                                slideOutVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> -(height * 0.35f).toInt() }
+                                slideOutVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> -height }
                         ).using(
-                            SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> tween(duration, easing = FastOutSlowInEasing) })
+                            SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(duration, easing = FastOutSlowInEasing) })
                         )
                 }
             },
             label = "currentLyricTransition",
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f, fill = false).clipToBounds(),
         ) { (lineIndex, lineItem, lineText) ->
             val itemInstrumental = lineItem == null || lineItem.isGap
             // A line-synced line gets guessed word timings too, so the strip

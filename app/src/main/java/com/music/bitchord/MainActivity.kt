@@ -4073,7 +4073,11 @@ private fun BitChordApp(
                     artworkPageChrome = true,
                     // Home, Explore and Library hand their large heading a
                     // compact successor; Search's field already fills the bar.
-                    showCollapsedTitle = rootTabChrome && selectedTab != TAB_SEARCH,
+                    // Album and playlist pages do the same once their sleeve
+                    // header has scrolled away, so their floating controls sit
+                    // on a dimmed bar instead of over bare artwork.
+                    showCollapsedTitle = (rootTabChrome && selectedTab != TAB_SEARCH) ||
+                        (isDetailVisible && detail?.type != BrowseType.ARTIST),
                     backButtonHazeState = hazeState,
                     trailingTitle = if (detail != null && detailActiveShelf != null) detail.title else null,
                     // Search has no large in-list header to hand the title back to —

@@ -747,6 +747,9 @@ internal fun localizeShelfTitle(title: String): String {
             trimmed.equals("Đã đăng ký", ignoreCase = true) ||
             trimmed.equals("登録チャンネル", ignoreCase = true) ->
             stringResource(Res.string.subscriptions)
+        trimmed.equals("Podcasts", ignoreCase = true) ||
+            trimmed.equals("Podcast", ignoreCase = true) ->
+            stringResource(Res.string.podcasts)
         trimmed.equals("Trending community playlists", ignoreCase = true) ||
             trimmed.equals("Danh sách phát cộng đồng thịnh hành", ignoreCase = true) ||
             trimmed.equals("Danh sách phát thịnh hành trong cộng đồng người dùng", ignoreCase = true) ||
@@ -1195,9 +1198,10 @@ internal fun ShelfCard(
                 isPlaying = isPlaying,
             )
             else -> {
-                // An artist's channel (`UC…`) uses the app's existing round
-                // artist style; albums, playlists and songs stay square.
-                val artworkShape = if (item.browseId?.startsWith("UC") == true) {
+                // An artist uses the app's existing round artist style,
+                // including a card whose picture had to fall back to an album
+                // cover; albums, playlists and songs stay square.
+                val artworkShape = if (item.isArtist || item.browseId?.startsWith("UC") == true) {
                     CircleShape
                 } else {
                     RoundedCornerShape(LARGE_CARD_CORNER)

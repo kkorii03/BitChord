@@ -826,6 +826,8 @@
     <string name="use_all_audio_folders">Use all audio folders</string>
     <string name="use_all_audio_folders_subtitle">Remove the folder limit and scan music across the device</string>
     <string name="album">album</string>
+    <string name="album_release_year">%1$s</string>
+    <string name="album_release_date">%1$d/%2$d/%3$d</string>
     <string name="artist">artist</string>
     <string name="webdav">WebDAV</string>
     <string name="webdav_subtitle">Music on your server</string>

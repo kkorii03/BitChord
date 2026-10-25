@@ -669,7 +669,14 @@ object InnertubeParser {
             val item = parseBrowseItem(renderer) ?: return@forEach
             out.putIfAbsent(
                 item.browseId,
-                ShelfItem(item.title, item.subtitle, item.thumbnailUrl, null, item.browseId),
+                ShelfItem(
+                    item.title,
+                    item.subtitle,
+                    item.thumbnailUrl,
+                    null,
+                    item.browseId,
+                    isArtist = item.type == BrowseType.ARTIST,
+                ),
             )
         }
         return LibraryItemPage(out.values.toList(), continuationToken(root))
@@ -936,6 +943,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best(),
             videoId = null,
             browseId = browseId,
+            isArtist = true,
         )
     }
 
@@ -1540,6 +1548,9 @@ object InnertubeParser {
         if (title.isBlank()) return null
         val endpoint = renderer.o("navigationEndpoint")
         val browseId = endpoint.o("browseEndpoint").s("browseId")
+        val pageType = endpoint.o("browseEndpoint")
+            .o("browseEndpointContextSupportedConfigs")
+            .o("browseEndpointContextMusicConfig").s("pageType").orEmpty()
         // History/"Listen again" cards for tracks YouTube never catalogued
         // as a proper Song carry no watchEndpoint at all — just a browseId
         // to a "non-music audio track page" prefixed MPED<videoId>. That's
@@ -1575,6 +1586,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best(),
             videoId = videoId,
             browseId = resolvedBrowseId,
+            isArtist = "ARTIST" in pageType,
         )
     }
 
