@@ -224,10 +224,15 @@ fun FloatingBottomBar(
                 } else if (useGlass) {
                     Modifier.liquidGlass(shape = pillShape, surfaceTint = glassBarTint())
                 } else {
-                    Modifier.optimizedHazeEffect(
-                        state = hazeState,
-                        style = HazeMaterials.regular(container),
-                    )
+                    Modifier
+                        .optimizedHazeEffect(
+                            state = hazeState,
+                            style = HazeMaterials.regular(container),
+                        )
+                        // Neutral glass, not the page's colour: the bar is a
+                        // system surface, so a sleeve's tint must not turn the
+                        // tabs green or red while the feed scrolls under them.
+                        .background(container.copy(alpha = 0.55f), pillShape)
                 },
             )
             .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, pillShape)

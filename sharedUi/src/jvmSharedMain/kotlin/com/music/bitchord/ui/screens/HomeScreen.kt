@@ -69,9 +69,13 @@ import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import java.util.Locale
+import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.LibraryViewType
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.ui.components.LikedMusicCover
+import com.music.bitchord.ui.components.appleSubtitleText
+import java.util.Locale
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.MessageState
@@ -101,6 +105,19 @@ private const val RECENT_TRACKS_PER_COLUMN = 4
 /** The app's own Recents key, whichever index the feed puts it at. */
 private fun isRecentsShelf(shelf: HomeShelf): Boolean =
     shelf.title.trim().equals(RECENTS_TITLE, ignoreCase = true)
+
+/**
+ * YouTube's Shorts rail is a video feed, not music: Apple Music has no
+ * equivalent, so the Home page never draws it. Matched by title because the
+ * shelf carries no type of its own, in the languages this fork serves.
+ */
+private fun isShortsShelf(shelf: HomeShelf): Boolean {
+    val title = shelf.title.trim().lowercase(Locale.ROOT)
+    return title.startsWith("shorts") ||
+        title == "short" ||
+        title.startsWith("숏") ||
+        title == "ショート"
+}
 
 /**
  * YouTube Music's Quick picks, in the feed's own words whichever language
@@ -287,7 +304,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     onDisablePrivateListening: (() -> Unit)? = null,
     onRecentsViewTypeToggle: () -> Unit,
 ) {
-    shelves.forEachIndexed { index, shelf ->
+    shelves.filterNot(::isShortsShelf).forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             when {
@@ -571,7 +588,10 @@ private fun RecentTrackRow(
 ) {
     CompactTrackRow(
         title = item.title,
-        subtitle = item.subtitle,
+        subtitle = appleSubtitleText(
+            item.subtitle,
+            appleCardKind(item.videoId, item.browseId, item.isArtist),
+        ),
         thumbnailUrl = item.thumbnailUrl,
         onClick = onClick,
         onLongPress = onLongPress,
@@ -978,7 +998,10 @@ private fun HeroCard(
                 overflow = TextOverflow.Ellipsis,
             )
             if (item.subtitle.isNotBlank()) {
-                val displaySubtitle = localizeCardSubtitle(item.subtitle)
+                val displaySubtitle = appleSubtitleText(
+                    item.subtitle,
+                    appleCardKind(item.videoId, item.browseId, item.isArtist),
+                )
                 Text(
                     text = displaySubtitle,
                     style = MaterialTheme.typography.bodyMedium,
@@ -1214,12 +1237,16 @@ internal fun ShelfCard(
                         .thumbnailBorder(artworkShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
-                    AsyncImage(
-                        model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
-                        contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (item.browseId == YtMusicRepository.LIKED_MUSIC) {
+                        LikedMusicCover(Modifier.fillMaxSize())
+                    } else {
+                        AsyncImage(
+                            model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
                 }
             }
@@ -1247,7 +1274,10 @@ internal fun ShelfCard(
                 modifier = Modifier.weight(1f, fill = false),
             )
         }
-        val displaySubtitle = localizeCardSubtitle(item.subtitle)
+        val displaySubtitle = appleSubtitleText(
+            item.subtitle,
+            appleCardKind(item.videoId, item.browseId, item.isArtist),
+        )
         Text(
             text = displaySubtitle,
             style = MaterialTheme.typography.bodyMedium,

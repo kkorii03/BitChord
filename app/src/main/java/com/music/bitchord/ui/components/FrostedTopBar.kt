@@ -510,10 +510,15 @@ private fun artworkPageSurface(
             when {
                 useLiquidGlass -> Modifier.liquidGlass(shape)
                 reduceDynamicBlur || hazeState == null -> Modifier.background(container)
-                else -> Modifier.optimizedHazeEffect(
-                    state = hazeState,
-                    style = HazeMaterials.regular(container),
-                )
+                else -> Modifier
+                    .optimizedHazeEffect(
+                        state = hazeState,
+                        style = HazeMaterials.regular(container),
+                    )
+                    // The back and action buttons float over artwork-led pages;
+                    // a neutral film keeps their glass from taking the album's
+                    // colour while the sleeve scrolls beneath them.
+                    .background(container.copy(alpha = 0.55f), shape)
             },
         )
         // Keep the same explicit hairline as FloatingBottomBar. Liquid glass

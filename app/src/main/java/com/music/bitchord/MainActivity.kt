@@ -3848,6 +3848,12 @@ private fun BitChordApp(
                                     }
                                 },
                                 history = searchHistory,
+                                browseCategories = exploreState,
+                                onBrowseCategoryClick = { category ->
+                                    selectedTab = TAB_EXPLORE
+                                    viewModel.openMoodGenre(category)
+                                },
+                                onBrowseCategoryVisible = viewModel::loadMoodGenreArtwork,
                                 suggestions = searchSuggestions,
                                 typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                                 onSubmit = viewModel::submitSearch,
@@ -4335,6 +4341,21 @@ private fun BitChordApp(
                                         Icon(
                                             Icons.Rounded.MoreHoriz,
                                             contentDescription = stringResource(R.string.more),
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
+                                // The release header leaves its add-to-library
+                                // control to this bar, as Apple Music does: the
+                                // same + / check beside the overflow menu.
+                                if (isReleaseDetail && signedIn && detail.library != null) {
+                                    val saved = detail.library?.saved == true
+                                    IconButton(onClick = { viewModel.toggleLibrary(detail.browseId) }) {
+                                        Icon(
+                                            if (saved) BitChordIcons.Check else BitChordIcons.Plus,
+                                            contentDescription = stringResource(
+                                                if (saved) R.string.remove_from_library else R.string.add_to_library,
+                                            ),
                                             tint = MaterialTheme.colorScheme.onSurface,
                                         )
                                     }
@@ -4848,6 +4869,15 @@ private fun BitChordApp(
                 presentation = presentation,
                 signedIn = signedIn,
                 likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
+                // The app's library entry for a song is its liked state, so
+                // the menu's first row writes the same answer as the heart
+                // below it — one labelled as the library, one as the rating.
+                onToggleLibrary = if (signedIn && song.localUri == null) {
+                    { viewModel.toggleLike(song.videoId) }
+                } else {
+                    null
+                },
+                inLibrary = (likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT) == LikeStatus.LIKE,
                 onPlayNext = { playNext(song); songActions = null },
                 onAddToQueue = { addToQueue(song); songActions = null },
                 onStartRadio = { startRadio(song); songActions = null },

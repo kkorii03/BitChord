@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,13 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -184,7 +178,7 @@ fun ExploreScreen(
 }
 
 @Composable
-private fun MoodGenreRow(
+internal fun MoodGenreRow(
     row: List<MoodGenre>,
     columns: Int,
     onCategoryClick: (MoodGenre) -> Unit,
@@ -212,9 +206,8 @@ private fun MoodGenreRow(
 }
 
 /**
- * A solid stripe down the left and the category's cover filling the rest,
- * redrawn as a duotone of the stripe's colour so every card reads as one
- * tinted sleeve rather than a photo pasted onto a swatch.
+ * A category tile with its cover filling the card, and the title over the
+ * dark fade at its foot — see [MoodGenreSleeve].
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -244,9 +237,10 @@ private fun MoodGenreCard(
 }
 
 /**
- * A solid stripe down the left and the category's cover filling the rest,
- * redrawn as a duotone of the stripe's colour so every card reads as one
- * tinted sleeve rather than a photo pasted onto a swatch.
+ * A category tile: its photograph edge to edge, with the title over a dark
+ * fade at the foot — Apple Music's browse tile. A category without a cover is
+ * the same tile in its own solid colour, not the old split stripe-and-photo
+ * band.
  *
  * Only the artwork: the caller sizes, clips and makes it clickable, which is
  * how the TV app wraps the same sleeve in its own focus treatment.
@@ -257,82 +251,46 @@ fun MoodGenreSleeve(
     modifier: Modifier = Modifier,
     titleStyle: TextStyle = MaterialTheme.typography.titleMedium,
 ) {
-    val tone = remember(item.stripeColor, item.title) { moodTone(item) }
-    Box(modifier = modifier.background(tone.stripe)) {
-        Box(
-            Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .fillMaxWidth(1f - MOOD_STRIPE_FRACTION)
-                .background(tone.placeholder),
-        ) {
-            item.thumbnailUrl?.let { artwork ->
-                AsyncImage(
-                    model = artwork,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    colorFilter = tone.duotone,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+    val base = remember(item.stripeColor, item.title) { moodBaseColor(item) }
+    Box(modifier = modifier.background(base)) {
+        item.thumbnailUrl?.let { artwork ->
+            AsyncImage(
+                model = artwork,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
-        // Pale stripes (Energize's cream, Feel good's mint) would swallow
-        // white type; a soft shade under the title keeps it legible.
+        // The fade only at the foot, so the photograph keeps its own colour
+        // across the rest of the tile.
         Box(
             Modifier
                 .matchParentSize()
-                .background(Brush.verticalGradient(0f to Color.Black.copy(alpha = .24f), .62f to Color.Transparent)),
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = .82f),
+                    ),
+                ),
         )
         Text(
             text = ExploreCategoryNames.displayTitle(item.title, appLanguageTag()),
-            style = titleStyle.copy(
-                shadow = Shadow(Color.Black.copy(alpha = .35f), offset = Offset(0f, 1f), blurRadius = 6f),
-            ),
+            style = titleStyle,
             fontWeight = FontWeight.Bold,
             color = Color.White,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.BottomStart)
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         )
     }
 }
 
-private class MoodTone(val stripe: Color, val placeholder: Color, val duotone: ColorFilter)
-
-private fun moodTone(item: MoodGenre): MoodTone {
-    val base = item.stripeColor?.let { Color(it.toInt()) } ?: fallbackMoodColor(item.title)
-    // YouTube's palette is already pastel; a touch of black keeps it from
-    // glowing against the black page.
-    val stripe = lerp(base, Color.Black, .08f)
-    val shadow = lerp(base, Color.Black, .68f)
-    val highlight = lerp(base, Color.White, .32f)
-    return MoodTone(
-        stripe = stripe,
-        placeholder = lerp(shadow, highlight, .45f),
-        duotone = duotone(shadow, highlight),
-    )
-}
-
-/**
- * Maps each pixel's luminance onto the ramp [shadow] to [highlight]. Offsets
- * are in 0..255, which Compose honours on Skia too (it rescales them).
- */
-private fun duotone(shadow: Color, highlight: Color): ColorFilter {
-    fun channel(from: Float, to: Float): FloatArray {
-        val span = to - from
-        return floatArrayOf(span * .299f, span * .587f, span * .114f, 0f, from * 255f)
-    }
-    return ColorFilter.colorMatrix(
-        ColorMatrix(
-            channel(shadow.red, highlight.red) +
-                channel(shadow.green, highlight.green) +
-                channel(shadow.blue, highlight.blue) +
-                floatArrayOf(0f, 0f, 0f, 1f, 0f),
-        ),
-    )
-}
+/** The category's own colour, or a muted stand-in when YouTube sent none. */
+private fun moodBaseColor(item: MoodGenre): Color =
+    item.stripeColor?.let { Color(it.toInt()) } ?: fallbackMoodColor(item.title)
 
 /** For a button that came without YouTube's colour: muted, never neon. */
 private fun fallbackMoodColor(title: String): Color = when ((title.hashCode() and Int.MAX_VALUE) % 8) {
@@ -354,9 +312,6 @@ private val MOOD_CARD_SHAPE = RoundedCornerShape(LARGE_CARD_CORNER)
 /** Width over height; a two-column phone row lands at about 100dp tall. */
 const val MOOD_CARD_ASPECT = 1.72f
 
-/** How much of the card the solid stripe covers before the artwork starts. */
-private const val MOOD_STRIPE_FRACTION = .28f
-
 /**
  * The narrowest a mood card is let get before the row drops a column.
  *
@@ -368,7 +323,7 @@ private val MOOD_MIN_CARD_WIDTH = 220.dp
 
 private const val MOOD_MAX_COLUMNS = 6
 
-private fun moodColumns(available: Dp): Int {
+internal fun moodColumns(available: Dp): Int {
     val row = available - PAGE_GUTTER * 2
     return ((row + MOOD_SPACING) / (MOOD_MIN_CARD_WIDTH + MOOD_SPACING)).toInt().coerceIn(2, MOOD_MAX_COLUMNS)
 }

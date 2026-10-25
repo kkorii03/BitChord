@@ -1633,10 +1633,8 @@ fun NowPlayingScreen(
             onCycleRepeat = onCycleRepeat,
             onToggleAutoplay = onToggleAutoplay,
             onOpenOutput = openAudioOutput,
-            onListenTogether = onListenTogether,
-            onOpenListenTogetherMembers = openListenTogetherMembers,
         )
-        // Keep the current output caption visible in every state.
+        // Keep the external-output or party caption visible in every state.
         Spacer(Modifier.height(18.dp))
         Box(
             modifier = Modifier.fillMaxWidth().height(20.dp),

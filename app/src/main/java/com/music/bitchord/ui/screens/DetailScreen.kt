@@ -138,6 +138,7 @@ import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.CARD_ART_PX
@@ -151,6 +152,7 @@ import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.artistCountValue
+import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.model.AlbumSubtitle
 import com.music.bitchord.data.model.parseAlbumSubtitle
 import com.music.bitchord.data.model.durationMillis
@@ -160,10 +162,12 @@ import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
+import com.music.bitchord.ui.components.LikedMusicCover
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.artworkCorner
+import com.music.bitchord.ui.components.appleSubtitleText
 import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -1111,36 +1115,42 @@ private fun ReleaseHeader(
                 .background(palette.elevated)
                 .thumbnailBorder(SLEEVE_SHAPE),
         ) {
-            // A cover that isn't there, or wouldn't load — a device folder, a
-            // playlist with nothing on it yet, files with no picture — gets a
-            // placeholder sleeve rather than an empty square. Not shown while a
-            // real one is still on its way, so a loading cover doesn't flash
-            // a glyph first.
-            var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
-            if (page.thumbnailUrl == null || artFailed) {
-                CoverPlaceholder(
-                    icon = page.placeholderIcon(),
-                    base = palette.elevated,
-                    tint = palette.onBackgroundVariant,
+            // Liked Music wears Apple's star cover rather than YouTube's
+            // thumb-up thumbnail; every other release keeps its own sleeve.
+            if (page.browseId == YtMusicRepository.LIKED_MUSIC) {
+                LikedMusicCover(Modifier.matchParentSize())
+            } else {
+                // A cover that isn't there, or wouldn't load — a device folder, a
+                // playlist with nothing on it yet, files with no picture — gets a
+                // placeholder sleeve rather than an empty square. Not shown while a
+                // real one is still on its way, so a loading cover doesn't flash
+                // a glyph first.
+                var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
+                if (page.thumbnailUrl == null || artFailed) {
+                    CoverPlaceholder(
+                        icon = page.placeholderIcon(),
+                        base = palette.elevated,
+                        tint = palette.onBackgroundVariant,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+                AsyncImage(
+                    model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onState = { artFailed = it is AsyncImagePainter.State.Error },
                     modifier = Modifier.matchParentSize(),
                 )
-            }
-            AsyncImage(
-                model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                onState = { artFailed = it is AsyncImagePainter.State.Error },
-                modifier = Modifier.matchParentSize(),
-            )
-            // Animated cover art, inside the same frame. Always running:
-            // unlike the player's sleeve there is no transport here to follow,
-            // and the page is only up while it's being read.
-            canvas?.let { clip ->
-                CanvasArtworkPlayer(
-                    canvas = clip,
-                    isPlaying = true,
-                    modifier = Modifier.matchParentSize(),
-                )
+                // Animated cover art, inside the same frame. Always running:
+                // unlike the player's sleeve there is no transport here to follow,
+                // and the page is only up while it's being read.
+                canvas?.let { clip ->
+                    CanvasArtworkPlayer(
+                        canvas = clip,
+                        isPlaying = true,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
             }
         }
 
@@ -1193,9 +1203,6 @@ private fun ReleaseHeader(
         }
 
         if (songs.isNotEmpty()) {
-            // Only where YouTube said the release can be saved and the caller
-            // is willing to take the write — see [onToggleLibrary].
-            val library = page.library?.takeIf { onToggleLibrary != null }
             Spacer(Modifier.height(18.dp))
             Row(
                 modifier = Modifier
@@ -1205,29 +1212,30 @@ private fun ReleaseHeader(
                 horizontalArrangement = Arrangement.spacedBy(RELEASE_ACTION_GAP),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Apple Music's pair: Play and Shuffle, the same size, on the
+                // same grey veil, with this page's accent in their glyphs.
+                // Add to Library now lives in the top bar beside ⋯.
+                ActionPill(
+                    icon = BitChordIcons.Play,
+                    label = stringResource(R.string.play),
+                    onClick = onPlay,
+                    filled = false,
+                    size = RELEASE_SIDE_BUTTON,
+                    accent = palette.accent,
+                    modifier = Modifier.weight(1f),
+                )
+                ActionPill(
+                    icon = BitChordIcons.Shuffle,
+                    label = stringResource(R.string.shuffle),
+                    onClick = onShuffle,
+                    filled = false,
+                    size = RELEASE_SIDE_BUTTON,
+                    accent = palette.accent,
+                    modifier = Modifier.weight(1f),
+                )
+                // The song cache's copies, saved to Downloads in one go — from
+                // disk, so it works offline. See [LocalFolder.onDownload].
                 if (page.browseId.startsWith("local:")) {
-                    // Already on this device — a folder, a download, a local
-                    // playlist — so there is no library to add it to, and a
-                    // greyed-out plus would only promise one. Apple Music's
-                    // own pair for that case: Play and Shuffle, side by side.
-                    ActionPill(
-                        icon = BitChordIcons.Play,
-                        label = stringResource(R.string.play),
-                        onClick = onPlay,
-                        filled = true,
-                        size = RELEASE_SIDE_BUTTON,
-                        modifier = Modifier.weight(1f),
-                    )
-                    ActionPill(
-                        icon = BitChordIcons.Shuffle,
-                        label = stringResource(R.string.shuffle),
-                        onClick = onShuffle,
-                        filled = false,
-                        size = RELEASE_SIDE_BUTTON,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // The song cache's copies, saved to Downloads in one go —
-                    // from disk, so it works offline. See [LocalFolder.onDownload].
                     onDownloadAll?.let {
                         CircleIconButton(
                             icon = Icons.Rounded.Download,
@@ -1236,47 +1244,6 @@ private fun ReleaseHeader(
                             size = RELEASE_SIDE_BUTTON,
                         )
                     }
-                    return@Row
-                }
-                CircleIconButton(
-                    icon = BitChordIcons.Shuffle,
-                    contentDescription = stringResource(R.string.shuffle),
-                    onClick = onShuffle,
-                    haptic = Haptic.Resume,
-                    size = RELEASE_SIDE_BUTTON,
-                )
-                ActionPill(
-                    icon = BitChordIcons.Play,
-                    label = stringResource(R.string.play),
-                    onClick = onPlay,
-                    filled = true,
-                    size = RELEASE_SIDE_BUTTON,
-                    modifier = Modifier.weight(1f),
-                )
-                if (library != null) {
-                    CircleIconButton(
-                        // A tick, not a filled-in plus: the pair reads as
-                        // "not yet / done", which is what the state is.
-                        icon = if (library.saved) BitChordIcons.Check else BitChordIcons.Plus,
-                        contentDescription = if (library.saved) {
-                            stringResource(R.string.remove_from_library)
-                        } else {
-                            stringResource(R.string.add_to_library)
-                        },
-                        onClick = { onToggleLibrary?.invoke() },
-                        haptic = if (library.saved) Haptic.ToggleOff else Haptic.ToggleOn,
-                        size = RELEASE_SIDE_BUTTON,
-                    )
-                } else {
-                    // Shown but greyed out for a guest, rather than leaving a
-                    // hole beside Play.
-                    CircleIconButton(
-                        icon = BitChordIcons.Plus,
-                        contentDescription = stringResource(R.string.add_to_library),
-                        onClick = {},
-                        size = RELEASE_SIDE_BUTTON,
-                        enabled = false,
-                    )
                 }
             }
         }
@@ -1807,10 +1774,10 @@ private fun ActionRow(
 }
 
 /**
- * A labelled pill in the release page's action row. [filled] is Play: white
- * with black content, so the primary action survives every palette, filling
- * whatever width the row leaves it. Otherwise it wears the light veil and glass
- * rim of the circles beside it — Shuffle, on a page with no Add to sit opposite.
+ * A labelled pill in the release page's action row. Play and Shuffle are the
+ * same size and share the light veil; [accent] colours both glyph and label,
+ * which is what makes them read as this page's controls rather than generic
+ * white buttons. [filled] is kept for a caller that wants the old white Play.
  */
 @Composable
 private fun ActionPill(
@@ -1820,11 +1787,12 @@ private fun ActionPill(
     filled: Boolean,
     modifier: Modifier = Modifier,
     size: Dp = 50.dp,
+    accent: Color? = null,
 ) {
     // Resume rather than a flat tap: both start a queue, and the rising pair
     // says so.
     val haptics = rememberHaptics()
-    val content = if (filled) Color.Black else MaterialTheme.colorScheme.onSurface
+    val content = accent ?: if (filled) Color.Black else MaterialTheme.colorScheme.onSurface
     Row(
         modifier = modifier
             .height(size)
@@ -2412,7 +2380,10 @@ private fun TopReleaseCard(
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = item.subtitle,
+                text = appleSubtitleText(
+                    item.subtitle,
+                    appleCardKind(item.videoId, item.browseId, item.isArtist),
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = palette.onBackgroundVariant,
                 maxLines = 1,
@@ -2506,7 +2477,10 @@ private fun SectionCard(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = item.subtitle,
+            text = appleSubtitleText(
+                item.subtitle,
+                appleCardKind(item.videoId, item.browseId, item.isArtist),
+            ),
             style = MaterialTheme.typography.bodyMedium,
             color = palette.onBackgroundVariant,
             maxLines = 1,

@@ -137,8 +137,11 @@
     <string name="hdmi_output">HDMI</string>
     <string name="personal_phone">%1$s의 휴대폰</string>
     <string name="this_phone">이 휴대폰</string>
+    <string name="album">앨범</string>
     <string name="albums">앨범</string>
+    <string name="artist">아티스트</string>
     <string name="artists">아티스트</string>
+    <string name="song">노래</string>
     <string name="songs">노래</string>
     <string name="card_plays_format">%1$s회 재생</string>
     <string name="card_songs_format">%1$s곡</string>

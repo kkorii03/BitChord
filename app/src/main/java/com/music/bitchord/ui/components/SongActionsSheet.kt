@@ -152,6 +152,13 @@ fun SongActionsSheet(
     onUploadToWebDav: (() -> Unit)? = null,
     onToggleLike: () -> Unit,
     onToggleDislike: () -> Unit,
+    /**
+     * Saves this song to the account's library, or takes it out. Null hides
+     * the row — a guest or a local file has no library entry to write.
+     */
+    onToggleLibrary: (() -> Unit)? = null,
+    /** Whether [onToggleLibrary] would remove rather than add. */
+    inLibrary: Boolean = false,
     onAddToPlaylist: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
@@ -252,15 +259,115 @@ fun SongActionsSheet(
     val isOffline = song.localUri != null
 
     val rows: @Composable ColumnScope.() -> Unit = {
-        // Leads the list whenever it's available: which recording is playing
-        // is the one question that has to be answered before any of the rows
-        // below mean anything — there is no point rating, queueing or
-        // downloading the wrong version of a song.
-        //
-        // The two are never both present — one is offered for a track playing
-        // a substituted copy, the other for a track held on YouTube's own —
-        // and between them they are the whole of the choice, which is why they
-        // sit in the same place under the same divider.
+        // The account's own actions lead, in the order Apple Music writes
+        // them: library, playlist, queue, share, navigation, rating. A guest
+        // or a local file skips only the rows that need an account; the queue
+        // and navigation still work for both.
+        if (signedIn && !isOffline) {
+            onToggleLibrary?.let {
+                ActionRow(
+                    icon = if (inLibrary) Icons.Rounded.Check else Icons.Rounded.Add,
+                    label = stringResource(
+                        if (inLibrary) R.string.remove_from_library else R.string.add_to_library,
+                    ),
+                    tint = if (inLibrary) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = it,
+                )
+            }
+            ActionRow(
+                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                label = stringResource(R.string.add_to_playlist),
+                accent = palette.accent,
+                onClick = onAddToPlaylist,
+            )
+            onRemoveFromPlaylist?.let {
+                ActionRow(
+                    icon = Icons.Rounded.PlaylistRemove,
+                    label = stringResource(R.string.remove_from_playlist),
+                    accent = palette.accent,
+                    onClick = it,
+                )
+            }
+        }
+
+        ActionRow(
+            icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
+            label = stringResource(R.string.play_next),
+            accent = palette.accent,
+            onClick = onPlayNext,
+        )
+        ActionRow(
+            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+            label = stringResource(R.string.add_to_queue),
+            accent = palette.accent,
+            onClick = onAddToQueue,
+        )
+        if (!isOffline) {
+            onShare?.let {
+                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
+            }
+        }
+
+        when (val id = song.albumId) {
+            null -> if (resolvingLinks) {
+                LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
+            }
+            else -> ActionRow(
+                Icons.Rounded.Album,
+                stringResource(R.string.open_album),
+                accent = palette.accent,
+            ) { onOpenAlbum(id) }
+        }
+        when (val id = song.artistId) {
+            null -> if (resolvingLinks) {
+                LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
+            }
+            else -> ActionRow(
+                Icons.Rounded.Person,
+                stringResource(R.string.open_artist),
+                accent = palette.accent,
+            ) { onOpenArtist(id) }
+        }
+
+        if (signedIn && !isOffline) {
+            ActionRow(
+                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
+                tint = if (liked) palette.accent else null,
+                accent = palette.accent,
+                onClick = onToggleLike,
+            )
+            ActionRow(
+                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
+                tint = if (disliked) palette.accent else null,
+                accent = palette.accent,
+                onClick = onToggleDislike,
+            )
+        }
+
+        GroupSeparator(palette)
+
+        // Everything else: offline copies, the recording itself, and the
+        // player's own extras. Kept below the actions above, as Apple puts
+        // them under "Other".
+        DownloadRow(song, palette, isOffline, onDownload)
+        onRemoveFromCache?.let {
+            ActionRow(
+                icon = Icons.Rounded.DeleteSweep,
+                label = stringResource(R.string.remove_from_cache),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
+        WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
+        ActionRow(
+            icon = Icons.Rounded.Radio,
+            label = stringResource(R.string.start_radio),
+            accent = palette.accent,
+            onClick = onStartRadio,
+        )
         if (onRollbackToOriginal != null || onUpgradeQuality != null || onToggleAudioVersion != null) {
             (onRollbackToOriginal ?: onUpgradeQuality)?.let {
                 ActionRow(
@@ -281,9 +388,6 @@ fun SongActionsSheet(
                     onClick = it,
                 )
             }
-            // Which recording, not which quality — a different question from
-            // the row above, so it sits right under it rather than merged
-            // into it, but still ahead of the divider both share.
             onToggleAudioVersion?.let {
                 ActionRow(
                     icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
@@ -294,88 +398,6 @@ fun SongActionsSheet(
                     onClick = it,
                 )
             }
-            GroupSeparator(palette)
-        }
-
-        if (signedIn && !isOffline) {
-            ActionRow(
-                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
-                tint = if (liked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleLike,
-            )
-            ActionRow(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
-                tint = if (disliked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleDislike,
-            )
-            ActionRow(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
-            onRemoveFromPlaylist?.let {
-                ActionRow(
-                    icon = Icons.Rounded.PlaylistRemove,
-                    label = stringResource(R.string.remove_from_playlist),
-                    accent = palette.accent,
-                    onClick = it,
-                )
-            }
-            GroupSeparator(palette)
-        }
-
-        DownloadRow(song, palette, isOffline, onDownload)
-        onRemoveFromCache?.let {
-            ActionRow(
-                icon = Icons.Rounded.DeleteSweep,
-                label = stringResource(R.string.remove_from_cache),
-                accent = palette.accent,
-                onClick = it,
-            )
-        }
-        WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
-        ActionRow(
-            icon = Icons.Rounded.Radio,
-            label = stringResource(R.string.start_radio),
-            accent = palette.accent,
-            onClick = onStartRadio,
-        )
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
-            label = stringResource(R.string.play_next),
-            accent = palette.accent,
-            onClick = onPlayNext,
-        )
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.QueueMusic,
-            label = stringResource(R.string.add_to_queue),
-            accent = palette.accent,
-            onClick = onAddToQueue,
-        )
-        when (val id = song.albumId) {
-            null -> if (resolvingLinks) {
-                LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
-            }
-            else -> ActionRow(
-                Icons.Rounded.Album,
-                stringResource(R.string.open_album),
-                accent = palette.accent,
-            ) { onOpenAlbum(id) }
-        }
-        when (val id = song.artistId) {
-            null -> if (resolvingLinks) {
-                LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
-            }
-            else -> ActionRow(
-                Icons.Rounded.Person,
-                stringResource(R.string.open_artist),
-                accent = palette.accent,
-            ) { onOpenArtist(id) }
         }
         // Covers — see CoverTitles. The upload's own title, for a row shown
         // as its song; tapping copies it.
@@ -458,11 +480,6 @@ fun SongActionsSheet(
                 accent = palette.accent,
                 onClick = it,
             )
-        }
-        if (!isOffline) {
-            onShare?.let {
-                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
-            }
         }
         // Last, and only from the player: it is about the track playing right
         // now rather than about the song as a thing in a library, and it is
@@ -1072,12 +1089,8 @@ internal fun ActionRow(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // A context menu reads label-first with the glyph at the far edge;
-        // the sheet keeps the glyph leading, like every other list in the app.
-        if (!menu) {
-            iconView()
-            Spacer(Modifier.width(18.dp))
-        }
+        // Apple's menus read label-first with the glyph at the far edge, in
+        // the sheet and the popup alike; the old leading icon is gone.
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
@@ -1095,10 +1108,8 @@ internal fun ActionRow(
                 maxLines = 1,
             )
         }
-        if (menu) {
-            Spacer(Modifier.width(14.dp))
-            iconView()
-        }
+        Spacer(Modifier.width(14.dp))
+        iconView()
     }
 }
 
@@ -1123,19 +1134,13 @@ private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkP
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = palette.onBackground.copy(alpha = 0.4f),
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.width(18.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
             color = palette.onBackground.copy(alpha = 0.4f),
             modifier = Modifier.weight(1f),
         )
+        Spacer(Modifier.width(14.dp))
         CircularProgressIndicator(
             color = palette.onBackgroundVariant,
             strokeWidth = 2.dp,

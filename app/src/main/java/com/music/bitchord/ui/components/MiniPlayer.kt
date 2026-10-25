@@ -391,10 +391,19 @@ fun MiniPlayer(
                 if (reduceDynamicBlur) {
                     Modifier.background(MaterialTheme.colorScheme.surface)
                 } else {
-                    Modifier.optimizedHazeEffect(
-                        state = hazeState,
-                        style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
-                    )
+                    Modifier
+                        .optimizedHazeEffect(
+                            state = hazeState,
+                            style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
+                        )
+                        // A neutral film over the blur: the bar samples the
+                        // sleeve behind it, and without this an album's green
+                        // or red stained the whole mini player. The blur stays,
+                        // the colour does not.
+                        .background(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                            shape,
+                        )
                 },
             )
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), shape)

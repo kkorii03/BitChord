@@ -64,7 +64,6 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.CastConnected
 import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.Headphones
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.Watch
 import androidx.compose.material3.CircularProgressIndicator
@@ -581,9 +580,6 @@ internal fun PlayerActionRow(
     onCycleRepeat: () -> Unit,
     onToggleAutoplay: () -> Unit,
     onOpenOutput: () -> Unit,
-    onListenTogether: () -> Unit,
-    /** Opens [ListenTogetherMembersSheet] rather than settings directly. */
-    onOpenListenTogetherMembers: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // Sized for the wider of the two capsules — the three-up one — in both
@@ -692,11 +688,7 @@ internal fun PlayerActionRow(
                         )
                     }
                 } else {
-                    OutputPartyPill(
-                        onOutput = onOpenOutput,
-                        onParty = onListenTogether,
-                        onOpenMembers = onOpenListenTogetherMembers,
-                    )
+                    OutputPill(onOutput = onOpenOutput)
                 }
             }
             Box(Modifier.align(Alignment.CenterEnd)) {
@@ -847,7 +839,6 @@ private const val PILL_SLIDE_MS = 320
  * [PILL_OUTPUT_WIDE_SIZE] / [PILL_OUTPUT_TALL_SIZE] for the Material ones.
  */
 private val PILL_OUTPUT_SIZE = 23.dp
-private val PILL_PARTY_SIZE = 22.dp
 
 /** Cast and Tv run 92% of their box wide; at 23dp they read bigger than the rest. */
 private val PILL_OUTPUT_WIDE_SIZE = 21.dp
@@ -902,25 +893,15 @@ private fun PillDivider() {
 }
 
 /**
- * The two ends of "where is this playing": the output capsule.
+ * Where the sound leaves by, as one AirPlay-style control.
  *
- * Both halves answer the same question and so belong to one control rather than
- * two glyphs that happen to sit side by side — the device the sound leaves by
- * (see [rememberOutputGlyph]), the party for which *people* it reaches.
- *
- * Video vs audio-only used to live here as a third segment; it now lives in
- * the player's own three-dot menu, beside Revert to original and Upgrade
- * quality — the same kind of choice, offered the same way. This capsule is
- * back to the two icons it always otherwise had, at their original spacing.
+ * Apple Music shows a single output glyph here; the room's party is not a
+ * second half of the same switch, so Listen Together keeps its own way in
+ * (Settings, and the party caption when one is running) rather than sharing
+ * this capsule.
  */
 @Composable
-private fun OutputPartyPill(
-    onOutput: () -> Unit,
-    onParty: () -> Unit,
-    /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
-    onOpenMembers: () -> Unit,
-) {
-    val badge = rememberPartyBadge()
+private fun OutputPill(onOutput: () -> Unit) {
     val output = rememberOutputGlyph()
     Pill {
         PillSegment(
@@ -928,28 +909,6 @@ private fun OutputPartyPill(
             iconSize = output.size,
             contentDescription = stringResource(Res.string.audio_output),
             onClick = onOutput,
-        )
-        PillDivider()
-        PillSegment(
-            // Person rather than Groups: the three-person glyph is drawn half
-            // the height of Headphones and wider than the segment holding it,
-            // so the two halves of the capsule never looked like a pair.
-            icon = Icons.Rounded.Person,
-            iconSize = PILL_PARTY_SIZE,
-            // The count is here and nowhere else: spoken, it is the whole
-            // point of the control; drawn, it would cost the capsule its
-            // symmetry for something the caption below already implies.
-            contentDescription = if (badge.inParty) {
-                stringResource(Res.string.listen_together_open_count, badge.members)
-            } else {
-                stringResource(Res.string.listen_together_open)
-            },
-            // Already in a party, this opens who's in it rather than the
-            // settings page directly; there is nothing to create or join once
-            // there is a party, so [onParty] only ever fires beforehand.
-            onClick = if (badge.inParty) onOpenMembers else onParty,
-            highlighted = badge.inParty,
-            trailingLabel = badge.members.takeIf { badge.inParty }?.toString(),
         )
     }
 }
@@ -1089,14 +1048,13 @@ private fun PillSegment(
 }
 
 /**
- * The line under the transport: normally the output, and the party's name
- * whenever there is one.
+ * The line under the transport: the party's name when there is one, and the
+ * output's name only while the music is leaving this phone.
  *
- * A party overrides the output rather than sitting beside it because the two
- * are not the same kind of fact. "Kushagra's Phone" answers which speaker in
- * this room; once there are four devices playing the same song, the room is no
- * longer what the listener is checking. The tap follows the label — whichever
- * one is on screen is the thing it opens.
+ * Apple Music keeps this line for an external route — a Bluetooth speaker, a
+ * car, a cast receiver. "This phone" is the default and says nothing, so it is
+ * not drawn. A party still names itself here, because that is not a device and
+ * is the way back into who is listening; the tap follows the label.
  */
 @Composable
 internal fun OutputCaption(
@@ -1107,6 +1065,12 @@ internal fun OutputCaption(
 ) {
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
+    val cast by PlayerPlatform.host.castState.collectAsStateWithLifecycle()
+    val watch by PlayerPlatform.host.watchOutput.collectAsStateWithLifecycle()
+    val activeOutput = rememberAudioOutputs().firstOrNull { it.isActive }
+    val externalOutput = cast.connectedName != null ||
+        watch.active ||
+        (activeOutput != null && activeOutput.kind != AudioOutputKind.PHONE)
     val outputFormat by PlayerPlatform.host.outputFormat.collectAsStateWithLifecycle()
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     // What the route is *capable* of, read off the negotiated AudioTrack —
@@ -1138,8 +1102,18 @@ internal fun OutputCaption(
     val captionModifier = Modifier
         .fillMaxWidth(0.65f)
         .clickable { if (badge.inParty) onOpenMembers() else onOpenOutput() }
-    if (!badge.inParty && isHiResOutput) {
-        ShimmerText(
+    when {
+        badge.inParty -> Text(
+            text = jamName,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+            color = LocalPlayerTint.current.copy(alpha = 0.55f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = captionModifier,
+        )
+        !externalOutput -> Unit
+        isHiResOutput -> ShimmerText(
             text = outputName,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = 11.sp,
@@ -1148,9 +1122,8 @@ internal fun OutputCaption(
             ),
             modifier = captionModifier,
         )
-    } else {
-        Text(
-            text = if (badge.inParty) jamName else outputName,
+        else -> Text(
+            text = outputName,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
             color = LocalPlayerTint.current.copy(alpha = 0.55f),
             maxLines = 1,
@@ -1161,7 +1134,7 @@ internal fun OutputCaption(
     }
 }
 
-/** The three fields of a party the player draws — see [OutputPartyPill]. */
+/** The three fields of a party the player draws — see [OutputCaption]. */
 private data class PartyBadge(
     val inParty: Boolean,
     val members: Int,

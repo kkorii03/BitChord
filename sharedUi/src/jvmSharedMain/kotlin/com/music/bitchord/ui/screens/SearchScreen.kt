@@ -18,6 +18,7 @@ import com.music.bitchord.ui.components.longPressMenuClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -76,6 +77,12 @@ import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.data.model.MoodGenre
+import com.music.bitchord.data.model.MoodGenreSection
+import com.music.bitchord.data.model.appleCardKind
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.ui.components.LikedMusicCover
+import com.music.bitchord.ui.components.appleSubtitleText
 import com.music.bitchord.ui.components.artworkCorner
 import com.music.bitchord.ui.components.LIST_ROW_VERTICAL_PADDING
 import com.music.bitchord.ui.components.MessageState
@@ -121,6 +128,14 @@ fun SearchScreen(
      */
     onBrowseLongPress: ((BrowseItem) -> Unit)? = null,
     history: List<SearchHistoryEntity>,
+    /**
+     * The same moods and genres the Explore tab draws. With nothing typed, the
+     * search page shows them under the recent searches, so a blank search is a
+     * way into the catalogue rather than a sentence.
+     */
+    browseCategories: UiState<List<MoodGenreSection>>? = null,
+    onBrowseCategoryClick: (MoodGenre) -> Unit = {},
+    onBrowseCategoryVisible: (MoodGenre) -> Unit = {},
     suggestions: List<String>,
     typeaheadResults: List<SearchResult>,
     onSubmit: () -> Unit,
@@ -256,11 +271,13 @@ fun SearchScreen(
             }
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
-        ) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val browseColumns = moodColumns(maxWidth)
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+            ) {
             when {
                 searchingLibrary || searchingAddons -> librarySearchResults(
                     query = query.trim(),
@@ -300,19 +317,57 @@ fun SearchScreen(
                         )
                     }
                 }
-                results == null -> if (history.isEmpty()) {
-                    item { MessageState(stringResource(Res.string.search_empty)) }
-                } else {
-                    recentSearches(
-                        history = history,
-                        currentSong = currentSong,
-                        isPlaying = isPlaying,
-                        onClick = onHistoryClick,
-                        onSongLongPress = onSongLongPress,
-                        onRemove = onHistoryRemove,
-                        onClear = onHistoryClear,
-                        onSongSwipe = onSongSwipe,
-                    )
+                results == null -> {
+                    if (history.isNotEmpty()) {
+                        recentSearches(
+                            history = history,
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onClick = onHistoryClick,
+                            onSongLongPress = onSongLongPress,
+                            onRemove = onHistoryRemove,
+                            onClear = onHistoryClear,
+                            onSongSwipe = onSongSwipe,
+                        )
+                    }
+                    // The same category tiles Explore draws, under the recent
+                    // searches: Apple's blank search page is a way into the
+                    // catalogue, not a sentence.
+                    val rows = (browseCategories as? UiState.Success)?.data.orEmpty()
+                        .flatMap(MoodGenreSection::items)
+                        .distinctBy { it.browseId to it.params }
+                        .chunked(browseColumns)
+                    if (rows.isNotEmpty()) {
+                        item(key = "browse:header") {
+                            Text(
+                                text = stringResource(Res.string.explore),
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(
+                                    start = PAGE_GUTTER,
+                                    end = PAGE_GUTTER,
+                                    top = 20.dp,
+                                    bottom = 8.dp,
+                                ),
+                            )
+                        }
+                        items(
+                            items = rows,
+                            key = { row ->
+                                "browse:${row.first().browseId}|${row.first().params}"
+                            },
+                        ) { row ->
+                            MoodGenreRow(
+                                row = row,
+                                columns = browseColumns,
+                                onCategoryClick = onBrowseCategoryClick,
+                                onCategoryVisible = onBrowseCategoryVisible,
+                                onCategoryLongClick = null,
+                            )
+                        }
+                    } else if (history.isEmpty() && browseCategories !is UiState.Loading) {
+                        item { MessageState(stringResource(Res.string.search_empty)) }
+                    }
                 }
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
                 results is UiState.Error -> item { MessageState(results.message) }
@@ -388,6 +443,7 @@ fun SearchScreen(
                                     isPlaying = isPlaying && isCurrentRow(row.song),
                                     searchPlayingStyle = true,
                                     activeTint = PlayingAccent,
+                                    showDuration = false,
                                 )
                                 is SearchResult.Browse -> BrowseRow(
                                     item = row.item,
@@ -412,6 +468,7 @@ fun SearchScreen(
                         )
                     }
                 }
+            }
             }
         }
     }
@@ -497,6 +554,7 @@ private fun LazyListScope.librarySearchResults(
                     searchPlayingStyle = true,
                     activeTint = PlayingAccent,
                     showSourceQuality = addons,
+                    showDuration = false,
                 )
                 if (index < tracks.lastIndex) {
                     HorizontalDivider(
@@ -985,8 +1043,14 @@ private fun RecentSearchEntityRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(2.dp))
+                val kind = when (entity.entityType) {
+                    EntityType.TRACK -> com.music.bitchord.data.model.AppleCardKind.SONG
+                    EntityType.ALBUM -> com.music.bitchord.data.model.AppleCardKind.ALBUM
+                    EntityType.ARTIST -> com.music.bitchord.data.model.AppleCardKind.ARTIST
+                    EntityType.PLAYLIST -> com.music.bitchord.data.model.AppleCardKind.PLAYLIST
+                }
                 Text(
-                    text = entity.subtitle.ifBlank { entity.entityType.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) } },
+                    text = appleSubtitleText(entity.subtitle, kind),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1022,22 +1086,27 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(
-                    if (item.type == BrowseType.ARTIST) CircleShape
-                    else RoundedCornerShape(SMALL_ART_CORNER),
-                )
-                .thumbnailBorder(
-                    if (item.type == BrowseType.ARTIST) CircleShape
-                    else RoundedCornerShape(SMALL_ART_CORNER),
-                )
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        val shape = if (item.type == BrowseType.ARTIST) CircleShape
+        else RoundedCornerShape(SMALL_ART_CORNER)
+        if (item.browseId == YtMusicRepository.LIKED_MUSIC) {
+            LikedMusicCover(
+                Modifier
+                    .size(52.dp)
+                    .clip(shape)
+                    .thumbnailBorder(shape),
+            )
+        } else {
+            AsyncImage(
+                model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(shape)
+                    .thumbnailBorder(shape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+        }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -1048,7 +1117,10 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = item.subtitle.ifBlank { item.type.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) } },
+                text = appleCardKind(item.type)?.let { appleSubtitleText(item.subtitle, it) }
+                    ?: item.subtitle.ifBlank {
+                        item.type.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) }
+                    },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
