@@ -192,21 +192,38 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun unadvertisedHiResRateFallsBackToASafeMixerRate() {
-        assertEquals(
-            48_000,
+    fun otherHiResRatesAreLeftToTheOsMixer() {
+        assertNull(
             AudioOutputPolicy.outputSampleRateFor(
                 96_000,
                 AudioRouting.Kind.BLUETOOTH,
                 listOf(44_100, 48_000),
-            ) ?: -1,
+            ),
         )
-        assertEquals(
-            44_100,
+        assertNull(
             AudioOutputPolicy.outputSampleRateFor(
                 192_000,
                 AudioRouting.Kind.WIRED,
                 listOf(44_100, 48_000),
+            ),
+        )
+        assertNull(
+            AudioOutputPolicy.outputSampleRateFor(
+                96_000,
+                AudioRouting.Kind.PHONE,
+                emptyList(),
+            ),
+        )
+    }
+
+    @Test
+    fun bluetoothFoldsThe352kRateTo48k() {
+        assertEquals(
+            48_000,
+            AudioOutputPolicy.outputSampleRateFor(
+                352_800,
+                AudioRouting.Kind.BLUETOOTH,
+                listOf(44_100, 48_000, 352_800),
             ) ?: -1,
         )
     }

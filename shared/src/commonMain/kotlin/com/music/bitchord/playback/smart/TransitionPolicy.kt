@@ -268,6 +268,11 @@ data class LoudnessMatch(
  */
 fun loudnessMatch(outgoingLufs: Double, incomingLufs: Double): LoudnessMatch {
     if (!outgoingLufs.isFinite() || !incomingLufs.isFinite()) return LoudnessMatch()
+    // Zero is the model's "not measured" default (old caches and unanalysed
+    // tracks); real programme loudness is always negative. Treating it as a
+    // value would trim the other side by up to 6 dB while one analysis is
+    // still pending.
+    if (outgoingLufs >= 0.0 || incomingLufs >= 0.0) return LoudnessMatch()
     if (outgoingLufs <= -69.0 || incomingLufs <= -69.0) return LoudnessMatch()
     val db = (outgoingLufs - incomingLufs).coerceIn(-MAX_LOUDNESS_MATCH_DB, MAX_LOUDNESS_MATCH_DB)
     if (abs(db) < 0.5) return LoudnessMatch()

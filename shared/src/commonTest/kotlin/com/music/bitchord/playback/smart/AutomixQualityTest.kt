@@ -88,6 +88,17 @@ class AutomixQualityTest {
     }
 
     @Test
+    fun unmeasuredZeroLoudnessLeavesBothSidesAtUnity() {
+        val outgoingMissing = loudnessMatch(outgoingLufs = 0.0, incomingLufs = -13.0)
+        assertEquals(1.0, outgoingMissing.incomingGain, 1e-6)
+        assertEquals(1.0, outgoingMissing.outgoingGain, 1e-6)
+
+        val incomingMissing = loudnessMatch(outgoingLufs = -9.0, incomingLufs = 0.0)
+        assertEquals(1.0, incomingMissing.incomingGain, 1e-6)
+        assertEquals(1.0, incomingMissing.outgoingGain, 1e-6)
+    }
+
+    @Test
     fun incomingCueStaysInsideTheSkipCap() {
         val next = track("next", 120.0)
         val latest = latestIncomingCue(next.duration)
