@@ -232,6 +232,7 @@
     <string name="high">高</string>
     <string name="standard">標準</string>
     <string name="lossless">ロスレス</string>
+    <string name="best_quality">最高音質</string>
     <string name="system">システム</string>
     <string name="light">ライト</string>
     <string name="dark">ダーク</string>
@@ -991,6 +992,15 @@
     <string name="unsubscribe">チャンネル登録を解除</string>
 
     <string name="upgrade_quality">音質をアップグレード</string>
+    <string name="quality_upgrade_done">高音質に切り替えました</string>
+    <string name="quality_upgrade_already_best">この曲はすでに最高音質です</string>
+    <string name="quality_upgrade_no_better">より高音質の音源が見つかりませんでした</string>
+    <string name="quality_upgrade_failed">音質を変更できませんでした</string>
+    <string name="quality_upgrade_too_late">曲がほぼ終わるため、音質は変更しませんでした</string>
+    <string name="quality_upgrade_unavailable">現在は音質を変更できません</string>
+    <string name="quality_upgrade_busy">音質を確認しています。しばらくしてからもう一度お試しください</string>
+    <string name="quality_upgrade_reason_not_proven">新しい音源を確認できませんでした</string>
+    <string name="quality_upgrade_reason_unavailable">現在は変更できません</string>
 
     <string name="use_this_channel">このチャンネルを使用</string>
 

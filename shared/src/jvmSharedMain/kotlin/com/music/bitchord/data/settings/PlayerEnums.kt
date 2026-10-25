@@ -23,7 +23,7 @@ enum class AudioQuality(
     LOW(64, "Low", "~64kbps · 가장 작은 용량", "29 MB/hr"),
     MEDIUM(Int.MAX_VALUE, "Medium", "최상의 품질 · ~171kbps Opus", "77 MB/hr"),
     HIGH(Int.MAX_VALUE, "High", "JioSaavn 최대 320kbps, YouTube 대체", "144 MB/hr"),
-    LOSSLESS(Int.MAX_VALUE, "Lossless", "내 애드온 + JioSaavn, 가능하면 비트 퍼펙트", "300+ MB/hr"),
+    LOSSLESS(Int.MAX_VALUE, "Best", "내 애드온 + JioSaavn, 가능하면 최고 음질", "300+ MB/hr"),
     ;
 }
 

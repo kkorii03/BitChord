@@ -262,6 +262,7 @@
     <string name="high">Yüksek</string>
     <string name="standard">Standart</string>
     <string name="lossless">Kayıpsız</string>
+    <string name="best_quality">En iyi kalite</string>
     <string name="system">Sistem</string>
     <string name="light">Açık</string>
     <string name="dark">Koyu</string>
@@ -968,6 +969,15 @@
     <string name="unsubscribe">Abonelikten çık</string>
 
     <string name="upgrade_quality">Kaliteyi yükselt</string>
+    <string name="quality_upgrade_done">Daha yüksek kaliteye geçildi</string>
+    <string name="quality_upgrade_already_best">Bu parça zaten en iyi kalitede</string>
+    <string name="quality_upgrade_no_better">Daha yüksek kalitede bir kopya bulunamadı</string>
+    <string name="quality_upgrade_failed">Kalite değiştirilemedi</string>
+    <string name="quality_upgrade_too_late">Parça neredeyse bitti, bu yüzden kalite değiştirilmedi</string>
+    <string name="quality_upgrade_unavailable">Kalite şu anda değiştirilemiyor</string>
+    <string name="quality_upgrade_busy">Kalite kontrol ediliyor. Biraz sonra tekrar deneyin</string>
+    <string name="quality_upgrade_reason_not_proven">yeni kopya doğrulanamadı</string>
+    <string name="quality_upgrade_reason_unavailable">değişiklik şu anda kullanılamıyor</string>
 
 
     <string name="lyrics_offset">Söz zamanlama ayarı</string>

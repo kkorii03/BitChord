@@ -238,6 +238,7 @@
     <string name="high">גבוה</string>
     <string name="standard">סטנדרטי</string>
     <string name="lossless">Lossless</string>
+    <string name="best_quality">האיכות הטובה ביותר</string>
     <string name="system">מערכת</string>
     <string name="light">בהיר</string>
     <string name="dark">כהה</string>
@@ -1014,6 +1015,15 @@
     <string name="unsubscribe">בטל מנוי</string>
 
     <string name="upgrade_quality">שדרג איכות</string>
+    <string name="quality_upgrade_done">הועבר לאיכות גבוהה יותר</string>
+    <string name="quality_upgrade_already_best">זו כבר האיכות הטובה ביותר לרצועה הזו</string>
+    <string name="quality_upgrade_no_better">לא נמצא עותק באיכות גבוהה יותר</string>
+    <string name="quality_upgrade_failed">לא ניתן היה לשנות את האיכות</string>
+    <string name="quality_upgrade_too_late">הרצועה כמעט נגמרה, לכן האיכות לא שונתה</string>
+    <string name="quality_upgrade_unavailable">לא ניתן לשנות את האיכות כרגע</string>
+    <string name="quality_upgrade_busy">בודק את האיכות. נסו שוב בעוד רגע</string>
+    <string name="quality_upgrade_reason_not_proven">לא ניתן היה לאמת את העותק החדש</string>
+    <string name="quality_upgrade_reason_unavailable">השינוי לא זמין כרגע</string>
 
     <string name="use_this_channel">השתמש בערוץ זה</string>
 

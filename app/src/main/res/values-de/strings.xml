@@ -237,6 +237,7 @@
     <string name="high">Hoch</string>
     <string name="standard">Standard</string>
     <string name="lossless">Verlustfrei</string>
+    <string name="best_quality">Beste Qualität</string>
     <string name="system">System</string>
     <string name="light">Hell</string>
     <string name="dark">Dunkel</string>
@@ -1009,6 +1010,15 @@
     <string name="unsubscribe">Abo beenden</string>
 
     <string name="upgrade_quality">Qualität verbessern</string>
+    <string name="quality_upgrade_done">Auf höhere Qualität umgestellt</string>
+    <string name="quality_upgrade_already_best">Dieser Titel läuft bereits in bester Qualität</string>
+    <string name="quality_upgrade_no_better">Keine Kopie in höherer Qualität gefunden</string>
+    <string name="quality_upgrade_failed">Qualität konnte nicht geändert werden</string>
+    <string name="quality_upgrade_too_late">Der Titel ist fast vorbei, daher wurde die Qualität nicht geändert</string>
+    <string name="quality_upgrade_unavailable">Qualität kann gerade nicht geändert werden</string>
+    <string name="quality_upgrade_busy">Qualität wird geprüft. Versuche es gleich noch einmal</string>
+    <string name="quality_upgrade_reason_not_proven">die neue Kopie konnte nicht geprüft werden</string>
+    <string name="quality_upgrade_reason_unavailable">die Änderung ist gerade nicht möglich</string>
 
     <string name="use_this_channel">Diesen Kanal nutzen</string>
 

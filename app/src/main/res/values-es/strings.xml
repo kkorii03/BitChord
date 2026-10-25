@@ -250,6 +250,7 @@
     <string name="high">Alta</string>
     <string name="standard">Estándar</string>
     <string name="lossless">Sin pérdida</string>
+    <string name="best_quality">Mejor calidad</string>
     <string name="system">Sistema</string>
     <string name="light">Claro</string>
     <string name="dark">Oscuro</string>
@@ -953,6 +954,15 @@
     <string name="revert_to_original">Revertir al original</string>
 
     <string name="upgrade_quality">Mejorar calidad</string>
+    <string name="quality_upgrade_done">Cambiado a mayor calidad</string>
+    <string name="quality_upgrade_already_best">Ya es la mejor calidad de esta pista</string>
+    <string name="quality_upgrade_no_better">No se encontró una copia de mayor calidad</string>
+    <string name="quality_upgrade_failed">No se pudo cambiar la calidad</string>
+    <string name="quality_upgrade_too_late">La pista está casi terminando, así que no se cambió la calidad</string>
+    <string name="quality_upgrade_unavailable">La calidad no se puede cambiar ahora</string>
+    <string name="quality_upgrade_busy">Comprobando la calidad. Inténtalo de nuevo en un momento</string>
+    <string name="quality_upgrade_reason_not_proven">no se pudo verificar la nueva copia</string>
+    <string name="quality_upgrade_reason_unavailable">el cambio no está disponible ahora</string>
 
     <string name="sort_date_added_toggle">Fecha añadida</string>
 

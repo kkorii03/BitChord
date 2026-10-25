@@ -157,6 +157,15 @@
     <string name="converting_to_audio">Đang chuyển đổi thành âm thanh…</string>
     <string name="revert_to_original">Khôi phục về bản gốc</string>
     <string name="upgrade_quality">Nâng cấp chất lượng</string>
+    <string name="quality_upgrade_done">Đã chuyển sang chất lượng cao hơn</string>
+    <string name="quality_upgrade_already_best">Đây đã là chất lượng cao nhất cho bài hát này</string>
+    <string name="quality_upgrade_no_better">Không tìm thấy bản chất lượng cao hơn</string>
+    <string name="quality_upgrade_failed">Không thể thay đổi chất lượng</string>
+    <string name="quality_upgrade_too_late">Bài hát sắp kết thúc nên chất lượng được giữ nguyên</string>
+    <string name="quality_upgrade_unavailable">Không thể thay đổi chất lượng ngay bây giờ</string>
+    <string name="quality_upgrade_busy">Đang kiểm tra chất lượng. Hãy thử lại sau giây lát</string>
+    <string name="quality_upgrade_reason_not_proven">không thể xác minh bản mới</string>
+    <string name="quality_upgrade_reason_unavailable">thay đổi hiện không khả dụng</string>
     <string name="dolby_atmos">Dolby Atmos</string>
     <string name="dolby_atmos_subtitle">Phát phiên bản âm thanh vòm sống động hơn khi có sẵn.</string>
     <string name="dolby_atmos_unavailable">Thiết bị này không hỗ trợ Atmos, các bài hát sẽ phát ở phiên bản thông thường</string>
@@ -268,6 +277,7 @@
     <string name="high">Cao</string>
     <string name="standard">Tiêu chuẩn</string>
     <string name="lossless">Lossless</string>
+    <string name="best_quality">Chất lượng tốt nhất</string>
     <string name="system">Hệ thống</string>
     <string name="light">Sáng</string>
     <string name="dark">Tối</string>

@@ -887,7 +887,7 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
         AudioQuality.LOW -> R.string.low
         AudioQuality.MEDIUM -> R.string.medium
         AudioQuality.HIGH -> R.string.high
-        AudioQuality.LOSSLESS -> R.string.lossless
+        AudioQuality.LOSSLESS -> R.string.best_quality
     },
 )
 

@@ -237,6 +237,7 @@
     <string name="high">ज़्यादा</string>
     <string name="standard">मानक</string>
     <string name="lossless">लॉसलेस</string>
+    <string name="best_quality">सर्वोत्तम गुणवत्ता</string>
     <string name="system">सिस्टम</string>
     <string name="light">लाइट</string>
     <string name="dark">डार्क</string>
@@ -1009,6 +1010,15 @@
     <string name="unsubscribe">सदस्यता छोड़ें</string>
 
     <string name="upgrade_quality">गुणवत्ता सुधारें</string>
+    <string name="quality_upgrade_done">उच्च गुणवत्ता पर स्विच किया</string>
+    <string name="quality_upgrade_already_best">यह ट्रैक पहले से ही सर्वोत्तम गुणवत्ता में है</string>
+    <string name="quality_upgrade_no_better">उच्च गुणवत्ता वाली कोई प्रति नहीं मिली</string>
+    <string name="quality_upgrade_failed">गुणवत्ता नहीं बदली जा सकी</string>
+    <string name="quality_upgrade_too_late">ट्रैक लगभग खत्म हो गया है, इसलिए गुणवत्ता नहीं बदली गई</string>
+    <string name="quality_upgrade_unavailable">अभी गुणवत्ता नहीं बदली जा सकती</string>
+    <string name="quality_upgrade_busy">गुणवत्ता जाँची जा रही है। थोड़ी देर बाद पुनः प्रयास करें</string>
+    <string name="quality_upgrade_reason_not_proven">नई प्रति सत्यापित नहीं हो सकी</string>
+    <string name="quality_upgrade_reason_unavailable">बदलाव अभी उपलब्ध नहीं है</string>
 
     <string name="use_this_channel">इस चैनल का उपयोग करें</string>
 

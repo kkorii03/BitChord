@@ -2284,7 +2284,10 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
         AudioQuality.LOW -> R.string.low
         AudioQuality.MEDIUM -> R.string.medium
         AudioQuality.HIGH -> R.string.high
-        AudioQuality.LOSSLESS -> R.string.lossless
+        // The top rung is "whatever the sources can do", which on YouTube is
+        // its best Opus/AAC — not a lossless stream. The download picker keeps
+        // "Lossless" because a saved file genuinely can be bit-exact.
+        AudioQuality.LOSSLESS -> R.string.best_quality
     },
 )
 

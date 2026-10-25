@@ -183,6 +183,15 @@
     <string name="converting_to_audio">오디오로 전환 중…</string>
     <string name="revert_to_original">원래대로 되돌리기</string>
     <string name="upgrade_quality">품질 업그레이드</string>
+    <string name="quality_upgrade_done">고음질로 바꿨어요</string>
+    <string name="quality_upgrade_already_best">이미 이 곡의 최고 음질이에요</string>
+    <string name="quality_upgrade_no_better">더 높은 음질을 찾지 못했어요</string>
+    <string name="quality_upgrade_failed">음질을 바꾸지 못했어요</string>
+    <string name="quality_upgrade_too_late">곡이 거의 끝나 음질을 바꾸지 않았어요</string>
+    <string name="quality_upgrade_unavailable">지금은 음질을 바꿀 수 없어요</string>
+    <string name="quality_upgrade_busy">음질을 확인하는 중이에요. 잠시 후 다시 시도해 주세요</string>
+    <string name="quality_upgrade_reason_not_proven">새 음원을 확인할 수 없었어요</string>
+    <string name="quality_upgrade_reason_unavailable">지금은 시도할 수 없어요</string>
     <string name="dolby_atmos">Dolby Atmos</string>
     <string name="dolby_atmos_subtitle">노래에 더욱 몰입감 있는 서라운드 버전이 있으면 해당 버전을 재생합니다.</string>
     <string name="dolby_atmos_unavailable">이 기기는 Atmos를 재생할 수 없으므로 일반 버전으로 재생됩니다.</string>
@@ -351,6 +360,7 @@
     <string name="high">높음</string>
     <string name="standard">표준</string>
     <string name="lossless">무손실</string>
+    <string name="best_quality">최고 음질</string>
     <string name="system">시스템</string>
     <string name="light">라이트</string>
     <string name="dark">다크</string>

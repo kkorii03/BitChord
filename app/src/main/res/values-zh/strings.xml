@@ -232,6 +232,7 @@
     <string name="high">高</string>
     <string name="standard">标准</string>
     <string name="lossless">无损</string>
+    <string name="best_quality">最佳音质</string>
     <string name="system">跟随系统</string>
     <string name="light">浅色</string>
     <string name="dark">深色</string>
@@ -988,6 +989,15 @@
     <string name="unsubscribe">取消订阅</string>
 
     <string name="upgrade_quality">提升音质</string>
+    <string name="quality_upgrade_done">已切换到更高音质</string>
+    <string name="quality_upgrade_already_best">这首歌曲已是最高音质</string>
+    <string name="quality_upgrade_no_better">未找到更高音质的版本</string>
+    <string name="quality_upgrade_failed">无法更改音质</string>
+    <string name="quality_upgrade_too_late">歌曲即将结束，因此未更改音质</string>
+    <string name="quality_upgrade_unavailable">目前无法更改音质</string>
+    <string name="quality_upgrade_busy">正在检查音质。请稍后重试</string>
+    <string name="quality_upgrade_reason_not_proven">无法验证新版本</string>
+    <string name="quality_upgrade_reason_unavailable">目前无法进行更改</string>
 
     <string name="use_this_channel">使用此频道</string>
 

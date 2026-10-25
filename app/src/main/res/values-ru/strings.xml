@@ -247,6 +247,7 @@
     <string name="high">Высокое</string>
     <string name="standard">Стандартное</string>
     <string name="lossless">Без потерь</string>
+    <string name="best_quality">Лучшее качество</string>
     <string name="system">Системная</string>
     <string name="light">Светлая</string>
     <string name="dark">Тёмная</string>
@@ -1037,6 +1038,15 @@
     <string name="unsubscribe">Отписаться</string>
 
     <string name="upgrade_quality">Улучшить качество</string>
+    <string name="quality_upgrade_done">Переключено на более высокое качество</string>
+    <string name="quality_upgrade_already_best">Это уже лучшее качество этой композиции</string>
+    <string name="quality_upgrade_no_better">Копия более высокого качества не найдена</string>
+    <string name="quality_upgrade_failed">Не удалось изменить качество</string>
+    <string name="quality_upgrade_too_late">Композиция почти закончилась, поэтому качество не изменено</string>
+    <string name="quality_upgrade_unavailable">Сейчас нельзя изменить качество</string>
+    <string name="quality_upgrade_busy">Проверка качества. Повторите попытку чуть позже</string>
+    <string name="quality_upgrade_reason_not_proven">не удалось проверить новую копию</string>
+    <string name="quality_upgrade_reason_unavailable">изменение сейчас недоступно</string>
 
     <string name="use_this_channel">Использовать этот канал</string>
 

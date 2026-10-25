@@ -280,6 +280,7 @@
     <string name="high">Alta</string>
     <string name="standard">Standard</string>
     <string name="lossless">Lossless</string>
+    <string name="best_quality">Qualità migliore</string>
     <string name="system">Sistema</string>
     <string name="light">Chiaro</string>
     <string name="dark">Scuro</string>
@@ -986,6 +987,15 @@
     <string name="unsubscribe">Annulla iscrizione</string>
 
     <string name="upgrade_quality">Migliora qualità</string>
+    <string name="quality_upgrade_done">Passato a una qualità superiore</string>
+    <string name="quality_upgrade_already_best">È già la migliore qualità per questo brano</string>
+    <string name="quality_upgrade_no_better">Nessuna copia di qualità superiore trovata</string>
+    <string name="quality_upgrade_failed">Impossibile cambiare la qualità</string>
+    <string name="quality_upgrade_too_late">Il brano è quasi finito, quindi la qualità non è stata cambiata</string>
+    <string name="quality_upgrade_unavailable">Non è possibile cambiare la qualità ora</string>
+    <string name="quality_upgrade_busy">Verifica della qualità in corso. Riprova tra poco</string>
+    <string name="quality_upgrade_reason_not_proven">non è stato possibile verificare la nuova copia</string>
+    <string name="quality_upgrade_reason_unavailable">la modifica non è disponibile ora</string>
 
 
     <string name="lyrics_offset">Lyrics offset</string>

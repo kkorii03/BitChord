@@ -239,6 +239,7 @@
     <string name="high">Alta</string>
     <string name="standard">Padrão</string>
     <string name="lossless">Sem perdas</string>
+    <string name="best_quality">Melhor qualidade</string>
     <string name="system">Sistema</string>
     <string name="light">Claro</string>
     <string name="dark">Escuro</string>
@@ -1014,6 +1015,15 @@
     <string name="unsubscribe">Cancelar inscrição</string>
 
     <string name="upgrade_quality">Melhorar qualidade</string>
+    <string name="quality_upgrade_done">Mudado para qualidade superior</string>
+    <string name="quality_upgrade_already_best">Esta faixa já está na melhor qualidade</string>
+    <string name="quality_upgrade_no_better">Nenhuma cópia de qualidade superior encontrada</string>
+    <string name="quality_upgrade_failed">Não foi possível alterar a qualidade</string>
+    <string name="quality_upgrade_too_late">A faixa está quase terminando, então a qualidade não foi alterada</string>
+    <string name="quality_upgrade_unavailable">Não é possível alterar a qualidade agora</string>
+    <string name="quality_upgrade_busy">Verificando a qualidade. Tente novamente em instantes</string>
+    <string name="quality_upgrade_reason_not_proven">não foi possível verificar a nova cópia</string>
+    <string name="quality_upgrade_reason_unavailable">a alteração não está disponível agora</string>
 
     <string name="use_this_channel">Usar este canal</string>
 

@@ -232,6 +232,7 @@
     <string name="high">Tinggi</string>
     <string name="standard">Standar</string>
     <string name="lossless">Lossless</string>
+    <string name="best_quality">Kualitas terbaik</string>
     <string name="system">Sistem</string>
     <string name="light">Terang</string>
     <string name="dark">Gelap</string>
@@ -988,6 +989,15 @@
     <string name="unsubscribe">Berhenti berlangganan</string>
 
     <string name="upgrade_quality">Tingkatkan kualitas</string>
+    <string name="quality_upgrade_done">Beralih ke kualitas lebih tinggi</string>
+    <string name="quality_upgrade_already_best">Ini sudah kualitas terbaik untuk trek ini</string>
+    <string name="quality_upgrade_no_better">Tidak ditemukan salinan dengan kualitas lebih tinggi</string>
+    <string name="quality_upgrade_failed">Tidak dapat mengubah kualitas</string>
+    <string name="quality_upgrade_too_late">Trek hampir selesai, jadi kualitas tidak diubah</string>
+    <string name="quality_upgrade_unavailable">Kualitas tidak dapat diubah sekarang</string>
+    <string name="quality_upgrade_busy">Sedang memeriksa kualitas. Coba lagi sebentar lagi</string>
+    <string name="quality_upgrade_reason_not_proven">salinan baru tidak dapat diverifikasi</string>
+    <string name="quality_upgrade_reason_unavailable">perubahan tidak tersedia sekarang</string>
 
     <string name="use_this_channel">Gunakan channel ini</string>
 

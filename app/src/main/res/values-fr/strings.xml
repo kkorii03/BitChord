@@ -238,6 +238,7 @@
     <string name="high">Élevée</string>
     <string name="standard">Standard</string>
     <string name="lossless">Sans perte</string>
+    <string name="best_quality">Meilleure qualité</string>
     <string name="system">Système</string>
     <string name="light">Clair</string>
     <string name="dark">Sombre</string>
@@ -1010,6 +1011,15 @@
     <string name="unsubscribe">Se désabonner</string>
 
     <string name="upgrade_quality">Améliorer la qualité</string>
+    <string name="quality_upgrade_done">Passé en meilleure qualité</string>
+    <string name="quality_upgrade_already_best">C\'est déjà la meilleure qualité pour ce titre</string>
+    <string name="quality_upgrade_no_better">Aucune copie de meilleure qualité trouvée</string>
+    <string name="quality_upgrade_failed">Impossible de changer la qualité</string>
+    <string name="quality_upgrade_too_late">Le titre est presque terminé, la qualité n\'a pas été changée</string>
+    <string name="quality_upgrade_unavailable">Impossible de changer la qualité pour le moment</string>
+    <string name="quality_upgrade_busy">Vérification de la qualité. Réessayez dans un instant</string>
+    <string name="quality_upgrade_reason_not_proven">la nouvelle copie n\'a pas pu être vérifiée</string>
+    <string name="quality_upgrade_reason_unavailable">le changement n\'est pas disponible pour le moment</string>
 
     <string name="use_this_channel">Utiliser cette chaîne</string>
 

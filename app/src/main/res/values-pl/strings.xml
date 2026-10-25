@@ -235,6 +235,7 @@
     <string name="high">Wysokie</string>
     <string name="standard">Standard</string>
     <string name="lossless">Lossless</string>
+    <string name="best_quality">Najlepsza jakość</string>
     <string name="system">System</string>
     <string name="light">Jasny</string>
     <string name="dark">Ciemny</string>
@@ -1047,6 +1048,15 @@
     <string name="unsubscribe">Anuluj subskrypcję</string>
 
     <string name="upgrade_quality">Ulepsz jakość</string>
+    <string name="quality_upgrade_done">Przełączono na wyższą jakość</string>
+    <string name="quality_upgrade_already_best">To już najlepsza jakość tego utworu</string>
+    <string name="quality_upgrade_no_better">Nie znaleziono kopii w wyższej jakości</string>
+    <string name="quality_upgrade_failed">Nie udało się zmienić jakości</string>
+    <string name="quality_upgrade_too_late">Utwór już się kończy, więc jakość nie została zmieniona</string>
+    <string name="quality_upgrade_unavailable">Nie można teraz zmienić jakości</string>
+    <string name="quality_upgrade_busy">Sprawdzanie jakości. Spróbuj ponownie za chwilę</string>
+    <string name="quality_upgrade_reason_not_proven">nie udało się zweryfikować nowej kopii</string>
+    <string name="quality_upgrade_reason_unavailable">zmiana nie jest teraz dostępna</string>
 
     <string name="use_this_channel">Użyj tego kanału</string>
 

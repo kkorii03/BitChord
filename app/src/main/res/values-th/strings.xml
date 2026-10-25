@@ -256,6 +256,7 @@
     <string name="high">สูง</string>
     <string name="standard">มาตรฐาน</string>
     <string name="lossless">ไม่สูญเสียคุณภาพ</string>
+    <string name="best_quality">คุณภาพสูงสุด</string>
     <string name="system">ระบบ</string>
     <string name="light">สว่าง</string>
     <string name="dark">มืด</string>
@@ -849,6 +850,15 @@
     <string name="source_skipped_by_quality">Not used on %1$s · quality is set to %2$s</string>
 
     <string name="upgrade_quality">Upgrade quality</string>
+    <string name="quality_upgrade_done">เปลี่ยนเป็นคุณภาพสูงขึ้นแล้ว</string>
+    <string name="quality_upgrade_already_best">เพลงนี้เป็นคุณภาพสูงสุดอยู่แล้ว</string>
+    <string name="quality_upgrade_no_better">ไม่พบไฟล์คุณภาพสูงกว่า</string>
+    <string name="quality_upgrade_failed">ไม่สามารถเปลี่ยนคุณภาพได้</string>
+    <string name="quality_upgrade_too_late">เพลงใกล้จบแล้ว จึงไม่เปลี่ยนคุณภาพ</string>
+    <string name="quality_upgrade_unavailable">ไม่สามารถเปลี่ยนคุณภาพได้ในตอนนี้</string>
+    <string name="quality_upgrade_busy">กำลังตรวจสอบคุณภาพ โปรดลองอีกครั้งในอีกสักครู่</string>
+    <string name="quality_upgrade_reason_not_proven">ไม่สามารถตรวจสอบไฟล์ใหม่ได้</string>
+    <string name="quality_upgrade_reason_unavailable">ไม่สามารถดำเนินการเปลี่ยนแปลงได้ในตอนนี้</string>
 
     <string name="dolby_atmos">Dolby Atmos</string>
 
