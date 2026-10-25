@@ -16,7 +16,10 @@ package com.music.bitchord.playback.smart
 internal data class AiTimingKnowledge(
     /** The lyrics (text hash) the kept answer was made for, if any. */
     val answerKey: Int? = null,
-    /** Which engine gave it — [AiTimingPolicy.DEEPGRAM], [AiTimingPolicy.WHISPER] or [AiTimingPolicy.GEMINI]. */
+    /**
+     * Which engine gave it — [AiTimingPolicy.DEEPGRAM], [AiTimingPolicy.WHISPER],
+     * [AiTimingPolicy.GEMINI], or [AiTimingPolicy.DEEPGRAM_WHISPER] for a song check.
+     */
     val answerEngine: String? = null,
     /** How much of the song agreed with it, 0–100; null on answers kept before it was recorded. */
     val answerMatch: Int? = null,
@@ -35,6 +38,14 @@ internal object AiTimingPolicy {
     const val WHISPER = "Whisper"
     const val GEMINI = "Gemini"
 
+    /**
+     * Whisper through Deepgram's key, as the song check names it. Kept apart
+     * from [WHISPER] (and from [DEEPGRAM]) so a song already tried with
+     * nova-3, which hears almost no singing, is asked again once with the
+     * model that does.
+     */
+    const val DEEPGRAM_WHISPER = "Deepgram Whisper"
+
     /** All engines, cheapest first: what a request may spend while nothing usable is kept. */
     val ALL_ENGINES = listOf(DEEPGRAM, WHISPER, GEMINI)
 
@@ -46,10 +57,13 @@ internal object AiTimingPolicy {
 
     /**
      * What a song check may spend. There is no video edit to tell apart from
-     * the record, so the only thing worth asking for is a word timing — and
-     * Whisper is a paid-per-minute upgrade the song path does not take.
+     * the record, so the only thing worth asking for is a word timing. For a
+     * song that is Whisper (through Deepgram's key): nova-3 hears almost no
+     * singing over a band, and a 90-second opening gave it only a few words.
+     * Its own engine id means songs tried with nova-3 before are checked once
+     * more, while a Whisper answer or attempt still stops a second request.
      */
-    val SONG_ENGINES = listOf(DEEPGRAM)
+    val SONG_ENGINES = listOf(DEEPGRAM_WHISPER)
 
     /**
      * The agreement an answer needs to count as the answer, and to be applied
@@ -77,9 +91,9 @@ internal object AiTimingPolicy {
      * same one again. [measurementGaveUp] widens the pool to Whisper, whose
      * cost is only worth paying once the free measurement has nothing.
      *
-     * [songOnly] is the record-timed song check: its pool is [SONG_ENGINES],
-     * so Whisper and Gemini are never spent there — not even as the
-     * post-measurement upgrade. The manual button is unchanged.
+     * [songOnly] is the record-timed song check: its pool is [SONG_ENGINES]
+     * (Deepgram's Whisper only), so the video path's Gemini and its one
+     * Whisper upgrade are never spent there. The manual button is unchanged.
      */
     fun nextEngines(
         knowledge: AiTimingKnowledge,

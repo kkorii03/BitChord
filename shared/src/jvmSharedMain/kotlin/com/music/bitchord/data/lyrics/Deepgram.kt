@@ -65,13 +65,25 @@ object Deepgram {
     }
 
     /**
+     * What Deepgram answered: the [words] it heard, or null, and the [httpCode]
+     * it answered with (null when no response came back at all — offline, a
+     * timeout, or a key that was never asked with). Callers tell a real
+     * refusal from a request that never completed by the code.
+     */
+    data class Answer(val words: List<LyricsWordAlign.Heard>?, val httpCode: Int? = null)
+
+    /**
      * The words heard in [audioWav] by [model], timed; null when Deepgram
      * couldn't be asked or didn't answer. Whisper takes no "multi": it is told
      * to work the language out itself instead.
      */
-    suspend fun words(audioWav: ByteArray, language: String, model: String = MODEL_NOVA): List<LyricsWordAlign.Heard>? {
+    suspend fun words(audioWav: ByteArray, language: String, model: String = MODEL_NOVA): List<LyricsWordAlign.Heard>? =
+        listen(audioWav, language, model).words
+
+    /** As [words], but saying whether Deepgram actually answered, and with which HTTP code. */
+    suspend fun listen(audioWav: ByteArray, language: String, model: String = MODEL_NOVA): Answer {
         val key = apiKey.trim()
-        if (key.isEmpty() || key == rejectedKey) return null
+        if (key.isEmpty() || key == rejectedKey) return Answer(null)
         val spoken = if (model == MODEL_WHISPER && language == "multi") "detect_language=true" else "language=$language"
         val url = "$ENDPOINT?model=$model&$spoken&punctuate=false&smart_format=false&numerals=false"
         val request = Request.Builder()
@@ -85,16 +97,17 @@ object Deepgram {
                     if (response.code == 401 || response.code == 403) {
                         rejectedKey = key
                         keyRejected.value = true
-                        return@withContext null
+                        return@withContext Answer(null, response.code)
                     }
-                    if (!response.isSuccessful) return@withContext null
-                    parse(response.body?.string() ?: return@withContext null)
+                    if (!response.isSuccessful) return@withContext Answer(null, response.code)
+                    val body = response.body?.string() ?: return@withContext Answer(null, response.code)
+                    Answer(parse(body), response.code)
                 }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            null
+            Answer(null)
         }
     }
 

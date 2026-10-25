@@ -130,16 +130,16 @@ class AiTimingPolicyTest {
     }
 
     @Test
-    fun songCheckSpendsDeepgramOnly() {
+    fun songCheckSpendsDeepgramWhisperOnly() {
         assertEquals(
-            listOf("Deepgram"),
+            listOf("Deepgram Whisper"),
             AiTimingPolicy.nextEngines(AiTimingKnowledge(), key, manual = false, measurementGaveUp = false, songOnly = true),
         )
         assertEquals(
             AiTimingPolicy.SONG_ENGINES,
             AiTimingPolicy.nextEngines(AiTimingKnowledge(), key, manual = false, measurementGaveUp = true, songOnly = true),
         )
-        val spent = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf("Deepgram"))
+        val spent = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf("Deepgram Whisper"))
         assertEquals(
             emptyList<String>(),
             AiTimingPolicy.nextEngines(spent, key, manual = false, measurementGaveUp = true, songOnly = true),
@@ -148,8 +148,25 @@ class AiTimingPolicyTest {
     }
 
     @Test
-    fun songCheckNeverUpgradesToWhisper() {
-        val accepted = AiTimingKnowledge(answerKey = key, answerEngine = "Deepgram", answerMatch = 95)
+    fun songTriedWithNovaIsCheckedAgainWithWhisper() {
+        // 924b631a–5b09cb2a recorded the song check as "Deepgram" (nova-3);
+        // those songs must get one Whisper check, not stay marked as spent.
+        val novaTried = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf("Deepgram"))
+        assertEquals(
+            AiTimingPolicy.SONG_ENGINES,
+            AiTimingPolicy.nextEngines(novaTried, key, manual = false, measurementGaveUp = false, songOnly = true),
+        )
+        // A Whisper attempt or answer does stop the next request.
+        val whisperTried = novaTried.copy(attemptedEngines = setOf("Deepgram", "Deepgram Whisper"))
+        assertEquals(
+            emptyList<String>(),
+            AiTimingPolicy.nextEngines(whisperTried, key, manual = false, measurementGaveUp = false, songOnly = true),
+        )
+    }
+
+    @Test
+    fun songCheckNeverUpgradesToWhisperOrGemini() {
+        val accepted = AiTimingKnowledge(answerKey = key, answerEngine = "Deepgram Whisper", answerMatch = 95)
         assertEquals(
             emptyList<String>(),
             AiTimingPolicy.nextEngines(accepted, key, manual = false, measurementGaveUp = true, songOnly = true),

@@ -104,7 +104,7 @@ object LyricsTiming {
         val base: Adjustment?,
         val manualMs: Long,
         val aiBiasMs: Long = 0L,
-        /** Who gave [base] when it is an AI answer — "Deepgram" or "Gemini". */
+        /** Who gave [base] when it is an AI answer — "Deepgram", "Deepgram Whisper" or "Gemini". */
         val aiEngine: String? = null,
         /**
          * What the transcript heard for this video, already on the displayed
@@ -1099,12 +1099,38 @@ object LyricsTiming {
             key,
             manual = false,
             // There is no measurement for a song version; the song pool
-            // already holds only Deepgram.
+            // already holds only the song check's engine.
             measurementGaveUp = false,
             songOnly = true,
         )
-        val engine = AiTimingPolicy.DEEPGRAM
+        val engine = ENGINE_DEEPGRAM_WHISPER
         if (engine !in engines || !com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        // Whisper takes a minute or two, and a screen job is cancelled the
+        // moment the track changes: run the request on the app-lifetime scope
+        // so it finishes and keeps its answer. One request per video and
+        // lyrics text, whoever asks. A cancelled caller stops waiting only.
+        val flight = "song:${song.videoId}:$key"
+        val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            verifySongRequest(context.applicationContext, song, lines, key, engine)
+        }
+        val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
+        if (running === fresh) {
+            fresh.invokeOnCompletion { songInFlight.remove(flight, fresh) }
+            fresh.start()
+        }
+        return running.await()
+    }
+
+    private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
+
+    /** The request itself, outliving its caller; see [verifySong]. */
+    private suspend fun verifySongRequest(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        key: Int,
+        engine: String,
+    ): Boolean {
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
         val audio = VideoAudio.songWav(context, song) ?: run {
@@ -1120,31 +1146,40 @@ object LyricsTiming {
             return false
         }
         val texts = indices.map { lines[it].text }
-        // Kept before the call: a request that fails or is cancelled has
-        // still been paid for, and must not be made again for these lyrics.
-        noteAttempt(context, song.videoId, key, engine)
-        val heard = com.music.bitchord.data.lyrics.Deepgram.words(
+        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
             audio,
-            com.music.bitchord.data.lyrics.Deepgram.languageFor(texts),
-            com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA,
-        ) ?: run {
-            songLog(song.videoId, "no-words", null, null, seconds)
+            language,
+            com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
+        )
+        // Spent once Deepgram actually answered — success or refusal. A
+        // cancellation or a request that never reached it is not recorded,
+        // so the next playback may try again; nothing is recorded before the
+        // answer either, which used to leave a song never checked again when
+        // its screen job was cancelled mid-request.
+        if (answer.httpCode != null) noteAttempt(context, song.videoId, key, engine)
+        val heard = answer.words ?: run {
+            songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
+            return true
+        }
+        if (heard.size < MIN_AI_LINES) {
+            songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
             return true
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
         val fitted = fitAi(lines, indices, starts) ?: run {
-            songLog(song.videoId, "no-words", null, null, seconds)
+            songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
             return true
         }
         val match = fitted.matchPercent
         val shift = shownShiftMs(lines, fitted)
         when {
             !LyricsAiGuard.agreementAllows(match) -> {
-                songLog(song.videoId, "refused-match", match, shift, seconds)
+                songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
                 return true
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
-                songLog(song.videoId, "refused-shift", match, shift, seconds)
+                songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
                 return true
             }
         }
@@ -1163,15 +1198,24 @@ object LyricsTiming {
             )
         }
         _changes.tryEmit(song.videoId)
-        songLog(song.videoId, "applied", match, shift, seconds)
+        songLog(song.videoId, "applied", match, shift, seconds, words = heard.size, http = answer.httpCode)
         return true
     }
 
     /** One line about a song check, without the words, the search or any key. */
-    private fun songLog(videoId: String, result: String, match: Int?, shift: Long?, seconds: Int) {
+    private fun songLog(
+        videoId: String,
+        result: String,
+        match: Int?,
+        shift: Long?,
+        seconds: Int,
+        words: Int? = null,
+        http: Int? = null,
+    ) {
         TrackLog.d(
             TAG,
-            "song-sync: $videoId result=$result match=${match ?: 0}% shift=${shift ?: 0} secs=$seconds",
+            "song-sync: $videoId result=$result match=${match ?: 0}% shift=${shift ?: 0} secs=$seconds" +
+                " words=${words ?: 0}" + (http?.let { " http=$it" } ?: ""),
             videoId,
         )
     }
@@ -1262,6 +1306,7 @@ object LyricsTiming {
     const val ENGINE_DEEPGRAM = AiTimingPolicy.DEEPGRAM
     const val ENGINE_WHISPER = AiTimingPolicy.WHISPER
     const val ENGINE_GEMINI = AiTimingPolicy.GEMINI
+    const val ENGINE_DEEPGRAM_WHISPER = AiTimingPolicy.DEEPGRAM_WHISPER
 
     /**
      * Whether the free measurement has already timed [videoId] (or found it
@@ -1448,7 +1493,11 @@ object LyricsTiming {
         val aiPreferred: Boolean = false,
         /** This video's AI answer and measurement have been compared for [aiBias]. */
         val biasSampled: Boolean = false,
-        /** Who gave the AI answer: [ENGINE_DEEPGRAM], [ENGINE_WHISPER] or [ENGINE_GEMINI] (null: Gemini, before ko-35). */
+        /**
+         * Who gave the AI answer: [ENGINE_DEEPGRAM], [ENGINE_WHISPER],
+         * [ENGINE_GEMINI], or [ENGINE_DEEPGRAM_WHISPER] for a song check
+         * (null: Gemini, before ko-35).
+         */
         val aiEngine: String? = null,
         /** The lyrics (text key) Whisper was last asked about, answered or not: asked once. */
         val whisperKey: Int? = null,
