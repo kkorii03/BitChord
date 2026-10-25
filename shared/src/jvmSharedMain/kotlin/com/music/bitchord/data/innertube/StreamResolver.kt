@@ -610,8 +610,40 @@ object StreamResolver {
                     "proxy-playback: $videoId race won by $winner in ${MonotonicClock.nowMs() - resolveStart}ms",
                 )
                 won
+            } else if (gated) {
+                // With no learned route the gated ladder asks the anonymous
+                // IOS/ANDROID player first (~0.3 s). When it answers UNPLAYABLE
+                // that is the first refusal: Blue Valentine then spent 10 s on
+                // InnerTubeX before the proxy was tried (14.3 s to first
+                // sound), so the proxy starts beside InnerTubeX from here.
+                tryDirect() ?: if (directUnplayable && ProxyPlayback.canResolveViaProxy() && !proxyAttempted) {
+                    proxyAttempted = true
+                    TrackLog.i(
+                        TAG,
+                        "proxy-playback: $videoId early race (direct refused at ${MonotonicClock.nowMs() - resolveStart}ms)",
+                    )
+                    val (winner, won) = raceForFirstSuccess(
+                        direct = { tryInnerTubeX(null) },
+                        proxy = {
+                            try {
+                                resolveViaProxy(videoId)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (e: Exception) {
+                                null
+                            }
+                        },
+                    )
+                    TrackLog.i(
+                        TAG,
+                        "proxy-playback: $videoId race won by $winner in ${MonotonicClock.nowMs() - resolveStart}ms",
+                    )
+                    won
+                } else {
+                    tryInnerTubeX(null)
+                }
             } else {
-                if (gated) tryDirect() ?: tryInnerTubeX(null) else tryInnerTubeX(null) ?: tryDirect()
+                tryInnerTubeX(null) ?: tryDirect()
             }) ?: run {
                 TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                 timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
