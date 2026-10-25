@@ -3394,9 +3394,11 @@ class PlaybackService : MediaLibraryService() {
                 if (index >= exoPlayer.mediaItemCount) return@launch
                 val item = exoPlayer.getMediaItemAt(index)
                 val song = item.toSong()
-                if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) ||
-                    song.localUri != null
-                ) continue
+                if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) continue
+                // A downloaded video is still a video and is resolved like any
+                // other. Offline, its file is the only thing that can play, so
+                // the look-ahead does not spend a request that cannot finish.
+                if (song.localUri != null && AudioCache.isOffline()) continue
                 val resolved = try {
                     YtMusicRepository.songVersion(song, beforeAudio = true)
                 } catch (cancelled: CancellationException) {
@@ -3453,6 +3455,12 @@ class PlaybackService : MediaLibraryService() {
      * [SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS]; if no version is found in
      * that window the video plays as it is and is never swapped mid-song. A
      * cached answer returns without a wait.
+     *
+     * A row playing from a downloaded file is no exception when it is a video:
+     * the file is the video, so the catalogue release is still what should
+     * play. [SongVersionPolicy.keepsLocalFile] is what leaves a downloaded
+     * song, and the listener's own music, alone. Offline the downloaded video
+     * file stays instead of being replaced by a stream that cannot open.
      */
     private fun resolveSongVersionBeforeAudio(
         exoPlayer: ExoPlayer,
@@ -3468,7 +3476,11 @@ class PlaybackService : MediaLibraryService() {
             ListenTogether.state.value.inParty -> "listen together"
             item == null || song == null -> "no row"
             !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) -> "not a video"
-            song.localUri != null -> "local file"
+            SongVersionPolicy.keepsLocalFile(
+                song.localUri != null,
+                song.isVideo,
+                song.typeUnknown,
+            ) -> "local file"
             SongVersionPolicy.hasMadeFirstSound(item.mediaId, audibleMediaId) -> "first sound"
             else -> null
         }
@@ -3488,27 +3500,78 @@ class PlaybackService : MediaLibraryService() {
         }
         if (item == null || song == null) return
         val mediaId = item.mediaId
+        val localFile = song.localUri != null
+        // A downloaded file is the only thing that can play with no connection,
+        // so a local video row must not spend its first-sound hold on a lookup
+        // that cannot finish. This is the same connectivity check the recovery
+        // path uses; nothing here polls.
+        val offline = localFile && AudioCache.isOffline()
         // A definitive answer from the queue build needs no network wait, but
         // the first sound is still held for the single dispatch that installs
         // it, so the replacement cannot land after audio. Deferring it also
         // keeps the timeline change out of the transition callback.
-        YtMusicRepository.cachedSongVersionFor(song)?.let { cached ->
-            beforeAudioVersionJob?.cancel()
-            beginVersionHold(exoPlayer)
-            beforeAudioVersionJob = scope.launch {
-                TrackLog.i(
-                    "BitChord",
-                    "song version: ${song.videoId} -> ${cached.videoId} via cache before-audio",
-                    about = song.videoId,
+        val cached = YtMusicRepository.cachedSongVersionFor(song)
+        val cachedFile = cached?.let { Downloads.verifiedSavedUri(it.videoId) }
+        if (cached != null && cachedFile != null) {
+            // A cached answer whose recording is already on the device plays
+            // from that file, with no network, even offline.
+            installPreResolvedVersion(
+                exoPlayer,
+                mediaId,
+                song,
+                cached.copy(localUri = cachedFile),
+                viaDownload = true,
+            )
+            return
+        }
+        if (localFile) {
+            // The download record can name this file's song version even when
+            // this run has not looked it up ? see Downloads.remember. Playing
+            // that id needs no network at all.
+            downloadedSongVersionFor(song)?.let { downloaded ->
+                installPreResolvedVersion(
+                    exoPlayer,
+                    mediaId,
+                    song,
+                    downloaded,
+                    viaDownload = true,
                 )
-                installSongVersionBeforeAudio(exoPlayer, mediaId, song, cached)
-                if (player === exoPlayer) resumeVersionHold(exoPlayer)
+                return
             }
+        }
+        if (cached != null && !offline) {
+            // Offline, a cached answer is only usable when its recording is
+            // already on the device. Otherwise the downloaded video file keeps
+            // playing rather than being replaced by a stream that cannot open.
+            installPreResolvedVersion(
+                exoPlayer,
+                mediaId,
+                song,
+                cached,
+                viaDownload = false,
+            )
+            return
+        }
+        if (localFile && offline) {
+            TrackLog.i(
+                "BitChord",
+                "song version: ${song.videoId} kept (local file, offline)",
+                about = song.videoId,
+            )
+            releaseVersionHold(exoPlayer)
             return
         }
         if (YtMusicRepository.isSongVersionMissing(song.videoId)) {
             // The queue build already established this row has no song version.
-            TrackLog.i("BitChord", "song version: ${song.videoId} kept (none)", about = song.videoId)
+            TrackLog.i(
+                "BitChord",
+                if (localFile) {
+                    "song version: ${song.videoId} kept (local file, none)"
+                } else {
+                    "song version: ${song.videoId} kept (none)"
+                },
+                about = song.videoId,
+            )
             releaseVersionHold(exoPlayer)
             return
         }
@@ -3517,12 +3580,22 @@ class PlaybackService : MediaLibraryService() {
         beforeAudioVersionJob?.cancel()
         beginVersionHold(exoPlayer)
         beforeAudioVersionJob = scope.launch {
+            var lookupFailed = false
             val resolved = try {
                 withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
                     YtMusicRepository.songVersion(song, beforeAudio = true)
                 }
             } catch (timeout: TimeoutCancellationException) {
-                TrackLog.i("BitChord", "song version: ${song.videoId} kept (timeout)", about = song.videoId)
+                lookupFailed = true
+                TrackLog.i(
+                    "BitChord",
+                    if (localFile) {
+                        "song version: ${song.videoId} kept (local file, timeout)"
+                    } else {
+                        "song version: ${song.videoId} kept (timeout)"
+                    },
+                    about = song.videoId,
+                )
                 // The lookup itself keeps running in the repository's shared
                 // scope. If it lands while this video is still playing, use it
                 // as the lyrics reference (never as a mid-song swap).
@@ -3531,16 +3604,35 @@ class PlaybackService : MediaLibraryService() {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
+                lookupFailed = true
                 TrackLog.w(
                     "BitChord",
                     "song version failed before audio: ${failure.message}",
                     about = song.videoId,
                 )
+                if (localFile) {
+                    TrackLog.i(
+                        "BitChord",
+                        "song version: ${song.videoId} kept (local file, failed)",
+                        about = song.videoId,
+                    )
+                }
                 null
             }
             try {
                 if (resolved != null) {
-                    installSongVersionBeforeAudio(exoPlayer, mediaId, song, resolved)
+                    val resolvedFile = Downloads.verifiedSavedUri(resolved.videoId)
+                    val version = if (resolvedFile != null) resolved.copy(localUri = resolvedFile) else resolved
+                    installSongVersionBeforeAudio(exoPlayer, mediaId, song, version)
+                } else if (localFile && !lookupFailed) {
+                    // The lookup answered "there is no version" rather than
+                    // failing; keep the downloaded video with a reason that
+                    // says why it stayed.
+                    TrackLog.i(
+                        "BitChord",
+                        "song version: ${song.videoId} kept (local file, none)",
+                        about = song.videoId,
+                    )
                 }
             } finally {
                 // The replacement itself changes the media id, so the hold is
@@ -3554,6 +3646,64 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
         }
+    }
+
+    /**
+     * Installs a song version that was already in hand — a cached answer, or a
+     * downloaded release found in the download record — holding the first
+     * sound only for the dispatch that performs the replacement.
+     */
+    private fun installPreResolvedVersion(
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        song: Song,
+        version: Song,
+        viaDownload: Boolean,
+    ) {
+        beforeAudioVersionJob?.cancel()
+        beginVersionHold(exoPlayer)
+        beforeAudioVersionJob = scope.launch {
+            val via = if (viaDownload) "download" else "cache"
+            TrackLog.i(
+                "BitChord",
+                "song version: ${song.videoId} -> ${version.videoId} via $via before-audio",
+                about = song.videoId,
+            )
+            installSongVersionBeforeAudio(exoPlayer, mediaId, song, version)
+            if (player === exoPlayer) resumeVersionHold(exoPlayer)
+        }
+    }
+
+    /**
+     * A downloaded catalogue release of [song], when the download record kept
+     * the video and the release it resolved to against one file — see
+     * [Downloads.remember]. Null for a file saved on its own, which is every
+     * ordinary download; the caller then falls back to the network lookup.
+     */
+    private fun downloadedSongVersionFor(song: Song): Song? {
+        val alias = Downloads.savedAliasFor(song.videoId) ?: return null
+        val uri = Downloads.verifiedSavedUri(alias) ?: return null
+        val meta = Downloads.savedMetadataFor(alias)
+        return Song(
+            videoId = alias,
+            title = meta?.title?.takeIf { it.isNotBlank() } ?: song.title,
+            artist = meta?.artist?.takeIf { it.isNotBlank() } ?: song.artist,
+            thumbnailUrl = meta?.thumbnailUrl ?: song.thumbnailUrl,
+            durationText = meta?.durationText ?: song.durationText,
+            artistId = song.artistId,
+            artists = song.artists,
+            albumId = song.albumId,
+            albumName = meta?.albumName ?: song.albumName,
+            setVideoId = song.setVideoId,
+            queueTier = song.queueTier,
+            queueEntryId = song.queueEntryId,
+            radioName = song.radioName,
+            playbackSource = song.playbackSource,
+            playbackSourceType = song.playbackSourceType,
+            playbackSourceId = song.playbackSourceId,
+            localUri = uri,
+            isVideoOrigin = true,
+        )
     }
 
     /**

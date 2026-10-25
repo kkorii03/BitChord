@@ -91,4 +91,44 @@ class SongVersionPolicyTest {
         assertTrue(SongVersionPolicy.wantsSongVersion(isVideo = false, typeUnknown = true))
         assertFalse(SongVersionPolicy.wantsSongVersion(isVideo = false, typeUnknown = false))
     }
+
+    @Test
+    fun `a downloaded video still gets its song version`() {
+        assertFalse(
+            SongVersionPolicy.keepsLocalFile(
+                localFile = true,
+                isVideo = true,
+                typeUnknown = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.keepsLocalFile(
+                localFile = true,
+                isVideo = false,
+                typeUnknown = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a downloaded song or the listener's own file is kept`() {
+        assertTrue(
+            SongVersionPolicy.keepsLocalFile(
+                localFile = true,
+                isVideo = false,
+                typeUnknown = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a streamed row is never a kept local file`() {
+        assertFalse(
+            SongVersionPolicy.keepsLocalFile(
+                localFile = false,
+                isVideo = false,
+                typeUnknown = false,
+            ),
+        )
+    }
 }

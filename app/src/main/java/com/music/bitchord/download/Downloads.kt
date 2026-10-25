@@ -371,6 +371,29 @@ object Downloads {
     }
 
     /**
+     * The other id that names the same downloaded file as [videoId], when one
+     * was recorded — see [remember], which files a music video and the
+     * catalogue release it resolved to under both ids.
+     *
+     * Null for an ordinary download, which is recorded under its own id only.
+     * Cheaper than looking the file up again, and enough for a caller to build
+     * the release row without a network request.
+     */
+    fun savedAliasFor(videoId: String): String? {
+        open()
+        val uri = _saved.value[videoId] ?: return null
+        return _saved.value.entries
+            .firstOrNull { (id, saved) -> id != videoId && saved == uri }
+            ?.key
+    }
+
+    /** The metadata recorded for a downloaded id, without touching its file. */
+    internal fun savedMetadataFor(videoId: String): SavedSongMetadata? {
+        open()
+        return _savedMetadata.value[videoId]
+    }
+
+    /**
      * Delete the file saved for [videoId] and forget it.
      *
      * The record is dropped only once the file is really gone. Forgetting it

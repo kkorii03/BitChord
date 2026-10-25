@@ -1038,7 +1038,9 @@ object YtMusicRepository {
      *   pre-playback path is read by.
      */
     suspend fun songVersion(song: Song, beforeAudio: Boolean = false): Song? {
-        if (song.localUri != null) return null
+        if (SongVersionPolicy.keepsLocalFile(song.localUri != null, song.isVideo, song.typeUnknown)) {
+            return null
+        }
         if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
             logSongVersionSkipOnce(song.videoId)
             return null

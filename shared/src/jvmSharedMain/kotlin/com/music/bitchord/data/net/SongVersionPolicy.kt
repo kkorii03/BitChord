@@ -72,6 +72,25 @@ object SongVersionPolicy {
         isVideo || typeUnknown
 
     /**
+     * Whether a row with a file on the device is already the recording to play.
+     *
+     * A downloaded song, and a file from the listener's own library, are audio
+     * rows and must be left alone. A downloaded *video* is not: it is still a
+     * music video, so the same lookup that converts a streamed video to its
+     * catalogue release applies to it. `typeUnknown` counts for the same reason
+     * as [wantsSongVersion] — a preview row may turn out to be a video.
+     *
+     * This is the one place the old blanket "has a local file, so skip" rule
+     * lives now; every version path asks this question rather than testing
+     * `localUri` on its own.
+     */
+    fun keepsLocalFile(
+        localFile: Boolean,
+        isVideo: Boolean,
+        typeUnknown: Boolean,
+    ): Boolean = localFile && !wantsSongVersion(isVideo, typeUnknown)
+
+    /**
      * Whether the row [mediaId] has made its first sound. The only evidence is
      * this row's own audible id: while a *previous* track is still sounding,
      * the player is playing, but the new row has not been heard yet — a jump

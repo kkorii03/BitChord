@@ -1771,6 +1771,7 @@ private fun BitChordApp(
         val c = controller ?: return@LaunchedEffect
         if (preferMusicOnly && !partyState.inParty &&
             SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
+            (song.localUri == null || !AudioCache.isOffline()) &&
             song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
             SongVersionPolicy.mayAutoSwapBeforeAudio(
                 positionMs = c.currentPosition,
@@ -1814,9 +1815,18 @@ private fun BitChordApp(
             showNowPlaying &&
             menuFromPlayer &&
             songActions?.videoId == song.videoId
-        // A file on the device has no YouTube counterpart to switch to, so
-        // there is nothing to look up and nothing to offer.
-        if (song == null || song.localUri != null || partyState.inParty || !sheetIsOpenForThisTrack) {
+        // A downloaded song (or the listener's own file) has no YouTube
+        // counterpart to switch to. A downloaded *video* row does: it is still
+        // a music video, and the version switch is how it becomes the
+        // catalogue release.
+        if (song == null ||
+            SongVersionPolicy.keepsLocalFile(
+                song.localUri != null,
+                song.isVideo,
+                song.typeUnknown,
+            ) ||
+            partyState.inParty || !sheetIsOpenForThisTrack
+        ) {
             hasAlternateVersion = false
             return@LaunchedEffect
         }
@@ -6234,4 +6244,12 @@ private val musicOnlyTried: MutableSet<String> =
  * pre-audio lookup still ask for a song version — see [Song.typeUnknown].
  */
 private fun List<Song>.asTypeUnknown(): List<Song> =
-    map { if (!it.isVideo && it.localUri == null) it.copy(typeUnknown = true) else it }
+    map {
+        if (!it.isVideo &&
+            !SongVersionPolicy.keepsLocalFile(it.localUri != null, it.isVideo, it.typeUnknown)
+        ) {
+            it.copy(typeUnknown = true)
+        } else {
+            it
+        }
+    }
