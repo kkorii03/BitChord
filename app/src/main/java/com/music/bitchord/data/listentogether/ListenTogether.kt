@@ -621,7 +621,12 @@ object ListenTogether {
             val body = runCatching { response.bodyAsText() }.getOrDefault("")
             body.contains("\"ok\":true")
         }.getOrElse {
-            Log.w(TAG, "health check failed for ${redact(raw)}: ${redact(it.message)}")
+            // One line per day is enough to know the server is unreachable:
+            // the screen already shows the status, and a failed check is
+            // retried on the next open or network change.
+            if (shouldLogHealthFailure()) {
+                Log.w(TAG, "health check failed for ${redact(raw)}: ${redact(it.message)}")
+            }
             false
         }
         val elapsed = clock.nowMs() - start
@@ -630,6 +635,22 @@ object ListenTogether {
 
     private suspend fun probeHealth(baseUrl: String): Boolean =
         probeHealthWithLatency(baseUrl, HEALTH_TIMEOUT_MS).isOnline
+
+    /**
+     * Whether a failed health check may be written to the log today.
+     *
+     * Persisted so a phone that restarts several times a day still leaves one
+     * line rather than one per launch. The day is the UTC day, which is only
+     * ever used to decide whether to write a diagnostic line.
+     */
+    private fun shouldLogHealthFailure(): Boolean {
+        if (!this::prefs.isInitialized) return true
+        val day = System.currentTimeMillis() / 86_400_000L
+        val last = runCatching { prefs.getLong(KEY_HEALTH_FAILURE_DAY, -1L) }.getOrDefault(-1L)
+        if (day <= last) return false
+        runCatching { prefs.edit().putLong(KEY_HEALTH_FAILURE_DAY, day).apply() }
+        return true
+    }
 
     data class HealthResolution(
         val resolvedServer: String,
@@ -720,11 +741,13 @@ object ListenTogether {
             }
         }
 
-        startHealthMonitor()
-        // One resolution per process so create/join targets the right server
-        // (custom vs default fallback) without opening the screen first. The
-        // periodic monitor above is what was draining in #788, not this.
-        refreshServerHealth(showChecking = true)
+        // No /healthz probe here on purpose. Most installs never open Listen
+        // Together, and a server address check at every launch was both an
+        // unsolicited request and a "server check failed" line per start
+        // (2026-10-22 log, item 32). The probe now happens when it is useful:
+        // setScreenActive(true) when the screen opens, a network change while
+        // it is open or a party is live, and create/join itself. The periodic
+        // monitor is likewise started only while somebody can see its answer.
     }
 
     /**
@@ -1720,6 +1743,9 @@ object ListenTogether {
     private const val KEY_DEVICE = "device_id"
     private const val KEY_NICKNAME = "party_nickname"
     private const val KEY_KICKED = "party_kicked_until"
+
+    /** UTC day of the last logged health-check failure, so it logs once a day. */
+    private const val KEY_HEALTH_FAILURE_DAY = "health_failure_log_day"
 
     /** How long a removal keeps this device out of that party. */
     private const val KICK_BLOCK_MS = 24L * 60 * 60 * 1000

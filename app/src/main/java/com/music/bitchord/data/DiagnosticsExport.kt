@@ -18,6 +18,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.net.CounterpartSwitch
 import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyPlayback
+import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -115,6 +116,10 @@ object DiagnosticsExport {
                     MusicGateFallback.describe().forEach { appendLine("music gate: $it") }
                     appendLine("proxy: ${if (proxy == ProxyMode.OFF) "off" else "on (${proxy.name.lowercase(Locale.US)})"}")
                     appendLine("proxy scope: ${AppSettings.proxyScope.value.name.lowercase(Locale.US)}")
+                    appendLine(
+                        "proxy route: ${YouTubeProxy.activeRoute.value.name.lowercase(Locale.US)}" +
+                            " backup=${if (YouTubeProxy.config.backupUsable) "yes" else "no"}",
+                    )
                     val privateSince = AppSettings.privateListeningSince()
                     appendLine(
                         "private listening: ${if (AppSettings.privateListening.value) "on" else "off"}" +

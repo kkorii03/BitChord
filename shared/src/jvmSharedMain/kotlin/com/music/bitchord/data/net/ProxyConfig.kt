@@ -40,6 +40,14 @@ enum class ProxyConfigError {
 }
 
 /**
+ * Which of the two configured servers a request is asked through.
+ *
+ * [BACKUP] only ever applies when [ProxyConfig.backupUsable]; with no backup
+ * configured every request is [PRIMARY] and the old behaviour is unchanged.
+ */
+enum class ProxyRoute { PRIMARY, BACKUP }
+
+/**
  * A proxy configuration, held in memory only.
  *
  * The password is here because OkHttp needs it per request; the persisted copy
@@ -51,6 +59,13 @@ data class ProxyConfig(
     val mode: ProxyMode = ProxyMode.OFF,
     val host: String = "",
     val port: Int = 0,
+    /**
+     * An optional second server, same transport and same credentials, used
+     * when [host] stops answering. Empty means there is no backup and a dead
+     * primary behaves exactly as it always has (one direct retry).
+     */
+    val backupHost: String = "",
+    val backupPort: Int = 0,
     val username: String = "",
     val password: String = "",
     val scope: ProxyScope = ProxyScope.MUSIC_ONLY,
@@ -61,13 +76,30 @@ data class ProxyConfig(
     /** Whether this configuration can actually be handed to the network layer. */
     val usable: Boolean get() = enabled && ProxyValidation.validate(this) == null
 
-    fun normalized(): ProxyConfig = copy(
-        host = host.trim().removeSurrounding("[", "]"),
-        username = username.trim(),
-    )
+    /**
+     * Whether [backupHost] names a usable second server.
+     *
+     * A malformed backup never disables the primary: it is optional, and a
+     * typo in it must not take a working route offline.
+     */
+    val backupUsable: Boolean
+        get() = usable && backupHost.isNotBlank() &&
+            ProxyValidation.validateBackup(this) == null
+
+    fun normalized(): ProxyConfig {
+        val cleanBackupHost = backupHost.trim().removeSurrounding("[", "]")
+        return copy(
+            host = host.trim().removeSurrounding("[", "]"),
+            backupHost = cleanBackupHost,
+            // A backup port without a backup host is not a configuration.
+            backupPort = if (cleanBackupHost.isBlank()) 0 else backupPort,
+            username = username.trim(),
+        )
+    }
 
     override fun toString(): String =
         "ProxyConfig(mode=$mode, host='$host', port=$port, " +
+            "backupHost='$backupHost', backupPort=$backupPort, " +
             "username=${if (username.isEmpty()) "''" else "'***'"}, " +
             "password=${if (password.isEmpty()) "''" else "'***'"}, scope=$scope)"
 }
@@ -135,18 +167,35 @@ object ProxyValidation {
 
     fun validate(config: ProxyConfig): ProxyConfigError? {
         if (!config.enabled) return null
-        val host = config.host.trim()
-        when {
-            host.isEmpty() -> return ProxyConfigError.HOST_MISSING
-            host.any { it.isWhitespace() } -> return ProxyConfigError.HOST_INVALID
-            "://" in host || '/' in host || '\\' in host || '@' in host ->
-                return ProxyConfigError.HOST_INVALID
-            // One colon means a host:port pair was pasted into the host field.
-            // Several means an IPv6 literal, which is legitimate.
-            host.count { it == ':' } == 1 -> return ProxyConfigError.HOST_INVALID
-        }
+        hostError(config.host.trim())?.let { return it }
         if (config.port !in 1..65535) return ProxyConfigError.PORT_INVALID
         return null
+    }
+
+    /**
+     * The optional second server's own rules.
+     *
+     * Null for an empty backup: it is not an error to have none. The same host
+     * and port rules apply as the primary's, because the same selector and
+     * authenticator answer for it.
+     */
+    fun validateBackup(config: ProxyConfig): ProxyConfigError? {
+        if (!config.enabled) return null
+        if (config.backupHost.isBlank()) return null
+        hostError(config.backupHost.trim())?.let { return it }
+        if (config.backupPort !in 1..65535) return ProxyConfigError.PORT_INVALID
+        return null
+    }
+
+    private fun hostError(host: String): ProxyConfigError? = when {
+        host.isEmpty() -> ProxyConfigError.HOST_MISSING
+        host.any { it.isWhitespace() } -> ProxyConfigError.HOST_INVALID
+        "://" in host || '/' in host || '\\' in host || '@' in host ->
+            ProxyConfigError.HOST_INVALID
+        // One colon means a host:port pair was pasted into the host field.
+        // Several means an IPv6 literal, which is legitimate.
+        host.count { it == ':' } == 1 -> ProxyConfigError.HOST_INVALID
+        else -> null
     }
 }
 

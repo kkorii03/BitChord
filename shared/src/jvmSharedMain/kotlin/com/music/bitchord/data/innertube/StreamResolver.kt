@@ -10,6 +10,7 @@ import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.ProxyPlaybackPolicy
 import com.music.bitchord.data.net.ResolutionFacts
+import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.net.raceForFirstSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -748,7 +749,7 @@ object StreamResolver {
      * failure here is either handed back as a network fault or recorded as a
      * verdict by the caller.
      */
-    private suspend fun resolveViaProxy(videoId: String): Stream {
+    private suspend fun resolveViaProxy(videoId: String, allowBackupRetry: Boolean = true): Stream {
         val start = MonotonicClock.nowMs()
         val found = try {
             timed("$videoId proxy InnerTubeX") {
@@ -761,7 +762,18 @@ object StreamResolver {
         } catch (e: Exception) {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: ${e.javaClass.simpleName}: ${e.message}")
             if (ProxyFailure.isProxyDown(e)) {
-                ProxyHealthMonitor.recordUnreachable()
+                if (!allowBackupRetry) {
+                    // This walk already used the backup; both are down.
+                    ProxyHealthMonitor.recordBackupUnreachable()
+                } else {
+                    // A backup configured is asked once for this same track;
+                    // the switch itself happens in the health monitor.
+                    ProxyHealthMonitor.recordUnreachable("stream $videoId")
+                    if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
+                        TrackLog.i(TAG, "proxy-playback: $videoId retrying through the backup proxy")
+                        return resolveViaProxy(videoId, allowBackupRetry = false)
+                    }
+                }
             }
             throw e
         }
@@ -769,7 +781,7 @@ object StreamResolver {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: no stream")
             throw IOException("stream resolution found no stream for $videoId")
         }
-        ProxyHealthMonitor.recordSuccess()
+        ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
         val first = ProxyPlayback.markResolved(videoId, found.url)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
@@ -1216,6 +1228,7 @@ object StreamResolver {
         videoId: String,
         maxKbps: Int,
         requireM4a: Boolean,
+        allowBackupRetry: Boolean = true,
     ): Stream? {
         val start = MonotonicClock.nowMs()
         val found = try {
@@ -1224,7 +1237,17 @@ object StreamResolver {
             throw e
         } catch (e: Exception) {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: ${e.javaClass.simpleName}: ${e.message}")
-            if (ProxyFailure.isProxyDown(e)) ProxyHealthMonitor.recordUnreachable()
+            if (ProxyFailure.isProxyDown(e)) {
+                if (!allowBackupRetry) {
+                    ProxyHealthMonitor.recordBackupUnreachable()
+                } else {
+                    ProxyHealthMonitor.recordUnreachable("download $videoId")
+                    if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
+                        TrackLog.i(TAG, "proxy-playback: $videoId retrying the download through the backup proxy")
+                        return proxyDownloadStream(videoId, maxKbps, requireM4a, allowBackupRetry = false)
+                    }
+                }
+            }
             return null
         } ?: run {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: no stream")
@@ -1235,7 +1258,7 @@ object StreamResolver {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: ${found.mimeType} is not $wantedExtension")
             return null
         }
-        ProxyHealthMonitor.recordSuccess()
+        ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
         val first = ProxyPlayback.markResolved(videoId, found.url)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")

@@ -1,6 +1,10 @@
 package com.music.bitchord.data.net
 
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.IOException
 import java.net.Authenticator
 import java.net.InetSocketAddress
@@ -30,11 +34,57 @@ import okhttp3.Credentials
  */
 object YouTubeProxy {
 
+    private const val TAG = "BitChord"
+
     @Volatile
     private var current = ProxyConfig()
 
     /** The configuration in force. Never logged as-is. */
     val config: ProxyConfig get() = current
+
+    private val _activeRoute = MutableStateFlow(ProxyRoute.PRIMARY)
+
+    /** Which configured server requests are using right now: primary or backup. */
+    val activeRoute: StateFlow<ProxyRoute> = _activeRoute.asStateFlow()
+
+    @Volatile
+    private var routeChangedAtMs = 0L
+
+    /**
+     * Whether requests really go to the backup server now.
+     *
+     * False whenever no backup is configured, even if the route still reads
+     * [ProxyRoute.BACKUP] from a switch made before the configuration changed.
+     */
+    val usingBackup: Boolean
+        get() = current.backupUsable && _activeRoute.value == ProxyRoute.BACKUP
+
+    /** Milliseconds since the route last moved, for [ProxyRoutePolicy]. */
+    fun millisSinceRouteChange(now: Long = System.currentTimeMillis()): Long =
+        if (routeChangedAtMs == 0L) Long.MAX_VALUE else now - routeChangedAtMs
+
+    /**
+     * Moves traffic to the other server. Called from [ProxyHealthMonitor] at a
+     * request failure or success, never from a timer.
+     *
+     * The connection pools are dropped because a keep-alive socket to the old
+     * server would otherwise carry the next request, and because a stream URL
+     * minted on one route must never be fetched over a socket opened on the
+     * other. The log line names only the direction and the reason: the servers
+     * themselves are the listener's own configuration and stay out of logs.
+     */
+    @Synchronized
+    internal fun switchRoute(target: ProxyRoute, reason: String) {
+        if (_activeRoute.value == target) return
+        _activeRoute.value = target
+        routeChangedAtMs = System.currentTimeMillis()
+        if (target == ProxyRoute.BACKUP) {
+            Log.i(TAG, "proxy: switched to backup ($reason)")
+        } else {
+            Log.i(TAG, "proxy: back to primary")
+        }
+        evictPools()
+    }
 
     /**
      * Publishes a new configuration. Called at startup and on every edit.
@@ -46,11 +96,23 @@ object YouTubeProxy {
     fun update(config: ProxyConfig) {
         val normalized = config.normalized()
         if (normalized == current) return
+        // A new configuration is a new pair of servers: start by asking the
+        // primary, which is also what a fresh process does. The route is reset
+        // before the config is published so a selector can never pair the new
+        // config with the previous one's backup switch.
+        _activeRoute.value = ProxyRoute.PRIMARY
+        routeChangedAtMs = 0L
         current = normalized
         ProxyHealthMonitor.clear()
-        // Off the caller's thread: closing a pooled TLS socket writes its
-        // close_notify, and the settings dialog saves on the main thread, where
-        // Android kills the app for network I/O (crashed on the S24, ko-74).
+        evictPools()
+    }
+
+    /**
+     * Off the caller's thread: closing a pooled TLS socket writes its
+     * close_notify, and the settings dialog saves on the main thread, where
+     * Android kills the app for network I/O (crashed on the S24, ko-74).
+     */
+    private fun evictPools() {
         Thread({
             runCatching {
                 Http.client.connectionPool.evictAll()
@@ -123,8 +185,20 @@ object YouTubeProxy {
                 ProxyMode.HTTP -> Proxy.Type.HTTP
                 ProxyMode.OFF -> return listOf(Proxy.NO_PROXY)
             }
+            // The selector is the one place the active route becomes an
+            // address, so a switch needs no client rebuild: the next request
+            // is simply addressed to the other server. Read from the same
+            // snapshot the scope check above used, so a simultaneous settings
+            // save cannot pair one config's route with another's address.
+            val backup = config.backupUsable && _activeRoute.value == ProxyRoute.BACKUP
             return listOf(
-                Proxy(type, InetSocketAddress(config.host, config.port)),
+                Proxy(
+                    type,
+                    InetSocketAddress(
+                        if (backup) config.backupHost else config.host,
+                        if (backup) config.backupPort else config.port,
+                    ),
+                ),
             )
         }
 
@@ -152,7 +226,11 @@ object YouTubeProxy {
             if (routeProxy.type() != Proxy.Type.HTTP) return null
             if (config.username.isEmpty()) return null
             val proxyPort = (routeProxy.address() as? InetSocketAddress)?.port
-            if (proxyPort != null && proxyPort != config.port) return null
+            // Either configured server may be answering this handshake; the
+            // credentials are the same one the listener entered for both.
+            val knownPort = proxyPort == config.port ||
+                (config.backupUsable && proxyPort == config.backupPort)
+            if (proxyPort != null && !knownPort) return null
 
             val credential = Credentials.basic(config.username, config.password)
             if (response.request.header("Proxy-Authorization") == credential) {
@@ -178,8 +256,14 @@ object YouTubeProxy {
             if (!config.usable || config.mode != ProxyMode.SOCKS5) return null
             if (requestorType != java.net.Authenticator.RequestorType.PROXY) return null
             if (config.username.isEmpty()) return null
-            if (requestingPort != config.port) return null
-            if (!requestingHost.equals(config.host, ignoreCase = true)) return null
+            // The SOCKS5 handshake names the server it is talking to; only the
+            // configured pair may receive this credential, backup included.
+            val primary = requestingPort == config.port &&
+                requestingHost.equals(config.host, ignoreCase = true)
+            val backup = config.backupUsable &&
+                requestingPort == config.backupPort &&
+                requestingHost.equals(config.backupHost, ignoreCase = true)
+            if (!primary && !backup) return null
             return PasswordAuthentication(config.username, config.password.toCharArray())
         }
     }

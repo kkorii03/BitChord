@@ -859,6 +859,15 @@ object AppSettings {
     val proxyMode = MutableStateFlow(ProxyMode.OFF)
     val proxyHost = MutableStateFlow("")
     val proxyPort = MutableStateFlow(0)
+
+    /**
+     * An optional second server (host and port only — transport, scope and
+     * credentials are shared with the primary). Empty means no backup, and a
+     * dead primary keeps its old behaviour: one direct retry.
+     */
+    val proxyBackupHost = MutableStateFlow("")
+    val proxyBackupPort = MutableStateFlow(0)
+
     val proxyUsername = MutableStateFlow("")
     val proxyPassword = MutableStateFlow("")
     val proxyScope = MutableStateFlow(ProxyScope.MUSIC_ONLY)
@@ -2513,9 +2522,12 @@ object AppSettings {
     fun setProxyConfig(config: ProxyConfig) {
         val normalized = config.normalized()
         val port = normalized.port.coerceIn(0, 65535)
+        val backupPort = normalized.backupPort.coerceIn(0, 65535)
         proxyMode.value = normalized.mode
         proxyHost.value = normalized.host
         proxyPort.value = port
+        proxyBackupHost.value = normalized.backupHost
+        proxyBackupPort.value = backupPort
         proxyUsername.value = normalized.username
         proxyPassword.value = normalized.password
         proxyScope.value = normalized.scope
@@ -2523,6 +2535,8 @@ object AppSettings {
             .putString(KEY_PROXY_MODE, normalized.mode.name)
             .putString(KEY_PROXY_HOST, normalized.host)
             .putInt(KEY_PROXY_PORT, port)
+            .putString(KEY_PROXY_BACKUP_HOST, normalized.backupHost)
+            .putInt(KEY_PROXY_BACKUP_PORT, backupPort)
             .putString(KEY_PROXY_USERNAME, normalized.username)
             .putString(KEY_PROXY_SCOPE, normalized.scope.name)
             .apply()
@@ -2544,6 +2558,8 @@ object AppSettings {
         }.getOrDefault(ProxyMode.OFF)
         proxyHost.value = prefs.getString(KEY_PROXY_HOST, "").orEmpty()
         proxyPort.value = prefs.getInt(KEY_PROXY_PORT, 0)
+        proxyBackupHost.value = prefs.getString(KEY_PROXY_BACKUP_HOST, "").orEmpty()
+        proxyBackupPort.value = prefs.getInt(KEY_PROXY_BACKUP_PORT, 0)
         proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
         proxyPassword.value = authStore.proxyPassword.orEmpty()
         proxyScope.value = runCatching {
@@ -2558,6 +2574,8 @@ object AppSettings {
             mode = proxyMode.value,
             host = proxyHost.value,
             port = proxyPort.value,
+            backupHost = proxyBackupHost.value,
+            backupPort = proxyBackupPort.value,
             username = proxyUsername.value,
             password = proxyPassword.value,
             scope = proxyScope.value,
@@ -2874,6 +2892,8 @@ object AppSettings {
     private const val KEY_PROXY_MODE = "proxy_mode"
     private const val KEY_PROXY_HOST = "proxy_host"
     private const val KEY_PROXY_PORT = "proxy_port"
+    private const val KEY_PROXY_BACKUP_HOST = "proxy_backup_host"
+    private const val KEY_PROXY_BACKUP_PORT = "proxy_backup_port"
     private const val KEY_PROXY_USERNAME = "proxy_username"
     private const val KEY_PROXY_SCOPE = "proxy_scope"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"

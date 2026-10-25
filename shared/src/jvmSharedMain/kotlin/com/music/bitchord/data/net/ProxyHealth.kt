@@ -106,20 +106,113 @@ object ProxyHealthMonitor {
     private val _state = MutableStateFlow(ProxyHealth.UNKNOWN)
     val state: StateFlow<ProxyHealth> = _state.asStateFlow()
 
-    fun recordSuccess() {
+    /**
+     * Requests already in flight on the route we just left fail on their own
+     * schedule. They must not condemn the backup for a primary's failure, so
+     * a failure reported this soon after a switch is ignored.
+     */
+    private const val SWITCH_GRACE_MS = 30_000L
+
+    @Volatile
+    private var routeChangedAtMs = 0L
+
+    /**
+     * A proxy request succeeded.
+     *
+     * With a backup in use this is also the only moment the app can consider
+     * moving back to the primary: after [ProxyRoutePolicy.PRIMARY_RETRY_AFTER_MS]
+     * the next request is sent there, and a failure simply returns to the
+     * backup (see [recordUnreachable] and the callers' retry).
+     *
+     * @param allowRouteChange false for a stream request that minted a media
+     *   URL. That URL is bound to the server that minted it, so the return to
+     *   the primary waits for a browse success instead of breaking the track
+     *   that just started.
+     */
+    @Synchronized
+    fun recordSuccess(allowRouteChange: Boolean = true) {
+        val config = YouTubeProxy.config
+        if (allowRouteChange && config.backupUsable &&
+            YouTubeProxy.activeRoute.value == ProxyRoute.BACKUP
+        ) {
+            val due = ProxyRoutePolicy.nextRouteAfterSuccess(
+                current = ProxyRoute.BACKUP,
+                hasBackup = true,
+                msSinceSwitch = YouTubeProxy.millisSinceRouteChange(),
+            )
+            if (due == ProxyRoute.PRIMARY) {
+                YouTubeProxy.switchRoute(ProxyRoute.PRIMARY, "backup answered")
+            }
+        }
         memory.markReachable()
         _state.value = ProxyHealth.OK
     }
 
-    fun recordUnreachable() {
+    /**
+     * A proxy request failed in a way that says the route is dead.
+     *
+     * With a backup configured the first such failure moves traffic there
+     * instead of bypassing the proxy: the backup exists exactly so a lost
+     * free server does not cost the listener their music. Only when the
+     * backup is also failing does the short direct bypass start, and with no
+     * backup the old behaviour is unchanged.
+     *
+     * @param reason what asked for the proxy; logged with the switch, never
+     *   with a server address.
+     */
+    @Synchronized
+    fun recordUnreachable(reason: String = "unreachable") {
+        val config = YouTubeProxy.config
+        val now = System.currentTimeMillis()
+        val target = ProxyRoutePolicy.nextRouteAfterFailure(hasBackup = config.backupUsable)
+        // While the proxy is already known down this is just another request
+        // noticing it: do not move the route back and forth on every one.
+        if (target == ProxyRoute.BACKUP && !memory.isUnreachable() &&
+            YouTubeProxy.activeRoute.value == ProxyRoute.PRIMARY
+        ) {
+            YouTubeProxy.switchRoute(target, reason)
+            routeChangedAtMs = now
+            memory.markReachable()
+            _state.value = ProxyHealth.UNKNOWN
+            return
+        }
+        if (YouTubeProxy.activeRoute.value == ProxyRoute.BACKUP &&
+            config.backupUsable &&
+            now - routeChangedAtMs < SWITCH_GRACE_MS
+        ) {
+            return
+        }
         memory.markUnreachable()
         _state.value = ProxyHealth.UNREACHABLE
+    }
+
+    /**
+     * The backup attempt failed after a primary failure moved traffic there.
+     *
+     * Unlike [recordUnreachable] this is never suppressed by the switch grace:
+     * the caller knows the failed request went to the backup, so both
+     * configured servers are down and the direct bypass is what is left.
+     */
+    @Synchronized
+    fun recordBackupUnreachable() {
+        memory.markUnreachable()
+        _state.value = ProxyHealth.UNREACHABLE
+        // Both servers are down. Prefer the primary again for the attempt that
+        // follows the bypass window: it is the one most likely to come back,
+        // and this keeps the recovery attempt on a request event rather than a
+        // timer. Nothing is retried until then because the memory is set.
+        if (YouTubeProxy.activeRoute.value == ProxyRoute.BACKUP) {
+            YouTubeProxy.switchRoute(ProxyRoute.PRIMARY, "backup failed")
+        }
     }
 
     fun clear() {
         memory.markReachable()
         _state.value = ProxyHealth.UNKNOWN
     }
+
+    /** Whether a proxy failure was recorded recently, so the route is bypassed. */
+    fun isMarkedUnreachable(): Boolean = memory.isUnreachable()
 
     /** Whether the next proxy request should be sent directly instead. */
     fun shouldBypassProxy(): Boolean {

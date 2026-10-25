@@ -31,7 +31,7 @@ object ProxyConnectionTest {
         data class Failed(val message: String?) : Result
     }
 
-    suspend fun run(): Result {
+    suspend fun run(allowBackupRetry: Boolean = true): Result {
         val proxyConfigured = YouTubeProxy.config.usable
         // A manual test is the listener asking again right now, so the
         // five-minute "unreachable" memory must not decide the answer before
@@ -63,10 +63,21 @@ object ProxyConnectionTest {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // The listener just proved the proxy route failed; keep the short
-            // bypass so other requests do not each wait for the same timeout.
             if (proxyConfigured && ProxyFailure.isProxyDown(e)) {
-                ProxyHealthMonitor.recordUnreachable()
+                if (!allowBackupRetry) {
+                    // Both configured servers have now refused this test.
+                    ProxyHealthMonitor.recordBackupUnreachable()
+                } else {
+                    // Recorded first: with a backup this is what moves the
+                    // route there, and the listener's one tap then tests the
+                    // server that will actually answer.
+                    ProxyHealthMonitor.recordUnreachable("connection test")
+                    if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
+                        return run(allowBackupRetry = false)
+                    }
+                }
+                // Keep the short bypass so other requests do not each wait for
+                // the same timeout.
             }
             Result.Failed(e.message)
         }

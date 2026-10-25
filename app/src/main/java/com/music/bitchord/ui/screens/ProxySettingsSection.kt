@@ -42,8 +42,10 @@ import com.music.bitchord.data.net.ProxyConfigError
 import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyMode
+import com.music.bitchord.data.net.ProxyRoute
 import com.music.bitchord.data.net.ProxyScope
 import com.music.bitchord.data.net.ProxyValidation
+import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.launch
 
@@ -67,6 +69,9 @@ internal fun ProxySettingsSection() {
     val mode by AppSettings.proxyMode.collectAsStateWithLifecycle()
     val host by AppSettings.proxyHost.collectAsStateWithLifecycle()
     val port by AppSettings.proxyPort.collectAsStateWithLifecycle()
+    val backupHost by AppSettings.proxyBackupHost.collectAsStateWithLifecycle()
+    val backupPort by AppSettings.proxyBackupPort.collectAsStateWithLifecycle()
+    val activeRoute by YouTubeProxy.activeRoute.collectAsStateWithLifecycle()
     val username by AppSettings.proxyUsername.collectAsStateWithLifecycle()
     val password by AppSettings.proxyPassword.collectAsStateWithLifecycle()
     val proxyScope by AppSettings.proxyScope.collectAsStateWithLifecycle()
@@ -83,7 +88,7 @@ internal fun ProxySettingsSection() {
     // already clears it on save; this also covers the scope switch and any
     // other publication of a new configuration. The revision makes an
     // in-flight test's late answer land only if the route did not change.
-    LaunchedEffect(mode, host, port, username, password, proxyScope) {
+    LaunchedEffect(mode, host, port, backupHost, backupPort, username, password, proxyScope) {
         testRevision++
         testResult = null
     }
@@ -155,6 +160,28 @@ internal fun ProxySettingsSection() {
             )
             RowDivider()
             SettingsRow(
+                icon = Icons.Rounded.Dns,
+                title = stringResource(R.string.proxy_active_server),
+                subtitle = when {
+                    activeRoute == ProxyRoute.BACKUP && backupHost.isNotBlank() ->
+                        stringResource(R.string.proxy_active_backup, "$backupHost:$backupPort")
+                    host.isBlank() -> stringResource(R.string.proxy_server_not_set)
+                    else -> stringResource(R.string.proxy_active_primary, "$host:$port")
+                },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Dns,
+                title = stringResource(R.string.proxy_backup_server),
+                subtitle = if (backupHost.isBlank()) {
+                    stringResource(R.string.proxy_backup_not_set)
+                } else {
+                    "$backupHost:$backupPort"
+                },
+                onClick = { editing = true },
+            )
+            RowDivider()
+            SettingsRow(
                 icon = Icons.Rounded.Language,
                 title = stringResource(
                     if (proxyScope == ProxyScope.ALL_YOUTUBE) {
@@ -209,6 +236,8 @@ internal fun ProxySettingsSection() {
                 mode = mode,
                 host = host,
                 port = port,
+                backupHost = backupHost,
+                backupPort = backupPort,
                 username = username,
                 password = password,
                 scope = proxyScope,
@@ -232,6 +261,10 @@ private fun ProxyConfigDialog(
     var mode by remember { mutableStateOf(initial.mode) }
     var host by remember { mutableStateOf(initial.host) }
     var port by remember { mutableStateOf(initial.port.takeIf { it > 0 }?.toString().orEmpty()) }
+    var backupHost by remember { mutableStateOf(initial.backupHost) }
+    var backupPort by remember {
+        mutableStateOf(initial.backupPort.takeIf { it > 0 }?.toString().orEmpty())
+    }
     var username by remember { mutableStateOf(initial.username) }
     var password by remember { mutableStateOf(initial.password) }
 
@@ -239,11 +272,17 @@ private fun ProxyConfigDialog(
         mode = mode,
         host = host,
         port = port.trim().toIntOrNull() ?: 0,
+        backupHost = backupHost,
+        backupPort = backupPort.trim().toIntOrNull() ?: 0,
         username = username,
         password = password,
         scope = initial.scope,
     )
-    val error = ProxyValidation.validate(candidate)
+    // The optional backup is validated with the same rules, and an invalid
+    // one is refused here rather than silently saved as "no backup".
+    val primaryError = ProxyValidation.validate(candidate)
+    val backupError = ProxyValidation.validateBackup(candidate)
+    val error = primaryError ?: backupError
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -306,6 +345,25 @@ private fun ProxyConfigDialog(
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // Backup server: same transport, scope and credentials as
+                    // the primary; only the address differs.
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = backupHost,
+                        onValueChange = { backupHost = it },
+                        label = { Text(stringResource(R.string.proxy_backup_host)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = backupPort,
+                        onValueChange = { backupPort = it.filter(Char::isDigit) },
+                        label = { Text(stringResource(R.string.proxy_backup_port)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (error != null) {
