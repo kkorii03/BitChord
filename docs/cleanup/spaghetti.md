@@ -1,11 +1,14 @@
-# PlaybackService 스파게티 해소 계획 (1/3: 노래 버전 분리)
+# PlaybackService 스파게티 해소 계획 (2/3: 프리페치 분리)
 
 작업 기준: `task/proxy-fallback` HEAD (ko-101 이후 모든 변경 포함, 이전 대기열 작업 결과 포함).
 로컬 Gradle 빌드는 하지 않았고 컴파일·테스트는 CI(`ko-wip-check`)가 수행한다.
 사용자 기능·동작·설정·저장 데이터 형식은 바꾸지 않았다. 이번 단계는 **동작 변경 없는
 코드 이동**만 한다.
 
-## 이번 단계에서 한 일
+이 문서는 1/3(노래 버전 분리) 기록을 그대로 남기고, 이어서 2/3(프리페치 분리)를
+추가한다. 3/3은 아래 분리 계획의 남은 후보 중에서 고른다.
+
+## 1/3 단계에서 한 일
 
 `PlaybackService.kt`(1만 줄 이상)에서 노래 버전 결정 계열 private 함수·상태를
 `app/src/main/java/com/music/bitchord/playback/SongVersionController.kt`로 옮겼다.
@@ -60,6 +63,61 @@ ko-101..HEAD에서 새로 들어온 코드를 먼저 읽었다. 이번 이동과
 `YtMusicRepository`, `LyricsTiming`, `AudioCache` 경로만 호출부와 타입을 다시 확인했고,
 동작·로그·타이밍은 바꾸지 않았다. 나머지 기능은 아래 분리 후보의 대상으로 남긴다.
 
+## 2/3 단계에서 한 일
+
+`PlaybackService.kt`에서 미리 받기·프리페치 계열 상태와 함수를
+`app/src/main/java/com/music/bitchord/playback/PrefetchController.kt`로 옮겼다.
+`PlaybackService`에는 lazy 위임 프로퍼티와 `prefetchAround`/`cancelPrefetch` 얇은
+위임만 남겼다.
+
+옮긴 상태:
+
+- `preferredPrefetchJob`, `preferredPrefetchRequest` (다음 곡 rendition 선택)
+- `alternatePreResolveJob`, `alternatePreResolveFor` (다음 곡 대체 버전 미리 해석)
+
+옮긴 함수:
+
+- `prefetchAround` (큐 앞 `AudioCache.prefetchQueue`, `AudioCache.noteSongs`,
+  `SongVersionPolicy.aheadSongVersion` 분기)
+- `preResolveAlternateAhead` (한 곡 앞 definitive refusal → alternate 교체)
+- `cancelPrefetch`
+
+`PlaybackService`에 남긴 위임:
+
+| 이름 | 이유 |
+|---|---|
+| `prefetchAround` | 재생 시작·전환·설정 변경 등 4개 호출부 |
+| `cancelPrefetch` | 재생 상태 콜백의 else, 설정 변경, `onDestroy` 3개 호출부 |
+
+의존성은 생성자 인자 5개로만 연결했다: `scope`, 현재 player, 대체 버전 조회
+타임아웃, `permanentReason` 판정, 그리고 `MediaItem`/`Song`을 대체 버전으로 바꾸는
+`withAlternateRecording`. `preResolveAlternateAhead`의 IO 이후 메인 스레드 재확인은
+기존 `this@PlaybackService.player` 대신 `currentPlayer()`로 같은 시점의 player를
+읽는다. 로그 문구·로그 시점·`AudioCache.cancel()`/`prefetchQueue` 호출 순서·
+`SongVersionPolicy` 판단 순서는 그대로다.
+
+`scheduleForeignCachePurge`(재생을 지난 foreign 캐시 정리)와 HQ 업그레이드의
+`AudioCache.warmRange` 호출은 프리페치 응집도가 아니므로 이번 단계에서 옮기지 않았다.
+
+### 확인한 호출부
+
+- `PlaybackService.kt:1197` — `onIsPlayingChanged`에서 재생/일시정지에 따라 프리페치/취소.
+- `PlaybackService.kt:1523` — 재생 상태 변경 콜백의 프리페치.
+- `PlaybackService.kt:4302` — 전환 직후 첫 소리/이미 들리는 행에서 프리페치.
+- `PlaybackService.kt:8148-8149` — `preferMusicOnly` 변경 시 취소 후 재프리페치.
+- `PlaybackService.kt:8724` — 서비스 종료 시 취소.
+- `preResolveAlternateAhead`는 `prefetchAround` 내부에서만 호출되므로 서비스에
+  위임을 만들지 않았다.
+
+### 검사 범위
+
+ko-101..HEAD에서 새로 들어온 코드 중 이번 이동과 닿는 경로를 다시 읽었다:
+`AudioCache.prefetchQueue`/`Upcoming`/`noteSongs`/`cancel`, `TrackMatcher.targetOf`,
+`SongVersionPolicy.aheadSongVersion`, `YtMusicRepository.songVersion`/
+`cachedSongVersionFor`/`isSongVersionMissing`/`findAlternateRecording`,
+`StreamResolver`, `SourceRegistry`, `TrackLog`, `AppSettings.preferMusicOnly`.
+동작·로그·타이밍은 바꾸지 않았다. 나머지 기능은 아래 분리 후보의 대상으로 남긴다.
+
 ## 분리 계획 전체
 
 `PlaybackService`는 이미 `CrossfadeController`, `QueueCoordinator`, `AudioCache`,
@@ -73,7 +131,7 @@ ko-101..HEAD에서 새로 들어온 코드를 먼저 읽었다. 이번 이동과
 |---|---|---|---|---|
 | 1 (완료) | `SongVersionController.kt` | MV→노래 전환, 첫 소리 홀드, 늦은 버전, 다운로드 길이 판정 | `PlaybackService` 3385-4026 (이동 전) | 낮음 |
 | 2 | `VersionSwapController.kt` | 영화/릴리스 수동 버전 스왑, 정렬 측정, standby 채택 | `smoothSwapCurrentTrackVersion`, `prepareVersionAlignment`, `adoptPlayerForVersionSwap`, `measureVersionAlignmentAsync` | 중간 |
-| 3 | `PrefetchController.kt` | 다음 곡 준비·프리페치·캐시 워밍·미리 받기 | `prefetchAround`, `warm`, `prepareNext*`, `AudioCache.warm*` 호출부 | 중간 |
+| 3 (완료) | `PrefetchController.kt` | 다음 곡 준비·프리페치·캐시 워밍·미리 받기 | `prefetchAround`, `preResolveAlternateAhead`, `cancelPrefetch`, `AudioCache.prefetchQueue` 호출부 | 중간 |
 | 4 | `TransitionController.kt` | 크로스페이드·자동 믹스 arming/handoff, 전환 필터·loudness 연결 | `crossfade`, `onHandoff`, `adoptPlayer`, `CrossfadeArmPolicy` 호출부 | 높음 |
 | 5 | `ProxyPlaybackController.kt` | 프록시 재생·스트림 선택·중간 403·소스 폴백 | `SourceResolver`/`StreamChoice`/`ProxyAwareDataSource` 연동부 | 높음 |
 | 6 | `QueueController.kt` | 큐 편집·bounded context·autoplay append·history trim | `QueueCoordinator` 밖에 남은 큐 변이·`scheduleBoundedContextTopUp` | 중간 |
@@ -86,7 +144,7 @@ ko-101..HEAD에서 새로 들어온 코드를 먼저 읽었다. 이번 이동과
 
 1. **VersionSwapController**: 이번 `SongVersionController`와 같은 "버전" 응집도라
    상태·콜백 형태를 재사용할 수 있고, `swappingMediaId`·standby player 규칙을 한곳에 모은다.
-2. **PrefetchController**: 배터리 원칙(주기 폴링 금지, 이벤트 기반)과 직접 닿는다.
+2. **PrefetchController (완료)**: 배터리 원칙(주기 폴링 금지, 이벤트 기반)과 직접 닿는다.
    다음 곡 준비가 전환·버전·HQ 경로와 얽혀 있어, 전환/버전 분리 후가 안전하다.
 3. **TransitionController**: 가장 위험하다. 크로스페이드 handoff는 `player`/`standby`,
    필터 역할 교대, `audibleMediaId`, HQ 업그레이드가 동시에 걸린다. 앞 단계들이
@@ -108,10 +166,20 @@ ko-101..HEAD에서 새로 들어온 코드를 먼저 읽었다. 이번 이동과
   이번 단계는 순수 로직 추가가 없어 새 테스트는 만들지 않았다(CI 컴파일로 확인).
 - `.github/`, `keys/`, 서명 설정, `.ds-ctx/`는 건드리지 않는다.
 
-## 이번 단계의 검증
+## 1/3 단계의 검증
 
 - 옮기기 전/후 문자열 리터럴 27개가 동일함을 확인했다(로그 문구 불변).
 - 옮긴 본문을 정규화해 비교했고, 의도한 치환(`player`→`currentPlayer()`,
   `audibleMediaId`→`currentAudibleMediaId()`, `swappingMediaId = x`→`setSwappingMediaId(x)`,
   설치 후 두 콜백→`onVersionInstalled()`) 외 로직 차이는 없다.
+- `git diff --check` 통과. 로컬 빌드 금지로 컴파일은 CI에 맡긴다.
+
+## 2/3 단계의 검증
+
+- `prefetchAround`/`preResolveAlternateAhead`/`cancelPrefetch`의 로그 문자열과
+  `AudioCache.cancel()`·`prefetchQueue` 호출 순서가 이동 전과 동일함을 확인했다.
+- 의도한 치환은 `this@PlaybackService.player`→`currentPlayer()`,
+  `MediaItem.withAlternateRecording`→`swapToAlternate` 콜백,
+  `ALTERNATE_LOOKUP_TIMEOUT_MS`→생성자 인자뿐이다.
+- 순수 로직 추가가 없어 새 `shared` 테스트는 만들지 않았다(CI 컴파일로 확인).
 - `git diff --check` 통과. 로컬 빌드 금지로 컴파일은 CI에 맡긴다.
