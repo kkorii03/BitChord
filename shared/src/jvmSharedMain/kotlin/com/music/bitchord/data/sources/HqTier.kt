@@ -137,10 +137,6 @@ object HqQuality {
         return (candidate.sampleRateHz ?: 0) > (current.sampleRateHz ?: 0)
     }
 
-    /** The better of two streams on the ladder, or [current] when neither wins. */
-    fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream =
-        if (current == null || isBetter(candidate.format, current.format)) candidate else current
-
     /** The gain in rungs from [current] to [candidate] (positive means better). */
     fun rungsGained(candidate: StreamFormat?, current: StreamFormat?): Int =
         tierOf(current).rank - tierOf(candidate).rank

@@ -1317,7 +1317,7 @@ object SourceResolver {
 
     /** The higher-quality of two streams — see [isBetter]. */
     private fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream =
-        HqQuality.betterOf(current, candidate)
+        if (current == null || isBetter(candidate.format, current.format)) candidate else current
 
     /**
      * Whether a format has said nothing that rules lossless out.
