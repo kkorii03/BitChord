@@ -402,6 +402,7 @@ object StreamResolver {
         // signed-in walk and an anonymous one are not handed the same streams.
         // Kept, one would play the old session's URL for up to [URL_TTL_MS].
         recent.clear()
+        lastRefused.clear()
     }
 
     private const val UNPLAYABLE_TTL_MS = 10 * 60 * 1000L
@@ -749,13 +750,18 @@ object StreamResolver {
      * failure here is either handed back as a network fault or recorded as a
      * verdict by the caller.
      */
-    private suspend fun resolveViaProxy(videoId: String, allowBackupRetry: Boolean = true): Stream {
+    private suspend fun resolveViaProxy(
+        videoId: String,
+        maxKbps: Int = maxKbps(),
+        requireM4a: Boolean = false,
+        allowBackupRetry: Boolean = true,
+    ): Stream {
         val start = MonotonicClock.nowMs()
         val found = try {
             timed("$videoId proxy InnerTubeX") {
-                innerTubeXStreamAllowingUploads(videoId, viaProxy = true)
+                innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
             } ?: timed("$videoId proxy direct") {
-                directStream(videoId, viaProxy = true)
+                directStream(videoId, maxKbps, viaProxy = true)
             }
         } catch (e: CancellationException) {
             throw e
@@ -1075,6 +1081,167 @@ object StreamResolver {
         /** What the media store should be told this file is. */
         val downloadMimeType: String
             get() = if (downloadExtension == "m4a") "audio/mp4" else "audio/webm"
+    }
+
+    /**
+     * A URL googlevideo refused, and enough about the rendition it served to
+     * ask for the same one again.
+     *
+     * [url] is null when the failure path only knows the videoId — the item's
+     * virtual `bitchord://` URI does not carry the resolved URL.
+     */
+    class RefusedStream(
+        val videoId: String,
+        val url: String?,
+        val mimeType: String?,
+        val kbps: Int,
+    )
+
+    /** A replacement stream for a refusal in the middle of a track. */
+    class MidPlayStream(
+        val videoId: String,
+        val url: String,
+        val headers: Map<String, String>,
+        val viaProxy: Boolean,
+        val client: String,
+    )
+
+    /**
+     * The videoId behind [url], without changing any state.
+     *
+     * Used by the playback layer to key its retry budget before it decides
+     * whether to ask for a replacement.
+     */
+    fun videoIdFor(url: String): String? =
+        InnerTubeXResolver.extractedFor(url)?.videoId
+            ?: recent.entries.firstOrNull { it.value.url == url }?.key
+
+    /**
+     * Records that googlevideo refused [url] in the middle of playback and
+     * returns what is needed to ask for the same track again.
+     *
+     * The URL is forgotten and, when InnerTubeX minted it, that client is
+     * excluded for this track — exactly as [onPlaybackRefused] always did. The
+     * difference is the returned record: the caller can now re-resolve the same
+     * videoId instead of being left with only a dead URL.
+     */
+    fun refuseMidPlay(url: String, responseCode: Int): RefusedStream? {
+        if (responseCode !in REFUSAL_CODES) return null
+        // Only googlevideo's URLs say anything about the client that minted
+        // them. A module's stream URL answering 404 is that server's business,
+        // and must not bench a YouTube client.
+        if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") != true) return null
+        val extracted = InnerTubeXResolver.onRefused(url)
+        val videoId = extracted?.videoId
+            ?: recent.entries.firstOrNull { it.value.url == url }?.key
+            ?: return null
+        recent.remove(videoId)
+        val parsed = url.toHttpUrlOrNull()
+        val refused = RefusedStream(
+            videoId = videoId,
+            url = url,
+            mimeType = extracted?.mimeType ?: parsed?.queryParameter("mime"),
+            kbps = extracted?.kbps
+                ?: parsed?.queryParameter("bitrate")?.toIntOrNull()?.div(1000)
+                ?: 0,
+        )
+        if (lastRefused.size >= MAX_REMEMBERED) lastRefused.clear()
+        lastRefused[videoId] = refused
+        return refused
+    }
+
+    /**
+     * Asks for [refused]'s track again: another direct client first, or the
+     * proxy when [forceProxy] is set.
+     *
+     * The container and bitrate of the refused URL are carried into the ask, so
+     * the replacement is the same rendition rather than a different encoding
+     * whose byte offsets would not line up with the position playback has
+     * already read. A failure here is a normal "no answer", not a verdict: the
+     * caller's retry budget decides what happens next.
+     */
+    suspend fun reResolve(refused: RefusedStream, forceProxy: Boolean): MidPlayStream? {
+        val parsed = refused.url?.toHttpUrlOrNull()
+        val requireM4a =
+            refused.mimeType?.contains("mp4", ignoreCase = true) == true ||
+                parsed?.queryParameter("mime")?.contains("mp4", ignoreCase = true) == true
+        val ceiling = refused.kbps.takeIf { it > 0 } ?: maxKbps()
+        val stream = (if (forceProxy) {
+            if (!ProxyPlayback.canResolveViaProxy()) return null
+            try {
+                resolveViaProxy(refused.videoId, ceiling, requireM4a)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: LinkageError) {
+                TrackLog.w(TAG, "mid-play re-resolve via proxy hit a linkage failure for ${refused.videoId}: ${e.message}")
+                null
+            } catch (e: Exception) {
+                TrackLog.w(
+                    TAG,
+                    "mid-play re-resolve via proxy failed for ${refused.videoId}: " +
+                        "${e.javaClass.simpleName}: ${e.message}",
+                )
+                null
+            }
+        } else {
+            try {
+                innerTubeXStreamAllowingUploads(
+                    refused.videoId,
+                    ceiling,
+                    requireM4a,
+                    viaProxy = false,
+                ) ?: directStream(refused.videoId, ceiling, viaProxy = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: LinkageError) {
+                TrackLog.w(TAG, "mid-play re-resolve hit a linkage failure for ${refused.videoId}: ${e.message}")
+                null
+            } catch (e: Exception) {
+                TrackLog.w(
+                    TAG,
+                    "mid-play re-resolve failed for ${refused.videoId}: " +
+                        "${e.javaClass.simpleName}: ${e.message}",
+                )
+                null
+            }
+        }) ?: return null
+        // A successful re-resolve outranks any verdict recorded while every
+        // client was being refused: the track is playable again. The caller
+        // records the URL only after it has checked that this is the same
+        // rendition, so a rejected replacement is not left in [recent].
+        unplayable.remove(refused.videoId)
+        return MidPlayStream(
+            videoId = refused.videoId,
+            url = stream.url,
+            headers = mediaHeadersFor(stream.url),
+            viaProxy = ProxyPlayback.isProxiedUrl(stream.url),
+            client = InnerTubeXResolver.extractedFor(stream.url)?.profileId
+                ?: PlayerClient.forStreamUrl(stream.url).clientName,
+        )
+    }
+
+    /**
+     * The failure path's version of [reResolve]: the item's URI carries only
+     * the videoId, so the refused URL's hints are read from the last refusal
+     * recorded for it, if there was one.
+     */
+    suspend fun reResolveTrack(
+        videoId: String,
+        forceProxy: Boolean,
+        refusedUrl: String? = null,
+    ): MidPlayStream? {
+        val refused = lastRefused[videoId] ?: RefusedStream(videoId, refusedUrl, null, 0)
+        return reResolve(refused, forceProxy)
+    }
+
+    /**
+     * Puts [url] back in [recent] after a retry of the same URL succeeded.
+     *
+     * [refuseMidPlay] removes it so no later resolve hands it back blindly;
+     * a retry that worked is the evidence that it is good again.
+     */
+    fun rememberServed(videoId: String, url: String) {
+        remember(videoId, url)
     }
 
     /**
@@ -1474,17 +1641,7 @@ object StreamResolver {
      * [ChunkedDataSource][com.music.bitchord.playback.ChunkedDataSource].
      */
     fun onPlaybackRefused(url: String, responseCode: Int) {
-        if (responseCode !in REFUSAL_CODES) return
-        // Only googlevideo's URLs say anything about the client that minted
-        // them. A module's stream URL answering 404 is that server's business,
-        // and must not bench a YouTube client.
-        if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") != true) return
-        val videoId = InnerTubeXResolver.onRefused(url)
-            // The map is a latency cache of a few dozen entries, so finding the
-            // way back from a URL costs nothing worth measuring.
-            ?: recent.entries.firstOrNull { it.value.url == url }?.key
-            ?: return
-        recent.remove(videoId)
+        refuseMidPlay(url, responseCode)
     }
 
     // ---- Failsafe -----------------------------------------------------------
@@ -1809,6 +1966,13 @@ object StreamResolver {
      */
     private val recent = ConcurrentHashMap<String, Resolved>()
 
+    /**
+     * The last URL refused for each track, so the playback failure path can
+     * ask for the same rendition again after the URL itself has been forgotten.
+     * Bounded and session-scoped like [recent].
+     */
+    private val lastRefused = ConcurrentHashMap<String, RefusedStream>()
+
     private const val URL_TTL_MS = 20 * 60 * 1000L
 
     /** Enough for the queue in hand; this is a latency cache, not a store. */
@@ -1821,5 +1985,8 @@ object StreamResolver {
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
         recent[videoId] = Resolved(url, MonotonicClock.nowMs())
+        // A URL that resolved or answered a retry is no longer described by the
+        // refusal that preceded it.
+        lastRefused.remove(videoId)
     }
 }

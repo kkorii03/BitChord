@@ -2030,7 +2030,12 @@ class PlaybackService : MediaLibraryService() {
             // Innermost, so it chunks the real googlevideo URL the resolver
             // above has already substituted in — see [ChunkedDataSource] for
             // why an open-ended read of one is worth avoiding.
-            ChunkedDataSource.Factory(ProxyAwareDataSourceFactory(), STREAM_CHUNK_BYTES),
+            ChunkedDataSource.Factory(
+                ProxyAwareDataSourceFactory(),
+                STREAM_CHUNK_BYTES,
+            ) { videoId ->
+                player?.takeIf { it.currentMediaItem?.mediaId == videoId }?.currentPosition
+            },
         ) { dataSpec ->
             // Wrapped rather than folded into the resolver above so the record
             // is made in one place for every branch of it, and made from what
@@ -4733,6 +4738,10 @@ class PlaybackService : MediaLibraryService() {
         val becameCurrent = mediaItem?.mediaId
         if (becameCurrent == null || becameCurrent != retryingMediaId) {
             recoveries.clear()
+            // A different track gets a fresh mid-play recovery budget. A retry
+            // of this one does not, which is what keeps a refused URL from
+            // starting a second full round.
+            becameCurrent?.let(StreamRefusalRecovery::clear)
         }
         retryingMediaId = null
 
@@ -5031,6 +5040,13 @@ class PlaybackService : MediaLibraryService() {
             AudioCache.isOffline()
 
     /**
+     * Whether [error] is googlevideo refusing the bytes — the failure that is
+     * worth a fresh resolve of the same videoId before anything is skipped.
+     */
+    private fun isHttpRefusal(error: PlaybackException): Boolean =
+        error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
+
+    /**
      * Puts a track that died mid-read back on its feet.
      *
      * Two things get thrown away before trying again, because both have been
@@ -5210,6 +5226,11 @@ class PlaybackService : MediaLibraryService() {
                 uri = uri,
                 reason = verdict ?: "이 트랙은 재생할 수 없습니다",
                 networkFault = networkFault,
+                trySameVideoFirst = isHttpRefusal(error) && uri?.getQueryParameter("v") != null,
+                // Another upload of the same song is a different recording. It
+                // is a fair rescue for a track that never made a sound, and a
+                // mid-song swap for one that did — which this must not do.
+                allowAlternateRecording = neverStarted,
             )
             return
         }
@@ -5548,13 +5569,19 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * A definitive refusal: find another upload of the same recording, swap it
-     * into this queue position and play it from the start. Skip only when the
-     * catalogue has no other version.
+     * A definitive refusal: re-ask the same videoId, then — only for a track
+     * that never made a sound — find another upload of the same song, swap it
+     * into this queue position and play it from the start. Skip when none of
+     * that is available.
      *
      * The failed id is already in [StreamResolver]'s unplayable cache, so it
      * is never offered back by the search. Nothing here retries it: the only
-     * network work is the alternate lookup itself.
+     * network work is the same-id re-resolve and the alternate lookup itself.
+     *
+     * @param allowAlternateRecording false for a mid-song failure. Another
+     *   upload is a different recording, and swapping it in under a listener
+     *   who is already hearing the first one is the change this path must not
+     *   make; the same-id re-resolve is the only rescue it may attempt.
      */
     private fun switchToAlternateOrSkip(
         mediaId: String,
@@ -5562,14 +5589,91 @@ class PlaybackService : MediaLibraryService() {
         uri: Uri?,
         reason: String,
         networkFault: Boolean,
+        trySameVideoFirst: Boolean = false,
+        allowAlternateRecording: Boolean = true,
     ) {
         if (!alternateLookups.add(mediaId)) return
         scope.launch(TrackLog.about(mediaId)) {
             try {
-                val alternate = withContext(Dispatchers.IO) {
-                    withTimeoutOrNull(ALTERNATE_LOOKUP_TIMEOUT_MS) {
-                        YtMusicRepository.findAlternateRecording(song, setOf(mediaId))
+                // A 403 in the middle of a track is not a verdict about the
+                // videoId: the URL expired or its client was refused. Ask for
+                // the same id again — another client, then the proxy — before
+                // spending the skip. Only then is the track actually gone.
+                if (trySameVideoFirst && StreamRefusalRecovery.canAttempt(mediaId)) {
+                    StreamRefusalRecovery.noteAttempt(mediaId)
+                    val previous = StreamChoice.of(mediaId)?.url
+                        ?: StreamContainer.servedUrl(mediaId)
+                    fun acceptable(candidate: StreamResolver.MidPlayStream?): StreamResolver.MidPlayStream? =
+                        candidate?.takeIf {
+                            previous == null ||
+                                (it.url != previous && StreamContainer.sameRendition(previous, it.url))
+                        }
+                    val recovered = withContext(Dispatchers.IO) {
+                        withTimeoutOrNull(MID_PLAY_RESOLVE_TIMEOUT_MS) {
+                            val direct = StreamResolver.reResolveTrack(
+                                mediaId,
+                                forceProxy = false,
+                                refusedUrl = previous,
+                            )
+                            acceptable(direct) ?: acceptable(
+                                StreamResolver.reResolveTrack(
+                                    mediaId,
+                                    forceProxy = true,
+                                    refusedUrl = previous,
+                                ),
+                            )
+                        }
                     }
+                    if (recovered != null) {
+                        StreamRefusalRecovery.clear(mediaId)
+                        StreamResolver.rememberServed(mediaId, recovered.url)
+                        withContext(Dispatchers.Main) {
+                            val live = this@PlaybackService.player ?: return@withContext
+                            val currentItem = live.currentMediaItem ?: return@withContext
+                            if (currentItem.mediaId != mediaId) return@withContext
+                            val at = live.currentPosition.coerceAtLeast(0L)
+                            // Pin the replacement, or the resolver would hand
+                            // back the URL that was just refused.
+                            StreamChoice.remember(
+                                mediaId,
+                                SourceStream(recovered.url, headers = recovered.headers),
+                                substituted = false,
+                            )
+                            StreamContainer.served(mediaId, recovered.url)
+                            TrackLog.w(
+                                "BitChord",
+                                "stream: $mediaId refused mid-play at ${at}ms; " +
+                                    "re-resolved via ${if (recovered.viaProxy) "proxy" else recovered.client} " +
+                                    "and resumed",
+                                about = mediaId,
+                            )
+                            retryingMediaId = mediaId
+                            live.seekTo(live.currentMediaItemIndex, at)
+                            live.prepare()
+                        }
+                        return@launch
+                    }
+                    TrackLog.w(
+                        "BitChord",
+                        "stream: $mediaId refused mid-play; " +
+                            "re-resolve via direct and proxy failed or changed the rendition",
+                        about = mediaId,
+                    )
+                } else if (trySameVideoFirst) {
+                    TrackLog.w(
+                        "BitChord",
+                        "stream: $mediaId refused mid-play; recovery budget already spent",
+                        about = mediaId,
+                    )
+                }
+                val alternate = if (allowAlternateRecording) {
+                    withContext(Dispatchers.IO) {
+                        withTimeoutOrNull(ALTERNATE_LOOKUP_TIMEOUT_MS) {
+                            YtMusicRepository.findAlternateRecording(song, setOf(mediaId))
+                        }
+                    }
+                } else {
+                    null
                 }
                 // The old source is let go asynchronously; the discard still
                 // wants the same moment of quiet the retry path asks for.
@@ -11347,6 +11451,13 @@ class PlaybackService : MediaLibraryService() {
          * before the same track is asked for again.
          */
         const val RECOVERY_DELAY_MS = 350L
+
+        /**
+         * How long a mid-play re-resolve may take before the failure path moves
+         * on. The buffer is the budget; this only bounds one walk of the client
+         * ladder plus its proxy fallback.
+         */
+        const val MID_PLAY_RESOLVE_TIMEOUT_MS = 10_000L
 
         /**
          * How long an alternate-version search may take before the track is

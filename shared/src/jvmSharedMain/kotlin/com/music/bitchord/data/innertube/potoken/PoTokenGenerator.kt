@@ -33,12 +33,15 @@ interface PoTokenMinter {
 /**
  * BotGuard PoTokens for YouTube's web clients, minted in a browser page.
  *
- * Keeps one loaded page: the session's streaming token is minted when the page
- * is made and re-minted from that same page when the visitor id changes, and
- * each track's player token is minted from the page too. Only a page that has
- * expired or died is replaced; a mint that fails on a live page gets one retry
- * on a fresh one. Reloading the page for a new visitor would repeat the cold
- * BotGuard Create/GenerateIT round trips on the first track after start-up.
+ * Keeps one loaded page per visitor id: the session's streaming token is
+ * minted when the page is made, and each track's player token is minted from
+ * the same page. A page that has expired, died or belongs to another visitor
+ * is replaced. A page cannot simply be re-minted for a new visitor: the
+ * BotGuard integrity token behind it was issued to the visitor that created
+ * it, and a streaming token minted on the old page for the new visitor
+ * produced URLs that served the opening of a track and then answered 403 to
+ * every real range. The cold-start prewarm still pays the Create/GenerateIT
+ * round trips; it just cannot carry them across a visitor change.
  *
  * @param createMinter loads a new BotGuard page; the platform's browser.
  * @param available whether this platform can host a page at all.
@@ -191,25 +194,6 @@ class PoTokenGenerator(
                         ),
                     )
 
-                    PoTokenPageAction.Retoken -> {
-                        TrackLog.d(TAG, "potoken: reusing page for a changed session id")
-                        val retoken = try {
-                            existing!!.generatePoToken(sessionId)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            TrackLog.w(TAG, "potoken: session token failed on the live page; rebuilding")
-                            null
-                        }
-                        if (retoken == null) {
-                            createPage(sessionId = sessionId, forceRecreate = false, reason = "retoken-failed")
-                        } else {
-                            webPoTokenStreamingPot = retoken
-                            webPoTokenSessionId = sessionId
-                            LoadedPage(existing!!, retoken, false)
-                        }
-                    }
-
                     PoTokenPageAction.Keep ->
                         LoadedPage(existing!!, webPoTokenStreamingPot!!, false)
                 }
@@ -262,7 +246,7 @@ class PoTokenGenerator(
     }
 }
 
-internal enum class PoTokenPageAction { Create, Retoken, Keep }
+internal enum class PoTokenPageAction { Create, Keep }
 
 /** What to do with the loaded page for this request. Pure so it can be tested off-device. */
 internal fun poTokenPageAction(
@@ -273,7 +257,10 @@ internal fun poTokenPageAction(
     sessionChanged: Boolean,
 ): PoTokenPageAction = when {
     forceRecreate || !hasPage || expired || dead -> PoTokenPageAction.Create
-    sessionChanged -> PoTokenPageAction.Retoken
+    // The integrity token is bound to the visitor that made the page. Re-minting
+    // the streaming token on that page for a different visitor produced URLs
+    // that 403'd every range after the opening, so a visitor change rebuilds.
+    sessionChanged -> PoTokenPageAction.Create
     else -> PoTokenPageAction.Keep
 }
 

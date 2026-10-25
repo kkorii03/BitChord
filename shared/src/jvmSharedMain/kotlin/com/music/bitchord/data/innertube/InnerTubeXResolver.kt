@@ -356,17 +356,22 @@ object InnerTubeXResolver {
     /** Headers the media fetch for [url] must carry, when InnerTubeX minted it. */
     fun headersFor(url: String): Map<String, String>? = minted[url]?.headers
 
+    /** What [url] was minted from, when InnerTubeX minted it and has not forgotten it. */
+    fun extractedFor(url: String): Extracted? = minted[url]
+
     /**
      * Records that googlevideo refused [url] mid-playback.
      *
-     * @return the videoId it was minted for, or null when InnerTubeX did not mint it.
+     * @return what the URL was minted from, or null when InnerTubeX did not
+     *   mint it. The caller needs the videoId to re-resolve the same track and
+     *   the format hints to ask for the same rendition.
      */
-    fun onRefused(url: String): String? {
+    fun onRefused(url: String): Extracted? {
         val refused = minted.remove(url) ?: return null
         exclude(refused.videoId, refused.profileId)
         // A refused ciphered URL is the signal the remote cipher config may be stale; it has its own cooldown.
         scope.launch { runCatching { cipherService.refreshAfterStreamRejection() } }
-        return refused.videoId
+        return refused
     }
 
     fun exclude(videoId: String, profileId: String) {

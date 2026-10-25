@@ -161,6 +161,39 @@ object StreamContainer {
         serving[mediaId] = url
     }
 
+    /** The URL [mediaId] was last actually served from, or null. */
+    fun servedUrl(mediaId: String): String? = serving[mediaId]
+
+    /**
+     * Whether [replacement] is the same rendition as [original] — the same
+     * container and the same total length.
+     *
+     * Used before a mid-play re-resolve is spliced into bytes that are already
+     * buffered or cached. A different encoding has different byte offsets, so
+     * continuing at the same position would corrupt the track; the same videoId
+     * with the same container and length is the evidence that this is the same
+     * recording's same rendition.
+     */
+    fun sameRendition(original: String, replacement: String): Boolean {
+        val oldMime = queryParameter(original, "mime")?.substringBefore(';')
+        val newMime = queryParameter(replacement, "mime")?.substringBefore(';')
+        if (oldMime != null && newMime != null && oldMime != newMime) return false
+        val oldLength = queryParameter(original, "clen")?.toLongOrNull()
+        val newLength = queryParameter(replacement, "clen")?.toLongOrNull()
+        if (oldLength != null && newLength != null && oldLength != newLength) return false
+        return true
+    }
+
+    /** A query parameter from [url], decoded, without pulling in Android's Uri. */
+    private fun queryParameter(url: String, wanted: String): String? {
+        val query = url.substringAfter('?', missingDelimiterValue = "").substringBefore('#')
+        val raw = query.split('&')
+            .firstOrNull { it.substringBefore('=') == wanted }
+            ?.substringAfter('=', missingDelimiterValue = "")
+            ?: return null
+        return runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+    }
+
     /**
      * The mime type [mediaId]'s current stream needed and did not get, or null
      * if it is not being served a manifest.

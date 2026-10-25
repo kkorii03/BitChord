@@ -222,8 +222,10 @@ class DirectClientResolverTest {
     }
 
     /**
-     * The cold-start fix: a live BotGuard page is reused and re-minted for a new
-     * visitor id instead of paying Google's Create/GenerateIT round trips again.
+     * A live page is reused only while its visitor id is unchanged. A changed
+     * visitor rebuilds the page: the BotGuard integrity token behind it belongs
+     * to the visitor that created it, and re-minting on the old page produced
+     * stream URLs that 403'd every range after the opening.
      */
     @Test
     fun `a live page is kept for the same visitor`() {
@@ -234,15 +236,16 @@ class DirectClientResolverTest {
     }
 
     @Test
-    fun `a changed visitor re-mints on the live page`() {
+    fun `a changed visitor rebuilds the page`() {
         assertEquals(
-            PoTokenPageAction.Retoken,
+            PoTokenPageAction.Create,
             poTokenPageAction(forceRecreate = false, hasPage = true, expired = false, dead = false, sessionChanged = true),
         )
     }
 
     @Test
     fun `a missing expired or dead page is rebuilt`() {
+
         assertEquals(
             PoTokenPageAction.Create,
             poTokenPageAction(forceRecreate = false, hasPage = false, expired = false, dead = false, sessionChanged = false),
