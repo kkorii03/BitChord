@@ -995,7 +995,7 @@ object InnertubeParser {
                 credits = credits.copy(albumId = id, albumName = name)
             }
         }
-        ArtistNameIndex.record(artists)
+        ArtistNameIndex.record(artists, credits.albumId, credits.albumName)
         return if (artists.isEmpty()) credits else credits.copy(artists = artists)
     }
 

@@ -9491,6 +9491,7 @@ class PlaybackService : MediaLibraryService() {
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
+                    artistAliases = coverQuery.artistAliases,
                     transcribe = localUri == null,
                 )
                 lines = found?.lines

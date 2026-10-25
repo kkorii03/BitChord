@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.TrackLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -72,6 +73,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object LyricsRepository {
 
+    private const val TAG = "Lyrics"
+
     /** Lyrics, and which source they turned out to come from. */
     data class Result(
         val source: LyricsSource,
@@ -137,6 +140,12 @@ object LyricsRepository {
          */
         artistKnown: Boolean = true,
         /**
+         * Other names the row's artist is known by — a group a solo member
+         * plays in, or a stage name written beside the legal one. Evidence
+         * only; see [ArtistAliases].
+         */
+        artistAliases: List<String> = emptyList(),
+        /**
          * With nothing found anywhere, have [transcriber] write the lyrics
          * down off the video. Only for what is playing or about to — never
          * for one provider tried by hand, or a download filling its tags.
@@ -146,6 +155,7 @@ object LyricsRepository {
         val found = lookUpAll(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
+            artistAliases,
         )
         // An upload labelled an instrumental has no words to write down: skip
         // the paid Gemini request before it is made.
@@ -155,6 +165,7 @@ object LyricsRepository {
             // restart — shows it without listening again.
             val key = questionKey(
                 videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
+                artistAliases,
             )
             answers.put(key, Answer(heard))
             kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, heard) }
@@ -172,11 +183,13 @@ object LyricsRepository {
         alternatives: List<Pair<String, String>>,
         order: List<LyricsSource>,
         sources: Set<LyricsSource>,
+        artistAliases: List<String> = emptyList(),
     ): String = buildString {
         append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
         append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
         append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
         alternatives.forEach { (t, a) -> append('\u0001').append(t).append('\u0000').append(a) }
+        artistAliases.forEach { append('\u0004').append(it) }
         order.forEach { append('\u0002').append(it.name) }
         sources.map { it.name }.sorted().forEach { append('\u0003').append(it) }
     }
@@ -197,6 +210,7 @@ object LyricsRepository {
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
+        artistAliases: List<String>,
     ): Result? {
         // The whole answer — retries and original-language names included —
         // kept against the whole question, so the lookup the next-track
@@ -205,6 +219,7 @@ object LyricsRepository {
         // the same question is joined rather than started twice.
         val key = questionKey(
             videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
+            artistAliases,
         )
         answers.get(key)?.let { kept ->
             kept.result?.let { onSourceResult?.invoke(it.source, it, null) }
@@ -223,7 +238,7 @@ object LyricsRepository {
                     checkAgain(key, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                            null, null, null, isVideo, alternatives, artistKnown,
+                            null, null, null, isVideo, alternatives, artistKnown, artistAliases,
                         )
                     }
                 }
@@ -234,6 +249,7 @@ object LyricsRepository {
             return search(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
+                artistAliases,
             )
         }
         // Everyone asking hears every provider as it starts and answers — not
@@ -252,6 +268,7 @@ object LyricsRepository {
                     search(
                         videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                         lookup::started, lookup::answered, lookup::cancelled, isVideo, alternatives, artistKnown,
+                        artistAliases,
                     ).also {
                         answers.put(key, Answer(it))
                         // Only answers go on disk: "nothing found" may only
@@ -498,6 +515,7 @@ object LyricsRepository {
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
+        artistAliases: List<String>,
     ): Result? = coroutineScope {
         // The original-language name is one cheap search away and needed the
         // moment the first round comes back empty, so it is asked for now,
@@ -511,7 +529,8 @@ object LyricsRepository {
         try {
             searchRounds(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown, nameAhead,
+                onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
+                artistAliases, nameAhead,
             )
         } finally {
             nameAhead?.cancel()
@@ -534,6 +553,7 @@ object LyricsRepository {
         isVideo: Boolean,
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
+        artistAliases: List<String>,
         nameAhead: Deferred<OriginalNames.Name?>?,
     ): Result? {
         val ordered = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in sources) {
@@ -541,23 +561,55 @@ object LyricsRepository {
         } else {
             order
         }
-        val first = lyricsFor(
-            videoId, title, artist, durationMs, album, sources, ordered, prioritizeSyllableSync, isrc,
-            onSourceStarted, onSourceResult, onSourceCancelled,
+        // A plain-text answer is kept, but never at the price of a synced one
+        // a later name could still find: the bug's "통가사 only" was the first
+        // name's plain YouTube Music answer ending the search before the
+        // normalised name was ever tried.
+        var fallback: Result? = null
+        fun keepIfBetter(result: Result?): Result? {
+            if (result == null) return null
+            if (result.lines.any { it.timeMs > 0 }) return result
+            if (fallback == null) fallback = result
+            return null
+        }
+        val variants = LyricsQueryVariants.names(title, artist, album, artistAliases)
+        val primary = variants.firstOrNull() ?: LyricsQueryVariants.Name(title, artist)
+        val first = keepIfBetter(
+            lyricsFor(
+                videoId, primary.title, primary.artist, durationMs, album, sources, ordered,
+                prioritizeSyllableSync, isrc, onSourceStarted, onSourceResult, onSourceCancelled,
+            ),
         )
         if (first != null) return first
         // The sources keyed on the video rather than on a name were already
         // asked: they do not change with the name the search is made under.
         val byName = sources - KEYED_ON_VIDEO
-        if (byName.isEmpty()) return null
-        val tried = mutableSetOf(title to artist)
+        if (byName.isEmpty()) return fallback
+        val tried = mutableSetOf(primary.title to primary.artist)
         suspend fun retry(name: Pair<String, String>): Result? {
             if (!tried.add(name)) return null
-            return lyricsFor(
-                videoId, name.first, name.second, durationMs, album,
-                byName, ordered, prioritizeSyllableSync, isrc,
-                onSourceStarted, onSourceResult, onSourceCancelled,
+            return keepIfBetter(
+                lyricsFor(
+                    videoId, name.first, name.second, durationMs, album,
+                    byName, ordered, prioritizeSyllableSync, isrc,
+                    onSourceStarted, onSourceResult, onSourceCancelled,
+                ),
             )
+        }
+        val extra = variants.drop(1)
+        if (extra.isNotEmpty()) {
+            TrackLog.i(TAG, "lyrics: query variants for $videoId: n=${extra.size}", about = videoId)
+        }
+        for ((index, variant) in extra.withIndex()) {
+            retry(variant.title to variant.artist)?.let { found ->
+                TrackLog.i(
+                    TAG,
+                    "lyrics: $videoId found at variant ${index + 1}/${extra.size} " +
+                        "(title='${variant.title}', artist='${variant.artist}')",
+                    about = videoId,
+                )
+                return found
+            }
         }
         for (alternative in alternatives) {
             retry(alternative)?.let { return it }
@@ -568,20 +620,20 @@ object LyricsRepository {
             nameAhead?.await()?.let { name ->
                 retry(name.title to name.artist)?.let { return it }
             }
-            return null
+            return fallback
         }
         // Still nothing, and the name is written in Hangul: very often a Korean
         // spelling of a Japanese, Chinese or English song, which the catalogues
         // file under its own name. Ask for that name and search once more —
         // YouTube Music first, Gemini only if that doesn't do it.
-        if (!OriginalNames.worthTrying(title, artist)) return null
+        if (!OriginalNames.worthTrying(title, artist)) return fallback
         nameAhead?.await()?.let { name ->
             retry(name.title to name.artist)?.let { return it }
         }
         OriginalNames.fromGemini(title, artist)?.let { name ->
             retry(name.title to name.artist)?.let { return it }
         }
-        return null
+        return fallback
     }
 
     /** Sources that look a track up by its video id, whatever it is called. */

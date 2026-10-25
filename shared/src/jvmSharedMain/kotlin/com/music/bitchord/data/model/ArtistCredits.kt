@@ -161,18 +161,39 @@ private fun String.startsWithIgnoringCase(prefix: String, at: Int): Boolean =
  */
 object ArtistNameIndex {
     private val channels = ConcurrentHashMap<String, MutableSet<String>>()
+    private val namesById = ConcurrentHashMap<String, MutableSet<String>>()
+    private val albumArtists = ConcurrentHashMap<String, MutableSet<String>>()
     private val joiners = ConcurrentHashMap.newKeySet<String>()
     private val joinerTexts = ConcurrentHashMap.newKeySet<String>()
     private val joinerSightings = ConcurrentHashMap<String, Int>()
 
-    /** Notes an artist YouTube linked, under the name it wrote. */
-    fun record(refs: List<ArtistRef>) {
+    /**
+     * Notes an artist YouTube linked, under the name it wrote.
+     *
+     * [albumId] and [albumName] are optional evidence for the other direction:
+     * the same release often credits a solo member and the group they play in,
+     * and the lyrics search can then ask for both names. An album is only
+     * remembered when it has an id or a non-blank name, and a name is only
+     * ever returned for an album YouTube itself stated.
+     */
+    fun record(
+        refs: List<ArtistRef>,
+        albumId: String? = null,
+        albumName: String? = null,
+    ) {
         refs.forEach { ref ->
             val name = normalizedArtistName(ref.name)
             val id = ref.browseId
             if (name.isEmpty() || id.isNullOrBlank()) return@forEach
             channels.computeIfAbsent(name) { ConcurrentHashMap.newKeySet() }.add(id)
+            namesById.computeIfAbsent(id) { ConcurrentHashMap.newKeySet() }.add(ref.name)
         }
+        val album = albumId?.takeIf { it.isNotBlank() }
+            ?: normalizedArtistName(albumName.orEmpty()).takeIf { it.isNotEmpty() }
+            ?: return
+        val named = refs.map { it.name }.filter { it.isNotBlank() }
+        if (named.isEmpty()) return
+        albumArtists.computeIfAbsent(album) { ConcurrentHashMap.newKeySet() }.addAll(named)
     }
 
     /**
@@ -217,6 +238,22 @@ object ArtistNameIndex {
     }
 
     /**
+     * Every spelling YouTube has stated for [browseId]. A channel can be named
+     * once as the solo act and once as the group (or as a former name), and
+     * the two are the same identity behind different display strings.
+     */
+    fun namesFor(browseId: String): List<String> =
+        namesById[browseId]?.toList().orEmpty()
+
+    /** The artists YouTube has credited on [albumId] or [albumName]. */
+    fun namesOnAlbum(albumId: String?, albumName: String?): List<String> {
+        val key = albumId?.takeIf { it.isNotBlank() }
+            ?: normalizedArtistName(albumName.orEmpty()).takeIf { it.isNotEmpty() }
+            ?: return emptyList()
+        return albumArtists[key]?.toList().orEmpty()
+    }
+
+    /**
      * The channel YouTube stated for [name], or null when it has never stated
      * one or has stated more than one.
      */
@@ -245,6 +282,8 @@ object ArtistNameIndex {
      */
     fun forget() {
         channels.clear()
+        namesById.clear()
+        albumArtists.clear()
         joiners.clear()
         joinerTexts.clear()
         joinerSightings.clear()

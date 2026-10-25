@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources
 
+import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import kotlin.math.abs
 import java.text.Normalizer
@@ -93,7 +94,8 @@ object TrackMatcher {
      * in the other script (below).
      */
     fun queries(target: Target): List<String> {
-        val title = searchableTitle(target.title, target.artist)
+        val titles = titleVariants(target.title, target.artist)
+        val title = titles.firstOrNull().orEmpty()
         if (title.isBlank()) return emptyList()
         val artist = primaryArtist(target.artist)
         val out = if (artist.isBlank()) mutableListOf(title) else mutableListOf("$title $artist", title)
@@ -109,8 +111,40 @@ object TrackMatcher {
         val otherScript = latin.takeIf { it.isNotBlank() && it != title && it.all { c -> c in LATIN_QUERY_CHARS } }
             ?: scriptMates(target.title).firstOrNull { it.isNotBlank() && it != title }
         otherScript?.let { out += it }
+        // A title that states its translation after a dash is filed under
+        // either language. The first title above is the one the listing leads
+        // with; this asks the other without spending a second artist pair.
+        titles.drop(1).firstOrNull { it.isNotBlank() && it !in out }?.let { out += it }
         return out.distinct()
     }
+
+    /**
+     * The titles [raw] can be searched under, best first: the title proper,
+     * then the other language of a `한글 - English` (or reverse) pair.
+     *
+     * A leading track number and a trailing translation are packaging, not
+     * identity — see [parseTitle] — so "3.여수밤바다 - Yeosu Night Sea" asks
+     * for "여수 밤바다" and "yeosu night sea", never for "3".
+     */
+    fun titleVariants(raw: String, artist: String = ""): List<String> {
+        val parts = parseTitle(raw, artist)
+        val main = (parts.words + parts.versions).joinToString(" ").trim()
+        val out = LinkedHashSet<String>()
+        if (main.isNotBlank()) out += main
+        parts.altWords.forEach { words ->
+            val title = (words + parts.versions).joinToString(" ").trim()
+            if (title.isNotBlank()) out += title
+        }
+        return out.toList()
+    }
+
+    /** The core identities [raw] can be filed under, primary first. */
+    fun titleCores(raw: String, artist: String = ""): List<String> =
+        parseTitle(raw, artist).cores()
+
+    /** Whether [raw] opens with a listing's track number rather than a title. */
+    fun hasLeadingTrackNumber(raw: String): Boolean =
+        LEADING_TRACK_NUMBER.containsMatchIn(normalize(raw))
 
     /** The title with the packaging taken off, version markers kept. */
     internal fun searchableTitle(title: String, artist: String = ""): String =
@@ -118,7 +152,26 @@ object TrackMatcher {
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
     internal fun primaryArtist(artist: String): String =
-        normalize(artist).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
+        artistVariants(artist).firstOrNull().orEmpty()
+
+    /**
+     * Every name a credit line carries, in the order it reads.
+     *
+     * A byline is not one string: it joins collaborators with commas, `&`,
+     * `및`, `x`, `feat.` and the rest, and a Korean act often writes its stage
+     * name in brackets after the legal one — "강현준(Lil tachi)" answers to
+     * either. Both halves are returned, base first, because a catalogue may
+     * file the track under either and searching only the printed whole finds
+     * neither. A bracket that is not a name ("f(x)", whose base is one letter)
+     * is left alone rather than cut into nonsense.
+     */
+    internal fun artistVariants(artist: String): List<String> {
+        val out = LinkedHashSet<String>()
+        splitTopLevel(normalize(artist), ARTIST_SEPARATORS).forEach { part ->
+            expandArtistName(part).forEach { name -> out += name }
+        }
+        return out.filter { it.isNotBlank() }
+    }
 
     /** Whether both credits name at least one of the same artists. */
     fun sharesArtist(wanted: String, got: String): Boolean {
@@ -157,18 +210,30 @@ object TrackMatcher {
         // no comparable words ("f(x)" is all single letters), and "cannot tell"
         // must not count as the same artist here.
         ranked(candidates, target).firstOrNull { candidate ->
-            (artistScore(target.artist, candidate.artist) ?: 0) > 0 &&
+            val sameName = (artistScore(target.artist, candidate.artist) ?: 0) > 0 &&
                 // The same person, not a name that merely contains them: "The
                 // Justin Bieber Cover Band" shares every word of "Justin
                 // Bieber" and is a piano cover of "Peaches", not the song.
-                namesTheSameArtist(target.artist, candidate.artist) &&
+                namesTheSameArtist(target.artist, candidate.artist)
+            // A different printed name is still the same act when the row's
+            // own channel or release says so (a solo member and their group).
+            (sameName || sameArtistIdentity(target, candidate)) &&
                 !isCoverOf(candidate, target)
         }
 
     /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
     internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
         val have = artistNames(got)
-        return artistNames(wanted).any { it in have }
+        if (artistNames(wanted).any { it in have }) return true
+        // Two printed names that YouTube has linked to one channel are the
+        // same act: a solo member and their group, or an act's former name.
+        // Only a channel both names have actually been seen under counts.
+        val wantedIds = artistVariants(wanted).mapNotNull { ArtistNameIndex.lookup(it) }.toSet()
+        if (wantedIds.isEmpty()) return false
+        return artistVariants(got).any { name ->
+            val id = ArtistNameIndex.lookup(name)
+            id != null && id in wantedIds
+        }
     }
 
     /**
@@ -253,13 +318,7 @@ object TrackMatcher {
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isBlank() || got.core.isBlank()) return false
         if (wanted.versions != got.versions) return false
-        val sameTitle = when {
-            wanted.core == got.core -> true
-            romajiOf(wanted.core) == romajiOf(got.core) -> true
-            wanted.core.length <= 3 || got.core.length <= 3 -> false
-            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
-        }
-        if (!sameTitle) return false
+        if (!coresMatch(wanted.cores(), got.cores(), containment = true)) return false
         if (isCoverArrangement(candidate, seedOf(target))) return false
         if (target.artist.isNotBlank() && candidate.artist.isNotBlank() &&
             !sharesArtist(target.artist, candidate.artist)
@@ -310,7 +369,7 @@ object TrackMatcher {
         // different song with a shared word gets through. A cover's bracket
         // ("(16-Bit Aespa Emulation)") is dropped by the title parser, which is
         // why the marker check above has to run first.
-        val sameTitle = wanted.core == got.core || romajiOf(wanted.core) == romajiOf(got.core)
+        val sameTitle = coresEqual(wanted.cores(), got.cores())
         if (!sameTitle) return false
         // The take has to be the one asked for, in both directions. Album
         // markers count the same way [score] counts them: a no-vocal edition is
@@ -489,7 +548,9 @@ object TrackMatcher {
             .filterNot { isCoverOf(it, target) }
             .mapNotNull { candidate ->
                 val got = parseTitle(candidate.title, candidate.artist)
-                if (wanted.core != got.core || wanted.versions != got.versions) return@mapNotNull null
+                if (!coresEqual(wanted.cores(), got.cores()) || wanted.versions != got.versions) {
+                    return@mapNotNull null
+                }
                 // A vocal song must not be switched to the instrumental or
                 // karaoke row of an "… (Instrumental Edition)" album.
                 if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
@@ -559,12 +620,7 @@ object TrackMatcher {
         // romaji tail instead, and English loans like ドア/door don't
         // transliterate to each other either). Past that, a guarded
         // containment absorbs minor punctuation and symbol differences.
-        val isTitleMatch = when {
-            wanted.core == got.core -> true
-            romajiOf(wanted.core) == romajiOf(got.core) -> true
-            wanted.core.length <= 3 || got.core.length <= 3 -> false
-            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
-        }
+        val isTitleMatch = coresMatch(wanted.cores(), got.cores(), containment = true)
         if (!isTitleMatch) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
@@ -586,6 +642,10 @@ object TrackMatcher {
         if (wanted.versions != effectiveVersions) return null
 
         val creditedArtist = artistScore(target.artist, candidate.artist)
+            ?: ARTIST_SHARED.takeIf {
+                namesTheSameArtist(target.artist, candidate.artist) ||
+                    sameArtistIdentity(target, candidate)
+            }
         val duration = durationScore(
             target.durationSec,
             secondsOf(candidate.durationText),
@@ -691,7 +751,7 @@ object TrackMatcher {
         val wanted = parseTitle(a.title, a.artist)
         val got = parseTitle(b.title, b.artist)
         return wanted.core.isNotEmpty() &&
-            wanted.core == got.core &&
+            coresEqual(wanted.cores(), got.cores()) &&
             wanted.versions == got.versions
     }
 
@@ -733,12 +793,28 @@ object TrackMatcher {
         val versions: Set<String>,
         /** Words dropped with the packaging. A hint for scoring, never a veto. */
         val context: Set<String>,
-    )
+        /**
+         * Other spellings the same listing states outright, one word list each:
+         * the English half of "여수밤바다 - Yeosu Night Sea", the Hangul half
+         * of the reverse. Catalogues file the song under either, so identity
+         * has to accept both without guessing at a translation.
+         */
+        val altWords: List<List<String>> = emptyList(),
+        /** [altWords] reduced the same way as [core]. */
+        val altCores: List<String> = emptyList(),
+    ) {
+        /** Every core this title is filed under, the primary one first. */
+        fun cores(): List<String> = (listOf(core) + altCores).filter { it.isNotBlank() }.distinct()
+    }
 
     internal fun parseTitle(raw: String, artist: String = ""): TitleParts {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
-        var text = normalize(raw)
+        // A playlist row prints its position in front of the name ("3.여수밤바다",
+        // "03 Ditto", "Track 3 - Song"). It is the listing's, not the song's,
+        // and every catalogue search for it misses.
+        var text = LEADING_TRACK_NUMBER.replace(normalize(raw), "")
+        val altTexts = mutableListOf<String>()
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -763,23 +839,36 @@ object TrackMatcher {
         // A mixed-script head with no Latin in it ("第ゼロ感 - Dai Zero Kan")
         // is the transliteration shape: catalogues file the track under the
         // Latin tail, so the tail becomes the identity and the head is kept
-        // as context rather than the other way round.
+        // as context rather than the other way round. A Hangul/Latin pair is
+        // the translation shape instead: both halves are the same song and
+        // both are kept as identities, the Hangul one first.
         repeat(DASH_PASSES) {
             val dash = DASH.find(text) ?: return@repeat
             val head = text.substring(0, dash.range.first)
             val tail = text.substring(dash.range.last + 1)
-            text = if (isArtistName(head, artist)) {
-                classify(head, versions, context)
-                tail
-            } else if (!hasFilingLatin(head) && hasFilingLatin(tail) && !isArtistName(tail, artist)) {
-                // "紅蓮華 - LiSA" is the title and its artist, not a
-                // transliteration: the Latin tail only takes over when it
-                // isn't just the credit.
-                classify(head, versions, context)
-                tail
-            } else {
-                classify(tail, versions, context)
-                head
+            text = when {
+                isArtistName(head, artist) -> {
+                    classify(head, versions, context)
+                    tail
+                }
+                isTranslationPair(head, tail, artist) -> {
+                    val hangulHead = hasHangul(head)
+                    val keep = if (hangulHead) head else tail
+                    val other = if (hangulHead) tail else head
+                    altTexts += other
+                    keep
+                }
+                !hasFilingLatin(head) && hasFilingLatin(tail) && !isArtistName(tail, artist) -> {
+                    // "紅蓮華 - LiSA" is the title and its artist, not a
+                    // transliteration: the Latin tail only takes over when it
+                    // isn't just the credit.
+                    classify(head, versions, context)
+                    tail
+                }
+                else -> {
+                    classify(tail, versions, context)
+                    head
+                }
             }
         }
 
@@ -827,13 +916,87 @@ object TrackMatcher {
             words.joinToString("")
         }
 
+        val altWords = mutableListOf<List<String>>()
+        val altCores = mutableListOf<String>()
+        altTexts.forEach { alt ->
+            val clean = alt.replace(FEATURING, " ").trim()
+            if (clean.isBlank()) return@forEach
+            val altCjk = clean.any {
+                Character.UnicodeBlock.of(it) in setOf(
+                    Character.UnicodeBlock.HIRAGANA,
+                    Character.UnicodeBlock.KATAKANA,
+                    Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
+                    Character.UnicodeBlock.HANGUL_SYLLABLES
+                )
+            }
+            val altWordList = clean.split(WORD_SPLIT)
+                .map { it.replace(NON_ALNUM, "") }
+                .filter { it.isNotEmpty() && it !in JOINING_WORDS }
+            if (altWordList.isEmpty()) return@forEach
+            val altCore = if (altCjk) {
+                clean.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            } else {
+                altWordList.joinToString("")
+            }
+            if (altCore.isNotBlank() && altCore != coreString) {
+                altWords += altWordList
+                altCores += altCore
+            }
+        }
+
         return TitleParts(
             words = words,
             core = coreString,
             versions = versions,
             context = context,
+            altWords = altWords,
+            altCores = altCores,
         )
     }
+
+    /**
+     * Whether [head] and [tail] are the same song in Hangul and Latin script.
+     * Only a Hangul side qualifies: kana has no algorithmic reading, and a
+     * Japanese title with a romaji tail is handled as the filing shape above.
+     */
+    private fun isTranslationPair(head: String, tail: String, artist: String): Boolean {
+        val headHangul = hasHangul(head)
+        val tailHangul = hasHangul(tail)
+        if (headHangul == tailHangul) return false
+        return when {
+            headHangul && !tailHangul && hasFilingLatin(tail) && !isArtistName(tail, artist) -> true
+            tailHangul && !headHangul && hasFilingLatin(head) && !isArtistName(head, artist) -> true
+            else -> false
+        }
+    }
+
+    /** Whether [text] carries Hangul. */
+    internal fun hasHangul(text: String): Boolean = text.any {
+        Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HANGUL
+    }
+
+    /**
+     * Whether any identity of [wanted] meets any identity of [got]. The lists
+     * carry a title and its stated translation, so an English catalogue row
+     * still matches the Korean listing that named both.
+     */
+    private fun coresMatch(wanted: List<String>, got: List<String>, containment: Boolean): Boolean {
+        for (w in wanted) {
+            for (g in got) {
+                if (w == g || romajiOf(w) == romajiOf(g)) return true
+                if (containment && w.length > 3 && g.length > 3 &&
+                    (w.contains(g) || g.contains(w))
+                ) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /** Exact identity (or the same title in the other script), across every reading. */
+    private fun coresEqual(wanted: List<String>, got: List<String>): Boolean =
+        wanted.any { w -> got.any { g -> w == g || romajiOf(w) == romajiOf(g) } }
 
     /**
      * Files one dropped segment under [versions] or [context].
@@ -1024,8 +1187,7 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> = normalize(value)
-        .split(ARTIST_SEPARATORS)
+    internal fun artistNames(value: String): Set<List<String>> = artistVariants(value)
         .map { name ->
             name.split(WORD_SPLIT)
                 .map { it.replace(NON_ALNUM, "") }
@@ -1033,6 +1195,54 @@ object TrackMatcher {
         }
         .filter { it.isNotEmpty() }
         .toSet()
+
+    /**
+     * Splits [text] on [separators] that sit outside brackets, so a stage name
+     * inside "(…)" stays with the name it belongs to.
+     */
+    private fun splitTopLevel(text: String, separators: Regex): List<String> {
+        val out = mutableListOf<String>()
+        var depth = 0
+        var start = 0
+        var at = 0
+        while (at < text.length) {
+            when (text[at]) {
+                '(', '[', '（', '【' -> depth++
+                ')', ']', '）', '】' -> if (depth > 0) depth--
+            }
+            if (depth == 0) {
+                val match = separators.matchAt(text, at)
+                if (match != null && match.value.isNotEmpty()) {
+                    val part = text.substring(start, at).trim()
+                    if (part.isNotEmpty()) out += part
+                    at = match.range.last + 1
+                    start = at
+                    continue
+                }
+            }
+            at++
+        }
+        text.substring(start).trim().takeIf { it.isNotEmpty() }?.let(out::add)
+        return out
+    }
+
+    /**
+     * "강현준(lil tachi)" as its two names. The bracket has to look like a name
+     * (two characters or more on both sides) so that "f(x)" is not read as an
+     * artist called "x".
+     */
+    private fun expandArtistName(part: String): List<String> {
+        val name = part.trim().trim(',', ';', '·', '|')
+        if (name.isBlank()) return emptyList()
+        val trailing = TRAILING_ALIAS.find(name) ?: return listOf(name)
+        val base = trailing.groupValues[1].trim()
+        val alias = trailing.groupValues[2].trim()
+        return if (base.length >= 2 && alias.length >= 2 && base.any { it.isLetter() }) {
+            listOf(base, alias)
+        } else {
+            listOf(name)
+        }
+    }
 
     private fun sameArtist(a: List<String>, b: List<String>) = runOf(a, b) || runOf(b, a)
 
@@ -1188,6 +1398,18 @@ object TrackMatcher {
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
+    /**
+     * A listing's track number in front of the name: "3.", "03 ", "3) ",
+     * "Track 3 - ". A bare number followed by a word ("7 Rings") is a title
+     * and is left alone; so is "3 Nights". The leading-zero form is accepted
+     * because a zero-padded number is never how a title starts.
+     */
+    private val LEADING_TRACK_NUMBER = Regex(
+        """^\s*(?:track\s+\d{1,3}\s*[-–—.:)]\s*|\d{1,3}\s*[.)\]\-–—]\s*(?=\D|$)|0\d{1,2}\s+)\s*""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** A trailing "(stage name)" that can be split off an artist credit. */
+    private val TRAILING_ALIAS = Regex("""^(.*?)[(\[（【]([^)\]）】]*)[)\]）】]\s*$""")
     /** `~` and the wave dash `〜` join words in Japanese titles ("真夜中のドア〜stay"). */
     private val WORD_SPLIT = Regex("""[\s.·~〜]+""")
     /**
@@ -1231,7 +1453,7 @@ object TrackMatcher {
     // Not the katakana middle dot `・`: it sits *inside* a transliterated
     // name (ジョン・レノン), and splitting there makes two Johns one artist.
     private val ARTIST_SEPARATORS =
-        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""")
+        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|및)\s*""")
 
     /**
      * What makes a listing a different recording rather than a different

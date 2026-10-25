@@ -1271,6 +1271,7 @@ private fun BitChordApp(
                 isVideo = query.isVideo,
                 alternatives = query.alternatives,
                 artistKnown = query.artistKnown,
+                artistAliases = query.artistAliases,
             )
         }
     }

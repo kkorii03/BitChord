@@ -1,5 +1,6 @@
 package com.music.bitchord.data.cover
 
+import com.music.bitchord.data.lyrics.ArtistAliases
 import com.music.bitchord.data.model.Song
 
 /**
@@ -201,6 +202,11 @@ object CoverTitles {
          * its title alone.
          */
         val artistKnown: Boolean = true,
+        /**
+         * Other names the row's artist is known by, from its channel ids and
+         * the album's credits. Evidence only — see [ArtistAliases].
+         */
+        val artistAliases: List<String> = emptyList(),
     )
 
     /**
@@ -220,6 +226,7 @@ object CoverTitles {
                 alternatives = listOfNotNull((song.title to singer).takeIf { original.isNotEmpty() }),
                 isVideo = true,
                 artistKnown = original.isNotEmpty(),
+                artistAliases = ArtistAliases.forSong(song),
             )
         }
         val upload = if (song.originalTitle != null) {
@@ -241,6 +248,7 @@ object CoverTitles {
             // and its lyrics are put on its own clock.
             title, artist, queries.drop(1), song.isVideo || cover != null,
             artistKnown = cover == null || cover.originalArtist != null,
+            artistAliases = ArtistAliases.forSong(upload),
         )
     }
 

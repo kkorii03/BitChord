@@ -89,6 +89,7 @@ internal object LyricsTag {
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
+                    artistAliases = coverQuery.artistAliases,
                 )
             }
         } catch (e: CancellationException) {

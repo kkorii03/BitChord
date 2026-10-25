@@ -426,6 +426,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val isVideo: Boolean = false,
         val alternatives: List<Pair<String, String>> = emptyList(),
         val artistKnown: Boolean = true,
+        val artistAliases: List<String> = emptyList(),
         /** Played from a file: there is no stream on disk to measure against. */
         val localUri: String? = null,
         /**
@@ -479,6 +480,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         alternatives: List<Pair<String, String>> = emptyList(),
         /** False when [artist] is only a cover's singer — see CoverTitles.LyricsQuery. */
         artistKnown: Boolean = true,
+        /** Other names the row's artist is known by — see CoverTitles.LyricsQuery. */
+        artistAliases: List<String> = emptyList(),
     ) {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
@@ -507,7 +510,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
-        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album, isVideo, alternatives, artistKnown, localUri)
+        currentLyricsRequest = LyricsRequest(
+            videoId, title, artist, durationMs, album, isVideo, alternatives, artistKnown,
+            artistAliases, localUri,
+        )
         selectedLyricsSource = null
         fileLyricsLabel = null
         manualLyricsJobs.values.forEach(Job::cancel)
@@ -609,6 +615,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 isVideo = isVideo,
                 alternatives = alternatives,
                 artistKnown = artistKnown,
+                artistAliases = artistAliases,
                 transcribe = localUri == null,
             )
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
@@ -673,6 +680,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onSourceCancelled = { provider -> providerCancelled(generation, provider) },
                 alternatives = request.alternatives,
                 artistKnown = request.artistKnown,
+                artistAliases = request.artistAliases,
             )
         }
     }

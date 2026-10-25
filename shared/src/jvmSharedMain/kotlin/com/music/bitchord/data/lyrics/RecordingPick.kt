@@ -262,12 +262,17 @@ object RecordingPick {
      * the same artist stays well under [TITLE_SIMILARITY].
      */
     private fun titleSimilarity(a: String, b: String): Double {
-        val left = TrackMatcher.parseTitle(a).core
-        val right = TrackMatcher.parseTitle(b).core
+        val left = TrackMatcher.titleCores(a)
+        val right = TrackMatcher.titleCores(b)
         if (left.isEmpty() || right.isEmpty()) return 0.0
-        if (left == right) return 1.0
-        val longest = maxOf(left.length, right.length)
-        return 1.0 - levenshtein(left, right).toDouble() / longest
+        return left.maxOf { l ->
+            right.maxOf { r ->
+                if (l == r) 1.0 else {
+                    val longest = maxOf(l.length, r.length)
+                    if (longest == 0) 0.0 else 1.0 - levenshtein(l, r).toDouble() / longest
+                }
+            }
+        }
     }
 
     private fun levenshtein(a: String, b: String): Int {

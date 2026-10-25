@@ -319,6 +319,7 @@ internal object TranslationAhead {
                     isVideo = coverQuery.isVideo,
                     alternatives = coverQuery.alternatives,
                     artistKnown = coverQuery.artistKnown,
+                    artistAliases = coverQuery.artistAliases,
                     transcribe = transcribe,
                 )
             }
