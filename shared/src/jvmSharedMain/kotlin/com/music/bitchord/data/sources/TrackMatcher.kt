@@ -275,7 +275,66 @@ object TrackMatcher {
         title = target.title,
         artist = target.artist,
         thumbnailUrl = null,
+        albumName = target.album,
     )
+
+    /**
+     * Whether [candidate] is the *original recording* of [target], strictly
+     * enough to stand in for it on a substitute source.
+     *
+     * This is the gate every replacement stream has to clear before it may be
+     * played instead of YouTube's own copy. It is deliberately stricter than
+     * [score]: a cover catalogue files its arrangement under the original
+     * title, with the original artist in the credit and a runtime rounded to
+     * the same second, so every signal [score] uses can agree while the audio
+     * is a lullaby, a karaoke backing track or an 8-bit emulation. The markers
+     * in [COVER_MARKERS], the exact normalised title, the take markers (from
+     * the row *and* its album) and the artist's own identity are what separate
+     * those rows from the record.
+     *
+     * A runtime outside [maxDriftSec] is refused outright. Title and artist
+     * agreeing across two different edits of a song is ordinary; a runtime
+     * that agrees this closely is one recording.
+     */
+    fun isOriginalRecording(
+        candidate: Song,
+        target: Target,
+        maxDriftSec: Int = SUBSTITUTE_DRIFT_SEC,
+    ): Boolean {
+        if (isCoverOf(candidate, target)) return false
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return false
+        // Exact normalised title, or the same title in the other script. No
+        // containment here: a title that merely contains another is how a
+        // different song with a shared word gets through. A cover's bracket
+        // ("(16-Bit Aespa Emulation)") is dropped by the title parser, which is
+        // why the marker check above has to run first.
+        val sameTitle = wanted.core == got.core || romajiOf(wanted.core) == romajiOf(got.core)
+        if (!sameTitle) return false
+        // The take has to be the one asked for, in both directions. Album
+        // markers count the same way [score] counts them: a no-vocal edition is
+        // a different recording even when the row's title says nothing.
+        val albumMarks = albumVersionMarkers(candidate.albumName)
+        val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
+            (albumMarks intersect wanted.versions)
+        if (wanted.versions != effectiveVersions) return false
+        // The same artist, established by a name that matches exactly or by the
+        // channel/release identity behind it. A merely non-comparable credit is
+        // not enough here: this is a replacement, not a search result.
+        if (target.artist.isNotBlank()) {
+            val sameArtist = (candidate.artist.isNotBlank() &&
+                namesTheSameArtist(target.artist, candidate.artist)) ||
+                sharesArtistChannel(target, candidate) ||
+                sharesRelease(target, candidate)
+            if (!sameArtist) return false
+        }
+        if (target.durationSec != null) {
+            val gotSec = secondsOf(candidate.durationText) ?: return false
+            if (abs(target.durationSec - gotSec) > maxDriftSec) return false
+        }
+        return true
+    }
 
     /** Whether [text] carries Latin letters, the script catalogues file in. */
     fun hasLatinLetters(text: String): Boolean =
@@ -302,15 +361,18 @@ object TrackMatcher {
      * artists, and guessing would discard legitimate suggestions.
      */
     fun isCoverArrangement(candidate: Song, seed: Song? = null): Boolean {
-        val got = (candidate.title + " " + candidate.artist).lowercase(Locale.ROOT)
-        val wanted = seed?.let { (it.title + " " + it.artist).lowercase(Locale.ROOT) }.orEmpty()
+        val got = (candidate.title + " " + candidate.artist + " " + candidate.albumName.orEmpty())
+            .lowercase(Locale.ROOT)
+        val wanted = seed?.let {
+            (it.title + " " + it.artist + " " + it.albumName.orEmpty()).lowercase(Locale.ROOT)
+        }.orEmpty()
         return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
     }
 
     private val COVER_MARKERS = listOf(
         Regex("""originally performed"""),
         Regex("""in the style of"""),
-        Regex("""made famous by"""),
+        Regex("""made famous"""),
         // Karaoke catalogue naming: "The Hills (Made Popular By The Weeknd)
         // [Vocal Version]" by Party Tyme Karaoke is the arrangement, not the
         // record, however exactly its title reads.
@@ -322,9 +384,16 @@ object TrackMatcher {
         Regex("""\bcover\b"""),
         Regex("""\bcovers\b"""),
         Regex("""\binstrumental\b"""),
-        Regex("""\bpiano (version|cover)\b"""),
+        Regex("""\bbacking (track|band|vocals?)\b"""),
+        Regex("""\b(piano|guitar)\s+(version|cover|instrumental|arrangement)\b"""),
+        Regex("""\b(kpop|idol)\s+guitar\b"""),
         Regex("""\blullaby\b"""),
         Regex("""\b8[- ]?bit\b"""),
+        Regex("""\b16[- ]?bit\b"""),
+        Regex("""\b(chiptune|chip tune)\b"""),
+        Regex("""\bemulat(ion|ed|or)\b"""),
+        Regex("""\b(video )?game (version|music|cover)\b"""),
+        Regex("""\barcade player\b"""),
         Regex("""커버"""),
         Regex("""반주"""),
         Regex("""노래방"""),
@@ -1091,6 +1160,14 @@ object TrackMatcher {
      * enough to rule out an extended cut or a full-album upload.
      */
     const val DURATION_LIMIT_SEC = 30
+
+    /**
+     * How far a substitute source's runtime may sit from the requested
+     * recording's before it is not that recording. Tighter than
+     * [DURATION_LIMIT_SEC] on purpose: this is the gate for replacing what the
+     * listener asked for, not for accepting a search result.
+     */
+    const val SUBSTITUTE_DRIFT_SEC = 5
 
     /**
      * Whether two runtimes differ by more than [DURATION_LIMIT_SEC], meaning

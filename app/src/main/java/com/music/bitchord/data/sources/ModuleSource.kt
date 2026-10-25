@@ -110,6 +110,7 @@ class ModuleSource(
 
             val modules = manager.fetchIndex(indexUrl).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
+                SourceResolver.reportSourceFailure(config.id)
                 return@withContext emptyList()
             }
 
@@ -231,6 +232,7 @@ class ModuleSource(
             // then ask for the stream URL.
             val modules = manager.fetchIndex(config.baseUrl).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
+                SourceResolver.reportSourceFailure(config.id)
                 return@withContext null
             }
             val module = modules.firstOrNull { it.id == moduleId } ?: run {
@@ -240,6 +242,7 @@ class ModuleSource(
             val baseUrl = config.baseUrl.substringBeforeLast("/")
             val loaded = manager.loadModule(module) { baseUrl }.getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: load failed for $moduleId — ${e.message}")
+                SourceResolver.reportSourceFailure(config.id)
                 return@withContext null
             }
             val streamResponse = manager.getStreamUrl(
@@ -249,6 +252,7 @@ class ModuleSource(
                 settings = settingsFor(request),
             ).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
+                SourceResolver.reportSourceFailure(config.id)
                 return@withContext null
             }
             val url = streamResponse.streamUrl?.ifBlank { null } ?: run {
