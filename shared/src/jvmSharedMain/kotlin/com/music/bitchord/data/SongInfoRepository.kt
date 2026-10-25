@@ -369,8 +369,8 @@ internal object SongInfoParser {
 
     private fun descriptionOf(data: JsonObject?): String? {
         val secondary = data?.find("videoSecondaryInfoRenderer")?.firstOrNull()
-        return secondary?.o("attributedDescription").str("content")
-            ?: secondary?.o("description").text()
+        return secondary?.obj("attributedDescription")?.str("content")
+            ?: secondary?.obj("description")?.text()
             ?: data?.find("attributedDescription")?.firstOrNull()?.str("content")
     }
 
