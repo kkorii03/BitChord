@@ -1233,10 +1233,15 @@
     <string name="song_info">Song Info</string>
     <string name="song_info_album">Album</string>
     <string name="song_info_release_date">Release date</string>
+    <string name="song_info_genre">Genre</string>
+    <string name="song_info_composer">Composer</string>
+    <string name="song_info_lyricist">Lyricist</string>
+    <string name="song_info_quality">Audio quality</string>
     <string name="song_info_views">Plays / views</string>
     <string name="song_info_likes">Likes</string>
     <string name="song_info_comments">Comments</string>
     <string name="song_info_unavailable">Not available</string>
+    <string name="song_info_unknown">No information</string>
     <string name="song_info_error">Some information could not be loaded.</string>
     <string name="song_info_retry">Retry</string>
     <!-- Settings: BitChord for Wear OS -->

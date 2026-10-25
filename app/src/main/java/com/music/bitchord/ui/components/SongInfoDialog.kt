@@ -19,9 +19,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.music.bitchord.R
+import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.SongInfo
+import com.music.bitchord.data.SongInfoDisplay
+import com.music.bitchord.data.SongInfoField
+import com.music.bitchord.data.SongInfoQuality
 import com.music.bitchord.data.SongInfoRepository
-import com.music.bitchord.data.compactCount
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.ui.theme.ArtworkPalette
 import androidx.compose.material.icons.Icons
@@ -29,6 +32,18 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Refresh
 
 private val INFO_BODY_MAX_HEIGHT = 360.dp
+
+private fun SongInfoField.labelRes(): Int = when (this) {
+    SongInfoField.ALBUM -> R.string.song_info_album
+    SongInfoField.RELEASE_DATE -> R.string.song_info_release_date
+    SongInfoField.GENRE -> R.string.song_info_genre
+    SongInfoField.COMPOSER -> R.string.song_info_composer
+    SongInfoField.LYRICIST -> R.string.song_info_lyricist
+    SongInfoField.QUALITY -> R.string.song_info_quality
+    SongInfoField.VIEWS -> R.string.song_info_views
+    SongInfoField.LIKES -> R.string.song_info_likes
+    SongInfoField.COMMENTS -> R.string.song_info_comments
+}
 
 /**
  * Drawn as the same UIAlertController-style card as [AlertScaffold] — centred
@@ -47,6 +62,7 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
         value = null
         value = SongInfoRepository.load(song)
     }
+    val snapshot by NerdStats.current.collectAsState()
     val onSurface = MaterialTheme.colorScheme.onSurface
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -95,19 +111,16 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
                     .heightIn(max = INFO_BODY_MAX_HEIGHT)
                     .verticalScroll(rememberScrollState()),
             ) {
-                val unavailable = stringResource(R.string.song_info_unavailable)
-                val rows = listOf(
-                    R.string.song_info_album to (info?.album ?: song.albumName),
-                    R.string.song_info_release_date to (info?.releaseDate ?: info?.releaseYear),
-                    R.string.song_info_views to info?.views?.let(::compactCount),
-                    R.string.song_info_likes to info?.likes,
-                    R.string.song_info_comments to info?.comments,
-                )
-                rows.forEachIndexed { index, (label, value) ->
+                val unknown = stringResource(R.string.song_info_unknown)
+                val quality = SongInfoQuality.label(song, snapshot)
+                val lines = info?.let { SongInfoDisplay.lines(it, song, quality, unknown) }
+                    ?: SongInfoDisplay.loadingLines(song)
+                lines.forEachIndexed { index, line ->
                     if (index > 0) AlertRule(Modifier.padding(start = 16.dp))
                     SongInfoRow(
-                        label = stringResource(label),
-                        value = value ?: unavailable.takeIf { info != null },
+                        label = stringResource(line.field.labelRes()),
+                        value = line.value,
+                        unknown = line.unknown,
                     )
                 }
                 if (info?.failed == true) {
@@ -115,7 +128,7 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
                         text = stringResource(R.string.song_info_error),
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 15.sp),
-                        color = MaterialTheme.colorScheme.error,
+                        color = onSurface.copy(alpha = 0.6f),
                     )
                 }
             }
@@ -132,7 +145,7 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
 
 /** Label on the left, value on the right; a small spinner stands in for the value while it loads. */
 @Composable
-private fun SongInfoRow(label: String, value: String?) {
+private fun SongInfoRow(label: String, value: String?, unknown: Boolean = false) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     Row(
         Modifier
@@ -158,7 +171,7 @@ private fun SongInfoRow(label: String, value: String?) {
                 Text(
                     text = value,
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-                    color = onSurface,
+                    color = if (unknown) onSurface.copy(alpha = 0.6f) else onSurface,
                     textAlign = TextAlign.End,
                 )
             }
@@ -178,6 +191,7 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
         value = null
         value = SongInfoRepository.load(song)
     }
+    val snapshot by NerdStats.current.collectAsState()
 
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -210,15 +224,17 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
         }
         HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
 
-        val unavailable = stringResource(R.string.song_info_unavailable)
-        listOf(
-            R.string.song_info_album to (info?.album ?: song.albumName),
-            R.string.song_info_release_date to (info?.releaseDate ?: info?.releaseYear),
-            R.string.song_info_views to info?.views?.let(::compactCount),
-            R.string.song_info_likes to info?.likes,
-            R.string.song_info_comments to info?.comments,
-        ).forEach { (label, value) ->
-            SongInfoPageRow(stringResource(label), value ?: unavailable.takeIf { info != null }, palette)
+        val unknown = stringResource(R.string.song_info_unknown)
+        val quality = SongInfoQuality.label(song, snapshot)
+        val lines = info?.let { SongInfoDisplay.lines(it, song, quality, unknown) }
+            ?: SongInfoDisplay.loadingLines(song)
+        lines.forEach { line ->
+            SongInfoPageRow(
+                label = stringResource(line.field.labelRes()),
+                value = line.value,
+                unknown = line.unknown,
+                palette = palette,
+            )
         }
 
         if (info?.failed == true) {
@@ -229,7 +245,7 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
                 text = stringResource(R.string.song_info_error),
                 modifier = Modifier.padding(horizontal = 22.dp),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                color = palette.onBackgroundVariant,
             )
         }
         Spacer(Modifier.height(24.dp))
@@ -238,7 +254,7 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
 
 /** Same metrics as the sleep timer's options; the value takes the sheet's accent, spinner while loading. */
 @Composable
-private fun SongInfoPageRow(label: String, value: String?, palette: ArtworkPalette) {
+private fun SongInfoPageRow(label: String, value: String?, unknown: Boolean, palette: ArtworkPalette) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -262,7 +278,7 @@ private fun SongInfoPageRow(label: String, value: String?, palette: ArtworkPalet
                 Text(
                     text = value,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = palette.accent,
+                    color = if (unknown) palette.onBackgroundVariant else palette.accent,
                     textAlign = TextAlign.End,
                 )
             }

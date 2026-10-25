@@ -878,6 +878,32 @@ object Innertube {
     }
 
     /**
+     * The `player` metadata for [videoId], read without the listener's account.
+     *
+     * Song Info needs the views and the description's release facts. It asks
+     * youtube.com's own player rather than scraping a watch page: the page is
+     * what a Korean request without a visitor id gets refused, while this
+     * endpoint is the same one the app's fallback already uses.
+     */
+    suspend fun playerResponse(videoId: String): JsonObject =
+        postYouTube("player", anonymous = true) {
+            put("videoId", videoId)
+            put("contentCheckOk", true)
+            put("racyCheckOk", true)
+        }
+
+    /**
+     * The watch page's `next` data for [videoId], read without the account.
+     * This is where the like button and comment count live.
+     */
+    suspend fun watchNext(videoId: String): JsonObject =
+        postYouTube("next", anonymous = true) {
+            put("videoId", videoId)
+            put("contentCheckOk", true)
+            put("racyCheckOk", true)
+        }
+
+    /**
      * The watch queue for [videoId], or for a standalone mix when the id is
      * null. A `RD` + seed id is YouTube's own Mix, personalised by the
      * signed-in account's cookies.

@@ -1252,11 +1252,16 @@
     <string name="song_info">노래 정보</string>
     <string name="song_info_album">앨범</string>
     <string name="song_info_comments">댓글</string>
+    <string name="song_info_composer">작곡</string>
     <string name="song_info_error">일부 정보를 불러오지 못했습니다.</string>
+    <string name="song_info_genre">장르</string>
     <string name="song_info_likes">좋아요</string>
+    <string name="song_info_lyricist">작사</string>
+    <string name="song_info_quality">음질</string>
     <string name="song_info_release_date">발매일</string>
     <string name="song_info_retry">다시 시도</string>
     <string name="song_info_unavailable">사용할 수 없음</string>
+    <string name="song_info_unknown">정보 없음</string>
     <string name="song_info_views">재생수 / 조회수</string>
     <string name="spotify_use_spdc_token">sp_dc 토큰 사용</string>
     <string name="wear_os_checking">확인 중…</string>
