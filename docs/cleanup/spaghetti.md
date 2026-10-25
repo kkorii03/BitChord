@@ -183,3 +183,81 @@ ko-101..HEAD에서 새로 들어온 코드 중 이번 이동과 닿는 경로를
   `ALTERNATE_LOOKUP_TIMEOUT_MS`→생성자 인자뿐이다.
 - 순수 로직 추가가 없어 새 `shared` 테스트는 만들지 않았다(CI 컴파일로 확인).
 - `git diff --check` 통과. 로컬 빌드 금지로 컴파일은 CI에 맡긴다.
+
+## 3/3 단계에서 한 일 (MainViewModel 가사 분리)
+
+파일 이름은 `12-ui3`이지만 내용은 원래 `11 코드 정리 c` 작업이다. 이번에는
+`PlaybackService`가 아니라 `app/src/main/java/com/music/bitchord/ui/MainViewModel.kt`의
+가사 로딩·타이밍을 `app/src/main/java/com/music/bitchord/ui/LyricsController.kt`로
+옮겼다. `MainViewModel`에는 상태 노출 프로퍼티와 얇은 위임 함수만 남겼다.
+
+옮긴 상태:
+
+- `_lyrics`/`lyrics`, `_lyricsSource`/`lyricsSource`, `_lyricsChecked`/`lyricsChecked`,
+  `_lyricsProviderStates`/`lyricsProviderStates`, `_lyricsTiming`/`lyricsTiming`
+- `rawLyricsResult`, `lyricsRaceOrder`, `lyricsTimingJob`, `aiTimingJob`,
+  `songCheckStartedFor`, `lyricsJob`, `manualLyricsJobs`, `lyricsProviderResults`
+- `LyricsRequest`, `currentLyricsRequest`, `lyricsGeneration`, `selectedLyricsSource`,
+  `fileLyricsLabel`, `lyricsFor`
+- `timingLines`, `timingBaseAllowed`, `timingMeasureAllowed`, `appliedTiming`,
+  `earlyMeasureJob`
+- 상수 `PATIENCE_MS`, `MAX_MEASURE_ATTEMPTS`, `REMEASURE_CHECK_MS`, `MEASURE_WINDOW_MS`
+
+옮긴 함수:
+
+- `loadLyrics`(파일 가사 우선 처리, 네트워크 조회, duration 재시도 포함)
+- `selectLyricsProvider`, `fetchLyricsProvider`
+- `providerStarted`, `providerFinished`, `providerCancelled`, `showFirstUsable`,
+  `showLyricsResult`, `publishLyrics`
+- `startTiming`(노래 검증 분기·AI ahead·측정 루프 포함), `startEarlyMeasure`,
+  `refreshTiming`(SyncTestMode 보고 포함)
+- `aiAhead`, `autoAiIfNeeded`, `runAiTiming`, `toggleAiLyricsTiming`,
+  `setSongLyricsOffset`
+- `init`의 `LyricsRepository.upgrades` 수집기(배경에서 더 나은 가사가 오면 교체)
+
+`MainViewModel`에 남긴 위임:
+
+| 이름 | 이유 |
+|---|---|
+| `lyrics`, `lyricsSource`, `lyricsChecked`, `lyricsProviderStates`, `lyricsTiming` | `MainActivity`/TV 플레이어가 그대로 구독 |
+| `loadLyrics` | `MainActivity.kt:1259`, `TvNowPlayingScreen.kt:107` 호출부 유지 |
+| `selectLyricsProvider` | `MainActivity.kt:3030` |
+| `toggleAiLyricsTiming` | `MainActivity.kt:3036` |
+| `setSongLyricsOffset` | `MainActivity.kt:3037` |
+
+의존성은 생성자 인자 2개로만 연결했다: `Application`과 `viewModelScope`.
+컨트롤러가 ViewModel을 다시 참조하지 않으므로 상태 소유권이 한 방향이다.
+의도한 치환은 `viewModelScope`→`scope`, `getApplication()`/
+`getApplication<Application>()`→`app`, 그리고 완전 수식 타입을 import로 바꾼 것뿐이다.
+기존 KDoc·주석은 옮긴 본문에 그대로 두고, ViewModel의 위임에는 짧은 안내만 남겼다.
+로그 문구·로그 시점·세대(`lyricsGeneration`) 검사·provider 경쟁 순서·AI/측정
+타이밍은 그대로다.
+
+### 확인한 호출부
+
+- `MainActivity.kt:978-985` — 가사 상태 5개 구독. 이름·타입 동일.
+- `MainActivity.kt:1259-1275` — `loadLyrics`의 모든 인자(커버 제목 정규화,
+  `artistAliases` 포함)가 위임 시그니처와 일치.
+- `MainActivity.kt:3028-3037` — provider 선택·AI 타이밍·수동 오프셋 콜백.
+- `TvNowPlayingScreen.kt:107` — TV 플레이어의 `loadLyrics` 호출.
+- `MainViewModel.init` — 가사 업그레이드 수집기를 컨트롤러 `init`으로 이동.
+  시작 시점은 ViewModel 초기화 시점으로 사실상 동일하다.
+
+### 검사 범위
+
+ko-101..HEAD에서 새로 들어온 코드를 먼저 확인했다. 이번 이동과 직접 닿는
+`artistAliases`(커버 가수 이동), `SyncTestMode.report`(싱크 채점 모드),
+`shown` 변수 수정(화면에 표시된 가사 기준 진단), `LyricsQueryVariants`,
+`SongSyncRetry`, `CoverTitles`, `LyricsTiming`/`HqAudioVerify` 경로를 다시 읽었다.
+`LyricsRepository`·`EmbeddedLyrics`·`FileLyricsOrigin`·`LyricsAiGuard`·
+`LyricsTranslation`의 시그니처와 널 처리도 그대로 사용한다. 크로스페이드·자동 믹스,
+다운로드 곡 메뉴·사진, 고음질 소스·등급·다음 곡 준비, 설정 공유, 충전 조건 제거,
+그리고 이전 대기열 작업은 이번 가사 이동과 호출 경로가 겹치지 않아 건드리지 않았다.
+
+### 3/3 단계의 검증
+
+- 이동 전/후 본문을 정규화해 비교했고, 위 치환 외 로직 차이는 없다.
+- 로그 문자열(`lyrics: no sources enabled`, `lyrics-provider`, `lyrics: <source> ...`,
+  `cmd: lyrics-offset`)과 호출 순서가 동일함을 확인했다.
+- 새 순수 로직 추가가 없어 새 `shared` 테스트는 만들지 않았다(CI 컴파일로 확인).
+- `git diff --check` 통과. 로컬 빌드 금지로 컴파일은 CI에 맡긴다.
