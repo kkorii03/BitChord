@@ -5830,6 +5830,18 @@ class PlaybackService : MediaLibraryService() {
         val item = player.currentMediaItem ?: return false
         val mediaId = item.mediaId
         val uri = item.localConfiguration?.uri
+        val manual = manualUpgradeFor == mediaId
+        // Nothing may be fetched for this row before it has made a sound: the
+        // search would compete with the resolve that is trying to start it
+        // (report 60). A cold start reaches the first-sound callback below and
+        // is picked up there; a gapless or crossfaded advance is already
+        // sounding and may go ahead.
+        if (!manual &&
+            !SongVersionPolicy.hasMadeFirstSound(mediaId, audibleMediaId) &&
+            !player.isPlaying
+        ) {
+            return false
+        }
         val alreadyPending = QualityUpgrade.isPending(mediaId)
         val shelved = QualityUpgrade.shelvedFor(mediaId)
         if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) {
@@ -5872,6 +5884,21 @@ class PlaybackService : MediaLibraryService() {
                 // on disk — so this goes straight to the swap and skips the ten
                 // seconds of catalogue searching it would otherwise repeat.
                 if (shelved != null) {
+                    if (!manual) {
+                        // A stream found earlier is still valid, but it must not
+                        // replace the audio under a track that is already
+                        // playing. Keep it for the next play instead.
+                        uri?.let { SourceResolver.targetIn(it) }?.let {
+                            SourceResolver.rememberOriginal(it, shelved)
+                        }
+                        QualityUpgrade.forget(mediaId)
+                        TrackLog.d(
+                            "BitChord",
+                            "upgrade for $mediaId kept for next play; no mid-song swap",
+                            about = mediaId,
+                        )
+                        return@launch
+                    }
                     TrackLog.d("BitChord", "re-offering the upgrade already proved for $mediaId")
                     NerdStats.onLosslessRaceStart(mediaId)
                     val outcome = try {
@@ -5941,6 +5968,25 @@ class PlaybackService : MediaLibraryService() {
                         )
                     }
                     reportManualUpgrade(mediaId, message)
+                    return@launch
+                }
+                // The automatic second look never replaces the audio of a
+                // track that is already sounding. The answer is remembered and
+                // used from the next play of this track, or by the ahead-of-
+                // playback pass for the next queue row; the listener's song is
+                // never cut in half by a better copy arriving late. A request
+                // made by hand is still honoured — that is the one swap the
+                // listener explicitly asked for.
+                if (!manual) {
+                    uri?.let { SourceResolver.targetIn(it) }?.let {
+                        SourceResolver.rememberOriginal(it, better)
+                    }
+                    QualityUpgrade.forget(mediaId)
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade found for $mediaId kept for next play; no mid-song swap",
+                        about = mediaId,
+                    )
                     return@launch
                 }
                 val outcome = try {
