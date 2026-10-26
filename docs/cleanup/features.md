@@ -151,3 +151,224 @@
 - `HqVerificationStore.bestTier`가 호출마다 전체 검증 맵을 훑는다. 곡별 인덱스를 두면
   다음 곡 준비에서 스캔을 없앨 수 있다.
 - 기기 실측은 로컬 빌드 금지로 새로 만들지 못했다. 위 수치는 코드 경로 기준이다.
+
+---
+
+# 기능 연결 전수 검사 (1/2: 목록·연결)
+
+작업 기준: 현재 스냅샷 HEAD. 이 저장소에는 `ko-101` 태그가 없어 커밋 비교 대신
+`docs/cleanup/`의 이전 기록(가사 검증·제목 정규화·크로스페이드/자동 믹스·싱크
+채점·다운로드 메뉴·HQ/다음 곡 준비·설정 공유·커버 가수 이동·충전 조건 제거)과
+현재 코드의 선언/호출/설정 소비처를 대조했다. `.ds-ctx/`는 수정 금지 지시가 있어
+만들지 않았고, 목록은 이 파일에 남긴다.
+
+방법:
+- `AppSettings.kt`의 `KEY_*` 152개와 공개 속성 167개를 모두 뽑아, 설정 화면
+  (`SettingsSheet.kt`, `ProxySettingsSection.kt`, `AccountAndScrobblingScreen.kt`,
+  `DiscordScreen.kt`, `EqualizerScreen.kt`, `SourcesScreen.kt`)과
+  `app`·`shared`·`sharedUi`의 소비처를 대조했다.
+- 곡 메뉴(`SongActionsSheet.kt`), 재생 화면(`sharedUi/.../PlayerControls.kt`,
+  `AndroidPlayerHost.kt`), 보관함/홈(`MainActivity.kt`, `MainViewModel.kt`),
+  위젯(`MediaWidget*`), 알림 버튼의 `onClick`/세션 명령 연결을 따라갔다.
+- `catch { }`, `onClick = {}`, `TODO`, 항상 거짓인 플래그, 같은 일을 하는 두
+  경로를 검색했다.
+- 컴파일은 `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true`로,
+  공유 테스트는 `./gradlew :shared:jvmTest --tests ...`로 확인했다.
+
+상태 범례: **정상** / **죽은 스위치** / **연결 끊김** / **충돌** /
+**조용한 실패 위험**(이번에 로그 추가) / **판단 필요** / **확인 불가**.
+
+## 1. 설정 키 전수 (AppSettings 152키)
+
+| 기능(키) | UI 위치 | 실제 소비처(근거) | 상태 |
+|---|---|---|---|
+| 음질 상한 Wi‑Fi/셀룰러 (`audio_quality_wifi`, `audio_quality_cellular`) | Settings > Audio quality, Sources | `AppSettings.effectiveAudioQuality` → `SourceResolver`/`AudioCache` | 정상 |
+| 구버전 음질 마이그레이션 (`audio_quality`) | 없음(마이그레이션) | `AppSettings.migrateSingleQuality` | 정상(내부) |
+| 다운로드 음질 (`audio_quality_download`) | Settings > Downloads | `Downloads.enqueue`/`Downloader` | 정상 |
+| 업그레이드 길이 허용 (`upgrade_length_slack_seconds`) | Sources | `PlaybackService` 업그레이드 길이 판정 | 정상 |
+| Wi‑Fi에서만 다운로드 (`wifi_only_downloads`) | Settings > Downloads | `AppSettings.downloadsAllowedNow`, `LikedAutoDownload` | 정상 |
+| MV 사운드 자동 재다운로드 (`auto_redownload_mv_sound`) | Settings > Downloads | `MvSoundRedownload.scheduleIfEnabled` | 정상 |
+| Music/BitChord로 내보내기 (`export_downloads`) | Settings > Downloads | `Downloads`/`Downloader` | 정상 |
+| 크로스페이드 초 (`crossfade_seconds`) | Settings > Playback | `CrossfadeController`가 틱마다 읽음 | 정상 |
+| 자동 믹스 (`smart_fade_enabled`) | Settings > Playback | `CrossfadeController.tick`, `requestAnalysisAround` | 정상 |
+| 자동 믹스 비디오 (`automix_videos`) | Settings > Playback | `CrossfadeController` | 정상 |
+| 자동 믹스 CPU (`automix_performance_mode`) | Settings > Playback | `TrackAnalyzer` 스레드/우선순위 | 정상 |
+| 무음 건너뛰기 (`skip_silence`) | Settings > Playback | `PlaybackService.observeSettings` → `skipSilenceEnabled` | 정상 |
+| 시크릿 모드 (`private_listening`, `private_listening_since`) | Settings > Playback, 곡 메뉴 | `ListeningRecorder`, `PlaybackService` 스크로블/Discord, `checkPrivateListeningExpiry` | 정상 |
+| 출력 PCM (`output_pcm_mode`) | Settings > Audio | `PlaybackService` 출력 재구성, `AudioOutputPolicy` | 정상 |
+| USB DAC 우선 (`prefer_usb_dac`) | Settings > Audio | `PlaybackService.observeSettings` → 출력 재구성 | 정상 |
+| 라우드니스 정규화/스피커 예외 (`loudness_normalization`, `loudness_off_on_speaker`) | Settings > Audio | `PlaybackService.setupLoudnessEnhancer` | 정상 |
+| Dolby Atmos (`dolby_atmos`) | Settings > Audio | `AddonClient`, `ModuleSource`, `SourceResolver`, `AudioCache` | 정상 |
+| 공간 오디오 (`spatial_audio`) | Settings > Audio | `PlaybackService.applySpatialAudioEnabled` | 정상 |
+| 이퀄라이저 (`equalizer_enabled`, `equalizer_mode`, `equalizer_tone_x`, `equalizer_tone_y`, `equalizer_focused`, `equalizer_balance`, `equalizer_bands`) | Equalizer | `PlaybackService` EQ 프로세서, `EqualizerCurve` | 정상 |
+| 재생 속도/피치 (`playback_speed`, `playback_pitch_semitones`) | 곡 메뉴, 재생 화면 | `PlaybackService.observeSettings` → `applyPlaybackSpeed` | 정상 |
+| 테마 (`theme_mode`) | Settings > Appearance | `MainActivity`/`Theme` | 정상 |
+| 자동 재생/개인화 (`autoplay`, `personalised_autoplay`) | Settings > Playback | `PlaybackService` AutoPlay, `Autoplay`/`AutoplayOrder` | 정상 |
+| 셔플/반복 (`shuffle_enabled`, `repeat_mode`) | 재생 화면, 알림 | `QueueShuffle`, `PlaybackService` 재시작 복원 | 정상 |
+| 알림 권한 요청 기록 (`notification_permission_asked`) | 없음(1회 요청) | `MainActivity` 권한 요청 | 정상(내부) |
+| 너드 통계 (`show_nerd_stats`) | Settings > Playback | 재생 화면/진단 | 정상 |
+| 오디오 캐시 한도 (`audio_cache_limit_bytes`) | Settings > Storage | `AudioCache` LRU/정리 | 정상 |
+| 애니메이션 줄이기 (`reduce_animation`) | Settings > Appearance | 재생 화면/백드롭 | 정상 |
+| 저전력 (`low_power_mode`) | Settings > Performance | `LowPowerDevice`, `AppSettings.lowPower`, `heavyWorkAllowed` | 정상 |
+| 고성능/주사율 (`high_performance_mode`, `performance_refresh_rate`) | Settings > Performance | `MainActivity.applyPerformanceMode` | 정상 |
+| 앱 닫을 때 정지 (`stop_on_task_removed`) | Settings > Playback | `PlaybackService` | 정상 |
+| 볼륨/상태바/곡 상태 숨김 (`hide_volume_bar`, `hide_status_bar_in_player`, `hide_song_status`) | Settings > Playback | `AndroidPlayerHost`/재생 화면 | 정상 |
+| 위젯 탭 동작 (`widget_opens_player`) | Settings > Playback | `WidgetOpenIntent` | 정상 |
+| 대기열 기록 (`show_queue_history`) | Settings > Playback | `AndroidPlayerHost`/재생 화면 | 정상 |
+| 스와이프 다음 재생 (`swipe_to_play_next`) | Settings > Playback | 보관함/홈 행 제스처 | 정상 |
+| 추천 중복 제외 (`dont_repeat_suggestions`) | Settings > Playback | `PlaybackService` 세션 추천 목록 | 정상 |
+| 음악만 재생 (`prefer_music_only`) | Settings > Playback | `SongVersionController`, `PrefetchController`, `Autoplay`, `MainActivity` | 정상 |
+| 비음악 구간 건너뛰기 (`skip_non_music_parts`) | Settings > Playback | `PlaybackService.loadSkipSegmentsForCurrentTrack`/`checkSkipSegments` | 정상(이번에 즉시 반영) |
+| 스폰서 구간까지 (`skip_sponsor_parts`) | Settings > Playback | `PlaybackService.skipCategories`/`scheduleSkipSegmentMessages` | 정상(이번에 즉시 반영) |
+| 버전 자동 정렬 (`smart_version_alignment`) | Settings > Playback | `PlaybackService` 버전 스왑, `MainActivity` | 정상 |
+| 동적 블러/리퀴드 글래스 (`reduce_dynamic_blur`, `liquid_glass`) | Settings > Appearance | `Backdrop`/플레이어 UI | 정상 |
+| 가사 블러/오프셋 (`lyrics_blur`, `lyrics_offset_ms`) | Settings > Appearance, 곡 메뉴 | `PlayerLyrics`, `LyricsController` | 정상 |
+| 번역 언어 (`translation_language`) | Settings > Lyrics | `LyricsTranslation`, `TranslationAhead` | 정상 |
+| 캔버스 (`animated_canvas`, `canvas_over_cellular`, `spotify_canvas_auto_hide`, `prioritize_spotify_canvas`, `ko_video_canvas`) | Settings > Appearance | `CanvasRepository`, `AndroidPlayerHost`, `DetailScreen` | 정상 |
+| 아티스트 서명 API (`signature_api_enabled`, `signature_api_url`) | Settings > Appearance | `DetailScreen` → `ArtistSignatureRepository` | 정상 |
+| 전체 화면 커버/구형 메시 (`full_bleed_artwork`, `legacy_mesh_gradient`) | Settings > Appearance | 재생 화면 백드롭 | 정상 |
+| 마지막 플레이어 화면 (`last_player_screen`) | 없음(재생 화면이 기록) | `AndroidPlayerHost` | 정상(내부) |
+| 가사/소스 (`synced_lyrics`, `lyrics_sources`, `lyrics_source_order`, `lyrics_sources_seen`, `prioritize_syllable_sync`) | Settings > Lyrics | `LyricsRepository`, `LyricsController` | 정상 |
+| 가사 API 키 (`paxsenix_api_key`, `gemini_api_key`, `deepgram_api_key`) | Settings > Lyrics | `PaxSenix`, `LyricsTranslation`, `Deepgram` | 정상. **Deepgram 키는 이번에 백업 제외로 고침** |
+| Gemini 번역 (`gemini_translation`) | Settings > Lyrics | `AppSettings.init/setGeminiTranslation` → `LyricsTranslation.geminiEnabled` | 정상 |
+| 번역 미리/다운로드 유지 (`prefetch_translation`, `keep_download_translation`) | Settings > Lyrics | `TranslationAhead` | 정상 |
+| 좋아요 자동 다운로드 (`auto_download_liked`) | Settings > Downloads | `LikedAutoDownload` | 정상 |
+| 자동 번역/자동 타이밍/AI (`auto_translate_lyrics`, `auto_lyrics_timing`, `ko_ai_lyrics`, `ko_ai_timing_ahead`) | Settings > Lyrics | `LyricsController`, `TranslationAhead`, `AiLyrics` | 정상 |
+| 가사 기본값 마이그레이션 (`ko_syllable_default_migrated`) | 없음(1회) | `AppSettings.readAll` | 정상(내부) |
+| 잠금화면 가사 (`lock_screen_lyrics`) | Settings > Lyrics | `LockScreenLyrics`, `PlaybackService` | 정상 |
+| 콘텐츠/차트 국가 (`ko_content_country`, `ko_charts_country`) | Settings > Content, 차트 | `YtMusicRepository`, `MainViewModel.loadCharts` | 정상 |
+| 커버 채널/가수 (`ko_cover_channels`, `ko_cover_singers`) | 곡 메뉴, 자동 학습 | `CoverTitles.designatedChannels/knownSingers`, `SongActionsSheet` | 정상 |
+| 숨긴 Explore (`ko_hidden_explore_categories`, `hidden_explore_seeded_v1`) | Settings > Appearance | `ExploreCategoryFilter`, `MainViewModel` | 정상 |
+| 헤드폰 재생 (`ko_resume_on_headphones`) | Settings > Playback | `HeadphoneResume` | 정상 |
+| Replay 장르 (`replay_genres`) | Settings > Replay | `ArtistFacts` | 정상 |
+| 비음악 오디오 필터 (`filter_non_music_audio`) | Settings > Local music | `MainActivity` 로컬 스캔 | 정상 |
+| 캐시 폴더 표시 (`show_cache_folder`) | Settings > Storage | `LibraryPhoneParts` | 정상 |
+| 정렬/보기 (`local_music_sort`, `downloaded_music_sort`, `library_sort`, `detail_song_sorts`, `local_music_view_type`, `downloaded_music_view_type`, `home_recents_view_type`) | 보관함/홈 메뉴 | `MainActivity`, `AndroidAppUiHost` | 정상 |
+| 로컬 음악 폴더 (`local_music_folder_uri`) | Settings > Local music | `LocalMediaRepository` | 정상 |
+| WebDAV (`webdav_url`, `webdav_username`) | Sources | `WebDavConfig`, `WebDavRepository` | 정상 |
+| SMB (`smb_host`, `smb_share`, `smb_base_path`, `smb_username`) | Sources | `SmbConfig`, `SmbRepository` | 정상 |
+| 프록시 (`proxy_mode`, `proxy_host`, `proxy_port`, `proxy_backup_host`, `proxy_backup_port`, `proxy_username`, `proxy_scope`) | Sources > Proxy | `AppSettings.publishProxy` → `YouTubeProxy`, `MusicGateFallback` | 정상 |
+| 고정 플레이리스트 (`pinned_playlists`) | 보관함 길게 누르기 | `MainActivity`, `AndroidAppUiHost` | 정상 |
+| Last.fm (`lastfm_enabled`, `lastfm_username`, `lastfm_session_key`, `lastfm_api_key`, `lastfm_secret`, `lastfm_scrobble_enabled`, `lastfm_now_playing`, `lastfm_primary_artist_only`, `scrobble_min_duration`, `scrobble_delay_percent`, `scrobble_delay_seconds`) | Account & scrobbling | `ScrobbleManager`, `LastFM`, `PlaybackService` | 정상 |
+| Last.fm 엔드포인트 (`lastfm_endpoint`) | 없음 | `BitChordApplication`, `PlaybackService` | **판단 필요**: UI/설정자가 없고 백업·빌드 값으로만 읽힌다. 기능 자체는 동작 |
+| ListenBrainz (`listenbrainz_enabled`, `listenbrainz_token`, `listenbrainz_primary_artist_only`) | Account & scrobbling | `ListenBrainzManager`, `PlaybackService` | 정상 |
+| Spotify 토큰 (`spotify_spdc_token`) | Spotify Canvas 로그인 | `SpotifyCanvas`, `SpotifyToken` | 정상 |
+| Discord (`discord_username`, `discord_name`, `discord_avatar`, `discord_rpc_enabled`, `discord_use_details`, `discord_show_audio_quality`, `discord_advanced_mode`, `discord_status`, `discord_activity_type`, `discord_activity_name`, `discord_button_1_text`, `discord_button_1_visible`, `discord_button_2_text`, `discord_button_2_visible`, `discord_info_dismissed`) | Settings > Discord | `PlaybackService` presence, `DiscordScreen` | 정상 |
+| 온보딩/버전 (`onboarding_complete`, `last_version_code`) | 온보딩/업데이트 | `MainActivity`, `consumeVersionUpdate` | 정상(내부) |
+
+결과: 선언만 있고 어디서도 읽히지 않는 **죽은 스위치 0건**. 값이 바뀌어도
+동작이 바뀌지 않는 후보는 `skip_non_music_parts`/`skip_sponsor_parts`(재생 중
+다음 이벤트까지 지연)와 `lastfm_endpoint`(UI 없음)였고, 앞의 둘은 이번에 고쳤다.
+
+## 2. 버튼·메뉴 연결
+
+| 화면/버튼 | 연결(근거) | 상태 |
+|---|---|---|
+| 곡 메뉴: 재생 다음/대기열/라디오 | `MainActivity.kt:4944` `SongActionsSheet` 콜백 → `playNext`/`addToQueue`/`startRadio` | 정상 |
+| 곡 메뉴: 다운로드/캐시에서 다운로드 | `SongActionsSheet.DownloadRow`, `MainActivity.downloadSong/downloadFromCache` | 정상 |
+| 곡 메뉴: WebDAV 업로드 | `onUploadToWebDav`(로컬 파일+설정 시에만) → `uploadToWebDav` | 정상 |
+| 곡 메뉴: 좋아요/싫어요/보관함 | `viewModel.toggleLike/toggleDislike`, `LikeState` | 정상 |
+| 곡 메뉴: 재생목록 추가/제거 | `PlaylistPickerSheet`, `removeFromPlaylist` | 정상 |
+| 곡 메뉴: 캐시에서 제거 | `AudioCache.holds` 확인 후 `removeFromCache` | 정상 |
+| 곡 메뉴: 원곡으로 되돌리기/음질 업그레이드 | `controller.revertToOriginal/upgradeQuality` | 정상 |
+| 곡 메뉴: 오디오/비디오 버전 전환 | `onToggleAudioVersion` → `switchToVideo/switchToMusicOnly` | 정상 |
+| 곡 메뉴: 커버 원제목 복사/커버 채널 지정 | `SongActionsSheet` 클립보드, `AppSettings.setCoverChannel` | 정상 |
+| 곡 메뉴: 가수/앨범 열기 | `coverSingerChannelId`/`CoverTitles.creditedArtist` → `openPage` | 정상(커버 가수 이동) |
+| 곡 메뉴: Song Info/가사 오프셋/문제 신고/로그 복사 | `SongInfoDialog`, `showLyricsOffset`, `TrackDiagnostics.mark`, `TrackLog.forTrack` | 정상 |
+| 곡 메뉴: 수면 타이머/재생 속도/시크릿 | `SleepTimer`, `setPlaybackSpeed`, `setPrivateListening` | 정상 |
+| 재생 화면: 재생/일시정지/이전/다음/셔플/반복/좋아요/대기열/가사/출력/볼륨 | `PlayerControls.kt`, `PlaybackService` 세션 명령 | 정상 |
+| 홈/보관함: 검색/정렬/보기/탭/새로고침 | `MainActivity`/`MainViewModel` | 정상 |
+| 설정: 데이터 내보내기/가져오기 | `SettingsSheet.kt:1639` → `Backup.exportTo/importFrom` | 정상(내보내기에서 Deepgram 키 제외로 고침) |
+| 설정: 캐시 비우기/폴더 선택/WebDAV·SMB/프록시/소스 편집 | `SettingsSheet`, `SourcesScreen`, `ProxySettingsSection` | 정상 |
+| 설정: 이퀄라이저/가사 소스/번역 언어/콘텐츠 국가/숨긴 카테고리 | `EqualizerScreen`, `LyricsSourcesDialog`, `TranslationLanguageDialog`, `ContentCountryDialog` | 정상 |
+| 설정: Gemini/Deepgram 키/서명 API/Discord/Last.fm/ListenBrainz/Wear OS | `MainActivity` 알림/화면 라우팅 | 정상 |
+| 위젯: 재생/다음/이전/좋아요/셔플/열기 | `MediaWidgetActions.kt:35`, `WidgetOpenIntent` | 정상 |
+| 알림: 좋아요/셔플 | `PlaybackService` 세션 명령 | 정상 |
+| 빈 람다/비활성 자리 | `DetailScreen.kt:1792`(구독 정보 없음), `MainActivity.kt:6311`(메뉴 내부 클릭 차단), `SongActionsSheet.kt:814`(업로드 진행 중) | 의도된 비활성, 정상 |
+
+## 3. 백그라운드 기능
+
+| 기능 | 위치 | 연결 | 상태 |
+|---|---|---|---|
+| 크로스페이드/자동 믹스 | `CrossfadeController.kt:110`, `:777`, `:988` | 설정 읽기, 틱, 분석 요청. 컨트롤러 1개만 생성 | 정상 |
+| 노래 버전 전환 | `SongVersionController.kt:113`, `PlaybackService.kt:2338` | `SharedLookups` 중복 차단, 크로스페이드/버전 스왑 상호 배제 | 정상 |
+| 다음 곡 선반입 | `PrefetchController.kt:72`, `AudioCache.prefetchQueue` | 한 경로만 사용, 같은 큐 요청 무시 | 정상 |
+| 프록시/일본 경유 | `AppSettings.publishProxy:2590` | `YouTubeProxy.update`, `MusicGateFallback.resetAll` | 정상 |
+| 가사 싱크/번역 | `LyricsController`, `LyricsTiming`, `TranslationAhead` | 소스·타이밍·번역 캐시/중복 차단 | 정상 |
+| 노래 검증(Whisper) | `LyricsTiming.verifySong:1167` | `LyricsController`가 AI 타이밍/저전력/키 조건에서 호출 | 정상 |
+| 싱크 채점 모드 | `SyncTestMode.kt:34,49,81` | `sync-test.flag`가 있을 때만 WAV/덤프 | 확인 불가(외부 플래그, 의도) |
+| 진단 로그 | `TrackLog`, `TrackLogPersistence` | 이벤트/버스트 flush, 내보내기 | 정상 |
+| 시크릿 모드 | `AppSettings.privateListening`, `ListeningRecorder`, `PlaybackService` | 기록/스크로블/Discord 차단 | 정상 |
+| 최근 재생/감상 기록 | `ListeningStats`, `RecentShelf`, `LocalPlayHistory` | 재생 이벤트 기록 | 정상 |
+| 다운로드 | `DownloadService.kt:116`, `Downloads`, `LikedAutoDownload`, `MvSoundRedownload` | 큐/진행/자동 다운로드 | 정상(유휴 100ms 폴링은 다음 단계) |
+| 스크로블 | `ScrobbleManager`, `LastFM`, `ListenBrainzManager` | 재생/일시정지/곡 전환 이벤트 | 정상 |
+| 함께 듣기 | `PartySync.kt:225`, `ListenTogether.kt:1304,1332` | 파티 중에만 틱/ping/report | 정상(파티 동기화에 필요) |
+| 위젯 | `MediaWidgetActions`, `MediaWidgetSnapshot` | 세션 명령/스냅샷 | 정상 |
+| SponsorBlock | `SkipSegments.kt`, `PlaybackService.kt:9498` | 설정 변경 즉시 반영, HTTP 실패 로그 추가 | 정상(이번에 고침) |
+| ListenBrainz 추천 | `SimilarCandidates.kt:97,164` | 토큰 없는 유사곡 API → AutoPlay | 정상 |
+| HQ 소스/등급/다음 곡 준비 | `HqAudioVerify.kt:129`, `HqVerificationStore`, `SourceResolver.bestAcross` | 검증·캐시·다음 곡 준비 | 정상 |
+| 설정 공유(백업) | `Backup.kt:71,115`, `AppSettings.exportPrefs/importPrefs` | 설정/기록/재생목록 내보내기·가져오기 | 정상(비밀키 제외 보강) |
+| 커버 가수 이동 | `CoverTitles.creditedArtist:301`, `ArtistCredits.coverSingerChannelId:116` | 곡 메뉴/크레딧/스크로블 | 정상 |
+| 충전 조건 제거 | `AppSettings.heavyWorkAllowed:489` | `!lowPower`만 사용, 충전 여부 미사용 | 정상 |
+
+## 4. 이번에 고친 것
+
+### 4.1 백업이 Deepgram API 키를 내보내던 문제 — `AppSettings.kt:2742`
+
+`SECRETS`에 `KEY_DEEPGRAM_API_KEY`가 빠져 있었다. Gemini·PaxSenix·Last.fm·
+ListenBrainz 키는 제외하면서 Deepgram만 일반 설정처럼 `exportPrefs()`에 실렸고,
+백업 파일을 공유하면 계정 키가 함께 나갔다. `SECRETS`에 추가해 내보내기와
+가져오기 모두에서 제외했다. 기존 백업 파일을 가져올 때도 이 키는 덮어쓰지 않고
+기기의 키를 유지한다. 설정 화면·동작·백업 스키마는 그대로다.
+
+### 4.2 SponsorBlock 스위치가 재생 중 다음 이벤트까지 무시되던 문제 — `PlaybackService.kt:8492,9498`
+
+`skip_non_music_parts`/`skip_sponsor_parts`는 `checkSkipSegments()`가 불릴 때만
+읽혔다. 그 함수는 재생/일시정지 변경이나 이미 예약된 구간 메시지에서만 불려서,
+재생 중에 스위치를 켜면 다음 곡/일시정지까지 적용되지 않았다. 이제 두 설정의
+변화를 `observeSettings()`에서 직접 받아 `refreshSkipSegmentsForSettings()`로
+현재 곡에 적용한다. 끄면 예약 메시지를 취소하고, 켜면 이미 받은 구간을 재사용해
+카테고리만 다시 고른다. 새 타이머·폴링은 없다.
+
+### 4.3 조용한 실패에 TrackLog 경고 — `PlaybackService.kt:430,464,513,544,571,649`, `SkipSegments.kt:266,274`
+
+Android Auto용 최근재생/빠른선택/좋아요/홈/재생목록/폴더 갱신이 예외를
+`emptyList()`/`null`로 삼키고 있었다. 이제 실패 종류만(예외 클래스 이름)
+`TrackLog.w`로 남긴다. SponsorBlock은 HTTP 비성공 응답과 네트워크 실패를
+`TrackLog.w`로 남긴다. 키·검색어·계정 정보는 쓰지 않는다.
+
+### 4.4 확인만 한 것
+
+- 같은 일을 두 곳에서 하는 경로: 버전 스왑과 크로스페이드가 서로를 배제하고
+  (`PlaybackService.kt:2338`), 선반입은 `PrefetchController` 한 곳이며,
+  좋아요 자동 다운로드는 두 진입점이 있어도 `alreadyHandled`로 막는다.
+- 항상 꺼진 플래그: `AppUpdateChecker.CHECK_UPSTREAM_RELEASES=false`는 포크
+  서명상 업스트림 APK를 설치할 수 없어 의도적으로 끈 것이고, 대신
+  `noticeUpstream`이 하루 1회 알림을 띄운다. 도달 불가 기능 아님.
+- `.ds-ctx/`는 지시대로 수정하지 않았다.
+
+## 5. 남긴 것(판단 필요/다음 단계)
+
+- `lastfm_endpoint`: 설정 UI가 없어 일반 사용자는 바꿀 수 없다. 의도된 숨김인지
+  확인 필요(기능 자체는 읽힘).
+- Android Auto의 나머지 `catch (_: Exception) { emptyList() }`(재생목록/검색/홈
+  폴백 등 `PlaybackService.kt:10400~10830`)는 같은 패턴이 남아 있다. 이번에는
+  캐시 경로만 로그를 넣었다.
+- `DownloadService.work`의 유휴 100ms 폴링(`DownloadService.kt:125`)은 배터리
+  우선 원칙의 다음 후보. 이벤트 기반 wake-up으로 바꾸는 것은 별도 작업.
+- `CanvasArtworkPlayer`의 3초 프레임 readback(`CanvasArtworkPlayer.kt:351`)은
+  화면·전체화면 조건으로 게이트되어 있으나, 배터리 실측 후 주기 조정 여지가 있다.
+- `AppSettings.exportPrefs`는 여전히 `KEY_LAST_VERSION_CODE` 외 기기 로컬 키를
+  `DEVICE_LOCAL`로 관리한다. 새 기기 로컬 키가 추가되면 여기에 등록해야 한다.
+
+## 6. 테스트
+
+- 신규 `shared/src/jvmTest/.../data/cover/CoverCreditTest.kt`
+  - 커버 byline에서 가수/원곡자 분리
+  - 파싱된 커버 필드가 byline보다 우선
+  - 일반 곡은 artist 그대로, 원곡자 null
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.cover.CoverCreditTest' --console=plain -q` 통과.
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과.
+- 기존 `SkipSegmentsTest`, `BackupLibraryRoundTripTest`, `TitleNormalizationTest`,
+  `HqMatchPolicyTest`, `HqTierTest`, `DownloadedArtworkCandidatesTest`는 동작
+  불변이므로 그대로 통과해야 한다.

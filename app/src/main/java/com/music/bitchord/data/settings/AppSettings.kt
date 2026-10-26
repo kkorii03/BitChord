@@ -2747,6 +2747,11 @@ object AppSettings {
         KEY_SPOTIFY_SPDC_TOKEN,
         KEY_PAXSENIX_API_KEY,
         KEY_GEMINI_API_KEY,
+        // The AI timing key is a credential like the rest: it is written to
+        // ordinary preferences (not the encrypted store), so an export that
+        // did not filter it would carry the listener's Deepgram account key
+        // into a file they may share.
+        KEY_DEEPGRAM_API_KEY,
     )
 
     /**
