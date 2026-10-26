@@ -39,11 +39,13 @@ import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.math.abs
@@ -121,6 +123,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val tailResults = ConcurrentHashMap<String, TrackAnalysis>()
     /** Windows already measured, so a cached side is never decoded twice. */
     private val measuredWindows = ConcurrentHashMap<String, MutableSet<AnalysisWindow>>()
+    /** Callers waiting on one window; completed when its result or failure lands. */
+    private val windowWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     /** Failed attempts per window, bounding a track that cannot be decoded. */
     private val regionFailures = ConcurrentHashMap<String, Int>()
     /** Cumulative decode time per track, for the per-transition analysisMs log. */
@@ -256,6 +260,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 headResults[trackId] = stored
                 tailResults[trackId] = stored
                 windowsOf(trackId).addAll(listOf(AnalysisWindow.HEAD, AnalysisWindow.TAIL))
+                completeWindow(trackId, AnalysisWindow.HEAD)
+                completeWindow(trackId, AnalysisWindow.TAIL)
             }
         }
     }
@@ -331,6 +337,33 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     /** True once [trackId] has a usable result for [window]. */
     fun hasWindow(trackId: String, window: AnalysisWindow): Boolean =
         measuredWindows[trackId]?.contains(window) == true
+
+    /**
+     * Waits for one window's first answer, without polling.
+     *
+     * The next-song bundle requests the incoming track's opening and then
+     * suspends here until the analysis thread publishes it (or gives up), so
+     * its log line can say whether the mix was ready before the track started.
+     * A timeout only ends the wait; the existing analysis keeps running and
+     * the crossfade path still picks it up.
+     */
+    suspend fun awaitWindow(trackId: String, window: AnalysisWindow, timeoutMs: Long): Boolean {
+        if (hasWindow(trackId, window)) return true
+        val key = "$trackId@${window.name}"
+        val waiter = windowWaiters.computeIfAbsent(key) { CompletableDeferred() }
+        if (hasWindow(trackId, window)) {
+            waiter.complete(Unit)
+            return true
+        }
+        return withTimeoutOrNull(timeoutMs) {
+            waiter.await()
+            true
+        } ?: hasWindow(trackId, window)
+    }
+
+    private fun completeWindow(trackId: String, window: AnalysisWindow) {
+        windowWaiters.remove("$trackId@${window.name}")?.complete(Unit)
+    }
 
     /** Milliseconds spent decoding and measuring [trackId] so far. */
     fun analysisTimeMs(trackId: String): Long = analysisMillis[trackId] ?: 0L
@@ -465,6 +498,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         provisional.remove(trackId)
         val merged = mergeWindows(trackId, durationSeconds)
         results[trackId] = merged
+        completeWindow(trackId, window)
         // Only a track measured at both ends is persisted. A head-only result
         // is missing the outgoing half, and a tail-only one the incoming half;
         // storing either would freeze a deliberately partial answer in place.
@@ -491,6 +525,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         Log.w(TAG, "Giving up on $trackId ($window) after $MAX_REGION_ATTEMPTS attempts")
         windowsOf(trackId).add(window)
         if (results[trackId] == null) results[trackId] = empty(trackId, durationSeconds)
+        completeWindow(trackId, window)
     }
 
     private fun windowsOf(trackId: String): MutableSet<AnalysisWindow> =
@@ -1481,6 +1516,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headResults.clear()
         tailResults.clear()
         measuredWindows.clear()
+        windowWaiters.values.forEach { it.complete(Unit) }
+        windowWaiters.clear()
         regionFailures.clear()
         analysisMillis.clear()
         tracker.release()

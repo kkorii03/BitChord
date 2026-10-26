@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.NextPrepCache
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.playback.smart.SyncTestMode
@@ -249,6 +250,22 @@ class LyricsController(
             return
         }
         _lyricsChecked.value = false
+        // The next-song bundle already looked these up. Put them on screen
+        // before the lookup below even starts, with the stored correction
+        // applied by startTiming; the lookup then confirms the same memoised
+        // answer rather than making a request.
+        NextPrepCache.get(videoId)?.let { prepared ->
+            if (prepared.source != null) {
+                publishLyrics(
+                    LyricsRepository.Result(
+                        source = prepared.source,
+                        lines = prepared.raw,
+                        searchedAs = prepared.searchedAs,
+                    ),
+                )
+                _lyricsChecked.value = true
+            }
+        }
         lyricsJob = scope.launch {
             // A per-song override is the last word: it comes before the
             // downloaded file's tags or `lyrics.lrc`, and before any provider

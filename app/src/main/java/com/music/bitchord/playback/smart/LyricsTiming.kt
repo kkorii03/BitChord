@@ -1169,6 +1169,25 @@ object LyricsTiming {
      * when an engine answered and its answer was recorded; false when there
      * was nothing to ask, or the song was held for a 429.
      */
+    /**
+     * Whether this song's sync check already has an answer for these lyrics
+     * and this audio source. The next-song bundle uses it to skip the step
+     * entirely on a replay, rather than asking [verifySong] to re-derive the
+     * same "nothing left to do".
+     */
+    suspend fun songVerified(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+    ): Boolean {
+        val key = textKey(
+            lines,
+            audioSourceKey(song.videoId, song.localUri != null),
+        )
+        val entry = store(context).get(song.videoId) ?: return false
+        return entry.aiTextKey == key && entry.ai != null
+    }
+
     suspend fun verifySong(
         context: Context,
         song: Song,

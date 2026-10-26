@@ -7,6 +7,7 @@ import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
+import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -107,6 +108,48 @@ internal object TranslationAhead {
         nextId = next.videoId
         val app = context.applicationContext
         nextJob = scope.launch { prepare(app, next, allowHeavy) }
+    }
+
+    /** The lyrics a prep pass found, and whether they came out of a downloaded file. */
+    internal class AheadLyrics(
+        val lines: List<LyricLine>?,
+        val source: LyricsSource?,
+        val searchedAs: Pair<String, String>?,
+        val fromFile: Boolean,
+    )
+
+    /**
+     * The cheap half of [nextTrack] on its own, for the next-song bundle: the
+     * same search the player will make, so the answer is already in
+     * [LyricsRepository]'s memo (and the disk cache) when the track opens.
+     *
+     * A download carries its own lyrics, so those are read instead of asking
+     * the network for a second copy. Nothing is timed or translated here; that
+     * is [nextTrack]'s heavy pass, and the bundle's own sync step.
+     */
+    internal suspend fun lyricsForPrep(
+        app: Context,
+        song: Song,
+        allowHeavy: Boolean,
+    ): AheadLyrics {
+        song.localUri?.let { uri ->
+            val embedded = EmbeddedLyrics.withSource(app, uri)
+            if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {
+                return AheadLyrics(
+                    lines = embedded.lines,
+                    source = embedded.source,
+                    searchedAs = null,
+                    fromFile = true,
+                )
+            }
+        }
+        val found = lookUp(song, transcribe = allowHeavy && song.localUri == null)
+        return AheadLyrics(
+            lines = found?.lines,
+            source = found?.source,
+            searchedAs = found?.searchedAs,
+            fromFile = false,
+        )
     }
 
     /**
