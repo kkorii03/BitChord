@@ -164,6 +164,39 @@ class ProxyRoutePolicyTest {
         assertNull(ProxyValidation.validateBackup(normalized))
     }
 
+    @Test
+    fun `without a backup a success on the backup still returns to the primary`() {
+        assertEquals(
+            ProxyRoute.PRIMARY,
+            ProxyRoutePolicy.nextRouteAfterSuccess(
+                current = ProxyRoute.BACKUP,
+                hasBackup = false,
+                msSinceSwitch = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun `the primary is retried after fifteen minutes on the backup`() {
+        assertEquals(15L * 60L * 1000L, ProxyRoutePolicy.PRIMARY_RETRY_AFTER_MS)
+        assertEquals(
+            ProxyRoute.BACKUP,
+            ProxyRoutePolicy.nextRouteAfterSuccess(
+                current = ProxyRoute.BACKUP,
+                hasBackup = true,
+                msSinceSwitch = ProxyRoutePolicy.PRIMARY_RETRY_AFTER_MS - 1,
+            ),
+        )
+        assertEquals(
+            ProxyRoute.PRIMARY,
+            ProxyRoutePolicy.nextRouteAfterSuccess(
+                current = ProxyRoute.BACKUP,
+                hasBackup = true,
+                msSinceSwitch = ProxyRoutePolicy.PRIMARY_RETRY_AFTER_MS,
+            ),
+        )
+    }
+
     private fun selectedPort(): Int =
         (YouTubeProxy.proxySelector.select(musicUri).single().address() as InetSocketAddress).port
 }

@@ -37,4 +37,18 @@ class FileLyricsOriginTest {
         assertFalse(FileLyricsOrigin.timingIsUnverified(null, ""))
         assertFalse(FileLyricsOrigin.timingIsUnverified("PMivT7MJ41M", ""))
     }
+
+    @Test
+    fun `a blank provider or id is named unknown rather than printed empty`() {
+        assertEquals("file:unknown@PMivT7MJ41M", FileLyricsOrigin.label("", "PMivT7MJ41M"))
+        assertEquals("file:LRCLIB@unknown", FileLyricsOrigin.label("LRCLIB", ""))
+        assertEquals("file:unknown@unknown", FileLyricsOrigin.label("   ", "   "))
+    }
+
+    @Test
+    fun `a blank stored id is never a mismatch`() {
+        assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("", "PMivT7MJ41M"))
+        assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("   ", "PMivT7MJ41M"))
+        assertFalse(FileLyricsOrigin.timingIsUnverified("   ", ""))
+    }
 }
