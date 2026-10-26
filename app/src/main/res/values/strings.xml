@@ -534,6 +534,8 @@
     <string name="pipeline_dsp">DSP</string>
     <string name="pipeline_output_device">Output Device</string>
     <string name="pipeline_source">Source</string>
+    <string name="pipeline_source_verified">Source: %1$s · Verified (offset %2$s ms)</string>
+    <string name="pipeline_source_unverified">Source: %1$s · Not verified</string>
     <string name="pipeline_format">Format</string>
     <string name="pipeline_bit_depth">Bit Depth</string>
     <string name="pipeline_sample_rate">Sample Rate</string>

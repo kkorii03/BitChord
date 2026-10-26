@@ -404,11 +404,19 @@ object AudioOutputStatus {
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {
         val isFloat = encoding == AudioFormat.ENCODING_PCM_FLOAT
+        val rejectedFloat = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 &&
+            encoding == AudioFormat.ENCODING_PCM_16BIT
         val baseSnapshot = current.value.copy(
             actualEncoding = encoding,
             actualSampleRateHz = sampleRateHz,
             bufferSize = bufferSize ?: current.value.bufferSize,
             floatFallback = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 && !isFloat,
+            fallbackReason = if (rejectedFloat) FallbackReason.ROUTE_LIMITATION else current.value.fallbackReason,
+            fallbackDetail = if (rejectedFloat) {
+                "기기가 Float32 AudioTrack을 거부해 16비트 PCM으로 대체"
+            } else {
+                current.value.fallbackDetail
+            },
         )
         current.value = evaluateActualPath(baseSnapshot)
     }

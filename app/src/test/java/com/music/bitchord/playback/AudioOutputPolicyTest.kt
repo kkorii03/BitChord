@@ -20,8 +20,8 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun floatFallsBackOnSpeakerEvenWhenRequested() {
-        assertFalse(
+    fun floatIsAllowedOffUsbWhenRequested() {
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 isPreferredUsbRoute = false,
@@ -31,8 +31,8 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun floatFallsBackWhenUsbDoesNotAdvertiseIt() {
-        assertFalse(
+    fun floatDoesNotDependOnAdvertisedEncodings() {
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 isPreferredUsbRoute = true,
@@ -53,12 +53,19 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun routeAwarePhoneIsAlwaysCappedAt16Bit() {
+    fun routeAwarePhoneAlwaysUsesPcm16EvenWhenFloatRequested() {
         assertFalse(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.PHONE,
                 advertisesPcmFloat = true,
+            ),
+        )
+        assertFalse(
+            AudioOutputPolicy.shouldUseFloatOutput(
+                OutputPcmMode.FLOAT_32,
+                routeKind = AudioRouting.Kind.PHONE,
+                advertisesPcmFloat = false,
             ),
         )
     }
@@ -72,7 +79,7 @@ class AudioOutputPolicyTest {
                 advertisesPcmFloat = true,
             ),
         )
-        assertFalse(
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.USB,
@@ -82,7 +89,7 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun routeAwareBluetoothAllowsFloatOnlyWhenAdvertised() {
+    fun routeAwareBluetoothTakesFloatEvenWhenOnlyPcm16IsAdvertised() {
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
@@ -90,7 +97,7 @@ class AudioOutputPolicyTest {
                 advertisesPcmFloat = true,
             ),
         )
-        assertFalse(
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.BLUETOOTH,

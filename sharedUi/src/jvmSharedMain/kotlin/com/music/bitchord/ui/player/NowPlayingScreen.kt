@@ -3485,6 +3485,10 @@ fun NowPlayingScreen(
                                             startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
                                             onOpenArtist = onOpenArtist,
                                         )
+                                        TitleMeasuredQualityBadge(
+                                            song = song,
+                                            modifier = Modifier.padding(top = 2.dp),
+                                        )
                                     }
                                 }
                             }
