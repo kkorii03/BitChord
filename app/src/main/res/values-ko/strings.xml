@@ -189,6 +189,9 @@
     <string name="redownload_higher_quality">고음질로 다시 받기</string>
     <string name="download_already_best_quality">이미 최고 음질</string>
     <string name="quality_upgrade_done">고음질로 바꿨습니다</string>
+    <string name="quality_upgrade_switching">고음질로 전환합니다</string>
+    <string name="quality_upgrade_mismatch">이 노래와 일치하는 고음질 버전을 찾을 수 없습니다</string>
+    <string name="quality_upgrade_reference_unavailable">지금은 음질을 확인할 수 없습니다. 다시 시도하십시오</string>
     <string name="quality_upgrade_already_best">이미 이 곡의 최고 음질입니다</string>
     <string name="quality_upgrade_no_better">더 높은 음질을 찾지 못했습니다</string>
     <string name="quality_upgrade_failed">음질을 바꾸지 못했습니다</string>

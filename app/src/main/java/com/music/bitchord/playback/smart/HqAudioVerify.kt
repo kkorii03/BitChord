@@ -15,13 +15,13 @@ import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqReferenceCache
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.HqVerifyPolicy
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
-import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.ProxyAwareDataSourceFactory
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
@@ -63,25 +63,63 @@ object HqAudioVerify {
     /** How much of each recording is compared. */
     const val COMPARE_SECONDS = 90.0
 
-    /** How long to wait for the reference's opening to reach the cache. */
-    private const val REFERENCE_HEAD_TIMEOUT_MS = 20_000L
+    /**
+     * How long an automatic attempt waits for the reference's opening.
+     *
+     * Short because a missing reference is no longer remembered across plays:
+     * the next playback event asks again, so giving up early costs nothing but
+     * a retry later.
+     */
+    private const val REFERENCE_HEAD_TIMEOUT_MS = 10_000L
+
+    /**
+     * A manual request is someone waiting on the answer, so it gets the longer
+     * wait that makes a slow head arrive instead of being reported missing.
+     */
+    private const val MANUAL_REFERENCE_HEAD_TIMEOUT_MS = 20_000L
 
     /** One verification per pair at a time while that verification is running. */
     private val locks = ConcurrentHashMap<String, Mutex>()
 
     /**
-     * References whose opening could not be had, and when. Several candidates
-     * are tried in one race; without this every one of them would wait the
-     * full head timeout for the same missing bytes.
+     * References whose opening could not be had during this playback, and why.
+     *
+     * Several candidates are tried in one race; without this every one of them
+     * would wait the full head timeout for the same missing bytes. It is
+     * cleared on the next playback event and ignored by manual requests: a
+     * failure now is not a verdict about the next attempt.
      */
-    private val noReference = ConcurrentHashMap<String, Long>()
-    private const val NO_REFERENCE_TTL_MS = 10 * 60_000L
+    private val noReference = ConcurrentHashMap<String, NoReferenceReason>()
 
-    /**
-     * A failure is only useful until the bytes have had a chance to arrive;
-     * this bounds the map even in a session that never sees a reference again.
-     */
+    /** A session can still reach many tracks; the map never needs to outgrow one queue. */
     private const val MAX_NO_REFERENCE = 256
+
+    /** Why the YouTube reference could not be compared this time. */
+    enum class NoReferenceReason(val wire: String) {
+        HEAD_TIMEOUT("head-timeout"),
+        NO_SOURCE("no-source"),
+        DECODE_FAILED("decode-failed"),
+        CANCELLED("cancelled"),
+    }
+
+    /** The full answer of a verification, including why it could not be measured. */
+    sealed interface Outcome {
+        data class Verified(val value: HqVerificationStore.Verified) : Outcome
+
+        /** A real measurement that did not match the YouTube recording. */
+        data object Mismatch : Outcome
+
+        /** The YouTube reference itself could not be opened, decoded or reached. */
+        data class NoReference(val reason: NoReferenceReason) : Outcome
+
+        /** The candidate could not be measured, or the request was not verifiable. */
+        data object Unavailable : Outcome
+    }
+
+    private sealed interface Reference {
+        data class Ready(val features: ChromaAlignment.Features) : Reference
+        data class Missing(val reason: NoReferenceReason) : Reference
+    }
 
     /**
      * The reference profiles already measured in this session, by YouTube id.
@@ -132,35 +170,51 @@ object HqAudioVerify {
         youtubeId: String,
         target: TrackMatcher.Target,
         stream: SourceStream,
-    ): HqVerificationStore.Verified? = withContext(Dispatchers.IO) {
-        if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext null
+    ): HqVerificationStore.Verified? = verifyOutcome(context, youtubeId, target, stream).verifiedOrNull()
+
+    /**
+     * As [verify], with the reason when the candidate cannot be used.
+     *
+     * [manual] is a listener waiting on the answer: it ignores a missing
+     * reference remembered earlier in this play and waits longer for the
+     * YouTube opening. It never turns a missing reference into a rejection.
+     */
+    suspend fun verifyOutcome(
+        context: Context,
+        youtubeId: String,
+        target: TrackMatcher.Target,
+        stream: SourceStream,
+        manual: Boolean = false,
+    ): Outcome = withContext(Dispatchers.IO) {
+        if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable
         // A source-backed row has no YouTube song version to compare with;
         // its own source is the reference, so there is nothing to verify here.
         if (SourceTrackKeys.parse(youtubeId) != null) {
-            return@withContext HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL)
+            return@withContext Outcome.Verified(
+                HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL),
+            )
         }
         val sourceId = stream.sourceConfigId
         // YouTube's own copy is the reference, not a candidate to verify.
         if (sourceId == null || SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) {
-            return@withContext HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL)
+            return@withContext Outcome.Verified(
+                HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL),
+            )
         }
         val trackId = stream.trackId
-        HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let { return@withContext it }
-        if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
-            return@withContext null
+        HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let {
+            return@withContext Outcome.Verified(it)
         }
-        // Verification is a ninety-second decode on each side. A verdict
-        // already on disk is returned above; with the screen off there is
-        // nobody waiting on a fresh one — the next-song read-ahead can ask
-        // again once it is on — so this is exactly the work to leave undone
-        // rather than to spend battery on.
-        if (!PowerState.screenOn) return@withContext null
+        // Only a measured mismatch is stored here; a missing reference never is.
+        if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
+            return@withContext Outcome.Mismatch
+        }
         val sourceName = SourceRegistry.config(sourceId)?.displayName ?: "source"
         // A manifest is a container the decoder here cannot read; it cannot be
         // proved and must not be swapped in blind.
         if (StreamContainer.isManifest(stream.url)) {
             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-            return@withContext null
+            return@withContext Outcome.Unavailable
         }
 
         val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
@@ -169,9 +223,9 @@ object HqAudioVerify {
             return@withContext lock.withLock {
                 coroutineScope {
                     HqVerificationStore.get(context, youtubeId, sourceId, trackId)
-                        ?.let { return@coroutineScope it }
+                        ?.let { return@coroutineScope Outcome.Verified(it) }
                     if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
-                        return@coroutineScope null
+                        return@coroutineScope Outcome.Mismatch
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the cached YouTube opening and
@@ -182,29 +236,49 @@ object HqAudioVerify {
                     // missing reference cancels the candidate read before
                     // anything waits on it.
                     val candidateDeferred = async { candidateFeatures(stream) }
-                    val reference = referenceFeatures(context, youtubeId)
-                    if (reference == null) {
+                    val reference = referenceFeatures(
+                        context,
+                        youtubeId,
+                        target.title,
+                        manual,
+                    )
+                    if (reference is Reference.Missing) {
                         candidateDeferred.cancel()
-                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-                        TrackLog.d(TAG, "hq-verify: '${target.title}' no reference audio; keeping YouTube", youtubeId)
-                        return@coroutineScope null
+                        return@coroutineScope Outcome.NoReference(reference.reason)
                     }
                     val candidate = candidateDeferred.await()
                     if (candidate == null) {
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-                        return@coroutineScope null
+                        return@coroutineScope Outcome.Unavailable
                     }
                     val result = runCatching {
-                        ChromaAlignment.align(reference, candidate, videoComplete = false)
+                        ChromaAlignment.align(
+                            (reference as Reference.Ready).features,
+                            candidate,
+                            videoComplete = false,
+                        )
                     }.getOrNull()
-                    val match = result?.matchPercent ?: 0
-                    val offset = result?.map?.map(0L) ?: 0L
-                    val rate = result?.rate ?: 1.0
+                    if (result == null) {
+                        // The aligner failed rather than finding a poor match;
+                        // that says nothing about the candidate, so it must not
+                        // become a stored rejection.
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                        return@coroutineScope Outcome.Unavailable
+                    }
+                    val match = result.matchPercent
+                    val offset = result.map.map(0L)
+                    val rate = result.rate
                     val verdict = HqMatchPolicy.verdict(match, offset, rate)
                     logVerdict(target.title, sourceName, match, offset, verdict.accepted, about = youtubeId)
                     if (!verdict.accepted) {
-                        reject(context, youtubeId, sourceId, trackId)
-                        return@coroutineScope null
+                        if (HqVerifyPolicy.shouldPersistRejection(
+                                referenceAvailable = true,
+                                accepted = verdict.accepted,
+                            )
+                        ) {
+                            reject(context, youtubeId, sourceId, trackId)
+                        }
+                        return@coroutineScope Outcome.Mismatch
                     }
                     val tier = HqQuality.tierOf(stream.format)
                     val verified = HqVerificationStore.Verified(offset, rate, match, tier)
@@ -212,7 +286,7 @@ object HqAudioVerify {
                     // A downloaded or pre-saved copy may now be replaceable with
                     // this newly proved rung, even if it was already high quality.
                     HqLibraryUpgrade.onVerified(context)
-                    verified
+                    Outcome.Verified(verified)
                 }
             }
         } finally {
@@ -224,6 +298,21 @@ object HqAudioVerify {
             // fresh lock, and the verdict cache still answers it.
             locks.remove(key, lock)
         }
+    }
+
+    private fun Outcome.verifiedOrNull(): HqVerificationStore.Verified? =
+        (this as? Outcome.Verified)?.value
+
+    /**
+     * The next playback event makes every remembered missing reference stale.
+     *
+     * A failure belongs to the attempt that met it — a slow head, a decoder
+     * that was busy — not to the recording or to the next time the track is
+     * played. Clearing here is what makes the next play try again without a
+     * ten-minute timer.
+     */
+    fun onPlaybackStarted() {
+        noReference.clear()
     }
 
     /** The one line a verification leaves: the figure and the verdict, never lyrics text. */
@@ -253,14 +342,18 @@ object HqAudioVerify {
         HqVerificationStore.reject(context, youtubeId, sourceId, trackId)
     }
 
-    /** Remembers a missing reference, pruning expired failures first. */
-    private fun noteNoReference(youtubeId: String) {
-        val now = System.currentTimeMillis()
-        if (noReference.size >= MAX_NO_REFERENCE) {
-            noReference.entries.removeIf { now - it.value >= NO_REFERENCE_TTL_MS }
-            if (noReference.size >= MAX_NO_REFERENCE) noReference.clear()
-        }
-        noReference[youtubeId] = now
+    /** Remembers a missing reference for the rest of this playback, with its cause. */
+    private fun noteNoReference(youtubeId: String, reason: NoReferenceReason) {
+        if (noReference.size >= MAX_NO_REFERENCE) noReference.clear()
+        noReference[youtubeId] = reason
+    }
+
+    private fun logNoReference(title: String, youtubeId: String, reason: NoReferenceReason) {
+        TrackLog.d(
+            TAG,
+            "hq-verify: '$title' no reference reason=${reason.wire}",
+            youtubeId,
+        )
     }
 
     /** A stored reference profile for [youtubeId], or null when there is none usable. */
@@ -325,18 +418,20 @@ object HqAudioVerify {
     private suspend fun referenceFeatures(
         context: Context,
         youtubeId: String,
-    ): ChromaAlignment.Features? {
-        referenceCache.get(youtubeId)?.let { return it }
+        title: String,
+        manual: Boolean,
+    ): Reference {
+        referenceCache.get(youtubeId)?.let { return Reference.Ready(it) }
         val lock = referenceLocks.getOrPut(youtubeId) { Mutex() }
         try {
             return lock.withLock {
-                referenceCache.get(youtubeId)?.let { return@withLock it }
+                referenceCache.get(youtubeId)?.let { return@withLock Reference.Ready(it) }
                 diskReference(context, youtubeId)?.let { cached ->
                     referenceCache.put(youtubeId, cached)
                     noReference.remove(youtubeId)
-                    return@withLock cached
+                    return@withLock Reference.Ready(cached)
                 }
-                referenceFeaturesUncached(context, youtubeId)
+                referenceFeaturesUncached(context, youtubeId, title, manual)
             }
         } finally {
             referenceLocks.remove(youtubeId, lock)
@@ -346,18 +441,25 @@ object HqAudioVerify {
     private suspend fun referenceFeaturesUncached(
         context: Context,
         youtubeId: String,
-    ): ChromaAlignment.Features? {
-        if (!PowerState.screenOn) return null
-        val now = System.currentTimeMillis()
-        val failedAt = noReference[youtubeId]
-        if (failedAt != null && now - failedAt < NO_REFERENCE_TTL_MS) return null
+        title: String,
+        manual: Boolean,
+    ): Reference {
+        if (manual) {
+            noReference.remove(youtubeId)
+        } else {
+            noReference[youtubeId]?.let { remembered ->
+                logNoReference(title, youtubeId, remembered)
+                return Reference.Missing(remembered)
+            }
+        }
         AudioCache.keepForTiming(youtubeId)
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(youtubeId))
         AudioCache.requestAnalysisHead(opus)
-        if (!AudioCache.awaitAnalysisHead(opus, REFERENCE_HEAD_TIMEOUT_MS)) {
-            noteNoReference(youtubeId)
-            TrackLog.d(TAG, "hq-verify: reference opening for $youtubeId did not arrive", youtubeId)
-            return null
+        val timeout = if (manual) MANUAL_REFERENCE_HEAD_TIMEOUT_MS else REFERENCE_HEAD_TIMEOUT_MS
+        if (!AudioCache.awaitAnalysisHead(opus, timeout)) {
+            noteNoReference(youtubeId, NoReferenceReason.HEAD_TIMEOUT)
+            logNoReference(title, youtubeId, NoReferenceReason.HEAD_TIMEOUT)
+            return Reference.Missing(NoReferenceReason.HEAD_TIMEOUT)
         }
         val song = Song(
             videoId = youtubeId,
@@ -367,17 +469,26 @@ object HqAudioVerify {
             isVideo = false,
         )
         val source = VersionAudioAligner.openDataSource(context, song) ?: run {
-            noteNoReference(youtubeId)
-            return null
+            noteNoReference(youtubeId, NoReferenceReason.NO_SOURCE)
+            logNoReference(title, youtubeId, NoReferenceReason.NO_SOURCE)
+            return Reference.Missing(NoReferenceReason.NO_SOURCE)
         }
         return try {
             val coroutine = currentCoroutineContext()
-            val features = featuresOf(source) { coroutine.isActive && PowerState.screenOn }
+            val features = featuresOf(source) { coroutine.isActive }
             if (features == null) {
                 // A cancelled decode is not a missing reference: the next
-                // playback must be free to try again. The screen going off is
-                // the same kind of interruption, not a verdict about the audio.
-                if (coroutine.isActive && PowerState.screenOn) noteNoReference(youtubeId)
+                // playback must be free to try again.
+                val reason = if (coroutine.isActive) {
+                    NoReferenceReason.DECODE_FAILED
+                } else {
+                    NoReferenceReason.CANCELLED
+                }
+                if (reason != NoReferenceReason.CANCELLED) {
+                    noteNoReference(youtubeId, reason)
+                }
+                logNoReference(title, youtubeId, reason)
+                Reference.Missing(reason)
             } else {
                 // A partial head is returned for this comparison but not kept:
                 // the rest of the bytes may still arrive, and freezing a short
@@ -387,8 +498,8 @@ object HqAudioVerify {
                     storeReference(context, youtubeId, features)
                 }
                 noReference.remove(youtubeId)
+                Reference.Ready(features)
             }
-            features
         } finally {
             runCatching { source.close() }
         }
@@ -400,7 +511,7 @@ object HqAudioVerify {
         val source = UrlMediaDataSource(dataSource, Uri.parse(stream.url), stream.headers)
         return try {
             val coroutine = currentCoroutineContext()
-            featuresOf(source) { coroutine.isActive && PowerState.screenOn }
+            featuresOf(source) { coroutine.isActive }
         } finally {
             runCatching { source.close() }
         }

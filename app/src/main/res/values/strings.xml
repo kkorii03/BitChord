@@ -204,6 +204,9 @@
     <string name="redownload_higher_quality">Download again in higher quality</string>
     <string name="download_already_best_quality">Already the best quality</string>
     <string name="quality_upgrade_done">Upgraded to higher quality</string>
+    <string name="quality_upgrade_switching">Switching to higher quality</string>
+    <string name="quality_upgrade_mismatch">No high-quality version of this song was found</string>
+    <string name="quality_upgrade_reference_unavailable">Quality can\'t be checked right now. Try again</string>
     <string name="quality_upgrade_already_best">Already the best quality for this track</string>
     <string name="quality_upgrade_no_better">No higher-quality copy found</string>
     <string name="quality_upgrade_failed">Couldn\'t change the quality</string>
