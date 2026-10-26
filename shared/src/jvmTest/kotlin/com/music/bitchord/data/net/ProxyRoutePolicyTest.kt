@@ -37,6 +37,64 @@ class ProxyRoutePolicyTest {
     }
 
     @Test
+    fun `a success on the backup after the window returns to the primary by itself`() {
+        YouTubeProxy.update(withBackup)
+        ProxyHealthMonitor.recordUnreachable("test")
+        assertEquals(ProxyRoute.BACKUP, YouTubeProxy.activeRoute.value)
+        assertEquals(9090, selectedPort())
+
+        // The next browse success after the window is the event that moves
+        // traffic back; no timer or periodic probe is involved.
+        ProxyHealthMonitor.recordSuccess(
+            msSinceSwitch = ProxyRoutePolicy.PRIMARY_RETRY_AFTER_MS,
+        )
+
+        assertEquals(ProxyRoute.PRIMARY, YouTubeProxy.activeRoute.value)
+        assertFalse(YouTubeProxy.usingBackup)
+        assertEquals(8080, selectedPort())
+    }
+
+    @Test
+    fun `a success on the backup inside the window stays on the backup`() {
+        YouTubeProxy.update(withBackup)
+        ProxyHealthMonitor.recordUnreachable("test")
+
+        ProxyHealthMonitor.recordSuccess(
+            msSinceSwitch = ProxyRoutePolicy.PRIMARY_RETRY_AFTER_MS - 1,
+        )
+
+        assertEquals(ProxyRoute.BACKUP, YouTubeProxy.activeRoute.value)
+        assertTrue(YouTubeProxy.usingBackup)
+        assertEquals(9090, selectedPort())
+    }
+
+    @Test
+    fun `without a backup a success never moves the route`() {
+        assertEquals(
+            ProxyRoute.PRIMARY,
+            ProxyRoutePolicy.nextRouteAfterSuccess(
+                current = ProxyRoute.PRIMARY,
+                hasBackup = false,
+                msSinceSwitch = Long.MAX_VALUE,
+            ),
+        )
+    }
+
+    @Test
+    fun `a malformed backup does not receive traffic when the primary fails`() {
+        YouTubeProxy.update(
+            withBackup.copy(backupHost = "backup.example:9090", backupPort = 9090),
+        )
+        assertFalse(YouTubeProxy.config.backupUsable)
+
+        ProxyHealthMonitor.recordUnreachable("test")
+
+        assertEquals(ProxyRoute.PRIMARY, YouTubeProxy.activeRoute.value)
+        assertFalse(YouTubeProxy.usingBackup)
+        assertTrue(ProxyHealthMonitor.isMarkedUnreachable())
+    }
+
+    @Test
     fun `a failed primary moves to the backup`() {
         assertEquals(ProxyRoute.BACKUP, ProxyRoutePolicy.nextRouteAfterFailure(hasBackup = true))
     }

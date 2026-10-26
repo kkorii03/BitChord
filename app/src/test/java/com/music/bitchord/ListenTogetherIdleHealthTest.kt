@@ -34,4 +34,16 @@ class ListenTogetherIdleHealthTest {
     fun `in party probes even on metered when socket down`() {
         assertFalse(ListenTogether.shouldSkipIdleProbe(true, false, true, true))
     }
+
+    @Test
+    fun `a health check failure is logged once per day`() {
+        assertTrue(ListenTogether.healthFailureLogAllowed(day = 20_000L, lastLoggedDay = -1L))
+        assertFalse(ListenTogether.healthFailureLogAllowed(day = 20_000L, lastLoggedDay = 20_000L))
+        assertTrue(ListenTogether.healthFailureLogAllowed(day = 20_001L, lastLoggedDay = 20_000L))
+    }
+
+    @Test
+    fun `a backwards clock does not re-enable the failure log`() {
+        assertFalse(ListenTogether.healthFailureLogAllowed(day = 19_999L, lastLoggedDay = 20_000L))
+    }
 }

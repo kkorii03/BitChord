@@ -175,6 +175,29 @@ object MusicGateFallback {
     }
 
     /**
+     * Whether a failed Music request may be answered from the youtube.com
+     * fallback.
+     *
+     * With no proxy the old gate rule is unchanged: a GATED verdict is enough.
+     * With a usable proxy the fallback is only for a route that is actually
+     * down; a healthy proxy must not be bypassed behind the listener's back.
+     * The gate's own refusal still falls back when the request cannot use the
+     * proxy at all (a no-proxy install), which is the behaviour this keeps.
+     *
+     * Pure so the rule is tested without a network or mutable health state.
+     */
+    fun shouldUseYouTubeFallback(
+        proxyUsable: Boolean,
+        proxyUnreachable: Boolean,
+        gateActive: Boolean,
+        gateSignal: Boolean,
+    ): Boolean = when {
+        proxyUsable && proxyUnreachable -> true
+        proxyUsable -> gateActive && gateSignal
+        else -> gateActive
+    }
+
+    /**
      * Makes every identity read as gated, or gives the real verdicts back.
      *
      * Debug builds only — the application allows it through
