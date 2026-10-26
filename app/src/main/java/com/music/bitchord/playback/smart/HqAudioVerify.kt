@@ -3,10 +3,12 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import android.media.MediaDataSource
 import androidx.annotation.OptIn
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
+import com.music.bitchord.download.ManifestFile
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.WavAudio
 import com.music.bitchord.data.model.Song
@@ -143,7 +145,7 @@ object HqAudioVerify {
      * partial profile is never written, for the same reason it is not kept in
      * memory (see [HqReferenceCache]).
      */
-    private const val REFERENCE_DIR = "hq_reference"
+    private const val REFERENCE_DIR = "hq_reference_canonical_v2"
     private const val MAX_REFERENCE_FILES = 64
 
     /**
@@ -223,14 +225,18 @@ object HqAudioVerify {
         }
         // Only a measured mismatch is stored here; a missing reference never is.
         if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
-            return@withContext Outcome.Mismatch
+            if (manual) {
+                // A listener asking again is a request for a fresh measurement,
+                // not a replay of a rejection that may have come from a
+                // truncated profile. Drop it and measure the pair again.
+                HqVerificationStore.clearRejection(context, youtubeId, sourceId, trackId)
+            } else {
+                return@withContext Outcome.Mismatch
+            }
         }
-        // A manifest is a container the decoder here cannot read; it cannot be
-        // proved and must not be swapped in blind.
-        if (StreamContainer.isManifest(stream.url)) {
-            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
-            return@withContext Outcome.Unavailable
-        }
+        // A manifest is an index, not audio. It is assembled into a temporary
+        // ordinary file by [candidateFeatures] and decoded through the same
+        // path as a progressive candidate; it is never swapped in as-is.
 
         val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
         val lock = locks.getOrPut(key) { Mutex() }
@@ -240,7 +246,11 @@ object HqAudioVerify {
                     HqVerificationStore.get(context, youtubeId, sourceId, trackId)
                         ?.let { return@coroutineScope Outcome.Verified(it) }
                     if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
-                        return@coroutineScope Outcome.Mismatch
+                        if (manual) {
+                            HqVerificationStore.clearRejection(context, youtubeId, sourceId, trackId)
+                        } else {
+                            return@coroutineScope Outcome.Mismatch
+                        }
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
@@ -266,17 +276,17 @@ object HqAudioVerify {
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
                         return@coroutineScope Outcome.Unavailable
                     }
-                    // A head that stops short of the window while the reference
-                    // has the full one is not a shorter answer: comparing it
-                    // would read as a poor match and could be stored as a
-                    // rejection. It is merely unmeasurable. When both are short
-                    // (a genuinely short track), they are still comparable.
+                    // Both profiles have to cover the compared window. A head
+                    // that stopped early — a slow proxy, an EOF, a short
+                    // response — is not a shorter answer: comparing it would
+                    // read as a poor match and could be stored as a permanent
+                    // rejection. Leave it unmeasured so the next play retries.
                     val referenceFeatures = (reference as Reference.Ready).features
                     val referenceComplete =
                         HqReferenceCache.completeEnough(referenceFeatures, COMPARE_SECONDS)
                     val candidateComplete =
                         HqReferenceCache.completeEnough(candidate.features, COMPARE_SECONDS)
-                    if (referenceComplete && !candidateComplete) {
+                    if (!referenceComplete || !candidateComplete) {
                         logVerdict(
                             target.title,
                             sourceName,
@@ -284,8 +294,8 @@ object HqAudioVerify {
                             0L,
                             accepted = false,
                             about = youtubeId,
-                            reference = "wav",
-                            candidate = "file",
+                            reference = if (referenceComplete) "wav" else "wav-partial",
+                            candidate = if (candidateComplete) "file" else "file-partial",
                             bytes = candidate.bytes,
                         )
                         return@coroutineScope Outcome.Unavailable
@@ -445,6 +455,26 @@ object HqAudioVerify {
                     }
                     val candidate = candidateDeferred.await()
                         ?: return@coroutineScope DownloadedSound.Unavailable
+                    // As in [verifyOutcome]: a truncated profile is an
+                    // unmeasured attempt, never a permanent rejection of the
+                    // file. Both sides must cover the compared window.
+                    val referenceComplete =
+                        HqReferenceCache.completeEnough(reference, COMPARE_SECONDS)
+                    val candidateComplete =
+                        HqReferenceCache.completeEnough(candidate, COMPARE_SECONDS)
+                    if (!referenceComplete || !candidateComplete) {
+                        logVerdict(
+                            title = "downloaded file",
+                            sourceName = "download",
+                            match = 0,
+                            offset = 0L,
+                            accepted = false,
+                            about = youtubeId,
+                            reference = if (referenceComplete) "wav" else "wav-partial",
+                            candidate = if (candidateComplete) "file" else "file-partial",
+                        )
+                        return@coroutineScope DownloadedSound.Unavailable
+                    }
                     val result = runCatching {
                         ChromaAlignment.align(reference, candidate, videoComplete = false)
                     }.getOrNull() ?: return@coroutineScope DownloadedSound.Unavailable
@@ -461,7 +491,11 @@ object HqAudioVerify {
                         about = youtubeId,
                     )
                     if (!verdict.accepted) {
-                        if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank()) {
+                        if (HqVerifyPolicy.shouldPersistRejection(
+                                referenceAvailable = true,
+                                accepted = verdict.accepted,
+                            ) && !sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank()
+                        ) {
                             HqVerificationStore.reject(context, youtubeId, sourceConfigId, trackId)
                         }
                         return@coroutineScope DownloadedSound.Rejected
@@ -649,7 +683,10 @@ object HqAudioVerify {
         // opening to a small WAV; using the same path avoids a second decoder
         // reading a container the extractor may only have a truncated head of.
         // [VideoAudio] keeps the WAV by song, so the lyrics check and this
-        // measurement share one decode rather than paying for two.
+        // measurement share one decode rather than paying for two. It reads the
+        // plain-id YouTube copy, never a `#alt` substitute or an upgrade: this
+        // profile is stored under the YouTube id and used as the reference for
+        // every later candidate, so it must describe the YouTube upload.
         val song = Song(
             videoId = youtubeId,
             title = title,
@@ -707,35 +744,61 @@ object HqAudioVerify {
      * is unknown and each ranged reopen starts another request, which is what
      * left a 44.1 kHz stereo candidate with no first sample. A head-only file
      * on disk is what the platform extractor handles best, and a FLAC whose
-     * tail is missing still opens. The file is deleted on every exit.
+     * tail is missing still opens. A manifest is assembled from its first
+     * segments into the same kind of file, so it reaches the same decoder. The
+     * file is deleted on every exit.
      */
     private suspend fun candidateFeatures(
         context: Context,
         stream: SourceStream,
     ): Candidate? {
-        val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
-        if (needed <= 0L) return null
+        val manifest = StreamContainer.isManifest(stream.url)
+        val needed = if (manifest) {
+            0L
+        } else {
+            HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
+        }
+        if (!manifest && needed <= 0L) return null
         val directory = File(context.cacheDir, CANDIDATE_DIR)
         if (!directory.exists() && !directory.mkdirs()) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-dir")
             return null
         }
         val file = try {
-            File.createTempFile("candidate-", ".bin", directory)
+            File.createTempFile("candidate-", if (manifest) ".head" else ".bin", directory)
         } catch (e: Exception) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-file ${e.message}")
             return null
         }
         return try {
             val bytes = try {
-                downloadPrefix(stream, file, needed)
+                if (manifest) {
+                    val dash = StreamContainer.manifestMimeOf(stream.url) == MimeTypes.APPLICATION_MPD
+                    file.outputStream().buffered().use { sink ->
+                        ManifestFile.writeHead(
+                            cacheDir = directory,
+                            url = stream.url,
+                            headers = stream.headers,
+                            dash = dash,
+                            maxSeconds = COMPARE_SECONDS + 5.0,
+                            sink = sink,
+                            client = ProxyPlayback.mediaClientFor(stream.url),
+                        )
+                    }
+                    file.length()
+                } else {
+                    downloadPrefix(stream, file, needed)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
                 // A cancelled call surfaces as an IOException; only report it
                 // as a download failure when the coroutine is still wanted.
                 currentCoroutineContext().ensureActive()
-                TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
+                TrackLog.w(
+                    TAG,
+                    "decode: hq-verify failed at=${if (manifest) "manifest" else "download"} ${e.message}",
+                )
                 return null
             }
             if (bytes <= 0L) {

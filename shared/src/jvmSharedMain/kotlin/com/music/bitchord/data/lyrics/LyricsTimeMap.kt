@@ -118,8 +118,11 @@ fun List<LyricLine>.timedBy(map: LyricsTimeMap?, extraMs: Long = 0L): List<Lyric
     } else {
         { ms -> (map.map(ms) + extraMs).coerceAtLeast(0L) }
     }
-    return map { it.retimed(at) }
+    return retimedBy(at)
 }
+
+/** [this] moved by an arbitrary clock transform — see [PlaybackSync.transform]. */
+fun List<LyricLine>.retimedBy(at: (Long) -> Long): List<LyricLine> = map { it.retimed(at) }
 
 private fun LyricLine.retimed(at: (Long) -> Long): LyricLine = copy(
     timeMs = at(timeMs),

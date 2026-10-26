@@ -211,6 +211,10 @@ internal class NextTrackPreparation(
                     Step.SYNC -> {
                         val found = lyrics
                         val lines = found?.lines
+                        // The song check listens to the YouTube copy even when
+                        // an HQ substitute is pinned (see VideoAudio), so this
+                        // answer stays on the clock the lyrics are stored on.
+                        // The HQ offset is applied once when they are shown.
                         if (lines != null && lines.any { it.timeMs > 0 } && !song.isVideo) {
                             if (!LyricsTiming.songVerified(context, song, lines)) {
                                 LyricsTiming.verifySong(context, song, lines)
@@ -450,6 +454,7 @@ internal class NextTrackPreparation(
             } else {
                 LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
             },
+            localFile = song.localUri != null,
         )
     }
 

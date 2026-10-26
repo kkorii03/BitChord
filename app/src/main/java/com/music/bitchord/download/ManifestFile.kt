@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.OutputStream
@@ -89,6 +90,56 @@ internal object ManifestFile {
         sink.flush()
     }
 
+    /**
+     * The opening of a manifest, joined into an ordinary file just far enough
+     * to decode [maxSeconds] of it.
+     *
+     * Used by the high-quality verifier: a source that serves HLS or DASH is
+     * not unmeasurable just because its URL is an index. Only the first
+     * segments are fetched — enough for the same ninety-second comparison a
+     * progressive candidate gets — and the result goes through the same
+     * extractor. The manifest itself is still never swapped in; this is a
+     * temporary head, deleted by the caller.
+     */
+    suspend fun writeHead(
+        cacheDir: File,
+        url: String,
+        headers: Map<String, String>,
+        dash: Boolean,
+        maxSeconds: Double,
+        sink: OutputStream,
+        client: OkHttpClient = Http.client,
+    ): Unit = withContext(Dispatchers.IO) {
+        fun fetch(target: String): ByteArray {
+            val request = Request.Builder().url(target).apply {
+                headers.forEach { (name, value) -> header(name, value) }
+            }.build()
+            return client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("Segment failed (HTTP ${response.code})")
+                response.body?.bytes() ?: error("Empty segment")
+            }
+        }
+
+        val base = url.toHttpUrlOrNull() ?: error("Invalid manifest URL")
+        val index = String(fetch(url), Charsets.UTF_8)
+        val plan = if (dash) {
+            OfflineDash.parse(index).let { SegmentPlan(it.initialization, it.media, it.seconds) }
+        } else {
+            hlsPlan(index)
+        }
+        fun resolve(ref: String) = base.resolve(ref)?.toString() ?: error("Invalid segment URL")
+        val init = fetch(resolve(plan.initialization))
+        val extension = sniffExtension(init)
+        val take = segmentsFor(plan.seconds, plan.media.size, maxSeconds)
+        val scope = coroutineContext
+        val media = plan.media.take(take).asSequence().map { ref ->
+            scope.ensureActive()
+            fetch(resolve(ref))
+        }
+        assemble(cacheDir, extension, init, media, sink)
+        sink.flush()
+    }
+
     /** Everything after the fetching: [init] and [media] in, one [extension] file out. */
     internal fun assemble(cacheDir: File, extension: String, init: ByteArray, media: Sequence<ByteArray>, sink: OutputStream) {
         when (extension) {
@@ -105,19 +156,71 @@ internal object ManifestFile {
         }
     }
 
+    /** One manifest's initialisation and media segments, with their stated lengths. */
+    private class SegmentPlan(
+        val initialization: String,
+        val media: List<String>,
+        val seconds: List<Double>,
+    )
+
     /** The init segment and media segments of an HLS media playlist, refusing what [OfflineHls] refuses. */
     internal fun hlsSegments(playlist: String): Pair<String, List<String>> {
+        val plan = hlsPlan(playlist)
+        return plan.initialization to plan.media
+    }
+
+    /** As [hlsSegments], keeping each segment's `#EXTINF` for a bounded head read. */
+    private fun hlsPlan(playlist: String): SegmentPlan {
         if (!playlist.startsWith("#EXTM3U")) error("Invalid HLS playlist")
         if (playlist.contains("#EXT-X-KEY:") && !playlist.contains("METHOD=NONE")) {
             error("Encrypted HLS cannot be saved")
         }
         val init = Regex("""#EXT-X-MAP:.*URI="([^"]+)"""").find(playlist)?.groupValues?.get(1)
             ?: error("HLS playlist has no initialisation segment")
-        val media = playlist.lineSequence().map(String::trim)
-            .filter { it.isNotEmpty() && !it.startsWith('#') }
-            .toList()
+        val media = mutableListOf<String>()
+        val seconds = mutableListOf<Double>()
+        var pending: Double? = null
+        playlist.lineSequence().map(String::trim).forEach { line ->
+            when {
+                line.startsWith("#EXTINF:") -> pending = line
+                    .removePrefix("#EXTINF:")
+                    .substringBefore(',')
+                    .trim()
+                    .toDoubleOrNull()
+                line.isNotEmpty() && !line.startsWith('#') -> {
+                    media += line
+                    seconds += pending ?: 0.0
+                    pending = null
+                }
+            }
+        }
         if (media.isEmpty()) error("HLS playlist has no fragments")
-        return init to media
+        return SegmentPlan(init, media, seconds)
+    }
+
+    /** The container [init] describes: native FLAC or fragmented MP4. */
+    private fun sniffExtension(init: ByteArray): String {
+        val stsd = find(init, "moov", "trak", "mdia", "minf", "stbl", "stsd")
+            ?: error("Not an MP4 initialisation segment")
+        val entry = boxes(init, stsd.content + 8, stsd.end).firstOrNull()
+        return if (entry?.type == "fLaC") "flac" else "m4a"
+    }
+
+    /**
+     * How many of the first media segments cover [maxSeconds]. A playlist that
+     * states no `#EXTINF` falls back to a bounded handful rather than reading
+     * the whole track.
+     */
+    private fun segmentsFor(seconds: List<Double>, count: Int, maxSeconds: Double): Int {
+        if (count <= 0) return 0
+        var total = 0.0
+        var take = 0
+        for (i in 0 until count) {
+            take++
+            total += seconds.getOrElse(i) { 0.0 }
+            if (total >= maxSeconds) break
+        }
+        return if (total > 0.0) take else minOf(count, 16)
     }
 
     /**

@@ -2468,6 +2468,17 @@ object AudioCache {
     }
 
     /**
+     * The plain-id YouTube rendition of [videoId], never a substitute (`#alt`)
+     * or a quality upgrade (`#…`).
+     *
+     * Anything that derives a *clock* — the lyrics measurement, the song check,
+     * the HQ reference — must read the YouTube copy the lyrics and every stored
+     * answer were made against. A substitute's bytes belong to a different
+     * edit and would make the answer describe the wrong recording.
+     */
+    fun canonicalRendition(videoId: String): Rendition? = renditionFor(videoId)
+
+    /**
      * Which cache keys belong to [videoId], memoized.
      *
      * [SimpleCache.getKeys] copies the entire key set on every call, and this

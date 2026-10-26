@@ -340,6 +340,25 @@ object VersionAudioAligner {
         }
     }
 
+    /**
+     * The plain-id YouTube copy of [videoId], never a `#alt` substitute or a
+     * quality upgrade.
+     *
+     * Clocks are defined against the YouTube upload: the lyrics were timed to
+     * it and every stored offset/rate maps from it. Reading a substitute here
+     * would make the answer describe a different edit, and the HQ map would
+     * then move the same lyrics a second time.
+     */
+    internal fun canonicalRendition(videoId: String): AudioCache.Rendition? =
+        AudioCache.canonicalRendition(videoId)
+
+    /** Opens [canonicalRendition] for decoding; null until its head is on disk. */
+    internal fun openCanonicalDataSource(context: Context, videoId: String): MediaDataSource? {
+        val pick = canonicalRendition(videoId) ?: return null
+        val watch = Uri.parse("bitchord://watch?v=$videoId")
+        return AudioCache.renditionDataSource(watch, pick)
+    }
+
     private fun safeClose(ds: MediaDataSource?) {
         if (ds != null) {
             runCatching { ds.close() }

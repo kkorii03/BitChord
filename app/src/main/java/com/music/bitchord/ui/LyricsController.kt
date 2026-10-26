@@ -631,8 +631,11 @@ class LyricsController(
         // its clock is not the one any measurement or AI answer for the YouTube
         // upload was made against. Neither apply it nor spend an engine
         // checking it; the plain provider timing is what this play shows.
+        // A file on the device is the copy playing; a StreamChoice left from
+        // an earlier stream says nothing about it. Only a stream can be a
+        // substitute whose clock differs from the YouTube upload's.
         val substituted = request != null && !request.isVideo &&
-            StreamChoice.isSubstitute(request.videoId)
+            request.localUri == null && StreamChoice.isSubstitute(request.videoId)
         timingBaseAllowed = adjustable && !substituted
         timingMeasureAllowed = measure && !substituted
         val timed = lines != null && lines.any { it.timeMs > 0 }
@@ -861,7 +864,8 @@ class LyricsController(
         // saved measurement/AI answer was made against. Checked here as well as
         // at [startTiming] because the stream may be chosen after the lyrics
         // were first shown.
-        val substituted = !request.isVideo && StreamChoice.isSubstitute(request.videoId)
+        val substituted = !request.isVideo && request.localUri == null &&
+            StreamChoice.isSubstitute(request.videoId)
         val baseAllowed = timingBaseAllowed && !substituted
         val audioSource = if (request.isVideo) {
             null
@@ -876,6 +880,7 @@ class LyricsController(
             measuredAllowed = baseAllowed && timingMeasureAllowed,
             isVideo = request.isVideo,
             audioSource = audioSource,
+            localFile = request.localUri != null,
         )
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;

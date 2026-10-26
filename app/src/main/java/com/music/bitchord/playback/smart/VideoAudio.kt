@@ -64,7 +64,7 @@ object VideoAudio {
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         AudioCache.keepForTiming(videoId)
         if (!AudioCache.awaitAnalysisTrack(opus, FETCH_TIMEOUT_MS)) return@withContext null
-        val copy = VersionAudioAligner.renditionToMeasure(videoId)
+        val copy = VersionAudioAligner.canonicalRendition(videoId)
         if (copy == null || !copy.isComplete) return@withContext null
         synchronized(locks.getOrPut(videoId) { Any() }) {
             synchronized(recent) { recent[videoId] }?.let { return@synchronized it }
@@ -114,7 +114,9 @@ object VideoAudio {
     private suspend fun openSongSource(context: Context, song: Song): SongSource? {
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
         val fromFile = local != null && LocalAudioSource.isLocal(local)
-        if (!fromFile) {
+        val data = if (fromFile) {
+            VersionAudioAligner.openDataSource(context, song)
+        } else {
             // The opening is all a song check reads, so wait for that rather
             // than for the whole track the way the video WAV has to.
             val opus = Uri.parse(AutomixAnalysisSource.opusUri(song.videoId))
@@ -123,8 +125,11 @@ object VideoAudio {
                 TrackLog.d(TAG, "song check: the opening is not on disk yet", song.videoId)
                 return null
             }
+            // The answer is stored under the YouTube clock, so listen to the
+            // YouTube copy — not the `#alt` substitute the player may be
+            // reading. The HQ map is applied once when the lyrics are shown.
+            VersionAudioAligner.openCanonicalDataSource(context, song.videoId)
         }
-        val data = VersionAudioAligner.openDataSource(context, song)
         if (data == null) {
             TrackLog.d(TAG, "song check: no audio to listen to", song.videoId)
             return null
@@ -137,10 +142,7 @@ object VideoAudio {
 
     private fun decode(context: Context, videoId: String): ByteArray? {
         if (!PowerState.screenOn) return null
-        val source = VersionAudioAligner.openDataSource(
-            context,
-            Song(videoId = videoId, title = "", artist = "", thumbnailUrl = null, isVideo = true),
-        ) ?: return null
+        val source = VersionAudioAligner.openCanonicalDataSource(context, videoId) ?: return null
         val resampler = Resampler(RATE * 2 * 240)
         try {
             AudioDecoder.decodeMonoStream(

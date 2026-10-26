@@ -134,6 +134,26 @@ object HqVerificationStore {
         }
     }
 
+    /**
+     * Forgets a stored rejection so the pair can be measured again.
+     *
+     * A manual "Upgrade quality" request uses this: the rejection may describe
+     * a truncated profile from an earlier attempt, not the candidate itself.
+     */
+    fun clearRejection(
+        context: Context,
+        youtubeId: String,
+        sourceConfigId: String?,
+        trackId: String?,
+    ) {
+        synchronized(lock) {
+            val data = data(context)
+            if (data.rejected.remove(keyOf(youtubeId, sourceConfigId, trackId))) {
+                save(context, data)
+            }
+        }
+    }
+
     /** The best rung already verified for [youtubeId], for the tier-change log. */
     fun bestTier(context: Context, youtubeId: String): HqTier? = synchronized(lock) {
         data(context).verified.entries

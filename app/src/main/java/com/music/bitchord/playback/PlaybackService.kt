@@ -9613,6 +9613,7 @@ class PlaybackService : MediaLibraryService() {
                                 com.music.bitchord.playback.smart.LyricsTiming
                                     .audioSourceKey(currentSong.videoId, currentSong.localUri != null)
                             },
+                            localFile = currentSong.localUri != null,
                         )
                         ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
                 } else {

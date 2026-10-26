@@ -16,14 +16,16 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsWordAlign
+import com.music.bitchord.data.lyrics.PlaybackSync
 import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
-import com.music.bitchord.data.lyrics.timedBy
+import com.music.bitchord.data.lyrics.retimedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
@@ -173,6 +175,7 @@ object LyricsTiming {
         measuredAllowed: Boolean = baseAllowed,
         isVideo: Boolean = false,
         audioSource: String? = null,
+        localFile: Boolean = false,
     ): Timing? {
         // A missing entry is not "nothing to do": the stream may still be a
         // verified high-quality copy whose clock differs from YouTube's, and
@@ -186,7 +189,15 @@ object LyricsTiming {
             manualMs = entry.manualMs ?: 0L,
             aiBiasMs = bias,
             aiEngine = engine,
-            hq = hqAdjustment(context, videoId),
+            // An AI answer made against a downloaded file is already on that
+            // file's clock; the stored HQ offset describes YouTube → that file
+            // and must not be added a second time.
+            hq = hqAdjustment(
+                context = context,
+                videoId = videoId,
+                localFile = localFile,
+                baseOnPlayingClock = localFile && base?.byAi == true,
+            ),
         )
         // The transcript is kept on the video's own clock, and a displayed line
         // is map(record) + extraMs; the words are already video time, so only
@@ -270,23 +281,39 @@ object LyricsTiming {
         val hq = timing.hq?.map
         // The HQ map is the second half of the clock: YouTube song version →
         // the copy playing. A manual correction belongs on top of both, in the
-        // clock the listener is actually hearing.
-        return if (hq == null) {
-            lines.timedBy(baseMap, timing.extraMs)
-        } else {
-            lines.timedBy(baseMap).timedBy(hq, timing.extraMs)
-        }
+        // clock the listener is actually hearing. [PlaybackSync] owns that
+        // order so the stored answer, the player and the tests cannot drift.
+        if (baseMap == null && hq == null && timing.extraMs == 0L) return lines
+        return lines.retimedBy(PlaybackSync.transform(baseMap, hq, timing.extraMs))
     }
 
     /**
-     * The YouTube → high-quality map for the stream serving [videoId], when it
-     * is a substitute that was verified. Read from [StreamChoice] rather than
-     * passed by every caller: the player and the lyrics screen both already
-     * record and read that choice, and a caller that forgot would silently
-     * show the lyrics on the wrong clock.
+     * The YouTube → high-quality map for the copy actually playing [videoId],
+     * when it is a substitute that was verified.
+     *
+     * A stream reads [StreamChoice] and the verdict stored for that exact
+     * source/track pair. A downloaded file reads the alignment saved with its
+     * own metadata: [StreamChoice] may still describe a stream played earlier,
+     * and applying that to a file is how the same id got two different clocks.
      */
-    private suspend fun hqAdjustment(context: Context, videoId: String): Adjustment.Mapped? =
-        withContext(Dispatchers.IO) {
+    private suspend fun hqAdjustment(
+        context: Context,
+        videoId: String,
+        localFile: Boolean,
+        baseOnPlayingClock: Boolean,
+    ): Adjustment.Mapped? = withContext(Dispatchers.IO) {
+        if (!PlaybackSync.hqApplies(PlaybackSync.Source.HQ, baseOnPlayingClock)) {
+            return@withContext null
+        }
+        val offsetMs: Long
+        val rate: Double
+        val matchPercent: Int?
+        if (localFile) {
+            val meta = Downloads.savedMetadataFor(videoId) ?: return@withContext null
+            offsetMs = meta.hqOffsetMs ?: return@withContext null
+            rate = meta.hqRate ?: 1.0
+            matchPercent = null
+        } else {
             val choice = StreamChoice.of(videoId) ?: return@withContext null
             if (!StreamChoice.isSubstitute(videoId)) return@withContext null
             val sourceId = choice.sourceConfigId ?: return@withContext null
@@ -297,15 +324,18 @@ object LyricsTiming {
                 sourceId,
                 trackId,
             ) ?: return@withContext null
-            val map = HqMatchPolicy.mapFor(verified.offsetMs, verified.rate)
-                ?: return@withContext null
-            Adjustment.Mapped(
-                map = map,
-                byAi = false,
-                rate = verified.rate,
-                matchPercent = verified.matchPercent,
-            )
+            offsetMs = verified.offsetMs
+            rate = verified.rate
+            matchPercent = verified.matchPercent
         }
+        val map = HqMatchPolicy.mapFor(offsetMs, rate) ?: return@withContext null
+        Adjustment.Mapped(
+            map = map,
+            byAi = false,
+            rate = rate,
+            matchPercent = matchPercent,
+        )
+    }
 
     /** How far [adjustment] moves the first sung line of [lines] — the figure worth showing. */
     fun shownShiftMs(lines: List<LyricLine>, adjustment: Adjustment): Long {
@@ -341,7 +371,7 @@ object LyricsTiming {
         if (entry == null || entry.autoVersion != AUTO_VERSION) return true
         if (entry.autoRecordPartial || searchOutdated(entry)) return true
         if (entry.autoComplete) return false
-        val copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return false
+        val copy = VersionAudioAligner.canonicalRendition(videoId) ?: return false
         return copy.isComplete || copy.cachedPrefix >= entry.autoVideoBytes + maxOf(REMEASURE_GROWTH_BYTES, entry.autoVideoBytes / 4)
     }
 
@@ -653,7 +683,7 @@ object LyricsTiming {
             val head = withTimeoutOrNull(HEAD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisHead(uri, HEAD_TIMEOUT_MS) } == true
             if (!head) return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 받지 못함")
             val headAt = System.currentTimeMillis()
-            val alreadyWhole = VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete == true
+            val alreadyWhole = VersionAudioAligner.canonicalRendition(original.videoId)?.isComplete == true
             run {
                 // The opening first: most of the time it is all the answer needs.
                 // Even when the whole record is already on disk (it downloads in
@@ -674,7 +704,7 @@ object LyricsTiming {
             val downloaded = System.currentTimeMillis()
             val record = withContext(analysis) { recordFeatures(context, original, job) }
                 ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
-            val whole = VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete == true
+            val whole = VersionAudioAligner.canonicalRendition(original.videoId)?.isComplete == true
             if (whole) keep(context, original.videoId, record)
             val read = System.currentTimeMillis()
             val (result, verdict) = aligned(record)
@@ -709,7 +739,11 @@ object LyricsTiming {
         }
         val deadline = System.currentTimeMillis() + VIDEO_TIMEOUT_MS
         while (true) {
-            val copy = VersionAudioAligner.renditionToMeasure(video.videoId)
+            // The YouTube copy defines the clock the answer is stored on. A
+            // `#alt` substitute may be the only bytes on disk, but measuring it
+            // would produce a map on the substitute's clock and then have the
+            // HQ map applied on top.
+            val copy = VersionAudioAligner.canonicalRendition(video.videoId)
             if (copy != null && (copy.isComplete || copy.cachedPrefix >= MIN_VIDEO_BYTES)) return copy
             if (System.currentTimeMillis() >= deadline) return null
             delay(250)
@@ -822,7 +856,11 @@ object LyricsTiming {
         if (reading != null && from >= untilSeconds) {
             return reading.extractor.finish(startSeconds = reading.startSeconds).takeIf { it.frames > 0 }
         }
-        val source = VersionAudioAligner.openDataSource(context, video) ?: return null
+        val source = if (video.localUri != null) {
+            VersionAudioAligner.openDataSource(context, video)
+        } else {
+            VersionAudioAligner.openCanonicalDataSource(context, video.videoId)
+        } ?: return null
         try {
             AudioDecoder.decodeMonoStream(
                 source,
@@ -869,7 +907,17 @@ object LyricsTiming {
         job: Job?,
         untilSeconds: Double = MAX_SECONDS,
     ): ChromaAlignment.Features? =
-        videoFeatures(context, original, VersionAudioAligner.renditionToMeasure(original.videoId)?.key ?: "record", job, untilSeconds)
+        videoFeatures(
+            context,
+            original,
+            if (original.localUri != null) {
+                "local:${original.videoId}"
+            } else {
+                VersionAudioAligner.canonicalRendition(original.videoId)?.key ?: "record"
+            },
+            job,
+            untilSeconds,
+        )
 
     /** Readings kept: the video playing, the next one, and two records each. */
     private const val VIDEOS_KEPT = 6
