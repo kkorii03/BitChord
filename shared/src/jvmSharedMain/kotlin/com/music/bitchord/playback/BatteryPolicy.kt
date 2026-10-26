@@ -42,4 +42,27 @@ object BatteryPolicy {
         if (origin == foreignOrigin) return true
         return hasAnalysis && !hasPlayback && !hasPlayed
     }
+
+    /**
+     * Whether Automix may decode and run its models right now.
+     *
+     * A whole-track decode plus two ONNX passes is the heaviest background
+     * work the player does, so it waits out low power like every other heavy
+     * job. The crossfade ticker asks again on its next tick once power saving
+     * is off, which is why deferring needs no timer of its own. A party never
+     * mixes, so it stops the work for the same reason it always did.
+     */
+    fun automixAnalysisActive(lowPower: Boolean, inParty: Boolean): Boolean =
+        !lowPower && !inParty
+
+    /**
+     * Whether read-ahead may spend bytes on the next track.
+     *
+     * Resolving its stream URL is still worth doing — a few small round trips
+     * — but downloading the track is not while the phone is saving power.
+     * Metered connections were already refused by the caller; keeping low
+     * power out of that decision is what makes it testable here.
+     */
+    fun cachePrefetchBytesAllowed(metered: Boolean, lowPower: Boolean): Boolean =
+        !metered && !lowPower
 }
