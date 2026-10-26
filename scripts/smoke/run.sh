@@ -93,7 +93,7 @@ if [ -n "${SMOKE_SETTINGS_FILE:-}" ]; then
     # could not read it (second run: "debug-import: unreadable path"). The
     # debuggable app copies it into its own files dir with run-as instead.
     adb push "$SMOKE_SETTINGS_FILE" /data/local/tmp/smoke.bitchord-settings >/dev/null 2>&1 &&
-      adb shell "run-as $PKG sh -c 'cat /data/local/tmp/smoke.bitchord-settings > files/smoke.bitchord-settings'" </dev/null &&
+      adb shell "run-as $PKG sh -c 'mkdir -p files && cat /data/local/tmp/smoke.bitchord-settings > files/smoke.bitchord-settings'" </dev/null &&
       SETTINGS_DEVICE="/data/data/$PKG/files/smoke.bitchord-settings" || {
         echo "smoke: could not hand $SMOKE_SETTINGS_FILE to the app" >&2
         SETTINGS_DEVICE=""
