@@ -451,9 +451,11 @@ object LyricsTiming {
         timing: Timing,
         audioSource: String? = null,
     ): Boolean {
-        val base = timing.base ?: return false
-        // An AI base already came with the words that placed it.
-        if (base.byAi) return false
+        timing.base ?: return false
+        // An AI base usually came with the words that placed it, and then
+        // refineHeardKnown below answers true. Answers saved before words were
+        // kept have none (10-27: qQNbfxDLxq0, base=ai, stayed -0.24 s with no
+        // refine at all), so they are heard once like a measured song.
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return false
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
         if (refineHeardKnown(context, videoId, lines, audioSource)) return false

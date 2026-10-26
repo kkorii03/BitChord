@@ -1009,8 +1009,9 @@ class LyricsController(
         audioSource: String?,
         generation: Long,
     ) {
-        val base = timing.base ?: return
-        if (base.byAi) return
+        timing.base ?: return
+        // An AI base with its words is caught by refineHeardKnown below; one
+        // saved without words is heard once too (see ensureRefineHeard).
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
         if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, audioSource)) return
