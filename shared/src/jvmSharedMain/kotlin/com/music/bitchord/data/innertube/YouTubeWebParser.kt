@@ -67,10 +67,11 @@ internal object YouTubeWebParser {
     /** A playlist page opened by browse id (`VL…`) in the ordinary web layout. */
     fun parsePlaylist(root: JsonObject): PlaylistResult {
         val listRoot = findFirst(root, "playlistVideoListRenderer") ?: root
+        val songs = songsIn(listRoot, musicOnly = false)
         return PlaylistResult(
-            songs = songsIn(listRoot, musicOnly = false),
+            songs = songs,
             continuation = continuationToken(root),
-            header = playlistHeader(root),
+            header = playlistHeader(root)?.withArtworkFallback(songs),
         )
     }
 
@@ -81,14 +82,17 @@ internal object YouTubeWebParser {
             ?.findObject("playlist")
             ?.findObject("playlist")
             ?: root
-        val songs = collectObjects(playlist, "playlistPanelVideoRenderer").mapNotNull(::songOfPanel)
+        val songs = collectObjects(playlist, "playlistPanelVideoRenderer")
+            .mapNotNull(::songOfPanel)
+            .distinctBy { it.videoId }
         val title = playlist.findObject("titleText")?.text().orEmpty()
         val owner = playlist.findObject("ownerName")?.text().orEmpty()
         return PlaylistResult(
-            songs = songs.distinctBy { it.videoId },
+            songs = songs,
             continuation = continuationToken(playlist),
             header = title.takeIf { it.isNotBlank() }?.let {
                 InnertubeParser.BrowseHeader(title = it, subtitle = owner, thumbnailUrl = null)
+                    .withArtworkFallback(songs)
             },
         )
     }
@@ -248,7 +252,7 @@ internal object YouTubeWebParser {
         return out.values.toList()
     }
 
-    private fun lockupSong(lockup: JsonObject, musicOnly: Boolean): Song? {
+    internal fun lockupSong(lockup: JsonObject, musicOnly: Boolean): Song? {
         val item = lockupItem(lockup, musicOnly) ?: return null
         val videoId = item.videoId ?: return null
         val duration = collectObjects(lockup, "thumbnailBadgeViewModel")
@@ -503,7 +507,7 @@ internal object YouTubeWebParser {
         return ShelfItem(
             title = title,
             subtitle = owner.orEmpty(),
-            thumbnailUrl = video.findObject("thumbnail")?.thumbnails(),
+            thumbnailUrl = rowThumbnail(video, videoId),
             videoId = videoId,
             browseId = null,
         )
@@ -516,10 +520,10 @@ internal object YouTubeWebParser {
         return ShelfItem(
             title = title,
             subtitle = video.findObject("shortBylineText")?.firstRun().orEmpty(),
-            // Some playlist rows (`VLLM`, clipped lists) carry no `thumbnail`
-            // renderer at all; the fallback layer adds the video still and
-            // logs the row (see YouTubeFallback.ensureArtwork).
-            thumbnailUrl = video.findObject("thumbnail")?.thumbnails(),
+            // Some playlist rows (`VLLM`, clipped lists, and newer layouts)
+            // carry no `thumbnail` renderer at all. The video id is enough to
+            // name its still, so fill it here rather than in every screen.
+            thumbnailUrl = rowThumbnail(video, videoId),
             videoId = videoId,
             browseId = null,
         )
@@ -533,7 +537,7 @@ internal object YouTubeWebParser {
             title = title,
             subtitle = panel.findObject("shortBylineText")?.firstRun()
                 ?: panel.findObject("longBylineText")?.firstRun().orEmpty(),
-            thumbnailUrl = panel.findObject("thumbnail")?.thumbnails(),
+            thumbnailUrl = rowThumbnail(panel, videoId),
             videoId = videoId,
             browseId = null,
         )
@@ -548,7 +552,8 @@ internal object YouTubeWebParser {
             title = title,
             subtitle = playlist.findObject("shortBylineText")?.firstRun()
                 ?: playlist.findObject("videoCountText")?.text().orEmpty(),
-            thumbnailUrl = playlist.findObject("thumbnail")?.thumbnails(),
+            thumbnailUrl = playlist.findObject("thumbnail")?.thumbnails()
+                ?: firstVideoId(playlist)?.let(::videoThumbnailUrl),
             videoId = null,
             browseId = playlistsBrowseId(playlistId),
         )
@@ -566,7 +571,7 @@ internal object YouTubeWebParser {
             videoId = videoId,
             title = title,
             artist = artist.substringBefore(" · ").trim(),
-            thumbnailUrl = panel.findObject("thumbnail")?.thumbnails(),
+            thumbnailUrl = rowThumbnail(panel, videoId),
             durationText = panel.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
             setVideoId = panel.string("playlistSetVideoId") ?: panel.string("setVideoId"),
@@ -574,9 +579,21 @@ internal object YouTubeWebParser {
         )
     }
 
+    /**
+     * A row's still across the layouts in circulation: the older `thumbnail`
+     * renderer, the newer `thumbnailViewModel` / `contentImage`, and finally
+     * the video id itself, which always names a still.
+     */
+    private fun rowThumbnail(row: JsonObject, videoId: String): String? =
+        row.findObject("thumbnail")?.thumbnails()
+            ?: row.findObject("thumbnailViewModel")?.let(::thumbnailViewModelUrl)
+            ?: row.findObject("contentImage")?.let(::lockupImageUrl)
+            ?: videoThumbnailUrl(videoId)
+
     private fun playlistHeader(root: JsonObject): InnertubeParser.BrowseHeader? {
         val primary = findFirst(root, "playlistSidebarPrimaryInfoRenderer")
             ?: findFirst(root, "pageHeaderRenderer")
+            ?: findFirst(root, "playlistHeaderRenderer")
             ?: return null
         val title = primary.findObject("title")?.text()
             ?: primary.findObject("pageTitle")?.text()
@@ -593,12 +610,34 @@ internal object YouTubeWebParser {
             ?.findObject("playlistVideoThumbnailRenderer")
             ?.findObject("thumbnail")
             ?.thumbnails()
+            ?: primary.findObject("thumbnailRenderer")?.imageUrl()
             ?: primary.findObject("thumbnail")?.thumbnails()
+            ?: primary.findObject("thumbnailViewModel")?.let(::thumbnailViewModelUrl)
+            ?: primary.findObject("playlistHeaderBanner")
+                ?.findObject("heroPlaylistThumbnailRenderer")
+                ?.findObject("thumbnail")?.thumbnails()
+            ?: primary.findObject("heroPlaylistThumbnailRenderer")
+                ?.findObject("thumbnail")?.thumbnails()
         return InnertubeParser.BrowseHeader(
             title = title,
             subtitle = stats.ifBlank { description?.substringBefore('\n').orEmpty() },
             thumbnailUrl = thumbnail,
         )
+    }
+
+    /**
+     * A playlist header can arrive without the playlist's own cover even when
+     * its first rows have theirs. The first track's still is what the page
+     * would otherwise draw as the default playlist icon.
+     */
+    private fun InnertubeParser.BrowseHeader.withArtworkFallback(
+        songs: List<Song>,
+    ): InnertubeParser.BrowseHeader {
+        if (!thumbnailUrl.isNullOrBlank()) return this
+        val fallback = songs.firstNotNullOfOrNull {
+            it.thumbnailUrl?.takeIf(String::isNotBlank)
+        } ?: return this
+        return copy(thumbnailUrl = fallback)
     }
 
     // ---- JSON helpers -------------------------------------------------------

@@ -7,6 +7,7 @@ import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.spotify.LocalPlaylist
@@ -299,7 +300,7 @@ object Backup {
             downloadFormat = downloadFormat,
             sourceQuality = sourceQuality,
             isExplicit = isExplicit,
-        )
+        ).withVideoThumbnailFallback()
 
         companion object {
             fun from(song: Song): BackupSong = BackupSong(

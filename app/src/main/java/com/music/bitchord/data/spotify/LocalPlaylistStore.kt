@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withVideoThumbnailFallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -301,7 +302,7 @@ private fun parseSong(obj: JsonObject): Song {
         downloadFormat = obj.stringOrNull("downloadFormat"),
         sourceQuality = obj.stringOrNull("sourceQuality"),
         isExplicit = (obj["isExplicit"] as? JsonPrimitive)?.booleanOrNull,
-    )
+    ).withVideoThumbnailFallback()
 }
 
 private fun JsonObject.requiredString(key: String): String =
