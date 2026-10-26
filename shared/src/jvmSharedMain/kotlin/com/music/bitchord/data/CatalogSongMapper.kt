@@ -60,6 +60,7 @@ internal object CatalogSongMapper {
             artists = emptyList(),
             setVideoId = null,
             isVideo = false,
+            typeUnknown = false,
             isVideoOrigin = false,
         )
     }
@@ -148,10 +149,24 @@ internal object CatalogSongMapper {
      *
      * Covers are never mapped to the song they cover: their upload is the
      * performance the listener chose.
+     *
+     * [allowLocalVideo] is for the song-version lookup of a downloaded video
+     * row (including one whose type has not landed yet): the mapping only
+     * reads album metadata, never the local file, so a file on the device must
+     * not hide the catalogue release behind it. Local *audio* is still left
+     * alone — it is already the recording to play.
      */
-    suspend fun map(song: Song, budget: LookupBudget = newBudget()): CatalogSong? {
+    suspend fun map(
+        song: Song,
+        budget: LookupBudget = newBudget(),
+        allowLocalVideo: Boolean = false,
+    ): CatalogSong? {
         if (song.videoId.isBlank()) return null
-        if (song.localUri != null) return null
+        if (song.localUri != null &&
+            !(allowLocalVideo && (song.isVideo || song.typeUnknown))
+        ) {
+            return null
+        }
         if (isCover(song) || isCoverTitle(song.title)) return null
         // A row already carrying a release identity is catalogue metadata, not
         // a youtube.com upload; there is nothing to map and no reason to spend

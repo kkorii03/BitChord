@@ -716,17 +716,20 @@ object YtMusicRepository {
      * [TrackMatcher.best] returning null is a normal answer, not a failure to
      * work around.
      *
-     * Returns [song] unchanged when it isn't a video, or when nothing better
-     * turns up — playing the video's own audio track beats guessing at a
-     * substitute. This is deliberately an explicit action from the player,
-     * never part of normal queueing or playback.
+     * Returns [song] unchanged when it isn't a video (and its type is known),
+     * or when nothing better turns up — playing the video's own audio track
+     * beats guessing at a substitute. This is deliberately an explicit action
+     * from the player, never part of normal queueing or playback.
      *
      * [search] already drops video rows from its results (see
      * [InnertubeParser.parseSearch]), so every candidate here is audio-only
      * without a second check.
      */
     suspend fun resolveAudio(song: Song): Song {
-        if (!song.isVideo) return song
+        // A preview row whose type has not landed yet may be a video; the
+        // policy already says to ask about it, so this guard must use the same
+        // rule instead of trusting the default `isVideo = false`.
+        if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) return song
         if (song.title.isBlank() || song.artist.isBlank()) {
             Log.w(TAG, "audio switch skipped: ${song.videoId} has empty title/artist")
             return song
@@ -756,9 +759,14 @@ object YtMusicRepository {
     }
 
     private suspend fun resolveAudioUncached(song: Song): Song {
+        // A row whose type is still unknown is treated as a video for timing:
+        // its runtime may already include a visual intro/outro, and refusing
+        // that drift is how the song version was written off.
         val target = TrackMatcher.targetOf(song)
+            .copy(isVideo = song.isVideo || song.typeUnknown)
         var searched = false
         var videoRowsOnly = false
+        val loggedRejects = HashSet<String>()
         for (query in TrackMatcher.queries(target)) {
             val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
             if (page.isSuccess) searched = true
@@ -788,13 +796,27 @@ object YtMusicRepository {
                 audioVersionCache[song.videoId] = match
                 return match
             }
+            // One line per candidate that did not become the answer, so a
+            // device log names the failing check instead of only the outcome.
+            for (candidate in rows) {
+                if (!loggedRejects.add(candidate.videoId)) continue
+                val reason = TrackMatcher.songVersionRejectReason(candidate, target) ?: continue
+                Log.d(
+                    TAG,
+                    "audio switch: reject ${candidate.videoId} ${candidate.title} " +
+                        "reason=$reason",
+                )
+            }
         }
         // The search answered with uploads only, or nothing at all: the
         // catalogue's own album listing still names the release behind a
         // video, even where Korea's Songs filter refuses the anonymous
         // search. This is the same mapping the gated search uses, asked
-        // directly for this one row.
-        val catalogue = runCatching { CatalogSongMapper.map(song)?.toSong(song) }.getOrNull()
+        // directly for this one row. A downloaded video still qualifies: the
+        // lookup reads album metadata only and never touches its file.
+        val catalogue = runCatching {
+            CatalogSongMapper.map(song, allowLocalVideo = true)?.toSong(song)
+        }.getOrNull()
         if (catalogue != null && catalogue.videoId != song.videoId && !catalogue.isVideo) {
             Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
             audioVersionCache[song.videoId] = catalogue

@@ -156,6 +156,7 @@ class CatalogSongMapperTest {
             artistId = "UC_upload",
             setVideoId = "set",
             isVideo = true,
+            typeUnknown = true,
             isVideoOrigin = true,
         )
 
@@ -171,6 +172,7 @@ class CatalogSongMapperTest {
         assertTrue(mapped.artists.isEmpty())
         assertNull(mapped.setVideoId)
         assertFalse(mapped.isVideo)
+        assertFalse(mapped.typeUnknown)
         assertFalse(mapped.isVideoOrigin)
     }
 

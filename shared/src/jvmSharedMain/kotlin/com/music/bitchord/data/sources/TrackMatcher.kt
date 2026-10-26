@@ -189,7 +189,13 @@ object TrackMatcher {
     private fun artistVariantsUncached(artist: String): List<String> {
         val out = LinkedHashSet<String>()
         splitTopLevel(normalize(artist), ARTIST_SEPARATORS).forEach { part ->
-            expandArtistName(part).forEach { name -> out += name }
+            // youtube.com's fallback search credits album audio to the
+            // auto-generated channel ("5 Seconds of Summer - Topic"), not to a
+            // different act. The suffix is the channel's, not the artist's, so
+            // leaving it on made the exact-name check refuse the official song.
+            expandArtistName(part.replace(TOPIC_CHANNEL_SUFFIX, "")).forEach { name ->
+                out += name
+            }
         }
         return out.filter { it.isNotBlank() }
     }
@@ -537,6 +543,58 @@ object TrackMatcher {
         "m countdown", "mcountdown", "reaction", "cover", "dance practice", "lyrics",
         "karaoke", "1 hour", "\uAD50\uCC28\uD3B8\uC9D1",
     )
+
+    /**
+     * Why [candidate] is not the catalogue song for [target], in the shape the
+     * audio-switch log reads: `title`, `artist`, `duration Δ초`, `type` or
+     * `cover`. Null when either [bestSameArtist] or
+     * [bestOfficialAudioForVideo] would take it.
+     *
+     * Only a diagnostic: the decision itself stays in those two functions, so
+     * this cannot quietly widen what plays. It exists because the log used to
+     * say only "no official song match", which left a rejected official row
+     * and a genuinely absent one indistinguishable on a device.
+     */
+    fun songVersionRejectReason(candidate: Song, target: Target): String? {
+        // resolveAudio only offers non-video rows to the two matchers.
+        if (candidate.isVideo) return "type"
+        // Ask the real gates first, so a candidate they accept can never be
+        // logged as rejected because this diagnostic forgot one of their
+        // terms. Only the failing check below is reproduced.
+        if (bestSameArtist(listOf(candidate), target) != null) return null
+        if (bestOfficialAudioForVideo(listOf(candidate), target) != null) return null
+        if (isCoverOf(candidate, target)) return "cover"
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return "title"
+        if (!coresMatch(wanted.cores(), got.cores(), containment = true)) return "title"
+        if (wanted.versions != got.versions) return "title"
+        // A row filed under an instrumental/karaoke album is that take even
+        // when its title says nothing.
+        if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
+                .any { it !in wanted.versions }
+        ) {
+            return "cover"
+        }
+        val sameArtist = (candidate.artist.isNotBlank() &&
+            namesTheSameArtist(target.artist, candidate.artist)) ||
+            sameArtistIdentity(target, candidate)
+        if (!sameArtist) return "artist"
+        val wantedSec = target.durationSec
+        val gotSec = secondsOf(candidate.durationText)
+        if (wantedSec != null && gotSec != null) {
+            // A video may run longer than its song by any amount (intro/outro)
+            // but not shorter by more than the ordinary window. A non-video
+            // target keeps the ordinary window in both directions.
+            val tooLong = gotSec - wantedSec
+            if (target.isVideo && tooLong > 0) {
+                if (tooLong > VIDEO_DURATION_LIMIT_SEC) return "duration ${tooLong}s"
+            } else if (abs(wantedSec - gotSec) > DURATION_LIMIT_SEC) {
+                return "duration ${abs(wantedSec - gotSec)}s"
+            }
+        }
+        return null
+    }
 
     /**
      * The catalogue counterpart for a music-video upload selected explicitly
@@ -1483,6 +1541,13 @@ object TrackMatcher {
         Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|및)\s*""")
 
     /**
+     * YouTube's auto-generated artist channel suffix: "Artist - Topic". It
+     * names the uploader, not another performer, so it is dropped from the
+     * credit before identity is compared.
+     */
+    private val TOPIC_CHANNEL_SUFFIX = Regex("""\s+-\s+topic$""", RegexOption.IGNORE_CASE)
+
+    /**
      * What makes a listing a different recording rather than a different
      * listing of the same one. A title carrying one of these on one side only
      * is refused outright.
@@ -1559,6 +1624,9 @@ object TrackMatcher {
     private val TRAILING_NOISE = setOf(
         "song", "songs", "video", "audio", "lyrics", "lyric", "lyrical",
         "official", "full", "hd", "hq", "4k", "mp3", "ost", "soundtrack",
+        // `Youngblood M/V` and `Youngblood MV` print the tag without brackets.
+        // Normalisation drops the slash, so both arrive here as `mv`.
+        "mv",
     )
 
     /** Dropped from the core so that "Jack and Jill" and "Jack & Jill" are one title. */
