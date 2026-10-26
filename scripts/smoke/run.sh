@@ -237,6 +237,17 @@ while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
     continue
   }
   play_song "$key" "$kind"
+  # No audio after three songs means YouTube refused this network (the runner
+  # IPs get "confirm you're not a bot"); say so now instead of after an hour.
+  SONGS_DONE=$(( ${SONGS_DONE:-0} + 1 ))
+  if [ "$SONGS_DONE" -eq 3 ] && ! grep -qE 'track-summary:.*firstAudio=[0-9]' "$OUT/smoke-logcat.txt"; then
+    if grep -qE 'LOGIN_REQUIRED|SignInConfirmNotBot' "$OUT/smoke-logcat.txt"; then
+      echo "smoke: NO AUDIO - YouTube bot check on this network (proxy not used or refused)" >&2
+    else
+      echo "smoke: NO AUDIO after 3 songs" >&2
+    fi
+    exit 3
+  fi
 done 3< "$SONGS_FILE"
 
 # `track-summary` is written for the outgoing track, so the last song only gets

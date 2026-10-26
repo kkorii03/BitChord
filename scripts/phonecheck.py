@@ -454,12 +454,34 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="use the package already installed on the phone",
     )
+    install.add_argument(
+        "--score-only",
+        metavar="LOGCAT",
+        help="judge an existing log (e.g. an emulator smoke-play artifact) without a phone",
+    )
+    parser.add_argument("--wav-dir", help="with --score-only: the pulled synctest WAVs")
+    parser.add_argument("--report", help="with --score-only: where to write the report")
     parser.add_argument(
         "--songs",
         default=str(SONGS_FILE),
         help="song list (default: scripts/smoke/songs.txt)",
     )
     args = parser.parse_args(argv)
+
+    if args.score_only:
+        # The emulator run produces the same log and WAVs; score them with the
+        # same judge so a phone-less evening still gets real numbers.
+        log_file = Path(args.score_only)
+        text = log_file.read_text(encoding="utf-8", errors="replace")
+        songs = load_songs(Path(args.songs))
+        wav_dir = Path(args.wav_dir) if args.wav_dir else log_file.parent / "synctest"
+        smoke_checks = smokecheck.check_log(text, songs=songs, hq_configured=True)
+        sync_rows = score_sync(text, songs, wav_dir)
+        report = build_report(text, songs, log_file, sync_rows, smoke_checks, datetime.datetime.now())
+        target = Path(args.report) if args.report else log_file.parent / "score.md"
+        target.write_text(report, encoding="utf-8")
+        print("\n".join(report.splitlines()[:25]))
+        return 0
 
     log("약 40분 소요")
     OUT.mkdir(parents=True, exist_ok=True)
