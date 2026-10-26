@@ -44,7 +44,6 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -974,30 +973,6 @@ private fun connectionLine(state: ListenTogether.State): String = when {
     // saying so is more use than a spinner.
     !state.clockSynced -> stringResource(R.string.listen_together_syncing_clock)
     else -> stringResource(R.string.listen_together_in_sync, state.roundTripMs)
-}
-
-/**
- * This device's own party picture, drawn in the slot the rows around it give
- * their glyphs — so the field beside it starts on the same line as every other
- * field on the screen.
- */
-@Composable
-private fun PartyAvatar(url: String?, size: Dp = ICON_SIZE) {
-    if (url != null) {
-        AsyncImage(
-            model = url,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.size(size).clip(CircleShape),
-        )
-    } else {
-        Icon(
-            Icons.Rounded.Person,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.size(size),
-        )
-    }
 }
 
 @Composable

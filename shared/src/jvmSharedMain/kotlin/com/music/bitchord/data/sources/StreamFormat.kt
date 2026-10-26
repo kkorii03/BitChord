@@ -43,17 +43,6 @@ data class StreamFormat(
     val isDolbyAtmos: Boolean
         get() = codec in DOLBY_ATMOS_CODECS
 
-    /**
-     * A lossless codec with a bitrate too low to be one.
-     *
-     * FLAC can compress a quiet passage hard, but a whole track below
-     * [SUSPECT_LOSSLESS_KBPS] is far more often a lossy transcode wearing a
-     * `flac` label. Not a refusal — the decoder can still play it — but a
-     * reason to prefer a declared lossless copy that states a real rate.
-     */
-    val isSuspectLossless: Boolean
-        get() = isLossless == true && kbps != null && kbps < SUSPECT_LOSSLESS_KBPS
-
     /** "24-bit · 192 kHz", "FLAC", "320 kbps" — whichever parts are known. */
     val summary: String
         get() = if (isDolbyAtmos) "Dolby Atmos" else listOfNotNull(
@@ -66,8 +55,5 @@ data class StreamFormat(
     private companion object {
         val LOSSLESS_CODECS = setOf("flac", "alac", "wav", "aiff", "ape", "wv", "dsf", "dff")
         val DOLBY_ATMOS_CODECS = setOf("eac3-joc", "ec3-joc", "dolby-atmos")
-
-        /** Below this a file claiming lossless is more likely a transcode. */
-        const val SUSPECT_LOSSLESS_KBPS = 300
     }
 }

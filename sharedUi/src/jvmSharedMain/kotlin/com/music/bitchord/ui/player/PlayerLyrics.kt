@@ -176,12 +176,6 @@ private fun isRtl(text: String): Boolean {
     return rtlCount > ltrCount
 }
 
-/** Returns the text direction for [text]: LTR by default, RTL when detected. */
-private fun textDirectionFor(text: String): androidx.compose.ui.text.style.TextDirection {
-    return if (isRtl(text)) androidx.compose.ui.text.style.TextDirection.Rtl
-    else androidx.compose.ui.text.style.TextDirection.Ltr
-}
-
 /** Whether this text should align to the right end of its box. */
 private fun alignsRight(text: String, alignEnd: Boolean, laneLocked: Boolean): Boolean =
     if (laneLocked) alignEnd else isRtl(text)

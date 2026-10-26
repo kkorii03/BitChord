@@ -75,9 +75,6 @@ object EqLayout {
 
     /** Decibels per step of the pad, so a corner is ±6 dB. */
     const val TONE_DB_PER_STEP = 1.2f
-
-    /** Frequency of the tone pad's tilt pair, for the UI to describe. */
-    val TONE_TILT_HZ = floatArrayOf(250f, 4_000f)
 }
 
 /**

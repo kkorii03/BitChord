@@ -121,12 +121,6 @@ internal object YouTubeCoverResolver {
     }
 
     /**
-     * The square cover for [song], or null when the row should keep its
-     * thumbnail. Never throws: a network failure is reported as no answer.
-     */
-    suspend fun coverFor(song: Song): String? = matchFor(song)?.artworkUrl
-
-    /**
      * The catalogue metadata for [song] when iTunes or Deezer has the same
      * recording, or null when neither could confirm it. A confirmed match
      * carries the store's title and artist as well as its square artwork, so

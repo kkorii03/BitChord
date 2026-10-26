@@ -541,22 +541,6 @@ internal object YouTubeFallback {
         return HomeFeed(enrichCovers(shelves), page.continuation, HomeSource.FALLBACK)
     }
 
-    suspend fun recentShelf(): HomeShelf? {
-        // Built from the current local record rather than the cached feed: the
-        // cache can be ten minutes old, which is exactly the shelf being asked
-        // about here.
-        val songs = try {
-            mergedHistory(RECENT_LIMIT)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            Log.w(TAG, "Recently played failed: ${failure.message}")
-            emptyList()
-        }
-        if (songs.isEmpty()) return null
-        return HomeShelf(RECENT_TITLE, songs.map(::shelfItem))
-    }
-
     /**
      * The account's listening history, local first.
      *

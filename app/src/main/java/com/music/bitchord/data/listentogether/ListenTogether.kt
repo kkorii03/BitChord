@@ -419,7 +419,6 @@ object ListenTogether {
     val serverConnectionState: StateFlow<ServerConnectionState> = _serverConnectionState.asStateFlow()
 
     private val _serverStatus = MutableStateFlow(ServerStatus())
-    val serverStatus: StateFlow<ServerStatus> = _serverStatus.asStateFlow()
 
     fun isEligibleForFallback(error: Throwable): Boolean = when (error) {
         is java.net.UnknownHostException,
@@ -640,9 +639,6 @@ object ListenTogether {
         return ProbeResult(isOnline = isOnline, latencyMs = if (isOnline) elapsed.coerceAtLeast(0L) else 0L)
     }
 
-    private suspend fun probeHealth(baseUrl: String): Boolean =
-        probeHealthWithLatency(baseUrl, HEALTH_TIMEOUT_MS).isOnline
-
     /**
      * Whether a failed health check may be written to the log today.
      *
@@ -811,9 +807,6 @@ object ListenTogether {
         job.start()
         return job.await()
     }
-
-    /** Whether this device has an account it can jam as. */
-    fun canJoin(): Boolean = identity() != null
 
     fun nickname(): String = prefs.getString(KEY_NICKNAME, null).orEmpty()
 
@@ -1783,5 +1776,4 @@ object ListenTogether {
     // below the poll interval, or the debounce silently stretches the poll.
     private const val HEALTH_MIN_GAP_MS = 5_000L
     private const val REPORT_INTERVAL_MS = 10_000L
-    private const val HEALTH_TIMEOUT_MS = 45_000L
 }

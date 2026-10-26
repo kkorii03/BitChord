@@ -46,10 +46,6 @@ open class KizzyRPC(
         discordApiClient.close()
     }
 
-    fun isRpcRunning(): Boolean {
-        return discordWebSocket.isWebSocketConnected()
-    }
-
     /**
      * Tells the gateway that conditions have changed and it is worth trying
      * again now — a network coming back, typically.

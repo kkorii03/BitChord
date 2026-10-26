@@ -25,9 +25,6 @@ interface DirectAudioOutput {
     /** Whether direct hardware streaming is active and ready to accept audio frames. */
     val isActive: Boolean
 
-    /** Current hardware probe diagnosis. */
-    val probeResult: DirectUsbProbeResult
-
     /**
      * Attempts to configure the direct USB output stream for the given audio format.
      *

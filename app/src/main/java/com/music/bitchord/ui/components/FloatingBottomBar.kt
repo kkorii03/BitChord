@@ -36,7 +36,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -170,7 +169,6 @@ fun FloatingBottomBar(
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val haptics = rememberHaptics()
     val density = LocalDensity.current
-    val currentSelectedIndex by rememberUpdatedState(selectedIndex)
 
     var rowSize by remember { mutableStateOf(IntSize.Zero) }
     val gapPx = with(density) { 6.dp.toPx() }

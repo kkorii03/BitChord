@@ -877,48 +877,6 @@ internal fun localizeShelfSubtitle(subtitle: String): String {
 }
 
 @Composable
-internal fun localizeCardSubtitle(subtitle: String): String {
-    if (subtitle.isBlank()) return subtitle
-    val delimiter = " • "
-    val parts = subtitle.split(delimiter)
-    val songLabel = stringResource(Res.string.shelf_song_item)
-    val singleLabel = stringResource(Res.string.shelf_single)
-    val chartLabel = stringResource(Res.string.shelf_chart)
-    val playlistLabel = stringResource(Res.string.playlist)
-    val localizedParts = parts.map { part ->
-        val trimmed = part.trim()
-        val lower = trimmed.lowercase(Locale.ROOT)
-        when {
-            trimmed.equals("Song", ignoreCase = true) || trimmed.equals("Titre", ignoreCase = true) ||
-                trimmed.equals("Bài hát", ignoreCase = true) || trimmed.equals("曲", ignoreCase = true) -> songLabel
-            trimmed.equals("Single", ignoreCase = true) || trimmed.equals("Đĩa đơn", ignoreCase = true) ||
-                trimmed.equals("シングル", ignoreCase = true) -> singleLabel
-            trimmed.equals("Chart", ignoreCase = true) || trimmed.equals("Bảng xếp hạng", ignoreCase = true) ||
-                trimmed.equals("チャート", ignoreCase = true) -> chartLabel
-            trimmed.equals("Playlist", ignoreCase = true) || trimmed.equals("Danh sách phát", ignoreCase = true) ||
-                trimmed.equals("再生リスト", ignoreCase = true) -> playlistLabel
-            lower.endsWith(" views") || lower.endsWith(" view") || lower.endsWith(" lượt xem") ||
-                lower.endsWith(" 回視聴") || lower.endsWith("回視聴") -> {
-                val count = trimmed.substringBeforeLast(' ', "").trim()
-                if (count.any { it.isDigit() }) stringResource(Res.string.card_views_format, count) else part
-            }
-            lower.endsWith(" plays") || lower.endsWith(" play") || lower.endsWith(" lượt phát") ||
-                lower.endsWith(" 回再生") || lower.endsWith("回再生") -> {
-                val count = trimmed.substringBeforeLast(' ', "").trim()
-                if (count.any { it.isDigit() }) stringResource(Res.string.card_plays_format, count) else part
-            }
-            lower.endsWith(" songs") || lower.endsWith(" song") || lower.endsWith(" bài hát") ||
-                lower.endsWith(" 曲") || lower.endsWith("曲") -> {
-                val count = trimmed.substringBeforeLast(' ', "").trim()
-                if (count.any { it.isDigit() }) stringResource(Res.string.card_songs_format, count) else part
-            }
-            else -> part
-        }
-    }
-    return localizedParts.joinToString(delimiter)
-}
-
-@Composable
 private fun HeroShelf(
     shelf: HomeShelf,
     onItemClick: (ShelfItem) -> Unit,
