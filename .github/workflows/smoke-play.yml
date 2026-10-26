@@ -36,7 +36,7 @@ jobs:
           SMOKE_SETTINGS_B64: ${{ secrets.SMOKE_SETTINGS_B64 }}
         run: |
           if [ -n "$SMOKE_SETTINGS_B64" ]; then
-            echo "$SMOKE_SETTINGS_B64" | base64 -d > "$RUNNER_TEMP/smoke.bitchord-settings"
+            echo "$SMOKE_SETTINGS_B64" | base64 -d | sed '1s/^\xEF\xBB\xBF//' > "$RUNNER_TEMP/smoke.bitchord-settings"
             echo "SMOKE_SETTINGS_FILE=$RUNNER_TEMP/smoke.bitchord-settings" >> "$GITHUB_ENV"
             echo "::notice title=smoke::HQ sources loaded"
           else

@@ -136,12 +136,18 @@ if [ -n "$SETTINGS_DEVICE" ]; then
     grep -q 'debug-import:' "$OUT/smoke-logcat.txt" && break
     sleep 1
   done
-  if grep -q 'debug-import:' "$OUT/smoke-logcat.txt"; then
+  if grep -q 'debug-import: applied=' "$OUT/smoke-logcat.txt"; then
     HQ_CONFIGURED=1
-    echo "smoke: settings import confirmed (debug-import:)"
+    echo "smoke: settings import confirmed: $(grep -m1 -o 'debug-import: applied=.*' "$OUT/smoke-logcat.txt")"
   else
-    echo "smoke: settings import receiver not available (no debug-import:); continuing" >&2
+    # Without the listener's settings (music-only, HQ sources, proxy) the run
+    # judges a different app; stop now instead of an hour later.
+    echo "smoke: settings import FAILED: $(grep -m1 -o 'debug-import:.*' "$OUT/smoke-logcat.txt" || echo 'no debug-import line')" >&2
+    exit 2
   fi
+elif [ -n "${SMOKE_SETTINGS_FILE:-}" ]; then
+  echo "smoke: settings were given but could not be handed to the app" >&2
+  exit 2
 fi
 
 play_count() {
