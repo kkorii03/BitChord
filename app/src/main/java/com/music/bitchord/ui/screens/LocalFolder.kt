@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.music.bitchord.R
+import com.music.bitchord.data.HangulSearch
 import com.music.bitchord.data.LocalGroup
 import com.music.bitchord.data.LocalGroups
 import com.music.bitchord.data.model.BrowseType
@@ -208,8 +209,8 @@ fun rememberLocalFolderGroups(
     query: String,
 ): List<LocalGroup> = remember(browseId, tab, songs, folder.collections, query) {
     fun LocalGroup.matches() = query.isBlank() ||
-        title.contains(query, ignoreCase = true) ||
-        subtitle.contains(query, ignoreCase = true)
+        HangulSearch.matches(query, title) ||
+        HangulSearch.matches(query, subtitle)
     when (tab) {
         LocalFolderTab.SONGS -> emptyList()
         LocalFolderTab.ARTISTS -> LocalGroups.artistsOf(browseId, songs).filter { it.matches() }
