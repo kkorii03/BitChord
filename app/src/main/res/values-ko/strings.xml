@@ -1336,6 +1336,9 @@
     <string name="pipeline_surround">%1$s (서라운드)</string>
     <string name="problem_mark">문제 표시(진단 로그에 기록)</string>
     <string name="problem_marked">진단 로그에 표시했습니다</string>
+    <string name="sync_report_now">이 줄 지금 부르는 중</string>
+    <string name="lyrics_sync_report_late">가사 %1$s초 늦음 기록</string>
+    <string name="lyrics_sync_report_early">가사 %1$s초 빠름 기록</string>
     <string name="auto_replace_hq_downloads">다운로드한 곡 고음질로 자동 교체</string>
     <string name="auto_replace_hq_downloads_subtitle">소리로 검증된 더 높은 등급의 음원이 있으면 다시 받아 기존 파일을 교체합니다. 새 파일이 완성되기 전까지 기존 파일은 유지됩니다.</string>
     <string name="auto_prefetch_hq">자주 듣는 곡 고음질로 미리 저장</string>

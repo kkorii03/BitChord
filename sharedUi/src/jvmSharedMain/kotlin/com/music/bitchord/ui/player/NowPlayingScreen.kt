@@ -1076,6 +1076,20 @@ fun NowPlayingScreen(
     // through [PlayerHost.LyricsShareSheet].
     var lyricsShare by remember { mutableStateOf<LyricsShareRequest?>(null) }
     val lyricsShareEnabled = lyricsShareAvailable
+    val lyricsSyncFacts = remember(song.videoId, lyricsSource, lyricsTiming, lyrics) {
+        LyricsSyncFacts(
+            videoId = song.videoId,
+            source = lyricsSource?.label
+                ?: if (lyrics.isNullOrEmpty()) "none" else "file",
+            base = when {
+                lyricsTiming.byAi -> "ai"
+                lyricsTiming.shiftMs != null || lyricsTiming.rate != null -> "measured"
+                else -> "none"
+            },
+            shiftMs = lyricsTiming.shiftMs,
+            manualMs = lyricsTiming.manualMs,
+        )
+    }
     val lyricPicker = rememberLyricsPicker(
         song = song,
         lines = lyrics,
@@ -2231,6 +2245,7 @@ fun NowPlayingScreen(
                                     picked = lyricPicker.picks,
                                     onPickLine = lyricPicker.pick,
                                     onTogglePick = lyricPicker.toggle,
+                                    syncFacts = lyricsSyncFacts,
                                     centerFocus = true,
                                     modifier = Modifier.fillMaxSize(),
                                 )
@@ -3600,6 +3615,7 @@ fun NowPlayingScreen(
                                         picked = lyricPicker.picks,
                                         onPickLine = lyricPicker.pick,
                                         onTogglePick = lyricPicker.toggle,
+                                        syncFacts = lyricsSyncFacts,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }

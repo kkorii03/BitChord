@@ -102,7 +102,7 @@ object SyncTestMode {
      * in the queue's `src:<config>::<track>` shape, or the video id when the
      * YouTube copy is the one playing.
      */
-    private fun playingId(videoId: String): String {
+    fun playingId(videoId: String): String {
         if (!StreamChoice.isSubstitute(videoId)) return videoId
         val choice = StreamChoice.of(videoId) ?: return videoId
         val sourceId = choice.sourceConfigId ?: return videoId

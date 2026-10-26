@@ -50,6 +50,14 @@ LYRICS_SYNC_SHIFT_RE = re.compile(
 )
 # The same line ends with `video=y|n`, another statement that the id is an MV.
 LYRICS_SYNC_ID_RE = re.compile(r"lyrics-sync:\s+(?P<id>\S+)")
+# `sync-report: <id> line=3/20 shown=12345 tapped=10545 error=1800 source=.. ...`
+SYNC_REPORT_RE = re.compile(
+    r"sync-report:\s+(?P<id>\S+)\s+line=(?P<line>\d+)/(?P<total>\d+)\s+"
+    r"shown=(?P<shown>-?\d+)(?:ms)?\s+tapped=(?P<tapped>-?\d+)(?:ms)?\s+"
+    r"error=(?P<error>-?\d+)(?:ms)?"
+)
+# A drift this steep, in ms per lyric line, is worth calling out as widening.
+SYNC_SLOPE_WIDENING_MS = 50.0
 # `song-sync: <id> result=applied|refused-shift|... shift=1234 ...`
 SONG_SYNC_RE = re.compile(
     r"song-sync:\s+(?P<id>\S+)\s+result=(?P<result>\S+).*?\bshift=(?P<shift>-?\d+)"
@@ -64,6 +72,67 @@ class Summary:
     video_id: str
     title: str
     video: bool
+
+
+@dataclass(frozen=True)
+class SyncReport:
+    video_id: str
+    line: int
+    total: int
+    shown: int
+    tapped: int
+    error: int
+
+
+def _slope(points: list[tuple[float, float]]) -> float:
+    """Least-squares slope of y against x; zero when x never moves."""
+    if len(points) < 2:
+        return 0.0
+    mean_x = sum(x for x, _ in points) / len(points)
+    mean_y = sum(y for _, y in points) / len(points)
+    spread = sum((x - mean_x) ** 2 for x, _ in points)
+    if spread == 0:
+        return 0.0
+    return sum((x - mean_x) * (y - mean_y) for x, y in points) / spread
+
+
+def sync_report_details(
+    reports: list[SyncReport],
+    title_by_id: dict[str, str],
+) -> list[str]:
+    """Per-song error average, range and, from three reports on, its drift."""
+    by_song: dict[str, list[SyncReport]] = {}
+    for report in reports:
+        by_song.setdefault(report.video_id, []).append(report)
+    details: list[str] = []
+    for video_id, song_reports in by_song.items():
+        song_reports.sort(key=lambda report: report.line)
+        errors = [report.error for report in song_reports]
+        average = sum(errors) / len(errors)
+        title = title_by_id.get(video_id)
+        label = f"{video_id} ({title})" if title else video_id
+        detail = (
+            f"sync-report {label} n={len(errors)} avg={average:+.0f}ms "
+            f"range={min(errors):+d}..{max(errors):+d}ms"
+        )
+        if len(song_reports) >= 3:
+            slope = _slope(
+                [(report.line, report.error) for report in song_reports]
+            )
+            # Widening is about the size of the miss, whichever way it points:
+            # 500 → 300 → 100 ms late is closing, not drifting apart.
+            magnitude_slope = _slope(
+                [(report.line, abs(report.error)) for report in song_reports]
+            )
+            if magnitude_slope >= SYNC_SLOPE_WIDENING_MS:
+                trend = "점점 벌어짐"
+            elif magnitude_slope <= -SYNC_SLOPE_WIDENING_MS:
+                trend = "점점 좁아짐"
+            else:
+                trend = "일정"
+            detail += f" slope={slope:+.1f}ms/줄 ({trend})"
+        details.append(detail)
+    return details
 
 
 @dataclass
@@ -125,6 +194,7 @@ def check_log(text: str) -> list[Check]:
     sync_warnings: list[tuple[str, str, str]] = []
     seen_sync: set[tuple[str, str, str]] = set()
     video_flag_ids: set[str] = set()
+    sync_reports: list[SyncReport] = []
     crashes: list[str] = []
     next_preps: list[tuple[str, str]] = []
 
@@ -199,6 +269,20 @@ def check_log(text: str) -> list[Check]:
                     if key not in seen_sync:
                         seen_sync.add(key)
                         sync_warnings.append(key)
+
+        if "sync-report:" in line:
+            match = SYNC_REPORT_RE.search(line)
+            if match:
+                sync_reports.append(
+                    SyncReport(
+                        video_id=match.group("id"),
+                        line=int(match.group("line")),
+                        total=int(match.group("total")),
+                        shown=int(match.group("shown")),
+                        tapped=int(match.group("tapped")),
+                        error=int(match.group("error")),
+                    )
+                )
 
         if "FATAL EXCEPTION" in line or ANR_RE.search(line):
             crashes.append(line.strip())
@@ -277,8 +361,12 @@ def check_log(text: str) -> list[Check]:
             3,
             "가사 싱크",
             "FAIL" if sync_details else "PASS",
-            sync_details
-            or [f"|shift| > {SHIFT_LIMIT_MS}ms 또는 refused-shift 없음"],
+            (
+                sync_details
+                if sync_details
+                else [f"|shift| > {SHIFT_LIMIT_MS}ms 또는 refused-shift 없음"]
+            )
+            + sync_report_details(sync_reports, title_by_id),
         )
     )
 

@@ -225,6 +225,12 @@ fun SongActionsSheet(
      * see can be found again afterwards. Null everywhere except the player.
      */
     onReportProblem: (() -> Unit)? = null,
+    /**
+     * Says the line being sung now is the one the listener hears. The lyric
+     * panel's long press is the pick gesture, so on the phone this is where a
+     * sync report is reached. Null hides the row.
+     */
+    onReportSync: (() -> Unit)? = null,
     /** Opens the timing control offered only by the main player's menu. */
     onLyricsOffset: (() -> Unit)? = null,
     /**
@@ -524,6 +530,16 @@ fun SongActionsSheet(
             ActionRow(
                 icon = Icons.Rounded.Flag,
                 label = stringResource(R.string.problem_mark),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
+        // The lyric line under the singer, named from here because the line's
+        // own long press already belongs to the share-card picker.
+        onReportSync?.let {
+            ActionRow(
+                icon = Icons.Rounded.Subtitles,
+                label = stringResource(R.string.sync_report_now),
                 accent = palette.accent,
                 onClick = it,
             )

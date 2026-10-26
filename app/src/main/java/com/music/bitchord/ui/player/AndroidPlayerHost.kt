@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -197,6 +198,30 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     override fun showMessage(message: String) {
         main.post { Toast.makeText(app, message, Toast.LENGTH_SHORT).show() }
+    }
+
+    override fun reportLyricsSync(
+        videoId: String,
+        line: Int,
+        total: Int,
+        shownMs: Long,
+        tappedMs: Long,
+        source: String,
+        base: String,
+        shiftMs: Long?,
+        manualMs: Long,
+    ) {
+        TrackDiagnostics.reportSync(
+            videoId = videoId,
+            line = line,
+            total = total,
+            shownMs = shownMs,
+            tappedMs = tappedMs,
+            source = source,
+            base = base,
+            shiftMs = shiftMs,
+            manualMs = manualMs,
+        )
     }
 
     override val castState: StateFlow<CastUi> by lazy {

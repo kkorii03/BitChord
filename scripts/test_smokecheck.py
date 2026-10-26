@@ -111,6 +111,60 @@ class SyncTest(unittest.TestCase):
         self.assertEqual("FAIL", statuses(log)[3].status)
 
 
+class SyncReportTest(unittest.TestCase):
+    def report(self, line: int, error: int, video_id: str = "vid1") -> str:
+        return log_line(
+            f"sync-report: {video_id} line={line}/12 shown={10000 + error} "
+            f"tapped=10000 error={error} source=lrc.red base=measured "
+            "shift=-200ms manual=0ms playing=vid1"
+        )
+
+    def test_three_reports_show_average_range_and_slope(self):
+        log = "\n".join(
+            [self.report(1, 100), self.report(2, 300), self.report(3, 500)]
+        )
+        result = statuses(log)[3]
+        self.assertEqual("PASS", result.status)
+        detail = next(d for d in result.details if d.startswith("sync-report"))
+        self.assertIn("n=3", detail)
+        self.assertIn("avg=+300ms", detail)
+        self.assertIn("range=+100..+500ms", detail)
+        self.assertIn("slope=+200.0ms/줄", detail)
+        self.assertIn("점점 벌어짐", detail)
+
+    def test_two_reports_have_no_slope(self):
+        log = "\n".join([self.report(1, 100), self.report(2, -100)])
+        result = statuses(log)[3]
+        detail = next(d for d in result.details if d.startswith("sync-report"))
+        self.assertIn("avg=+0ms", detail)
+        self.assertIn("range=-100..+100ms", detail)
+        self.assertNotIn("slope=", detail)
+
+    def test_closing_error_is_not_called_widening(self):
+        log = "\n".join(
+            [self.report(1, 500), self.report(2, 300), self.report(3, 100)]
+        )
+        result = statuses(log)[3]
+        detail = next(d for d in result.details if d.startswith("sync-report"))
+        self.assertIn("slope=-200.0ms/줄", detail)
+        self.assertIn("점점 좁아짐", detail)
+
+    def test_reports_are_grouped_by_song(self):
+        log = "\n".join(
+            [
+                self.report(1, 100, "a"),
+                self.report(2, 200, "a"),
+                self.report(1, -300, "b"),
+            ]
+        )
+        details = [
+            d for d in statuses(log)[3].details if d.startswith("sync-report")
+        ]
+        self.assertEqual(2, len(details))
+        self.assertTrue(any("a" in d and "avg=+150ms" in d for d in details))
+        self.assertTrue(any("b" in d and "avg=-300ms" in d for d in details))
+
+
 class QualityUpgradeTest(unittest.TestCase):
     def test_only_rejections_fail(self):
         log = log_line(

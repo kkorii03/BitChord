@@ -1,9 +1,11 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.lyrics.LyricsSyncReport
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.TrackSummaryFormat
 import com.music.bitchord.playback.audio.SilenceSkipStats
+import com.music.bitchord.playback.smart.SyncTestMode
 import java.util.Locale
 
 /** What the lyrics engine applied to the track that is playing. */
@@ -84,6 +86,41 @@ object TrackDiagnostics {
     }
 
     fun lyricsFor(videoId: String): LyricsFacts? = synchronized(this) { facts[videoId] }
+
+    /**
+     * The listener's "this line is being sung now" report. Unlike [mark], it
+     * names the line the panel was showing and the moment it was tapped, so a
+     * run of them says whether the error is steady or drifting.
+     */
+    fun reportSync(
+        videoId: String,
+        line: Int,
+        total: Int,
+        shownMs: Long,
+        tappedMs: Long,
+        source: String,
+        base: String,
+        shiftMs: Long?,
+        manualMs: Long,
+    ) {
+        if (videoId.isBlank()) return
+        TrackLog.i(
+            "BitChord",
+            LyricsSyncReport.line(
+                videoId = videoId,
+                line = line,
+                total = total,
+                shownMs = shownMs,
+                tappedMs = tappedMs,
+                source = source,
+                base = base,
+                shiftMs = shiftMs,
+                manualMs = manualMs,
+                playing = SyncTestMode.playingId(videoId),
+            ),
+            about = videoId,
+        )
+    }
 
     /**
      * The listener's "report a problem" mark: the playing moment, the lyric

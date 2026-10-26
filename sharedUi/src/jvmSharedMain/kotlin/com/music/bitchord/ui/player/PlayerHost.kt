@@ -99,6 +99,23 @@ interface PlayerHost {
     /** A short, non-blocking notice — a Toast on the phone. */
     fun showMessage(message: String)
 
+    /**
+     * Writes the listener's "this line is being sung now" report to the
+     * diagnostic log. A host with no log leaves it alone; the panel still
+     * buzzes and says what it recorded.
+     */
+    fun reportLyricsSync(
+        videoId: String,
+        line: Int,
+        total: Int,
+        shownMs: Long,
+        tappedMs: Long,
+        source: String,
+        base: String,
+        shiftMs: Long?,
+        manualMs: Long,
+    ) = Unit
+
     /** The full signal-chain readout, opened from the output drawer. */
     @Composable
     fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit)

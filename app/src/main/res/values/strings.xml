@@ -490,6 +490,9 @@
     <string name="copy_log">Copy log</string>
     <string name="problem_mark">Report a problem (writes to the log)</string>
     <string name="problem_marked">Marked in the diagnostic log</string>
+    <string name="sync_report_now">This line is being sung now</string>
+    <string name="lyrics_sync_report_late">Lyrics %1$ss late · recorded</string>
+    <string name="lyrics_sync_report_early">Lyrics %1$ss early · recorded</string>
     <string name="couldnt_find">Couldn\'t find %1$s</string>
     <string name="couldnt_open_link">Couldn\'t open that link</string>
     <string name="create_playlist">Create playlist</string>

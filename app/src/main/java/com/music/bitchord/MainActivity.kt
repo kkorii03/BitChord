@@ -5219,6 +5219,60 @@ private fun BitChordApp(
                 } else {
                     null
                 },
+                // The lyric panel's long press is the card picker, so the
+                // "this line is being sung now" report lives here. It reads
+                // the line under the playhead, on the same offset clock the
+                // panel draws from.
+                onReportSync = if (fromPlayer &&
+                    controller?.currentMediaItem?.mediaId == song.videoId &&
+                    lyrics.orEmpty().any { it.timeMs > 0 }
+                ) {
+                    {
+                        val offsetMs = AppSettings.lyricsOffsetMs.value.toLong()
+                        val tappedMs = (player.position.positionMs - offsetMs).coerceAtLeast(0L)
+                        val timed = lyrics.orEmpty()
+                        val index = timed.indexOfLast { it.timeMs > 0 && it.timeMs <= tappedMs }
+                        if (index >= 0) {
+                            val shownMs = timed[index].timeMs
+                            val error = shownMs - tappedMs
+                            val base = when {
+                                lyricsTiming.byAi -> "ai"
+                                lyricsTiming.shiftMs != null || lyricsTiming.rate != null -> "measured"
+                                else -> "none"
+                            }
+                            val source = lyricsSource?.label
+                                ?: if (timed.isEmpty()) "none" else "file"
+                            TrackDiagnostics.reportSync(
+                                videoId = song.videoId,
+                                line = index + 1,
+                                total = timed.size,
+                                shownMs = shownMs,
+                                tappedMs = tappedMs,
+                                source = source,
+                                base = base,
+                                shiftMs = lyricsTiming.shiftMs,
+                                manualMs = lyricsTiming.manualMs,
+                            )
+                            val seconds = com.music.bitchord.data.lyrics.LyricsSyncReport
+                                .seconds(error)
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    if (error >= 0) {
+                                        R.string.lyrics_sync_report_late
+                                    } else {
+                                        R.string.lyrics_sync_report_early
+                                    },
+                                    seconds,
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        songActions = null
+                    }
+                } else {
+                    null
+                },
                 onLyricsOffset = if (fromPlayer) {
                     {
                         songActions = null

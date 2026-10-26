@@ -239,6 +239,8 @@
     <string name="lyrics_timing_ai_detail">%1$s · AI timing %2$s</string>
     <string name="lyrics_timing_rate">%1$s× speed</string>
     <string name="lyrics_timing_match">%1$s% match</string>
+    <string name="lyrics_sync_report_late">Lyrics %1$ss late · recorded</string>
+    <string name="lyrics_sync_report_early">Lyrics %1$ss early · recorded</string>
     <string name="lyrics_timing_manual">%1$s · this song %2$s</string>
     <string name="lyrics_offset_song">This song</string>
     <string name="lyrics_offset_song_description">Only for this song, on top of any automatic timing.</string>

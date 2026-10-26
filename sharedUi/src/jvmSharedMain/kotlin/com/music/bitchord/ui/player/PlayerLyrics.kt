@@ -133,6 +133,7 @@ import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricLineIndex
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsSyncReport
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.translationLanguageName
 import com.music.bitchord.data.lyrics.withEstimatedWords
@@ -1812,6 +1813,19 @@ internal fun rememberPlayerControlsOnScroll(
 }
 
 /**
+ * What a "this line is being sung now" report needs to name the timing behind
+ * the words. Null on a panel with nothing to report, or on one whose host has
+ * no log.
+ */
+internal data class LyricsSyncFacts(
+    val videoId: String,
+    val source: String,
+    val base: String,
+    val shiftMs: Long?,
+    val manualMs: Long,
+)
+
+/**
  * Apple Music's lyrics view: big tight type, the playing line crisp and
  * everything else falling out of focus the further it is from it. Blur needs
  * API 31+, so alpha carries the same hierarchy on older devices.
@@ -1866,6 +1880,11 @@ internal fun LyricsPanel(
     /** Tap while picking: add or drop that line. */
     onTogglePick: (Int) -> Unit = {},
     /**
+     * The timing behind these lines, when the listener can report one as being
+     * sung now. Null leaves the gesture alone.
+     */
+    syncFacts: LyricsSyncFacts? = null,
+    /**
      * Holds the sung line in the middle of the panel rather than at its top.
      * For the wide layouts — TV, landscape, tablet — where a column of lyrics
      * read from its top edge leaves most of the screen below the words.
@@ -1873,6 +1892,9 @@ internal fun LyricsPanel(
     centerFocus: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberHaptics()
+    val syncLateTemplate = stringResource(Res.string.lyrics_sync_report_late)
+    val syncEarlyTemplate = stringResource(Res.string.lyrics_sync_report_early)
     val panelPlaying = isPlaying && active
     val clock = rememberLyricClock(trackKey, playhead, panelPlaying)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
@@ -2403,6 +2425,38 @@ internal fun LyricsPanel(
                     animationSpec = tween(durationMillis = 420),
                     label = "lyricGlow",
                 )
+                // A long press is the pick gesture wherever a card can be made,
+                // so the report is only offered on the plain row. It says the
+                // line under the finger is the one being sung, and leaves the
+                // song where it is.
+                val reportSync: (() -> Unit)? = if (syncFacts != null && isSynced) {
+                    {
+                        val tapped = clock.longValue
+                        val error = line.timeMs - tapped
+                        haptics.play(Haptic.Select)
+                        PlayerPlatform.host.reportLyricsSync(
+                            videoId = syncFacts.videoId,
+                            line = index + 1,
+                            total = lines.size,
+                            shownMs = line.timeMs,
+                            tappedMs = tapped,
+                            source = syncFacts.source,
+                            base = syncFacts.base,
+                            shiftMs = syncFacts.shiftMs,
+                            manualMs = syncFacts.manualMs,
+                        )
+                        val seconds = LyricsSyncReport.seconds(error)
+                        PlayerPlatform.host.showMessage(
+                            if (LyricsSyncReport.isLate(error)) {
+                                String.format(Locale.ROOT, syncLateTemplate, seconds)
+                            } else {
+                                String.format(Locale.ROOT, syncEarlyTemplate, seconds)
+                            },
+                        )
+                    }
+                } else {
+                    null
+                }
                 // No width held back for the swell any more: nothing draws past
                 // its own bounds now that the playing line tops out at 1, so the
                 // text gets the full column and wraps where the panel does.
@@ -2480,6 +2534,16 @@ internal fun LyricsPanel(
                                         onSeekToLine(line.timeMs)
                                     }
                                 },
+                            )
+                        } else if (reportSync != null) {
+                            // No card to pick, so the long press is free to say
+                            // this line is the one being sung.
+                            Modifier.combinedClickable(
+                                enabled = isSynced,
+                                interactionSource = interaction,
+                                indication = LocalIndication.current,
+                                onLongClick = reportSync,
+                                onClick = { onSeekToLine(line.timeMs) },
                             )
                         } else {
                             // Where a card cannot be made there is nothing to
