@@ -206,6 +206,8 @@ fun SettingsScreen(
     onGeminiKey: () -> Unit,
     /** Opens the Deepgram API key alert (AI lyric timing), hosted the same way. */
     onDeepgramKey: () -> Unit = {},
+    /** Forgets downloaded songs' sync-check versions; each is checked again on its next play. */
+    onResetDownloadSync: () -> Unit = {},
     onEditSignatureApi: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -1306,6 +1308,16 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setAiTimingAhead(!aiTimingAhead) },
+                    )
+                }
+                val resetDownloadSyncTitle = stringResource(R.string.reset_download_sync)
+                row(resetDownloadSyncTitle, "lyrics", "timing", "sync", "download", "recheck") {
+                    SettingsRow(
+                        icon = Icons.Rounded.Cached,
+                        title = resetDownloadSyncTitle,
+                        subtitle = stringResource(R.string.reset_download_sync_subtitle),
+                        trailing = { Chevron() },
+                        onClick = onResetDownloadSync,
                     )
                 }
                 val deepgramTitle = stringResource(R.string.deepgram_api_key)

@@ -6,8 +6,10 @@ import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.ChromaAlignment
+import com.music.bitchord.data.lyrics.DownloadedSyncCheck
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
+import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -1248,11 +1250,56 @@ object LyricsTiming {
         if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
             return@withLock false
         }
+        val check = runSongCheck(context, song, lines, key, engine) ?: return@withLock false
+        if (check.result == "no-words") return@withLock false
+        val fitted = check.fitted ?: return@withLock true
+        store(context).update(song.videoId) {
+            it.copy(
+                aiTextKey = key,
+                ai = savedOf(fitted),
+                aiShiftMs = null,
+                aiStarts = null,
+                aiFailedKey = null,
+                heardWords = check.heard.take(MAX_HEARD_WORDS)
+                    .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                aiPreferred = it.aiPreferred && it.aiTextKey == key,
+                biasSampled = false,
+                aiEngine = engine,
+                songRetryKey = null,
+                songRetryAtMs = null,
+            )
+        }
+        _changes.tryEmit(song.videoId)
+        songLog(
+            song.videoId,
+            "applied",
+            check.match,
+            check.shift,
+            check.seconds,
+            words = check.words,
+            http = check.http,
+        )
+        true
+    }
+
+    /**
+     * The one song check, used by the streaming path and by the download
+     * re-check. Reads the audio, listens to the opening and fits the lines to
+     * the words heard; null means nothing could be listened to (no audio, or a
+     * 429 held for later), so the caller must not record the attempt as spent.
+     */
+    private suspend fun runSongCheck(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        key: Int,
+        engine: String,
+    ): SongCheck? {
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
         val audio = VideoAudio.songWav(context, song) ?: run {
             songLog(song.videoId, "no-audio", null, null, 0)
-            return@withLock false
+            return null
         }
         // Sync-test mode only: the ninety seconds the check already decoded,
         // kept for the phone's scoring run. Off, this is a no-op.
@@ -1263,11 +1310,11 @@ object LyricsTiming {
         val seconds = (windowMs / 1000.0).roundToInt()
         if (indices.size < MIN_AI_LINES) {
             songLog(song.videoId, "no-words", null, null, seconds)
-            return@withLock false
+            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0)
         }
         val texts = indices.map { lines[it].text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
-        val answer = listenForSong(context, song.videoId, key, audio, language) ?: return@withLock false
+        val answer = listenForSong(context, song.videoId, key, audio, language) ?: return null
         // Spent once Deepgram actually answered — success or refusal. A
         // cancellation or a request that never reached it is not recorded,
         // so the next playback may try again; nothing is recorded before the
@@ -1277,49 +1324,43 @@ object LyricsTiming {
         if (answer.httpCode != null) noteAttempt(context, song.videoId, key, engine)
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
-            return@withLock true
+            return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0)
         }
         if (heard.size < MIN_AI_LINES) {
             songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
-            return@withLock true
+            return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
         val fitted = fitAi(lines, indices, starts) ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
-            return@withLock true
+            return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size)
         }
         val match = fitted.matchPercent
         val shift = shownShiftMs(lines, fitted)
         when {
             !LyricsAiGuard.agreementAllows(match) -> {
                 songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
-                return@withLock true
+                return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size)
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
-                return@withLock true
+                return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size)
             }
         }
-        store(context).update(song.videoId) {
-            it.copy(
-                aiTextKey = key,
-                ai = savedOf(fitted),
-                aiShiftMs = null,
-                aiStarts = null,
-                aiFailedKey = null,
-                heardWords = heard.take(MAX_HEARD_WORDS)
-                    .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
-                aiPreferred = it.aiPreferred && it.aiTextKey == key,
-                biasSampled = false,
-                aiEngine = engine,
-                songRetryKey = null,
-                songRetryAtMs = null,
-            )
-        }
-        _changes.tryEmit(song.videoId)
-        songLog(song.videoId, "applied", match, shift, seconds, words = heard.size, http = answer.httpCode)
-        true
+        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size)
     }
+
+    /** What [runSongCheck] made of one lyric sheet; [result] is the song-sync log token. */
+    private class SongCheck(
+        val result: String,
+        val fitted: Adjustment.Mapped?,
+        val heard: List<LyricsWordAlign.Heard>,
+        val match: Int?,
+        val shift: Long?,
+        val seconds: Int,
+        val http: Int?,
+        val words: Int?,
+    )
 
     /**
      * Whisper with the 429 rules applied: at most two retries, `Retry-After`
@@ -1454,6 +1495,210 @@ object LyricsTiming {
             )
         }
         _changes.tryEmit(videoId)
+    }
+
+    // ---- Downloaded files' stored sync ------------------------------------------------
+
+    /** The last re-check state per video, for the `lyrics-sync:` line only. */
+    private val recheckTokens = ConcurrentHashMap<String, String>()
+
+    /**
+     * What the `lyrics-sync:` line says about the stored sync of a downloaded
+     * file: whether a sync is kept for these lyrics, and why it is (or was)
+     * being re-checked on this play.
+     */
+    suspend fun syncDiagnostics(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String?,
+        downloaded: Boolean,
+        providerUnknown: Boolean,
+    ): Pair<Boolean, String> {
+        val entry = store(context).get(videoId)
+        val key = textKey(lines, audioSource)
+        val match = entry?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
+        val stored = entry?.aiTextKey == key &&
+            (entry.ai != null || entry.aiShiftMs != null || entry.aiStarts != null)
+        val recheck = if (!downloaded) {
+            DownloadedSyncCheck.Recheck.NONE.token
+        } else {
+            recheckTokens[videoId] ?: DownloadedSyncCheck.recheckReason(
+                entry?.syncCheckVersion,
+                providerUnknown = providerUnknown,
+                matchPercent = match,
+            ).token
+        }
+        return stored to recheck
+    }
+
+    /**
+     * Re-checks a downloaded file's stored lyrics and sync once, when they
+     * were never checked with the current rules. The file's own audio is used
+     * exactly as the streaming song check uses its copy; a poor or unknown
+     * stored sheet is compared with a fresh provider lookup, and the answer
+     * that agrees more wins. The chosen answer is kept against the file's
+     * existing lines, so it applies on this play and every later one.
+     *
+     * One check at a time, and none for a version already recorded: this is
+     * called on playback only, never polled, and a repeat play is a no-op.
+     */
+    suspend fun recheckDownloaded(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        providerUnknown: Boolean,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        alternatives: List<Pair<String, String>>,
+        artistKnown: Boolean,
+        artistAliases: List<String>,
+    ) {
+        if (song.localUri.isNullOrBlank() || lines.none { it.timeMs > 0 }) return
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
+        val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
+        if (!LyricsAiGuard.songTimingWanted(
+                isVideo = song.isVideo,
+                timed = true,
+                sungLines = sung.size,
+                title = title,
+                artist = artist,
+                texts = sung.map { it.value.text },
+            )
+        ) return
+        val audioSource = audioSourceKey(song.videoId, localFile = true)
+        val key = textKey(lines, audioSource)
+        val before = store(context).get(song.videoId)
+        val beforeMatch = before?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
+        val reason = DownloadedSyncCheck.recheckReason(
+            before?.syncCheckVersion,
+            providerUnknown = providerUnknown,
+            matchPercent = beforeMatch,
+        )
+        if (reason == DownloadedSyncCheck.Recheck.NONE) return
+        recheckTokens[song.videoId] = reason.token
+        songSyncGate.withLock {
+            // Another flight may have finished this file while this one waited.
+            val entry = store(context).get(song.videoId)
+            if (!DownloadedSyncCheck.isUnverified(entry?.syncCheckVersion)) {
+                recheckTokens[song.videoId] = DownloadedSyncCheck.Recheck.DONE.token
+                return@withLock
+            }
+            val existingMatch = entry?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
+            // The file's own lyrics first: they are what is shown, so an
+            // answer fitted to them needs no second interpretation. No audio
+            // or a 429 leaves the version unset so the next play may try again.
+            val own = runSongCheck(context, song, lines, key, ENGINE_DEEPGRAM_WHISPER) ?: return@withLock
+            var best = own
+            // A fresh sheet is worth a request when the stored answer is
+            // unknown or poor — including a first check that could not fit
+            // these words at all.
+            val knownMatch = existingMatch ?: own.match
+            val fetchFresh = DownloadedSyncCheck.shouldFetchNewLyrics(providerUnknown, knownMatch) ||
+                (existingMatch == null && own.fitted == null)
+            if (fetchFresh) {
+                val fresh = fetchDownloadedLyrics(
+                    song, title, artist, durationMs, album, alternatives, artistKnown, artistAliases,
+                )
+                if (fresh != null && fresh != lines) {
+                    val other = runSongCheck(context, song, fresh, textKey(fresh, audioSource), ENGINE_DEEPGRAM_WHISPER)
+                    if (other != null && (other.match ?: 0) > (best.match ?: 0)) {
+                        best = other
+                    }
+                }
+            }
+            val result = best
+            val chosen = result.fitted
+            val replace = DownloadedSyncCheck.shouldReplace(
+                entry?.syncCheckVersion,
+                existingMatch,
+                result.match,
+            )
+            store(context).update(song.videoId) {
+                val keep = if (replace && chosen != null) {
+                    it.copy(
+                        aiTextKey = key,
+                        ai = savedOf(chosen),
+                        aiShiftMs = null,
+                        aiStarts = null,
+                        aiFailedKey = null,
+                        heardWords = result.heard.take(MAX_HEARD_WORDS)
+                            .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                        aiPreferred = false,
+                        biasSampled = false,
+                        aiEngine = ENGINE_DEEPGRAM_WHISPER,
+                        songRetryKey = null,
+                        songRetryAtMs = null,
+                    )
+                } else {
+                    it
+                }
+                keep.copy(syncCheckVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION)
+            }
+            if (replace && chosen != null) {
+                songLog(
+                    song.videoId,
+                    "applied",
+                    result.match,
+                    result.shift,
+                    result.seconds,
+                    words = result.words,
+                    http = result.http,
+                )
+            }
+            recheckTokens[song.videoId] = DownloadedSyncCheck.Recheck.DONE.token
+            _changes.tryEmit(song.videoId)
+        }
+    }
+
+    /** A fresh timed sheet for a downloaded file, from the user's chosen sources only. */
+    private suspend fun fetchDownloadedLyrics(
+        song: Song,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        alternatives: List<Pair<String, String>>,
+        artistKnown: Boolean,
+        artistAliases: List<String>,
+    ): List<LyricLine>? {
+        val sources = if (AppSettings.syncedLyrics.value) AppSettings.lyricsSources.value else emptySet()
+        if (sources.isEmpty()) return null
+        return runCatching {
+            LyricsRepository.lyrics(
+                videoId = song.videoId,
+                title = title,
+                artist = artist,
+                durationMs = durationMs,
+                album = album,
+                sources = sources,
+                order = AppSettings.lyricsSourceOrder.value,
+                prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                isVideo = song.isVideo,
+                alternatives = alternatives,
+                artistKnown = artistKnown,
+                artistAliases = artistAliases,
+            )?.lines?.takeIf { found ->
+                found.count { it.text.isNotBlank() } >= MIN_AI_LINES && found.any { it.timeMs > 0 }
+            }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            TrackLog.w(TAG, "download re-check lookup failed: ${it.message}", song.videoId)
+        }.getOrNull()
+    }
+
+    /**
+     * The settings button: forgets every stored sync-check version, so each
+     * downloaded file is checked once more the next time it is played. The
+     * stored lyrics and sync themselves are left alone until a better answer
+     * is actually found; nothing is re-processed in the background.
+     */
+    suspend fun resetDownloadedSync(context: Context) {
+        recheckTokens.clear()
+        store(context).clearSyncCheckVersions()
+        TrackLog.i("BitChord", "lyrics-sync: downloaded sync versions cleared")
     }
 
     private const val MIN_AI_LINES = 3
@@ -1741,6 +1986,13 @@ object LyricsTiming {
          */
         val songRetryKey: Int? = null,
         val songRetryAtMs: Long? = null,
+        /**
+         * The [DownloadedSyncCheck.SYNC_CHECK_VERSION] a downloaded file's
+         * stored sync was last checked with; 0 means never. Only this version
+         * is cleared by the settings button, so each file is checked once more
+         * on its next play rather than all at once.
+         */
+        val syncCheckVersion: Int = 0,
         /** This video's once-ever calibration sample has been claimed; see [claimCalibrationSample]. */
         val calibrationSampled: Boolean = false,
     )
@@ -1770,6 +2022,22 @@ object LyricsTiming {
                 dirty = true
             }
             scheduleSave()
+        }
+
+        /** Forgets every file's sync-check version, leaving the stored sync itself in place. */
+        suspend fun clearSyncCheckVersions() {
+            mutex.withLock {
+                val map = loaded()
+                var changed = false
+                for ((videoId, entry) in map) {
+                    if (entry.syncCheckVersion != 0) {
+                        map[videoId] = entry.copy(syncCheckVersion = 0)
+                        changed = true
+                    }
+                }
+                if (changed) dirty = true
+            }
+            if (dirty) scheduleSave()
         }
 
         @Volatile private var dirty = false

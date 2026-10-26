@@ -1150,6 +1150,8 @@
     <string name="ai_lyrics_subtitle">가사 제공처 어디에도 없는 노래는 Gemini가 영상을 듣고 가사와 타이밍을 받아씁니다. 최대 1분 정도 걸리며 틀린 줄이 있을 수 있습니다.</string>
     <string name="ai_timing_ahead">AI 싱크 미리 맞추기</string>
     <string name="ai_timing_ahead_subtitle">비디오 노래가 시작될 때와 다음 노래를 준비할 때 Gemini에게 미리 싱크를 맞춰 둡니다. 자동 보정이 실패해도 바로 맞춰진 가사가 나옵니다. 비디오마다 Gemini 요청을 한 번 씁니다.</string>
+    <string name="reset_download_sync">다운로드 곡 싱크 다시 맞추기</string>
+    <string name="reset_download_sync_subtitle">다운로드한 곡이 다음에 재생될 때 저장된 가사와 싱크를 한 번 더 확인하고, 더 나은 결과면 바꿉니다. 지금 바로 실행하지는 않습니다.</string>
     <string name="deepgram_api_key">Deepgram API 키</string>
     <string name="deepgram_api_key_description">비디오 가사의 AI 싱크에 사용합니다. Deepgram이 먼저 듣고, 안 되면 Whisper, 그다음 Gemini가 맞춥니다. 키는 console.deepgram.com에서 받을 수 있습니다.</string>
     <string name="deepgram_subtitle_missing">키 없음 — AI 싱크는 Gemini만 사용합니다</string>

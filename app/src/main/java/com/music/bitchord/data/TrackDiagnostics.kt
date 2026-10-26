@@ -44,6 +44,10 @@ object TrackDiagnostics {
         biasMs: Long,
         manualOffsetMs: Long,
         video: Boolean,
+        /** Whether a downloaded file's sync is stored for these lyrics. */
+        stored: Boolean = false,
+        /** Why a downloaded file's sync is (or was) re-checked: none/unverified/unknown-provider/low-match/done. */
+        recheck: String = "none",
     ) {
         if (videoId.isBlank()) return
         synchronized(this) {
@@ -60,6 +64,8 @@ object TrackDiagnostics {
             append(" match=").append(matchPercent ?: "-").append('%')
             append(" bias=").append(biasMs).append("ms")
             append(" manual=").append(manualOffsetMs).append("ms")
+            append(" stored=").append(if (stored) "y" else "n")
+            append(" recheck=").append(recheck)
             append(" silenceSkipMs=").append(SilenceSkipStats.skippedMs)
             append(" video=").append(if (video) "y" else "n")
         }
