@@ -344,6 +344,8 @@ object AudioCache {
         analysisHeadWant.clear()
         stalledAnalysisHeads.clear()
         renditionKeys.clear()
+        purgeCandidates.clear()
+        purgeIndexBuilt = true
         scope.launch {
             cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
             _contentsChanged.value++
@@ -389,7 +391,10 @@ object AudioCache {
                 return@forEach
             }
             runCatching { cache.removeResource(key) }
-                .onSuccess { TrackLog.d(TAG, "discarded cache entry $key", about = about) }
+                .onSuccess {
+                    forgetPurgeCandidate(key)
+                    TrackLog.d(TAG, "discarded cache entry $key", about = about)
+                }
                 .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
         }
     }
@@ -414,7 +419,10 @@ object AudioCache {
     fun discardRendition(uri: Uri) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         runCatching { cache.removeResource(key) }
-            .onSuccess { TrackLog.d(TAG, "discarded unused rendition $key", about = mediaIdIn(uri)) }
+            .onSuccess {
+                forgetPurgeCandidate(key)
+                TrackLog.d(TAG, "discarded unused rendition $key", about = mediaIdIn(uri))
+            }
             .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaIdIn(uri)) }
     }
 
@@ -451,6 +459,7 @@ object AudioCache {
         }
         return runCatching { cache.removeResource(key) }
             .onSuccess {
+                forgetPurgeCandidate(key)
                 TrackLog.d(TAG, "discarded undecodable rendition $key", about = about)
                 // Deleting the bytes is only half of it. The head fetch runs once
                 // per track per session, so without this the entry it just made
@@ -742,10 +751,23 @@ object AudioCache {
             runCatching {
                 val meta = cache.getContentMetadata(key)
                 if (meta.get(META_ORIGIN, null as String?) == null) return@runCatching
-                if (meta.get(META_PLAYED, null as String?) != null) return@runCatching
+                if (meta.get(META_PLAYED, null as String?) != null) {
+                    updatePurgeCandidate(key, purgeCandidate(meta))
+                    return@runCatching
+                }
                 cache.applyContentMetadataMutations(
                     key,
                     ContentMetadataMutations().set(META_PLAYED, "1"),
+                )
+                updatePurgeCandidate(
+                    key,
+                    BatteryPolicy.cacheEntryNeedsPurge(
+                        origin = meta.get(META_ORIGIN, null as String?),
+                        foreignOrigin = Origin.OTHER.name,
+                        hasAnalysis = meta.get(META_ANALYSIS, null as String?) != null,
+                        hasPlayback = meta.get(META_PLAYBACK, null as String?) != null,
+                        hasPlayed = true,
+                    ),
                 )
             }
         }
@@ -788,7 +810,10 @@ object AudioCache {
                 has(META_PLAYED) == played
             // Every re-open — a seek, a continuation fetch — passes through
             // here. Only write when something would actually change.
-            if (tagged && (song == null || has(META_TITLE))) return
+            if (tagged && (song == null || has(META_TITLE))) {
+                updatePurgeCandidate(key, purgeCandidate(meta))
+                return
+            }
             cache.applyContentMetadataMutations(
                 key,
                 ContentMetadataMutations().also { mutations ->
@@ -798,6 +823,16 @@ object AudioCache {
                     if (played) mutations.set(META_PLAYED, "1")
                     describe(mutations, song, spec.uri)
                 },
+            )
+            updatePurgeCandidate(
+                key,
+                BatteryPolicy.cacheEntryNeedsPurge(
+                    origin = origin.name,
+                    foreignOrigin = Origin.OTHER.name,
+                    hasAnalysis = !usedByPlayback,
+                    hasPlayback = usedByPlayback,
+                    hasPlayed = played,
+                ),
             )
         }.onFailure {
             TrackLog.d(TAG, "could not tag cache entry $key: ${it.message}", about = mediaId)
@@ -959,7 +994,10 @@ object AudioCache {
         var removed = 0
         keysOf(mediaId).forEach { key ->
             runCatching { cache.removeResource(key) }
-                .onSuccess { removed++ }
+                .onSuccess {
+                    forgetPurgeCandidate(key)
+                    removed++
+                }
                 .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
         }
         TrackLog.d(TAG, "removed $removed cache entries at the listener's request", about = mediaId)
@@ -1096,22 +1134,67 @@ object AudioCache {
     private const val TIMING_KEEP_MS = 15 * 60_000L
     private const val TIMING_KEEP_MAX = 16
 
+    /**
+     * Cache keys that may need dropping, maintained as entries are written and
+     * removed rather than rediscovered by walking the whole cache on every
+     * track change.
+     *
+     * A multi-gigabyte cache holds tens of thousands of keys, and the old
+     * [dropForeignEntries] read every one's metadata after each transition.
+     * The index is seeded once from disk (see [rebuildPurgeIndex]) and then
+     * follows [recordServed], [notePlayed] and the removal paths.
+     */
+    private val purgeCandidates = ConcurrentHashMap.newKeySet<String>()
+    @Volatile
+    private var purgeIndexBuilt = false
+
+    private fun purgeCandidate(meta: ContentMetadata): Boolean = BatteryPolicy.cacheEntryNeedsPurge(
+        origin = meta.get(META_ORIGIN, null as String?),
+        foreignOrigin = Origin.OTHER.name,
+        hasAnalysis = meta.get(META_ANALYSIS, null as String?) != null,
+        hasPlayback = meta.get(META_PLAYBACK, null as String?) != null,
+        hasPlayed = meta.get(META_PLAYED, null as String?) != null,
+    )
+
+    private fun updatePurgeCandidate(key: String, candidate: Boolean) {
+        if (candidate) purgeCandidates.add(key) else purgeCandidates.remove(key)
+    }
+
+    private fun forgetPurgeCandidate(key: String) {
+        purgeCandidates.remove(key)
+    }
+
+    private fun rebuildPurgeIndex() {
+        if (openedCache == null) {
+            purgeIndexBuilt = true
+            return
+        }
+        // Only adds: a concurrent [recordServed] may have put a newer key in
+        // the set while this scan was running, and it must not be lost.
+        cache.keys.forEach { key ->
+            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+            if (purgeCandidate(meta)) purgeCandidates.add(key)
+        }
+        purgeIndexBuilt = true
+    }
+
     fun dropForeignEntries(keep: Set<String>) {
         if (openedCache == null) return
         scope.launch {
+            if (!purgeIndexBuilt) rebuildPurgeIndex()
             var dropped = 0
-            cache.keys.toList().forEach { key ->
-                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-                val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name
-                val analysisOnly = meta.get(META_ANALYSIS, null as String?) != null &&
-                    meta.get(META_PLAYBACK, null as String?) == null &&
-                    meta.get(META_PLAYED, null as String?) == null
-                if (!foreign && !analysisOnly) return@forEach
+            purgeCandidates.toList().forEach { key ->
+                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull()
+                if (meta == null || !purgeCandidate(meta)) {
+                    forgetPurgeCandidate(key)
+                    return@forEach
+                }
                 val mediaId = meta.get(META_MEDIA_ID, null as String?)
                 if (mediaId != null && (mediaId in keep || keptForTiming(mediaId))) return@forEach
                 runCatching { cache.removeResource(key) }
                     .onSuccess {
                         dropped++
+                        forgetPurgeCandidate(key)
                         mediaId?.let { id ->
                             analysisHeads.remove(id)
                             analysisHeadWant.remove(id)
@@ -2206,6 +2289,7 @@ object AudioCache {
         if (held >= want) return false
         return runCatching { cache.removeResource(videoId) }
             .onSuccess {
+                forgetPurgeCandidate(videoId)
                 TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)", about = videoId)
             }
             .onFailure {

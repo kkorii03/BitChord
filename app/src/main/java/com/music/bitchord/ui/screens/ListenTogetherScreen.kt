@@ -239,10 +239,14 @@ fun ListenTogetherScreen(
     // the screen is looked at — rather than on every cold start — is what keeps
     // a feature nobody is currently using off the radio.
     LaunchedEffect(Unit) { ListenTogether.ensureConnected() }
-    DisposableEffect(Unit) {
-        ListenTogether.setScreenActive(true)
+    // The composition outlives the screen being turned off, so this follows the
+    // lifecycle rather than just being present. A health poll has no viewer
+    // with the display off, and none at all outside a party.
+    val foreground = rememberIsForeground()
+    DisposableEffect(foreground) {
+        ListenTogether.setScreenActive(foreground)
         onDispose {
-            ListenTogether.setScreenActive(false)
+            if (foreground) ListenTogether.setScreenActive(false)
         }
     }
 
