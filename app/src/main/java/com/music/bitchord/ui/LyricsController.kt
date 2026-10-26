@@ -990,9 +990,12 @@ class LyricsController(
                 heardWords = timing?.heardWords.orEmpty(),
             )
         }
-        if (timing != null) {
-            LyricsTiming.refine(app, request.videoId, lines, timing, audioSource)
-            startRefineHeardIfNeeded(request, lines, timing, audioSource, generation)
+        // A song version usually has no base and so no timing at all; its
+        // provider's clock is refined from the same empty starting point.
+        val refineFrom = timing ?: LyricsTiming.Timing(base = null, manualMs = 0L).takeIf { baseAllowed }
+        if (refineFrom != null) {
+            LyricsTiming.refine(app, request.videoId, lines, refineFrom, audioSource)
+            startRefineHeardIfNeeded(request, lines, refineFrom, audioSource, generation)
         }
     }
 
@@ -1010,8 +1013,7 @@ class LyricsController(
         audioSource: String?,
         generation: Long,
     ) {
-        timing.base ?: return
-        // An AI base with its words is caught by refineHeardKnown below; one
+        // No base (a song version) is refined too. An AI base with its words is caught by refineHeardKnown below; one
         // saved without words is heard once too (see ensureRefineHeard).
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return

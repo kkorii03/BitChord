@@ -217,7 +217,7 @@ object LyricsTiming {
         // HQ and under the listener's own correction.
         val refineWords = refineWords(entry, key, base)
         val refineClock = onHqClock(refineWords, timing)
-        val refine = if (base != null && refineClock.isNotEmpty()) {
+        val refine = if (baseAllowed && refineClock.isNotEmpty()) {
             RefinePolicy.compute(
                 apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
                 refineClock,
@@ -431,7 +431,11 @@ object LyricsTiming {
         timing: Timing,
         audioSource: String? = null,
     ) {
-        val base = timing.base ?: return
+        // No base is a song version shown on its lyric provider's own clock —
+        // the commonest case of all. That provider can still sit a fifth of a
+        // second off (vc78: Espresso -0.23 s, Viva La Vida -0.25 s, never
+        // refined), so the refine runs without a base too.
+        val base = timing.base
         val entry = store(context).get(videoId) ?: Entry()
         val key = textKey(lines, audioSource)
         val words = refineWords(entry, key, base)
@@ -455,7 +459,11 @@ object LyricsTiming {
                 refineMad = result.madMs,
             )
         }
-        val baseLabel = if (base.byAi) "ai" else "measured"
+        val baseLabel = when {
+            base == null -> "none"
+            base.byAi -> "ai"
+            else -> "measured"
+        }
         TrackLog.i(
             "BitChord",
             "lyrics-refine: $videoId lines=${result.lines} median=${result.medianMs}ms " +
@@ -495,8 +503,8 @@ object LyricsTiming {
         timing: Timing,
         audioSource: String? = null,
     ): Boolean {
-        timing.base ?: return false
-        // An AI base usually came with the words that placed it, and then
+        // Also without a base: a song version on its provider's clock is
+        // refined too (see [refine]). An AI base usually came with the words that placed it, and then
         // refineHeardKnown below answers true. Answers saved before words were
         // kept have none (10-27: qQNbfxDLxq0, base=ai, stayed -0.24 s with no
         // refine at all), so they are heard once like a measured song.
