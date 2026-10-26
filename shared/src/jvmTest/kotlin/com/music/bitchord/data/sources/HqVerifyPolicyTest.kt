@@ -106,4 +106,23 @@ class HqVerifyPolicyTest {
         assertTrue(HqVerifyPolicy.shouldRetryMissingReference(manual = true))
         assertFalse(HqVerifyPolicy.shouldRetryMissingReference(manual = false))
     }
+
+    @Test
+    fun `a lossless stream fetches at least its PCM rate, whatever kbps it states`() {
+        // 16-bit/44.1 kHz stereo is 1411 kbps; a FLAC that states 320 must not cut the head short.
+        val flac = StreamFormat(codec = "flac", kbps = 320, sampleRateHz = 44_100, bitDepth = 16)
+        assertEquals((1411L * 1_000 / 8 * 92 * 1.2).toLong(), HqVerifyPolicy.bytesToFetch(flac, seconds = 92.0))
+    }
+
+    @Test
+    fun `an inferred bitrate is not trusted`() {
+        val inferred = StreamFormat(kbps = 320, kbpsInferred = true)
+        assertEquals(HqVerifyPolicy.UNSTATED_KBPS_MAX_BYTES, HqVerifyPolicy.bytesToFetch(inferred, seconds = 92.0))
+    }
+
+    @Test
+    fun `hi res lossless is capped`() {
+        val hiRes = StreamFormat(codec = "flac", sampleRateHz = 192_000, bitDepth = 24)
+        assertEquals(HqVerifyPolicy.LOSSLESS_MAX_BYTES, HqVerifyPolicy.bytesToFetch(hiRes, seconds = 92.0))
+    }
 }

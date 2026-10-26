@@ -26,14 +26,27 @@ object HqVerifyPolicy {
      */
     fun bytesToFetch(format: StreamFormat?, seconds: Double): Long {
         if (seconds <= 0.0 || !seconds.isFinite()) return 0L
-        val kbps = format?.kbps?.takeIf { it > 0 }
+        // A lossless stream's real rate is the PCM rate less what FLAC saves,
+        // and an inferred figure (a module mapping "HIGH" to 320) is no rate at
+        // all; either way the stated number would fetch too short a head and
+        // leave the pair unmeasurable on every attempt.
+        val pcmKbps = if (format?.isLossless == true) {
+            (format.sampleRateHz ?: 44_100).toLong() * (format.bitDepth ?: 16) * 2 / 1_000
+        } else {
+            null
+        }
+        val stated = format?.kbps?.takeIf { it > 0 && !format.kbpsInferred }?.toLong()
+        val kbps = listOfNotNull(stated, pcmKbps).maxOrNull()
             ?: return UNSTATED_KBPS_MAX_BYTES
         val bytes = kbps.toDouble() * 1_000.0 / 8.0 * seconds * HEADROOM_FRACTION
-        return bytes.toLong().coerceAtLeast(1L)
+        return bytes.toLong().coerceIn(1L, LOSSLESS_MAX_BYTES)
     }
 
     /** Bytes fetched for a source that never stated a bitrate (a FLAC-sized head). */
     const val UNSTATED_KBPS_MAX_BYTES = 40L * 1024L * 1024L
+
+    /** Ceiling for any fetch: ninety-odd seconds of 24-bit/192 kHz stereo PCM rate. */
+    const val LOSSLESS_MAX_BYTES = 120L * 1024L * 1024L
 
     /** Extra bytes for container headers and a little slack at the tail. */
     const val HEADROOM_FRACTION = 1.2
