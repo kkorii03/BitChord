@@ -61,6 +61,22 @@ object ProxyPlaybackPolicy {
         refused -> ProxyPlaybackRoute.PROXY_RETRY
         else -> ProxyPlaybackRoute.DIRECT
     }
+
+    /**
+     * Whether a cached URL may still be handed to the player.
+     *
+     * A direct URL has no route stamp and survives any proxy change. A proxied
+     * URL is only valid on the generation (route + configuration) that minted
+     * it, and only while a proxy is still usable: after a primary-to-backup
+     * switch or an edit, the old URL is bound to the old server's address and
+     * is answered with 403.
+     */
+    fun cachedUrlUsable(
+        proxyGeneration: Long?,
+        currentGeneration: Long,
+        canResolveViaProxy: Boolean,
+    ): Boolean = proxyGeneration == null ||
+        (proxyGeneration == currentGeneration && canResolveViaProxy)
 }
 
 /**
@@ -85,8 +101,11 @@ object ProxyPlayback {
     /** videoId -> proxied URL, least recently used first when over the cap. */
     private val remembered = LinkedHashMap<String, String>(16, 0.75f, true)
 
+    /** A URL a proxy player request minted, and the route generation that did it. */
+    private data class ProxiedUrl(val videoId: String, val generation: Long)
+
     /** The URLs a proxy player request minted; their bytes must follow the same route. */
-    private val proxiedUrls = ConcurrentHashMap<String, String>()
+    private val proxiedUrls = ConcurrentHashMap<String, ProxiedUrl>()
 
     /** videoId -> last successful proxy play, the part that survives restarts. */
     private val rememberedTimestamps = ConcurrentHashMap<String, Long>()
@@ -128,7 +147,7 @@ object ProxyPlayback {
         val first = !remembered.containsKey(videoId)
         remembered.remove(videoId)?.let { proxiedUrls.remove(it) }
         remembered[videoId] = key
-        proxiedUrls[key] = videoId
+        proxiedUrls[key] = ProxiedUrl(videoId, YouTubeProxy.routeGeneration)
         rememberedTimestamps[videoId] = System.currentTimeMillis()
         trimToCap()
         scheduleSave()
@@ -195,6 +214,15 @@ object ProxyPlayback {
 
     fun isProxiedUrl(url: String): Boolean = proxiedUrls.containsKey(canonical(url))
 
+    /** The route generation that minted [url], or null when it was not proxied. */
+    fun generationFor(url: String): Long? = proxiedUrls[canonical(url)]?.generation
+
+    /** The route generation in force now. */
+    val currentRouteGeneration: Long get() = YouTubeProxy.routeGeneration
+
+    /** Whether [generation] is still the route in force. */
+    fun isCurrentRoute(generation: Long): Boolean = generation == YouTubeProxy.routeGeneration
+
     /** Whether a proxy is configured and healthy enough for a new player request. */
     fun canResolveViaProxy(): Boolean {
         val config = YouTubeProxy.config
@@ -202,9 +230,18 @@ object ProxyPlayback {
         return ProxyPlaybackPolicy.canProxyPlayback(config, ProxyHealthMonitor.shouldBypassProxy())
     }
 
-    /** Whether bytes for [url] must be fetched over the proxy. */
-    fun usesProxyFor(url: String): Boolean =
-        proxiedUrls.containsKey(canonical(url)) && YouTubeProxy.config.usable
+    /**
+     * Whether bytes for [url] must be fetched over the proxy.
+     *
+     * Only a URL minted by the route in force qualifies. A stale stamp means
+     * the URL belongs to a server that is no longer being asked, so treating
+     * it as proxied would send it to the wrong address (or treat it as direct,
+     * which is the same 403 from the other side). Recovery re-resolves it.
+     */
+    fun usesProxyFor(url: String): Boolean {
+        val entry = proxiedUrls[canonical(url)] ?: return false
+        return entry.generation == YouTubeProxy.routeGeneration && YouTubeProxy.config.usable
+    }
 
     /**
      * The same URL OkHttp will open, so `Uri` re-encoding between resolution

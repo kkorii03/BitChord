@@ -5,8 +5,8 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.module.SharedCalls
+import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.playback.HqHostTracker
-import com.music.bitchord.playback.HqRetryPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -352,12 +352,14 @@ class AddonClient(rawBaseUrl: String) {
                     // otherwise 1s/2s/4s, and the host is rested so the next
                     // candidate choice avoids it.
                     HqRetryPolicy.isRateLimited(response.code) -> {
-                        if (attempt >= HqRetryPolicy.MAX_ATTEMPTS) {
-                            throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
-                        }
                         val header = response.header("Retry-After")
                         HqHostTracker.noteRateLimited(HqHostTracker.hostOf(url), header, response.code)
-                        HqRetryPolicy.decide(header, attempt, System.currentTimeMillis()).waitMs
+                        val decision =
+                            HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
+                        if (!decision.retry) {
+                            throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
+                        }
+                        decision.waitMs
                     }
                     // A 5xx is a server having a bad minute and will be tried
                     // again on the next track; a 4xx is this app asking for

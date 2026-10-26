@@ -10,11 +10,13 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
 import com.music.bitchord.data.innertube.PlayerClient
+import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.net.ProxyPlayback
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.IOException
 import java.io.InterruptedIOException
 
 /**
@@ -398,7 +400,14 @@ class ChunkedDataSource(
             }
             chunkRemaining = 0L
         }
-        return C.RESULT_END_OF_INPUT
+        // Every re-open at this position also ended before the bytes that were
+        // asked for. Reporting EOF here is what made a cut stream look like a
+        // finished song: ExoPlayer advanced the queue with no error and no
+        // recovery. A short read is a transport failure, not the end of the
+        // track, because `clen` already said how many bytes there are.
+        val message = "truncated stream at $position ($bytesRemaining bytes missing)"
+        TrackLog.w(TAG, "hq-stream: $message")
+        throw IOException(message)
     }
 
     private fun closeChunk() {
@@ -448,11 +457,18 @@ class ChunkedDataSource(
                 val header = HqRetryPolicy.retryAfterHeader(refusal.headerFields)
                 val decision = HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
                 HqHostTracker.noteRateLimited(host, header, refusal.responseCode)
+                val statedMs = HqRetryPolicy.retryAfterMs(header, System.currentTimeMillis())
                 TrackLog.w(
                     TAG,
                     "hq-stream: ${host ?: "?"} ${refusal.responseCode} " +
-                        "retry-after=${decision.waitMs / 1000}s; " +
-                        if (decision.retry) "retrying (${attempt + 1}/${HqRetryPolicy.MAX_ATTEMPTS})" else "giving up",
+                        "retry-after=${(statedMs ?: decision.waitMs) / 1000}s; " +
+                        when {
+                            decision.retryAfterTooLong ->
+                                "over ${HqRetryPolicy.MAX_WAIT_MS / 1000}s cap, switching route"
+                            decision.retry ->
+                                "retrying (${attempt + 1}/${HqRetryPolicy.MAX_ATTEMPTS})"
+                            else -> "giving up"
+                        },
                 )
                 if (!decision.retry) {
                     HqHostTracker.noteFailure(host)

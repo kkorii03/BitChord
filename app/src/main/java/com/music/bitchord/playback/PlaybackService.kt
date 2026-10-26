@@ -104,6 +104,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.autoplayTopUpNeeded
 import com.music.bitchord.R
@@ -1180,6 +1181,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            updateWakeMode(exoPlayer)
             // The only number that describes what a listener actually
             // waits through. Every other timing in this app measures one
             // leg of getting a track started — a resolve, a client walk, an
@@ -1292,6 +1294,7 @@ class PlaybackService : MediaLibraryService() {
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
             // quiet again and the receiver is asked instead.
+            player?.let(::updateWakeMode)
             if (playWhenReady) player?.let(speakers::onLocalStartedPlaying)
             publishWidgetState(playing = playWhenReady)
             // The only place the *reason* can be read. A party has to tell a
@@ -1345,6 +1348,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            updateWakeMode(exoPlayer)
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
             // this callback's point of view, from the queue moving on. It
@@ -2015,11 +2019,17 @@ class PlaybackService : MediaLibraryService() {
                     .setHttpRequestHeaders(headers)
                     .build()
             }
-            val won = runBlocking(about) {
-                resolveWithModulePriority(
-                    videoId = videoId,
-                    target = SourceResolver.targetIn(dataSpec.uri),
-                )
+            val won = try {
+                runBlocking(about) {
+                    withTimeout(RESOLVE_TIMEOUT_MS) {
+                        resolveWithModulePriority(
+                            videoId = videoId,
+                            target = SourceResolver.targetIn(dataSpec.uri),
+                        )
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw java.io.IOException("Stream resolution timed out for $videoId", e)
             }
             when (won) {
                 is Resolved.Module -> {
@@ -3954,6 +3964,28 @@ class PlaybackService : MediaLibraryService() {
     private fun setSessionOwner(target: ExoPlayer, owns: Boolean) {
         target.setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ owns)
         target.setHandleAudioBecomingNoisy(owns)
+        if (owns) updateWakeMode(target) else target.setWakeMode(C.WAKE_MODE_NONE)
+    }
+
+    /**
+     * Holds the CPU — and for a stream, the radio — only while this player is
+     * actually meant to be playing.
+     *
+     * A downloaded copy is [C.WAKE_MODE_LOCAL]: it reads from disk and needs
+     * no Wi-Fi lock. A stream is [C.WAKE_MODE_NETWORK], so a screen-off buffer
+     * is not starved by the CPU or radio sleeping. Paused means
+     * [C.WAKE_MODE_NONE]; ExoPlayer releases the lock on its own when
+     * `playWhenReady` turns false, but lowering the mode keeps a later state
+     * change from re-acquiring it for a track nobody is hearing.
+     */
+    private fun updateWakeMode(exoPlayer: ExoPlayer) {
+        val item = exoPlayer.currentMediaItem
+        val mode = when {
+            !exoPlayer.playWhenReady || item == null -> C.WAKE_MODE_NONE
+            isLocalPlayback(item.mediaId, item) -> C.WAKE_MODE_LOCAL
+            else -> C.WAKE_MODE_NETWORK
+        }
+        exoPlayer.setWakeMode(mode)
     }
 
     /**
@@ -6885,113 +6917,125 @@ class PlaybackService : MediaLibraryService() {
             runCatching { StreamResolver.resolve(videoId) }
         }
 
-        // First past the post. A null because [lookup] won is a module miss; a
-        // null because [fallback] won means YouTube has a URL and the modules
-        // are still looking — [lookup.isActive] below is what tells those
-        // apart, which is the question the old head start answered by timing
-        // out rather than by asking.
-        val quick: SourceStream? = select {
-            lookup.onAwait { it }
-            // A fallback that finished without a URL has not won anything.
-            //
-            // This clause used to yield null unconditionally, which treats "the
-            // YouTube walk is over" as "YouTube has a URL" — true only while
-            // failing was the slow outcome. It no longer is: [StreamResolver]
-            // now answers a known-unplayable track immediately, so the losing
-            // leg crosses the line first and, before this, took the track down
-            // with it while a module lookup that was about to succeed was still
-            // running. Exactly the case in the report — an age-gated track that
-            // YouTube would never serve and a catalogue that had it all along.
-            fallback.onAwait { resolved -> if (resolved.isSuccess) null else lookup.await() }
-        }
+        try {
+            // First past the post. A null because [lookup] won is a module miss; a
+            // null because [fallback] won means YouTube has a URL and the modules
+            // are still looking — [lookup.isActive] below is what tells those
+            // apart, which is the question the old head start answered by timing
+            // out rather than by asking.
+            val quick: SourceStream? = select {
+                lookup.onAwait { it }
+                // A fallback that finished without a URL has not won anything.
+                //
+                // This clause used to yield null unconditionally, which treats "the
+                // YouTube walk is over" as "YouTube has a URL" — true only while
+                // failing was the slow outcome. It no longer is: [StreamResolver]
+                // now answers a known-unplayable track immediately, so the losing
+                // leg crosses the line first and, before this, took the track down
+                // with it while a module lookup that was about to succeed was still
+                // running. Exactly the case in the report — an age-gated track that
+                // YouTube would never serve and a catalogue that had it all along.
+                fallback.onAwait { resolved -> if (resolved.isSuccess) null else lookup.await() }
+            }
 
-        // A manifest cannot be substituted here, however good it is. This
-        // function runs on the loader thread, *inside* the open of a media
-        // source that was built minutes ago from an extensionless
-        // `bitchord://` URI — so the source is already progressive and cannot
-        // be told otherwise, and handing it a manifest is a track that fails
-        // at 0ms rather than a track that plays lossless. See [StreamContainer]
-        // for the log of exactly that.
-        //
-        // Nothing is thrown away for it. What the modules found is passed to
-        // the second look already answered, which is the same handover a lookup
-        // that merely lost the race gets — and [QualityUpgrade]'s swap does
-        // declare the type, so the manifest plays there. The cost is a seam a
-        // few seconds in instead of a clean start, which is the trade this
-        // whole path is built to make.
-        if (quick != null && StreamContainer.isManifest(quick.url)) {
-            val url = runCatching { fallback.await().getOrThrow() }.getOrNull()
-            if (url != null) {
-                TrackLog.d(
+            // A manifest cannot be substituted here, however good it is. This
+            // function runs on the loader thread, *inside* the open of a media
+            // source that was built minutes ago from an extensionless
+            // `bitchord://` URI — so the source is already progressive and cannot
+            // be told otherwise, and handing it a manifest is a track that fails
+            // at 0ms rather than a track that plays lossless. See [StreamContainer]
+            // for the log of exactly that.
+            //
+            // Nothing is thrown away for it. What the modules found is passed to
+            // the second look already answered, which is the same handover a lookup
+            // that merely lost the race gets — and [QualityUpgrade]'s swap does
+            // declare the type, so the manifest plays there. The cost is a seam a
+            // few seconds in instead of a clean start, which is the trade this
+            // whole path is built to make.
+            if (quick != null && StreamContainer.isManifest(quick.url)) {
+                val url = runCatching { fallback.await().getOrThrow() }.getOrNull()
+                if (url != null) {
+                    TrackLog.d(
+                        "BitChord",
+                        "'${target.title}' was offered ${quick.format.summary} as a manifest; " +
+                            "starting on YouTube and swapping to it under the music",
+                        about = videoId,
+                    )
+                    val handed = QualityUpgrade.settledForLess(
+                        mediaId = videoId,
+                        target = target,
+                        inFlight = CompletableDeferred(quick),
+                        playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
+                    )
+                    if (!handed) NerdStats.onLosslessRaceEnd(videoId)
+                    return Resolved.YouTube(url)
+                }
+                // YouTube cannot serve it either, so there is nothing to start on
+                // and nothing to swap from. The manifest goes out as it is: it will
+                // fail its first read, and [replayAsManifest] rebuilds the item
+                // with the type declared and prepares it again. A cut before the
+                // first note beats a track that does not play at all.
+                TrackLog.w(
                     "BitChord",
-                    "'${target.title}' was offered ${quick.format.summary} as a manifest; " +
-                        "starting on YouTube and swapping to it under the music",
+                    "'${target.title}' has only a manifest and YouTube cannot serve it; " +
+                        "letting it fail once to declare its type",
                     about = videoId,
                 )
-                val handed = QualityUpgrade.settledForLess(
-                    mediaId = videoId,
-                    target = target,
-                    inFlight = CompletableDeferred(quick),
-                    playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
-                )
-                if (!handed) NerdStats.onLosslessRaceEnd(videoId)
-                return Resolved.YouTube(url)
-            }
-            // YouTube cannot serve it either, so there is nothing to start on
-            // and nothing to swap from. The manifest goes out as it is: it will
-            // fail its first read, and [replayAsManifest] rebuilds the item
-            // with the type declared and prepares it again. A cut before the
-            // first note beats a track that does not play at all.
-            TrackLog.w(
-                "BitChord",
-                "'${target.title}' has only a manifest and YouTube cannot serve it; " +
-                    "letting it fail once to declare its type",
-                about = videoId,
-            )
-            NerdStats.onLosslessRaceEnd(videoId)
-            return Resolved.Module(quick)
-        }
-
-        if (quick != null) {
-            // The modules got there first, so the YouTube walk is genuinely
-            // spare work now. Cancelling drops only this service's wait on it;
-            // [StreamResolver] parents the walk itself elsewhere and lets it
-            // finish into its own cache.
-            fallback.cancel()
-            // Everything that was asked for, ahead of the fallback: the
-            // ordinary good case, and the one with no seam in it.
-            if (!quick.belowRequest) {
                 NerdStats.onLosslessRaceEnd(videoId)
                 return Resolved.Module(quick)
             }
-            // Less than was asked for — but a lossy copy from a module still
-            // beats going back to YouTube for one. Worth a second look, and
-            // with this lookup already finished that look starts from scratch.
-            val settled = QualityUpgrade.settledForLess(
+
+            if (quick != null) {
+                // The modules got there first, so the YouTube walk is genuinely
+                // spare work now. Cancelling drops only this service's wait on it;
+                // [StreamResolver] parents the walk itself elsewhere and lets it
+                // finish into its own cache.
+                fallback.cancel()
+                // Everything that was asked for, ahead of the fallback: the
+                // ordinary good case, and the one with no seam in it.
+                if (!quick.belowRequest) {
+                    NerdStats.onLosslessRaceEnd(videoId)
+                    return Resolved.Module(quick)
+                }
+                // Less than was asked for — but a lossy copy from a module still
+                // beats going back to YouTube for one. Worth a second look, and
+                // with this lookup already finished that look starts from scratch.
+                val settled = QualityUpgrade.settledForLess(
+                    mediaId = videoId,
+                    target = target,
+                    playing = quick.format,
+                    servedBy = quick.sourceConfigId,
+                )
+                if (!settled) NerdStats.onLosslessRaceEnd(videoId)
+                return Resolved.Module(quick)
+            }
+
+            val url = fallback.await().getOrThrow()
+            // Marked pending only here, with the fallback's own bitrate in hand:
+            // that figure is the answer to "better than what?" the second look
+            // measures candidates against, and it isn't known until the client
+            // walk has picked a format. A lookup still running is handed over to
+            // be waited on rather than repeated; one that already finished with
+            // nothing leaves the second look to find its own candidates.
+            val pending = QualityUpgrade.settledForLess(
                 mediaId = videoId,
                 target = target,
-                playing = quick.format,
-                servedBy = quick.sourceConfigId,
+                inFlight = lookup.takeIf { lookup.isActive },
+                playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
             )
-            if (!settled) NerdStats.onLosslessRaceEnd(videoId)
-            return Resolved.Module(quick)
+            if (!pending) NerdStats.onLosslessRaceEnd(videoId)
+            return Resolved.YouTube(url)
+        } catch (e: CancellationException) {
+            // The caller's 120s cap (or the player moving on) cancelled this
+            // wait. Both legs were parented to the service scope so a loser
+            // could outlive a winner and be handed to [QualityUpgrade]; a
+            // cancelled wait has no winner to hand them to, so cancel them
+            // here rather than leave two walks running for a track nobody is
+            // waiting on any more.
+            lookup.cancel()
+            fallback.cancel()
+            throw e
         }
-
-        val url = fallback.await().getOrThrow()
-        // Marked pending only here, with the fallback's own bitrate in hand:
-        // that figure is the answer to "better than what?" the second look
-        // measures candidates against, and it isn't known until the client
-        // walk has picked a format. A lookup still running is handed over to
-        // be waited on rather than repeated; one that already finished with
-        // nothing leaves the second look to find its own candidates.
-        val pending = QualityUpgrade.settledForLess(
-            mediaId = videoId,
-            target = target,
-            inFlight = lookup.takeIf { lookup.isActive },
-            playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
-        )
-        if (!pending) NerdStats.onLosslessRaceEnd(videoId)
-        return Resolved.YouTube(url)
     }
 
     /**
