@@ -40,6 +40,39 @@ object DownloadedMvPolicy {
     }
 
     /**
+     * Whether a re-download must keep the upload type already on the record.
+     *
+     * A repair is queued as an unknown row so its lookup asks for the song
+     * version, but the file that lands is still the same recording the record
+     * had already classified. Writing that placeholder's `typeUnknown` over a
+     * definite stored type made the next play re-open a question that had
+     * already been answered. An incoming definite type (a real video or audio
+     * row) still wins, because that is new evidence about the new bytes.
+     */
+    fun keepsStoredUploadType(
+        storedIsVideo: Boolean?,
+        storedTypeUnknown: Boolean,
+        incomingIsVideo: Boolean?,
+        incomingTypeUnknown: Boolean,
+    ): Boolean = incomingTypeUnknown && incomingIsVideo != true && storedIsVideo != null
+
+    /**
+     * Whether this record already names its own stream as a song version.
+     *
+     * The pair of a definite audio type and its own provenance is what this
+     * version writes after a download; it is stronger evidence than a title or
+     * a length measured later, so the Downloads scan must not re-open it.
+     */
+    fun isRecordedSongVersion(
+        storedIsVideo: Boolean?,
+        storedTypeUnknown: Boolean,
+        soundSourceVideoId: String?,
+        rowVideoId: String,
+    ): Boolean = storedIsVideo == false &&
+        !storedTypeUnknown &&
+        soundSourceVideoId == rowVideoId
+
+    /**
      * Whether the file is the music video's sound.
      *
      * A recorded video/unknown type is conclusive. When the file was fetched
@@ -69,5 +102,51 @@ object DownloadedMvPolicy {
         val file = fileDurationMs?.takeIf { it > 0L } ?: return false
         val catalog = catalogDurationMs?.takeIf { it > 0L } ?: return false
         return file - catalog > MV_DURATION_SLACK_MS
+    }
+
+    /**
+     * The verdict the Downloads page should keep for one saved file, or null
+     * when the file is already known to be the song version.
+     *
+     * The scan used to look only at records with no provenance, so it walked
+     * past the recognition those records already carried. This applies the
+     * same rules as playback — an own-stream song version is left alone, a
+     * recorded video/unknown type or another upload's stream is repaired, and
+     * only a legacy record is measured by length — while still returning the
+     * length difference the banner and log want when there is one.
+     *
+     * The legacy length rule keeps [SongVersionPolicy.MV_SOUND_SLACK_MS], not
+     * [MV_DURATION_SLACK_MS]: the Downloads scan has always used the shorter
+     * threshold, and it must not lose a file that only just exceeds it.
+     */
+    fun mvSoundSuspectDeltaMs(
+        rowVideoId: String,
+        title: String,
+        fileDurationMs: Long?,
+        storedIsVideo: Boolean?,
+        storedTypeUnknown: Boolean,
+        soundSourceVideoId: String?,
+        catalogDurationMs: Long?,
+        legacySlackMs: Long = SongVersionPolicy.MV_SOUND_SLACK_MS,
+    ): Long? {
+        if (isRecordedSongVersion(storedIsVideo, storedTypeUnknown, soundSourceVideoId, rowVideoId)) {
+            return null
+        }
+        val file = fileDurationMs?.takeIf { it > 0L }
+        val catalog = catalogDurationMs?.takeIf { it > 0L }
+        val delta = if (file != null && catalog != null) {
+            (file - catalog).coerceAtLeast(0L)
+        } else {
+            null
+        }
+        val knownMv = storedIsVideo == true ||
+            storedTypeUnknown ||
+            (soundSourceVideoId != null && soundSourceVideoId != rowVideoId)
+        if (knownMv || hasMvTitleMarker(title)) return delta ?: 0L
+        // A legacy record has no catalogue id of its own to compare with; the
+        // shortest length recorded against the file is the song's. The scan has
+        // always measured against that, even when it belongs to the same id.
+        if (file == null || catalog == null) return null
+        return (file - catalog).takeIf { it >= legacySlackMs }
     }
 }
