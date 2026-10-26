@@ -22,7 +22,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -115,6 +117,14 @@ object SettingsTransfer {
     private const val MIN_SCHEMA_VERSION = 1
     private const val SHARE_FOLDER = "shared"
     private const val MIME_TYPE = "application/json"
+
+    /**
+     * A settings file is a short document — proxy, sources and a few dozen
+     * choices. Reading an arbitrarily large shared file whole would let another
+     * app hand this process a file big enough to run it out of memory before
+     * the schema check can refuse it.
+     */
+    internal const val MAX_IMPORT_BYTES = 1_000_000
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -269,11 +279,29 @@ object SettingsTransfer {
         withContext(Dispatchers.IO) {
             runCatching {
                 val text = context.contentResolver.openInputStream(source)
-                    ?.use { it.readBytes().decodeToString() }
+                    ?.use { it.readTextBounded() }
                     ?: error("파일을 열 수 없습니다")
                 preview(decode(text).getOrThrow())
             }
         }
+
+    /**
+     * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
+     * rather than growing the buffer without bound.
+     */
+    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var total = 0
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "설정 파일이 너무 큽니다" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray().decodeToString()
+    }
 
     /** Applies a preview that the listener has already seen. */
     suspend fun apply(preview: Preview): Result<Summary> = withContext(Dispatchers.IO) {

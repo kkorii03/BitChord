@@ -646,7 +646,7 @@
     <string name="show_what_playing">재생 중인 노래 표시</string>
     <string name="signed_in_as">%1$s(으)로 로그인됨</string>
     <string name="signing_in">로그인하는 중…</string>
-    <string name="sleep_timer">잠자기 타이머</string>
+    <string name="sleep_timer">취침 타이머</string>
     <string name="private_listening">시크릿 모드</string>
     <string name="private_listening_subtitle">YouTube 시청 기록·스크로블에 남지 않습니다. 이 기기의 최근 재생은 그대로 남습니다</string>
     <string name="private_listening_indicator">시크릿 모드가 켜져 있습니다</string>

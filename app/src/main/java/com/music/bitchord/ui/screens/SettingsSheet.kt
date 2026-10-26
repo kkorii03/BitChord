@@ -147,6 +147,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.MessageState
@@ -412,7 +413,7 @@ fun SettingsScreen(
                     context.getString(R.string.export_succeeded, context.countOfMonths(months))
                 },
                 onFailure = {
-                    context.getString(R.string.export_failed, it.message ?: context.getString(R.string.unknown_error))
+                    context.getString(R.string.export_failed, FriendlyError.message(context, it))
                 },
             )
         }
@@ -446,7 +447,7 @@ fun SettingsScreen(
                     }
                 },
                 onFailure = {
-                    context.getString(R.string.import_failed, it.message ?: context.getString(R.string.unknown_error))
+                    context.getString(R.string.import_failed, FriendlyError.message(context, it))
                 },
             )
         }
@@ -468,7 +469,7 @@ fun SettingsScreen(
                 onFailure = {
                     settingsImportStatus = context.getString(
                         R.string.settings_transfer_import_failed,
-                        it.message ?: context.getString(R.string.unknown_error),
+                        FriendlyError.message(context, it),
                     )
                 },
             )
@@ -486,7 +487,7 @@ fun SettingsScreen(
             onFailure = {
                 settingsImportStatus = context.getString(
                     R.string.settings_transfer_import_failed,
-                    it.message ?: context.getString(R.string.unknown_error),
+                    FriendlyError.message(context, it),
                 )
             },
         )
@@ -506,7 +507,7 @@ fun SettingsScreen(
                 onFailure = {
                     settingsSendStatus = context.getString(
                         R.string.settings_transfer_send_failed,
-                        it.message ?: context.getString(R.string.unknown_error),
+                        FriendlyError.message(context, it),
                     )
                 },
             )
@@ -539,7 +540,7 @@ fun SettingsScreen(
                 onFailure = {
                     settingsImportStatus = context.getString(
                         R.string.settings_transfer_import_failed,
-                        it.message ?: context.getString(R.string.unknown_error),
+                        FriendlyError.message(context, it),
                     )
                 },
             )

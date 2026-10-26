@@ -929,8 +929,11 @@ private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             icon = Icons.AutoMirrored.Rounded.Undo,
             label = stringResource(R.string.reset_to_default),
             accent = palette.accent,
-            enabled = semitones != 0,
-        ) { AppSettings.setPitchSemitones(0) }
+            enabled = speed != 1f || semitones != 0,
+        ) {
+            AppSettings.setPlaybackSpeed(1f)
+            AppSettings.setPitchSemitones(0)
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
