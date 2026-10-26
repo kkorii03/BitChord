@@ -23,6 +23,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.PlaybackParametersMath
+import com.music.bitchord.playback.SyncSafetyPolicy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
@@ -503,6 +504,27 @@ object AppSettings {
      * defers this work until power saving is off. Manual asks never read this.
      */
     val heavyWorkAllowed: Boolean get() = !lowPower.value
+
+    /**
+     * Developer-only kill switches for the post-ko-101 lyrics-sync paths.
+     *
+     * All three default off so a fresh install behaves like ko-101: the
+     * next-song bundle still resolves the version, waits for HQ and requests
+     * the mix, but it does not fetch/verify lyrics or publish them on the
+     * first frame; downloaded files are not re-checked and stored overrides
+     * are ignored; a saved HQ offset/rate is not re-applied to lyrics.
+     */
+    val syncSafetyNextPrep = MutableStateFlow(false)
+    val syncSafetyDownloadRecheck = MutableStateFlow(false)
+    val syncSafetyHqSync = MutableStateFlow(false)
+
+    /** The three switches above as the pure policy sees them. */
+    val syncSafetySwitches: SyncSafetyPolicy.Switches
+        get() = SyncSafetyPolicy.Switches(
+            nextPrepLyrics = syncSafetyNextPrep.value,
+            downloadedRecheck = syncSafetyDownloadRecheck.value,
+            hqReapply = syncSafetyHqSync.value,
+        )
 
     /** What the last battery broadcast said; kept to recompute [lowPower]. */
     private var powerSaveMode = false
@@ -1273,6 +1295,9 @@ object AppSettings {
         autoLyricsTiming.value = prefs.getBoolean(KEY_AUTO_LYRICS_TIMING, false)
         aiLyrics.value = prefs.getBoolean(KEY_AI_LYRICS, true)
         aiTimingAhead.value = prefs.getBoolean(KEY_AI_TIMING_AHEAD, true)
+        syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, false)
+        syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
+        syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
@@ -2076,6 +2101,21 @@ object AppSettings {
     fun setAiTimingAhead(value: Boolean) {
         aiTimingAhead.value = value
         prefs.edit().putBoolean(KEY_AI_TIMING_AHEAD, value).apply()
+    }
+
+    fun setSyncSafetyNextPrep(value: Boolean) {
+        syncSafetyNextPrep.value = value
+        prefs.edit().putBoolean(KEY_SYNC_SAFETY_NEXT_PREP, value).apply()
+    }
+
+    fun setSyncSafetyDownloadRecheck(value: Boolean) {
+        syncSafetyDownloadRecheck.value = value
+        prefs.edit().putBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, value).apply()
+    }
+
+    fun setSyncSafetyHqSync(value: Boolean) {
+        syncSafetyHqSync.value = value
+        prefs.edit().putBoolean(KEY_SYNC_SAFETY_HQ_SYNC, value).apply()
     }
 
     fun setAiLyrics(value: Boolean) {
@@ -3196,6 +3236,9 @@ object AppSettings {
     private const val KEY_AUTO_LYRICS_TIMING = "auto_lyrics_timing"
     private const val KEY_AI_LYRICS = "ko_ai_lyrics"
     private const val KEY_AI_TIMING_AHEAD = "ko_ai_timing_ahead"
+    private const val KEY_SYNC_SAFETY_NEXT_PREP = "ko_sync_safety_next_prep"
+    private const val KEY_SYNC_SAFETY_DOWNLOAD_RECHECK = "ko_sync_safety_download_recheck"
+    private const val KEY_SYNC_SAFETY_HQ_SYNC = "ko_sync_safety_hq_sync"
     private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
     private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
     private const val KEY_CONTENT_COUNTRY = "ko_content_country"

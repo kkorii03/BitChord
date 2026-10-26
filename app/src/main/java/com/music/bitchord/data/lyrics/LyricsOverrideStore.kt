@@ -1,6 +1,8 @@
 package com.music.bitchord.data.lyrics
 
 import android.content.Context
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.SyncSafetyPolicy
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,7 +20,13 @@ object LyricsOverrideStore {
 
     suspend fun read(context: Context, videoId: String): LyricsOverrideFile.Stored? =
         withContext(Dispatchers.IO) {
-            if (videoId.isBlank()) null else LyricsOverrideFile.read(file(context), videoId)
+            if (!SyncSafetyPolicy.overrideReadAllowed(AppSettings.syncSafetySwitches)) {
+                null
+            } else if (videoId.isBlank()) {
+                null
+            } else {
+                LyricsOverrideFile.read(file(context), videoId)
+            }
         }
 
     suspend fun write(
@@ -28,7 +36,11 @@ object LyricsOverrideStore {
         source: LyricsSource?,
         kind: LyricsOverrideFile.Kind = LyricsOverrideFile.Kind.RECHECK,
     ): Boolean = withContext(Dispatchers.IO) {
-        LyricsOverrideFile.write(file(context), videoId, lines, source, kind = kind)
+        if (!SyncSafetyPolicy.overrideWriteAllowed(AppSettings.syncSafetySwitches)) {
+            false
+        } else {
+            LyricsOverrideFile.write(file(context), videoId, lines, source, kind = kind)
+        }
     }
 
     suspend fun remove(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {

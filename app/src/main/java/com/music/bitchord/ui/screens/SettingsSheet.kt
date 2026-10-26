@@ -263,6 +263,9 @@ fun SettingsScreen(
     val autoLyricsTiming by AppSettings.autoLyricsTiming.collectAsStateWithLifecycle()
     val aiLyrics by AppSettings.aiLyrics.collectAsStateWithLifecycle()
     val aiTimingAhead by AppSettings.aiTimingAhead.collectAsStateWithLifecycle()
+    val syncSafetyNextPrep by AppSettings.syncSafetyNextPrep.collectAsStateWithLifecycle()
+    val syncSafetyDownloadRecheck by AppSettings.syncSafetyDownloadRecheck.collectAsStateWithLifecycle()
+    val syncSafetyHqSync by AppSettings.syncSafetyHqSync.collectAsStateWithLifecycle()
     val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
     val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
@@ -1986,6 +1989,54 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setSmartVersionAlignment(!smartVersionAlignment) },
+                )
+            }
+            val syncSafetyNextPrepTitle = stringResource(R.string.sync_safety_next_prep)
+            row(syncSafetyNextPrepTitle, "lyrics", "sync", "next", "developer", "experimental") {
+                SettingsRow(
+                    icon = Icons.Rounded.Timer,
+                    title = syncSafetyNextPrepTitle,
+                    subtitle = stringResource(R.string.sync_safety_next_prep_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = syncSafetyNextPrep,
+                            onCheckedChange = AppSettings::setSyncSafetyNextPrep,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSyncSafetyNextPrep(!syncSafetyNextPrep) },
+                )
+            }
+            val syncSafetyDownloadRecheckTitle = stringResource(R.string.sync_safety_download_recheck)
+            row(syncSafetyDownloadRecheckTitle, "lyrics", "sync", "download", "recheck", "developer", "experimental") {
+                SettingsRow(
+                    icon = Icons.Rounded.Cached,
+                    title = syncSafetyDownloadRecheckTitle,
+                    subtitle = stringResource(R.string.sync_safety_download_recheck_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = syncSafetyDownloadRecheck,
+                            onCheckedChange = AppSettings::setSyncSafetyDownloadRecheck,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSyncSafetyDownloadRecheck(!syncSafetyDownloadRecheck) },
+                )
+            }
+            val syncSafetyHqSyncTitle = stringResource(R.string.sync_safety_hq_sync)
+            row(syncSafetyHqSyncTitle, "lyrics", "sync", "hq", "developer", "experimental") {
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = syncSafetyHqSyncTitle,
+                    subtitle = stringResource(R.string.sync_safety_hq_sync_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = syncSafetyHqSync,
+                            onCheckedChange = AppSettings::setSyncSafetyHqSync,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSyncSafetyHqSync(!syncSafetyHqSync) },
                 )
             }
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)

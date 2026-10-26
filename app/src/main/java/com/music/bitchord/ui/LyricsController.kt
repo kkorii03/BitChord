@@ -15,6 +15,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.NextPrepCache
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.playback.SyncSafetyPolicy
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.ui.player.LyricsTimingUi
@@ -253,17 +254,20 @@ class LyricsController(
         // The next-song bundle already looked these up. Put them on screen
         // before the lookup below even starts, with the stored correction
         // applied by startTiming; the lookup then confirms the same memoised
-        // answer rather than making a request.
-        NextPrepCache.get(videoId)?.let { prepared ->
-            if (prepared.source != null) {
-                publishLyrics(
-                    LyricsRepository.Result(
-                        source = prepared.source,
-                        lines = prepared.raw,
-                        searchedAs = prepared.searchedAs,
-                    ),
-                )
-                _lyricsChecked.value = true
+        // answer rather than making a request. Off by default: the bundle's
+        // lyrics path is a post-ko-101 addition and must not reach this frame.
+        if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
+            NextPrepCache.get(videoId)?.let { prepared ->
+                if (prepared.source != null) {
+                    publishLyrics(
+                        LyricsRepository.Result(
+                            source = prepared.source,
+                            lines = prepared.raw,
+                            searchedAs = prepared.searchedAs,
+                        ),
+                    )
+                    _lyricsChecked.value = true
+                }
             }
         }
         lyricsJob = scope.launch {
@@ -661,7 +665,8 @@ class LyricsController(
                 // playing, once per playback and one file at a time. A version
                 // already recorded makes it a cheap no-op.
                 if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
-                if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
+                if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches) ||
+                    !AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
                     !com.music.bitchord.data.lyrics.Deepgram.usable
                 ) return@launch
                 val checkKey = LyricsTiming.audioSourceKey(request.videoId, localFile = true)

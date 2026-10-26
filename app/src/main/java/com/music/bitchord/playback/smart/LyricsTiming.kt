@@ -28,6 +28,7 @@ import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.playback.SyncSafetyPolicy
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
@@ -287,6 +288,12 @@ object LyricsTiming {
      */
     private suspend fun hqAdjustment(context: Context, videoId: String): Adjustment.Mapped? =
         withContext(Dispatchers.IO) {
+            // Off by default: the saved HQ offset/rate was a post-ko-101
+            // addition, and applying it on top of a measurement that already
+            // used the HQ copy moved the same lyrics twice.
+            if (!SyncSafetyPolicy.hqAdjustmentAllowed(AppSettings.syncSafetySwitches)) {
+                return@withContext null
+            }
             val choice = StreamChoice.of(videoId) ?: return@withContext null
             if (!StreamChoice.isSubstitute(videoId)) return@withContext null
             val sourceId = choice.sourceConfigId ?: return@withContext null
@@ -1580,6 +1587,9 @@ object LyricsTiming {
         artistKnown: Boolean,
         artistAliases: List<String>,
     ): LyricsRepository.Result? {
+        // Off by default: neither the check nor the override it writes may
+        // change a downloaded file's lyrics on this build.
+        if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches)) return null
         val localUri = song.localUri?.takeIf { it.isNotBlank() } ?: return null
         if (lines.none { it.timeMs > 0 }) return null
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return null
