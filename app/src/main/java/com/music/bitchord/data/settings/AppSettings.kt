@@ -3232,6 +3232,9 @@ object AppSettings {
         put(KEY_UPGRADE_LENGTH_SLACK_SECONDS, TransferCategory.QUALITY, TransferType.INT)
         put(KEY_WIFI_ONLY_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
         put(KEY_AUTO_REDOWNLOAD_MV_SOUND, TransferCategory.QUALITY, TransferType.BOOLEAN)
+        put(KEY_AUTO_REPLACE_HQ_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
+        put(KEY_AUTO_PREFETCH_HQ, TransferCategory.QUALITY, TransferType.BOOLEAN)
+        put(KEY_HQ_PREFETCH_LIMIT, TransferCategory.QUALITY, TransferType.INT, intRange = 0..10_000)
         put(KEY_EXPORT_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
 
         // Automix and transitions.
@@ -3358,6 +3361,9 @@ object AppSettings {
         KEY_UPGRADE_LENGTH_SLACK_SECONDS -> upgradeLengthSlackSeconds.value
         KEY_WIFI_ONLY_DOWNLOADS -> wifiOnlyDownloads.value
         KEY_AUTO_REDOWNLOAD_MV_SOUND -> autoRedownloadMvSound.value
+        KEY_AUTO_REPLACE_HQ_DOWNLOADS -> autoReplaceHqDownloads.value
+        KEY_AUTO_PREFETCH_HQ -> autoPrefetchHq.value
+        KEY_HQ_PREFETCH_LIMIT -> hqPrefetchLimit.value
         KEY_EXPORT_DOWNLOADS -> exportDownloads.value
 
         KEY_CROSSFADE -> crossfadeSeconds.value

@@ -14,6 +14,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.time.Instant
 
 /**
@@ -402,6 +403,57 @@ class SettingsTransferEdgeCasesTest {
         assertEquals(0.5f, reread.values["equalizer_balance"])
         assertEquals("0.0,1.5,-2.0", reread.values["equalizer_bands"])
         assertEquals("LRC_RED", reread.values["lyrics_sources"])
+    }
+
+    @Test
+    fun `hq automation switches and the prefetch cap travel with the settings`() {
+        val file = SettingsTransfer.buildFile(
+            rawSettings = mapOf(
+                "auto_replace_hq_downloads" to false,
+                "auto_prefetch_hq" to true,
+                "hq_prefetch_limit" to 120,
+            ),
+            sources = emptyList(),
+            proxy = null,
+        )
+
+        assertEquals(
+            setOf("auto_replace_hq_downloads", "auto_prefetch_hq", "hq_prefetch_limit"),
+            file.settings.keys,
+        )
+
+        val parsed = SettingsTransfer.readSettings(file)
+        assertEquals(false, parsed.values["auto_replace_hq_downloads"])
+        assertEquals(true, parsed.values["auto_prefetch_hq"])
+        assertEquals(120, parsed.values["hq_prefetch_limit"])
+        assertEquals(0, parsed.skipped)
+
+        val limit = AppSettings.TRANSFERABLE_KEYS.getValue("hq_prefetch_limit").spec
+        assertEquals(0, limit.normalize(-1))
+        assertEquals(10_000, limit.normalize(99_999))
+        assertNull(limit.normalize("120"))
+    }
+
+    @Test
+    fun `an oversized settings file is refused instead of being read whole`() {
+        val oversized = ByteArrayInputStream(
+            ByteArray(SettingsTransfer.MAX_IMPORT_BYTES + 1) { 'x'.code.toByte() },
+        )
+
+        val refused = runCatching {
+            with(SettingsTransfer) { oversized.readTextBounded() }
+        }
+
+        assertTrue(refused.isFailure)
+        assertTrue(refused.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    @Test
+    fun `a settings file exactly at the cap is still read`() {
+        val text = "x".repeat(SettingsTransfer.MAX_IMPORT_BYTES)
+        val input = ByteArrayInputStream(text.toByteArray())
+
+        assertEquals(text, with(SettingsTransfer) { input.readTextBounded() })
     }
 
     @Test

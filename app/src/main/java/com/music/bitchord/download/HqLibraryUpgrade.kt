@@ -37,6 +37,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
+ * Whether a high-quality pass may ignore the listener's Wi-Fi-only download
+ * setting.
+ *
+ * Only a pass the listener started with the button may spend mobile data. The
+ * background switches are not an instruction to download now: they run on
+ * whatever connection is in hand, and the Wi-Fi-only rule still applies.
+ */
+internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -393,6 +403,11 @@ object HqLibraryUpgrade {
             finishRun()
             return@withContext
         }
+        if (!hqPassAllowsMeteredData(manualPass) && !AppSettings.downloadsAllowedNow) {
+            TrackLog.i(TAG, "hq-library: waiting for an unmetered connection")
+            finishRun()
+            return@withContext
+        }
 
         var target = synchronized(lock) { plan.firstOrNull() }
         if (target == null) {
@@ -438,7 +453,7 @@ object HqLibraryUpgrade {
         Downloads.enqueue(
             context = context,
             song = pending.song,
-            allowMetered = true,
+            allowMetered = hqPassAllowsMeteredData(manualPass),
             quality = DownloadedQuality.qualityFor(pending.target.verifiedTier),
             hq = HqDownloadSource(
                 sourceConfigId = pending.target.sourceConfigId,
