@@ -17,6 +17,7 @@ import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
+import com.music.bitchord.data.lyrics.RefinePolicy
 import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
@@ -132,8 +133,14 @@ object LyricsTiming {
          * own clock. Null means the clocks are the same.
          */
         val hq: Adjustment.Mapped? = null,
+        /**
+         * The last line-level correction, on top of [base] and [hq] and under
+         * [manualMs]: a constant move learned from the words heard for this
+         * video. See [RefinePolicy].
+         */
+        val refineMs: Long = 0L,
     ) {
-        val isEmpty: Boolean get() = base == null && manualMs == 0L && hq == null
+        val isEmpty: Boolean get() = base == null && manualMs == 0L && hq == null && refineMs == 0L
 
         /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
@@ -182,6 +189,7 @@ object LyricsTiming {
         val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo, audioSource) else null
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
+        val key = textKey(lines, audioSource)
         val timing = Timing(
             base = base,
             manualMs = entry.manualMs ?: 0L,
@@ -189,14 +197,26 @@ object LyricsTiming {
             aiEngine = engine,
             hq = hqAdjustment(context, videoId),
         )
+        // The provider's own line times can stay a fifth of a second early or
+        // late even when [base] has already put the record on the video's
+        // clock. One constant move, learned from the words heard, goes on top
+        // of base and HQ and under the listener's own correction.
+        val refineWords = refineWords(entry, key, base)
+        val refineClock = onHqClock(refineWords, timing)
+        val refine = if (base != null && refineClock.isNotEmpty()) {
+            RefinePolicy.compute(apply(lines, timing.copy(manualMs = 0L, refineMs = 0L)), refineClock)
+        } else {
+            RefinePolicy.Result.NONE
+        }
+        val refined = timing.copy(refineMs = if (refine.applied) refine.medianMs else 0L)
         // The transcript is kept on the video's own clock, and a displayed line
-        // is map(record) + extraMs; the words are already video time, so only
-        // [Timing.extraMs] is still missing. Read it here rather than bake it
-        // into the kept words: a correction by hand, or a newly learned engine
-        // lateness, must move the heard words with their line.
-        val heard = if (base?.byAi == true && entry.aiTextKey == textKey(lines, audioSource)) {
-            val shift = timing.extraMs
-            val hqMap = timing.hq?.map
+        // is map(record) + refineMs + extraMs; the words are already video
+        // time, so the rest is still missing. Read it here rather than bake it
+        // into the kept words: a correction by hand, a refine, or a newly
+        // learned engine lateness must move the heard words with their line.
+        val heard = if (base?.byAi == true && entry.aiTextKey == key) {
+            val shift = refined.refineMs + refined.extraMs
+            val hqMap = refined.hq?.map
             fun heardAt(ms: Long): Long =
                 ((hqMap?.map(ms) ?: ms) + shift).coerceAtLeast(0L)
             entry.heardWords.map { word ->
@@ -210,7 +230,36 @@ object LyricsTiming {
         } else {
             emptyList()
         }
-        return timing.copy(heardWords = heard).takeUnless { it.isEmpty }
+        return refined.copy(heardWords = heard).takeUnless { it.isEmpty }
+    }
+
+    /**
+     * The words a refine may compare with: the AI answer's own transcript when
+     * that is the base, otherwise the transcript kept for refine (a measured
+     * song's first ninety seconds), falling back to any AI words already heard.
+     * All are on the video's own clock.
+     */
+    private fun refineWords(
+        entry: Entry,
+        key: Int,
+        base: Adjustment?,
+    ): List<LyricsWordAlign.Heard> {
+        val saved = when {
+            base?.byAi == true && entry.aiTextKey == key -> entry.heardWords
+            entry.refineHeardKey == key -> entry.refineHeardWords
+            entry.aiTextKey == key -> entry.heardWords
+            else -> emptyList()
+        }
+        return saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
+    }
+
+    /** Heard words moved onto the HQ copy's clock, where [apply] puts the lines after [Timing.hq]. */
+    private fun onHqClock(words: List<LyricsWordAlign.Heard>, timing: Timing): List<LyricsWordAlign.Heard> {
+        val map = timing.hq?.map ?: return words
+        return words.map { word ->
+            val start = map.map(word.startMs)
+            LyricsWordAlign.Heard(word.text, start, maxOf(start, map.map(word.endMs)))
+        }
     }
 
     private fun baseOf(
@@ -276,13 +325,15 @@ object LyricsTiming {
         }
         val hq = timing.hq?.map
         // The HQ map is the second half of the clock: YouTube song version →
-        // the copy playing. A manual correction belongs on top of both, in the
-        // clock the listener is actually hearing.
-        return if (hq == null) {
-            lines.timedBy(baseMap, timing.extraMs)
+        // the copy playing. The refine is a constant move after both, and a
+        // manual correction belongs on top of all of them, in the clock the
+        // listener is actually hearing.
+        val mapped = if (hq == null) {
+            lines.timedBy(baseMap)
         } else {
-            lines.timedBy(baseMap).timedBy(hq, timing.extraMs)
+            lines.timedBy(baseMap).timedBy(hq)
         }
+        return mapped.timedBy(null, timing.refineMs + timing.extraMs)
     }
 
     /**
@@ -328,6 +379,112 @@ object LyricsTiming {
             is Adjustment.Mapped -> adjustment.map.map(first.timeMs) - first.timeMs
         }
     }
+
+    // ---- The last line-level correction ----------------------------------------------
+
+    /**
+     * Records what the words heard say about the lines already on screen: one
+     * song-wide move from [RefinePolicy], for the kept entry and the one
+     * `lyrics-refine:` log line. The lines themselves already carry it from
+     * [timing]; this only writes it down when it changes. No request, no timer.
+     */
+    suspend fun refine(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        timing: Timing,
+        audioSource: String? = null,
+    ) {
+        val base = timing.base ?: return
+        val entry = store(context).get(videoId) ?: Entry()
+        val key = textKey(lines, audioSource)
+        val words = refineWords(entry, key, base)
+        if (words.isEmpty()) return
+        val result = RefinePolicy.compute(
+            apply(lines, timing.copy(manualMs = 0L, refineMs = 0L)),
+            onHqClock(words, timing),
+        )
+        val appliedMs = if (result.applied) result.medianMs else null
+        if (entry.refineMs == appliedMs && entry.refineLines == result.lines && entry.refineMad == result.madMs) return
+        store(context).update(videoId) {
+            it.copy(
+                refineMs = appliedMs,
+                refineLines = result.lines,
+                refineMad = result.madMs,
+            )
+        }
+        val baseLabel = if (base.byAi) "ai" else "measured"
+        TrackLog.i(
+            "BitChord",
+            "lyrics-refine: $videoId lines=${result.lines} median=${result.medianMs}ms " +
+                "mad=${result.madMs}ms applied=${if (result.applied) "y" else "n"} base=$baseLabel",
+            videoId,
+        )
+    }
+
+    /** Whether the words a refine needs are already kept for these lyrics and this sound. */
+    suspend fun refineHeardKnown(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String? = null,
+    ): Boolean {
+        val entry = store(context).get(videoId) ?: return false
+        val key = textKey(lines, audioSource)
+        if (entry.refineHeardKey == key) return true
+        return entry.aiTextKey == key && entry.heardWords.isNotEmpty()
+    }
+
+    /**
+     * A measured song's first ninety seconds, heard once, so [RefinePolicy] has
+     * words to compare with lines the measurement already put on the video's
+     * clock. Downloaded files are read from the file; a stream from the
+     * opening already on disk. Kept per lyrics and sound and reused, so a
+     * replay pays nothing. Null audio or a refusal is not marked, and the next
+     * playback may try again — there is no timer here.
+     */
+    suspend fun ensureRefineHeard(
+        context: Context,
+        videoId: String,
+        song: Song,
+        lines: List<LyricLine>,
+        timing: Timing,
+        audioSource: String? = null,
+    ): Boolean {
+        val base = timing.base ?: return false
+        // An AI base already came with the words that placed it.
+        if (base.byAi) return false
+        if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return false
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        if (refineHeardKnown(context, videoId, lines, audioSource)) return false
+        val key = textKey(lines, audioSource)
+        val lock = refining.getOrPut(videoId) { Mutex() }
+        return lock.withLock {
+            if (refineHeardKnown(context, videoId, lines, audioSource)) return@withLock false
+            val audio = VideoAudio.songWav(context, song, VideoAudio.SONG_CHECK_SECONDS) ?: return@withLock false
+            val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
+                lines.filter { it.text.isNotBlank() }.map { it.text },
+            )
+            val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
+                audio,
+                language,
+                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
+            )
+            val words = answer.words ?: return@withLock false
+            store(context).update(videoId) {
+                it.copy(
+                    refineHeardKey = key,
+                    refineHeardWords = words.take(MAX_HEARD_WORDS)
+                        .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                )
+            }
+            refine(context, videoId, lines, timing, audioSource)
+            _changes.tryEmit(videoId)
+            true
+        }
+    }
+
+    private val refining = ConcurrentHashMap<String, Mutex>()
 
     // ---- Automatic measurement ------------------------------------------------------
 
@@ -2084,6 +2241,18 @@ object LyricsTiming {
         val whisperKey: Int? = null,
         /** The words behind the AI answer, on the video's clock; see [timing]. */
         val heardWords: List<SavedWord> = emptyList(),
+        /**
+         * The line-level refine: the constant move [RefinePolicy] found, how
+         * many lines agreed and their spread. [refineMs] is null when it did
+         * not apply. The lines themselves are re-derived from the words on
+         * every [timing], so a changed base is followed without a stale move.
+         */
+        val refineMs: Long? = null,
+        val refineLines: Int = 0,
+        val refineMad: Long? = null,
+        /** The lyrics (text key) the refine transcript belongs to, and its words on the video's clock. */
+        val refineHeardKey: Int? = null,
+        val refineHeardWords: List<SavedWord> = emptyList(),
         /**
          * The lyrics the last automatic request was for, and the engines it
          * has spent on them; see [AiTimingPolicy]. A song check's key also
