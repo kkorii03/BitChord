@@ -97,6 +97,50 @@ class ShuffleAppendTest {
         assertEquals("fresh", merged.first { it.id == "b" }.label)
     }
 
+    @Test
+    fun mergeKeepsAnEmptyRemainingEmptyWhenNothingIsFresh() {
+        assertEquals(
+            emptyList<String>(),
+            ShuffleAppend.mergeRemaining(emptyList(), emptyList(), key = { it }, random = Random(1)),
+        )
+    }
+
+    @Test
+    fun mergeTreatsADuplicateKeyInsideRemainingAsAlreadyPresent() {
+        val merged = ShuffleAppend.mergeRemaining(
+            remaining = listOf("a", "a", "b"),
+            added = listOf("a", "c"),
+            key = { it },
+            random = Random(4),
+        )
+        assertEquals(4, merged.size)
+        assertEquals(2, merged.count { it == "a" })
+        assertEquals(1, merged.count { it == "b" })
+        assertEquals(1, merged.count { it == "c" })
+    }
+
+    @Test
+    fun mergeSkipsFreshRowsWhoseKeyIsBlankJustLikeAnyOtherKey() {
+        data class Row(val id: String)
+        val merged = ShuffleAppend.mergeRemaining(
+            remaining = listOf(Row("")),
+            added = listOf(Row(""), Row("b")),
+            key = { it.id },
+            random = Random(5),
+        )
+        assertEquals(listOf("", "b"), merged.map { it.id })
+    }
+
+    @Test
+    fun mergeDoesNotMutateEitherInputList() {
+        val remaining = mutableListOf("a", "b")
+        val added = mutableListOf("c")
+        val merged = ShuffleAppend.mergeRemaining(remaining, added, key = { it }, random = Random(6))
+        assertEquals(listOf("a", "b"), remaining)
+        assertEquals(listOf("c"), added)
+        assertEquals(3, merged.size)
+    }
+
     private class ZeroRandom : Random() {
         override fun nextBits(bitCount: Int): Int = 0
     }

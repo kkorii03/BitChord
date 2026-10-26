@@ -107,4 +107,126 @@ class NextPrepPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aBlankRowIdMeansNoWorkAndNoRow() {
+        val plan = NextPrepPolicy.plan(
+            NextPrepPolicy.Request(
+                rowId = "   ",
+                queueKey = "current|row-1",
+                wanted = Step.entries.toSet(),
+            ),
+        )
+        assertEquals(null, plan.rowId)
+        assertEquals("current|row-1", plan.queueKey)
+        assertTrue(plan.isEmpty)
+    }
+
+    @Test
+    fun anEmptyWantedSetPlansNothing() {
+        val plan = NextPrepPolicy.plan(
+            NextPrepPolicy.Request(
+                rowId = "row-1",
+                queueKey = "current|row-1",
+                wanted = emptySet(),
+            ),
+        )
+        assertEquals("row-1", plan.rowId)
+        assertTrue(plan.isEmpty)
+    }
+
+    @Test
+    fun stepsAlwaysComeOutInTheirFixedOrder() {
+        val plan = NextPrepPolicy.plan(
+            NextPrepPolicy.Request(
+                rowId = "row-1",
+                queueKey = null,
+                wanted = setOf(Step.MIX, Step.VERSION, Step.SYNC, Step.LYRICS, Step.HQ),
+            ),
+        )
+        assertEquals(Step.entries, plan.steps)
+    }
+
+    @Test
+    fun preparedAndAttemptedBothRemoveAStep() {
+        val plan = NextPrepPolicy.plan(
+            NextPrepPolicy.Request(
+                rowId = "row-1",
+                queueKey = null,
+                wanted = Step.entries.toSet(),
+                prepared = setOf(Step.HQ),
+                attempted = setOf(Step.HQ, Step.SYNC),
+            ),
+        )
+        assertEquals(listOf(Step.VERSION, Step.LYRICS, Step.MIX), plan.steps)
+    }
+
+    @Test
+    fun aStepOutsideTheWantedSetIsNeverPlanned() {
+        val plan = NextPrepPolicy.plan(
+            NextPrepPolicy.Request(
+                rowId = "row-1",
+                queueKey = null,
+                wanted = setOf(Step.LYRICS),
+                prepared = Step.entries.toSet(),
+            ),
+        )
+        assertTrue(plan.isEmpty)
+    }
+
+    @Test
+    fun aBlankStartedRowStillBelongsToTheRunningBundle() {
+        assertFalse(
+            NextPrepPolicy.shouldCancel(
+                startedRowId = "",
+                startedQueueKey = null,
+                currentRowId = "",
+                currentQueueKey = null,
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.shouldCancel(
+                startedRowId = "",
+                startedQueueKey = null,
+                currentRowId = "row-1",
+                currentQueueKey = null,
+            ),
+        )
+    }
+
+    @Test
+    fun aBundleIsCancelledWhenTheNextRowDisappears() {
+        assertTrue(
+            NextPrepPolicy.shouldCancel(
+                startedRowId = "row-1",
+                startedQueueKey = "current|row-1",
+                currentRowId = null,
+                currentQueueKey = null,
+            ),
+        )
+    }
+
+    @Test
+    fun aNullQueueKeyOnOneSideOnlyCountsAsAChangedPair() {
+        assertTrue(
+            NextPrepPolicy.shouldCancel(
+                startedRowId = "row-1",
+                startedQueueKey = null,
+                currentRowId = "row-1",
+                currentQueueKey = "current|row-1",
+            ),
+        )
+    }
+
+    @Test
+    fun theSameRowAndNoQueueKeysSurvives() {
+        assertFalse(
+            NextPrepPolicy.shouldCancel(
+                startedRowId = "row-1",
+                startedQueueKey = null,
+                currentRowId = "row-1",
+                currentQueueKey = null,
+            ),
+        )
+    }
 }
