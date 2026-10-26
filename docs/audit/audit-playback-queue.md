@@ -1,0 +1,57 @@
+# 재생·대기열 감사 (audit-playback-queue)
+
+- 점검일: 2026-10-26
+- 범위: 재생·대기열·셔플·반복·자동 재생(AutoPlay)·다음 곡·크로스페이드/Automix·재생 복구·알림/위젯 버튼. 중심 파일은 `PlaybackService`, `CrossfadeController`, `QueueShuffle`, `Autoplay`, `QueueCoordinator`, `BoundedQueuePlanner`, `BoundedQueueEdits`, `CrossfadeArmPolicy`.
+- 방법: `grep`/`git grep`으로 호출부를 좁힌 뒤 해당 함수와 호출 경로만 읽었다. 코드는 한 줄도 수정하지 않았고 이 문서만 추가했다. `.github/`, `keys/`, 서명 설정은 건드리지 않았다.
+- 비교 기준: 이 체크아웃에는 `ko-101` 태그가 없다. `git log --all`은 `fa49493`(grafted, HEAD)와 `94001ad` 두 개뿐이고 `94001ad`는 `.dsq/prompt.txt`·`.github/workflows/ds-cloud.yml`만 바꾼 작업 기록이다. 따라서 `git diff ko-101..HEAD`를 만들 수 없어 **현재 HEAD의 코드 자체**를 기준으로 감사했다.
+- 표시: HIGH는 사용자가 바로 체감하는 재생·대기열 오동작, MEDIUM은 특정 조건에서 재현되는 상태 불일치, LOW는 지속성·표시 수준. `추측`은 코드로 확정할 수 없는 기기 동작이다.
+
+## 요약 표
+
+| 심각도 | 파일:줄 | 무엇이 고장 | 재현 경로 | 수정법 |
+|---|---|---|---|---|
+| HIGH | `app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1504-1506`, `:1784-1803`; `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1498-1535`, `:3916-3932` | 크로스페이드 arm 시점에만 `repeatMode`를 standby에 복사한다. ARMING/FADING 중 사용자가 반복을 바꾸면 그 변경은 session(active)에만 적용되고, handoff 뒤 session이 되는 standby에는 옛 값이 남아 반복 상태가 되돌아간다. repeat-all을 켜는 순간 AutoPlay 꼬리를 active에서만 빼므로, standby가 session이 되면 repeat-all도 꺼진 채 AutoPlay 곡이 다시 살아난다. 반대로 페이드 중 repeat-all을 끄면 standby의 ALL과 빠진 AutoPlay 꼬리가 그대로 남는다. | Start an album with crossfade/Automix. While the next track is in ARMING or the first half of FADING (before the midpoint handoff), tap repeat-all. After the handoff the repeat button reads OFF and the AutoPlay rows that should have been stashed are still in the queue. Repeat the test by turning repeat-all OFF during the fade: after handoff the queue still loops with repeat-all and the restored AutoPlay tail is missing. | `CrossfadeController.handOff` 직전에 `into.repeatMode = out.repeatMode`, `into.shuffleModeEnabled = out.shuffleModeEnabled`를 다시 동기화하고, repeat-all 전환 시 `stashAutoplayTracks`/`restoreAutoplayTracks`를 standby에도 적용한다. 또는 `PlaybackService.onRepeatModeChanged`에서 `crossfade.isTransitioning()`이면 pending 값으로 저장했다가 `onHandoff`/`onSettled`에서 재적용한다. |
+| HIGH | `app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:704-714`, `:1838-1847`; `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:10323-10378`, `:3756-3765`; `app/src/main/java/com/music/bitchord/playback/QueueShuffle.kt:192-202` | standby는 arm 시점의 큐 복사본을 유지하고 handoff에서 **뒤에 덧붙은 항목만** 복사한다. 그래서 ARMING/FADING 중의 셔플 토글, 행 삭제/이동/교체, AutoPlay 끄기(꼬리 삭제)는 active에만 반영되고 handoff 뒤 사라진다. `onMediaItemTransition`은 현재 항목이 바뀌지 않는 꼬리 삭제·이동·교체에서는 발생하지 않으므로 전환도 중단되지 않는다(Media3 1.11 `ExoPlayerImpl.evaluateMediaItemTransitionReason`는 current window uid가 같으면 transition을 만들지 않는다). | Queue `[A,B,C,D]`, crossfade into B. During ARMING remove C, or drag D before C, or turn AutoPlay off. After handoff C is back / the old order is back / the AutoPlay rows are back. Separately, tap shuffle during ARMING: the icon turns on, but after handoff the queue is in the old order while shuffle still reads ON. | 큐 꼬리가 pure append가 아니면 전환을 bail하도록 `onTimelineChanged`에서 현재 항목 앞부분이 동일한지 비교하거나, handoff에서 `into`의 꼬리를 `out`의 꼬리로 통째로 교체한다(`replaceMediaItems(current+1, count, out tail)`). 셔플 토글과 AutoPlay 꼬리 삭제도 같은 경로로 동기화한다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:8753-8758`; `app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:659-666`, `:2076-2083`, `:2208-2218` | 전환 중에는 속도/피치 설정 적용을 건너뛴다. 전환이 handoff 전에 bail하면 `finish()`의 else 분기는 `outgoingPlaybackRate != 1.0`일 때만 active 속도를 되돌리므로, 사용자가 바꾼 속도는 session에 영영 적용되지 않는다. sleep fade도 `finishSleepFade()`에서 속도를 재적용하지 않는다. | Set playback speed to 1.25x while a crossfade is in ARMING, then force the arm to fail (unplayable next stream) or press next before handoff. The current player keeps the old speed after the transition is abandoned. Same with "pause after this song": change speed during the fade-out, resume later, and the track is still at the old speed. | `finish()`의 두 분기와 `finishSleepFade()` 모두에서 `AppSettings.playbackSpeed`/`pitchSemitones`를 session player에 적용한다. 전환 중 변경은 `pendingSpeed`로 보관했다가 `onSettled`에서 한 번 적용해도 된다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3044-3049`; `app/src/main/java/com/music/bitchord/playback/QueueShuffle.kt:192-202`; `app/src/main/java/com/music/bitchord/playback/PartySync.kt:951-1004` | 파티에서 셔플 버튼은 로컬 큐만 재정렬하고 파티 상태로 발행하지 않는다. 다음 `PartySync.reconcileQueue`가 서버 큐 순서로 꼬리를 되돌리므로 아이콘만 켜지고 실제 순서는 원복되며, 다른 멤버에게는 아무 변화가 없다. | Join a Listen Together party, open the queue, tap shuffle. The local order changes briefly; on the next party state the server order returns while the shuffle icon stays ON. Other members' queues never change. | 파티에서는 셔플을 숨기거나 비활성화하고, 지원하려면 서버 큐 명령으로 순서를 발행해야 한다. 최소한 `toggleShuffleFromSession`에서 `inParty`일 때 로컬 `QueueShuffle.toggle`과 `AppSettings.setShuffleEnabled`를 호출하지 않는다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:10323-10343`, `:3272-3284`; `app/src/main/java/com/music/bitchord/playback/BoundedQueuePlanner.kt:84-95` | bounded 앨범/플레이리스트에서 컨텍스트 행을 지워도 논리 `QueueWindow`에는 삭제 API가 없어 반영되지 않는다. `topUpEntries`는 materialized 목록이 desired의 prefix가 아니면 빈 결과를 내므로, 중간 행을 지우면 top-up이 멈추고, 남은 upcoming을 모두 지우면 다음 트랙 변경 자체가 없어 top-up이 다시 돌 기회 없이 재생이 끝난다. | Play a long album/playlist through the bounded path. Remove several upcoming CONTEXT rows so fewer than `LOW_WATER` remain: the tail is not refilled until the current track advances past the removed indices. Remove every remaining upcoming row: playback stops at the current track and the unshown rest of the album never plays. | `QueueWindow`에 canonical index 제거/소비 표시 API를 추가하고 `removeMediaItems`에서 반영한다. 또는 bounded 모드의 컨텍스트 행 삭제는 `BoundedQueueEdits.requestRefresh`로 logical window를 다시 만들고, 삭제 직후 `scheduleBoundedContextTopUp()`을 호출한다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3756-3765`, `:4210-4230` | repeat-all 진입 시 AutoPlay 꼬리는 현재 항목 뒤에서만 제거한다. 이미 재생되어 history에 남은 AutoPlay 행은 그대로 두고, repeat-all에서는 history를 큐 끝으로 회전시키므로 그 행들이 다시 upcoming이 되어 재생된다. "repeat-all은 AutoPlay를 빼고 일반 큐만 반복한다"는 주석과 어긋난다. | Play five AutoPlay-suggested tracks so they sit in history, then enable repeat-all. After the current cycle the previously played AutoPlay tracks are rotated to the tail and play again even though AutoPlay is supposed to be excluded from repeat-all. | repeat-all 진입 시 history 쪽 AutoPlay 행도 제거/표시하거나, repeat-all의 history 회전에서 `QueueTier.AUTOPLAY`를 제외한다. 사용자가 이미 들은 AutoPlay를 반복 대상으로 남길 의도라면 주석과 stash 정책을 그에 맞게 바꾼다. |
+| LOW | `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1498-1535`; `app/src/main/java/com/music/bitchord/MainActivity.kt:2896-2910`; `app/src/main/java/com/music/bitchord/wear/WearBridge.kt:690-696` | 반복 모드 영속화는 UI(`MainActivity`)와 워치(`WearBridge`)에서만 한다. Android Auto/블루투스 등 MediaSession 컨트롤러가 `setRepeatMode`를 호출하면 서비스는 큐 처리만 하고 `AppSettings.setRepeatMode`를 부르지 않는다. 서비스가 재생성되면 `applySettings`가 옛 저장값으로 되돌린다. | Change repeat mode from Android Auto or another MediaSession controller, kill the app process, and restart. Repeat returns to the last value saved by the phone UI or watch, not the value the car set. | `PlaybackService`의 session wrapper에서 `setRepeatMode`를 오버라이드해 `AppSettings.setRepeatMode`를 함께 호출하거나, `onRepeatModeChanged`에서 UI발 변경과 외부발 변경을 구분하지 않고 항상 저장한다. |
+
+## HIGH 상세
+
+### HIGH 1 — 크로스페이드 handoff가 반복 모드와 AutoPlay stash를 되돌린다
+
+- 근거:
+  - `CrossfadeController.kt:1504-1506` — `begin()`이 `into.repeatMode = out.repeatMode`를 **arm 시점에 한 번만** 복사한다.
+  - `CrossfadeController.kt:1784-1803` — `handOff()`는 `reconcileQueue()`만 호출하고 반복/셔플 상태를 다시 읽지 않는다.
+  - `PlaybackService.kt:1498-1535` — `onRepeatModeChanged`는 `player`(active)만 대상으로 `stashAutoplayTracks()`/`restoreAutoplayTracks()`를 실행한다.
+  - `PlaybackService.kt:3916-3932` — `adoptPlayer()`는 `player = incoming`으로 바꾸고 listener만 옮긴다. 반복/셔플 재적용은 없다.
+- 사용자 증상: 전환 중 반복 버튼을 누르면 잠깐 반영된 것처럼 보이다가 handoff 직후 원래 상태로 돌아간다. repeat-all과 AutoPlay의 상호작용도 함께 깨져, 반복이 켜졌는데 AutoPlay 곡이 섞여 돌거나, 반복이 꺼졌는데 AutoPlay 곡이 사라진 채로 남는다.
+- 고치는 방법: `handOff()`에서 `into.repeatMode = out.repeatMode`와 `into.shuffleModeEnabled = out.shuffleModeEnabled`를 다시 복사하고, repeat-all 전환 시 active와 standby의 AutoPlay 꼬리/stash를 같이 맞춘다. 가장 안전한 위치는 `listenTo(into)`/`onHandoff(out, into)` 직전이다.
+- 수정 후 검증(이 문서는 코드를 수정하지 않았으므로 미실시):
+  - 제안 테스트 1: ARMING 상태에서 repeat-all을 켠 뒤 handoff를 강제로 실행하고, session player의 `repeatMode == REPEAT_MODE_ALL`과 AutoPlay 행 부재를 확인.
+  - 제안 테스트 2: ARMING 상태에서 repeat-all을 끈 뒤 handoff를 실행하고, session의 반복이 OFF이며 stash였던 AutoPlay 행이 복원됐는지 확인.
+  - 현재 상태: 코드 수정 없음, 테스트 미실행.
+
+### HIGH 2 — 크로스페이드 중 대기열 편집이 handoff에서 사라진다
+
+- 근거:
+  - `CrossfadeController.kt:704-714` — `onMediaItemTransition`의 `PLAYLIST_CHANGED`/`SEEK`만 bail한다. 현재 항목이 바뀌지 않는 꼬리 삭제·이동·교체는 이 콜백을 만들지 않는다(Media3 `ExoPlayerImpl.evaluateMediaItemTransitionReason`는 current window uid가 같으면 transition 없음).
+  - `CrossfadeController.kt:1838-1847` — `reconcileQueue()`는 `queuedItemCount until out.mediaItemCount`만 복사한다. 삭제/이동/교체는 표현할 수 없다.
+  - `PlaybackService.kt:10323-10378` — `removeMediaItem(s)`/`moveMediaItem(s)`/`replaceMediaItems`는 `onUserIntent()`와 player 호출만 하고, 전환 중 defer/bail을 하지 않는다.
+  - `PlaybackService.kt:3756-3765` — AutoPlay 끄기는 active의 현재 뒤 행만 지운다.
+  - `QueueShuffle.kt:192-202`, `:253-295` — 셔플 토글도 active player만 재정렬한다.
+- 사용자 증상: 전환 중 큐에서 곡을 지우거나 순서를 바꾸면 handoff 뒤 지운 곡이 다시 나타나거나 순서가 원복된다. 셔플 아이콘은 켜져 있는데 실제 재생 순서는 셔플되지 않은 상태가 된다. AutoPlay를 끈 직후 전환이 일어나면 AutoPlay 곡이 다시 붙는다.
+- 고치는 방법: 전환 중 큐 꼬리가 pure append가 아니면 전환을 bail하도록 `CrossfadeController`에 `onTimelineChanged` 검사를 추가하거나, handoff에서 `into`의 꼬리를 `out`의 꼬리로 통째로 교체한다. 셔플/ AutoPlay 꼬리 변경도 같은 동기화 경로를 타야 한다.
+- 수정 후 검증(이 문서는 코드를 수정하지 않았으므로 미실시):
+  - 제안 테스트 1: ARMING 중 현재 뒤 행을 하나 제거하고 handoff 후 session 큐에 그 행이 없는지 확인.
+  - 제안 테스트 2: ARMING 중 셔플을 켜고 handoff 후 session 큐가 active의 셔플된 순서와 같은지 확인.
+  - 제안 테스트 3: ARMING 중 AutoPlay를 끄고 handoff 후 session 큐에 AUTOPLAY 행이 없는지 확인.
+  - 현재 상태: 코드 수정 없음, 테스트 미실행.
+
+## 참고
+
+- 실행 확인: `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과. `./gradlew :shared:jvmTest --tests 'com.music.bitchord.playback.QueueWindow*' --console=plain -q` 통과. 코드 변경이 없으므로 이는 기준선 확인일 뿐, 위 HIGH 수정의 검증은 아니다.
+- 기존 `docs/audit/audit-playback.md`, `check-flow.md`는 각각 재생 안정성과 NextPrep/자동 믹스 준비를 다룬다. 이 문서는 그중 **전환 시점의 상태 동기화와 대기열 편집**만 새로 좁혀 본 결과다.
+- 기존 순수 로직 테스트(`QueueShuffleRestoreBoundaryTest`, `BoundedQueuePlannerBoundaryTest`, `CrossfadeArmPolicyBoundaryTest` 등)는 큐/정책 계산은 덮지만, `CrossfadeController`의 arm→handoff 사이에 사용자 입력이 들어오는 경로는 테스트하지 않는다. 위 HIGH 2건이 그 공백에 있다.
