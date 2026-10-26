@@ -128,6 +128,8 @@ internal class NextTrackPreparation(
     private fun snapshot(player: ExoPlayer): Snapshot? {
         val index = player.nextMediaItemIndex
         if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return null
+        val current = player.currentMediaItemIndex.takeIf { it in 0 until player.mediaItemCount }
+        if (!NextPrepPolicy.hasDistinctNextRow(index, current)) return null
         val item = player.getMediaItemAt(index)
         val song = runCatching { item.toSong() }.getOrNull() ?: return null
         val rowId = item.queueEntryId ?: item.mediaId
