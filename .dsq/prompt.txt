@@ -1,0 +1,10 @@
+(10-26 11:20 Opus 신규, 사용자 지적: 다운로드된 곡은 음원·가사·싱크가 저장된 채 굳어 있어서, 처음 저장될 때 틀렸으면 계속 틀린 채로 나온다.)
+(공통 주의: 이 PC 셸에는 rg가 없다. 저장소 전체 목록(Get-ChildItem -Recurse 등)을 뽑지 말 것 — 큰 출력 뒤 실행이 멈춘다. 검색은 OpenCode 내장 grep/glob 으로 좁게. 출발점: app/.../playback/smart/LyricsTiming.kt(곡 확인 songCheck, VideoAudio.songWav 가 '파일에서 바로' 읽는 경로), ui/LyricsController.kt, 저장된 가사 파일('file:' 제공처, '@unknown'), 다운로드 쪽 코드는 grep 'download' 로 좁게.)
+작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-merge (브랜치 task/proxy-fallback). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지. .github/, keys\, 서명 설정 수정 금지. 배터리 우선: 주기 폴링·타이머·일괄 재처리 금지, 이벤트 기반(곡이 재생될 때만). 바꾼 함수의 모든 호출부·타입을 다시 읽고 확인. 기존 주석·설계를 지우면 요약에 이유.
+목표: 다운로드된 곡도 재생될 때 저장된 가사·싱크를 지금 알고리즘으로 한 번 다시 검증하고, 더 나은 결과면 저장값을 바꾼다.
+1) 저장된 싱크(가사 시간·shift·match)에 '검증 버전'(정수 상수 SYNC_CHECK_VERSION, 지금 1)을 함께 저장. 버전이 없거나 낮은 저장값 = 미검증.
+2) 다운로드 곡 재생 시 미검증이면: 스트리밍 곡과 같은 곡 확인(songCheck)을 그 저장 파일 오디오로 실행. 저장 가사가 '@unknown' 제공처이거나 match < 70% 이면 가사 제공처에서 새로 받아 같은 방식으로 확인하고, match 가 더 높은 쪽을 쓴다. 새 결과가 기존보다 낫거나 기존이 미검증·실패면 저장값 교체 + 버전 기록. 둘 다 나쁘면 기존 유지 + 버전 기록(같은 곡 반복 확인 금지). 한 곡에 한 번, 동시에 하나.
+3) 설정(가사 쪽)에 '다운로드 곡 싱크 다시 맞추기' 버튼: 저장된 검증 버전만 지운다(실제 재검증은 각 곡이 다음에 재생될 때). 한국어 문자열 values-ko 에도.
+4) 진단 로그: 기존 'lyrics-sync:' 줄에 stored=y|n recheck=<none|unverified|unknown-provider|low-match|done> 추가.
+5) 판정 함수(미검증 여부·교체 여부)는 순수 함수로 shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/ 에 두고 같은 패키지 jvmTest 에 테스트(CI 자동 실행).
+마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제
