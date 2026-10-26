@@ -91,6 +91,32 @@ object SongVersionPolicy {
     ): Boolean = localFile && !wantsSongVersion(isVideo, typeUnknown)
 
     /**
+     * Whether a downloaded file with no recorded provenance must still be
+     * checked against the catalogue before it is trusted.
+     *
+     * A download saved before provenance was recorded cannot say which stream
+     * produced its bytes. When that row also reads as a song (`isVideo` and
+     * `typeUnknown` both false), the old blanket "has a file, so skip" rule
+     * played the file — and a music video downloaded under its own id is
+     * exactly the case it cannot see. Online, such a file is verified like a
+     * video candidate: its catalogue release is streamed while the file stays
+     * as the offline fallback. Offline the file is the only sound there is, so
+     * it is kept without a request.
+     *
+     * The listener's own files, downloads whose provenance is known, and rows
+     * already known to be videos are left to their existing paths.
+     */
+    fun verifiesUnknownDownload(
+        localFile: Boolean,
+        downloaded: Boolean,
+        provenanceKnown: Boolean,
+        isVideo: Boolean,
+        typeUnknown: Boolean,
+        offline: Boolean,
+    ): Boolean = localFile && downloaded && !provenanceKnown && !offline &&
+        !wantsSongVersion(isVideo, typeUnknown)
+
+    /**
      * Whether choosing a download for this row has to fetch the song version.
      *
      * A music video's own stream is its video's sound, never what the app plays

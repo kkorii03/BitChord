@@ -48,22 +48,38 @@ internal object CatalogSongMapper {
         val durationText: String? = null,
     ) {
         /** The fallback row with the catalogue identity and metadata applied. */
-        fun toSong(source: Song): Song = source.copy(
-            videoId = videoId,
-            title = title,
-            artist = artist,
-            thumbnailUrl = artworkUrl ?: source.thumbnailUrl,
-            durationText = durationText ?: source.durationText,
-            albumId = albumId,
-            albumName = albumTitle,
-            artistId = null,
-            artists = emptyList(),
-            setVideoId = null,
-            isVideo = false,
-            typeUnknown = false,
-            isVideoOrigin = false,
-        )
+        fun toSong(source: Song): Song {
+            // A video's file is the MV itself, not this catalogue recording.
+            // Carrying its localUri/localPath onto the catalogue id would make
+            // playback install the song id but open the video's file, playing
+            // the MV sound the mapping exists to replace. The resolved id
+            // streams, or uses the file verified for that id, instead.
+            val localVideo = isVideoSource(source) && source.localUri != null
+            return source.copy(
+                videoId = videoId,
+                title = title,
+                artist = artist,
+                thumbnailUrl = artworkUrl ?: source.thumbnailUrl,
+                durationText = durationText ?: source.durationText,
+                albumId = albumId,
+                albumName = albumTitle,
+                artistId = null,
+                artists = emptyList(),
+                setVideoId = null,
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = false,
+                localUri = if (localVideo) null else source.localUri,
+                localPath = if (localVideo) null else source.localPath,
+            )
+        }
     }
+
+    /**
+     * A row that is, or may still be, a music-video upload. Its local file is
+     * the video, so it must not be mistaken for the catalogue recording.
+     */
+    internal fun isVideoSource(song: Song): Boolean = song.isVideo || song.typeUnknown
 
     /**
      * New lookups one screen build may start. Cached answers are free, so a
@@ -163,7 +179,7 @@ internal object CatalogSongMapper {
     ): CatalogSong? {
         if (song.videoId.isBlank()) return null
         if (song.localUri != null &&
-            !(allowLocalVideo && (song.isVideo || song.typeUnknown))
+            !(allowLocalVideo && isVideoSource(song))
         ) {
             return null
         }
@@ -193,7 +209,15 @@ internal object CatalogSongMapper {
         if (!budget.take()) return null
 
         val outcome = try {
-            inFlight.withPermit { resolve(song.videoId, title, artist, song.durationText, song.isVideo) }
+            inFlight.withPermit {
+                resolve(
+                    song.videoId,
+                    title,
+                    artist,
+                    song.durationText,
+                    sourceIsVideo = isVideoSource(song),
+                )
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

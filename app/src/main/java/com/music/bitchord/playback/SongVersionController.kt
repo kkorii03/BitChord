@@ -283,11 +283,30 @@ internal class SongVersionController(
         val song = item?.toSong()
         val localFile = song?.localUri != null
         val offline = AudioCache.isOffline()
+        // A file saved before provenance was recorded cannot say which stream
+        // produced it. Online it is verified as a possible video copy: the
+        // catalogue release is streamed and the file stays as the offline
+        // fallback. Offline the file is the only sound, so it is kept.
+        val verifyUnknownDownload = song != null &&
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = localFile,
+                downloaded = Downloads.isDownloaded(song.videoId),
+                provenanceKnown = Downloads.savedSoundSourceFor(song.videoId) != null,
+                isVideo = song.isVideo,
+                typeUnknown = song.typeUnknown,
+                offline = offline,
+            )
+        val versionSong = if (verifyUnknownDownload) {
+            song?.copy(typeUnknown = true, localUri = null, localPath = null)
+        } else {
+            song
+        }
         // A catalogue row whose file was recorded from another upload's stream
         // must not play that sound. Online, the row's own recording is
-        // streamed and the file stays only as the offline fallback; a file with
-        // no provenance is left alone because its source cannot be known.
+        // streamed and the file stays only as the offline fallback. A file with
+        // no provenance is verified above instead of being trusted blindly.
         if (!alreadyAudible && item != null && song != null && localFile &&
+            !verifyUnknownDownload &&
             !SongVersionPolicy.hasMadeFirstSound(item.mediaId, currentAudibleMediaId()) &&
             !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
         ) {
@@ -311,25 +330,30 @@ internal class SongVersionController(
                 return
             }
         }
+        if (item == null || song == null) {
+            releaseVersionHold(exoPlayer)
+            return
+        }
+        val lookupSong = versionSong ?: song
         val skipReason = when {
             alreadyAudible -> "already audible"
             !AppSettings.preferMusicOnly.value -> "music only off"
             ListenTogether.state.value.inParty -> "listen together"
-            item == null || song == null -> "no row"
-            !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) -> "not a video"
+            !SongVersionPolicy.wantsSongVersion(
+                lookupSong.isVideo,
+                lookupSong.typeUnknown,
+            ) -> "not a video"
             SongVersionPolicy.keepsLocalFile(
-                song.localUri != null,
-                song.isVideo,
-                song.typeUnknown,
+                lookupSong.localUri != null,
+                lookupSong.isVideo,
+                lookupSong.typeUnknown,
             ) -> "local file"
             SongVersionPolicy.hasMadeFirstSound(item.mediaId, currentAudibleMediaId()) -> "first sound"
             else -> null
         }
         if (skipReason != null) {
-            val id = song?.videoId ?: item?.mediaId
-            if (id != null && song != null &&
-                SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
-            ) {
+            val id = song.videoId
+            if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
                 TrackLog.i(
                     "BitChord",
                     "song version: $id hold skipped ($skipReason)",
@@ -339,13 +363,12 @@ internal class SongVersionController(
             releaseVersionHold(exoPlayer)
             return
         }
-        if (item == null || song == null) return
         val mediaId = item.mediaId
         // A definitive answer from the queue build needs no network wait, but
         // the first sound is still held for the single dispatch that installs
         // it, so the replacement cannot land after audio. Deferring it also
         // keeps the timeline change out of the transition callback.
-        val cached = YtMusicRepository.cachedSongVersionFor(song)
+        val cached = YtMusicRepository.cachedSongVersionFor(lookupSong)
         val cachedUse = cached?.let {
             SongVersionPolicy.downloadedFileUse(
                 it.videoId,
@@ -376,7 +399,7 @@ internal class SongVersionController(
             // The download record can name this file's song version even when
             // this run has not looked it up ? see Downloads.remember. Playing
             // that id needs no network at all.
-            downloadedSongVersionFor(song, offline)?.let { downloaded ->
+            downloadedSongVersionFor(lookupSong, offline)?.let { downloaded ->
                 val streamOnly = downloaded.localUri == null
                 installPreResolvedVersion(
                     exoPlayer,
@@ -414,7 +437,7 @@ internal class SongVersionController(
             releaseVersionHold(exoPlayer)
             return
         }
-        if (YtMusicRepository.isSongVersionMissing(song.videoId)) {
+        if (YtMusicRepository.isSongVersionMissing(lookupSong.videoId)) {
             // The queue build already established this row has no song version.
             TrackLog.i(
                 "BitChord",
@@ -436,7 +459,7 @@ internal class SongVersionController(
             var lookupFailed = false
             val resolved = try {
                 withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
-                    YtMusicRepository.songVersion(song, beforeAudio = true)
+                    YtMusicRepository.songVersion(lookupSong, beforeAudio = true)
                 }
             } catch (timeout: TimeoutCancellationException) {
                 lookupFailed = true
@@ -452,7 +475,7 @@ internal class SongVersionController(
                 // The lookup itself keeps running in the repository's shared
                 // scope. If it lands while this video is still playing, use it
                 // as the lyrics reference (never as a mid-song swap).
-                watchForLateVersion(exoPlayer, mediaId, song)
+                watchForLateVersion(exoPlayer, mediaId, lookupSong)
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled

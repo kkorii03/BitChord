@@ -492,6 +492,8 @@ object Downloads {
             albumName = meta.albumName,
             localUri = _saved.value[videoId] ?: meta.uri,
             downloadFormat = meta.downloadFormat,
+            isVideo = meta.wasVideoRow(),
+            typeUnknown = meta.typeUnknown,
         )
     }
 
@@ -679,6 +681,10 @@ object Downloads {
                 durationText = targetMeta.durationText,
                 albumName = targetMeta.albumName,
                 localUri = uri,
+                // The file was judged to be the video's sound; let the repair
+                // resolve the song version instead of downloading this id's
+                // own (video) stream again.
+                typeUnknown = true,
             )
         }.distinctBy { it.localUri }
     }
@@ -1053,6 +1059,8 @@ object Downloads {
             downloadFormat = downloadFormat,
             dateAddedSeconds = dateAddedSeconds,
             soundSourceVideoId = soundSourceVideoId,
+            isVideo = asked.isVideo,
+            typeUnknown = asked.typeUnknown,
             hqSourceConfigId = hq?.sourceConfigId,
             hqTrackId = hq?.trackId,
             hqOffsetMs = hq?.offsetMs,
@@ -1070,6 +1078,8 @@ object Downloads {
             downloadFormat = downloadFormat,
             dateAddedSeconds = dateAddedSeconds,
             soundSourceVideoId = soundSourceVideoId,
+            isVideo = fetched.isVideo,
+            typeUnknown = fetched.typeUnknown,
             hqSourceConfigId = hq?.sourceConfigId,
             hqTrackId = hq?.trackId,
             hqOffsetMs = hq?.offsetMs,
@@ -1212,6 +1222,8 @@ object Downloads {
                         downloadFormat = downloadFormat,
                         localDateAddedSeconds = dateAddedSeconds,
                         localDateModifiedSeconds = dateModifiedSeconds,
+                        isVideo = meta.wasVideoRow(),
+                        typeUnknown = meta.typeUnknown,
                     )
                 )
             } else {
@@ -1292,6 +1304,8 @@ object Downloads {
                     downloadFormat = meta.downloadFormat ?: legacyYoutubeDownloadBadge(context, uri),
                     localDateAddedSeconds = dateAddedSeconds,
                     localDateModifiedSeconds = dateModifiedSeconds,
+                    isVideo = meta.wasVideoRow(),
+                    typeUnknown = meta.typeUnknown,
                 )
             }
         }
@@ -2022,10 +2036,22 @@ internal data class SavedSongMetadata(
      *
      * A music video is filed under its own id and the catalogue release it
      * resolved to, so the two ids alone cannot say which recording is on disk.
-     * Defaulted for records written before this field existed: those keep
-     * playing their file because their provenance is genuinely unknown.
+     * Defaulted for records written before this field existed: those are
+     * verified online before their file is trusted, and kept offline — see
+     * [SongVersionPolicy.verifiesUnknownDownload].
      */
     val soundSourceVideoId: String? = null,
+    /**
+     * Whether the row this record was written from was a music video.
+     *
+     * Defaulted for records written before this field existed. Such a row is
+     * recovered from [soundSourceVideoId] when that names a different upload,
+     * and otherwise verified online like any other unknown-provenance file —
+     * see [SongVersionPolicy.verifiesUnknownDownload].
+     */
+    val isVideo: Boolean = false,
+    /** Whether the row's upload type was still unknown when it was saved. */
+    val typeUnknown: Boolean = false,
     /**
      * The verified high-quality pair this file was fetched from, when it was
      * replaced by the automatic pass. Defaulted so older records still decode.
@@ -2041,6 +2067,16 @@ internal data class SavedSongMetadata(
     val hqRate: Double? = null,
     val hqTier: String? = null,
 )
+
+/**
+ * Whether this record names a music-video row.
+ *
+ * New records say so directly. An older record can still be recovered from its
+ * provenance: a file recorded from a *different* id's stream was filed under
+ * the video's id as well, so this id is the video side of that pair.
+ */
+private fun SavedSongMetadata.wasVideoRow(): Boolean =
+    isVideo || (soundSourceVideoId != null && soundSourceVideoId != videoId)
 
 /**
  * Dates for a downloaded file-backed row.
