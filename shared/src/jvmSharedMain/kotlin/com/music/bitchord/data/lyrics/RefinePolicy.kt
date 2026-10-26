@@ -25,17 +25,27 @@ import kotlin.math.roundToLong
  * cannot follow. The fit is refused unless it is clearly better than the
  * constant move.
  *
+ * A provider's line times can also be a whole arrangement apart — a cover
+ * whose lyric file was timed to a different recording with a long intro. When
+ * the narrow window finds nothing to apply, the same opening letters are
+ * looked for in a wide window and the move every line supports together is
+ * taken, rather than each line's nearest hearing. That is the one big move a
+ * narrow window can never see.
+ *
  * Pure, so the rule can be checked without Android, a transcript or the disk.
  */
 object RefinePolicy {
+
+    /** Which of the three models produced a [Result]. */
+    enum class Model { CONST, LINEAR, WIDE }
 
     /** What one song's lines say about the timing, and whether it may be moved. */
     data class Result(
         val applied: Boolean,
         /**
          * The constant move applied, or the line's offset when [slopePerMin]
-         * is non-zero; the median found when [applied] is false. A constant
-         * move is capped at ±[MAX_SHIFT_MS].
+         * is non-zero; the median found when [applied] is false. A narrow
+         * move is capped at ±[MAX_SHIFT_MS], a wide one at ±[MAX_WIDE_SHIFT_MS].
          */
         val medianMs: Long,
         /** Median absolute deviation of the line residuals from the model. */
@@ -44,6 +54,8 @@ object RefinePolicy {
         val lines: Int,
         /** The drift in ms per minute when a straight line applied; 0 for a constant move. */
         val slopePerMin: Double = 0.0,
+        /** Whether this is the narrow constant/line fit or the wide common move. */
+        val model: Model = Model.CONST,
     ) {
         companion object {
             val NONE = Result(applied = false, medianMs = 0L, madMs = 0L, lines = 0)
@@ -64,6 +76,27 @@ object RefinePolicy {
 
     /** However far the median points, one refine moves no further than this. */
     const val MAX_SHIFT_MS = 1_500L
+
+    /** The second attempt looks this far either side of a line's shown time. */
+    private const val WIDE_WINDOW_MS = 8_000L
+
+    /** Candidate residuals are voted into bins this wide. */
+    private const val WIDE_BIN_MS = 200L
+
+    /** The winning bin's residuals within this distance give the wide median. */
+    private const val WIDE_BIN_TOLERANCE_MS = 400L
+
+    /** A wide move needs this many lines, and half of the lines that matched. */
+    const val MIN_WIDE_LINES = 10
+
+    /** Supporting residuals spread wider than this are not one arrangement's move. */
+    const val MAX_WIDE_MAD_MS = 300L
+
+    /** A move smaller than this belongs to the narrow window, not the wide one. */
+    const val MIN_WIDE_SHIFT_MS = 1_500L
+
+    /** However far the wide median points, one refine moves no further than this. */
+    const val MAX_WIDE_SHIFT_MS = 10_000L
 
     /** How many opening letters of a line are matched against the transcript. */
     private const val PREFIX_LETTERS = 4
@@ -102,21 +135,37 @@ object RefinePolicy {
             times += line.timeMs
             residuals += heardStart - line.timeMs
         }
+        if (residuals.isNotEmpty()) {
+            val median = median(residuals)
+            val mad = median(residuals.map { abs(it - median) })
+            linearFit(times, residuals, mad)?.let { line ->
+                return Result(
+                    applied = true,
+                    medianMs = line.offsetMs,
+                    madMs = line.madMs,
+                    lines = residuals.size,
+                    slopePerMin = line.slopePerMin,
+                    model = Model.LINEAR,
+                )
+            }
+            val applied = residuals.size >= MIN_LINES && mad <= MAX_MAD_MS && abs(median) >= MIN_SHIFT_MS
+            if (applied) {
+                return Result(
+                    applied = true,
+                    medianMs = median.coerceIn(-MAX_SHIFT_MS, MAX_SHIFT_MS),
+                    madMs = mad,
+                    lines = residuals.size,
+                )
+            }
+        }
+        // The narrow window found nothing worth moving. Only then look for the
+        // one big move a provider from another arrangement leaves behind.
+        wide(lines, stream)?.let { return it }
         if (residuals.isEmpty()) return Result.NONE
         val median = median(residuals)
         val mad = median(residuals.map { abs(it - median) })
-        linearFit(times, residuals, mad)?.let { line ->
-            return Result(
-                applied = true,
-                medianMs = line.offsetMs,
-                madMs = line.madMs,
-                lines = residuals.size,
-                slopePerMin = line.slopePerMin,
-            )
-        }
-        val applied = residuals.size >= MIN_LINES && mad <= MAX_MAD_MS && abs(median) >= MIN_SHIFT_MS
         return Result(
-            applied = applied,
+            applied = false,
             medianMs = median.coerceIn(-MAX_SHIFT_MS, MAX_SHIFT_MS),
             madMs = mad,
             lines = residuals.size,
@@ -203,6 +252,108 @@ object RefinePolicy {
             previous = current
         }
         return previous[length]
+    }
+
+    /**
+     * The one move all lines support, found in a window wide enough for a
+     * provider timed to another arrangement. Every line's candidate residuals
+     * vote in [WIDE_BIN_MS] bins, a line at most once per bin; the bin the most
+     * lines support wins, its residuals within [WIDE_BIN_TOLERANCE_MS] give the
+     * median. Null unless enough lines agree tightly on a move the narrow
+     * window could not have made.
+     */
+    private fun wide(lines: List<LyricLine>, stream: LetterStream): Result? {
+        val perLine = ArrayList<List<Long>>(lines.size)
+        for (line in lines) {
+            if (line.timeMs < 0L || line.text.isBlank()) continue
+            val prefix = LyricsWordAlign.fold(line.text).take(PREFIX_LETTERS)
+            if (prefix.length < MIN_PREFIX_LETTERS) continue
+            val heard = candidates(prefix, stream, line.timeMs)
+            if (heard.isEmpty()) continue
+            perLine += heard.map { it - line.timeMs }
+        }
+        if (perLine.size < MIN_WIDE_LINES) return null
+        val votes = HashMap<Long, Int>()
+        for (residuals in perLine) {
+            val bins = HashSet<Long>()
+            for (residual in residuals) bins += residual.floorDiv(WIDE_BIN_MS)
+            for (bin in bins) votes[bin] = (votes[bin] ?: 0) + 1
+        }
+        var bestBin = 0L
+        var bestVotes = -1
+        var bestDistance = Long.MAX_VALUE
+        for ((bin, count) in votes) {
+            val center = bin * WIDE_BIN_MS + WIDE_BIN_MS / 2
+            val distance = abs(center)
+            val better = count > bestVotes ||
+                (count == bestVotes && (distance < bestDistance ||
+                    (distance == bestDistance && bin < bestBin)))
+            if (better) {
+                bestBin = bin
+                bestVotes = count
+                bestDistance = distance
+            }
+        }
+        if (bestVotes < MIN_WIDE_LINES) return null
+        if (bestVotes * 2 < perLine.size) return null
+        val center = bestBin * WIDE_BIN_MS + WIDE_BIN_MS / 2
+        val supporting = ArrayList<Long>()
+        for (residuals in perLine) {
+            for (residual in residuals) {
+                if (abs(residual - center) <= WIDE_BIN_TOLERANCE_MS) supporting += residual
+            }
+        }
+        if (supporting.isEmpty()) return null
+        val median = median(supporting)
+        val mad = median(supporting.map { abs(it - median) })
+        if (mad > MAX_WIDE_MAD_MS) return null
+        if (abs(median) < MIN_WIDE_SHIFT_MS) return null
+        return Result(
+            applied = true,
+            medianMs = median.coerceIn(-MAX_WIDE_SHIFT_MS, MAX_WIDE_SHIFT_MS),
+            madMs = mad,
+            lines = perLine.size,
+            model = Model.WIDE,
+        )
+    }
+
+    /**
+     * Every place [prefix] is heard within [WIDE_WINDOW_MS] of [shownMs], in
+     * time order. A full match is preferred; with four letters, three of them
+     * in order are used only when nothing matches fully.
+     */
+    private fun candidates(prefix: String, stream: LetterStream, shownMs: Long): List<Long> {
+        val exact = candidatesWithin(prefix, stream, shownMs, allowOneWrong = false)
+        if (exact.isNotEmpty()) return exact
+        if (prefix.length < PREFIX_LETTERS) return emptyList()
+        return candidatesWithin(prefix, stream, shownMs, allowOneWrong = true)
+    }
+
+    private fun candidatesWithin(
+        prefix: String,
+        stream: LetterStream,
+        shownMs: Long,
+        allowOneWrong: Boolean,
+    ): List<Long> {
+        val length = prefix.length
+        if (stream.chars.size < length) return emptyList()
+        val found = ArrayList<Long>()
+        for (start in 0..stream.chars.size - length) {
+            val same = if (allowOneWrong) {
+                commonInOrder(prefix, stream.chars, start, length)
+            } else {
+                var count = 0
+                for (offset in 0 until length) {
+                    if (stream.chars[start + offset] == prefix[offset]) count++
+                }
+                count
+            }
+            val matches = if (allowOneWrong) same >= length - 1 else same == length
+            if (!matches) continue
+            val at = stream.times[start]
+            if (abs(at - shownMs) <= WIDE_WINDOW_MS) found += at
+        }
+        return found.distinct()
     }
 
     /** A robust straight line through the residual points, when it is clearly better than one move. */

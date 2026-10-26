@@ -116,4 +116,58 @@ class RefinePolicyTest {
         assertTrue(abs(result.slopePerMin - 260.0) <= 26.0, "slope ${result.slopePerMin} ms/min")
         assertEquals(lines.size, result.lines)
     }
+
+    @Test
+    fun aSongWideLatenessIsMovedByTheWideWindow() {
+        // Q7Q-ul7AlIk: every line is about 5.2 s late because the provider's
+        // file was timed to another arrangement. The narrow window sees
+        // nothing; the wide one must find the move all twelve lines share.
+        val texts = listOf(
+            "alpha", "bravo", "cabin", "delta", "eagle", "fable",
+            "giant", "hazel", "ivory", "joker", "karma", "lemon",
+        )
+        val lines = texts.mapIndexed { index, text -> line(10_000L + index * 10_000L, text) }
+        val heard = lines.mapIndexed { index, line -> heard(texts[index], line.timeMs + 5_200L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.WIDE, result.model)
+        assertTrue(abs(result.medianMs - 5_200L) <= 100L, "median ${result.medianMs} ms")
+        assertEquals(12, result.lines)
+    }
+
+    @Test
+    fun aRepeatedChorusEveryFourSecondsIsNotAWideMove() {
+        // Each line is heard at its shown time and again 4 s either side. The
+        // true move is zero, and the wide window must not pick one of the
+        // repeats just because it also has support.
+        val lines = List(12) { index -> line(10_000L + index * 10_000L, "chorus") }
+        val heard = buildList {
+            lines.forEach { line ->
+                add(heard("chorus", line.timeMs))
+                add(heard("chorus", line.timeMs + 4_000L))
+                add(heard("chorus", line.timeMs - 4_000L))
+            }
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied)
+    }
+
+    @Test
+    fun eightSupportingLinesAreNotEnoughForTheWideWindow() {
+        // Twelve lines match, but only eight agree on the 5.2 s move; ten are
+        // needed before a song-wide arrangement shift may be applied.
+        val texts = listOf(
+            "alpha", "bravo", "cabin", "delta", "eagle", "fable",
+            "giant", "hazel", "ivory", "joker", "karma", "lemon",
+        )
+        val lines = texts.mapIndexed { index, text -> line(10_000L + index * 10_000L, text) }
+        val heard = lines.mapIndexed { index, line ->
+            heard(texts[index], line.timeMs + if (index < 8) 5_200L else 0L)
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied)
+    }
 }
