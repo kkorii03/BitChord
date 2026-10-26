@@ -1,8 +1,16 @@
-(공통 주의 10-26 10시: 이 PC 셸에는 rg(ripgrep)가 없다 — 검색은 OpenCode 내장 grep/glob 도구나 PowerShell Select-String/Get-ChildItem 을 쓴다. 도구 하나가 실패해도 멈추지 말고 다른 방법으로 계속해 작업을 끝까지 하고, 마지막 요약을 반드시 출력한다.)
-(10-26 06:55 Opus: 원래 '12 화면 정리' — 15 자리에서 빈 응답 nochange, 재투입.)
-작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-lane2 (브랜치 task/lane2 의 지금 HEAD 에서 작업. ko-101 태그는 비교 기준점일 뿐 되돌리지 말 것). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지(컴파일은 CI). .github/, keys\, 서명 설정, .ds-ctx/ 수정 금지.
-검사 범위(사용자 지시, 필수): ko-101 이후 오늘·밤사이 추가·수정된 모든 기능과 코드(git log ko-101..HEAD, git diff ko-101..HEAD — 예: 노래 검증, 가사 제목 정규화, 크로스페이드·자동 믹스, 싱크 채점 모드, 다운로드 곡 메뉴·사진, 고음질 소스·등급·다음 곡 준비, 설정 공유, 커버 가수 이동, 충전 조건 제거 등)를 기존 코드와 똑같이 이 작업의 대상에 포함한다. 새로 들어온 코드일수록 먼저 본다. 이 작업 전에 끝난 대기열 작업의 결과도 포함.
-공통 원칙: 사용자 기능·동작·설정·저장 데이터 형식은 바꾸지 않는다(이 작업이 명시한 것 제외). 한 번에 너무 많이 바꾸지 말고 이 지시의 범위만. 바꾼 함수·클래스의 모든 호출부와 타입을 다시 읽고 확인(널 안전·스마트캐스트 주의, 과거 Song? 스마트캐스트 컴파일 오류 있었음). 기존 주석의 의도를 지울 때는 요약에 이유. 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 사용자 폰은 저장공간 1TB·데이터 무제한이라 데이터/용량보다 배터리를 우선한다. 새 순수 로직은 shared com.music.bitchord.data... 패키지 테스트(자동 실행)로 검증. 결과 기록은 C:\Users\jang\Desktop\BitChord\BitChord-lane2\docs\cleanup\ 아래 해당 md 파일(새로 만들 수 있음)에 남긴다.
-마지막에 10줄 이내로 요약: 수정 파일 수 / 핵심 변경 / 테스트 / 다음 단계에 남긴 것.
-작업:
-[UI/UX 3차: 애플뮤직다움 전수] C:\Users\jang\Desktop\BitChord\ship\UI-AUDIT.md(.ds-ctx\UI-AUDIT.md) 1·2차 이후 남은 부분을 전 화면에서 찾아 고친다: (1) 말투 — 모든 한국어 문자열(values-ko)을 애플뮤직 한국어 톤으로 통일: 짧은 해요체, 명사형 메뉴(예: 보관함에 추가, 다음에 재생), 느낌표·이모지·기술 용어 지양, 같은 개념은 같은 단어(재생목록/플레이리스트 혼용 금지 등). 바꾼 문자열 전후 표를 docs\cleanup\tone.md 에. (2) 글꼴·크기·굵기 — 큰 제목(34sp 굵게), 섹션 제목(22sp 굵게), 본문(17sp), 보조(15/13sp 회색) 체계를 공통 Typography로 정리하고 화면별 하드코딩 글자 크기를 공통 값으로 교체. 한글과 영문 글꼴이 섞여 어색한 곳 정리. (3) 간격 — 좌우 여백 20dp, 섹션 간격, 목록 줄 높이를 공통 값으로 통일. (4) 남은 머티리얼 요소(리플, 원형 프로그레스, 토스트 모양, 다이얼로그)를 iOS 느낌으로. 기능 삭제 금지.
+[최우선 버그 — 사용자 원칙 1번 '올바른 곡(노래 버전), MV 금지' 위반. 사용자 실기기 로그]
+상황: YouTube Music 공식 재생목록 '21세기 최고의 팝'(source=browse:VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8)에서 'Youngblood (Official Video)' - 5 Seconds of Summer (-RJSbO8UZVY) 가 MV 로 재생됨. 사용자가 '문제 표시'함.
+로그:
+ 13:23:25 search: music.youtube.com/search kind=audio-switch account=no length=30  → search:SONGS ok
+ 13:23:25 search: ... kind=audio-switch length=10 → search:SONGS ok
+ 13:23:26 W audio switch: no official song match for 'Youngblood (Official Video)' by '5 Seconds of Summer'
+ 13:23:26 song version: -RJSbO8UZVY kept (none)
+ 13:29:52 next-prep: Youngblood (Official Video) version=-RJSbO8UZVY ... (다음 곡 준비도 MV 그대로)
+즉 노래 버전 검색 두 번(검색어 30자 ≈ 'Youngblood 5 Seconds of Summer', 10자 'Youngblood') 모두 결과는 받았는데 판정에서 전부 탈락했다. Youngblood 는 노래 버전(ATV)이 당연히 있는 유명곡이다.
+할 일:
+ 1) 'audio switch' 판정 코드(grep 'no official song match', SongVersion, TrackMatcher, CatalogSongMapper, mvSoundDeltaMs)를 읽고 왜 탈락했는지 코드로 확정. 의심: MV 제목 꼬리 '(Official Video)' 를 정규화하지 않은 채 비교, 아티스트 표기 차이, MV 길이(인트로·아웃트로 포함)와 노래 길이 차이 허용폭이 너무 좁음, 결과 type 미상(typeUnknown) 무시 — docs/audit/audit-song.md 1번(typeUnknown, 10점)·관련 항목 참고.
+ 2) 판정 함수에 이 사례(제목 'Youngblood (Official Video)' / 노래 'Youngblood', 같은 아티스트, MV 가 노래보다 20~40초 긴 경우)를 jvmTest 로 먼저 재현하고 고친다. 비슷한 꼬리('(Official Music Video)', '[MV]', 'M/V', '(Lyric Video)', '(Official Audio)')도 표로 테스트.
+ 3) 고친 뒤에도 '커버·피아노·라이브 버전'은 여전히 탈락하는지 기존 테스트로 확인(완화가 엉뚱한 곡을 허용하면 안 됨).
+ 4) 판정 탈락 시 로그에 탈락 사유를 후보별로 한 줄씩: 'audio switch: reject <후보 id> <제목> reason=<title|artist|duration Δ초|type|cover>'. 지금은 사유가 없어 원인을 못 찾는다.
+ 5) 다음 곡 준비(NextTrackPreparation)의 버전 단계도 같은 판정을 쓰는지 확인.
+컴파일·테스트 직접 실행. 마지막에 8줄 이내 요약: 원인(파일:줄) / 고친 규칙 / 테스트 결과
