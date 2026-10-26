@@ -25,6 +25,7 @@ import shlex
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -553,6 +554,17 @@ def main(argv: list[str] | None = None) -> int:
         synctest.adb("shell", "touch", f"{APP_DIR}/sync-test.flag")
 
         stream.start()
+        # The PC hotspot (MediaTek RZ616) drops a quiet client with reason 4,
+        # inactivity, and Android then switches wireless debugging off: the
+        # 10-26 22:32 run lost the phone that way. A tiny adb round trip every
+        # 20 s keeps the link from ever looking idle. PC side, test runs only.
+        keepalive_stop = threading.Event()
+
+        def keepalive() -> None:
+            while not keepalive_stop.wait(20):
+                synctest.adb("shell", "true", timeout=15)
+
+        threading.Thread(target=keepalive, daemon=True).start()
         for index, spec in enumerate(songs, 1):
             log(f"[{index}/{len(songs)}] {spec.key} ({spec.kind})")
             play_song(spec)
@@ -565,6 +577,8 @@ def main(argv: list[str] | None = None) -> int:
                 if played:
                     SEARCH_IDS[spec.key] = played[-1]
     finally:
+        if "keepalive_stop" in locals():
+            keepalive_stop.set()
         stream.stop()
         synctest.adb("shell", "rm", "-f", f"{APP_DIR}/sync-test.flag")
         synctest.adb("shell", "input", "keyevent", "KEYCODE_MEDIA_PAUSE")
