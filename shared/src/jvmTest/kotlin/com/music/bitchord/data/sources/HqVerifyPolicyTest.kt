@@ -50,6 +50,58 @@ class HqVerifyPolicyTest {
     }
 
     @Test
+    fun `an unmeasurable candidate is never stored as a rejection`() {
+        assertFalse(
+            HqVerifyPolicy.shouldPersistRejection(
+                referenceAvailable = true,
+                accepted = false,
+                measured = false,
+            ),
+        )
+        assertTrue(
+            HqVerifyPolicy.shouldPersistRejection(
+                referenceAvailable = true,
+                accepted = false,
+                measured = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `the fetch size follows a stated bitrate with headroom`() {
+        assertEquals(
+            4_416_000L,
+            HqVerifyPolicy.bytesToFetch(StreamFormat(kbps = 320), seconds = 92.0),
+        )
+        assertEquals(
+            8_832_000L,
+            HqVerifyPolicy.bytesToFetch(StreamFormat(kbps = 640), seconds = 92.0),
+        )
+    }
+
+    @Test
+    fun `an unstated bitrate falls back to the flac sized cap`() {
+        assertEquals(
+            HqVerifyPolicy.UNSTATED_KBPS_MAX_BYTES,
+            HqVerifyPolicy.bytesToFetch(null, seconds = 92.0),
+        )
+        assertEquals(
+            HqVerifyPolicy.UNSTATED_KBPS_MAX_BYTES,
+            HqVerifyPolicy.bytesToFetch(StreamFormat(kbps = 0), seconds = 92.0),
+        )
+    }
+
+    @Test
+    fun `a non positive window asks for nothing`() {
+        assertEquals(0L, HqVerifyPolicy.bytesToFetch(StreamFormat(kbps = 320), seconds = 0.0))
+        assertEquals(0L, HqVerifyPolicy.bytesToFetch(StreamFormat(kbps = 320), seconds = -1.0))
+        assertEquals(
+            0L,
+            HqVerifyPolicy.bytesToFetch(StreamFormat(kbps = 320), seconds = Double.NaN),
+        )
+    }
+
+    @Test
     fun `only a manual request retries a remembered missing reference`() {
         assertTrue(HqVerifyPolicy.shouldRetryMissingReference(manual = true))
         assertFalse(HqVerifyPolicy.shouldRetryMissingReference(manual = false))

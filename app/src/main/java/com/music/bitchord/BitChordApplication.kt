@@ -225,6 +225,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // background without waiting for the Downloads page or another play.
         com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
         com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
+        // One-time cleanup of legacy HQ rejections that were written when an
+        // unmeasurable candidate looked like a mismatch. On IO because it reads
+        // the whole verdict file, and lazy because nothing needs it this frame.
+        CoroutineScope(Dispatchers.IO).launch {
+            com.music.bitchord.playback.smart.HqVerificationStore.init(this@BitChordApplication)
+        }
         com.music.bitchord.download.LikedAutoDownload.init(this)
         // The device's own listening record. Opened here rather than in
         // PlaybackService because the Replay page reads it from the UI side and

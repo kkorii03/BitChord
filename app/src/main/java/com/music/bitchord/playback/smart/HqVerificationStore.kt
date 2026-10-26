@@ -36,10 +36,20 @@ object HqVerificationStore {
     )
 
     private const val PREFS = "hq_verification"
+    private const val KEY_VERSION = "version"
     private const val KEY_VERIFIED = "verified"
     private const val KEY_REJECTED = "rejected"
     private const val MAX_VERIFIED = 2_000
     private const val MAX_REJECTED = 2_000
+
+    /**
+     * Format 1 stored a rejection whenever a comparison did not accept, even
+     * when the candidate never produced a sample. Those entries are
+     * indistinguishable from a real mismatch in the old file, so the one-time
+     * upgrade drops every legacy rejection rather than keeping a wrong no.
+     * Accepted pairs are measurements and survive.
+     */
+    private const val STORE_VERSION = 2
 
     private class Data(
         val verified: LinkedHashMap<String, Verified> = LinkedHashMap(),
@@ -48,6 +58,15 @@ object HqVerificationStore {
 
     private val lock = Any()
     private var cached: Data? = null
+
+    /**
+     * Applies the one-time format cleanup without waiting for a caller to ask
+     * for a verdict. Safe to call more than once; the loaded copy answers after
+     * the first call.
+     */
+    fun init(context: Context) {
+        synchronized(lock) { data(context) }
+    }
 
     fun get(
         context: Context,
@@ -157,8 +176,19 @@ object HqVerificationStore {
             val tier = runCatching { HqTier.valueOf(parts[4]) }.getOrNull() ?: return@forEach
             data.verified[parts[0]] = Verified(offset, rate, match, tier)
         }
-        prefs.getString(KEY_REJECTED, null)?.lineSequence()?.forEach { line ->
-            if (line.isNotBlank()) data.rejected += line
+        val version = prefs.getInt(KEY_VERSION, 1)
+        if (version < STORE_VERSION) {
+            // Legacy rejections may be failed decodes rather than mismatches;
+            // keeping them would hide a good candidate forever. Verified lines
+            // above are real measurements and stay.
+            prefs.edit()
+                .putInt(KEY_VERSION, STORE_VERSION)
+                .remove(KEY_REJECTED)
+                .apply()
+        } else {
+            prefs.getString(KEY_REJECTED, null)?.lineSequence()?.forEach { line ->
+                if (line.isNotBlank()) data.rejected += line
+            }
         }
         cached = data
         return data
@@ -172,6 +202,7 @@ object HqVerificationStore {
         val rejected = data.rejected.joinToString("\n")
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
+            .putInt(KEY_VERSION, STORE_VERSION)
             .putString(KEY_VERIFIED, verified)
             .putString(KEY_REJECTED, rejected)
             .apply()

@@ -1,13 +1,10 @@
 package com.music.bitchord.playback.smart
 
 import android.content.Context
-import android.media.MediaDataSource
-import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSpec
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.WavAudio
@@ -22,18 +19,21 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
-import com.music.bitchord.playback.ProxyAwareDataSourceFactory
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
@@ -106,6 +106,18 @@ object HqAudioVerify {
         data class Ready(val features: ChromaAlignment.Features) : Reference
         data class Missing(val reason: NoReferenceReason) : Reference
     }
+
+    /** The candidate's opening as a profile, and how many bytes were fetched for it. */
+    private data class Candidate(
+        val features: ChromaAlignment.Features,
+        val bytes: Long,
+    )
+
+    /** Temporary candidate heads live here and are deleted after every attempt. */
+    private const val CANDIDATE_DIR = "hq_verify"
+
+    /** One read at a time while copying the response into the cache file. */
+    private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
 
     /**
      * The reference profiles already measured in this session, by YouTube id.
@@ -215,13 +227,13 @@ object HqAudioVerify {
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
-                    // decodes and the candidate from its own URL. Started
-                    // together, a cold verification costs the slower of the
-                    // two rather than their sum — the verification in front of
-                    // the reported 2.2–8.4 s prove times had the same
-                    // sequential shape. A missing reference cancels the
-                    // candidate read before anything waits on it.
-                    val candidateDeferred = async { candidateFeatures(stream) }
+                    // decodes and the candidate from a cache file holding its
+                    // own opening. Started together, a cold verification costs
+                    // the slower of the two rather than their sum — the
+                    // verification in front of the reported 2.2–8.4 s prove
+                    // times had the same sequential shape. A missing reference
+                    // cancels the candidate read before anything waits on it.
+                    val candidateDeferred = async { candidateFeatures(context, stream) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
@@ -237,10 +249,34 @@ object HqAudioVerify {
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
                         return@coroutineScope Outcome.Unavailable
                     }
+                    // A head that stops short of the window while the reference
+                    // has the full one is not a shorter answer: comparing it
+                    // would read as a poor match and could be stored as a
+                    // rejection. It is merely unmeasurable. When both are short
+                    // (a genuinely short track), they are still comparable.
+                    val referenceFeatures = (reference as Reference.Ready).features
+                    val referenceComplete =
+                        HqReferenceCache.completeEnough(referenceFeatures, COMPARE_SECONDS)
+                    val candidateComplete =
+                        HqReferenceCache.completeEnough(candidate.features, COMPARE_SECONDS)
+                    if (referenceComplete && !candidateComplete) {
+                        logVerdict(
+                            target.title,
+                            sourceName,
+                            0,
+                            0L,
+                            accepted = false,
+                            about = youtubeId,
+                            reference = "wav",
+                            candidate = "file",
+                            bytes = candidate.bytes,
+                        )
+                        return@coroutineScope Outcome.Unavailable
+                    }
                     val result = runCatching {
                         ChromaAlignment.align(
-                            (reference as Reference.Ready).features,
-                            candidate,
+                            referenceFeatures,
+                            candidate.features,
                             videoComplete = false,
                         )
                     }.getOrNull()
@@ -263,10 +299,12 @@ object HqAudioVerify {
                         verdict.accepted,
                         about = youtubeId,
                         reference = "wav",
+                        candidate = "file",
+                        bytes = candidate.bytes,
                     )
                     if (!verdict.accepted) {
                         if (HqVerifyPolicy.shouldPersistRejection(
-                                referenceAvailable = true,
+                                referenceAvailable = referenceComplete && candidateComplete,
                                 accepted = verdict.accepted,
                             )
                         ) {
@@ -318,12 +356,16 @@ object HqAudioVerify {
         accepted: Boolean,
         about: String? = null,
         reference: String? = null,
+        candidate: String? = null,
+        bytes: Long? = null,
     ) {
         TrackLog.i(
             TAG,
             "hq-verify: $title $sourceName match=$match% offset=$offset -> " +
                 (if (accepted) "accepted" else "rejected") +
-                (reference?.let { " reference=$it" } ?: ""),
+                (reference?.let { " reference=$it" } ?: "") +
+                (candidate?.let { " candidate=$it" } ?: "") +
+                (bytes?.let { " bytes=$it" } ?: ""),
             about,
         )
     }
@@ -503,20 +545,109 @@ object HqAudioVerify {
         return extractor.finish(startSeconds = 0.0).takeIf { it.frames > 0 }
     }
 
-    /** The candidate's opening, read straight from its stream URL. */
-    private suspend fun candidateFeatures(stream: SourceStream): ChromaAlignment.Features? {
-        val dataSource = ProxyAwareDataSourceFactory().createDataSource()
-        val source = UrlMediaDataSource(dataSource, Uri.parse(stream.url), stream.headers)
+    /**
+     * The candidate's opening, downloaded to a cache file before decoding.
+     *
+     * The extractor cannot read this from a network [MediaDataSource]: its size
+     * is unknown and each ranged reopen starts another request, which is what
+     * left a 44.1 kHz stereo candidate with no first sample. A head-only file
+     * on disk is what the platform extractor handles best, and a FLAC whose
+     * tail is missing still opens. The file is deleted on every exit.
+     */
+    private suspend fun candidateFeatures(
+        context: Context,
+        stream: SourceStream,
+    ): Candidate? {
+        val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
+        if (needed <= 0L) return null
+        val directory = File(context.cacheDir, CANDIDATE_DIR)
+        if (!directory.exists() && !directory.mkdirs()) {
+            TrackLog.w(TAG, "decode: hq-verify failed at=cache-dir")
+            return null
+        }
+        val file = try {
+            File.createTempFile("candidate-", ".bin", directory)
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "decode: hq-verify failed at=cache-file ${e.message}")
+            return null
+        }
         return try {
+            val bytes = try {
+                downloadPrefix(stream, file, needed)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                // A cancelled call surfaces as an IOException; only report it
+                // as a download failure when the coroutine is still wanted.
+                currentCoroutineContext().ensureActive()
+                TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
+                return null
+            }
+            if (bytes <= 0L) {
+                TrackLog.w(TAG, "decode: hq-verify failed at=download bytes=0")
+                return null
+            }
             val coroutine = currentCoroutineContext()
-            featuresOf(source) { coroutine.isActive }
+            val features = featuresOf(file) { coroutine.isActive } ?: return null
+            Candidate(features, bytes)
         } finally {
-            runCatching { source.close() }
+            runCatching { file.delete() }
         }
     }
 
     /**
-     * The first [COMPARE_SECONDS] of [source] as a chroma profile, using the
+     * Fetches the first [limit] bytes of [stream] into [file], using the same
+     * client, headers and proxy route as HQ playback.
+     *
+     * `Range: bytes=0-` lets the server stream from the start; the copy stops
+     * as soon as [limit] is reached, so a server that ignores Range cannot
+     * make this read the whole track. The call is cancelled when the calling
+     * coroutine is, including while a read is blocked.
+     */
+    private suspend fun downloadPrefix(
+        stream: SourceStream,
+        file: File,
+        limit: Long,
+    ): Long {
+        val request = Request.Builder()
+            .url(stream.url)
+            .apply { stream.headers.forEach { (name, value) -> header(name, value) } }
+            .header("Range", "bytes=0-")
+            .build()
+        val call = ProxyPlayback.mediaClientFor(stream.url).newCall(request)
+        val cancel = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause is CancellationException) call.cancel()
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("HTTP ${response.code}")
+                }
+                val body = response.body ?: throw IOException("no body")
+                body.byteStream().use { input ->
+                    FileOutputStream(file).use { output ->
+                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                        var remaining = limit
+                        while (remaining > 0L) {
+                            currentCoroutineContext().ensureActive()
+                            val want = minOf(buffer.size.toLong(), remaining).toInt()
+                            val read = input.read(buffer, 0, want)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            remaining -= read
+                        }
+                        output.flush()
+                    }
+                }
+            }
+        } finally {
+            cancel?.dispose()
+        }
+        return file.length()
+    }
+
+    /**
+     * The first [COMPARE_SECONDS] of [file] as a chroma profile, using the
      * same extractor and decoder as the lyrics measurement.
      *
      * [abort] is polled by the decoder loop, so a verification the caller has
@@ -524,7 +655,7 @@ object HqAudioVerify {
      * stops reading instead of finishing ninety seconds of work nobody wants.
      */
     private fun featuresOf(
-        source: MediaDataSource,
+        file: File,
         abort: () -> Boolean = { false },
     ): ChromaAlignment.Features? {
         var extractor: ChromaAlignment.Extractor? = null
@@ -532,7 +663,7 @@ object HqAudioVerify {
         var startSeconds = 0.0
         try {
             val decoded = AudioDecoder.decodeMonoStream(
-                source,
+                file,
                 0.0,
                 COMPARE_SECONDS + 1.0,
                 abort = abort,
@@ -551,6 +682,8 @@ object HqAudioVerify {
             // profile is not a shorter answer: it would be compared as if the
             // recording were that short.
             if (decoded == null) return null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             TrackLog.w(TAG, "hq-verify: could not read candidate audio: ${e.message}")
             return null
@@ -560,66 +693,6 @@ object HqAudioVerify {
         // carried into the aligner as a bogus profile.
         if (sampleRate <= 0) return null
         return extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
-    }
-
-    /**
-     * Adapts a Media3 [DataSource] to the [MediaDataSource] interface the
-     * extractor wants, keeping the source open across the sequential reads it
-     * makes and reopening only at a new position.
-     */
-    private class UrlMediaDataSource(
-        private val dataSource: DataSource,
-        private val uri: Uri,
-        private val headers: Map<String, String>,
-    ) : MediaDataSource() {
-
-        private var isOpen = false
-        private var openPosition = -1L
-
-        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-            if (size == 0) return 0
-            if (!isOpen || position != openPosition) {
-                closeUpstream()
-                val spec = DataSpec.Builder()
-                    .setUri(uri)
-                    .setPosition(position)
-                    .setHttpRequestHeaders(headers)
-                    .build()
-                try {
-                    dataSource.open(spec)
-                } catch (e: IOException) {
-                    return -1
-                }
-                isOpen = true
-                openPosition = position
-            }
-            val read = try {
-                dataSource.read(buffer, offset, size)
-            } catch (e: IOException) {
-                closeUpstream()
-                return -1
-            }
-            if (read < 0) {
-                closeUpstream()
-                return -1
-            }
-            openPosition += read
-            return read
-        }
-
-        override fun getSize(): Long = -1L
-
-        override fun close() {
-            closeUpstream()
-        }
-
-        private fun closeUpstream() {
-            if (isOpen) {
-                runCatching { dataSource.close() }
-                isOpen = false
-                openPosition = -1L
-            }
-        }
     }
 }
 
