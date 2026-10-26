@@ -2,6 +2,7 @@ package com.music.bitchord.data
 
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 import okio.Buffer
@@ -9,6 +10,8 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.Source
 import okio.buffer
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -37,6 +40,12 @@ import java.util.concurrent.atomic.AtomicLong
  * request was slow.
  */
 object Http {
+
+    /** Puts IPv4 ahead of IPv6 without dropping either family. */
+    internal fun ipv4First(addresses: List<InetAddress>): List<InetAddress> {
+        val (ipv4, ipv6) = addresses.partition { it is Inet4Address }
+        return ipv4 + ipv6
+    }
 
     // ---- Temporary data-usage instrumentation --------------------------
     //
@@ -130,7 +139,22 @@ object Http {
         chain.proceed(request)
     }
 
+    /**
+     * OkHttp 5 already falls back between address families, but it starts with
+     * whichever address the system returns first. On a dual-stack phone that
+     * is often IPv6, and a single unreachable IPv6 route then decides the whole
+     * probe: [com.music.bitchord.data.innertube.StreamResolver] marks the URL
+     * UNREACHABLE and the client is skipped, even though the same host has a
+     * working IPv4 address. Ordering IPv4 first keeps that fallback but makes
+     * the first attempt the family most mobile networks can actually reach;
+     * IPv6 stays in the list as the fallback rather than being dropped.
+     */
+    private val ipv4FirstDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> = ipv4First(Dns.SYSTEM.lookup(hostname))
+    }
+
     private fun buildClient(withProxy: Boolean): OkHttpClient = OkHttpClient.Builder()
+        .dns(ipv4FirstDns)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
