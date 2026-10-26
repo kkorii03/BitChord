@@ -13,6 +13,7 @@ import com.music.bitchord.data.net.ResolutionFacts
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.net.raceForFirstSuccess
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -529,6 +530,11 @@ object StreamResolver {
 
         var itxWalked = false
         var directTried = false
+        // The preferred-client ask below runs inside the early race, so its
+        // failure has already spent the rest of the direct ladder. Without
+        // this, a failed race would fall through to the gated/default branch
+        // and walk the same clients a second time.
+        var preferredRaceRan = false
 
         // The direct path's answer, in the one form the proxy retry cares
         // about: a client said UNPLAYABLE/LOGIN_REQUIRED rather than merely
@@ -559,11 +565,18 @@ object StreamResolver {
             return found
         }
 
-        suspend fun tryInnerTubeX(preferredManifest: String?): Stream? {
+        suspend fun tryInnerTubeX(
+            preferredManifest: String?,
+            onFirstRefusal: () -> Unit = {},
+        ): Stream? {
             if (itxWalked) return null
             itxWalked = true
             val found = timed("$videoId InnerTubeX") {
-                innerTubeXStreamAllowingUploads(videoId, preferredManifest = preferredManifest) { key, label ->
+                innerTubeXStreamAllowingUploads(
+                    videoId,
+                    preferredManifest = preferredManifest,
+                    onFirstRefusal = onFirstRefusal,
+                ) { key, label ->
                     served(key, label)
                 }
             }
@@ -573,13 +586,62 @@ object StreamResolver {
             return found
         }
 
+        /**
+         * Run [direct] and, on the first client it refuses, start the proxy
+         * beside the rest of that ladder instead of after it has finished.
+         *
+         * The old shape awaited the whole InnerTubeX walk before logging
+         * "early race" and starting the proxy, so one unreachable URL at 2 s
+         * still left the proxy idle until the other fifteen clients had been
+         * tried at ~7.8 s. The signal is the refusal itself: a failed probe or
+         * an exhausted client list is all the proxy needs to start.
+         */
+        suspend fun raceWithProxyOnFirstRefusal(
+            direct: suspend (onFirstRefusal: () -> Unit) -> Stream?,
+        ): Stream? {
+            if (!ProxyPlayback.canResolveViaProxy() || proxyAttempted) return direct({})
+            proxyAttempted = true
+            val firstRefusal = CompletableDeferred<Unit>()
+            fun noteFirstRefusal() {
+                if (firstRefusal.complete(Unit)) {
+                    TrackLog.i(
+                        TAG,
+                        "proxy-playback: $videoId early race (first refusal at ${MonotonicClock.nowMs() - resolveStart}ms)",
+                    )
+                }
+            }
+            val (winner, won) = raceForFirstSuccess(
+                direct = { direct { noteFirstRefusal() } },
+                proxy = {
+                    try {
+                        resolveViaProxy(videoId)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (e: Exception) {
+                        null
+                    }
+                },
+                proxyStart = firstRefusal,
+            )
+            TrackLog.i(
+                TAG,
+                "proxy-playback: $videoId race won by $winner in ${MonotonicClock.nowMs() - resolveStart}ms",
+            )
+            return won
+        }
+
         val stream = try {
             // The first ask is the cheap one (the learned or preferred route,
             // ~0.3 s). Most tracks are served right there and never involve the
             // proxy; racing every track would double the player requests and
             // send playable tracks through Tokyo.
             val first = when {
-                preferredItx != null -> tryInnerTubeX(preferredItx)
+                preferredItx != null -> {
+                    preferredRaceRan = true
+                    raceWithProxyOnFirstRefusal { onFirstRefusal ->
+                        tryInnerTubeX(preferredItx, onFirstRefusal) ?: tryDirect()
+                    }
+                }
                 preferDirect -> tryDirect()
                 else -> null
             }
@@ -587,6 +649,8 @@ object StreamResolver {
             // branch, the race included, not only to the last `else`.
             (if (first != null) {
                 first
+            } else if (preferredRaceRan) {
+                null
             } else if ((preferredItx != null || preferDirect) &&
                 ProxyPlayback.canResolveViaProxy() && !proxyAttempted
             ) {
@@ -650,10 +714,14 @@ object StreamResolver {
                     )
                     won
                 } else {
-                    tryInnerTubeX(null)
+                    raceWithProxyOnFirstRefusal { onFirstRefusal ->
+                        tryInnerTubeX(null, onFirstRefusal)
+                    }
                 }
             } else {
-                tryInnerTubeX(null) ?: tryDirect()
+                raceWithProxyOnFirstRefusal { onFirstRefusal ->
+                    tryInnerTubeX(null, onFirstRefusal) ?: tryDirect()
+                }
             }) ?: run {
                 TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                 timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
@@ -833,6 +901,7 @@ object StreamResolver {
         playRefusedUpload: Boolean = false,
         preferredManifest: String? = null,
         viaProxy: Boolean = false,
+        onFirstRefusal: () -> Unit = {},
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         val skip = mutableSetOf<String>()
@@ -874,7 +943,10 @@ object StreamResolver {
                     onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
                     return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
                 }
+                onFirstRefusal()
                 skip += found.profileId
+            } else {
+                onFirstRefusal()
             }
         }
         repeat(INNERTUBEX_ATTEMPTS) { attempt ->
@@ -891,6 +963,7 @@ object StreamResolver {
                 throw e
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+                onFirstRefusal()
                 // A Premium refusal from a web client says this network is
                 // gated, not that this track is. The fallback decides the rest
                 // of the session from here; the media walk itself keeps the
@@ -902,7 +975,10 @@ object StreamResolver {
                     return@repeat
                 }
                 return null
-            } ?: return null
+            } ?: run {
+                onFirstRefusal()
+                return null
+            }
             val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
@@ -918,6 +994,7 @@ object StreamResolver {
                 if (manifest != null) onServed(ResolutionOrder.itx(manifest), "InnerTubeX ${found.profileId}")
                 return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
             }
+            onFirstRefusal()
             skip += found.profileId
 
             if (escalateToUpload && attempt == 0 && !uploaded &&
@@ -1005,6 +1082,7 @@ object StreamResolver {
         requireM4a: Boolean = false,
         preferredManifest: String? = null,
         viaProxy: Boolean = false,
+        onFirstRefusal: () -> Unit = {},
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
     ): Stream? {
         val known = UploadedTracks.contains(videoId)
@@ -1017,6 +1095,7 @@ object StreamResolver {
                 playRefusedUpload = true,
                 preferredManifest = preferredManifest,
                 viaProxy = viaProxy,
+                onFirstRefusal = onFirstRefusal,
                 onServed = onServed,
             )
                 ?.let { return it }
@@ -1029,6 +1108,7 @@ object StreamResolver {
                 escalateToUpload = false,
                 preferredManifest = preferredManifest,
                 viaProxy = viaProxy,
+                onFirstRefusal = onFirstRefusal,
                 onServed = onServed,
             )
         }
@@ -1038,6 +1118,7 @@ object StreamResolver {
             requireM4a,
             preferredManifest = preferredManifest,
             viaProxy = viaProxy,
+            onFirstRefusal = onFirstRefusal,
             onServed = onServed,
         )
     }
