@@ -10,10 +10,10 @@
     <string name="automix_not_supported_video">자동 믹스 · 비디오 노래: 단순 크로스페이드</string>
     <string name="automix_stopped_in_party">자동 믹스: 함께 듣기 중에는 중단됨</string>
     <string name="autoplay">자동 재생</string>
-    <string name="autoplay_empty_description">비슷한 음악이 계속 재생돼요.</string>
+    <string name="autoplay_empty_description">비슷한 음악이 계속 재생됩니다.</string>
     <string name="autoplay_off">자동 재생 끔</string>
     <string name="autoplay_on">자동 재생 켬</string>
-    <string name="autoplay_queue_description">다음에 재생하도록 선택된 비슷한 음악</string>
+    <string name="autoplay_queue_description">다음 항목으로 재생하도록 선택된 비슷한 음악</string>
     <string name="bit_depth">%1$d비트</string>
     <string name="cancel">취소</string>
     <string name="cast">전송</string>
@@ -30,7 +30,7 @@
     <string name="drag_to_reorder">드래그하여 순서 변경</string>
     <string name="failed">실패</string>
     <string name="hide_explore_category">이 카테고리 숨기기</string>
-    <string name="hide_explore_category_message">“%1$s”을(를) 둘러보기에서 숨길까요?</string>
+    <string name="hide_explore_category_message">“%1$s”을(를) 둘러보기에서 숨기시겠습니까?</string>
     <string name="hi_res_lossless">고해상도 무손실</string>
     <string name="high_quality">고품질</string>
     <string name="high_quality_upgrading">고품질, 업그레이드 중</string>
@@ -49,8 +49,8 @@
     <string name="listen_together_you">나</string>
     <string name="mixing">믹싱 중</string>
     <string name="lossless">무손실</string>
-    <string name="lyrics_already_in_language">이미 %1$s 가사예요.</string>
-    <string name="lyrics_already_romanized">이미 라틴 문자로 된 가사예요.</string>
+    <string name="lyrics_already_in_language">이미 %1$s 가사입니다.</string>
+    <string name="lyrics_already_romanized">이미 라틴 문자로 된 가사입니다.</string>
     <string name="lyrics_by">가사 제공: %1$s</string>
     <string-array name="lyrics_intro_lines">
         <item>비트가 시작돼요</item>
@@ -74,7 +74,7 @@
         <item>가사지를 확인하는 중</item>
         <item>노래책을 살펴보는 중</item>
         <item>가사를 정리하는 중</item>
-        <item>가사가 곧 표시돼요</item>
+        <item>가사가 곧 표시됩니다</item>
         <item>기록을 확인하는 중</item>
         <item>알맞은 가사를 찾는 중</item>
         <item>가사를 모으는 중</item>
@@ -82,7 +82,7 @@
     </string-array>
     <string name="lyrics_not_available">가사 없음</string>
     <string name="lyrics_offset">가사 싱크 조절</string>
-    <string name="lyrics_offset_description">양수면 가사가 더 늦게 표시돼요.</string>
+    <string name="lyrics_offset_description">양수면 가사가 더 늦게 표시됩니다.</string>
     <string name="lyrics_offset_reset">재설정</string>
     <string name="lyrics_provider_current">현재 제공처</string>
     <string name="lyrics_provider_fetching">가사 가져오는 중…</string>
@@ -102,8 +102,8 @@
     <string name="medium_quality">중간 품질</string>
     <string name="mono">모노</string>
     <string name="more">더 보기</string>
-    <string name="next_from">다음에 재생: %1$s</string>
-    <string name="next_in_queue">다음에 재생</string>
+    <string name="next_from">다음 재생: %1$s</string>
+    <string name="next_in_queue">다음 재생</string>
     <string name="no_lyrics_for_track">이 노래에는 가사가 없습니다.</string>
     <string name="no_lyrics_found">가사를 찾을 수 없습니다.</string>
     <string name="now_playing">지금 재생 중</string>
@@ -127,7 +127,7 @@
     <string name="stereo">스테레오</string>
     <string name="translate_lyrics">가사 번역</string>
     <string name="translating_lyrics_to">%1$s 번역 중…</string>
-    <string name="up_next">다음에 재생</string>
+    <string name="up_next">다음 재생</string>
     <string name="upgrading_quality">품질 업그레이드 중</string>
     <string name="waiting">대기 중</string>
     <string name="widget_next">다음</string>
@@ -150,15 +150,15 @@
     <string name="downloaded">다운로드됨</string>
     <string name="explore">둘러보기</string>
     <string name="library">보관함</string>
-    <string name="library_sign_in_description">좋아요 표시한 노래, 재생목록, YouTube Music 기록을 보려면 Google 계정에 로그인하세요.</string>
-    <string name="new_playlist">새로운 재생목록</string>
+    <string name="library_sign_in_description">좋아요 표시한 노래, 플레이리스트, YouTube Music 기록을 보려면 Google 계정에 로그인하십시오.</string>
+    <string name="new_playlist">새 플레이리스트</string>
     <string name="on_device">이 기기</string>
     <string name="personalized_recommendations">나를 위한 맞춤 추천 받기</string>
     <string name="pinned">고정됨</string>
-    <string name="play_next">다음에 재생</string>
-    <string name="playlist">재생목록</string>
-    <string name="playlist_action">재생목록</string>
-    <string name="playlists">재생목록</string>
+    <string name="play_next">다음 항목 재생</string>
+    <string name="playlist">플레이리스트</string>
+    <string name="playlist_action">플레이리스트</string>
+    <string name="playlists">플레이리스트</string>
     <string name="podcasts">팟캐스트</string>
     <string name="recent_search_edit">‘%1$s’ 편집</string>
     <string name="recent_search_remove">최근 검색에서 ‘%1$s’ 제거</string>
@@ -167,10 +167,10 @@
     <string name="retry">다시 시도</string>
     <string name="saved_to_youtube_music">YouTube Music에 저장됨</string>
     <string name="search">검색</string>
-    <string name="search_empty">YouTube Music에서 수백만 곡을 검색하세요.</string>
+    <string name="search_empty">YouTube Music에서 수백만 곡의 노래를 검색하십시오.</string>
     <string name="search_top_result">상위 검색 결과</string>
     <string name="search_hint">아티스트, 노래, 가사 등</string>
-    <string name="search_library_empty">로컬 음악 폴더의 노래를 검색하세요.</string>
+    <string name="search_library_empty">로컬 음악 폴더의 노래를 검색하십시오.</string>
     <string name="search_library_hint">노래, 아티스트 및 앨범</string>
     <string name="search_library_no_results">로컬 음악에서 ‘%1$s’에 대한 결과 없음</string>
     <string name="selected">선택됨</string>
@@ -179,7 +179,7 @@
     <string name="shelf_chart">차트</string>
     <string name="shelf_charts">차트</string>
     <string name="shelf_concerts">콘서트</string>
-    <string name="shelf_featured_playlists_for_you">추천 재생목록</string>
+    <string name="shelf_featured_playlists_for_you">추천 플레이리스트</string>
     <string name="shelf_for_you">나를 위한 추천</string>
     <string name="shelf_forgotten_favorites">잊고 있던 애청곡</string>
     <string name="shelf_from_the_community">커뮤니티 추천</string>
@@ -198,7 +198,7 @@
     <string name="shelf_top_music_videos">인기 뮤직비디오</string>
     <string name="shelf_top_tunes_right_now">지금 인기 있는 노래</string>
     <string name="shelf_trending">인기 급상승</string>
-    <string name="shelf_trending_community_playlists">인기 커뮤니티 재생목록</string>
+    <string name="shelf_trending_community_playlists">인기 커뮤니티 플레이리스트</string>
     <string name="shelf_youtube_charts">YouTube 차트</string>
     <string name="show_all">모두 보기</string>
     <string name="sign_in">로그인</string>
@@ -211,7 +211,7 @@
     <string name="default_replay_holder">BitChord 청취자</string>
     <string name="member_since">가입일</string>
     <string name="import_spotify">Spotify에서 가져오기</string>
-    <string name="import_spotify_subtitle">재생목록 링크 사용</string>
+    <string name="import_spotify_subtitle">플레이리스트 링크 사용</string>
     <string name="lyrics_translated_gemini">%1$s 번역 · Gemini</string>
     <string name="song_meaning">이 노래 해석</string>
     <string name="song_meaning_loading">가사를 읽는 중…</string>
@@ -219,7 +219,7 @@
     <string name="song_meaning_no_key">설정에서 Gemini API 키를 입력하면 사용할 수 있습니다.</string>
     <string name="song_meaning_highlights">주목할 가사</string>
     <string name="song_meaning_retry">다시 시도</string>
-    <string name="song_meaning_footer">Gemini가 가사를 바탕으로 쓴 해석이에요. 틀릴 수 있어요.</string>
+    <string name="song_meaning_footer">Gemini가 가사를 바탕으로 쓴 해석입니다. 틀릴 수 있습니다.</string>
     <string name="ai_lyrics_timing">AI로 이 비디오에 가사 타이밍 맞추기</string>
     <string name="ai_lyrics_timing_undo">AI 타이밍 되돌리기</string>
     <string name="lyrics_timing_running">AI가 이 비디오에 가사 타이밍을 맞추는 중…</string>
@@ -235,7 +235,7 @@
     <string name="lyrics_offset_song_description">이 노래에만 적용되며, 자동 보정 위에 더해집니다.</string>
     <string name="lyrics_offset_all">모든 노래</string>
     <string name="lyrics_tap_sync">탭해서 맞추기</string>
-    <string name="lyrics_tap_sync_hint">이 가사가 들리기 시작할 때 탭하세요.</string>
+    <string name="lyrics_tap_sync_hint">이 가사가 들리기 시작할 때 탭하십시오.</string>
     <string name="lyrics_tap_now">지금</string>
     <string name="lyrics_tap_previous_line">이전 줄</string>
     <string name="lyrics_tap_next_line">다음 줄</string>
@@ -246,14 +246,14 @@
     <string name="lyrics_timing_detail_auto">자동 보정 %1$s</string>
     <string name="lyrics_timing_detail_ai">AI 타이밍 %1$s</string>
     <string name="lyrics_timing_section">비디오 타이밍</string>
-    <string name="lyrics_timing_untouched">원곡 타이밍 그대로예요.</string>
-    <string name="lyrics_timing_video_own">이 비디오 자막의 타이밍 그대로예요.</string>
+    <string name="lyrics_timing_untouched">원곡 타이밍 그대로입니다.</string>
+    <string name="lyrics_timing_video_own">이 비디오 자막의 타이밍 그대로입니다.</string>
     <string name="lyrics_timing_ai_button">AI로 맞추기</string>
     <string name="lyrics_timing_ai_button_running">맞추는 중…</string>
-    <string name="private_listening_notice">시크릿 모드 · YouTube 기록에 남지 않아요</string>
+    <string name="private_listening_notice">시크릿 모드 · YouTube 기록에 남지 않습니다</string>
     <string name="private_listening_turn_off">끄기</string>
     <string name="previously_played">이전에 재생함</string>
-    <string name="search_addons_empty">활성화된 모든 애드온을 한 번에 검색해요. 노래는 애드온에서 바로 재생돼요.</string>
+    <string name="search_addons_empty">활성화된 모든 애드온을 한 번에 검색합니다. 노래는 애드온에서 바로 재생됩니다.</string>
     <string name="search_addons_hint">애드온 검색</string>
     <string name="search_addons_no_results">“%1$s”이(가) 있는 애드온이 없습니다.</string>
     <string name="sign_in_with_google">Google로 로그인</string>
