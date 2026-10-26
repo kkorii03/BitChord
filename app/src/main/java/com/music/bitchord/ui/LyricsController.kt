@@ -599,7 +599,7 @@ class LyricsController(
                 val checkKey = LyricsTiming.audioSourceKey(request.videoId, localFile = true)
                 if (songCheckStartedFor == checkKey) return@launch
                 songCheckStartedFor = checkKey
-                LyricsTiming.recheckDownloaded(
+                val replaced = LyricsTiming.recheckDownloaded(
                     context,
                     Song(
                         videoId = request.videoId,
@@ -619,6 +619,29 @@ class LyricsController(
                     artistKnown = request.artistKnown,
                     artistAliases = request.artistAliases,
                 )
+                if (replaced != null) {
+                    // The re-check found a better sheet and wrote it into the
+                    // file. Show those lines now, with the sync just saved
+                    // under their key, rather than the old words the job began
+                    // with. A new timing job also makes the provider label
+                    // name the source the fresh sheet came from.
+                    fileLyricsLabel = com.music.bitchord.data.lyrics.FileLyricsOrigin.label(
+                        replaced.source.label,
+                        request.videoId,
+                    )
+                    currentLyricsRequest = currentLyricsRequest?.copy(fileProviderKnown = true)
+                    startTiming(
+                        replaced.lines,
+                        adjustable = true,
+                        searchedAs = null,
+                        cancelAi = false,
+                        measure = false,
+                        measureNow = false,
+                        videoOwn = false,
+                        downloadRecheck = false,
+                    )
+                    return@launch
+                }
                 refreshTiming(generation, lines)
                 return@launch
             }

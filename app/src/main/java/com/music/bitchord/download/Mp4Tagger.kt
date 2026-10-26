@@ -80,14 +80,96 @@ object Mp4Tagger {
         }.getOrDefault(bytes)
     }
 
-    private fun insert(bytes: ByteArray, moov: BoxRef, udta: ByteArray): ByteArray {
-        val insertAt = moov.end
-        val delta = udta.size
+    /**
+     * Replaces just the lyrics in an already-tagged file, keeping title,
+     * artist, album and cover untouched. Returns null when the file is not a
+     * shape this recognises, or when there is nothing to write.
+     *
+     * A re-check can find a better sheet long after the download. Appending
+     * another `udta` would leave the old words first in the file, where both
+     * this app and other players look, so the existing `udta` is rebuilt with
+     * only its lyric items removed and the new ones added.
+     */
+    fun replaceLyrics(bytes: ByteArray, lyrics: String?, wordLyrics: String?): ByteArray? {
+        if (lyrics.isNullOrBlank() && wordLyrics.isNullOrBlank()) return null
+        val moov = runCatching {
+            parseBoxes(bytes, 0, bytes.size).firstOrNull { it.type == "moov" }
+        }.getOrNull() ?: return null
+        val moovChildren = runCatching { parseBoxes(bytes, moov.contentOffset, moov.end) }
+            .getOrNull() ?: return null
+        val udta = moovChildren.firstOrNull { it.type == "udta" }
+        val udtaChildren = udta?.let { runCatching { parseBoxes(bytes, it.contentOffset, it.end) }.getOrNull() }
+            .orEmpty()
+        val kept = udtaChildren.filter { it.type != "meta" }
+            .map { bytes.copyOfRange(it.offset, it.end) }
+        val items = udtaChildren.filter { it.type == "meta" }
+            .flatMap { meta -> metaItems(bytes, meta) }
+            .filterNot(::isLyricsItem)
+            .toMutableList()
+        if (!lyrics.isNullOrBlank()) items += textItem("©lyr", lyrics)
+        if (!wordLyrics.isNullOrBlank()) items += freeformItem(WORD_LYRICS_FIELD, wordLyrics)
+        if (items.isEmpty()) return null
+        val payload = kept.fold(ByteArray(0)) { acc, child -> acc + child } +
+            metaAtom(ilstAtom(items))
+        val newUdta = box("udta", payload)
+        return runCatching {
+            if (udta != null) {
+                splice(bytes, moov, udta.offset, udta.end, newUdta)
+            } else {
+                splice(bytes, moov, moov.end, moov.end, newUdta)
+            }
+        }.getOrNull()
+    }
 
-        val prefix = bytes.copyOf(insertAt)
+    /** The `ilst` items under one `meta` box, or none. */
+    private fun metaItems(bytes: ByteArray, meta: BoxRef): List<ByteArray> {
+        val children = runCatching {
+            parseBoxes(bytes, meta.contentOffset + 4, meta.end)
+        }.getOrNull().orEmpty()
+        val ilst = children.firstOrNull { it.type == "ilst" } ?: return emptyList()
+        return runCatching { parseBoxes(bytes, ilst.contentOffset, ilst.end) }
+            .getOrNull().orEmpty()
+            .map { bytes.copyOfRange(it.offset, it.end) }
+    }
+
+    /** Whether an `ilst` item carries either of the two lyric fields. */
+    private fun isLyricsItem(item: ByteArray): Boolean {
+        if (item.size < 8) return false
+        val type = String(item, 4, 4, Charsets.ISO_8859_1)
+        if (type == "©lyr") return true
+        if (type != "----") return false
+        val name = WORD_LYRICS_FIELD.toByteArray(Charsets.UTF_8)
+        for (at in 8..item.size - name.size) {
+            var matches = true
+            for (i in name.indices) {
+                if (item[at + i] != name[i]) {
+                    matches = false
+                    break
+                }
+            }
+            if (matches) return true
+        }
+        return false
+    }
+
+    private fun insert(bytes: ByteArray, moov: BoxRef, udta: ByteArray): ByteArray =
+        splice(bytes, moov, moov.end, moov.end, udta)
+
+    /**
+     * Replaces [start, end) inside [moov] with [replacement], updating the
+     * `moov` size and every absolute sample offset that points past it.
+     */
+    private fun splice(
+        bytes: ByteArray,
+        moov: BoxRef,
+        start: Int,
+        end: Int,
+        replacement: ByteArray,
+    ): ByteArray {
+        val delta = replacement.size - (end - start)
+        val prefix = bytes.copyOf(start)
         // rawSize32 == 0 means "this box runs to the end of its parent" — still
-        // true after the insertion, since nothing follows moov but this new
-        // atom, so the field is left as-is rather than given a concrete value.
+        // true after the splice, so the field is left as-is.
         if (moov.rawSize32 != 0L) {
             if (moov.headerLen == 16) {
                 writeU64(prefix, moov.offset + 8, moov.size.toLong() + delta)
@@ -100,13 +182,13 @@ object Mp4Tagger {
         collectOffsetBoxes(bytes, moov, offsetBoxes)
         offsetBoxes.forEach { box ->
             when (box.type) {
-                "stco" -> patchStco(prefix, box, insertAt, delta)
-                "co64" -> patchCo64(prefix, box, insertAt, delta)
+                "stco" -> patchStco(prefix, box, end, delta)
+                "co64" -> patchCo64(prefix, box, end, delta)
             }
         }
 
-        val suffix = bytes.copyOfRange(insertAt, bytes.size)
-        return prefix + udta + suffix
+        val suffix = bytes.copyOfRange(end, bytes.size)
+        return prefix + replacement + suffix
     }
 
     private fun collectOffsetBoxes(bytes: ByteArray, box: BoxRef, out: MutableList<BoxRef>) {

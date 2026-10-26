@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.download.FlacTagger
 import com.music.bitchord.download.Mp4Tagger
 import com.music.bitchord.download.WebmTagger
@@ -449,6 +450,53 @@ class MediaTaggerTest {
         assertTrue(tagged.indexOfBytes("LYRICS=$LRC".toByteArray(Charsets.UTF_8)) >= 0)
     }
 
+
+    @Test
+    fun `mp4 lyric replacement keeps other tags and cover`() {
+        val (original, _, _) = buildFakeMp4(ByteArray(4))
+        val cover = byteArrayOf(9, 8, 7, 6, 5)
+        val tagged = Mp4Tagger.tag(original, "My Title", "My Artist", null, LRC, cover, coverIsPng = false)
+
+        val replaced = requireNotNull(Mp4Tagger.replaceLyrics(tagged, NEW_LRC, null))
+
+        assertEquals(NEW_LRC, EmbeddedLyrics.fromBytes(replaced))
+        assertTrue(replaced.indexOfBytes("My Title".toByteArray(Charsets.UTF_8)) >= 0)
+        assertTrue(replaced.indexOfBytes("My Artist".toByteArray(Charsets.UTF_8)) >= 0)
+        assertTrue(replaced.indexOfBytes(cover) >= 0)
+        assertEquals(-1, replaced.indexOfBytes(LRC.toByteArray(Charsets.UTF_8)))
+    }
+
+    @Test
+    fun `flac lyric replacement keeps the other comment fields and picture`() {
+        val cover = byteArrayOf(9, 8, 7, 6, 5)
+        val original = flacMagic + flacBlock(TYPE_STREAMINFO, ByteArray(34), last = true) + ByteArray(16)
+        val tagged = FlacTagger.tag(original, "My Title", "My Artist", null, LRC, cover, "image/jpeg")
+
+        val replaced = requireNotNull(FlacTagger.replaceLyrics(tagged, NEW_LRC, null))
+
+        assertEquals(NEW_LRC, EmbeddedLyrics.fromBytes(replaced))
+        assertTrue(replaced.indexOfBytes("TITLE=My Title".toByteArray(Charsets.UTF_8)) >= 0)
+        assertTrue(replaced.indexOfBytes("ARTIST=My Artist".toByteArray(Charsets.UTF_8)) >= 0)
+        assertTrue(replaced.indexOfBytes(cover) >= 0)
+        assertEquals(-1, replaced.indexOfBytes(LRC.toByteArray(Charsets.UTF_8)))
+    }
+
+    @Test
+    fun `webm lyric replacement keeps the other tags and cover`() {
+        val unknownSize = byteArrayOf(0x01) + ByteArray(7) { 0xFF.toByte() }
+        val original = buildFakeWebm(ByteArray(10) { (it + 1).toByte() }, unknownSize)
+        val cover = byteArrayOf(3, 1, 4, 1, 5)
+        val tagged = WebmTagger.tag(original, "T", "A", null, LRC, cover, "image/jpeg")
+
+        val replaced = requireNotNull(WebmTagger.replaceLyrics(tagged, NEW_LRC, null))
+
+        assertEquals(NEW_LRC, EmbeddedLyrics.fromBytes(replaced))
+        assertTrue(replaced.indexOfBytes("TITLE".toByteArray(Charsets.US_ASCII)) >= 0)
+        assertTrue(replaced.indexOfBytes("ARTIST".toByteArray(Charsets.US_ASCII)) >= 0)
+        assertTrue(replaced.indexOfBytes(cover) >= 0)
+        assertEquals(-1, replaced.indexOfBytes(LRC.toByteArray(Charsets.UTF_8)))
+    }
+
     private companion object {
         const val TYPE_STREAMINFO = 0
         const val TYPE_PADDING = 1
@@ -461,5 +509,8 @@ class MediaTaggerTest {
          * the newline between them, which is all these tests need to look for.
          */
         const val LRC = "[00:01.20]first line here\n[00:04.50]second line here"
+
+        /** A different sheet, for the re-check's write path. */
+        const val NEW_LRC = "[00:02.00]replacement line here\n[00:05.50]and another one"
     }
 }

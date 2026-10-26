@@ -22,6 +22,8 @@ import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
+import com.music.bitchord.download.DownloadedLyrics
+import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
@@ -1537,8 +1539,10 @@ object LyricsTiming {
      * were never checked with the current rules. The file's own audio is used
      * exactly as the streaming song check uses its copy; a poor or unknown
      * stored sheet is compared with a fresh provider lookup, and the answer
-     * that agrees more wins. The chosen answer is kept against the file's
-     * existing lines, so it applies on this play and every later one.
+     * that agrees more wins. A fresh sheet replaces the words saved in the
+     * file and is kept under its own text key, so both the screen and later
+     * plays use the same lyrics and sync. The file's own lines stay under the
+     * existing key when they win.
      *
      * One check at a time, and none for a version already recorded: this is
      * called on playback only, never polled, and a repeat play is a no-op.
@@ -1555,9 +1559,10 @@ object LyricsTiming {
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
         artistAliases: List<String>,
-    ) {
-        if (song.localUri.isNullOrBlank() || lines.none { it.timeMs > 0 }) return
-        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
+    ): LyricsRepository.Result? {
+        val localUri = song.localUri?.takeIf { it.isNotBlank() } ?: return null
+        if (lines.none { it.timeMs > 0 }) return null
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return null
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (!LyricsAiGuard.songTimingWanted(
                 isVideo = song.isVideo,
@@ -1567,7 +1572,7 @@ object LyricsTiming {
                 artist = artist,
                 texts = sung.map { it.value.text },
             )
-        ) return
+        ) return null
         val audioSource = audioSourceKey(song.videoId, localFile = true)
         val key = textKey(lines, audioSource)
         val before = store(context).get(song.videoId)
@@ -1577,21 +1582,22 @@ object LyricsTiming {
             providerUnknown = providerUnknown,
             matchPercent = beforeMatch,
         )
-        if (reason == DownloadedSyncCheck.Recheck.NONE) return
+        if (reason == DownloadedSyncCheck.Recheck.NONE) return null
         recheckTokens[song.videoId] = reason.token
-        songSyncGate.withLock {
+        return songSyncGate.withLock {
             // Another flight may have finished this file while this one waited.
             val entry = store(context).get(song.videoId)
             if (!DownloadedSyncCheck.isUnverified(entry?.syncCheckVersion)) {
                 recheckTokens[song.videoId] = DownloadedSyncCheck.Recheck.DONE.token
-                return@withLock
+                return@withLock null
             }
             val existingMatch = entry?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
             // The file's own lyrics first: they are what is shown, so an
             // answer fitted to them needs no second interpretation. No audio
             // or a 429 leaves the version unset so the next play may try again.
-            val own = runSongCheck(context, song, lines, key, ENGINE_DEEPGRAM_WHISPER) ?: return@withLock
+            val own = runSongCheck(context, song, lines, key, ENGINE_DEEPGRAM_WHISPER) ?: return@withLock null
             var best = own
+            var bestFresh: LyricsRepository.Result? = null
             // A fresh sheet is worth a request when the stored answer is
             // unknown or poor — including a first check that could not fit
             // these words at all.
@@ -1602,24 +1608,51 @@ object LyricsTiming {
                 val fresh = fetchDownloadedLyrics(
                     song, title, artist, durationMs, album, alternatives, artistKnown, artistAliases,
                 )
-                if (fresh != null && fresh != lines) {
-                    val other = runSongCheck(context, song, fresh, textKey(fresh, audioSource), ENGINE_DEEPGRAM_WHISPER)
+                if (fresh != null && fresh.lines != lines) {
+                    val other = runSongCheck(
+                        context,
+                        song,
+                        fresh.lines,
+                        textKey(fresh.lines, audioSource),
+                        ENGINE_DEEPGRAM_WHISPER,
+                    )
                     if (other != null && (other.match ?: 0) > (best.match ?: 0)) {
                         best = other
+                        bestFresh = fresh
                     }
                 }
             }
             val result = best
             val chosen = result.fitted
-            val replace = DownloadedSyncCheck.shouldReplace(
-                entry?.syncCheckVersion,
-                existingMatch,
-                result.match,
+            val freshKey = bestFresh?.let { textKey(it.lines, audioSource) } ?: key
+            val decision = DownloadedSyncCheck.decide(
+                storedVersion = entry?.syncCheckVersion,
+                existingMatchPercent = existingMatch,
+                existingKey = key,
+                ownMatchPercent = own.match,
+                freshMatchPercent = if (bestFresh != null) result.match else null,
+                freshKey = freshKey,
             )
+            if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
+                // The fresh sheet's fit belongs to its own lines. Both have to
+                // land together: the file's lyrics replaced, and the sync saved
+                // under the fresh text's key. A failed write records nothing, so
+                // the next playback tries again.
+                val fresh = bestFresh
+                val embeddable = fresh?.let {
+                    LyricsTag.embeddable(it.source, song.videoId, it.lines)
+                }
+                val written = chosen != null && embeddable != null &&
+                    DownloadedLyrics.replace(context, localUri, embeddable)
+                if (!written) {
+                    recheckTokens[song.videoId] = reason.token
+                    return@withLock null
+                }
+            }
             store(context).update(song.videoId) {
-                val keep = if (replace && chosen != null) {
+                val keep = if (decision.replace && chosen != null) {
                     it.copy(
-                        aiTextKey = key,
+                        aiTextKey = decision.key ?: key,
                         ai = savedOf(chosen),
                         aiShiftMs = null,
                         aiStarts = null,
@@ -1635,9 +1668,13 @@ object LyricsTiming {
                 } else {
                     it
                 }
-                keep.copy(syncCheckVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION)
+                if (decision.recordVersion) {
+                    keep.copy(syncCheckVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION)
+                } else {
+                    keep
+                }
             }
-            if (replace && chosen != null) {
+            if (decision.replace && chosen != null) {
                 songLog(
                     song.videoId,
                     "applied",
@@ -1650,6 +1687,11 @@ object LyricsTiming {
             }
             recheckTokens[song.videoId] = DownloadedSyncCheck.Recheck.DONE.token
             _changes.tryEmit(song.videoId)
+            if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
+                bestFresh
+            } else {
+                null
+            }
         }
     }
 
@@ -1663,7 +1705,7 @@ object LyricsTiming {
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
         artistAliases: List<String>,
-    ): List<LyricLine>? {
+    ): LyricsRepository.Result? {
         val sources = if (AppSettings.syncedLyrics.value) AppSettings.lyricsSources.value else emptySet()
         if (sources.isEmpty()) return null
         return runCatching {
@@ -1680,8 +1722,9 @@ object LyricsTiming {
                 alternatives = alternatives,
                 artistKnown = artistKnown,
                 artistAliases = artistAliases,
-            )?.lines?.takeIf { found ->
-                found.count { it.text.isNotBlank() } >= MIN_AI_LINES && found.any { it.timeMs > 0 }
+            )?.takeIf { found ->
+                found.lines.count { it.text.isNotBlank() } >= MIN_AI_LINES &&
+                    found.lines.any { it.timeMs > 0 }
             }
         }.onFailure {
             if (it is CancellationException) throw it

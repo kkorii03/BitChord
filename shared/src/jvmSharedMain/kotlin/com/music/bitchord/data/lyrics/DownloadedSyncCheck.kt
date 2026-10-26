@@ -73,4 +73,53 @@ object DownloadedSyncCheck {
         val stored = storedMatchPercent ?: return true
         return newMatchPercent > stored
     }
+
+    /** Which lyric sheet a replacement belongs to. */
+    enum class Winner { STORED, FRESH }
+
+    /**
+     * What to keep after a re-check: no replacement, the file's own lines
+     * under [key], or a fresh sheet under its own [key].
+     *
+     * [key] is null when nothing is being stored — either the stored answer
+     * still wins, or there was no new answer to compare. A fresh winner is
+     * only a candidate here: the caller still has to write those lines into
+     * the file and save their sync under [key]. If either fails, it must not
+     * record [recordVersion], so the next play tries again.
+     */
+    class Replacement(
+        val replace: Boolean,
+        val winner: Winner?,
+        val key: Int?,
+        val recordVersion: Boolean,
+    )
+
+    /**
+     * Chooses between the file's own lyrics and a fresh provider answer.
+     *
+     * The comparison is the same one [shouldReplace] makes: the winner is
+     * whichever sheet fits the audio better, and it only replaces what is
+     * stored when it beats the stored answer. A tie keeps the file's own
+     * lines, so replaying a checked file does not rewrite it.
+     */
+    fun decide(
+        storedVersion: Int?,
+        existingMatchPercent: Int?,
+        existingKey: Int,
+        ownMatchPercent: Int?,
+        freshMatchPercent: Int?,
+        freshKey: Int,
+    ): Replacement {
+        val freshWins = freshMatchPercent != null &&
+            freshMatchPercent > (ownMatchPercent ?: 0)
+        val bestMatch = if (freshWins) freshMatchPercent else ownMatchPercent
+        if (!shouldReplace(storedVersion, existingMatchPercent, bestMatch)) {
+            return Replacement(replace = false, winner = null, key = null, recordVersion = true)
+        }
+        return if (freshWins) {
+            Replacement(replace = true, winner = Winner.FRESH, key = freshKey, recordVersion = true)
+        } else {
+            Replacement(replace = true, winner = Winner.STORED, key = existingKey, recordVersion = true)
+        }
+    }
 }
