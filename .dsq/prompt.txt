@@ -1,0 +1,14 @@
+﻿(공통 주의: 이 PC 셸에는 rg가 없다. 저장소 전체 목록(Get-ChildItem -Recurse 등)을 뽑지 말 것 — 출력이 너무 커서 실행이 멈춘다. 필요한 파일만 이름으로 좁게 찾는다. 도구가 실패해도 끝까지 하고 마지막 요약을 반드시 출력.)
+(10-26 11:20 Opus 신규 — 회귀 수정, 폰 측정 근거)
+작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-merge (브랜치 task/proxy-fallback). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지(컴파일은 CI). .github/, keys\, 서명 설정, .ds-ctx/ 수정 금지. 바꾼 함수의 모든 호출부·타입 확인. 폴링·타이머 금지.
+측정(S24, 화면 끔, 20분, 곡 7~9개, 자동 재생으로 다음 곡 있음):
+- vc62/vc63(커밋 00e1 이전): 'automix:' 계획 16~18개, 'blend start' 6~8회, 'BitChordTrackAnalyzer: Analysing …' 있음. 앱 CPU 20~23초/분.
+- vc64/vc65(커밋 a7b1673e 'autopilot: 00e1-battery-cpu' 이후): automix 계획 0~2개, blend 0회, TrackAnalyzer 로그 없음, 'power: decoders active=1'. 앱 CPU 7~8초/분.
+→ 배터리 개선의 상당 부분이 '화면 꺼짐에서 곡 분석·크로스페이드가 아예 멈춘 것'(자동 믹스 사실상 꺼짐)으로 보인다. 사용자는 자동 믹스를 켜고 쓴다. 회귀.
+할 일:
+1. git show a7b1673e 로 00e1 변경을 보고, 화면 꺼짐에서 분석·standby 준비·전환 계획을 막는 조건을 찾는다.
+2. 목표: 자동 믹스가 화면 꺼짐에서도 동작하면서 CPU 는 낮게. 규칙: (a) 분석은 '다음 곡' 1곡만, 한 번에 하나, 결과 캐시(이미 분석된 곡은 다시 안 함). (b) 분석은 곡 전체 대신 전환에 필요한 구간만(현재 곡 끝 45초, 다음 곡 앞 45초) — 기존 'lighter rendition' 경로가 있으면 그 범위를 줄인다. (c) standby 디코더는 전환 시작 15초 전부터만 준비(그 전엔 디코더 0개 추가). (d) 노래 검증 90초 WAV 디코드는 전환 준비와 겹치지 않게 순서대로. (e) 자동 믹스 꺼짐·크로스페이드 0초 설정이면 분석·standby 전혀 안 함.
+3. 'automix: … key=unknown' 이 밤새 모든 전환에서 unknown — 키 분석이 실제로 값을 못 내는지 확인하고, 고칠 수 있으면 고친다(못 고치면 원인만 요약).
+4. 로그: 전환마다 'automix: … analysisMs=<분석에 쓴 ms> standbyLeadMs=<준비 시작~전환 ms>' 추가.
+5. JVM 테스트: 분석 대상 선택(다음 곡 1곡, 캐시 재사용), standby 시작 시점 계산.
+마지막에 10줄 이내로 요약: 수정 파일 / 00e1 에서 막힌 조건 / 핵심 변경 / key=unknown 원인 / 테스트 / 미해결
