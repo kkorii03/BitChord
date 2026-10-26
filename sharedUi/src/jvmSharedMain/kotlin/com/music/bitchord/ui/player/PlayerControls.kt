@@ -99,6 +99,7 @@ import org.jetbrains.compose.resources.vectorResource
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -614,6 +615,9 @@ internal fun PlayerActionRow(
     onToggleAutoplay: () -> Unit,
     onOpenOutput: () -> Unit,
 ) {
+    val shuffle = shuffleModeControl(shuffleEnabled)
+    val repeat = repeatModeControl(repeatMode)
+    val autoplay = autoplayModeControl(autoplayEnabled)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // Sized for the wider of the two capsules — the three-up one — in both
         // states. Computed for whichever was on screen it would change as they
@@ -678,26 +682,20 @@ internal fun PlayerActionRow(
                     // read as one control growing a segment.
                     Pill {
                         PillSegment(
-                            icon = BitChordIcons.Shuffle,
-                            contentDescription = stringResource(
-                                if (shuffleEnabled) Res.string.shuffle_on else Res.string.shuffle_off,
-                            ),
+                            icon = playerModeIcon(shuffle.glyph),
+                            contentDescription = playerModeDescription(shuffle.description),
                             onClick = onToggleShuffle,
-                            highlighted = shuffleEnabled,
+                            highlighted = shuffle.highlight == PlayerModeHighlight.Strong,
                             haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                             tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                         )
                         PillDivider()
                         PillSegment(
-                            icon = if (repeatMode == RepeatModes.ONE) null else BitChordIcons.Repeat,
-                            label = if (repeatMode == RepeatModes.ONE) "1" else null,
-                            contentDescription = when (repeatMode) {
-                                RepeatModes.ONE -> stringResource(Res.string.repeat_one)
-                                RepeatModes.ALL -> stringResource(Res.string.repeat_all)
-                                else -> stringResource(Res.string.repeat_off)
-                            },
+                            icon = playerModeIcon(repeat.glyph),
+                            trailingLabel = repeat.badge,
+                            contentDescription = playerModeDescription(repeat.description),
                             onClick = onCycleRepeat,
-                            highlighted = repeatMode != RepeatModes.OFF,
+                            highlighted = repeat.highlight == PlayerModeHighlight.Strong,
                             // Three states, so the buzz tracks the edges of the
                             // cycle: leaving off rises, returning to off falls,
                             // and the step between the two repeat modes is just
@@ -710,12 +708,10 @@ internal fun PlayerActionRow(
                         )
                         PillDivider()
                         PillSegment(
-                            icon = BitChordIcons.Infinity,
-                            contentDescription = stringResource(
-                                if (autoplayEnabled) Res.string.autoplay_on else Res.string.autoplay_off,
-                            ),
+                            icon = playerModeIcon(autoplay.glyph),
+                            contentDescription = playerModeDescription(autoplay.description),
                             onClick = onToggleAutoplay,
-                            highlighted = autoplayEnabled,
+                            highlighted = autoplay.highlight == PlayerModeHighlight.Strong,
                             haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                             tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
                         )
@@ -736,6 +732,25 @@ internal fun PlayerActionRow(
         }
     }
 }
+
+private fun playerModeIcon(glyph: PlayerModeGlyph): ImageVector = when (glyph) {
+    PlayerModeGlyph.Repeat -> BitChordIcons.Repeat
+    PlayerModeGlyph.Shuffle -> BitChordIcons.Shuffle
+    PlayerModeGlyph.Autoplay -> BitChordIcons.Infinity
+}
+
+@Composable
+private fun playerModeDescription(description: PlayerModeDescription): String = stringResource(
+    when (description) {
+        PlayerModeDescription.RepeatOff -> Res.string.repeat_off
+        PlayerModeDescription.RepeatAll -> Res.string.repeat_all
+        PlayerModeDescription.RepeatOne -> Res.string.repeat_one
+        PlayerModeDescription.ShuffleOff -> Res.string.shuffle_off
+        PlayerModeDescription.ShuffleOn -> Res.string.shuffle_on
+        PlayerModeDescription.AutoplayOff -> Res.string.autoplay_off
+        PlayerModeDescription.AutoplayOn -> Res.string.autoplay_on
+    },
+)
 
 /**
  * Translucent circular button used for the track menu and the like control.
@@ -847,6 +862,14 @@ private val PLAYER_SKIP_TOUCH_SIZE = 53.dp
 private const val PLAYER_SKIP_HEIGHT_SCALE = 0.85f
 
 private val BOTTOM_ACTION_SIZE = 44.dp
+
+/**
+ * An on playback-mode segment: a bright, nearly opaque capsule so it reads as
+ * pressed-in against any album colour, with a dark glyph for contrast. The
+ * inactive segment keeps the translucent capsule and pale glyph.
+ */
+private val ACTIVE_SEGMENT_BACKGROUND = Color.White.copy(alpha = 0.94f)
+private val ACTIVE_SEGMENT_FOREGROUND = Color.Black.copy(alpha = 0.82f)
 
 /**
  * One half of the output capsule — wider than it is tall, so the capsule reads
@@ -1016,11 +1039,11 @@ private fun PillSegment(
         modifier = Modifier
             .width(width)
             .height(BOTTOM_ACTION_SIZE)
-            .background(if (highlighted) LocalPlayerTint.current.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 enabled = !loading,
+                role = Role.Button,
             ) {
                 val now = uptimeMillis()
                 if (now - lastTap.longValue >= tapWindowMs) {
@@ -1029,10 +1052,23 @@ private fun PillSegment(
                     onClick()
                 }
             }
-            .semantics { this.contentDescription = contentDescription },
+            .semantics(mergeDescendants = true) { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        val tint = LocalPlayerTint.current.copy(alpha = if (highlighted) 1f else 0.75f)
+        if (highlighted) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .padding(horizontal = 3.dp, vertical = 3.dp)
+                    .clip(CircleShape)
+                    .background(ACTIVE_SEGMENT_BACKGROUND),
+            )
+        }
+        val tint = if (highlighted) {
+            ACTIVE_SEGMENT_FOREGROUND
+        } else {
+            LocalPlayerTint.current.copy(alpha = 0.75f)
+        }
         Crossfade(
             targetState = loading,
             animationSpec = tween(durationMillis = 200),
@@ -1041,7 +1077,7 @@ private fun PillSegment(
             if (isLoading) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(17.dp),
-                    color = LocalPlayerTint.current,
+                    color = tint,
                     strokeWidth = 2.dp,
                 )
             } else if (icon != null) {
