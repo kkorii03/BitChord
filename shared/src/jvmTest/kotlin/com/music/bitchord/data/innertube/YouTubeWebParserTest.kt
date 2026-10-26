@@ -239,6 +239,61 @@ class YouTubeWebParserTest {
         assertEquals("VLOLAK5uy_album", item.browseId)
     }
 
+    @Test
+    fun `playlist rows without a thumbnail use the video still and keep real art`() {
+        val page = YouTubeWebParser.parsePlaylist(
+            json(
+                """
+                {
+                  "contents": {
+                    "twoColumnBrowseResultsRenderer": {
+                      "secondaryContents": {
+                        "playlistVideoListRenderer": {
+                          "contents": [
+                            {"playlistVideoRenderer": {
+                              "videoId": "noArtRow001",
+                              "title": {"runs": [{"text": "No Art Row"}]},
+                              "shortBylineText": {"runs": [{"text": "Artist"}]}
+                            }},
+                            {"playlistVideoRenderer": {
+                              "videoId": "withArtRow1",
+                              "title": {"runs": [{"text": "Has Art"}]},
+                              "shortBylineText": {"runs": [{"text": "Artist"}]},
+                              "thumbnail": {"thumbnails": [
+                                {"url": "https://i.ytimg.com/vi/withArtRow1/hq.jpg"}
+                              ]}
+                            }}
+                          ]
+                        }
+                      },
+                      "tabs": [
+                        {"tabRenderer": {"content": {"sectionListRenderer": {"contents": [
+                          {"playlistSidebarPrimaryInfoRenderer": {
+                            "title": {"runs": [{"text": "No Header Art"}]}
+                          }}
+                        ]}}}}
+                      ]
+                    }
+                  }
+                }
+                """,
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "https://i.ytimg.com/vi/noArtRow001/hqdefault.jpg",
+                "https://i.ytimg.com/vi/withArtRow1/hq.jpg",
+            ),
+            page.songs.map { it.thumbnailUrl },
+        )
+        assertEquals("No Header Art", page.header?.title)
+        assertEquals(
+            "https://i.ytimg.com/vi/noArtRow001/hqdefault.jpg",
+            page.header?.thumbnailUrl,
+        )
+    }
+
     private fun parseShelf(vararg lockups: String): List<ShelfItem> {
         val items = lockups.joinToString(",") { """{"richItemRenderer":{"content":$it}}""" }
         val root = json(

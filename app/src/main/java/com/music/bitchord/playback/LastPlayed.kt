@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withVideoThumbnailFallback
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -219,7 +220,7 @@ object LastPlayed {
                 originalArtist = originalArtist,
                 coverSinger = coverSinger,
                 coverOriginalArtist = coverOriginalArtist,
-            )
+            ).withVideoThumbnailFallback()
         }
 
         companion object {

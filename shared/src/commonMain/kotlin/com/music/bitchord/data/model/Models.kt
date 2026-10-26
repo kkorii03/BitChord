@@ -245,6 +245,21 @@ fun Song.artworkAt(px: Int): String? =
         ?: videoThumbnailUrl(videoId)?.takeIf { !SongOrigins.isLocalFile(this) }?.artworkAt(px)
 
 /**
+ * The row with the video's own still filled in when it arrived without art.
+ *
+ * Some playlist layouts omit a row's `thumbnail` renderer entirely even though
+ * the row states its `videoId`. Filling that in at the data layer — rather
+ * than in one screen — is what lets the playlist page, queue, downloads and
+ * widgets all show the same still. A row that already names a thumbnail, or a
+ * local file with no YouTube identity, is returned untouched.
+ */
+fun Song.withVideoThumbnailFallback(): Song {
+    if (!thumbnailUrl.isNullOrBlank() || SongOrigins.isLocalFile(this)) return this
+    val fallback = videoThumbnailUrl(videoId) ?: return this
+    return copy(thumbnailUrl = fallback)
+}
+
+/**
  * Whether a row is the track the player is on, for the now-playing highlight.
  *
  * Title and credit, matched exactly, and nothing else. Every id a row could be

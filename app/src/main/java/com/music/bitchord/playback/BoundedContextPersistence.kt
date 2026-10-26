@@ -6,6 +6,7 @@ import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withVideoThumbnailFallback
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -496,7 +497,7 @@ object BoundedContextPersistence {
                 playbackSource = playbackSource,
                 playbackSourceType = sourceType,
                 playbackSourceId = playbackSourceId,
-            )
+            ).withVideoThumbnailFallback()
         }
 
         companion object {

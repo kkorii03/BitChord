@@ -1758,7 +1758,7 @@ object YtMusicRepository {
 
     private fun pageOf(response: JsonObject): SongPage {
         val library = InnertubeParser.parseLibraryState(response)
-        val header = InnertubeParser.parseBrowseHeader(response)
+        val parsedHeader = InnertubeParser.parseBrowseHeader(response)
         // A playlist page is scoped to its own shelf so its "Suggested
         // tracks" never read as songs the user added — see
         // parsePlaylistShelf. Anything else (album, library, history) has no
@@ -1769,19 +1769,36 @@ object YtMusicRepository {
                 continuation = shelf.continuation,
                 suggested = shelf.suggested,
                 library = library,
-                header = header,
+                header = parsedHeader.withArtworkFallback(shelf.songs),
             )
         }
+        val songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId }
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
             // map used to take care of that; paging by hand means saying so.
-            songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId },
+            songs = songs,
             continuation = InnertubeParser.continuationToken(response),
             library = library,
-            header = header,
+            header = parsedHeader.withArtworkFallback(songs),
             description = InnertubeParser.parseDescription(response),
         )
+    }
+
+    /**
+     * A playlist header can arrive without the playlist's own cover even when
+     * its first rows have theirs. The first track's still stands in rather
+     * than leaving the page with the default playlist icon.
+     */
+    private fun InnertubeParser.BrowseHeader?.withArtworkFallback(
+        songs: List<Song>,
+    ): InnertubeParser.BrowseHeader? {
+        val header = this ?: return null
+        if (!header.thumbnailUrl.isNullOrBlank()) return header
+        val fallback = songs.firstNotNullOfOrNull {
+            it.thumbnailUrl?.takeIf(String::isNotBlank)
+        } ?: return header
+        return header.copy(thumbnailUrl = fallback)
     }
 
     /**

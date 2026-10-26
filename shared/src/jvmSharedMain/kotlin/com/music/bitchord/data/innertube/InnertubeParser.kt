@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import com.music.bitchord.auth.normalizeDataSyncId
+import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.ArtistNameIndex
@@ -580,6 +581,10 @@ object InnertubeParser {
                         parseResponsiveListItem(renderer as? JsonObject, pageCredit)
                             ?.let { out[it.videoId] = it }
                     }
+                    node["lockupViewModel"]?.let { renderer ->
+                        YouTubeWebParser.lockupSong(renderer as? JsonObject ?: return@let, musicOnly = false)
+                            ?.let { out[it.videoId] = it }
+                    }
                     node.values.forEach(::walk)
                 }
                 is JsonArray -> node.forEach(::walk)
@@ -629,9 +634,11 @@ object InnertubeParser {
 
         val pageCredit = pageCredit(root)
         val songs = playlistScope?.let { playlist ->
-            collectRenderers(playlist, "musicResponsiveListItemRenderer")
+            val responsive = collectRenderers(playlist, "musicResponsiveListItemRenderer")
                 .mapNotNull { parseResponsiveListItem(it, pageCredit) }
-                .distinctBy { it.videoId }
+            val lockups = collectRenderers(playlist, "lockupViewModel")
+                .mapNotNull { YouTubeWebParser.lockupSong(it, musicOnly = false) }
+            (responsive + lockups).distinctBy { it.videoId }
         }.orEmpty()
         val knownSongs = songs.mapTo(HashSet()) { it.videoId }
         val suggested = suggestionShelves
@@ -775,6 +782,12 @@ object InnertubeParser {
 
         val thumbnails = renderer.o("thumbnail").o("musicThumbnailRenderer")
             .o("thumbnail").a("thumbnails")
+            ?: renderer.o("thumbnail").a("thumbnails")
+            ?: renderer.o("thumbnail").o("thumbnailViewModel").o("image").a("sources")
+            ?: renderer.o("thumbnailViewModel").o("image").a("sources")
+            ?: renderer.o("contentImage")
+                ?.let { it.o("thumbnailViewModel").o("image").a("sources") }
+            ?: renderer.o("contentImage").a("sources")
 
         return Song(
             videoId = videoId,
@@ -788,7 +801,7 @@ object InnertubeParser {
                 ?: artist
                 ?: fallback.artistName
                 ?: "Unknown artist",
-            thumbnailUrl = thumbnails.best(),
+            thumbnailUrl = thumbnails.best() ?: videoThumbnailUrl(videoId),
             durationText = duration,
             artistId = credits.artistId ?: fallback.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists.ifEmpty { fallback.artists }),
@@ -842,7 +855,7 @@ object InnertubeParser {
                 ?: credits.artistName?.takeIf { it.isNotBlank() }
                 ?: artist
                 ?: "Unknown artist",
-            thumbnailUrl = thumbnails.best(),
+            thumbnailUrl = thumbnails.best() ?: videoThumbnailUrl(videoId),
             durationText = duration,
             artistId = credits.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
@@ -1311,7 +1324,8 @@ object InnertubeParser {
             videoId = videoId,
             title = title,
             artist = artist,
-            thumbnailUrl = renderer.o("thumbnail").a("thumbnails").best(),
+            thumbnailUrl = renderer.o("thumbnail").a("thumbnails").best()
+                ?: videoThumbnailUrl(videoId),
             durationText = renderer.o("lengthText").text().takeIf { it.isNotBlank() },
             artistId = credits.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
@@ -1583,7 +1597,7 @@ object InnertubeParser {
         return ShelfItem(
             title = title,
             subtitle = subtitle,
-            thumbnailUrl = thumbnails.best(),
+            thumbnailUrl = thumbnails.best() ?: videoId?.let(::videoThumbnailUrl),
             videoId = videoId,
             browseId = resolvedBrowseId,
             isArtist = "ARTIST" in pageType,
