@@ -128,9 +128,11 @@ internal object CatalogSongMapper {
     const val MAX_DURATION_DRIFT_SEC = 10
 
     private const val CACHE_ENTRIES = 3_000
-    // v2: the video-source runtime window changed, so an old "not in the
-    // catalogue" verdict (The Hills) must not outrank a fresh lookup.
-    private const val STORE_KEY = "catalog_song_mapping_v2"
+    // v3: a stored "not in the catalogue" answer may have been written under
+    // the old 10-second song window for a video id, so it must not outrank the
+    // widened type-unknown/video-window lookup. v2 retired the same class of
+    // verdict when the video-source runtime window changed (The Hills).
+    private const val STORE_KEY = "catalog_song_mapping_v3"
     private const val NONE = "none"
     private const val FIELD = "\u001F"
     private const val TAG = "BitChord"

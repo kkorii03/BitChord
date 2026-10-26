@@ -342,6 +342,62 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `a pre-field own-id download is verified before its file is trusted`() {
+        assertTrue(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = true,
+                isVideo = null,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = true,
+                isVideo = null,
+                typeUnknown = false,
+                offline = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a pre-field record from another upload is already the catalogue release`() {
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = false,
+                isVideo = null,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a new own-id song record is trusted without a lookup`() {
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = true,
+                isVideo = false,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+    }
+
+    @Test
     fun `a proven-empty counterpart endpoint is off for a week and then tried again`() {
         val now = 1_000_000L
         val offUntil = SongVersionPolicy.counterpartOffUntil(now)

@@ -525,6 +525,51 @@ object Downloads {
         return _savedMetadata.value[videoId]?.soundSourceVideoId
     }
 
+    /**
+     * The recorded upload type, or null for a record written before the field
+     * existed. Null is not the same as false: an old own-id record may still be
+     * a music video's sound.
+     */
+    internal fun savedIsVideoFor(videoId: String): Boolean? {
+        open()
+        return _savedMetadata.value[videoId]?.isVideo
+    }
+
+    /** Whether the saved row's upload type was still unknown, false if unrecorded. */
+    internal fun savedTypeUnknownFor(videoId: String): Boolean {
+        open()
+        return _savedMetadata.value[videoId]?.typeUnknown == true
+    }
+
+    /**
+     * Fills in the upload type of a pre-field record once it has been verified
+     * against the catalogue, so the same file is not looked up on every play.
+     * Does nothing when the record already states a type, or has no record.
+     */
+    internal fun backfillUploadType(videoId: String, isVideo: Boolean, typeUnknown: Boolean) {
+        open()
+        record(
+            saved = { it },
+            meta = { meta ->
+                val now = meta[videoId]
+                if (now == null || now.isVideo != null) {
+                    meta
+                } else {
+                    meta + (
+                        videoId to now.copy(
+                            isVideo = isVideo,
+                            typeUnknown = typeUnknown,
+                            // The catalogue just agreed this is the recording;
+                            // naming its own id also records the provenance the
+                            // old entry lacked, so it is not verified again.
+                            soundSourceVideoId = now.soundSourceVideoId ?: videoId,
+                        )
+                    )
+                }
+            },
+        )
+    }
+
     /** How much longer than the song this file was judged to be, or null. */
     fun mvSoundSuspectMs(videoId: String): Long? {
         open()
@@ -1442,16 +1487,38 @@ object Downloads {
         // The catalogue release is the recording the app plays, so a video row
         // is resolved first and the bytes, the name and the record all follow
         // that id. A row already known to have no version keeps its own, and a
-        // catalogue row is never looked up at all.
+        // catalogue row is never looked up at all. A download made before its
+        // provenance or upload type was recorded is treated like a video
+        // candidate: a re-download or quality replacement must fetch the
+        // catalogue release, not its own video stream again.
+        val storedIsVideo = savedIsVideoFor(song.videoId)
+        val storedTypeUnknown = savedTypeUnknownFor(song.videoId)
+        val soundSourceId = savedSoundSourceFor(song.videoId)
+        val downloaded = isDownloaded(song.videoId)
+        val effectiveIsVideo: Boolean? = when {
+            song.isVideo || storedIsVideo == true -> true
+            storedIsVideo == null -> null
+            else -> false
+        }
+        val unknownDownload = SongVersionPolicy.verifiesUnknownDownload(
+            localFile = downloaded,
+            downloaded = downloaded,
+            provenanceKnown = soundSourceId != null,
+            provenanceIsOwnId = soundSourceId == song.videoId,
+            isVideo = effectiveIsVideo,
+            typeUnknown = song.typeUnknown || storedTypeUnknown,
+            offline = AudioCache.isOffline(),
+        )
+        val versionSong = if (unknownDownload) song.copy(typeUnknown = true) else song
         val track = if (SongVersionPolicy.downloadIsSongVersion(
-                song.isVideo,
-                song.typeUnknown,
-                YtMusicRepository.isSongVersionMissing(song.videoId),
+                versionSong.isVideo,
+                versionSong.typeUnknown,
+                YtMusicRepository.isSongVersionMissing(versionSong.videoId),
             )
         ) {
-            runCatching { YtMusicRepository.songVersion(song) }.getOrNull() ?: song
+            runCatching { YtMusicRepository.songVersion(versionSong) }.getOrNull() ?: versionSong
         } else {
-            song
+            versionSong
         }
         // Read once, here, for the whole of this track. Both routes below
         // and the re-resolve inside [Downloader.fetch] have to agree on
@@ -2044,12 +2111,14 @@ internal data class SavedSongMetadata(
     /**
      * Whether the row this record was written from was a music video.
      *
-     * Defaulted for records written before this field existed. Such a row is
-     * recovered from [soundSourceVideoId] when that names a different upload,
-     * and otherwise verified online like any other unknown-provenance file —
-     * see [SongVersionPolicy.verifiesUnknownDownload].
+     * Tri-state on purpose: null means the record predates the field, so the
+     * row's type is not known even when [soundSourceVideoId] names its own id.
+     * Such an own-id record may be a legacy video downloaded as its own stream,
+     * so it is verified online like any other unknown-provenance file — see
+     * [SongVersionPolicy.verifiesUnknownDownload]. A record written by this
+     * version always states true or false.
      */
-    val isVideo: Boolean = false,
+    val isVideo: Boolean? = null,
     /** Whether the row's upload type was still unknown when it was saved. */
     val typeUnknown: Boolean = false,
     /**
@@ -2076,7 +2145,7 @@ internal data class SavedSongMetadata(
  * the video's id as well, so this id is the video side of that pair.
  */
 private fun SavedSongMetadata.wasVideoRow(): Boolean =
-    isVideo || (soundSourceVideoId != null && soundSourceVideoId != videoId)
+    isVideo == true || (soundSourceVideoId != null && soundSourceVideoId != videoId)
 
 /**
  * Dates for a downloaded file-backed row.
