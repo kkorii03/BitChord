@@ -12,7 +12,9 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -105,5 +107,76 @@ class HqAudioVerifyCancellationTest {
         val occupied = File(root, "occupied").apply { writeText("not a folder") }
 
         assertFalse(HqAudioVerify.ensureCandidateDirectory(occupied))
+    }
+
+    @Test
+    fun `a 429 with retry-after is retried once`() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            private var calls = 0
+
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                calls += 1
+                return if (calls == 1) {
+                    MockResponse().setResponseCode(429).setHeader("Retry-After", "0")
+                } else {
+                    MockResponse().setResponseCode(200).setBody("candidate")
+                }
+            }
+        }
+        val directory = File(root, "hq_verify").apply { mkdirs() }
+        val stream = SourceStream(url = server.url("/candidate").toString())
+
+        val result = HqAudioVerify.candidateFeatures(directory, stream, OkHttpClient())
+
+        assertNull(result)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `a second 429 is not retried and stays unmeasured`() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(429).setHeader("Retry-After", "0")
+        }
+        val directory = File(root, "hq_verify").apply { mkdirs() }
+        val stream = SourceStream(url = server.url("/candidate").toString())
+
+        val result = HqAudioVerify.candidateFeatures(directory, stream, OkHttpClient())
+
+        assertNull(result)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `a track change cancels the retry wait`() = runBlocking {
+        val requestSeen = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requestSeen.countDown()
+                return MockResponse().setResponseCode(429).setHeader("Retry-After", "30")
+            }
+        }
+        val directory = File(root, "hq_verify").apply { mkdirs() }
+        val stream = SourceStream(url = server.url("/candidate").toString())
+
+        val job = launch(Dispatchers.IO) {
+            HqAudioVerify.candidateFeatures(directory, stream, OkHttpClient())
+        }
+        try {
+            assertTrue("request never reached the server", requestSeen.await(5, TimeUnit.SECONDS))
+            Thread.sleep(250)
+            assertFalse("the retry wait ended before the track changed", job.isCompleted)
+
+            HqAudioVerify.onPlaybackStarted()
+
+            val stopped = withTimeoutOrNull(2_000L) {
+                job.join()
+                true
+            }
+            assertTrue("track change did not cancel the retry wait", stopped == true)
+            assertEquals(1, server.requestCount)
+        } finally {
+            job.cancel()
+        }
     }
 }

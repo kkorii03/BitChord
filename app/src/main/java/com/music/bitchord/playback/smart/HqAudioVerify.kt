@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.data.lyrics.ChromaAlignment
@@ -23,6 +24,7 @@ import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -33,12 +35,14 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -85,6 +89,19 @@ object HqAudioVerify {
     /** A session can still reach many tracks; the map never needs to outgrow one queue. */
     private const val MAX_NO_REFERENCE = 256
 
+    /**
+     * The play a verification belongs to.
+     *
+     * [onPlaybackStarted] replaces this object and completes [changed], which
+     * wakes a rate-limit wait at once instead of letting it outlive the track
+     * it was started for. Identity is the generation; no counter is needed.
+     */
+    private class PlaybackEpoch {
+        val changed = CompletableDeferred<Unit>()
+    }
+
+    private val playbackEpoch = AtomicReference(PlaybackEpoch())
+
     /** Why the YouTube reference could not be compared this time. */
     enum class NoReferenceReason(val wire: String) {
         HEAD_TIMEOUT("head-timeout"),
@@ -123,6 +140,24 @@ object HqAudioVerify {
 
     /** One read at a time while copying the response into the cache file. */
     private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+
+    /** Response headers worth keeping on a rate-limit line; nothing URL- or key-bearing. */
+    private val RATE_LIMIT_LOG_HEADERS = listOf(
+        "Retry-After",
+        "Date",
+        "Server",
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+        "X-RateLimit-Retry-After",
+    )
+
+    /** A response that a single later attempt could still get past. */
+    private class RateLimitedDownload(
+        val code: Int,
+        val retryAfter: String?,
+        val headerFields: Map<String, List<String>>,
+    ) : IOException("HTTP $code")
 
     /**
      * The reference profiles already measured in this session, by YouTube id.
@@ -189,6 +224,7 @@ object HqAudioVerify {
         stream: SourceStream,
         manual: Boolean = false,
     ): Outcome = withContext(Dispatchers.IO) {
+        val epoch = playbackEpoch.get()
         if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable
         // A source-backed row has no YouTube song version to compare with;
         // its own source is the reference, so there is nothing to verify here.
@@ -253,7 +289,7 @@ object HqAudioVerify {
                     // verification in front of the reported 2.2–8.4 s prove
                     // times had the same sequential shape. A missing reference
                     // cancels the candidate read before anything waits on it.
-                    val candidateDeferred = async { candidateFeatures(context, stream) }
+                    val candidateDeferred = async { candidateFeatures(context, stream, epoch) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
@@ -373,6 +409,7 @@ object HqAudioVerify {
      */
     fun onPlaybackStarted() {
         noReference.clear()
+        playbackEpoch.getAndSet(PlaybackEpoch()).changed.complete(Unit)
     }
 
     /** What the sound comparison says about a file already on the device. */
@@ -713,16 +750,36 @@ object HqAudioVerify {
      * left a 44.1 kHz stereo candidate with no first sample. A head-only file
      * on disk is what the platform extractor handles best, and a FLAC whose
      * tail is missing still opens. The file is deleted on every exit.
+     *
+     * B is not implemented here: starting this only after the current track's
+     * ExoPlayer loader goes idle needs a loading event from PlaybackService and
+     * a gate for ordinary streams ([HqHostGate][com.music.bitchord.playback.HqHostGate]
+     * tracks only upgrade and whole-rendition downloads today). The bounded
+     * retry below fixes the observed 429s without changing when verification
+     * starts.
      */
     private suspend fun candidateFeatures(
         context: Context,
         stream: SourceStream,
-    ): Candidate? = candidateFeatures(File(context.cacheDir, CANDIDATE_DIR), stream)
+        epoch: PlaybackEpoch,
+    ): Candidate? = candidateFeatures(
+        File(context.cacheDir, CANDIDATE_DIR),
+        stream,
+        ProxyPlayback.mediaClientFor(stream.url),
+        epoch,
+    )
 
     internal suspend fun candidateFeatures(
         directory: File,
         stream: SourceStream,
         client: OkHttpClient = ProxyPlayback.mediaClientFor(stream.url),
+    ): Candidate? = candidateFeatures(directory, stream, client, playbackEpoch.get())
+
+    private suspend fun candidateFeatures(
+        directory: File,
+        stream: SourceStream,
+        client: OkHttpClient,
+        epoch: PlaybackEpoch,
     ): Candidate? {
         val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
         if (needed <= 0L) return null
@@ -738,7 +795,7 @@ object HqAudioVerify {
         }
         return try {
             val bytes = try {
-                downloadPrefix(stream, file, needed, client)
+                downloadCandidate(stream, file, needed, client, epoch) ?: return null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
@@ -785,6 +842,75 @@ object HqAudioVerify {
     }
 
     /**
+     * Downloads the candidate head, waiting out one rate-limit refusal.
+     *
+     * The wait follows the server's `Retry-After` when it sends one, capped at
+     * [HqVerifyPolicy.MAX_CANDIDATE_RETRY_WAIT_MS], and is woken by the next
+     * playback event. A second refusal is not retried: the candidate stays
+     * unmeasured instead of becoming a stored rejection.
+     */
+    private suspend fun downloadCandidate(
+        stream: SourceStream,
+        file: File,
+        limit: Long,
+        client: OkHttpClient,
+        epoch: PlaybackEpoch,
+    ): Long? {
+        var attempt = 0
+        while (true) {
+            try {
+                return downloadPrefix(stream, file, limit, client)
+            } catch (limited: RateLimitedDownload) {
+                val retry = HqVerifyPolicy.retryCandidateDownload(
+                    retryAfterHeader = limited.retryAfter,
+                    attempt = attempt,
+                    nowMs = System.currentTimeMillis(),
+                )
+                logRateLimited(limited, retry)
+                if (!retry.retry) return null
+                if (!samePlaybackAfter(retry.waitMs, epoch)) {
+                    TrackLog.d(TAG, "decode: hq-verify retry abandoned at=download track-changed")
+                    return null
+                }
+                attempt++
+            }
+        }
+    }
+
+    /** Waits [waitMs], returning false as soon as the play this attempt belongs to ends. */
+    private suspend fun samePlaybackAfter(waitMs: Long, epoch: PlaybackEpoch): Boolean {
+        if (playbackEpoch.get() !== epoch) return false
+        if (waitMs > 0L) {
+            val changed = withTimeoutOrNull(waitMs) { epoch.changed.await() }
+            if (changed != null) return false
+        }
+        return playbackEpoch.get() === epoch
+    }
+
+    /**
+     * One line for a 429/503: status and only the rate-limit headers that are
+     * safe to keep. The URL and any credential headers are never printed.
+     */
+    private fun logRateLimited(
+        limited: RateLimitedDownload,
+        retry: HqVerifyPolicy.CandidateRetry,
+    ) {
+        val headers = RATE_LIMIT_LOG_HEADERS.mapNotNull { name ->
+            limited.headerFields.entries
+                .firstOrNull { it.key.equals(name, ignoreCase = true) }
+                ?.value
+                ?.firstOrNull()
+                ?.let { "$name=${it.take(80)}" }
+        }.joinToString(",")
+        val action = if (retry.retry) "retry in ${retry.waitMs}ms" else "giving up"
+        TrackLog.w(
+            TAG,
+            "decode: hq-verify rate limited at=download code=${limited.code} " +
+                "headers=[$headers] $action",
+        )
+    }
+
+    /**
      * Fetches the first [limit] bytes of [stream] into [file], using the same
      * client, headers and proxy route as HQ playback.
      *
@@ -818,6 +944,14 @@ object HqAudioVerify {
             val length = try {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
+                        val headerFields = response.headers.toMultimap()
+                        if (HqRetryPolicy.isRateLimited(response.code)) {
+                            throw RateLimitedDownload(
+                                code = response.code,
+                                retryAfter = HqRetryPolicy.retryAfterHeader(headerFields),
+                                headerFields = headerFields,
+                            )
+                        }
                         throw IOException("HTTP ${response.code}")
                     }
                     val body = response.body ?: throw IOException("no body")

@@ -1,5 +1,7 @@
 package com.music.bitchord.data.sources
 
+import com.music.bitchord.data.net.HqRetryPolicy
+
 /**
  * The pure half of the high-quality verification gates.
  *
@@ -90,4 +92,32 @@ object HqVerifyPolicy {
 
     /** A remembered missing reference may only short-circuit an automatic attempt. */
     fun shouldRetryMissingReference(manual: Boolean): Boolean = manual
+
+    /**
+     * What to do after a candidate download is rate limited.
+     *
+     * Verification runs beside playback, so it may wait longer than a loader
+     * thread: up to [MAX_CANDIDATE_RETRY_WAIT_MS]. It still retries only once —
+     * a second refusal is the server saying the same thing, and the attempt
+     * stays unmeasured rather than becoming a stored rejection.
+     */
+    data class CandidateRetry(val retry: Boolean, val waitMs: Long)
+
+    fun retryCandidateDownload(
+        retryAfterHeader: String?,
+        attempt: Int,
+        nowMs: Long,
+    ): CandidateRetry {
+        if (attempt >= MAX_CANDIDATE_RETRIES) return CandidateRetry(retry = false, waitMs = 0L)
+        val stated = HqRetryPolicy.retryAfterMs(retryAfterHeader, nowMs)
+        val wait = (stated ?: HqRetryPolicy.backoffMs(attempt))
+            .coerceIn(0L, MAX_CANDIDATE_RETRY_WAIT_MS)
+        return CandidateRetry(retry = true, waitMs = wait)
+    }
+
+    /** One retry only: no loop, and no timer beyond the server's own wait. */
+    const val MAX_CANDIDATE_RETRIES = 1
+
+    /** Verification may sleep longer than a loader thread, but never a minute. */
+    const val MAX_CANDIDATE_RETRY_WAIT_MS = 60_000L
 }
