@@ -76,7 +76,8 @@ object DownloadedArtworkResolver {
     }
 
     private fun resolveNow(context: Context, song: Song): String? {
-        for (candidate in downloadedArtworkCandidates(song)) {
+        val savedExists = localArtworkExists(song.thumbnailUrl)
+        for (candidate in downloadedArtworkCandidates(song, savedExists)) {
             when (candidate.kind) {
                 ArtworkCandidateKind.EMBEDDED -> {
                     val picture = embeddedPicture(context, candidate.value)
@@ -86,11 +87,31 @@ object DownloadedArtworkResolver {
                 }
                 ArtworkCandidateKind.SAVED_THUMBNAIL ->
                     if (readable(context, candidate.value)) return candidate.value
-                ArtworkCandidateKind.YOUTUBE -> return candidate.value
+                ArtworkCandidateKind.RECORDED,
+                ArtworkCandidateKind.YOUTUBE,
+                -> return candidate.value
                 ArtworkCandidateKind.DEFAULT -> return null
             }
         }
         return null
+    }
+
+    /**
+     * Whether the recorded local picture is still on disk, without decoding it.
+     *
+     * A `file:` sidecar is a cheap `stat`; a `content:` URI is left to
+     * [readable], which is the only place that can ask the resolver.
+     */
+    private fun localArtworkExists(value: String?): Boolean {
+        value ?: return false
+        return when {
+            value.startsWith("file:", ignoreCase = true) ->
+                runCatching {
+                    Uri.parse(value).path?.let(::File)?.let { it.isFile && it.length() > 0L } == true
+                }.getOrDefault(false)
+            value.startsWith("content:", ignoreCase = true) -> true
+            else -> false
+        }
     }
 
     private fun embeddedPicture(context: Context, value: String?): ByteArray? {

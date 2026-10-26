@@ -10,6 +10,9 @@ enum class ArtworkCandidateKind {
     /** The sidecar this app saved beside the audio when it tagged the file. */
     SAVED_THUMBNAIL,
 
+    /** A remote thumbnail recorded with the download, such as square album art. */
+    RECORDED,
+
     /** YouTube's own still for the video id. */
     YOUTUBE,
 
@@ -28,25 +31,48 @@ data class ArtworkCandidate(val kind: ArtworkCandidateKind, val value: String?)
  * The player used to take that one URL as final, fail, and retry the same dead
  * request every second and a half. The file's own picture is the better first
  * answer anyway, and YouTube always has a still for a row that still carries
- * its id — so the order is embedded, saved sidecar, YouTube, then nothing.
+ * its id — so the order is embedded, recorded art, YouTube, then nothing.
+ *
+ * [savedArtworkExists] is the caller's disk check for the recorded local
+ * picture. When it is false the dead `file:`/`content:` path is skipped rather
+ * than tried: that is the ENOENT the media session and the player used to
+ * spend retries on.
  *
  * Only local (`file:`/`content:`) thumbnails count as the saved sidecar: a
  * YouTube URL is already the [ArtworkCandidateKind.YOUTUBE] rung and must not
  * be tried twice under two names.
  */
-fun downloadedArtworkCandidates(song: Song): List<ArtworkCandidate> {
-    val embedded = song.localUri?.takeIf(::isLocalArtwork)
-    val saved = song.thumbnailUrl
-        ?.takeIf { isLocalArtwork(it) && it != song.localUri }
-    val youtube = videoThumbnailUrl(song.videoId)
+fun downloadedArtworkCandidates(
+    song: Song,
+    savedArtworkExists: Boolean = true,
+): List<ArtworkCandidate> {
+    val embedded = song.localUri?.takeIf(::isLocalArtworkUri)
+    val selection = song.artworkSelection(savedArtworkExists)
+    val youtubeStill = videoThumbnailUrl(song.videoId)
     return buildList {
         embedded?.let { add(ArtworkCandidate(ArtworkCandidateKind.EMBEDDED, it)) }
-        saved?.let { add(ArtworkCandidate(ArtworkCandidateKind.SAVED_THUMBNAIL, it)) }
-        youtube?.let { add(ArtworkCandidate(ArtworkCandidateKind.YOUTUBE, it)) }
+        when (selection.source) {
+            ArtworkSource.LOCAL -> {
+                if (selection.value != embedded) {
+                    add(ArtworkCandidate(ArtworkCandidateKind.SAVED_THUMBNAIL, selection.value))
+                }
+                // A sidecar that is present but unreadable still gets the
+                // YouTube rung; [DownloadedArtworkResolver] decides that by
+                // actually opening it.
+                youtubeStill?.let { add(ArtworkCandidate(ArtworkCandidateKind.YOUTUBE, it)) }
+            }
+            ArtworkSource.REMOTE -> add(
+                ArtworkCandidate(
+                    if (selection.value == youtubeStill) {
+                        ArtworkCandidateKind.YOUTUBE
+                    } else {
+                        ArtworkCandidateKind.RECORDED
+                    },
+                    selection.value,
+                ),
+            )
+            ArtworkSource.NONE -> Unit
+        }
         add(ArtworkCandidate(ArtworkCandidateKind.DEFAULT, null))
     }
 }
-
-private fun isLocalArtwork(value: String): Boolean =
-    value.startsWith("file:", ignoreCase = true) ||
-        value.startsWith("content:", ignoreCase = true)

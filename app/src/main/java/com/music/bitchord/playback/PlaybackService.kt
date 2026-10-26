@@ -122,7 +122,6 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
-import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.DownloadHealth
@@ -2252,6 +2251,7 @@ class PlaybackService : MediaLibraryService() {
     private fun newSessionPlayer(player: Player, crossfade: CrossfadeController) = SessionPlayer(
         player,
         crossfade,
+        applicationContext,
         onUserIntent = { partySync?.onLocalIntent() },
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
@@ -9932,6 +9932,7 @@ class PlaybackService : MediaLibraryService() {
     private class SessionPlayer(
         player: Player,
         private val crossfade: CrossfadeController,
+        private val context: Context,
         /**
          * Reports that what just came through here was the *user's* doing.
          *
@@ -10398,11 +10399,19 @@ class PlaybackService : MediaLibraryService() {
         override fun getMediaMetadata(): MediaMetadata {
             val base = wrappedPlayer.mediaMetadata
             val subtitle = getSubtitle()
-            return if (!subtitle.isNullOrBlank()) {
+            val withSubtitle = if (!subtitle.isNullOrBlank()) {
                 base.buildUpon().setSubtitle(subtitle).build()
             } else {
                 base
             }
+            // The session is the one place a private sidecar path must not
+            // escape: System UI opens this metadata in another process. See
+            // [MediaSessionArtwork].
+            return MediaSessionArtwork.apply(
+                context,
+                withSubtitle,
+                wrappedPlayer.currentMediaItem?.mediaId,
+            )
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
@@ -11157,7 +11166,7 @@ class PlaybackService : MediaLibraryService() {
             MediaMetadata.Builder()
                 .setTitle(title)
                 .setSubtitle(subtitle)
-                .setArtworkUri(artworkUrl?.artworkAt(NOTIFICATION_ART_PX)?.let(Uri::parse))
+                .setArtworkUri(MediaSessionArtwork.uriForUrl(this, artworkUrl)?.let(Uri::parse))
                 .setIsBrowsable(true)
                 .setIsPlayable(false)
                 .setFolderType(folderType)
@@ -11290,7 +11299,7 @@ class PlaybackService : MediaLibraryService() {
                     MediaMetadata.Builder()
                         .setTitle(title)
                         .setSubtitle(subtitle)
-                        .setArtworkUri(thumbnailUrl.artworkAt(NOTIFICATION_ART_PX)?.let { Uri.parse(it) })
+                        .setArtworkUri(MediaSessionArtwork.uriForUrl(this@PlaybackService, thumbnailUrl)?.let(Uri::parse))
                         .setIsBrowsable(true)
                         .setIsPlayable(false)
                         .setFolderType(MediaMetadata.FOLDER_TYPE_ALBUMS)

@@ -74,6 +74,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.playingRowMatcher
+import com.music.bitchord.ui.player.rememberRemoteArtworkUrl
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
@@ -594,7 +595,7 @@ private fun TopResultCard(
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
-                model = song.thumbnailUrl?.artworkAt(ROW_ART_PX),
+                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -824,7 +825,7 @@ private fun TypeaheadSongRow(
     ) {
         Box(Modifier.size(52.dp)) {
             AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
+                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

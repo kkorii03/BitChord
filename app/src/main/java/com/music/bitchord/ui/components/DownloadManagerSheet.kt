@@ -398,7 +398,7 @@ private fun DownloadManagerRow(
     ) {
         Box(Modifier.size(ART_SIZE), contentAlignment = Alignment.Center) {
             AsyncImage(
-                model = item.song.artworkAt(ROW_ART_PX),
+                model = rememberRemoteArtworkUrl(item.song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

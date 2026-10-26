@@ -259,6 +259,9 @@ object Downloads {
      */
     private val running = LinkedHashMap<String, Job?>()
 
+    /** The application context [init] was given, for metadata built off the main thread. */
+    internal fun applicationContext(): Context? = appContext
+
     fun init(context: Context) {
         appContext = context.applicationContext
         // Three JSON maps that grow with the listener's Downloads folder. None
@@ -1093,6 +1096,8 @@ object Downloads {
                 subtitle = target.subtitle,
                 // Once the remote cover has been cached, do not replace it with
                 // the YouTube URL when the same collection is downloaded again.
+                // A missing sidecar is re-cached from [target.thumbnailUrl] by
+                // the caller, which then replaces this record.
                 thumbnailUrl = existing?.thumbnailUrl?.takeIf(::isLocalArtwork)
                     ?: target.thumbnailUrl
                     ?: existing?.thumbnailUrl,
@@ -1118,6 +1123,22 @@ object Downloads {
 
     private fun isLocalArtwork(url: String): Boolean =
         url.startsWith("file:") || url.startsWith("content:")
+
+    /**
+     * A local artwork URL that is still there.
+     *
+     * `content:` is assumed live — checking it needs a [Context] this record
+     * does not hold — while a `file:` sidecar is a cheap `stat`. A record
+     * naming a deleted sidecar is what made a re-download keep the dead path
+     * instead of the remote cover it was given.
+     */
+    private fun isUsableLocalArtwork(url: String): Boolean = when {
+        url.startsWith("file:") -> runCatching {
+            url.toUri().path?.let(::File)?.let { it.isFile && it.length() > 0L } == true
+        }.getOrDefault(false)
+        url.startsWith("content:") -> true
+        else -> false
+    }
 
     /** Drop a release from the record without touching the files under it. */
     fun forgetCollection(id: String) {
@@ -1271,6 +1292,25 @@ object Downloads {
     private val collectionLock = Any()
 
     /**
+     * What to write down as a track's picture after a download.
+     *
+     * A fresh sidecar wins. When there is none, a remote thumbnail is kept as
+     * it is; a local path that no longer exists is replaced by YouTube's still
+     * so the record does not keep promising a file the next reader cannot
+     * open.
+     */
+    private fun recordedThumbnail(saved: String?, song: Song): String? {
+        if (!saved.isNullOrBlank()) return saved
+        val recorded = song.thumbnailUrl?.takeIf { it.isNotBlank() }
+        if (recorded != null && (!isLocalArtwork(recorded) || isUsableLocalArtwork(recorded))) {
+            return recorded
+        }
+        // A dead local path with no YouTube identity has no honest fallback;
+        // null draws the placeholder instead of promising a missing file.
+        return com.music.bitchord.data.cover.videoThumbnailUrl(song.videoId)
+    }
+
+    /**
      * Record one file under every id it could be asked about.
      *
      * [asked] is the row the user tapped and [fetched] is what was actually
@@ -1325,11 +1365,17 @@ object Downloads {
         // is both, and an album page's rows are neither.
         val album = fetched.albumName?.takeIf { it.isNotBlank() }
             ?: asked.albumName?.takeIf { it.isNotBlank() }
+        // A sidecar that failed to save must not leave the record naming a
+        // path that is not there. Keep a remote thumbnail when there is one,
+        // else YouTube's still for this id; the in-app ladder can still find
+        // the file's own picture first.
+        val askedThumbnail = recordedThumbnail(savedArtwork ?: artworkUri, asked)
+        val fetchedThumbnail = recordedThumbnail(savedArtwork ?: artworkUri, fetched)
         val metaAsked = SavedSongMetadata(
             videoId = asked.videoId,
             title = asked.title,
             artist = asked.artist,
-            thumbnailUrl = savedArtwork ?: artworkUri ?: asked.thumbnailUrl,
+            thumbnailUrl = askedThumbnail,
             durationText = asked.durationText,
             albumName = album,
             uri = uri.toString(),
@@ -1350,7 +1396,7 @@ object Downloads {
             videoId = fetched.videoId,
             title = fetched.title,
             artist = fetched.artist,
-            thumbnailUrl = savedArtwork ?: artworkUri ?: fetched.thumbnailUrl,
+            thumbnailUrl = fetchedThumbnail,
             durationText = fetched.durationText,
             albumName = album,
             uri = uri.toString(),

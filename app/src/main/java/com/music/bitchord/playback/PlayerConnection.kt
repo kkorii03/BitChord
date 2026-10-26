@@ -29,7 +29,6 @@ import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -764,7 +763,14 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
             // Sized here rather than left as stored: this is what the lock
             // screen, the notification and Android Auto draw, all of them
             // large, and none of them go back for a better copy later.
-            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri())
+            //
+            // A downloaded sidecar is a private file:// path; System UI reads
+            // this metadata in another process and cannot open it. Hand it the
+            // FileProvider content:// form instead, and fall back to YouTube's
+            // still when the sidecar is gone. See [MediaSessionArtwork].
+            .setArtworkUri(
+                MediaSessionArtwork.uriFor(Downloads.applicationContext(), this)?.toUri(),
+            )
             // System media surfaces (One UI's Now Bar, Android Auto, Assistant)
             // classify a session by its media type; untyped sessions get treated
             // as generic audio and lose the music-specific card.
