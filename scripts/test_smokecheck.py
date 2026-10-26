@@ -26,8 +26,27 @@ def summary(video_id: str, title: str, video: bool) -> str:
     )
 
 
+def play(video_id: str, title: str, artist: str) -> str:
+    return log_line(
+        f"play: -> {title} - {artist} ({video_id}) idx=0/10 reason=auto meta=none"
+    )
+
+
+def specs(*rows: str) -> list[smokecheck.SongSpec]:
+    return smokecheck.parse_songs("\n".join(rows))
+
+
 def statuses(log: str) -> dict[int, smokecheck.Check]:
     return {check.number: check for check in smokecheck.check_log(log)}
+
+
+def statuses_with_songs(
+    log: str, songs: list[smokecheck.SongSpec]
+) -> dict[int, smokecheck.Check]:
+    return {
+        check.number: check
+        for check in smokecheck.check_log(log, songs=songs)
+    }
 
 
 class MvPlaybackTest(unittest.TestCase):
@@ -54,6 +73,100 @@ class MvPlaybackTest(unittest.TestCase):
             [
                 log_line("song version: vid3 -> aud3 via cache before-audio"),
                 summary("aud3", "Song (Official Video)", False),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_cover_video_with_no_catalogue_song_passes(self):
+        log = "\n".join(
+            [
+                play("cover1", "Dance Monkey", "오화요"),
+                log_line(
+                    "audio switch: no official song match for 'Dance Monkey' by '오화요'"
+                ),
+                summary("cover1", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_downloaded_cover_kept_local_file_none_passes(self):
+        log = "\n".join(
+            [
+                log_line("song version: cover3 kept (local file, none)"),
+                summary("cover3", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_cover_marker_without_version_swap_passes(self):
+        log = "\n".join(
+            [
+                log_line("song version: cover2 -> none via none (cover)"),
+                summary("cover2", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_kept_none_video_without_mv_marker_passes(self):
+        log = "\n".join(
+            [
+                log_line("song version: cover3 kept (none)"),
+                summary("cover3", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_kept_none_with_mv_marker_still_fails(self):
+        log = "\n".join(
+            [
+                log_line("song version: vid6 kept (none)"),
+                summary("vid6", "Song (Official Video)", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_mv_title_still_fails_when_no_catalogue_song_was_found(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "audio switch: no official song match for 'Song' by 'Artist'"
+                ),
+                summary("vid4", "Song (Official Video)", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_no_match_for_a_different_title_does_not_excuse_the_video(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "audio switch: no official song match for 'Other Song' by 'Artist'"
+                ),
+                summary("vid5", "Song", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_no_match_for_a_different_artist_does_not_excuse_the_video(self):
+        log = "\n".join(
+            [
+                play("vid5", "Song", "Other Artist"),
+                log_line(
+                    "audio switch: no official song match for 'Song' by 'Artist'"
+                ),
+                summary("vid5", "Song", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_no_match_for_the_same_artist_and_id_excuses_the_video(self):
+        log = "\n".join(
+            [
+                play("cover1", "Song", "Artist"),
+                log_line(
+                    "audio switch: no official song match for 'Song' by 'Artist'"
+                ),
+                summary("cover1", "Song", True),
             ]
         )
         self.assertEqual("PASS", statuses(log)[1].status)
@@ -208,6 +321,130 @@ class NextPrepTest(unittest.TestCase):
         self.assertEqual("FAIL", statuses(log)[6].status)
 
 
+class SongListTest(unittest.TestCase):
+    def test_tabs_kinds_playlists_and_search_rows_are_read(self):
+        songs = smokecheck.parse_songs(
+            "# comment\n"
+            "-RJSbO8UZVY\tmv\n"
+            "cover1\tcover\tPL123\n"
+            "search:Espresso Sabrina Carpenter\tplain\tplay by search\n"
+            "\n"
+        )
+        self.assertEqual(3, len(songs))
+        self.assertEqual("-RJSbO8UZVY", songs[0].key)
+        self.assertEqual("mv", songs[0].kind)
+        self.assertEqual("cover1", songs[1].video_id)
+        self.assertEqual("PL123", songs[1].playlist)
+        self.assertIsNone(songs[2].video_id)
+        self.assertEqual("Espresso Sabrina Carpenter", songs[2].search)
+
+
+class KindCheckTest(unittest.TestCase):
+    def test_mv_kind_requires_a_version_swap(self):
+        songs = specs("mv1\tmv")
+        result = statuses_with_songs(summary("mv1", "Song", True), songs)[1]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("mv1", result.details[0])
+
+    def test_mv_kind_passes_with_a_version_swap(self):
+        log = "\n".join(
+            [
+                log_line("song version: mv1 -> aud1 via search before-audio"),
+                summary("mv1", "Song", True),
+            ]
+        )
+        self.assertEqual(
+            "PASS", statuses_with_songs(log, specs("mv1\tmv"))[1].status
+        )
+
+    def test_hq_kind_needs_one_accepted_verification(self):
+        songs = specs("hq1\thq")
+        log = log_line(
+            "hq-verify: Song Qobuz match=95% offset=0 -> accepted reference=wav"
+        )
+        self.assertEqual("PASS", statuses_with_songs(log, songs)[4].status)
+
+    def test_hq_kind_fails_when_only_rejections_exist(self):
+        songs = specs("hq1\thq")
+        log = log_line(
+            "hq-verify: Song Qobuz match=80% offset=0 -> rejected reference=wav"
+        )
+        self.assertEqual("FAIL", statuses_with_songs(log, songs)[4].status)
+
+    def test_hq_kind_skips_without_settings(self):
+        songs = specs("hq1\thq")
+        self.assertEqual("SKIP", statuses_with_songs("", songs)[4].status)
+
+    def test_hq_kind_skips_when_the_import_was_not_confirmed(self):
+        songs = specs("hq1\thq")
+        log = log_line(
+            "hq-verify: Song Qobuz match=95% offset=0 -> accepted reference=wav"
+        )
+        checks = smokecheck.check_log(log, songs=songs, hq_configured=False)
+        result = {check.number: check for check in checks}[4]
+        self.assertEqual("SKIP", result.status)
+
+    def test_cover_kind_passes_when_it_plays_as_itself(self):
+        songs = specs("cover1\tcover")
+        log = "\n".join(
+            [
+                log_line("song version: cover1 -> none via none (cover)"),
+                summary("cover1", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses_with_songs(log, songs)[7].status)
+
+    def test_cover_kind_fails_when_replaced_by_an_official_song(self):
+        songs = specs("cover1\tcover")
+        log = "\n".join(
+            [
+                log_line("song version: cover1 -> aud1 via search before-audio"),
+                summary("cover1", "Dance Monkey", True),
+            ]
+        )
+        result = statuses_with_songs(log, songs)[7]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("aud1", result.details[0])
+
+    def test_cover_kind_fails_without_a_summary(self):
+        songs = specs("cover1\tcover")
+        self.assertEqual("FAIL", statuses_with_songs("", songs)[7].status)
+
+    def test_cover_no_match_is_not_a_catalogue_failure(self):
+        songs = specs("cover1\tcover")
+        log = "\n".join(
+            [
+                play("cover1", "Dance Monkey", "오화요"),
+                log_line(
+                    "audio switch: no official song match for 'Dance Monkey' by '오화요'"
+                ),
+                summary("cover1", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses_with_songs(log, songs)[2].status)
+
+    def test_cover_next_prep_keeps_its_own_id(self):
+        songs = specs("cover1\tcover")
+        log = "\n".join(
+            [
+                log_line("song version: cover1 kept (none)"),
+                summary("cover1", "Dance Monkey", True),
+                log_line(
+                    "next-prep: Dance Monkey version=cover1 lyrics=none hq=none "
+                    "sync=skipped mix=none in 120ms"
+                ),
+            ]
+        )
+        self.assertEqual("PASS", statuses_with_songs(log, songs)[6].status)
+
+    def test_plain_kind_has_no_mv_or_cover_requirement(self):
+        songs = specs("search:Espresso Sabrina Carpenter\tplain")
+        checks = statuses_with_songs("", songs)
+        self.assertEqual("SKIP", checks[1].status)
+        self.assertEqual("SKIP", checks[4].status)
+        self.assertEqual("SKIP", checks[7].status)
+
+
 class OutputTest(unittest.TestCase):
     def test_table_and_markdown_show_every_check(self):
         checks = smokecheck.check_log("")
@@ -239,11 +476,22 @@ class OutputTest(unittest.TestCase):
     def test_main_returns_zero_when_all_checks_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "logcat.txt"
-            log.write_text("", encoding="utf-8")
+            log.write_text(log_line("nothing to judge") + "\n", encoding="utf-8")
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 code = smokecheck.main([str(log)])
             self.assertEqual(0, code)
+
+    def test_main_returns_two_for_an_empty_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "logcat.txt"
+            log.write_text("", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = smokecheck.main([str(log)])
+            self.assertEqual(2, code)
+            self.assertIn("비어", stderr.getvalue())
 
 
 if __name__ == "__main__":
