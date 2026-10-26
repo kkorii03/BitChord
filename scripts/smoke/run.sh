@@ -27,6 +27,9 @@ mkdir -p "$OUT"
 PKG=com.dev.bitchord
 APP_DIR="/sdcard/Android/data/$PKG/files"
 SONGS_FILE=${SMOKE_SONGS_FILE:-scripts/smoke/songs.txt}
+# A smoke/*mv* branch runs only the version-decision list: GitHub's runners get
+# no YouTube audio, so only what is decided before audio can be judged there.
+case "${GITHUB_REF_NAME:-}" in *mv*) SONGS_FILE=scripts/smoke/songs-mv.txt ;; esac
 WAIT_PER_SONG=45
 HQ_WAIT_PER_SONG=90
 SYNC_WAIT_PER_SONG=75
@@ -86,11 +89,15 @@ adb shell "mkdir -p '$APP_DIR' && rm -rf '$APP_DIR/synctest' && touch '$APP_DIR/
 SETTINGS_DEVICE=""
 if [ -n "${SMOKE_SETTINGS_FILE:-}" ]; then
   if [ -f "$SMOKE_SETTINGS_FILE" ]; then
-    SETTINGS_DEVICE="$APP_DIR/smoke-settings.json"
-    adb push "$SMOKE_SETTINGS_FILE" "$SETTINGS_DEVICE" >/dev/null 2>&1 || {
-      echo "smoke: could not push $SMOKE_SETTINGS_FILE" >&2
-      SETTINGS_DEVICE=""
-    }
+    # A file adb pushes under /sdcard belongs to the shell user and the app
+    # could not read it (second run: "debug-import: unreadable path"). The
+    # debuggable app copies it into its own files dir with run-as instead.
+    adb push "$SMOKE_SETTINGS_FILE" /data/local/tmp/smoke.bitchord-settings >/dev/null 2>&1 &&
+      adb shell "run-as $PKG sh -c 'cat /data/local/tmp/smoke.bitchord-settings > files/smoke.bitchord-settings'" </dev/null &&
+      SETTINGS_DEVICE="/data/data/$PKG/files/smoke.bitchord-settings" || {
+        echo "smoke: could not hand $SMOKE_SETTINGS_FILE to the app" >&2
+        SETTINGS_DEVICE=""
+      }
   else
     echo "smoke: SMOKE_SETTINGS_FILE not found: $SMOKE_SETTINGS_FILE" >&2
   fi

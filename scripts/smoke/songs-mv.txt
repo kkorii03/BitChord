@@ -1,0 +1,10 @@
+# Version-decision check: official MVs must be replaced by their song versions
+# before audio; covers must stay themselves.
+-RJSbO8UZVY	mv
+QYh6mYIJG2Y	mv
+ekzHIouo8Q4	mv
+av5JD1dfj_c	mv
+CnAmeh0-E-U	mv
+v59g4HRNIkc	cover
+-LqfikBILXs	cover
+US2I6tSRjcE	cover
