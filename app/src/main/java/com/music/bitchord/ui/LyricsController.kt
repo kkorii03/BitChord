@@ -81,6 +81,14 @@ class LyricsController(
      */
     private var songCheckStartedFor: String? = null
 
+    /**
+     * The lyrics whose first ninety seconds were already heard for a measured
+     * song's refine in this playback. Keeps a refusal (no audio, a 429) from
+     * being asked again on every timing refresh; a different track or sound
+     * clears it.
+     */
+    private var refineHeardStartedFor: String? = null
+
     /** Which of the four databases [lyrics] came from, for the panel's credit. */
     private val _lyricsSource = MutableStateFlow<LyricsSource?>(null)
     val lyricsSource: StateFlow<LyricsSource?> = _lyricsSource.asStateFlow()
@@ -210,6 +218,7 @@ class LyricsController(
             (currentLyricsRequest?.localUri != null) != (localUri != null)
         ) {
             songCheckStartedFor = null
+            refineHeardStartedFor = null
         }
         lyricsFor = key
         lyricsGeneration += 1
@@ -917,7 +926,9 @@ class LyricsController(
         val note = if (timingBaseAllowed && timingMeasureAllowed) LyricsTiming.note(app, request.videoId) else null
         if (generation != lyricsGeneration || timingLines !== lines) return
         val shiftMs = base?.let { adjustment ->
-            LyricsTiming.shownShiftMs(lines, adjustment) - if (adjustment.byAi) (timing?.aiBiasMs ?: 0L) else 0L
+            LyricsTiming.shownShiftMs(lines, adjustment) -
+                (if (adjustment.byAi) (timing?.aiBiasMs ?: 0L) else 0L) +
+                (timing?.refineMs ?: 0L)
         }
         val matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent
         val manualMs = timing?.manualMs ?: 0L
@@ -975,6 +986,55 @@ class LyricsController(
                 // already shifted onto the same clock as [LyricsTiming.apply].
                 heardWords = timing?.heardWords.orEmpty(),
             )
+        }
+        if (timing != null) {
+            LyricsTiming.refine(app, request.videoId, lines, timing, audioSource)
+            startRefineHeardIfNeeded(request, lines, timing, audioSource, generation)
+        }
+    }
+
+    /**
+     * A measured song's first ninety seconds, heard once so the provider's
+     * remaining line error can be refined. Event-driven: it runs when the
+     * lines and their base are known, not on a timer. A refusal is held for
+     * this playback by [refineHeardStartedFor]; a successful transcript is
+     * kept in the entry and reused.
+     */
+    private suspend fun startRefineHeardIfNeeded(
+        request: LyricsRequest,
+        lines: List<LyricLine>,
+        timing: LyricsTiming.Timing,
+        audioSource: String?,
+        generation: Long,
+    ) {
+        val base = timing.base ?: return
+        if (base.byAi) return
+        if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
+        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, audioSource)) return
+        val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
+        if (refineHeardStartedFor == key) return
+        refineHeardStartedFor = key
+        val song = Song(
+            videoId = request.videoId,
+            title = request.title,
+            artist = request.artist,
+            thumbnailUrl = null,
+            isVideo = request.isVideo,
+            localUri = request.localUri,
+        )
+        scope.launch {
+            val heard = LyricsTiming.ensureRefineHeard(
+                app,
+                request.videoId,
+                song,
+                lines,
+                timing,
+                audioSource,
+            )
+            if (heard && generation == lyricsGeneration && timingLines === lines) {
+                refreshTiming(generation, lines)
+            }
         }
     }
 
