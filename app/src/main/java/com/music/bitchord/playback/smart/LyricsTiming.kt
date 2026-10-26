@@ -226,6 +226,12 @@ object LyricsTiming {
         // Otherwise the measurement first: when it lines the two up it is right
         // to a tenth of a second, which Gemini's answers never are.
         measured?.toAdjustment(byAi = false)?.let { return it }
+        // A measurement that found the video already on the record's clock is
+        // an answer too: no shift. Falling through to the AI answer here moved
+        // lyrics the record had just shown were in place.
+        if (measuredAllowed && entry.autoVersion == AUTO_VERSION && entry.autoNoChange) {
+            return Adjustment.Shift(0L, byAi = false)
+        }
         return aiOf(entry, lines, isVideo, audioSource)
     }
 
@@ -456,7 +462,12 @@ object LyricsTiming {
         store(context).update(videoId) {
             it.copy(
                 autoVersion = AUTO_VERSION,
-                auto = done.result?.let(::savedOf),
+                auto = autoAfter(
+                    previous = it.auto,
+                    previousCurrent = it.autoVersion == AUTO_VERSION,
+                    fresh = done.result?.let(::savedOf),
+                    noChange = done.noChange,
+                ),
                 autoComplete = done.complete,
                 autoRecordPartial = done.recordPartial,
                 autoNoChange = done.noChange,
@@ -470,6 +481,19 @@ object LyricsTiming {
         sampleBias(context, videoId)
         _changes.tryEmit(videoId)
     }
+
+    /**
+     * The measurement to keep after a pass ends with [fresh].
+     *
+     * A pass that could not line the whole video up (no result, and not "the
+     * two are the same") says nothing against the answer an earlier pass found:
+     * on 10-26 FRIENDS (ZjZRLy3A3QA) had a +199 ms measurement from the
+     * record's opening, the full pass then came back empty, the null replaced
+     * it and the lyrics fell to the AI answer, 0.40 s early on every line.
+     * Only a new result, or a finding that no shift is needed, replaces it.
+     */
+    internal fun <T> autoAfter(previous: T?, previousCurrent: Boolean, fresh: T?, noChange: Boolean): T? =
+        fresh ?: previous.takeIf { previousCurrent && !noChange }
 
     private sealed interface Measured {
         data class Done(
@@ -1829,6 +1853,13 @@ object LyricsTiming {
 
     /** What to take off [engine]'s answers, ms; 0 until enough songs have taught it. */
     private fun aiBias(context: Context, engine: String): Long {
+        // Learned but not applied. Scored on the phone (10-26, Whisper judge),
+        // every AI-timed line came out earlier with the learned ~200 ms taken
+        // off than without it: FRIENDS -0.40 s vs -0.19, When We Were Young
+        // -0.21 vs 0.00, Dear -0.23 vs -0.03. One song's measured gap ran the
+        // other way (-205 ms), so a single global lateness cannot fix a song.
+        // Samples are still collected; the log keeps bias=0 until it is proved.
+        if (!AI_BIAS_APPLIED) return 0L
         cachedBias[engine]?.let { return it }
         val samples = context.applicationContext.getSharedPreferences(BIAS_PREFS, Context.MODE_PRIVATE)
             .getString(biasKey(engine), null).orEmpty().split(',').mapNotNull { it.toLongOrNull() }.sorted()
@@ -1905,6 +1936,7 @@ object LyricsTiming {
     private const val BIAS_PREFS = "lyrics_timing"
     private const val BIAS_KEY = "ai_bias_samples"
     private const val BIAS_SAMPLES = 40
+    private const val AI_BIAS_APPLIED = false
     private const val BIAS_MIN_SAMPLES = 3
     private const val BIAS_MAX_MS = 1_500L
     private const val BIAS_SAMPLE_LIMIT_MS = 3_000L
