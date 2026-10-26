@@ -224,6 +224,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // A verdict remembered by an earlier launch is repaired in the
         // background without waiting for the Downloads page or another play.
         com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
+        com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
         com.music.bitchord.download.LikedAutoDownload.init(this)
         // The device's own listening record. Opened here rather than in
         // PlaybackService because the Replay page reads it from the UI side and

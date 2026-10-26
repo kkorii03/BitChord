@@ -162,6 +162,7 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.DownloadedBadge
+import com.music.bitchord.ui.components.HqLibraryProgressLine
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
@@ -643,6 +644,11 @@ fun DetailScreen(
             }
 
             if (page.browseId == "local:downloads") {
+                item(key = "hq-library-progress") {
+                    HqLibraryProgressLine(
+                        Modifier.padding(horizontal = HEADER_GUTTER, vertical = 6.dp),
+                    )
+                }
                 item(key = "mv-sound-suspects") {
                     MvSoundSuspectBanner(palette)
                 }

@@ -58,7 +58,7 @@ class HqLibraryPolicyTest {
             ),
             prefetchLimit = 500,
         )
-        assertEquals(listOf("lossy", "lossless"), plan.prefetch.map { it.videoId }.sorted())
+        assertEquals(listOf("lossy", "lossless").sorted(), plan.prefetch.map { it.videoId }.sorted())
         assertTrue(plan.replace.isEmpty())
     }
 
@@ -147,5 +147,18 @@ class HqLibraryPolicyTest {
             prefetchLimit = 500,
         )
         assertEquals(1, plan.replace.size)
+    }
+
+    @Test
+    fun `the best verified rung wins when one song has several proved rows`() {
+        val plan = HqLibraryPolicy.select(
+            listOf(
+                entry("song", current = HqTier.NORMAL, verified = HqTier.LOSSLESS_16, source = "first"),
+                entry("song", current = HqTier.NORMAL, verified = HqTier.HI_RES_24_88, source = "better"),
+            ),
+            prefetchLimit = 500,
+        )
+        assertEquals(HqTier.HI_RES_24_88, plan.replace.single().verifiedTier)
+        assertEquals("better", plan.replace.single().sourceConfigId)
     }
 }

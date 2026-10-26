@@ -8,6 +8,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.HqMatchPolicy
@@ -208,6 +209,9 @@ object HqAudioVerify {
                     val tier = HqQuality.tierOf(stream.format)
                     val verified = HqVerificationStore.Verified(offset, rate, match, tier)
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
+                    // A downloaded or pre-saved copy may now be replaceable with
+                    // this newly proved rung, even if it was already high quality.
+                    HqLibraryUpgrade.onVerified(context)
                     verified
                 }
             }

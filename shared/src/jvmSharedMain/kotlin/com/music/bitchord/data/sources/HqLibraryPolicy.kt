@@ -91,7 +91,19 @@ object HqLibraryPolicy {
             .filter { it.videoId.isNotBlank() }
             .filter { it.verifiedTier != null }
             .filter { !it.sourceConfigId.isNullOrBlank() && !it.trackId.isNullOrBlank() }
-            .distinctBy { it.videoId }
+            // One song may have been proved against more than one source row.
+            // The best rung wins; a second, lower verdict must not hide it just
+            // because it was written first.
+            .groupBy { it.videoId }
+            .mapNotNull { (_, candidates) ->
+                candidates.minWithOrNull(
+                    compareBy<HqLibraryEntry> { it.verifiedTier?.rank ?: Int.MAX_VALUE }
+                        .thenByDescending { it.liked }
+                        .thenByDescending { it.plays }
+                        .thenBy { it.sourceConfigId.orEmpty() }
+                        .thenBy { it.trackId.orEmpty() },
+                )
+            }
             .toList()
 
         val replace = if (replaceEnabled) {

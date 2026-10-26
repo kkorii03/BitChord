@@ -820,6 +820,35 @@ object SourceResolver {
     }
 
     /**
+     * Open the exact pair a sound comparison already accepted.
+     *
+     * The ordinary download path searches again, which can find a different
+     * row under the same title and make the replacement a different recording
+     * from the one that was proved. The automatic high-quality pass therefore
+     * pins both ids: [sourceConfigId] and [trackId] are the pair stored with
+     * the verdict, and this asks only that source for that row.
+     *
+     * Null when the source is disabled, no longer configured, is YouTube
+     * itself, or cannot serve the row right now. The caller keeps the old file
+     * rather than falling back to an unverified search.
+     */
+    suspend fun forDownloadVerified(
+        sourceConfigId: String,
+        trackId: String,
+        request: StreamRequest = requestForDownload(),
+    ): SourceStream? {
+        if (sourceConfigId.isBlank() || trackId.isBlank()) return null
+        val source = SourceRegistry.activeForDownload()
+            .firstOrNull { it.configId == sourceConfigId }
+            ?: return null
+        if (source.kind == SourceKind.YOUTUBE) return null
+        if (SourceCooldown.isResting(source.configId)) return null
+        val opened = attempt(source) { source.stream(trackId, request) } ?: return null
+        SourceCooldown.succeeded(source.configId)
+        return opened.copy(sourceConfigId = source.configId, trackId = trackId)
+    }
+
+    /**
      * Whether a lossy [candidate] is worth keeping as a file over whatever
      * YouTube's own AAC ladder would have given for the same track.
      *

@@ -4262,6 +4262,9 @@ class PlaybackService : MediaLibraryService() {
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].
         mediaItem?.mediaId?.let(TrackLog::onTrackStarted)
+        // A pass interrupted by a process death resumes on the next play. The
+        // scheduler debounces and uses unique work, so this is cheap per track.
+        com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
         // A play beginning is what ends the last one's upgrade verdict. Here
         // rather than in [QualityUpgrade.forget] because that runs on the
         // failure and rollback paths, where a previous "no" is exactly what
