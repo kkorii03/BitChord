@@ -101,9 +101,27 @@ object LyricsOverrideFile {
     }
 
     fun remove(file: File, videoId: String): Boolean = synchronized(lock) {
+        removeWhere(file, videoId) { true }
+    }
+
+    /**
+     * Drops an automatic re-check override, keeping a listener's own edit.
+     * Called when the audio file is replaced: the re-check's sheet and sync
+     * were made for the old bytes, while a user override stays chosen.
+     */
+    fun removeRecheck(file: File, videoId: String): Boolean = synchronized(lock) {
+        removeWhere(file, videoId) { entry -> Kind.of(entry.kind) == Kind.RECHECK }
+    }
+
+    private fun removeWhere(
+        file: File,
+        videoId: String,
+        keep: (Entry) -> Boolean,
+    ): Boolean = synchronized(lock) {
         runCatching {
             val current = readFile(file)
-            if (videoId !in current.songs) return@synchronized false
+            val entry = current.songs[videoId] ?: return@synchronized false
+            if (!keep(entry)) return@synchronized false
             val songs = current.songs.toMutableMap()
             songs.remove(videoId)
             val data = Data(VERSION, songs)
@@ -116,6 +134,15 @@ object LyricsOverrideFile {
             true
         }.getOrDefault(false)
     }
+
+    /**
+     * Whether lyrics read from an override should be treated as the file's
+     * own for timing. A re-check's sheet is timed to the file's audio, so its
+     * stored sync must apply on every surface; only the file's own tags count
+     * as "from file" for the record/video split.
+     */
+    fun timingIsFilesOwn(hasOverride: Boolean, localUri: Boolean): Boolean =
+        !hasOverride && localUri
 
     private fun readFile(file: File): Data = runCatching {
         if (!file.isFile) return Data()

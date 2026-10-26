@@ -132,3 +132,46 @@ class LyricsOverrideFileTest {
         assertNull(LyricsOverrideFile.choose(null, null, null))
     }
 }
+
+class LyricsOverrideFileResetTest {
+
+    private fun tempFile(): File {
+        val dir = Files.createTempDirectory("lyrics-overrides-reset").toFile()
+        return File(dir, LyricsOverrideFile.FILE_NAME).also { file ->
+            file.deleteOnExit()
+            file.parentFile?.deleteOnExit()
+        }
+    }
+
+    @Test
+    fun `a replaced file drops the recheck override`() {
+        val file = tempFile()
+        LyricsOverrideFile.write(
+            file, "id", LrcLib.parseLrc("[00:01.00]old recheck"), LyricsSource.LRCLIB,
+            kind = LyricsOverrideFile.Kind.RECHECK,
+        )
+
+        assertTrue(LyricsOverrideFile.removeRecheck(file, "id"))
+        assertNull(LyricsOverrideFile.read(file, "id"))
+    }
+
+    @Test
+    fun `a replaced file keeps the listener's own override`() {
+        val file = tempFile()
+        LyricsOverrideFile.write(
+            file, "id", LrcLib.parseLrc("[00:01.00]mine"), LyricsSource.LRCLIB,
+            kind = LyricsOverrideFile.Kind.USER,
+        )
+
+        assertFalse(LyricsOverrideFile.removeRecheck(file, "id"))
+        assertEquals("mine", LyricsOverrideFile.read(file, "id")?.lines?.single()?.text)
+        assertEquals(LyricsOverrideFile.Kind.USER, LyricsOverrideFile.read(file, "id")?.kind)
+    }
+
+    @Test
+    fun `override lyrics are never treated as the file's own timing`() {
+        assertFalse(LyricsOverrideFile.timingIsFilesOwn(hasOverride = true, localUri = true))
+        assertTrue(LyricsOverrideFile.timingIsFilesOwn(hasOverride = false, localUri = true))
+        assertFalse(LyricsOverrideFile.timingIsFilesOwn(hasOverride = false, localUri = false))
+    }
+}

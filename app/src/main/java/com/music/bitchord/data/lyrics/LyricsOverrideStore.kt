@@ -34,4 +34,9 @@ object LyricsOverrideStore {
     suspend fun remove(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         LyricsOverrideFile.remove(file(context), videoId)
     }
+
+    /** Drops an automatic re-check override but keeps the listener's own edit. */
+    suspend fun removeRecheck(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
+        LyricsOverrideFile.removeRecheck(file(context), videoId)
+    }
 }

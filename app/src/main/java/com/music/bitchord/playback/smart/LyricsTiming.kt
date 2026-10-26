@@ -18,6 +18,7 @@ import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.SongCheckWindow
+import com.music.bitchord.data.lyrics.SongFileGeneration
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.timedBy
@@ -1230,9 +1231,10 @@ object LyricsTiming {
         // moment the track changes: run the request on the app-lifetime scope
         // so it finishes and keeps its answer. One request per video and
         // lyrics text, whoever asks. A cancelled caller stops waiting only.
-        val flight = "song:${song.videoId}:$key"
+        val generation = songGenerations.current(song.videoId)
+        val flight = "song:${song.videoId}:$generation:$key"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            verifySongRequest(context.applicationContext, song, lines, key, engine)
+            verifySongRequest(context.applicationContext, song, lines, key, engine, generation)
         }
         val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
         if (running === fresh) {
@@ -1245,11 +1247,29 @@ object LyricsTiming {
     private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
 
     /**
-     * The one song-sync request allowed at a time. A 429 is an account-wide
-     * statement, so serialising the checks keeps a queue of skipped songs from
+     * A replaced file is a new recording under the same row id: a check that
+     * started on the old bytes must not write its answer back afterwards.
+     * [resetSongCheck] bumps this; every writer carries the generation it
+     * started with and leaves the store alone when it no longer matches.
+     */
+    private val songGenerations = SongFileGeneration()
+
+    /** One check per song at a time, without holding the account-wide gate. */
+    private val songLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun songLock(videoId: String): Mutex =
+        songLocks.getOrPut(videoId) { Mutex() }
+
+    /**
+     * The one Deepgram request allowed at a time. A 429 is an account-wide
+     * statement, so serialising the calls keeps a queue of skipped songs from
      * re-tripping the limiter while another check is in flight. Nothing polls:
      * waiters are suspended on this mutex, and a wait longer than
      * [SongSyncRetry.MAX_INLINE_WAIT_MS] is deferred to the next playback.
+     *
+     * Held only around the Deepgram call (and its own short retry wait), never
+     * across the provider lookup or the file decode; those are serialised per
+     * song by [songLocks] instead.
      */
     private val songSyncGate = Mutex()
 
@@ -1264,33 +1284,44 @@ object LyricsTiming {
         lines: List<LyricLine>,
         key: Int,
         engine: String,
-    ): Boolean = songSyncGate.withLock {
-        // Checked again under the gate: another song's 429 may have marked
+        generation: Long,
+    ): Boolean = songLock(song.videoId).withLock {
+        // The file may have been replaced before this flight reached the lock.
+        if (!songGenerations.isCurrent(song.videoId, generation)) return@withLock false
+        // Checked again under the lock: another song's 429 may have marked
         // this one while its flight was waiting here.
         val pending = store(context).get(song.videoId)
         val retryAt = pending?.songRetryAtMs
         if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
             return@withLock false
         }
-        val check = runSongCheck(context, song, lines, key, engine) ?: return@withLock false
+        val check = runSongCheck(context, song, lines, key, engine, generation)
+            ?: return@withLock false
         if (check.result == "no-words") return@withLock false
         val fitted = check.fitted ?: return@withLock true
+        var applied = false
         store(context).update(song.videoId) {
-            it.copy(
-                aiTextKey = key,
-                ai = savedOf(fitted),
-                aiShiftMs = null,
-                aiStarts = null,
-                aiFailedKey = null,
-                heardWords = check.heard.take(MAX_HEARD_WORDS)
-                    .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
-                aiPreferred = it.aiPreferred && it.aiTextKey == key,
-                biasSampled = false,
-                aiEngine = engine,
-                songRetryKey = null,
-                songRetryAtMs = null,
-            )
+            if (!songGenerations.isCurrent(song.videoId, generation)) {
+                it
+            } else {
+                applied = true
+                it.copy(
+                    aiTextKey = key,
+                    ai = savedOf(fitted),
+                    aiShiftMs = null,
+                    aiStarts = null,
+                    aiFailedKey = null,
+                    heardWords = check.heard.take(MAX_HEARD_WORDS)
+                        .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    aiPreferred = it.aiPreferred && it.aiTextKey == key,
+                    biasSampled = false,
+                    aiEngine = engine,
+                    songRetryKey = null,
+                    songRetryAtMs = null,
+                )
+            }
         }
+        if (!applied) return@withLock false
         _changes.tryEmit(song.videoId)
         songLog(
             song.videoId,
@@ -1316,6 +1347,7 @@ object LyricsTiming {
         lines: List<LyricLine>,
         key: Int,
         engine: String,
+        generation: Long,
     ): SongCheck? {
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
@@ -1336,14 +1368,15 @@ object LyricsTiming {
         }
         val texts = indices.map { lines[it].text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
-        val answer = listenForSong(context, song.videoId, key, audio, language) ?: return null
+        val answer = listenForSong(context, song.videoId, key, audio, language, generation)
+            ?: return null
         // Spent once Deepgram actually answered — success or refusal. A
         // cancellation or a request that never reached it is not recorded,
         // so the next playback may try again; nothing is recorded before the
         // answer either, which used to leave a song never checked again when
         // its screen job was cancelled mid-request. A 429 never gets here:
         // [listenForSong] either retried it or deferred the song.
-        if (answer.httpCode != null) noteAttempt(context, song.videoId, key, engine)
+        if (answer.httpCode != null) noteAttempt(context, song.videoId, key, engine, generation)
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
             return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0)
@@ -1395,34 +1428,42 @@ object LyricsTiming {
         key: Int,
         audio: ByteArray,
         language: String,
+        generation: Long,
     ): com.music.bitchord.data.lyrics.Deepgram.Answer? {
-        val quiet = songQuietUntilMs - System.currentTimeMillis()
-        if (quiet > 0) {
-            if (!SongSyncRetry.canWaitInline(quiet)) {
-                markRateLimited(context, videoId, key, quiet)
-                rateLimitedLog(videoId, quiet)
-                return null
-            }
-            delay(quiet)
-        }
         var attempt = 0
         while (true) {
-            val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
-                audio,
-                language,
-                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
-            )
-            if (answer.httpCode != 429) {
-                songQuietUntilMs = 0L
-                return answer
+            // The account-wide gate is held only for the Deepgram call (and
+            // the short wait its own 429 asks for). Provider lookups and audio
+            // decoding happen before this, under the per-song lock.
+            val answer = songSyncGate.withLock {
+                if (!songGenerations.isCurrent(videoId, generation)) return null
+                val quiet = songQuietUntilMs - System.currentTimeMillis()
+                if (quiet > 0) {
+                    if (!SongSyncRetry.canWaitInline(quiet)) {
+                        markRateLimited(context, videoId, key, quiet, generation)
+                        rateLimitedLog(videoId, quiet)
+                        return null
+                    }
+                    delay(quiet)
+                }
+                if (!songGenerations.isCurrent(videoId, generation)) return null
+                val heard = com.music.bitchord.data.lyrics.Deepgram.listen(
+                    audio,
+                    language,
+                    com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
+                )
+                if (!songGenerations.isCurrent(videoId, generation)) return null
+                if (heard.httpCode != 429) songQuietUntilMs = 0L
+                heard
             }
+            if (answer.httpCode != 429) return answer
             val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
             songQuietUntilMs = System.currentTimeMillis() + wait
             rateLimitedLog(videoId, wait)
             if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
                 !SongSyncRetry.canWaitInline(wait)
             ) {
-                markRateLimited(context, videoId, key, wait)
+                markRateLimited(context, videoId, key, wait, generation)
                 return null
             }
             delay(wait)
@@ -1431,9 +1472,22 @@ object LyricsTiming {
     }
 
     /** Keeps a rate-limited song until its server-stated wait has passed; next playback retries. */
-    private suspend fun markRateLimited(context: Context, videoId: String, key: Int, delayMs: Long) {
+    private suspend fun markRateLimited(
+        context: Context,
+        videoId: String,
+        key: Int,
+        delayMs: Long,
+        generation: Long,
+    ) {
+        if (!songGenerations.isCurrent(videoId, generation)) return
         val retryAt = System.currentTimeMillis() + delayMs.coerceAtLeast(0L)
-        store(context).update(videoId) { it.copy(songRetryKey = key, songRetryAtMs = retryAt) }
+        store(context).update(videoId) {
+            if (songGenerations.isCurrent(videoId, generation)) {
+                it.copy(songRetryKey = key, songRetryAtMs = retryAt)
+            } else {
+                it
+            }
+        }
     }
 
     /** The one line the phone log needs for a 429, without words or keys. */
@@ -1460,8 +1514,16 @@ object LyricsTiming {
     }
 
     /** Records that [engine] was spent on these lyrics for [videoId]; once per text. */
-    private suspend fun noteAttempt(context: Context, videoId: String, key: Int, engine: String) {
+    private suspend fun noteAttempt(
+        context: Context,
+        videoId: String,
+        key: Int,
+        engine: String,
+        generation: Long,
+    ) {
+        if (!songGenerations.isCurrent(videoId, generation)) return
         store(context).update(videoId) { entry ->
+            if (!songGenerations.isCurrent(videoId, generation)) return@update entry
             val sameLyrics = entry.aiAttemptedKey == key
             entry.copy(
                 aiAttemptedKey = key,
@@ -1499,6 +1561,11 @@ object LyricsTiming {
      * keep the same path, so the record itself has to be dropped.
      */
     suspend fun resetSongCheck(context: Context, videoId: String) {
+        // Bumped before anything is cleared: a check already listening to the
+        // old bytes carries the old generation and will not write its answer
+        // back after this point.
+        songGenerations.bump(videoId)
+        recheckTokens.remove(videoId)
         store(context).update(videoId) {
             it.copy(
                 aiTextKey = null,
@@ -1514,8 +1581,12 @@ object LyricsTiming {
                 whisperKey = null,
                 songRetryKey = null,
                 songRetryAtMs = null,
+                syncCheckVersion = 0,
             )
         }
+        // The re-check's sheet and its saved sync belong to the old file. A
+        // listener's own override is kept.
+        LyricsOverrideStore.removeRecheck(context, videoId)
         _changes.tryEmit(videoId)
     }
 
@@ -1595,6 +1666,7 @@ object LyricsTiming {
         ) return null
         val audioSource = audioSourceKey(song.videoId, localFile = true)
         val key = textKey(lines, audioSource)
+        val generation = songGenerations.current(song.videoId)
         val before = store(context).get(song.videoId)
         val beforeMatch = before?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
         val reason = DownloadedSyncCheck.recheckReason(
@@ -1603,8 +1675,11 @@ object LyricsTiming {
             matchPercent = beforeMatch,
         )
         if (reason == DownloadedSyncCheck.Recheck.NONE) return null
-        recheckTokens[song.videoId] = reason.token
-        return songSyncGate.withLock {
+        if (songGenerations.isCurrent(song.videoId, generation)) {
+            recheckTokens[song.videoId] = reason.token
+        }
+        return songLock(song.videoId).withLock {
+            if (!songGenerations.isCurrent(song.videoId, generation)) return@withLock null
             // Another flight may have finished this file while this one waited.
             val entry = store(context).get(song.videoId)
             if (!DownloadedSyncCheck.isUnverified(entry?.syncCheckVersion)) {
@@ -1615,7 +1690,9 @@ object LyricsTiming {
             // The file's own lyrics first: they are what is shown, so an
             // answer fitted to them needs no second interpretation. No audio
             // or a 429 leaves the version unset so the next play may try again.
-            val own = runSongCheck(context, song, lines, key, ENGINE_DEEPGRAM_WHISPER) ?: return@withLock null
+            val own = runSongCheck(context, song, lines, key, ENGINE_DEEPGRAM_WHISPER, generation)
+                ?: return@withLock null
+            if (!songGenerations.isCurrent(song.videoId, generation)) return@withLock null
             var best = own
             var bestFresh: LyricsRepository.Result? = null
             // A fresh sheet is worth a request when the stored answer is
@@ -1628,6 +1705,7 @@ object LyricsTiming {
                 val fresh = fetchDownloadedLyrics(
                     song, title, artist, durationMs, album, alternatives, artistKnown, artistAliases,
                 )
+                if (!songGenerations.isCurrent(song.videoId, generation)) return@withLock null
                 if (fresh != null && fresh.lines != lines) {
                     val other = runSongCheck(
                         context,
@@ -1635,6 +1713,7 @@ object LyricsTiming {
                         fresh.lines,
                         textKey(fresh.lines, audioSource),
                         ENGINE_DEEPGRAM_WHISPER,
+                        generation,
                     )
                     if (other != null && (other.match ?: 0) > (best.match ?: 0)) {
                         best = other
@@ -1652,6 +1731,7 @@ object LyricsTiming {
                 ownMatchPercent = own.match,
                 freshMatchPercent = if (bestFresh != null) result.match else null,
                 freshKey = freshKey,
+                ownNoAnswer = own.result == "no-answer",
             )
             if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
                 // The fresh sheet's fit belongs to its own lines. Both have to
@@ -1672,34 +1752,54 @@ object LyricsTiming {
                         kind = LyricsOverrideFile.Kind.RECHECK,
                     )
                 if (!written) {
-                    recheckTokens[song.videoId] = reason.token
+                    if (songGenerations.isCurrent(song.videoId, generation)) {
+                        recheckTokens[song.videoId] = reason.token
+                    }
+                    return@withLock null
+                }
+                // The file was replaced while the override was being written;
+                // drop it rather than leave the old bytes' sheet for the new.
+                if (!songGenerations.isCurrent(song.videoId, generation)) {
+                    LyricsOverrideStore.removeRecheck(context, song.videoId)
                     return@withLock null
                 }
             }
+            var applied = false
             store(context).update(song.videoId) {
-                val keep = if (decision.replace && chosen != null) {
-                    it.copy(
-                        aiTextKey = decision.key ?: key,
-                        ai = savedOf(chosen),
-                        aiShiftMs = null,
-                        aiStarts = null,
-                        aiFailedKey = null,
-                        heardWords = result.heard.take(MAX_HEARD_WORDS)
-                            .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
-                        aiPreferred = false,
-                        biasSampled = false,
-                        aiEngine = ENGINE_DEEPGRAM_WHISPER,
-                        songRetryKey = null,
-                        songRetryAtMs = null,
-                    )
-                } else {
+                if (!songGenerations.isCurrent(song.videoId, generation)) {
                     it
-                }
-                if (decision.recordVersion) {
-                    keep.copy(syncCheckVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION)
                 } else {
-                    keep
+                    applied = true
+                    val keep = if (decision.replace && chosen != null) {
+                        it.copy(
+                            aiTextKey = decision.key ?: key,
+                            ai = savedOf(chosen),
+                            aiShiftMs = null,
+                            aiStarts = null,
+                            aiFailedKey = null,
+                            heardWords = result.heard.take(MAX_HEARD_WORDS)
+                                .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                            aiPreferred = false,
+                            biasSampled = false,
+                            aiEngine = ENGINE_DEEPGRAM_WHISPER,
+                            songRetryKey = null,
+                            songRetryAtMs = null,
+                        )
+                    } else {
+                        it
+                    }
+                    if (decision.recordVersion) {
+                        keep.copy(syncCheckVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION)
+                    } else {
+                        keep
+                    }
                 }
+            }
+            if (!applied) {
+                if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
+                    LyricsOverrideStore.removeRecheck(context, song.videoId)
+                }
+                return@withLock null
             }
             if (decision.replace && chosen != null) {
                 songLog(

@@ -101,6 +101,11 @@ object DownloadedSyncCheck {
      * whichever sheet fits the audio better, and it only replaces what is
      * stored when it beats the stored answer. A tie keeps the file's own
      * lines, so replaying a checked file does not rewrite it.
+     *
+     * [ownNoAnswer] means the file's own audio produced no answer at all —
+     * a Deepgram HTTP failure, not a confirmed "few words" or "no fit". That
+     * is not a check: the version stays unset so the next playback may try
+     * again, unless a fresh sheet answered and replaced the stored one.
      */
     fun decide(
         storedVersion: Int?,
@@ -109,12 +114,18 @@ object DownloadedSyncCheck {
         ownMatchPercent: Int?,
         freshMatchPercent: Int?,
         freshKey: Int,
+        ownNoAnswer: Boolean = false,
     ): Replacement {
         val freshWins = freshMatchPercent != null &&
             freshMatchPercent > (ownMatchPercent ?: 0)
         val bestMatch = if (freshWins) freshMatchPercent else ownMatchPercent
         if (!shouldReplace(storedVersion, existingMatchPercent, bestMatch)) {
-            return Replacement(replace = false, winner = null, key = null, recordVersion = true)
+            return Replacement(
+                replace = false,
+                winner = null,
+                key = null,
+                recordVersion = !ownNoAnswer,
+            )
         }
         return if (freshWins) {
             Replacement(replace = true, winner = Winner.FRESH, key = freshKey, recordVersion = true)

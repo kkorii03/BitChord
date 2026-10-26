@@ -246,3 +246,68 @@ class DownloadedSyncCheckDecideTest {
         assertTrue(decision.recordVersion)
     }
 }
+
+/** A Deepgram failure is not a completed check: the version must stay unset. */
+class DownloadedSyncCheckNoAnswerTest {
+
+    @Test
+    fun aNoAnswerWithoutAReplacementDoesNotRecordTheVersion() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownNoAnswer = true,
+        )
+        assertFalse(decision.replace)
+        assertFalse(decision.recordVersion)
+    }
+
+    @Test
+    fun aNoAnswerKeepsAnAlreadyStoredAnswerUnrecordedForRetry() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION,
+            existingMatchPercent = 90,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownNoAnswer = true,
+        )
+        assertFalse(decision.replace)
+        assertFalse(decision.recordVersion)
+    }
+
+    @Test
+    fun aFreshAnswerAfterANoAnswerStillRecordsTheVersion() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = 80,
+            freshKey = 20,
+            ownNoAnswer = true,
+        )
+        assertTrue(decision.replace)
+        assertEquals(Winner.FRESH, decision.winner)
+        assertTrue(decision.recordVersion)
+    }
+
+    @Test
+    fun aConfirmedNoWordsStillRecordsTheVersion() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownNoAnswer = false,
+        )
+        assertFalse(decision.replace)
+        assertTrue(decision.recordVersion)
+    }
+}

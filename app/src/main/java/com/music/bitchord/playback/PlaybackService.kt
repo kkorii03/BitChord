@@ -9482,6 +9482,7 @@ class PlaybackService : MediaLibraryService() {
             var foundSource: com.music.bitchord.data.lyrics.LyricsSource? = null
             val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
             var fromFile = false
+            var overrideFile = false
             // A per-song override outranks both the file's own tags/sidecar and
             // every provider, and is what a re-check writes instead of touching
             // the audio file. See LyricsOverrideFile.
@@ -9489,7 +9490,12 @@ class PlaybackService : MediaLibraryService() {
             if (override != null) {
                 lines = override.lines
                 foundSource = override.source
-                fromFile = localUri != null
+                // A re-check's sheet is timed to the file's audio, not the
+                // file's own tags: its stored sync must apply here exactly as
+                // it does on the lyrics screen, including lock screen and car.
+                fromFile = com.music.bitchord.data.lyrics.LyricsOverrideFile
+                    .timingIsFilesOwn(hasOverride = true, localUri = localUri != null)
+                overrideFile = localUri != null
             } else if (localUri != null) {
                 EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
                     lines = file.lines
@@ -9525,8 +9531,24 @@ class PlaybackService : MediaLibraryService() {
             // for it (a correction by hand only); a video's lyrics — streamed,
             // or carried in its download — take Gemini's answer, and the
             // measurement when they are known to be the record's.
-            val timeable = timed && (!fromFile || coverQuery.isVideo)
-            val recordTimed = timeable && (!fromFile || foundSource != null) &&
+            // The same split the lyrics screen makes: a downloaded song's
+            // override is adjustable only when a re-check wrote it, and its
+            // record measurement does not apply; a video's override still can.
+            val timeable = if (overrideFile) {
+                val downloadRecheck = !coverQuery.isVideo && timed &&
+                    override?.kind == com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.RECHECK &&
+                    !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
+                (coverQuery.isVideo && timed) || downloadRecheck
+            } else {
+                timed && (!fromFile || coverQuery.isVideo)
+            }
+            val sourceAllowsRecord = if (overrideFile) {
+                foundSource != null
+            } else {
+                !fromFile || foundSource != null
+            }
+            val recordTimed = timeable && !(overrideFile && !coverQuery.isVideo) &&
+                sourceAllowsRecord &&
                 !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
             suspend fun publish() {
                 val shown = if (timed && raw != null) {
