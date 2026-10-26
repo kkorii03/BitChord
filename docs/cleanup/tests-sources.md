@@ -96,9 +96,11 @@
    `FEATURING = \b(feat|ft|featuring|with)\b.*`가 제목 어디서든 `with`부터
    끝을 지웠다. `"Stay With Me"` → core `"stay"`, `"Dance With Me"` → `"dance"`,
    `"With or Without You"`/`"With You"` → core `""`(검색·매칭 불가).
-   → 고침: 정규화가 소문자로 바꾸기 전에 대문자 `With`를 센티널 토큰으로
-   보호했다가 feat. 크레딧 제거가 끝난 뒤 `with`로 복원한다. 소문자 `with …`
-   크레딧 규칙과 괄호 안 `(Live with Orchestra)`의 버전 판정은 기존과 같다.
+   → 고침: 대소문자가 아니라 `with` 뒤에 오는 말로 가른다. 대명사·한정사·
+   접속사(`with Me`, `with the Wolves`, `with or Without You`)가 오면 제목의
+   일부로 남기고, 이름이 오면 feat. 크레딧으로 자른다. 제목 첫머리의 `with`는
+   언제나 이름이다. 소문자·대문자·전부 대문자 표기가 모두 같은 규칙을 쓰며,
+   괄호 안 `(Live with Orchestra)`의 버전 판정은 기존과 같다.
 
 2. **CJK/한글 제목의 core에 trailing 패키징이 남는다**
    (`TrackMatcherTitleEdgeTest.CJK trailing packaging does not leak into the identity`).
@@ -106,8 +108,10 @@
    `"紅蓮華 Official Video"` → `"紅蓮華officialvideo"`,
    `"여수 밤바다 Official"` → `"여수밤바다official"`,
    `"紅蓮華 Instrumental"` → core `"紅蓮華instrumental"` + versions `{instrumental}`.
-   → 고침: 모든 스크립트에서 core를 정리된 `words`로 만든다. 괄호 패키징 제거는
-   기존과 같다.
+   → 고침: 모든 스크립트에서 core를 정리된 `words`로 만든다. 번역 제목의
+   보조 core도 같은 trailing 패키징 제거를 거친다
+   (`"여수밤바다 - Yeosu Night Sea 東京 Official Video"`의 보조 core는
+   `"yeosunightsea東京"`). 괄호 패키징 제거는 기존과 같다.
 
 3. **`secondsOf`가 범위를 벗어난 시간 성분을 받아들인다**
    (`TrackMatcherJudgementEdgeTest.an out-of-range time component is not a runtime`).

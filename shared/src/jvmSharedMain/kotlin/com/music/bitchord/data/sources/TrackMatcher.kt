@@ -837,10 +837,7 @@ object TrackMatcher {
         // A playlist row prints its position in front of the name ("3.여수밤바다",
         // "03 Ditto", "Track 3 - Song"). It is the listing's, not the song's,
         // and every catalogue search for it misses.
-        var text = LEADING_TRACK_NUMBER.replace(
-            normalize(CAPITAL_WITH.replace(raw, WITH_SENTINEL)),
-            "",
-        )
+        var text = LEADING_TRACK_NUMBER.replace(normalize(raw), "")
         val altTexts = mutableListOf<String>()
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
@@ -901,7 +898,7 @@ object TrackMatcher {
 
         // A feat. credit belongs to the artist field wherever a catalogue
         // chooses to print it.
-        text = text.replace(FEATURING, " ").replace(WITH_SENTINEL, "with")
+        text = stripCredits(text)
 
         // CJK languages do not use spaces between
         // words. Standard word splitting and non-alphanumeric filtering fragment
@@ -933,25 +930,24 @@ object TrackMatcher {
         val altWords = mutableListOf<List<String>>()
         val altCores = mutableListOf<String>()
         altTexts.forEach { alt ->
-            val clean = alt.replace(FEATURING, " ").replace(WITH_SENTINEL, "with").trim()
+            val clean = stripCredits(alt).trim()
             if (clean.isBlank()) return@forEach
-            val altCjk = clean.any {
-                Character.UnicodeBlock.of(it) in setOf(
-                    Character.UnicodeBlock.HIRAGANA,
-                    Character.UnicodeBlock.KATAKANA,
-                    Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
-                    Character.UnicodeBlock.HANGUL_SYLLABLES
-                )
-            }
-            val altWordList = clean.split(WORD_SPLIT)
+            var altWordList = clean.split(WORD_SPLIT)
                 .map { it.replace(NON_ALNUM, "") }
                 .filter { it.isNotEmpty() && it !in JOINING_WORDS }
-            if (altWordList.isEmpty()) return@forEach
-            val altCore = if (altCjk) {
-                clean.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
-            } else {
-                altWordList.joinToString("")
+            // The alternate half is the same listing and carries the same
+            // unbracketed packaging ("Yeosu Night Sea Official Video"), so it
+            // goes through the same trailing-noise/take pass as the primary.
+            while (altWordList.size > 1) {
+                val last = altWordList.last()
+                if (last in TRAILING_NOISE) altWordList = altWordList.dropLast(1)
+                else if (last in TRAILING_TAKES) {
+                    versions += last
+                    altWordList = altWordList.dropLast(1)
+                } else break
             }
+            if (altWordList.isEmpty()) return@forEach
+            val altCore = altWordList.joinToString("")
             if (altCore.isNotBlank() && altCore != coreString) {
                 altWords += altWordList
                 altCores += altCore
@@ -966,6 +962,39 @@ object TrackMatcher {
             altWords = altWords,
             altCores = altCores,
         )
+    }
+
+    /**
+     * Removes the parts of [text] that are a featuring credit rather than the
+     * song's name.
+     *
+     * `feat`/`ft`/`featuring` are credits wherever they appear. `with` is
+     * ambiguous — it is a credit in "Song with Artist" and part of the name in
+     * "Stay with Me" — and the printed case does not decide it, because
+     * listings write both "STAY WITH ME" and "Song With Artist". What decides
+     * it is the word that follows: a title continues with a pronoun,
+     * determiner or conjunction ("with Me", "with the Wolves", "with or
+     * Without You"), while a credit continues with a name. A `with` that opens
+     * the title is always the name. Once a credit starts, the rest of the line
+     * belongs to it, as before.
+     */
+    private fun stripCredits(text: String): String {
+        val out = FEATURING.replace(text, " ")
+        var from = 0
+        while (true) {
+            val match = WITH_WORD.find(out, from) ?: return out
+            if (isWithCredit(out, match.range.first)) {
+                return out.substring(0, match.range.first).trimEnd()
+            }
+            from = match.range.last + 1
+        }
+    }
+
+    private fun isWithCredit(text: String, at: Int): Boolean {
+        if (text.substring(0, at).isBlank()) return false
+        val after = text.substring(at + WITH_WORD_LENGTH).trimStart()
+        val next = after.takeWhile { !it.isWhitespace() }.replace(NON_ALNUM, "")
+        return next.isNotEmpty() && next !in WITH_TITLE_WORDS
     }
 
     /**
@@ -1327,18 +1356,6 @@ object TrackMatcher {
     internal fun albumVersionMarkers(album: String?): Set<String> =
         if (album.isNullOrBlank()) emptySet() else parseTitle(album).versions
 
-    /**
-     * A capitalised `With` inside a title ("Stay With Me") is part of the
-     * name, while a lowercase `with …` is a featuring credit. Normalisation
-     * lowercases the text before [FEATURING] runs, so the capital form is
-     * parked under a token that regex word boundaries cannot mistake for the
-     * credit, then restored once the credit pass is over. Bracket contents are
-     * removed before that pass, so "(Live with Orchestra)" keeps its take
-     * marker as before.
-     */
-    private val CAPITAL_WITH = Regex("""\bWith\b""")
-    private const val WITH_SENTINEL = "withcreditsentinelx"
-
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
     private fun albumKey(value: String?): String? {
         var text = normalize(value.orEmpty()).trim()
@@ -1429,7 +1446,8 @@ object TrackMatcher {
 
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
-    private val FEATURING = Regex("""\b(?:feat|ft|featuring|with)\b.*""", RegexOption.IGNORE_CASE)
+    private val FEATURING = Regex("""\b(?:feat|ft|featuring)\b.*""", RegexOption.IGNORE_CASE)
+    private val WITH_WORD = Regex("""\bwith\b""", RegexOption.IGNORE_CASE)
     /**
      * A listing's track number in front of the name: "3.", "03 ", "3) ",
      * "Track 3 - ". A bare number followed by a word ("7 Rings") is a title
@@ -1568,4 +1586,22 @@ object TrackMatcher {
 
     /** Dropped from the core so that "Jack and Jill" and "Jack & Jill" are one title. */
     private val JOINING_WORDS = setOf("and")
+
+    /**
+     * Words a title commonly continues with after "with" ("Stay with Me",
+     * "Dance with the Wolves", "With or Without You"). A `with` followed by
+     * one of these is part of the name; followed by anything else it reads as
+     * a featuring credit.
+     */
+    private val WITH_TITLE_WORDS = setOf(
+        "me", "you", "u", "us", "him", "her", "them", "it", "thee", "thou",
+        "my", "your", "his", "its", "our", "their",
+        "this", "that", "these", "those",
+        "the", "a", "an",
+        "or", "and", "without", "no", "not", "all", "some", "any", "every",
+        "someone", "somebody", "something", "anyone", "anybody", "anything",
+        "everyone", "everybody", "everything", "nobody", "nothing", "none",
+    )
+
+    private const val WITH_WORD_LENGTH = 4
 }

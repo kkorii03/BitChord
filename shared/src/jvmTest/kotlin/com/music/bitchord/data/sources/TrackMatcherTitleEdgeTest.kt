@@ -179,26 +179,44 @@ class TrackMatcherTitleEdgeTest {
     }
 
     @Test
+    fun `an alternate core is cleaned like the primary one`() {
+        // The Latin half carries the same unbracketed packaging; its core must
+        // lose the trailing label exactly as the primary core does.
+        val parts = TrackMatcher.parseTitle("여수밤바다 - Yeosu Night Sea 東京 Official Video", "장범준")
+        assertEquals(listOf("여수밤바다", "yeosunightsea東京"), parts.cores())
+        assertFalse(parts.cores().any { it.endsWith("officialvideo") })
+    }
+
+    @Test
     fun `a featuring credit is removed wherever it is printed`() {
         assertEquals("song", core("Song feat. Artist"))
         assertEquals("song", core("Song ft. Artist"))
         assertEquals("song", core("Song ft Artist"))
         assertEquals("song", core("Song featuring Artist"))
         assertEquals("song", core("Song with Artist"))
+        assertEquals("song", core("Song With Artist"))
+        assertEquals("song", core("SONG WITH ARTIST"))
         assertEquals("song", core("Song (feat. Artist)"))
         assertEquals("goodday", core("Good Day (feat. 팔로알토 (Paloalto))"))
     }
 
     /**
-     * "with" is a credit only in its lowercase printed form ("Song with
-     * Artist"); a capitalised With inside a title is part of the name.
+     * "with" is part of the name when a pronoun, determiner or conjunction
+     * follows it ("with Me", "with the Wolves", "with or Without You"), and a
+     * credit when a name follows. The printed case does not decide it: real
+     * titles are written lowercase and all-caps too, and credits title-case.
      */
     @Test
     fun `with in a real title is not a featuring credit`() {
         assertEquals("staywithme", core("Stay With Me"))
+        assertEquals("staywithme", core("Stay with Me"))
+        assertEquals("staywithme", core("STAY WITH ME"))
         assertEquals("dancewithme", core("Dance With Me"))
+        assertEquals("dancewithme", core("Dance with Me"))
         assertEquals("withorwithoutyou", core("With or Without You"))
+        assertEquals("withorwithoutyou", core("WITH OR WITHOUT YOU"))
         assertEquals("withyou", core("With You"))
+        assertEquals("dancewiththewolves", core("Dance With the Wolves"))
     }
 
     @Test
