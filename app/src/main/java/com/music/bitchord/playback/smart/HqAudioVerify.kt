@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.smart
 
 import android.content.Context
+import android.media.MediaDataSource
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
@@ -811,18 +812,26 @@ object HqAudioVerify {
     private fun featuresOf(
         file: File,
         abort: () -> Boolean = { false },
+    ): ChromaAlignment.Features? = featuresFrom { onChunk ->
+        AudioDecoder.decodeMonoStream(file, 0.0, COMPARE_SECONDS + 1.0, abort = abort, label = "hq-verify", onChunk = onChunk)
+    }
+
+    /** The same profile from a downloaded file opened as a data source (a `content://` file has no path). */
+    private fun featuresOf(
+        source: MediaDataSource,
+        abort: () -> Boolean = { false },
+    ): ChromaAlignment.Features? = featuresFrom { onChunk ->
+        AudioDecoder.decodeMonoStream(source, 0.0, COMPARE_SECONDS + 1.0, abort = abort, label = "hq-verify", onChunk = onChunk)
+    }
+
+    private fun featuresFrom(
+        decode: ((FloatArray, Int, Double) -> Unit) -> Double?,
     ): ChromaAlignment.Features? {
         var extractor: ChromaAlignment.Extractor? = null
         var sampleRate = 0
         var startSeconds = 0.0
         try {
-            val decoded = AudioDecoder.decodeMonoStream(
-                file,
-                0.0,
-                COMPARE_SECONDS + 1.0,
-                abort = abort,
-                label = "hq-verify",
-            ) { samples, rate, at ->
+            val decoded = decode { samples, rate, at ->
                 val current = extractor
                 if (current == null) {
                     sampleRate = rate
