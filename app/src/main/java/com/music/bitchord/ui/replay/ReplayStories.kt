@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.replay
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -527,7 +529,7 @@ private fun Headline(parts: List<HeadlineRun>) {
             }
         },
         style = MaterialTheme.typography.displayLarge,
-        fontSize = 30.sp,
+        fontSize = AppType.Display,
         lineHeight = 37.sp,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -620,7 +622,7 @@ private fun ColumnScope.Leaderboard(
             Text(
                 text = lead.title,
                 style = MaterialTheme.typography.headlineMedium,
-                fontSize = 26.sp,
+                fontSize = AppType.Section,
                 lineHeight = 30.sp,
                 fontWeight = FontWeight.W800,
                 color = Color.White,

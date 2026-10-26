@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -211,7 +213,7 @@ internal fun PartyLanding(
             text = stringResource(R.string.listen_together_landing_title),
             style = MaterialTheme.typography.headlineMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 30.sp,
+                fontSize = AppType.Display,
             ),
             color = MaterialTheme.colorScheme.onBackground,
             textAlign = TextAlign.Center,

@@ -1,6 +1,8 @@
 package com.music.bitchord.ui.components
 
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
+import com.music.bitchord.ui.theme.AppType
+import com.music.bitchord.ui.theme.AppSpacing
 import com.music.bitchord.ui.AppUiHost
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
@@ -114,7 +116,7 @@ import androidx.compose.foundation.border
  * edge, which every other page now shares, so a track row, a card or a
  * heading starts at the same place whichever page it is on.
  */
-val PAGE_GUTTER = 16.dp
+val PAGE_GUTTER = AppSpacing.ScreenHorizontal
 
 /**
  * Corner radius for small square artwork — the 48–72dp thumbnails on track,
@@ -911,7 +913,7 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
                 Text(
                     text = stringResource(Res.string.sign_in_with_google),
                     style = MaterialTheme.typography.titleMedium,
-                    fontSize = 15.sp,
+                    fontSize = AppType.Secondary,
                     fontWeight = FontWeight.W700,
                     color = Color.Black,
                 )
@@ -989,7 +991,7 @@ fun PillTextField(
         if (value.isEmpty()) {
             Text(
                 text = placeholder,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Secondary),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1001,7 +1003,7 @@ fun PillTextField(
             enabled = enabled,
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
+                fontSize = AppType.Secondary,
                 color = MaterialTheme.colorScheme.onBackground,
             ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),

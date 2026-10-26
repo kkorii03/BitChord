@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -154,7 +156,7 @@ fun SpotifyImportAlert(
         ) {
             Text(
                 text = stringResource(R.string.spotify_import_title),
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Body, fontWeight = FontWeight.W600),
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
@@ -163,7 +165,7 @@ fun SpotifyImportAlert(
                 Text(
                     text = stringResource(R.string.spotify_import_unmatched, missed.size),
                     modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 17.sp),
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                 )
@@ -180,7 +182,7 @@ fun SpotifyImportAlert(
                     missed.forEach { track ->
                         Text(
                             text = if (track.artist.isBlank()) track.title else "${track.title} · ${track.artist}",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Caption),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -192,7 +194,7 @@ fun SpotifyImportAlert(
                         else R.string.spotify_import_description_local,
                     ),
                     modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 17.sp),
                     color = when {
                         status == null -> MaterialTheme.colorScheme.onSurface
                         failed -> MaterialTheme.colorScheme.error
@@ -244,7 +246,7 @@ fun SpotifyImportAlert(
                         ) {
                             Text(
                                 text = stringResource(lang.labelRes),
-                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 11.sp),
+                                style = MaterialTheme.typography.labelLarge.copy(fontSize = AppType.Micro),
                                 color = if (selected) MaterialTheme.colorScheme.onPrimary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -290,7 +292,7 @@ fun SpotifyImportAlert(
                             ) {
                                 Text(
                                     text = option.label,
-                                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp),
+                                    style = MaterialTheme.typography.labelLarge.copy(fontSize = AppType.Caption),
                                     color = if (selected) MaterialTheme.colorScheme.onPrimary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

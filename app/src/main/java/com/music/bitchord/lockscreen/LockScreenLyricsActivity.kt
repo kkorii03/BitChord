@@ -84,6 +84,7 @@ import com.music.bitchord.ui.player.StandaloneLyricsPanel
 import com.music.bitchord.ui.player.ThinSlider
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.theme.SFProDisplay
+import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.sharedui.resources.Res as SharedRes
 import com.music.bitchord.sharedui.resources.ic_player_next
 import com.music.bitchord.sharedui.resources.ic_player_pause
@@ -442,7 +443,7 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
                 Text(
                     text = stringResource(R.string.lock_screen_lyrics_unlock),
                     color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 13.sp,
+                    fontSize = AppType.Caption,
                 )
             }
         }
@@ -479,7 +480,7 @@ private fun Clock() {
         text = date,
         color = Color.White.copy(alpha = 0.82f),
         fontFamily = SFProDisplay,
-        fontSize = 19.sp,
+        fontSize = AppType.Title,
         fontWeight = FontWeight.W600,
     )
     Text(
@@ -540,7 +541,7 @@ private fun NowPlayingCard(
                     text = title,
                     color = Color.White,
                     fontFamily = SFProDisplay,
-                    fontSize = 16.sp,
+                    fontSize = AppType.Body,
                     fontWeight = FontWeight.W600,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -549,7 +550,7 @@ private fun NowPlayingCard(
                     text = artist,
                     color = Color.White.copy(alpha = 0.65f),
                     fontFamily = SFProDisplay,
-                    fontSize = 14.sp,
+                    fontSize = AppType.Secondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -590,7 +591,7 @@ private fun NowPlayingCard(
                 text = formatTime((shown * durationMs).toLong()),
                 color = Color.White.copy(alpha = 0.6f),
                 fontFamily = SFProDisplay,
-                fontSize = 12.sp,
+                fontSize = AppType.Caption,
                 fontWeight = FontWeight.W600,
                 style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
             )
@@ -599,7 +600,7 @@ private fun NowPlayingCard(
                 text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                 color = Color.White.copy(alpha = 0.6f),
                 fontFamily = SFProDisplay,
-                fontSize = 12.sp,
+                fontSize = AppType.Caption,
                 fontWeight = FontWeight.W600,
                 style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
             )

@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.theme.AppType
+
 import android.os.Build
 import com.music.bitchord.R
 
@@ -1192,7 +1194,7 @@ private fun ReleaseHeader(
                 text = credit,
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.Normal,
-                    fontSize = 19.sp,
+                    fontSize = AppType.Title,
                 ),
                 color = if (albumSubtitle != null) palette.accent else palette.onBackgroundVariant,
                 textAlign = TextAlign.Center,

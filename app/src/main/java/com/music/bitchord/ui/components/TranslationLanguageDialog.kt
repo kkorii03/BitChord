@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -143,7 +145,7 @@ fun TranslationLanguageDialog(
                 Text(
                     text = stringResource(R.string.translation_language),
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
+                        fontSize = AppType.Body,
                         fontWeight = FontWeight.W600,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -153,7 +155,7 @@ fun TranslationLanguageDialog(
                     text = stringResource(R.string.translation_language_description),
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
+                        fontSize = AppType.Caption,
                         lineHeight = 17.sp,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -203,7 +205,7 @@ fun TranslationLanguageDialog(
                     item {
                         Text(
                             text = stringResource(R.string.no_languages_match),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption),
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                             textAlign = TextAlign.Center,
                             modifier = Modifier
@@ -246,7 +248,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
             if (query.isEmpty()) {
                 Text(
                     text = stringResource(R.string.search_languages),
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
                 )
             }
@@ -255,7 +257,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
                 onValueChange = onQueryChange,
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = 15.sp,
+                    fontSize = AppType.Secondary,
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -294,14 +296,14 @@ private fun LanguageChoiceRow(
         Column(Modifier.weight(1f)) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = detail,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 15.sp),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

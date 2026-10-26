@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
@@ -110,7 +112,7 @@ internal fun ChartCountryChips(
         ) {
             Text(
                 text = selected?.let { chartCountryName(it) } ?: stringResource(R.string.select_country),
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, fontWeight = FontWeight.W600),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary, fontWeight = FontWeight.W600),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Icon(
@@ -208,7 +210,7 @@ private fun ChartCountryRow(code: String, selected: Boolean, onClick: () -> Unit
         Spacer(Modifier.width(16.dp))
         Text(
             text = chartCountryName(code),
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Body),
             color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.weight(1f),
         )

@@ -3,9 +3,11 @@ package com.music.bitchord.ui.theme
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Typography
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
@@ -15,6 +17,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.R
 
@@ -62,18 +65,34 @@ val SFProDisplay = FontFamily(
 // Korean wraps between words rather than inside them — see [PhraseLineBreak],
 // which the lyrics and the desktop's type also read.
 //
-// Heavy, tight typography — the backbone of the Apple Music look.
+// Heavy, tight typography — the backbone of the Apple Music look. The sizes
+// come from [AppType] so a screen can never drift onto a fifth body size.
 private val BitChordTypography = Typography(
-    displayLarge = TextStyle(fontWeight = FontWeight.W800, fontSize = 34.sp, letterSpacing = (-0.8).sp),
-    headlineLarge = TextStyle(fontWeight = FontWeight.W800, fontSize = 30.sp, letterSpacing = (-0.7).sp),
-    headlineMedium = TextStyle(fontWeight = FontWeight.W700, fontSize = 22.sp, letterSpacing = (-0.4).sp),
-    titleLarge = TextStyle(fontWeight = FontWeight.W700, fontSize = 20.sp, letterSpacing = (-0.3).sp),
-    titleMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = 16.sp, letterSpacing = (-0.2).sp),
-    bodyLarge = TextStyle(fontWeight = FontWeight.W400, fontSize = 16.sp),
-    bodyMedium = TextStyle(fontWeight = FontWeight.W400, fontSize = 14.sp),
-    labelMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = 12.sp),
-    labelSmall = TextStyle(fontWeight = FontWeight.W600, fontSize = 11.sp),
+    displayLarge = TextStyle(fontWeight = FontWeight.W800, fontSize = AppType.DisplayLarge, letterSpacing = (-0.8).sp),
+    headlineLarge = TextStyle(fontWeight = FontWeight.W800, fontSize = AppType.Display, letterSpacing = (-0.7).sp),
+    headlineMedium = TextStyle(fontWeight = FontWeight.W700, fontSize = AppType.Section, letterSpacing = (-0.4).sp),
+    titleLarge = TextStyle(fontWeight = FontWeight.W700, fontSize = AppType.Title, letterSpacing = (-0.3).sp),
+    titleMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = AppType.Body, letterSpacing = (-0.2).sp),
+    titleSmall = TextStyle(fontWeight = FontWeight.W600, fontSize = AppType.Secondary, letterSpacing = (-0.1).sp),
+    bodyLarge = TextStyle(fontWeight = FontWeight.W400, fontSize = AppType.Body),
+    bodyMedium = TextStyle(fontWeight = FontWeight.W400, fontSize = AppType.Secondary),
+    bodySmall = TextStyle(fontWeight = FontWeight.W400, fontSize = AppType.Caption),
+    labelLarge = TextStyle(fontWeight = FontWeight.W600, fontSize = AppType.Secondary),
+    labelMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = AppType.Caption),
+    labelSmall = TextStyle(fontWeight = FontWeight.W600, fontSize = AppType.Micro),
 ).withFamily(SFProDisplay).withPhraseLineBreak()
+
+/**
+ * Material's default alert corners are a 28dp superellipse; iOS alerts and
+ * sheets sit closer to a 24dp rounded rectangle. Dialogs and sheets pick this
+ * up through [MaterialTheme.shapes], so no screen has to restyle them.
+ */
+private val BitChordShapes = Shapes(
+    extraLarge = IosDialogShape,
+    large = RoundedCornerShape(22.dp),
+    medium = RoundedCornerShape(18.dp),
+    small = RoundedCornerShape(12.dp),
+)
 
 /** Applies [PhraseLineBreak] to every style in the scale. */
 private fun Typography.withPhraseLineBreak() = Typography(
@@ -121,6 +140,7 @@ fun BitChordTheme(
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
         typography = BitChordTypography,
+        shapes = BitChordShapes,
         content = content,
     )
 }

@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -111,7 +113,7 @@ internal fun AudioPopupCard(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
+                        fontSize = AppType.Body,
                         fontWeight = FontWeight.W600,
                     ),
                     color = Color.White,
@@ -121,7 +123,7 @@ internal fun AudioPopupCard(
                     text = subtitle,
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
+                        fontSize = AppType.Caption,
                         lineHeight = 17.sp,
                     ),
                     color = Color.White.copy(alpha = 0.7f),

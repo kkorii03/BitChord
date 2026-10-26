@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import com.music.bitchord.R
 
 import androidx.compose.foundation.background
@@ -143,7 +145,7 @@ fun LyricsSourcesDialog(
                 Text(
                     text = stringResource(R.string.lyrics_sources),
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
+                        fontSize = AppType.Body,
                         fontWeight = FontWeight.W600,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -153,7 +155,7 @@ fun LyricsSourcesDialog(
                     text = stringResource(R.string.lyrics_sources_order),
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
+                        fontSize = AppType.Caption,
                         lineHeight = 17.sp,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -276,12 +278,12 @@ private fun SyllableSyncToggle(checked: Boolean, onToggle: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(
                 text = stringResource(R.string.prioritize_syllable_lyrics),
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 text = stringResource(R.string.prioritize_syllable_lyrics_subtitle),
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 15.sp),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
         }
@@ -321,14 +323,14 @@ private fun SourceKeyRow(title: String, secondary: String, onClick: () -> Unit) 
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = secondary,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -587,7 +589,7 @@ private fun ReorderableSourceList(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 text = source.label,
-                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
                                 color = MaterialTheme.colorScheme.onSurface
                                     .copy(alpha = if (toggleable) 1f else 0.5f),
                                 maxLines = 1,
@@ -595,7 +597,7 @@ private fun ReorderableSourceList(
                             )
                             Text(
                                 text = source.detail,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,

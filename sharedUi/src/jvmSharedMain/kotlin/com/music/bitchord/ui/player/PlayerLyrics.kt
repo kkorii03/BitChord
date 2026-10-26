@@ -142,6 +142,7 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.theme.PhraseLineBreak
+import com.music.bitchord.ui.theme.AppType
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
@@ -2205,7 +2206,7 @@ internal fun LyricsPanel(
                             style = MaterialTheme.typography.labelMedium.copy(
                                 letterSpacing = 1.3.sp,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 11.5.sp,
+                                fontSize = AppType.Micro,
                             ),
                             color = Color.White.copy(alpha = 0.9f),
                         )
@@ -2341,14 +2342,14 @@ internal fun LyricsPanel(
                 val alignEnd = duet && line.alignment == LyricAlignment.End
                 val style = if (isSynced) {
                     MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = 34.sp,
+                        fontSize = AppType.DisplayLarge,
                         lineHeight = 41.sp,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
                     )
                 } else {
                     MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 30.sp,
+                        fontSize = AppType.Display,
                         lineHeight = 38.sp,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
