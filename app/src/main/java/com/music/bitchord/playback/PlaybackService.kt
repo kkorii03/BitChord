@@ -2361,7 +2361,7 @@ class PlaybackService : MediaLibraryService() {
             },
         )
             .setSessionCommand(shuffleCommand)
-            .setDisplayName(if (shuffleEnabled) "임의 재생 끔" else "임의 재생 켬")
+            .setDisplayName(if (shuffleEnabled) "셔플 끔" else "셔플 켬")
             .build()
         return listOfNotNull(favorite, shuffle)
     }

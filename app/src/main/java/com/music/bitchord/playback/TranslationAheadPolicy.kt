@@ -11,11 +11,11 @@ package com.music.bitchord.playback
  * So the heavy half runs ahead only on an unmetered connection when heavy work
  * is allowed, where it is free by the user's own definition. Low power still
  * defers it like every other background job: [allowHeavy] is false while the
- * phone saves power, and the charger is what makes it true again. Everywhere
- * else the next track gets its lyrics only, and the heavy pass is made once it
- * is actually playing (see `TranslationAhead.trackStarted`). A track AutoPlay
- * may replace is not prepared at all: its id is not the one that will be
- * current.
+ * phone saves power, and turning power saving off is what makes it true again.
+ * Everywhere else the next track gets its lyrics only, and the heavy pass is
+ * made once it is actually playing (see `TranslationAhead.trackStarted`). A
+ * track AutoPlay may replace is not prepared at all: its id is not the one that
+ * will be current.
  */
 internal object TranslationAheadPolicy {
 
@@ -25,7 +25,7 @@ internal object TranslationAheadPolicy {
      * @param metered true on mobile data, false on an unmetered connection,
      *   null when there is no active network at all.
      * @param allowHeavy [AppSettings.heavyWorkAllowed]: the phone is not saving
-     *   power, or is plugged in and can afford the work.
+     *   power.
      * @param autoplayUncertain the next item came from AutoPlay and may be
      *   replaced before it plays.
      */

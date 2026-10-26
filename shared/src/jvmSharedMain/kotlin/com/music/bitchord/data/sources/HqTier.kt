@@ -137,10 +137,6 @@ object HqQuality {
         return (candidate.sampleRateHz ?: 0) > (current.sampleRateHz ?: 0)
     }
 
-    /** The gain in rungs from [current] to [candidate] (positive means better). */
-    fun rungsGained(candidate: StreamFormat?, current: StreamFormat?): Int =
-        tierOf(current).rank - tierOf(candidate).rank
-
     /**
      * Whether [candidate] could still win a race whose best answer so far is
      * [current], given that [candidateEarlier] sits earlier in the user's

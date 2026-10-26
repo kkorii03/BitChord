@@ -475,7 +475,7 @@ object AppSettings {
      */
     val lowPower = MutableStateFlow(false)
 
-    /** Whether the charger is connected; low power lets automatic work run when it is. */
+    /** Whether the charger is connected; [LowPowerMode.AUTO] ignores a low battery while it is. */
     val charging = MutableStateFlow(true)
 
     /**

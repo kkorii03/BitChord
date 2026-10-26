@@ -38,7 +38,7 @@
     <string name="signed_in">로그인됨</string>
     <string name="not_signed_in">로그인 안 됨</string>
     <string name="retry">다시 시도</string>
-    <string name="shuffle">임의 재생</string>
+    <string name="shuffle">셔플</string>
     <string name="more">더 보기</string>
     <string name="lyrics_offset">가사 싱크 조절</string>
     <string name="auto_quick_picks">빠른 선곡</string>
@@ -174,7 +174,7 @@
     <string name="widget_preview_title">노래 제목</string>
     <string name="widget_preview_artist">아티스트</string>
     <string name="widget_pill_label">지금 재생 중 4×1</string>
-    <string name="widget_pill_description">좋아요, 임의 재생 및 재생 제어가 한 줄에 있는 노래 위젯입니다.</string>
+    <string name="widget_pill_description">좋아요, 셔플 및 재생 제어가 한 줄에 있는 노래 위젯입니다.</string>
     <string name="widget_preview_pill">노래 제목 - 아티스트</string>
     <string name="download_quality">다운로드 품질</string>
     <string name="download_wifi_only">Wi-Fi에서만 다운로드</string>
@@ -448,8 +448,8 @@
     <string name="first_button">첫 번째 버튼</string>
     <string name="got_it">확인</string>
     <string name="pause">일시 정지</string>
-    <string name="shuffle_on">임의 재생 켬</string>
-    <string name="shuffle_off">임의 재생 끔</string>
+    <string name="shuffle_on">셔플 켬</string>
+    <string name="shuffle_off">셔플 끔</string>
     <string name="audio_pipeline">오디오 파이프라인</string>
     <string name="cast_dialog_title">전송</string>
     <string name="cast_dialog_subtitle">Chromecast 또는 Google Cast 스피커에서 재생</string>

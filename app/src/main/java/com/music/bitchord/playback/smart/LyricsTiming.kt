@@ -531,8 +531,7 @@ object LyricsTiming {
         //
         // Not in low power: this is a background fetch of every candidate's
         // opening, and the measurement itself still reads what the player is
-        // already streaming. It is picked up again once the phone is charging
-        // or no longer saving power.
+        // already streaming. It is picked up again once power saving is off.
         if (AppSettings.heavyWorkAllowed) {
             candidates
                 .filter { it.localUri == null && kept(context, it.videoId) == null }

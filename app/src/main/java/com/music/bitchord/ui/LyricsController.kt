@@ -829,7 +829,7 @@ class LyricsController(
      */
     private suspend fun autoAiIfNeeded(generation: Long, lines: List<LyricLine>) {
         // An upload's worth of work for a track already playing: low power
-        // leaves it for a charging session or a non-saving phone.
+        // leaves it for a later playback on a phone that is not saving power.
         if (!AppSettings.heavyWorkAllowed) return
         // "AI 싱크 미리 맞추기" already asks the quick engines on its own; once the
         // measurement gives up it also gets Whisper's better ear.

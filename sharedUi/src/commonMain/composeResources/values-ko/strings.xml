@@ -122,8 +122,8 @@
     <string name="romanize_lyrics">로마자로 표시</string>
     <string name="romanizing_lyrics">로마자로 변환 중…</string>
     <string name="show_original_lyrics">원문 가사 보기</string>
-    <string name="shuffle_off">임의 재생 끔</string>
-    <string name="shuffle_on">임의 재생 켬</string>
+    <string name="shuffle_off">셔플 끔</string>
+    <string name="shuffle_on">셔플 켬</string>
     <string name="stereo">스테레오</string>
     <string name="translate_lyrics">가사 번역</string>
     <string name="translating_lyrics_to">%1$s 번역 중…</string>
