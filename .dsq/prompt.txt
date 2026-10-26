@@ -1,0 +1,7 @@
+(Opus 검토 결과 수정 지시 — 이 브랜치는 '다운로드 곡 싱크 재검증'(LyricsTiming.recheckDownloaded) 구현이 이미 들어 있다. 다시 만들지 말고 아래 결함만 고친다.)
+결함 1(치명): recheckDownloaded 에서 새로 받은 가사(fresh)가 이기면 best=other 가 되는데, 그 fitted 결과(other.fitted)를 기존 가사 키(key = textKey(lines, ...))로 저장한다. fitted 는 fresh 가사의 줄·시간에 맞춰진 결과라서, 화면에 계속 보이는 기존 가사(lines)에 적용하면 엉뚱한 싱크가 된다. 그리고 화면의 가사 자체도 바뀌지 않는다.
+고칠 것: fresh 가 이기면 (a) 그 곡의 저장 가사를 fresh 로 교체한다 — 다운로드 곡 가사가 저장되는 실제 위치를 찾아서(다운로드 시 함께 저장된 가사 파일/캐시, 'file:' 제공처, LyricsController 가 다운로드 곡 가사를 읽는 경로; grep 으로 좁게) 그곳에 fresh 를 쓰고 제공처 이름도 fresh 의 실제 제공처로, (b) 싱크 저장은 textKey(fresh, audioSource) 키로, (c) 지금 재생 중 화면도 fresh 가사 + 그 싱크로 바로 바뀌게(기존 변경 알림 _changes / LyricsController 갱신 경로 사용). 기존 가사가 이기면 지금처럼 기존 키로 저장.
+결함 2: shouldReplace 비교도 같은 기준이어야 한다 — 기존(existingMatch)과 새 결과(result.match) 비교는 유지하되, fresh 로 바꿀 때는 위 (a)(b)(c)가 모두 되어야만 교체로 친다. 하나라도 실패하면 교체하지 말고 버전만 기록하지 말 것(다음 재생에서 다시 시도).
+테스트: DownloadedSyncCheck 쪽에 '어느 가사가 이겼을 때 어떤 키·가사를 저장하는지' 판정을 순수 함수로 빼서 jvmTest 추가. 컴파일·테스트 직접 실행해 확인.
+배터리: 지금처럼 재생될 때 1회만. 바꾼 함수의 모든 호출부·타입 다시 확인.
+마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경(가사 교체 위치를 파일:줄로) / 테스트 결과 / 미해결 문제
