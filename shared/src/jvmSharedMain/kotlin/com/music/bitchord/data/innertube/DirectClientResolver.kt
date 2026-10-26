@@ -2,6 +2,7 @@ package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.ProxyFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -116,6 +117,7 @@ internal object DirectClientResolver {
             val found = runCatching { ask(spec, videoId, maxKbps, viaProxy, onRefused) }
                 .onFailure {
                     if (it is CancellationException) throw it
+                    if (viaProxy && ProxyFailure.isProxyDown(it)) throw it
                     TrackLog.w(TAG, "direct ${spec.name} failed for $videoId: ${it.message}")
                 }
                 .getOrNull()

@@ -472,6 +472,7 @@ class ChunkedDataSource(
                 )
                 if (!decision.retry) {
                     HqHostTracker.noteFailure(host)
+                    StreamResolver.forgetCachedUrl(spec.uri.toString())
                     throw e
                 }
                 runCatching { upstream.close() }

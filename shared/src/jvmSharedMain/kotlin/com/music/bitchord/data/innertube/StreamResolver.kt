@@ -858,6 +858,7 @@ object StreamResolver {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (viaProxy && ProxyFailure.isProxyDown(e)) throw e
                 TrackLog.w(TAG, "InnerTubeX $preferredManifest preferred ask failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
                 null
             }
@@ -890,6 +891,7 @@ object StreamResolver {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (viaProxy && ProxyFailure.isProxyDown(e)) throw e
                 TrackLog.w(TAG, "InnerTubeX failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
                 // A Premium refusal from a web client says this network is
                 // gated, not that this track is. The fallback decides the rest
@@ -973,6 +975,7 @@ object StreamResolver {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (viaProxy && ProxyFailure.isProxyDown(e)) throw e
             TrackLog.w(TAG, "asking for $videoId as an upload failed: ${e.javaClass.simpleName}: ${e.message}")
             return null
         }
@@ -1250,6 +1253,11 @@ object StreamResolver {
      */
     fun rememberServed(videoId: String, url: String) {
         remember(videoId, url)
+    }
+
+    fun forgetCachedUrl(url: String) {
+        val videoId = videoIdFor(url) ?: return
+        recent.remove(videoId)
     }
 
     /**
@@ -1587,6 +1595,7 @@ object StreamResolver {
                 verdict
             }
         } catch (e: Exception) {
+            if (viaProxy && ProxyFailure.isProxyDown(e)) throw e
             TrackLog.w(TAG, "probe failed: ${e.message}")
             Probe.UNREACHABLE
         }

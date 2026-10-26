@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.ConnectException
 import java.net.NoRouteToHostException
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.Collections
@@ -35,6 +36,15 @@ object ProxyFailure {
                 is SocketTimeoutException,
                 is UnknownHostException,
                 is NoRouteToHostException -> return true
+                is SocketException -> {
+                    val routeMessage = node.message.orEmpty()
+                    if (routeMessage.contains("network is unreachable", ignoreCase = true) ||
+                        routeMessage.contains("no route to host", ignoreCase = true) ||
+                        routeMessage.contains("address family not supported", ignoreCase = true)
+                    ) {
+                        return true
+                    }
+                }
             }
             val message = node.message.orEmpty()
             if (message.contains("proxy", ignoreCase = true) ||

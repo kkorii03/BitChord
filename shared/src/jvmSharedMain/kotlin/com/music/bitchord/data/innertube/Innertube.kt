@@ -1819,20 +1819,29 @@ object Innertube {
                 if (proxyActive && directRetryOnProxyFailure && !isAccountWrite(endpoint) &&
                     ProxyFailure.isProxyDown(e)
                 ) {
-                    // Recorded first, because with a backup configured this is
-                    // what moves the route there. The same request is then
-                    // asked again through the backup before anything goes
-                    // direct — a lost free server should cost a retry, not the
-                    // listener's music.
-                    ProxyHealthMonitor.recordUnreachable("music $endpoint")
-                    if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
-                        try {
-                            return@withRetry attempt(routedClient, true)
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (backupFailure: Exception) {
-                            if (!ProxyFailure.isProxyDown(backupFailure)) throw backupFailure
-                            ProxyHealthMonitor.recordBackupUnreachable()
+                    // With a backup configured the failure has to be recorded
+                    // before the retry: that is what moves the route there, and
+                    // the same request is then asked again through the backup
+                    // before anything goes direct — a lost free server should
+                    // cost a retry, not the listener's music.
+                    //
+                    // Without a backup nothing is recorded until the direct
+                    // retry actually succeeds. If the direct request fails too,
+                    // the phone's network is down and the proxy was never
+                    // proven to be the broken part; remembering it as
+                    // unreachable would bypass it for five minutes after the
+                    // connection comes back.
+                    if (YouTubeProxy.config.backupUsable) {
+                        ProxyHealthMonitor.recordUnreachable("music $endpoint")
+                        if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
+                            try {
+                                return@withRetry attempt(routedClient, true)
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (backupFailure: Exception) {
+                                if (!ProxyFailure.isProxyDown(backupFailure)) throw backupFailure
+                                ProxyHealthMonitor.recordBackupUnreachable()
+                            }
                         }
                     }
                     Log.w(TAG, "music $endpoint: proxy unreachable, retrying directly")
@@ -1844,9 +1853,10 @@ object Innertube {
                         throw cancelled
                     } catch (directFailure: Exception) {
                         // The phone's whole network is down, not just the proxy.
-                        // Rethrow what the direct route said and leave
-                        // [ProxyHealthMonitor] at UNKNOWN: no toast, no 5-minute
-                        // bypass, because there is nothing reachable either way.
+                        // Rethrow what the direct route said and leave the
+                        // proxy health at its previous state: no toast, no
+                        // 5-minute bypass, because there is nothing reachable
+                        // either way.
                         throw directFailure
                     }
                     directRetrySucceeded = true
