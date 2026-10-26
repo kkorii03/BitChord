@@ -80,14 +80,24 @@ object Mp4Tagger {
         }.getOrDefault(bytes)
     }
 
-    private fun insert(bytes: ByteArray, moov: BoxRef, udta: ByteArray): ByteArray {
-        val insertAt = moov.end
-        val delta = udta.size
+    private fun insert(bytes: ByteArray, moov: BoxRef, udta: ByteArray): ByteArray =
+        splice(bytes, moov, moov.end, moov.end, udta)
 
-        val prefix = bytes.copyOf(insertAt)
+    /**
+     * Replaces [start, end) inside [moov] with [replacement], updating the
+     * `moov` size and every absolute sample offset that points past it.
+     */
+    private fun splice(
+        bytes: ByteArray,
+        moov: BoxRef,
+        start: Int,
+        end: Int,
+        replacement: ByteArray,
+    ): ByteArray {
+        val delta = replacement.size - (end - start)
+        val prefix = bytes.copyOf(start)
         // rawSize32 == 0 means "this box runs to the end of its parent" — still
-        // true after the insertion, since nothing follows moov but this new
-        // atom, so the field is left as-is rather than given a concrete value.
+        // true after the splice, so the field is left as-is.
         if (moov.rawSize32 != 0L) {
             if (moov.headerLen == 16) {
                 writeU64(prefix, moov.offset + 8, moov.size.toLong() + delta)
@@ -100,13 +110,13 @@ object Mp4Tagger {
         collectOffsetBoxes(bytes, moov, offsetBoxes)
         offsetBoxes.forEach { box ->
             when (box.type) {
-                "stco" -> patchStco(prefix, box, insertAt, delta)
-                "co64" -> patchCo64(prefix, box, insertAt, delta)
+                "stco" -> patchStco(prefix, box, end, delta)
+                "co64" -> patchCo64(prefix, box, end, delta)
             }
         }
 
-        val suffix = bytes.copyOfRange(insertAt, bytes.size)
-        return prefix + udta + suffix
+        val suffix = bytes.copyOfRange(end, bytes.size)
+        return prefix + replacement + suffix
     }
 
     private fun collectOffsetBoxes(bytes: ByteArray, box: BoxRef, out: MutableList<BoxRef>) {

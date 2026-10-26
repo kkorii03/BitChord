@@ -234,6 +234,7 @@ import com.music.bitchord.playback.revertToOriginal
 import com.music.bitchord.playback.swapToVersion
 import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.playback.smart.HqVerificationStore
+import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
 import com.music.bitchord.download.DownloadedQuality
@@ -3382,6 +3383,11 @@ private fun BitChordApp(
                                 onContentCountry = { showContentCountry = true },
                                 onGeminiKey = { showGeminiKey = true },
                                 onDeepgramKey = { showDeepgramKey = true },
+                                onResetDownloadSync = {
+                                    scope.launch {
+                                        LyricsTiming.resetDownloadedSync(context.applicationContext)
+                                    }
+                                },
                                 onEditSignatureApi = { editingSignatureApi = true },
                                 contentPadding = listPadding,
                             )

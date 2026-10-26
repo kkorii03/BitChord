@@ -1,7 +1,9 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
+import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.toEnhancedLrc
 import com.music.bitchord.data.lyrics.toLrc
 import com.music.bitchord.data.model.Song
@@ -105,35 +107,47 @@ internal object LyricsTag {
         // not blank either, so the length check below would let it through.
         if (found.lines.none { it.text.isNotBlank() }) return null
 
+        val embeddable = embeddable(found.source, track.videoId, found.lines) ?: return null
+        Log.d(
+            TAG,
+            "embedding ${found.source.label} lyrics for ${track.videoId}" +
+                if (embeddable.enhanced != null) " (word-synced)" else "",
+        )
+        return embeddable
+    }
+
+    /**
+     * One provider answer as the two LRC strings a file can carry. The same
+     * conversion a download makes at save time; a re-check uses it only to
+     * validate the fresh sheet's size, keeping the lines themselves in
+     * `LyricsOverrideStore` rather than touching the audio file.
+     */
+    internal fun embeddable(source: LyricsSource, videoId: String?, lines: List<LyricLine>): Embeddable? {
+        if (lines.none { it.text.isNotBlank() }) return null
         // Timed lyrics say where they came from, so playing the file later
         // knows whether they are the record's (to be put on a cover video's
         // clock) or already the video's own.
-        val header = if (found.lines.any { it.timeMs > 0 }) {
-            com.music.bitchord.data.lyrics.EmbeddedLyrics.sourceHeader(found.source, track.videoId)
+        val header = if (lines.any { it.timeMs > 0 }) {
+            com.music.bitchord.data.lyrics.EmbeddedLyrics.sourceHeader(source, videoId)
         } else {
             ""
         }
-        val lrc = found.lines.toLrc().let { if (it.isBlank()) it else header + it }
+        val lrc = lines.toLrc().let { if (it.isBlank()) it else header + it }
         if (lrc.length > MAX_LRC_CHARS) {
             // Every byte of this is about to be copied into a file the user
             // keeps, and the size is decided by a third party's response body.
             // A cap is the difference between a bad answer costing the lyrics
             // and one costing the download's file size.
-            Log.w(TAG, "lyrics for ${track.videoId} are ${lrc.length} chars; not embedding")
+            Log.w(TAG, "lyrics for ${videoId ?: "unknown"} are ${lrc.length} chars; not embedding")
             return null
         }
         if (lrc.isBlank()) return null
         // Capped the same way and for the same reason as the plain form; the
         // word stamps roughly double it, so it gets its own headroom rather
         // than sharing the budget and pushing the portable field out.
-        val enhanced = found.lines.toEnhancedLrc().takeIf {
+        val enhanced = lines.toEnhancedLrc().takeIf {
             it.isNotBlank() && it.length <= MAX_LRC_CHARS * 2
         }?.let { header + it }
-        Log.d(
-            TAG,
-            "embedding ${found.source.label} lyrics for ${track.videoId}" +
-                if (enhanced != null) " (word-synced)" else "",
-        )
         return Embeddable(plain = lrc, enhanced = enhanced)
     }
 

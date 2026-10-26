@@ -6,6 +6,8 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
+import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -118,6 +120,8 @@ class LyricsController(
          * this catalogue track was swapped from). They still need measuring.
          */
         val fileTimingForeign: Boolean = false,
+        /** The file's header names its provider and the recording; false is the `@unknown` case. */
+        val fileProviderKnown: Boolean = false,
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
@@ -246,6 +250,55 @@ class LyricsController(
         }
         _lyricsChecked.value = false
         lyricsJob = scope.launch {
+            // A per-song override is the last word: it comes before the
+            // downloaded file's tags or `lyrics.lrc`, and before any provider
+            // lookup. It also keeps a re-checked sheet out of the audio file,
+            // which may be the one playing — see LyricsOverrideFile.
+            val override = LyricsOverrideStore.read(app, videoId)
+            if (override != null) {
+                val lines = override.lines
+                val timed = lines.any { it.timeMs > 0 }
+                _lyrics.value = lines
+                _lyricsChecked.value = true
+                currentLyricsRequest = currentLyricsRequest?.copy(
+                    fileProviderKnown = override.source != null,
+                )
+                if (localUri != null) {
+                    _lyricsSource.value = null
+                    fileLyricsLabel = com.music.bitchord.data.lyrics.FileLyricsOrigin.label(
+                        override.source?.label,
+                        videoId,
+                    )
+                    val onVideo = isVideo && timed
+                    val recordTimed = onVideo && override.source != null &&
+                        !LyricsTiming.timedToVideo(override.source)
+                    val downloadRecheck = !isVideo && timed &&
+                        override.kind == LyricsOverrideFile.Kind.RECHECK &&
+                        !LyricsTiming.timedToVideo(override.source)
+                    startTiming(
+                        lines,
+                        adjustable = onVideo || downloadRecheck,
+                        searchedAs = null,
+                        measure = recordTimed,
+                        measureNow = true,
+                        videoOwn = onVideo && !recordTimed,
+                        downloadRecheck = downloadRecheck,
+                    )
+                } else {
+                    _lyricsSource.value = override.source
+                    fileLyricsLabel = null
+                    val videoOwn = LyricsTiming.timedToVideo(override.source)
+                    startTiming(
+                        lines,
+                        adjustable = timed,
+                        searchedAs = null,
+                        measure = !videoOwn,
+                        measureNow = true,
+                        videoOwn = timed && videoOwn,
+                    )
+                }
+                return@launch
+            }
             // The file first, and without the duration gate below: a length is
             // only needed to *match* a track against a stranger's database, and
             // nothing is being matched here — these lyrics were written into
@@ -277,6 +330,9 @@ class LyricsController(
                     if (foreign) {
                         currentLyricsRequest = currentLyricsRequest?.copy(fileTimingForeign = true)
                     }
+                    currentLyricsRequest = currentLyricsRequest?.copy(
+                        fileProviderKnown = file.source != null && !file.videoId.isNullOrBlank(),
+                    )
                     val onVideo = isVideo && timed
                     val recordTimed = onVideo && file.source != null && !LyricsTiming.timedToVideo(file.source)
                     // A song's file header names the recording its times were
@@ -285,13 +341,19 @@ class LyricsController(
                     // (A video keeps its existing foreign/measure treatment.)
                     val unverified = !isVideo && timed && !LyricsTiming.timedToVideo(file.source) &&
                         com.music.bitchord.data.lyrics.FileLyricsOrigin.timingIsUnverified(file.videoId, videoId)
+                    // A downloaded song is re-checked once with today's rules,
+                    // whatever its header says: the file was written at save
+                    // time and may have kept a wrong sync ever since.
+                    val downloadRecheck = !isVideo && timed && !foreign &&
+                        !LyricsTiming.timedToVideo(file.source)
                     startTiming(
                         embedded,
-                        adjustable = onVideo || foreign || unverified,
+                        adjustable = onVideo || foreign || unverified || downloadRecheck,
                         searchedAs = null,
                         measure = recordTimed || foreign,
                         measureNow = true,
                         videoOwn = onVideo && !foreign && file.source != null && !recordTimed,
+                        downloadRecheck = downloadRecheck,
                     )
                     return@launch
                 }
@@ -541,6 +603,8 @@ class LyricsController(
         measureNow: Boolean = true,
         /** The lines are timed to the video already (its captions, Gemini's transcript). */
         videoOwn: Boolean = adjustable && !measure,
+        /** A downloaded song whose stored sync may need one check with today's rules. */
+        downloadRecheck: Boolean = false,
     ) {
         lyricsTimingJob?.cancel()
         if (cancelAi) aiTimingJob?.cancel()
@@ -575,6 +639,63 @@ class LyricsController(
                 }
             }
             refreshTiming(generation, lines)
+            if (downloadRecheck && request.localUri != null) {
+                // Event-driven only: the check runs because this file started
+                // playing, once per playback and one file at a time. A version
+                // already recorded makes it a cheap no-op.
+                if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
+                if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
+                    !com.music.bitchord.data.lyrics.Deepgram.usable
+                ) return@launch
+                val checkKey = LyricsTiming.audioSourceKey(request.videoId, localFile = true)
+                if (songCheckStartedFor == checkKey) return@launch
+                songCheckStartedFor = checkKey
+                val replaced = LyricsTiming.recheckDownloaded(
+                    context,
+                    Song(
+                        videoId = request.videoId,
+                        title = request.title,
+                        artist = request.artist,
+                        thumbnailUrl = null,
+                        isVideo = false,
+                        localUri = request.localUri,
+                    ),
+                    lines,
+                    providerUnknown = !request.fileProviderKnown,
+                    title = request.title,
+                    artist = request.artist,
+                    durationMs = request.durationMs,
+                    album = request.album,
+                    alternatives = request.alternatives,
+                    artistKnown = request.artistKnown,
+                    artistAliases = request.artistAliases,
+                )
+                if (replaced != null) {
+                    // The re-check found a better sheet and wrote it into the
+                    // file. Show those lines now, with the sync just saved
+                    // under their key, rather than the old words the job began
+                    // with. A new timing job also makes the provider label
+                    // name the source the fresh sheet came from.
+                    fileLyricsLabel = com.music.bitchord.data.lyrics.FileLyricsOrigin.label(
+                        replaced.source.label,
+                        request.videoId,
+                    )
+                    currentLyricsRequest = currentLyricsRequest?.copy(fileProviderKnown = true)
+                    startTiming(
+                        replaced.lines,
+                        adjustable = true,
+                        searchedAs = null,
+                        cancelAi = false,
+                        measure = false,
+                        measureNow = false,
+                        videoOwn = false,
+                        downloadRecheck = false,
+                    )
+                    return@launch
+                }
+                refreshTiming(generation, lines)
+                return@launch
+            }
             if (request.isVideo || request.fileTimingForeign) {
                 if (!adjustable || !measure || !measureNow) return@launch
                 // AI after the free measurement, not alongside it: each request
@@ -725,6 +846,11 @@ class LyricsController(
         // were first shown.
         val substituted = !request.isVideo && StreamChoice.isSubstitute(request.videoId)
         val baseAllowed = timingBaseAllowed && !substituted
+        val audioSource = if (request.isVideo) {
+            null
+        } else {
+            LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
+        }
         val timing = LyricsTiming.timing(
             app,
             request.videoId,
@@ -732,11 +858,7 @@ class LyricsController(
             baseAllowed,
             measuredAllowed = baseAllowed && timingMeasureAllowed,
             isVideo = request.isVideo,
-            audioSource = if (request.isVideo) {
-                null
-            } else {
-                LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
-            },
+            audioSource = audioSource,
         )
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;
@@ -764,6 +886,14 @@ class LyricsController(
             ?: _lyricsSource.value?.label
             ?: fileLyricsLabel
             ?: if (shown?.isNotEmpty() == true) "file" else "none"
+        val (storedSync, recheck) = LyricsTiming.syncDiagnostics(
+            app,
+            request.videoId,
+            lines,
+            audioSource,
+            downloaded = request.localUri != null && !request.isVideo,
+            providerUnknown = !request.fileProviderKnown,
+        )
         TrackDiagnostics.noteLyricsSync(
             videoId = request.videoId,
             provider = provider,
@@ -774,6 +904,8 @@ class LyricsController(
             biasMs = timing?.aiBiasMs ?: 0L,
             manualOffsetMs = manualMs,
             video = request.isVideo,
+            stored = storedSync,
+            recheck = recheck,
         )
         // Sync-test mode only: the lines as they are now on screen, so a phone
         // scoring run can compare every displayed start with the audio.

@@ -1,0 +1,125 @@
+package com.music.bitchord.data.lyrics
+
+/**
+ * When a downloaded file's stored lyrics and timing are worth checking again.
+ *
+ * A download writes the provider's lines and their times into the file once,
+ * at save time. If that first answer was wrong — an untimed sheet, a different
+ * edit, an older matching rule — every later play shows the same wrong sync.
+ * The file is now checked once against its own audio with today's song check,
+ * and the stored sync is replaced only when the new answer is better.
+ *
+ * Pure on purpose: the version and match rules are the part worth testing
+ * without a file, a player or a network request.
+ */
+object DownloadedSyncCheck {
+
+    /** The song-check rules a stored sync was last checked with. */
+    const val SYNC_CHECK_VERSION = 1
+
+    /** Below this agreement a stored sync is worth a fresh provider lookup. */
+    const val MIN_MATCH_PERCENT = 70
+
+    /** Why a downloaded file is (or is not) being checked on this play. */
+    enum class Recheck(val token: String) {
+        NONE("none"),
+        UNVERIFIED("unverified"),
+        UNKNOWN_PROVIDER("unknown-provider"),
+        LOW_MATCH("low-match"),
+        DONE("done"),
+    }
+
+    /** No version, or one from older rules, means the stored sync was never checked this way. */
+    fun isUnverified(storedVersion: Int?): Boolean =
+        storedVersion == null || storedVersion < SYNC_CHECK_VERSION
+
+    /**
+     * The reason to check now, most specific first. A version that already
+     * names the current rules is never checked again, even if the old answer
+     * was poor: the check has been paid for, and the next play must not buy it
+     * again.
+     */
+    fun recheckReason(
+        storedVersion: Int?,
+        providerUnknown: Boolean,
+        matchPercent: Int?,
+    ): Recheck {
+        if (!isUnverified(storedVersion)) return Recheck.NONE
+        if (providerUnknown) return Recheck.UNKNOWN_PROVIDER
+        if (matchPercent != null && matchPercent < MIN_MATCH_PERCENT) return Recheck.LOW_MATCH
+        return Recheck.UNVERIFIED
+    }
+
+    /**
+     * Whether the file's own lyrics are poor enough evidence to ask the lyric
+     * providers for a fresh timed sheet, which is then checked the same way.
+     */
+    fun shouldFetchNewLyrics(providerUnknown: Boolean, matchPercent: Int?): Boolean =
+        providerUnknown || (matchPercent != null && matchPercent < MIN_MATCH_PERCENT)
+
+    /**
+     * Whether the new answer should replace the stored one. A new answer always
+     * wins over an unverified or failed one; otherwise it has to agree more
+     * than what is already there. Equal agreement keeps the stored answer, so
+     * a replay is a no-op rather than a rewrite.
+     */
+    fun shouldReplace(
+        storedVersion: Int?,
+        storedMatchPercent: Int?,
+        newMatchPercent: Int?,
+    ): Boolean {
+        if (newMatchPercent == null) return false
+        if (isUnverified(storedVersion)) return true
+        val stored = storedMatchPercent ?: return true
+        return newMatchPercent > stored
+    }
+
+    /** Which lyric sheet a replacement belongs to. */
+    enum class Winner { STORED, FRESH }
+
+    /**
+     * What to keep after a re-check: no replacement, the file's own lines
+     * under [key], or a fresh sheet under its own [key].
+     *
+     * [key] is null when nothing is being stored — either the stored answer
+     * still wins, or there was no new answer to compare. A fresh winner is
+     * only a candidate here: the caller still has to save those lines as the
+     * song's override and their sync under [key]. If either fails, it must not
+     * record [recordVersion], so the next play tries again.
+     */
+    class Replacement(
+        val replace: Boolean,
+        val winner: Winner?,
+        val key: Int?,
+        val recordVersion: Boolean,
+    )
+
+    /**
+     * Chooses between the file's own lyrics and a fresh provider answer.
+     *
+     * The comparison is the same one [shouldReplace] makes: the winner is
+     * whichever sheet fits the audio better, and it only replaces what is
+     * stored when it beats the stored answer. A tie keeps the file's own
+     * lines, so replaying a checked file does not rewrite it.
+     */
+    fun decide(
+        storedVersion: Int?,
+        existingMatchPercent: Int?,
+        existingKey: Int,
+        ownMatchPercent: Int?,
+        freshMatchPercent: Int?,
+        freshKey: Int,
+    ): Replacement {
+        val freshWins = freshMatchPercent != null &&
+            freshMatchPercent > (ownMatchPercent ?: 0)
+        val bestMatch = if (freshWins) freshMatchPercent else ownMatchPercent
+        if (!shouldReplace(storedVersion, existingMatchPercent, bestMatch)) {
+            return Replacement(replace = false, winner = null, key = null, recordVersion = true)
+        }
+        return if (freshWins) {
+            Replacement(replace = true, winner = Winner.FRESH, key = freshKey, recordVersion = true)
+        } else {
+            Replacement(replace = true, winner = Winner.STORED, key = existingKey, recordVersion = true)
+        }
+    }
+}

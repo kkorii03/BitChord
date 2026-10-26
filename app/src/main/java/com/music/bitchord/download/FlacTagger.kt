@@ -167,8 +167,10 @@ object FlacTagger {
             // by every reader, so the portable field stays exactly as it was.
             if (!wordLyrics.isNullOrBlank()) add("$WORD_LYRICS_FIELD=$wordLyrics")
         }
-        if (fields.isEmpty()) return null
+        return if (fields.isEmpty()) null else vorbisComment(fields)
+    }
 
+    private fun vorbisComment(fields: List<String>): ByteArray {
         val out = ByteArrayOutputStream()
         val vendor = VENDOR.toByteArray(Charsets.UTF_8)
         out.writeLe(vendor.size)

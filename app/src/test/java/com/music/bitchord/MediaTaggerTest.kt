@@ -449,6 +449,7 @@ class MediaTaggerTest {
         assertTrue(tagged.indexOfBytes("LYRICS=$LRC".toByteArray(Charsets.UTF_8)) >= 0)
     }
 
+
     private companion object {
         const val TYPE_STREAMINFO = 0
         const val TYPE_PADDING = 1
@@ -461,5 +462,6 @@ class MediaTaggerTest {
          * the newline between them, which is all these tests need to look for.
          */
         const val LRC = "[00:01.20]first line here\n[00:04.50]second line here"
+
     }
 }
