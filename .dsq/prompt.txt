@@ -1,8 +1,15 @@
-(공통 주의 10-26 10시: 이 PC 셸에는 rg(ripgrep)가 없다 — 검색은 OpenCode 내장 grep/glob 도구나 PowerShell Select-String/Get-ChildItem 을 쓴다. 도구 하나가 실패해도 멈추지 말고 다른 방법으로 계속해 작업을 끝까지 하고, 마지막 요약을 반드시 출력한다.)
-(10-26 06:55 Opus: 원래 '12 화면 정리' — 15 자리에서 빈 응답 nochange, 재투입.)
-작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-lane2 (브랜치 task/lane2 의 지금 HEAD 에서 작업. ko-101 태그는 비교 기준점일 뿐 되돌리지 말 것). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지(컴파일은 CI). .github/, keys\, 서명 설정, .ds-ctx/ 수정 금지.
-검사 범위(사용자 지시, 필수): ko-101 이후 오늘·밤사이 추가·수정된 모든 기능과 코드(git log ko-101..HEAD, git diff ko-101..HEAD — 예: 노래 검증, 가사 제목 정규화, 크로스페이드·자동 믹스, 싱크 채점 모드, 다운로드 곡 메뉴·사진, 고음질 소스·등급·다음 곡 준비, 설정 공유, 커버 가수 이동, 충전 조건 제거 등)를 기존 코드와 똑같이 이 작업의 대상에 포함한다. 새로 들어온 코드일수록 먼저 본다. 이 작업 전에 끝난 대기열 작업의 결과도 포함.
-공통 원칙: 사용자 기능·동작·설정·저장 데이터 형식은 바꾸지 않는다(이 작업이 명시한 것 제외). 한 번에 너무 많이 바꾸지 말고 이 지시의 범위만. 바꾼 함수·클래스의 모든 호출부와 타입을 다시 읽고 확인(널 안전·스마트캐스트 주의, 과거 Song? 스마트캐스트 컴파일 오류 있었음). 기존 주석의 의도를 지울 때는 요약에 이유. 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 사용자 폰은 저장공간 1TB·데이터 무제한이라 데이터/용량보다 배터리를 우선한다. 새 순수 로직은 shared com.music.bitchord.data... 패키지 테스트(자동 실행)로 검증. 결과 기록은 C:\Users\jang\Desktop\BitChord\BitChord-lane2\docs\cleanup\ 아래 해당 md 파일(새로 만들 수 있음)에 남긴다.
-마지막에 10줄 이내로 요약: 수정 파일 수 / 핵심 변경 / 테스트 / 다음 단계에 남긴 것.
-작업:
-[UI/UX 3차: 애플뮤직다움 전수] C:\Users\jang\Desktop\BitChord\ship\UI-AUDIT.md(.ds-ctx\UI-AUDIT.md) 1·2차 이후 남은 부분을 전 화면에서 찾아 고친다: (1) 말투 — 모든 한국어 문자열(values-ko)을 애플뮤직 한국어 톤으로 통일: 짧은 해요체, 명사형 메뉴(예: 보관함에 추가, 다음에 재생), 느낌표·이모지·기술 용어 지양, 같은 개념은 같은 단어(재생목록/플레이리스트 혼용 금지 등). 바꾼 문자열 전후 표를 docs\cleanup\tone.md 에. (2) 글꼴·크기·굵기 — 큰 제목(34sp 굵게), 섹션 제목(22sp 굵게), 본문(17sp), 보조(15/13sp 회색) 체계를 공통 Typography로 정리하고 화면별 하드코딩 글자 크기를 공통 값으로 교체. 한글과 영문 글꼴이 섞여 어색한 곳 정리. (3) 간격 — 좌우 여백 20dp, 섹션 간격, 목록 줄 높이를 공통 값으로 통일. (4) 남은 머티리얼 요소(리플, 원형 프로그레스, 토스트 모양, 다이얼로그)를 iOS 느낌으로. 기능 삭제 금지.
+[긴급 버그 — 사용자 실기기: '품질 업그레이드'를 계속 눌러도 안 되고, 자동 업그레이드도 전혀 안 됨. Opus 가 로그로 원인 확정]
+사용자 로그(10-26 11:57~12:23): 모든 곡이 'upgrade found: <곡> at FLAC 16-bit 44.1kHz from Monochrome/Qobuz' 다음 약 65ms 만에 'hq-verify: <곡> ... match=0% offset=0 -> rejected' + 'hq-verify: <곡> no reference audio; keeping YouTube'. 즉 고음질 후보는 찾는데 기준(YouTube) 음원 특징을 못 얻어 전부 거절. 손으로 누르면 'manual upgrade ignored ... 20937ms cooldown remaining' 와 토스트 '음질을 확인하는 중이에요. 잠시 후 다시 시도해 주세요'.
+원인(코드 확인됨, app/.../playback/smart/HqAudioVerify.kt):
+ (1) referenceFeaturesUncached 첫 줄 'if (!PowerState.screenOn) return null' 과 featuresOf(...){ ... && PowerState.screenOn } — 배터리 작업(00e1)이 넣은 화면 꺼짐 차단. 사용자는 대부분 화면 끄고 이어폰으로 들으므로 검증이 영원히 안 된다.
+ (2) 기준 실패를 noReference 에 10분(NO_REFERENCE_TTL_MS) 기억 → 화면을 켜고 눌러도 즉시 실패.
+ (3) 수동 업그레이드 쿨다운이 이 실패와 겹쳐 버튼이 무반응처럼 보인다.
+고칠 것:
+ a) 화면 꺼짐 차단 제거. 이 검증은 (곡, 소스, 트랙)마다 한 번이고 결과가 디스크에 저장되므로 비용이 작다. 디코더 동시 사용은 이미 있는 AudioDecoder 전역 세마포어(자동 믹스 분석과 직렬)로 충분 — 없으면 같은 방식으로.
+ b) noReference 기억은 '이번 재생 동안'만: 다음 재생 이벤트나 수동 요청 때는 무조건 다시 시도(10분 타이머 의존 금지). 기준 오프닝이 아직 안 왔으면 AudioCache.awaitAnalysisHead 를 수동 요청 때는 더 길게(예: 20초) 기다린다.
+ c) 수동 '품질 업그레이드': 쿨다운·noReference 를 무시하고 즉시 검증을 시작, 진행 중이면 같은 작업에 붙는다(중복 실행 금지). 결과를 애플식 문구로 알린다: 성공 '고음질로 전환합니다'(다음 재생 대신 지금 곡이면 기존 규칙대로 안전한 시점에), 원곡 불일치 '이 노래와 일치하는 고음질 버전을 찾을 수 없습니다', 기준 음원 실패 '지금은 음질을 확인할 수 없습니다. 다시 시도하십시오'. 해요체 금지.
+ d) 거절 기록: 기준 음원이 없어서(no reference) 실패한 경우는 HqVerificationStore 에 '거절'로 영구 저장하면 안 된다 — 지금 그런 경로가 있으면 막는다. 진짜 불일치(match 낮음)만 거절 저장.
+ e) 로그: 'hq-verify: <곡> no reference reason=<head-timeout|no-source|decode-failed|cancelled>' 로 원인 표시.
+ f) 다운로드 곡의 자동 교체(HqLibraryUpgrade)도 같은 검증을 쓰므로 함께 살아나는지 확인.
+테스트: 순수 판정(수동 요청 시 쿨다운 무시, no-reference 는 거절 저장 안 함)을 shared 함수로 빼서 jvmTest. 컴파일·테스트 직접 실행.
+마지막에 8줄 이내로 요약: 원인 확인 / 수정 파일 / 동작 변화 / 테스트 결과

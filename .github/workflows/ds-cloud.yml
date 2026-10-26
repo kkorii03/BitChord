@@ -61,7 +61,7 @@ jobs:
             "$schema": "https://opencode.ai/config.json",
             "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
             "small_model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-            "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow" },
+            "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow", "external_directory": "allow" },
             "provider": { "openrouter": { "models": { "deepseek/deepseek-v4.1-flash-1017": {
               "options": { "provider": { "order": ["cloudflare", "deepseek", "deepinfra/fp8"], "allow_fallbacks": false } } } } } }
           }
@@ -74,7 +74,16 @@ jobs:
           and for shared tests ./gradlew :shared:jvmTest --tests '<your test>' --console=plain -q. Fix every compile error before you finish.
           rg (ripgrep) and grep both work. Do not print whole-repository listings. Do not commit or push. Never touch .github/, keys/, *.jks or signing config.
           Battery first in app code: no periodic polling or timers, event-driven only.
+          NEVER (each of these broke a real change on 10-26):
+          - Never delete or weaken an existing safety rule, guard or cap whose comment explains a real failure (e.g. phone-speaker PCM16 cap for Samsung distortion). Keep it unless the task names it.
+          - Never rewrite, truncate or re-tag a downloaded audio file in place, and never load a whole media file into memory.
+          - Never claim in the summary that something is wired/connected/done unless the diff contains it; list exactly the files you changed.
+          - Never change user-visible wording style; Korean UI follows Apple Music (noun labels, formal 합니다체, terms 보관함/플레이리스트/다음 항목 재생/나중에 재생/셔플).
+          - When you refactor a condition, keep every term of the old one (write the old and new truth table in your summary).
           EOF
+          # The real root, so DeepSeek does not guess /home/user/... and get its
+          # edits refused as "external_directory" (seen on yz-hq2-library).
+          echo "The repository root is exactly $GITHUB_WORKSPACE . Use paths relative to it (app/src/..., shared/src/...); never invent another absolute path." >> "$RUNNER_TEMP/ds/env.txt"
 
       - name: DeepSeek
         shell: bash
@@ -82,10 +91,19 @@ jobs:
           set +e
           prompt="$(cat "$RUNNER_TEMP/ds/env.txt")"$'\n\n'"$(cat "$RUNNER_TEMP/ds/prompt.txt")"
           opencode run -m "$MODEL" "$prompt" 2>&1 | tee "$RUNNER_TEMP/ds/out1.txt" | tail -c 200000
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "::warning title=ds::no changes, retrying once"
-            opencode run -m "$MODEL" "$prompt"$'\n\n'"(Retry: the last run ended with no file changes. Do not list the repository; go straight to the files named above and finish the task.)" 2>&1 | tee "$RUNNER_TEMP/ds/out2.txt" | tail -c 200000
-          fi
+          # A refused tool call ends the whole run mid-task; so does an empty answer.
+          for round in 2 3; do
+            last="$RUNNER_TEMP/ds/out$((round-1)).txt"
+            if [ -z "$(git status --porcelain)" ]; then
+              why="the last run ended with no file changes. Do not list the repository; go straight to the files named above"
+            elif grep -q "rejected permission" "$last"; then
+              why="the last run was cut off when an edit was refused (wrong absolute path). Your earlier edits are kept (see git status / git diff). Use paths relative to $GITHUB_WORKSPACE and continue where it stopped"
+            else
+              break
+            fi
+            echo "::warning title=ds::round $round: $why"
+            opencode run -m "$MODEL" "$prompt"$'\n\n'"(Continue: $why, and finish the whole task.)" 2>&1 | tee "$RUNNER_TEMP/ds/out$round.txt" | tail -c 200000
+          done
           exit 0
 
       - name: Guard and compile gate
@@ -119,6 +137,20 @@ jobs:
           echo "::notice title=result::cloud/$NAME $RESULT $(git rev-parse --short HEAD)"
           if [ "$RESULT" = compiled ]; then gh workflow run ko-wip-check.yml --repo "$GITHUB_REPOSITORY" --ref "cloud/$NAME"; fi
 
+      # A second, independent DeepSeek reads only the diff and hunts for what
+      # compiles but is wrong. Opus still decides; this is a pre-filter.
+      - name: Adversarial review
+        if: env.RESULT == 'compiled'
+        shell: bash
+        run: |
+          set +e
+          git diff "$BASE" HEAD -- . ':(exclude)*.md' > "$RUNNER_TEMP/ds/change.diff"
+          review="You are a strict senior reviewer. Another developer made the change in $RUNNER_TEMP/ds/change.diff (read it; you may open any repository file for context, but do NOT edit anything). The task they were given is in $RUNNER_TEMP/ds/prompt.txt. Find real defects only: logic that compiles but is wrong, a removed safety rule/guard/cap, a dropped term in a rewritten condition, data loss or file corruption risk, a race, a crash (null, OOM, main-thread I/O), battery waste (polling, timers, wake locks held too long), a task requirement not actually implemented, or a claim in the task summary the diff does not back. For each: severity HIGH/MEDIUM/LOW, file:line, one-sentence why, one-sentence fix. No style remarks. First line of your answer exactly 'VERDICT: OK' or 'VERDICT: ISSUES n'. Max 25 lines."
+          opencode run -m "$MODEL" "$review" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$RUNNER_TEMP/ds/review.txt"
+          verdict=$(grep -m1 -oE 'VERDICT: [A-Z]+( [0-9]+)?' "$RUNNER_TEMP/ds/review.txt")
+          echo "::notice title=review::${verdict:-VERDICT: none}"
+          exit 0
+
       - name: Summary
         if: always()
         shell: bash
@@ -131,6 +163,10 @@ jobs:
             echo '### DeepSeek summary (last 40 lines)'
             echo '```'
             cat "$RUNNER_TEMP"/ds/out*.txt 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | tail -40
+            echo '```'
+            echo '### Adversarial review'
+            echo '```'
+            tail -40 "$RUNNER_TEMP/ds/review.txt" 2>/dev/null
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
