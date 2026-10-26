@@ -167,6 +167,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.smart.AnalysisWindow
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
@@ -2275,9 +2276,9 @@ class PlaybackService : MediaLibraryService() {
                     crossfadeFormatFor(incomingItem, outgoing = false),
                 )
             },
-            requestAnalysis = { item, durationMs ->
+            requestAnalysis = { item, durationMs, window ->
                 item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
+                    trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, window)
                 }
             },
             // "Incoming" and "outgoing" here are session roles, not players:
@@ -2309,6 +2310,8 @@ class PlaybackService : MediaLibraryService() {
                 }
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
+            analysisTimeMs = { item -> trackAnalyzer.analysisTimeMs(item.mediaId) },
+            analysisWindowMeasured = { item, window -> trackAnalyzer.hasWindow(item.mediaId, window) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the

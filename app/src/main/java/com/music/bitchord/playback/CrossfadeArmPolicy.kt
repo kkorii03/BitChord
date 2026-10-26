@@ -48,12 +48,12 @@ internal data class CrossfadeTrackFormat(
  */
 internal object CrossfadeArmPolicy {
     /**
-     * How long the standby gets to reach STATE_READY.
+     * Grace after the standby lead, before a not-yet-ready player is dropped.
      *
-     * Three seconds is deliberately shorter than the old twelve: the outgoing
-     * track must not be left under transition filtering for a whole fade's
-     * worth of wall-clock time while a cold stream is resolved. A miss is a
-     * plain gapless advance, which is always safe.
+     * The standby is armed [com.music.bitchord.playback.smart.AutomixWorkPolicy.STANDBY_LEAD_MS]
+     * before the transition, so this is not the whole wait — it is how long the
+     * fade is held past its start for a stream that is still resolving. A miss
+     * is a plain gapless advance, which is always safe.
      */
     const val ARM_TIMEOUT_MS = 3_000L
 
