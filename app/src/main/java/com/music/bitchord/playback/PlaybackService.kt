@@ -261,28 +261,6 @@ const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QU
 /** Session command behind the player menu's "Upgrade quality". */
 const val ACTION_UPGRADE_QUALITY = "com.music.bitchord.action.UPGRADE_QUALITY"
 
-/**
- * App-side gate for explicit quality retries.
- *
- * Automatic upgrades never pass through this object. Returning the remaining
- * wait rather than a Boolean gives the log enough information to distinguish
- * a deliberate throttle from a search which failed to start.
- */
-internal class ManualUpgradeThrottle(private val cooldownMs: Long) {
-    private var lastAcceptedAtMs: Long? = null
-
-    @Synchronized
-    fun tryAcquire(nowMs: Long): Long {
-        val previous = lastAcceptedAtMs
-        if (previous != null) {
-            val remaining = cooldownMs - (nowMs - previous)
-            if (remaining > 0) return remaining
-        }
-        lastAcceptedAtMs = nowMs
-        return 0L
-    }
-}
-
 
 /**
  * Session command marking the span of a queue drag in the UI — see
@@ -1070,8 +1048,6 @@ class PlaybackService : MediaLibraryService() {
     private var favoriteActionJob: Job? = null
     private var stationActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
-    /** Rate limit for listener-requested retries; automatic upgrades do not touch it. */
-    private val manualUpgradeThrottle = ManualUpgradeThrottle(MANUAL_UPGRADE_COOLDOWN_MS)
     private var autoplaySeed: String? = null
 
     /** Index in the live queue represented by entry zero of the persisted window. */
@@ -4335,6 +4311,9 @@ class PlaybackService : MediaLibraryService() {
         // A pass interrupted by a process death resumes on the next play. The
         // scheduler debounces and uses unique work, so this is cheap per track.
         com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
+        // A missing reference belonged to the previous playback attempt, not
+        // to this recording. The next play is free to measure it again.
+        HqAudioVerify.onPlaybackStarted()
         // A play beginning is what ends the last one's upgrade verdict. Here
         // rather than in [QualityUpgrade.forget] because that runs on the
         // failure and rollback paths, where a previous "no" is exactly what
@@ -4456,6 +4435,14 @@ class PlaybackService : MediaLibraryService() {
      * second look stays silent. Cleared when the outcome has been reported.
      */
     private var manualUpgradeFor: String? = null
+
+    /**
+     * True when the manual request arrived while this track's automatic check
+     * was already running. The running job is allowed to finish and report; if
+     * it ends silently, the waiter starts the manual pass instead of leaving
+     * the request unanswered.
+     */
+    private var manualJoinedRunningUpgrade = false
 
     /**
      * Ends [upgradeJob] because the queue has moved on — unless it has already
@@ -5631,7 +5618,30 @@ class PlaybackService : MediaLibraryService() {
             // shelving what it proved.
             if (upgradeFor == mediaId) {
                 if (manualUpgradeFor == mediaId) {
-                    reportManualUpgrade(mediaId, getString(R.string.quality_upgrade_busy))
+                    // A manual request joins the check already running for this
+                    // track rather than starting a second one. The job re-reads
+                    // this flag at its decision points and reports the result.
+                    manualJoinedRunningUpgrade = true
+                    val running = upgradeJob
+                    TrackLog.d(
+                        "BitChord",
+                        "manual upgrade joined the check already running for $mediaId",
+                        about = mediaId,
+                    )
+                    scope.launch {
+                        running?.join()
+                        if (manualUpgradeFor == mediaId) {
+                            // The automatic pass ended without answering the
+                            // manual request; start the manual pass now.
+                            manualJoinedRunningUpgrade = false
+                            val live = player
+                            if (live?.currentMediaItem?.mediaId == mediaId) {
+                                lookForBetterCopy(live)
+                            } else {
+                                manualUpgradeFor = null
+                            }
+                        }
+                    }
                 }
                 return false
             }
@@ -5649,7 +5659,7 @@ class PlaybackService : MediaLibraryService() {
                 // on disk — so this goes straight to the swap and skips the ten
                 // seconds of catalogue searching it would otherwise repeat.
                 if (shelved != null) {
-                    if (!manual) {
+                    if (manualUpgradeFor != mediaId) {
                         // A stream found earlier is still valid, but it must not
                         // replace the audio under a track that is already
                         // playing. Keep it for the next play instead.
@@ -5675,7 +5685,7 @@ class PlaybackService : MediaLibraryService() {
                     } finally {
                         NerdStats.onLosslessRaceEnd(mediaId)
                     }
-                    reportManualSwapOutcome(mediaId, outcome, shelved.format)
+                    reportManualSwapOutcome(mediaId, outcome)
                     return@launch
                 }
                 // The runtime the decoder reports is the only measured evidence
@@ -5746,7 +5756,7 @@ class PlaybackService : MediaLibraryService() {
                 // never cut in half by a better copy arriving late. A request
                 // made by hand is still honoured — that is the one swap the
                 // listener explicitly asked for.
-                if (!manual) {
+                if (manualUpgradeFor != mediaId) {
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                         val currentTier = currentTierFor(mediaId)
                         if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, better) != null) {
@@ -5777,7 +5787,7 @@ class PlaybackService : MediaLibraryService() {
                         NerdStats.onLosslessRaceEnd(mediaId)
                     }
                     if (outcome != SwapOutcome.NOT_PROVEN || round >= MAX_UPGRADE_CANDIDATES) {
-                        reportManualSwapOutcome(mediaId, outcome, candidate.format)
+                        reportManualSwapOutcome(mediaId, outcome)
                         return@launch
                     }
                     // The candidate was found, chosen and then failed to prove
@@ -5787,7 +5797,7 @@ class PlaybackService : MediaLibraryService() {
                     // the listener on the copy they asked to improve.
                     round++
                     if (!QualityUpgrade.retryNext(mediaId)) {
-                        reportManualSwapOutcome(mediaId, outcome, candidate.format)
+                        reportManualSwapOutcome(mediaId, outcome)
                         return@launch
                     }
                     TrackLog.d(
@@ -5824,7 +5834,11 @@ class PlaybackService : MediaLibraryService() {
                     ),
                 )
             } finally {
-                if (manualUpgradeFor == mediaId) manualUpgradeFor = null
+                // A manual request that joined this automatic check is left for
+                // the waiter to answer if this job ended without reporting.
+                if (manualUpgradeFor == mediaId && !manualJoinedRunningUpgrade) {
+                    manualUpgradeFor = null
+                }
             }
         }
         return true
@@ -5861,15 +5875,32 @@ class PlaybackService : MediaLibraryService() {
     private fun upgradeQualityNow() {
         val player = player ?: return
         val mediaId = player.currentMediaItem?.mediaId ?: return
-        // Do not charge the manual cooldown for a command that merely arrived
-        // while this track's automatic or manual upgrade was already running.
-        // The UI disables the row too, but the service is the authoritative
-        // boundary for controllers which do not use that UI.
-        if (mediaId in NerdStats.racingLossless.value ||
-            (upgradeJob?.isActive == true && upgradeFor == mediaId)
-        ) {
-            TrackLog.d("BitChord", "manual upgrade ignored for $mediaId: upgrade already running", about = mediaId)
-            Toast.makeText(applicationContext, R.string.quality_upgrade_busy, Toast.LENGTH_SHORT).show()
+        // A request that arrives while this track's check is already running
+        // joins that check instead of starting a second one. The running job
+        // re-reads [manualUpgradeFor] at its decision points; if it ends
+        // silently, this waiter starts the manual pass so the request is never
+        // left unanswered.
+        if (upgradeJob?.isActive == true && upgradeFor == mediaId) {
+            manualUpgradeFor = mediaId
+            manualJoinedRunningUpgrade = true
+            val running = upgradeJob
+            TrackLog.d(
+                "BitChord",
+                "manual upgrade joined the check already running for $mediaId",
+                about = mediaId,
+            )
+            scope.launch {
+                running?.join()
+                if (manualUpgradeFor == mediaId) {
+                    manualJoinedRunningUpgrade = false
+                    val live = player
+                    if (live?.currentMediaItem?.mediaId == mediaId) {
+                        lookForBetterCopy(live)
+                    } else {
+                        manualUpgradeFor = null
+                    }
+                }
+            }
             return
         }
         val hasHigherSource = SourceResolver.canSubstituteForYouTube()
@@ -5895,16 +5926,6 @@ class PlaybackService : MediaLibraryService() {
             ).show()
             return
         }
-        val remaining = manualUpgradeThrottle.tryAcquire(SystemClock.elapsedRealtime())
-        if (remaining > 0) {
-            TrackLog.d(
-                "BitChord",
-                "manual upgrade ignored for $mediaId: ${remaining}ms cooldown remaining",
-                about = mediaId,
-            )
-            Toast.makeText(applicationContext, R.string.quality_upgrade_busy, Toast.LENGTH_SHORT).show()
-            return
-        }
         OriginalVersion.unpin(mediaId)
         // A manual retry is a request for the addon's state *now*. In
         // particular, do not replay a successful empty search cached while one
@@ -5915,6 +5936,7 @@ class PlaybackService : MediaLibraryService() {
         QualityUpgrade.askByHand(mediaId)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
         manualUpgradeFor = mediaId
+        manualJoinedRunningUpgrade = false
         if (!lookForBetterCopy(player) && manualUpgradeFor == mediaId) {
             reportManualUpgrade(
                 mediaId,
@@ -6000,18 +6022,19 @@ class PlaybackService : MediaLibraryService() {
     private fun reportManualUpgrade(mediaId: String, message: String) {
         if (manualUpgradeFor != mediaId) return
         manualUpgradeFor = null
+        manualJoinedRunningUpgrade = false
         Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun reportManualSwapOutcome(
         mediaId: String,
         outcome: SwapOutcome,
-        format: StreamFormat?,
     ) {
         if (manualUpgradeFor != mediaId) return
         val message = when (outcome) {
-            SwapOutcome.SWAPPED ->
-                upgradeMessage(R.string.quality_upgrade_done, QualityUpgradeAdvice.label(format))
+            SwapOutcome.SWAPPED -> getString(R.string.quality_upgrade_switching)
+            SwapOutcome.MISMATCH -> getString(R.string.quality_upgrade_mismatch)
+            SwapOutcome.NO_REFERENCE -> getString(R.string.quality_upgrade_reference_unavailable)
             SwapOutcome.NOT_PROVEN -> upgradeMessage(
                 R.string.quality_upgrade_failed,
                 getString(R.string.quality_upgrade_reason_not_proven),
@@ -6129,7 +6152,16 @@ class PlaybackService : MediaLibraryService() {
     /** What became of a proved upgrade at the moment it would have been swapped in. */
     private enum class SwapOutcome {
         SWAPPED,
+
+        /** The candidate was measured and is not the same recording. */
+        MISMATCH,
+
+        /** The YouTube reference itself could not be measured this time. */
+        NO_REFERENCE,
+
+        /** The candidate could not be proved for another reason. */
         NOT_PROVEN,
+
         TOO_LATE,
         UNAVAILABLE,
     }
@@ -6175,18 +6207,48 @@ class PlaybackService : MediaLibraryService() {
         // song. The answer is cached per pair, so a stream verified during
         // next-song preparation costs only a map lookup here.
         val target = runCatching { SourceResolver.targetIn(Uri.parse(at.uri)) }.getOrNull()
-        if (target != null && HqAudioVerify.verify(this, mediaId, target, stream) == null) {
-            TrackLog.d(
-                "BitChord",
-                "upgrade refused for $mediaId: '${target.title}' did not match the YouTube version",
-                about = mediaId,
-            )
-            QualityUpgrade.failedCandidate(
-                mediaId,
-                stream.sourceConfigId,
-                HqHostTracker.hostOf(stream.url),
-            )
-            return SwapOutcome.NOT_PROVEN
+        val verification = target?.let {
+            // A manual request ignores the automatic retry cooldown and any
+            // missing reference remembered earlier in this play, and waits
+            // longer for the YouTube opening.
+            HqAudioVerify.verifyOutcome(this, mediaId, it, stream, manual = true)
+        }
+        when (verification) {
+            is HqAudioVerify.Outcome.Mismatch -> {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade refused for $mediaId: '${target?.title}' did not match the YouTube version",
+                    about = mediaId,
+                )
+                QualityUpgrade.failedCandidate(
+                    mediaId,
+                    stream.sourceConfigId,
+                    HqHostTracker.hostOf(stream.url),
+                )
+                return SwapOutcome.MISMATCH
+            }
+            is HqAudioVerify.Outcome.NoReference -> {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade deferred for $mediaId: no reference reason=${verification.reason.wire}",
+                    about = mediaId,
+                )
+                return SwapOutcome.NO_REFERENCE
+            }
+            is HqAudioVerify.Outcome.Unavailable -> {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade refused for $mediaId: the candidate could not be measured",
+                    about = mediaId,
+                )
+                QualityUpgrade.failedCandidate(
+                    mediaId,
+                    stream.sourceConfigId,
+                    HqHostTracker.hostOf(stream.url),
+                )
+                return SwapOutcome.NOT_PROVEN
+            }
+            else -> Unit
         }
 
         val upgradedUri = QualityUpgrade.upgradedUri(at.uri)
@@ -11322,9 +11384,6 @@ class PlaybackService : MediaLibraryService() {
          * be worth the break in the audio it costs.
          */
         const val UPGRADE_MIN_REMAINING_MS = 20_000L
-
-        /** Minimum interval between accepted listener-requested quality retries. */
-        const val MANUAL_UPGRADE_COOLDOWN_MS = 30_000L
 
         /** How often to recheck [CrossfadeController.isTransitioning] while an upgrade waits on one. */
         const val UPGRADE_CROSSFADE_POLL_MS = 250L
