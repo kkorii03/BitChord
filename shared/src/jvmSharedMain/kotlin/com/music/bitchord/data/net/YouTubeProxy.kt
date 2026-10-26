@@ -13,6 +13,7 @@ import java.net.Proxy
 import java.net.ProxySelector
 import java.net.SocketAddress
 import java.net.URI
+import java.util.concurrent.atomic.AtomicLong
 import okhttp3.Authenticator as OkHttpAuthenticator
 import okhttp3.Credentials
 
@@ -51,6 +52,19 @@ object YouTubeProxy {
     private var routeChangedAtMs = 0L
 
     /**
+     * Bumped whenever the proxy route or configuration changes.
+     *
+     * A stream URL is bound to the server (and address) that minted it, so a
+     * URL from the previous generation must not be reused: fetching it over
+     * the new route is answered with 403. [ProxyPlayback] stamps each proxied
+     * URL with this value and the resolver treats a stale stamp as a miss.
+     */
+    private val generation = AtomicLong(0L)
+
+    /** The current route generation, for cache stamps. */
+    val routeGeneration: Long get() = generation.get()
+
+    /**
      * Whether requests really go to the backup server now.
      *
      * False whenever no backup is configured, even if the route still reads
@@ -78,6 +92,7 @@ object YouTubeProxy {
         if (_activeRoute.value == target) return
         _activeRoute.value = target
         routeChangedAtMs = System.currentTimeMillis()
+        generation.incrementAndGet()
         if (target == ProxyRoute.BACKUP) {
             Log.i(TAG, "proxy: switched to backup ($reason)")
         } else {
@@ -103,6 +118,7 @@ object YouTubeProxy {
         _activeRoute.value = ProxyRoute.PRIMARY
         routeChangedAtMs = 0L
         current = normalized
+        generation.incrementAndGet()
         ProxyHealthMonitor.clear()
         evictPools()
     }

@@ -276,10 +276,18 @@ object StreamResolver {
         val cached = recent[videoId]
         if (cached != null && MonotonicClock.nowMs() - cached.at < URL_TTL_MS) {
             // A URL minted through the proxy is only playable while the proxy
-            // route is still usable. If the proxy was switched off, past its
-            // health window, or the scope changed back, forget it and let the
-            // ordinary path resolve a fresh direct URL instead.
-            if (!ProxyPlayback.isProxiedUrl(cached.url) || ProxyPlayback.canResolveViaProxy()) {
+            // route is still usable *and* is the one that minted it. If the
+            // proxy was switched off, past its health window, the scope
+            // changed back, or the route moved to the backup (or a new
+            // configuration), forget it and let the ordinary path resolve a
+            // fresh URL instead. Reusing the old one is a 403: googlevideo
+            // binds it to the address that answered the player request.
+            if (ProxyPlaybackPolicy.cachedUrlUsable(
+                    proxyGeneration = cached.proxyGeneration,
+                    currentGeneration = ProxyPlayback.currentRouteGeneration,
+                    canResolveViaProxy = ProxyPlayback.canResolveViaProxy(),
+                )
+            ) {
                 return cached.url
             }
             recent.remove(videoId)
@@ -1951,7 +1959,11 @@ object StreamResolver {
     suspend fun contentLength(videoId: String): Long? =
         resolve(videoId).toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
 
-    private class Resolved(val url: String, val at: Long)
+    /**
+     * A cached URL, its age, and the proxy route generation that minted it.
+     * [proxyGeneration] is null for a direct URL, which survives route changes.
+     */
+    private class Resolved(val url: String, val at: Long, val proxyGeneration: Long?)
 
     /**
      * Stream URLs already resolved, by videoId — and, since [resolve] only ever
@@ -1984,7 +1996,11 @@ object StreamResolver {
             recent.entries.removeAll { it.value.at < cutoff }
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
-        recent[videoId] = Resolved(url, MonotonicClock.nowMs())
+        recent[videoId] = Resolved(
+            url = url,
+            at = MonotonicClock.nowMs(),
+            proxyGeneration = ProxyPlayback.generationFor(url),
+        )
         // A URL that resolved or answered a retry is no longer described by the
         // refusal that preceded it.
         lastRefused.remove(videoId)

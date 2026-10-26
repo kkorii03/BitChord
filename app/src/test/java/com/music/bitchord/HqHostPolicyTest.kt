@@ -4,7 +4,7 @@ import com.music.bitchord.playback.HqHostGate
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.HqResumeCandidate
 import com.music.bitchord.playback.HqResumePolicy
-import com.music.bitchord.playback.HqRetryPolicy
+import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.playback.QualityUpgrade
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
