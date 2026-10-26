@@ -74,12 +74,30 @@ def playlist_ids(pid):
     return [l.strip() for l in r.stdout.decode("utf-8", "replace").splitlines() if re.fullmatch(r"[\w-]{11}", l.strip())]
 
 
+def is_video(vid):
+    """A real video (MV, live clip, cover), not the plain song copy YouTube files
+    under an `<artist> - Topic` channel. The flat playlist only names the playlist
+    owner, so each candidate is looked up on its own."""
+    r = subprocess.run([YTDLP, "--skip-download", "--no-warnings", "--print", "%(channel)s",
+                        f"https://www.youtube.com/watch?v={vid}"], capture_output=True, timeout=120)
+    channel = r.stdout.decode("utf-8", "replace").strip()
+    return bool(channel) and not channel.endswith("- Topic")
+
+
 def pick_songs(playlists, limit, shuffle, seed):
     picked = []
     for pid in playlists:
         ids = playlist_ids(pid)
         if shuffle:
             random.Random(f"{seed}-{pid}").shuffle(ids)
+        if ARGS.videos_only:
+            videos = []
+            for v in ids:
+                if limit and len(videos) >= limit:
+                    break
+                if is_video(v):
+                    videos.append(v)
+            ids = videos
         ids = ids[:limit] if limit else ids
         log(f"playlist {pid}: {len(ids)} songs")
         picked += [(pid, v) for v in ids]
@@ -392,6 +410,10 @@ def main():
     ap.add_argument("--default-set", action="store_true")
     ap.add_argument("--video", action="append", default=[], help="score these video ids only")
     ap.add_argument("--model", default="whisper-large", help="Deepgram model (the app itself uses nova-3)")
+    # The user's call (10-26): test mostly video songs (MVs, covers, live clips),
+    # where the song-version swap and sync go wrong; plain song copies rarely do.
+    ap.add_argument("--all-tracks", dest="videos_only", action="store_false",
+                    help="also pick plain song (Topic) copies; default is videos only")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     ARGS = ap.parse_args()

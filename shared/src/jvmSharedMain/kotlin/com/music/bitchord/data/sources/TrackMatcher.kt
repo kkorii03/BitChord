@@ -841,11 +841,23 @@ object TrackMatcher {
         val altTexts = mutableListOf<String>()
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
-        // "[Official Audio]", "(Live at Wembley)".
+        // "[Official Audio]", "(Live at Wembley)". A bracket in the other
+        // script is not always an aside: "청록(Blue Rock)" and
+        // "봄날 (Spring Day)" state the same song twice, so the Latin reading
+        // is kept as an alternate title rather than thrown away with the
+        // packaging. A bracket naming the original's artist (조용필) stays an
+        // aside here; CoverTitles reads that shape as a credit.
         repeat(BRACKET_PASSES) {
             if (!BRACKETED.containsMatchIn(text)) return@repeat
-            text = BRACKETED.replace(text) { match ->
-                classify(match.groupValues[1], versions, context)
+            val source = text
+            text = BRACKETED.replace(source) { match ->
+                val inner = match.groupValues[1]
+                val outside = source.substring(0, match.range.first)
+                if (isSubtitleBracket(outside, inner)) {
+                    altTexts += inner
+                } else {
+                    classify(inner, versions, context)
+                }
                 " "
             }
         }
@@ -854,6 +866,17 @@ object TrackMatcher {
         text.indexOfFirst { it == '(' || it == '[' }.takeIf { it >= 0 }?.let { open ->
             classify(text.substring(open), versions, context)
             text = text.substring(0, open)
+        }
+
+        // A bar can separate the artist from the song rather than the song
+        // from an upload tag: "청록[Blue Rock] - it's | 아카네 리제(AKANE LIZE)".
+        // When one side is the row's own channel, that side is the credit and
+        // the other side is the title; the tag on the artist's side is
+        // packaging.
+        repeat(PIPE_PASSES) {
+            val next = withoutArtistPipe(text, artist)
+            if (next == text) return@repeat
+            text = next
         }
 
         // Dash- and pipe-separated tails: "Paniyon Sa - Satyamev Jayate",
@@ -872,6 +895,14 @@ object TrackMatcher {
             val tail = text.substring(dash.range.last + 1)
             text = when {
                 isArtistName(head, artist) -> {
+                    classify(head, versions, context)
+                    tail
+                }
+                // A clip channel's "A - 곡(English subtitle)": the uploader is
+                // not the artist, and the bracket has already marked the song
+                // as the side with the other-language reading.
+                isFanClipChannel(artist) && altTexts.isNotEmpty() &&
+                    !hasFilingLatin(head) && !tail.contains('|') -> {
                     classify(head, versions, context)
                     tail
                 }
@@ -997,6 +1028,90 @@ object TrackMatcher {
     /** Whether [text] carries Hangul. */
     internal fun hasHangul(text: String): Boolean = text.any {
         Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HANGUL
+    }
+
+    /** Whether [text] carries kana or Han characters. */
+    private fun hasKanaOrHan(text: String): Boolean =
+        text.any { it in '぀'..'ヿ' || it in '一'..'鿿' }
+
+    /**
+     * Whether a bracket is the same title in another script rather than an
+     * aside. Only a Latin/romanised bracket against a title that has none of
+     * its own qualifies: "청록(Blue Rock)", "봄날 (Spring Day)". A bracket in
+     * the title's own script (or a take/credit marker) stays packaging, which
+     * keeps "고추잠자리(조용필)" and "Lazenca, Save Us (우리 동네 음악대장)" as
+     * they were.
+     */
+    private fun isSubtitleBracket(outside: String, bracket: String): Boolean {
+        val inner = bracket.trim()
+        if (inner.isEmpty()) return false
+        val words = inner.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (words.isEmpty()) return false
+        if (words.any { it in VERSION_WORDS } || words.joinToString("") in NEUTRAL_SEGMENTS) return false
+        if (PRODUCTION_CREDIT.containsMatchIn(inner)) return false
+        if (words.all { it in NOISE_WORDS || it in TRAILING_NOISE || it in JOINING_WORDS }) return false
+        val latin = inner.any { it in 'a'..'z' || it in 'A'..'Z' } &&
+            !hasHangul(inner) && !hasKanaOrHan(inner)
+        if (!latin) return false
+        // One capitalised word is how a catalogue writes an artist
+        // ("비가 오는 날엔(BEAST)"); a phrase is the title's other language.
+        if (!inner.contains(' ')) return false
+        val outsideLatin = outside.any { it in 'a'..'z' || it in 'A'..'Z' }
+        val outsideOther = hasHangul(outside) || hasKanaOrHan(outside)
+        return outsideOther && !outsideLatin
+    }
+
+    /**
+     * A fan/clip channel is a re-uploader, not the performer: its name says
+     * "클립", "저장소", "archive" and the like. A title's artist is then in the
+     * title, never the channel.
+     */
+    fun isFanClipChannel(name: String): Boolean =
+        FAN_CLIP_CHANNEL.containsMatchIn(normalize(name))
+
+    private val FAN_CLIP_CHANNEL = Regex(
+        """클립|clip|팬|저장소|아카이브|archive|다시보기|topic\s*아님""",
+    )
+
+    /**
+     * [text] with a bar-separated segment that is the row's own artist removed.
+     * "청록[Blue Rock] - it's | 아카네 리제(AKANE LIZE)" becomes
+     * "청록[Blue Rock] - it's"; an ordinary "Song | Official Video" is left
+     * alone because neither side is the artist.
+     */
+    private fun withoutArtistPipe(text: String, artist: String): String {
+        if (artist.isBlank()) return text
+        val parts = splitTopLevelPipe(text)
+        if (parts.size < 2) return text
+        val kept = parts.filterNot { part ->
+            // "아카네 리제(AKANE LIZE)" is the artist when the row credits
+            // "아카네 리제"; the bracketed Latin alias is not a second name.
+            val bare = part.substringBefore('(').substringBefore('[').trim()
+            isArtistName(part, artist) || (bare.isNotEmpty() && isArtistName(bare, artist))
+        }
+        if (kept.size == parts.size || kept.isEmpty()) return text
+        return kept.joinToString(" | ")
+    }
+
+    /** Every top-level `|` segment, with the bars removed. */
+    private fun splitTopLevelPipe(text: String): List<String> {
+        val out = mutableListOf<String>()
+        var depth = 0
+        var start = 0
+        for (i in text.indices) {
+            when (text[i]) {
+                '(', '[', '（', '【', '{', '「', '『' -> depth++
+                ')', ']', '）', '】', '}', '」', '』' -> if (depth > 0) depth--
+                '|', '｜' -> if (depth == 0) {
+                    out += text.substring(start, i).trim()
+                    start = i + 1
+                }
+            }
+        }
+        out += text.substring(start).trim()
+        return out.filter { it.isNotEmpty() }
     }
 
     /**
@@ -1421,10 +1536,13 @@ object TrackMatcher {
 
     private const val BRACKET_PASSES = 3
     private const val DASH_PASSES = 3
+    private const val PIPE_PASSES = 2
 
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
+    /** "Prod. by X", "Produced by X": how it was made, never part of the name. */
+    private val PRODUCTION_CREDIT = Regex("""(?i)^\s*(?:prod\.?|produced)\b""")
     /**
      * A listing's track number in front of the name: "3.", "03 ", "3) ",
      * "Track 3 - ". A bare number followed by a word ("7 Rings") is a title
@@ -1495,7 +1613,7 @@ object TrackMatcher {
         // remotely the recording anybody asked for.
         "vocals", "vocal", "acapella", "acappella", "backing", "stems", "stem",
         "cover", "demo", "reprise", "remake", "rework", "extended", "edit",
-        "version", "mix", "dub", "vip", "session", "sessions",
+        "version", "mix", "dub", "vip", "session", "sessions", "inst",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",
         "part", "pt", "chapter",
         // Non-Latin spellings of the same takes. Without these a `カバー` or
@@ -1559,6 +1677,8 @@ object TrackMatcher {
     private val TRAILING_NOISE = setOf(
         "song", "songs", "video", "audio", "lyrics", "lyric", "lyrical",
         "official", "full", "hd", "hq", "4k", "mp3", "ost", "soundtrack",
+        // A clip's own filler after the song: "청록[Blue Rock] - it's".
+        "its", "shorts",
     )
 
     /** Dropped from the core so that "Jack and Jill" and "Jack & Jill" are one title. */
