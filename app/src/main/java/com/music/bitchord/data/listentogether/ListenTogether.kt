@@ -647,10 +647,21 @@ object ListenTogether {
         if (!this::prefs.isInitialized) return true
         val day = System.currentTimeMillis() / 86_400_000L
         val last = runCatching { prefs.getLong(KEY_HEALTH_FAILURE_DAY, -1L) }.getOrDefault(-1L)
-        if (day <= last) return false
+        if (!healthFailureLogAllowed(day, last)) return false
         runCatching { prefs.edit().putLong(KEY_HEALTH_FAILURE_DAY, day).apply() }
         return true
     }
+
+    /**
+     * Whether a failure on [day] may be logged when the last logged failure was
+     * on [lastLoggedDay].
+     *
+     * Pure so the once-a-day rule is tested without preferences or a clock.
+     * A clock that moves backwards must not re-enable logging for a day that
+     * was already written.
+     */
+    internal fun healthFailureLogAllowed(day: Long, lastLoggedDay: Long): Boolean =
+        day > lastLoggedDay
 
     data class HealthResolution(
         val resolvedServer: String,

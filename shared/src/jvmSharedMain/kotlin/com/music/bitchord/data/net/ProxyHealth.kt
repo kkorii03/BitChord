@@ -128,9 +128,15 @@ object ProxyHealthMonitor {
      *   URL. That URL is bound to the server that minted it, so the return to
      *   the primary waits for a browse success instead of breaking the track
      *   that just started.
+     * @param msSinceSwitch how long the backup has been in use. Callers use the
+     *   default; tests pass it so the retry window is exercised without
+     *   sleeping or polling.
      */
     @Synchronized
-    fun recordSuccess(allowRouteChange: Boolean = true) {
+    fun recordSuccess(
+        allowRouteChange: Boolean = true,
+        msSinceSwitch: Long = YouTubeProxy.millisSinceRouteChange(),
+    ) {
         val config = YouTubeProxy.config
         if (allowRouteChange && config.backupUsable &&
             YouTubeProxy.activeRoute.value == ProxyRoute.BACKUP
@@ -138,7 +144,7 @@ object ProxyHealthMonitor {
             val due = ProxyRoutePolicy.nextRouteAfterSuccess(
                 current = ProxyRoute.BACKUP,
                 hasBackup = true,
-                msSinceSwitch = YouTubeProxy.millisSinceRouteChange(),
+                msSinceSwitch = msSinceSwitch,
             )
             if (due == ProxyRoute.PRIMARY) {
                 YouTubeProxy.switchRoute(ProxyRoute.PRIMARY, "backup answered")

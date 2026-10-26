@@ -141,10 +141,12 @@ object YtMusicRepository {
                 // offline phone leaves health UNKNOWN, so the normal network
                 // error is surfaced instead.
                 if (
-                    (YouTubeProxy.config.usable &&
-                        ProxyHealthMonitor.state.value == ProxyHealth.UNREACHABLE) ||
-                    (MusicGateFallback.isActive(key) &&
-                        (!YouTubeProxy.config.usable || isMusicGateSignal(failure)))
+                    MusicGateFallback.shouldUseYouTubeFallback(
+                        proxyUsable = YouTubeProxy.config.usable,
+                        proxyUnreachable = ProxyHealthMonitor.state.value == ProxyHealth.UNREACHABLE,
+                        gateActive = MusicGateFallback.isActive(key),
+                        gateSignal = isMusicGateSignal(failure),
+                    )
                 ) {
                     Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
                     return@call YouTubeFallback.home(force)
