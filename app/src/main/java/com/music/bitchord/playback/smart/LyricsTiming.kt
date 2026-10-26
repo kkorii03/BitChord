@@ -9,6 +9,8 @@ import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.DownloadedSyncCheck
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
+import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
@@ -22,7 +24,6 @@ import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
-import com.music.bitchord.download.DownloadedLyrics
 import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
@@ -1539,10 +1540,10 @@ object LyricsTiming {
      * were never checked with the current rules. The file's own audio is used
      * exactly as the streaming song check uses its copy; a poor or unknown
      * stored sheet is compared with a fresh provider lookup, and the answer
-     * that agrees more wins. A fresh sheet replaces the words saved in the
-     * file and is kept under its own text key, so both the screen and later
-     * plays use the same lyrics and sync. The file's own lines stay under the
-     * existing key when they win.
+     * that agrees more wins. A fresh sheet is kept as this song's override and
+     * under its own text key, so both the screen and later plays use the same
+     * lyrics and sync. The file itself is never rewritten. The file's own lines
+     * stay under the existing key when they win.
      *
      * One check at a time, and none for a version already recorded: this is
      * called on playback only, never polled, and a repeat play is a no-op.
@@ -1635,15 +1636,22 @@ object LyricsTiming {
             )
             if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
                 // The fresh sheet's fit belongs to its own lines. Both have to
-                // land together: the file's lyrics replaced, and the sync saved
-                // under the fresh text's key. A failed write records nothing, so
-                // the next playback tries again.
+                // land together: the override saved for this video, and the
+                // sync saved under the fresh text's key. The audio file itself
+                // is never touched — it may be the one playing. A failed write
+                // records nothing, so the next playback tries again.
                 val fresh = bestFresh
                 val embeddable = fresh?.let {
                     LyricsTag.embeddable(it.source, song.videoId, it.lines)
                 }
-                val written = chosen != null && embeddable != null &&
-                    DownloadedLyrics.replace(context, localUri, embeddable)
+                val written = chosen != null && fresh != null && embeddable != null &&
+                    LyricsOverrideStore.write(
+                        context = context,
+                        videoId = song.videoId,
+                        lines = fresh.lines,
+                        source = fresh.source,
+                        kind = LyricsOverrideFile.Kind.RECHECK,
+                    )
                 if (!written) {
                     recheckTokens[song.videoId] = reason.token
                     return@withLock null

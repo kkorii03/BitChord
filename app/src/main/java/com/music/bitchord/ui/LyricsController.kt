@@ -6,6 +6,8 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
+import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
@@ -248,6 +250,55 @@ class LyricsController(
         }
         _lyricsChecked.value = false
         lyricsJob = scope.launch {
+            // A per-song override is the last word: it comes before the
+            // downloaded file's tags or `lyrics.lrc`, and before any provider
+            // lookup. It also keeps a re-checked sheet out of the audio file,
+            // which may be the one playing — see LyricsOverrideFile.
+            val override = LyricsOverrideStore.read(app, videoId)
+            if (override != null) {
+                val lines = override.lines
+                val timed = lines.any { it.timeMs > 0 }
+                _lyrics.value = lines
+                _lyricsChecked.value = true
+                currentLyricsRequest = currentLyricsRequest?.copy(
+                    fileProviderKnown = override.source != null,
+                )
+                if (localUri != null) {
+                    _lyricsSource.value = null
+                    fileLyricsLabel = com.music.bitchord.data.lyrics.FileLyricsOrigin.label(
+                        override.source?.label,
+                        videoId,
+                    )
+                    val onVideo = isVideo && timed
+                    val recordTimed = onVideo && override.source != null &&
+                        !LyricsTiming.timedToVideo(override.source)
+                    val downloadRecheck = !isVideo && timed &&
+                        override.kind == LyricsOverrideFile.Kind.RECHECK &&
+                        !LyricsTiming.timedToVideo(override.source)
+                    startTiming(
+                        lines,
+                        adjustable = onVideo || downloadRecheck,
+                        searchedAs = null,
+                        measure = recordTimed,
+                        measureNow = true,
+                        videoOwn = onVideo && !recordTimed,
+                        downloadRecheck = downloadRecheck,
+                    )
+                } else {
+                    _lyricsSource.value = override.source
+                    fileLyricsLabel = null
+                    val videoOwn = LyricsTiming.timedToVideo(override.source)
+                    startTiming(
+                        lines,
+                        adjustable = timed,
+                        searchedAs = null,
+                        measure = !videoOwn,
+                        measureNow = true,
+                        videoOwn = timed && videoOwn,
+                    )
+                }
+                return@launch
+            }
             // The file first, and without the duration gate below: a length is
             // only needed to *match* a track against a stranger's database, and
             // nothing is being matched here — these lyrics were written into

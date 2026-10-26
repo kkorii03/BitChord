@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
@@ -137,6 +138,17 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
     ) {
+        // A per-song override is what the player will show, so translate that
+        // rather than the file's older tags or a fresh provider answer.
+        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
+            if (allowHeavy &&
+                (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value)
+            ) {
+                translate(song.videoId, override.lines, targetLanguage(app), keep = song.localUri != null)
+                markPrepared(song.videoId)
+            }
+            return
+        }
         // A download carries its own lyrics: nothing to look up or time.
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.forUri(app, uri)

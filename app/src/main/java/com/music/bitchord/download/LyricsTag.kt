@@ -118,8 +118,9 @@ internal object LyricsTag {
 
     /**
      * One provider answer as the two LRC strings a file can carry. The same
-     * conversion a download makes at save time, reused when a re-check finds a
-     * better sheet and has to replace what the file already holds.
+     * conversion a download makes at save time; a re-check uses it only to
+     * validate the fresh sheet's size, keeping the lines themselves in
+     * `LyricsOverrideStore` rather than touching the audio file.
      */
     internal fun embeddable(source: LyricsSource, videoId: String?, lines: List<LyricLine>): Embeddable? {
         if (lines.none { it.text.isNotBlank() }) return null

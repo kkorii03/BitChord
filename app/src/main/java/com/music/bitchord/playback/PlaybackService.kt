@@ -113,6 +113,7 @@ import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -9250,7 +9251,15 @@ class PlaybackService : MediaLibraryService() {
             var foundSource: com.music.bitchord.data.lyrics.LyricsSource? = null
             val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
             var fromFile = false
-            if (localUri != null) {
+            // A per-song override outranks both the file's own tags/sidecar and
+            // every provider, and is what a re-check writes instead of touching
+            // the audio file. See LyricsOverrideFile.
+            val override = LyricsOverrideStore.read(this@PlaybackService, currentSong.videoId)
+            if (override != null) {
+                lines = override.lines
+                foundSource = override.source
+                fromFile = localUri != null
+            } else if (localUri != null) {
                 EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
                     lines = file.lines
                     foundSource = file.source

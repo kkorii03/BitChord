@@ -83,8 +83,8 @@ object DownloadedSyncCheck {
      *
      * [key] is null when nothing is being stored — either the stored answer
      * still wins, or there was no new answer to compare. A fresh winner is
-     * only a candidate here: the caller still has to write those lines into
-     * the file and save their sync under [key]. If either fails, it must not
+     * only a candidate here: the caller still has to save those lines as the
+     * song's override and their sync under [key]. If either fails, it must not
      * record [recordVersion], so the next play tries again.
      */
     class Replacement(
