@@ -150,6 +150,23 @@ object SongInfoDisplay {
 }
 
 /**
+ * The release year inside an album header's subtitle.
+ *
+ * English headers say "Album • 2010"; Korean ones say "앨범 • 2010년". The
+ * year is therefore a token in the line, not the whole line — matching the
+ * whole line dropped every Korean album's year.
+ */
+internal fun releaseYearFromSubtitle(subtitle: String?): String? =
+    subtitle?.split('•', '·')
+        ?.map { it.trim() }
+        ?.firstNotNullOfOrNull { part ->
+            YEAR_TOKEN.matchEntire(part)?.value?.take(4)
+        }
+
+/** The whole part is a year, optionally with Korea's "년" suffix ("2010년"). */
+private val YEAR_TOKEN = Regex("""(?:19|20)[0-9]{2}(?:년)?""")
+
+/**
  * The playback format the listener is actually hearing, or the format a
  * download was saved as. A catalogue's advertised tier is deliberately not
  * used: "LOSSLESS" on a row says what was asked for, not what arrived.
@@ -166,6 +183,11 @@ object SongInfoQuality {
                 current.bitDepth?.takeIf { lossless }?.let { "$it-bit" },
                 current.sampleRateHz?.let(::rateLabel),
                 current.bitrateKbps?.takeUnless { lossless }?.let { "$it kbps" },
+                // Which catalogue actually served these bytes. A YouTube
+                // substitution and a downloaded local file otherwise show the
+                // same codec and rate, and the source is the only thing that
+                // says where the copy came from.
+                current.sourceName?.trim()?.takeIf { it.isNotBlank() },
             )
             if (parts.isNotEmpty()) return parts.joinToString(" · ")
         }
@@ -273,10 +295,10 @@ object SongInfoRepository {
             attempt { InnertubeParser.parseBrowseHeader(Innertube.browse(id)) }.getOrNull()
         }
         album = album ?: header?.title?.takeIf { it.isNotBlank() }
-        val year = header?.subtitle
-            ?.split('•', '·')
-            ?.map { it.trim() }
-            ?.firstOrNull { it.matches(Regex("(?:19|20)[0-9]{2}")) }
+        // Korean headers say "앨범 • 2010년", so the year is a token inside the
+        // line rather than the whole line. Matching the line exactly dropped it
+        // and left a release with no date whenever the description had none.
+        val year = releaseYearFromSubtitle(header?.subtitle)
 
         val stats = parsed.getOrNull()
         val failed = stats == null || stats.failed
@@ -374,29 +396,39 @@ internal object SongInfoParser {
         val newLike = primary?.find("likeButtonViewModel")?.firstOrNull()
             ?.find("buttonViewModel")?.firstOrNull()?.str("title")
         val comments = data?.find("commentsHeaderRenderer")?.firstNotNullOfOrNull {
-            it["countText"]?.text()?.withCount()
+            countValue(it["countText"]?.text())
         }
             ?: data?.find("commentsEntryPointHeaderRenderer")?.firstOrNull()
-                ?.get("commentCount")?.text()?.withCount()
+                ?.get("commentCount")?.text()?.let(::countValue)
             ?: data?.find("engagementPanelSectionListRenderer")?.firstOrNull {
                 it.str("targetId") == "engagement-panel-comments-section" ||
                     it.str("panelIdentifier") == "engagement-panel-comments-section"
             }?.find("engagementPanelTitleHeaderRenderer")?.firstOrNull()
-                ?.get("contextualInfo")?.text()?.withCount()
+                ?.get("contextualInfo")?.text()?.let(::countValue)
         val meta = descriptionMeta(
-            (if (hasPlayer) details.str("shortDescription") else null) ?: descriptionOf(data),
+            (if (hasPlayer) {
+                details.str("shortDescription")
+                    ?: player?.obj("microformat")?.obj("playerMicroformatRenderer")
+                        ?.str("description")
+            } else {
+                null
+            }) ?: descriptionOf(data),
         )
+        val viewRenderer = primary?.find("videoViewCountRenderer")?.firstOrNull()
         return SongInfo(
             releaseDate = meta.releaseDate,
             genre = meta.genre,
             composer = meta.composer,
             lyricist = meta.lyricist,
-            views = viewCount(
+            views = countValue(
                 (if (hasPlayer) details.str("viewCount") else null)
-                    ?: primary?.find("videoViewCountRenderer")?.firstOrNull()
-                        ?.get("viewCount")?.text(),
+                    // The exact figure when YouTube states one; Korean watch
+                    // data often carries "18억" next to the full count.
+                    ?: viewRenderer?.str("originalViewCount")
+                        ?.takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }
+                    ?: viewRenderer?.get("viewCount")?.text(),
             ),
-            likes = (newLike ?: oldLike)?.withCount(),
+            likes = countValue(newLike ?: oldLike),
             comments = comments,
             failed = !hasPlayer && data == null,
         )
@@ -409,16 +441,36 @@ internal object SongInfoParser {
             ?: data?.find("attributedDescription")?.firstOrNull()?.str("content")
     }
 
-    /** YouTube's own count strings are full numbers, sometimes with a label. */
-    private fun viewCount(raw: String?): String? {
+    /**
+     * A count as YouTube states it, in any locale.
+     *
+     * Korean watch data mixes full figures ("조회수 59,809,305회") with
+     * abbreviated ones ("조회수 1.2만회", "좋아요 1949만", "댓글 246만").
+     * Stripping every non-digit turned "1.2만" into "12"; keeping the unit is
+     * both correct and what the Korean UI shows. A plain number is normalised
+     * to its digits so [compactCount] can shorten it.
+     */
+    private fun countValue(raw: String?): String? {
         val text = raw?.trim()?.takeIf { it.any(Char::isDigit) } ?: return null
         if (text.startsWith("-")) return null
-        val first = text.substringBefore(' ')
-        if (Regex("^[\\d.,]+[KMB]$", RegexOption.IGNORE_CASE).matches(first)) return first
+        val abbreviated = ABBREVIATED_COUNT.find(text)
+        if (abbreviated != null) {
+            val number = abbreviated.groupValues[1]
+            val unit = abbreviated.groupValues[2]
+            return if (unit.lowercase(Locale.ROOT) in setOf("k", "m", "b")) {
+                number + unit.uppercase(Locale.ROOT)
+            } else {
+                number + unit
+            }
+        }
         val number = Regex("\\d[\\d,.]*").find(text)?.value ?: return text
         val digits = number.filter(Char::isDigit)
         return digits.toLongOrNull()?.takeIf { it >= 0 }?.toString() ?: text
     }
+
+    /** A number and its unit, wherever it sits inside a localised label. */
+    private val ABBREVIATED_COUNT =
+        Regex("""(\d+(?:[.,]\d+)?)\s*([KMBkmb만억천万亿千億])""")
 
     private data class DescriptionMeta(
         val releaseDate: String?,
@@ -434,7 +486,10 @@ internal object SongInfoParser {
      */
     private fun descriptionMeta(description: String?): DescriptionMeta {
         val lines = description?.lineSequence()
-            ?.map { it.trim() }
+            // Auto-generated credits write "Composer  Lyricist"; collapsing
+            // the run of spaces lets one label match without loosening the
+            // colon rule every other field relies on.
+            ?.map { it.trim().replace(WHITESPACE, " ") }
             ?.filter { it.isNotEmpty() }
             ?.toList()
             .orEmpty()
@@ -455,9 +510,11 @@ internal object SongInfoParser {
             releaseDate = release,
             genre = field("Genre", "장르"),
             composer = field("Composer", "Written by", "Writer", "작곡"),
-            lyricist = field("Lyricist", "Lyrics by", "작사"),
+            lyricist = field("Lyricist", "Lyrics by", "Composer Lyricist", "작사"),
         )
     }
+
+    private val WHITESPACE = Regex("\\s+")
 
     /** Balanced JSON extraction tolerates braces inside titles and trailing script statements. */
     private fun extract(script: String, name: String): JsonObject? {
@@ -486,7 +543,6 @@ internal object SongInfoParser {
 
     private fun JsonObject.obj(key: String) = this[key] as? JsonObject ?: JsonObject(emptyMap())
     private fun JsonObject.str(key: String) = (this[key] as? JsonPrimitive)?.contentOrNull
-    private fun String.withCount(): String? = takeIf { it.any(Char::isDigit) }
     private fun JsonElement.text(): String? = (this as? JsonObject)?.let {
         it.str("simpleText") ?: (it["runs"] as? JsonArray)?.joinToString("") { run ->
             (run as? JsonObject)?.str("text").orEmpty()
