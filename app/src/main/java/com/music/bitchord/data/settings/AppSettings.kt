@@ -267,6 +267,22 @@ object AppSettings {
     val autoRedownloadMvSound = MutableStateFlow(true)
 
     /**
+     * Replace a downloaded file when a sound-verified copy on a higher rung
+     * exists, even if the file is already high quality.
+     *
+     * On by default. The old file is only removed after the replacement has
+     * been fetched and written, and the new file keeps the source, format and
+     * verification offset in its metadata. See `HqLibraryUpgrade`.
+     */
+    val autoReplaceHqDownloads = MutableStateFlow(true)
+
+    /** Pre-save a verified high-quality copy of frequently played and liked songs. */
+    val autoPrefetchHq = MutableStateFlow(true)
+
+    /** How many verified high-quality copies may be pre-saved in one pass. */
+    val hqPrefetchLimit = MutableStateFlow(500)
+
+    /**
      * Keep ordinary downloads in Music/BitChord where other music apps can see
      * them. Off (the default) keeps downloads in this app's private storage.
      * HLS downloads always stay private because they are a playlist package,
@@ -1133,6 +1149,9 @@ object AppSettings {
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
+        autoReplaceHqDownloads.value = prefs.getBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, true)
+        autoPrefetchHq.value = prefs.getBoolean(KEY_AUTO_PREFETCH_HQ, true)
+        hqPrefetchLimit.value = prefs.getInt(KEY_HQ_PREFETCH_LIMIT, 500).coerceIn(0, 10_000)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
@@ -1581,6 +1600,22 @@ object AppSettings {
     fun setAutoRedownloadMvSound(value: Boolean) {
         autoRedownloadMvSound.value = value
         prefs.edit().putBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, value).apply()
+    }
+
+    fun setAutoReplaceHqDownloads(value: Boolean) {
+        autoReplaceHqDownloads.value = value
+        prefs.edit().putBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, value).apply()
+    }
+
+    fun setAutoPrefetchHq(value: Boolean) {
+        autoPrefetchHq.value = value
+        prefs.edit().putBoolean(KEY_AUTO_PREFETCH_HQ, value).apply()
+    }
+
+    fun setHqPrefetchLimit(value: Int) {
+        val normalized = value.coerceIn(0, 10_000)
+        hqPrefetchLimit.value = normalized
+        prefs.edit().putInt(KEY_HQ_PREFETCH_LIMIT, normalized).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -3080,6 +3115,9 @@ object AppSettings {
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_AUTO_REDOWNLOAD_MV_SOUND = "auto_redownload_mv_sound"
+    private const val KEY_AUTO_REPLACE_HQ_DOWNLOADS = "auto_replace_hq_downloads"
+    private const val KEY_AUTO_PREFETCH_HQ = "auto_prefetch_hq"
+    private const val KEY_HQ_PREFETCH_LIMIT = "hq_prefetch_limit"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"

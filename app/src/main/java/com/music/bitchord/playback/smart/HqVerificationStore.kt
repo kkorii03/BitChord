@@ -27,6 +27,14 @@ object HqVerificationStore {
         val tier: HqTier,
     )
 
+    /** One accepted pair, with the ids needed to ask for the very same stream again. */
+    data class Entry(
+        val youtubeId: String,
+        val sourceConfigId: String,
+        val trackId: String,
+        val verified: Verified,
+    )
+
     private const val PREFS = "hq_verification"
     private const val KEY_VERIFIED = "verified"
     private const val KEY_REJECTED = "rejected"
@@ -105,6 +113,29 @@ object HqVerificationStore {
             .filter { it.key.startsWith("$youtubeId\u0001") }
             .map { it.value.tier }
             .minByOrNull { it.rank }
+    }
+
+    /**
+     * Every accepted pair, with its source and track ids.
+     *
+     * The automatic library pass needs more than the best rung: it has to ask
+     * the same catalogue for the same row, or a fresh search can land on a
+     * different recording. Rejected pairs are deliberately absent — they are
+     * not candidates, and a pass that tried them would only pay for the same
+     * decode again.
+     */
+    fun entries(context: Context): List<Entry> = synchronized(lock) {
+        data(context).verified.entries.mapNotNull { (key, verified) ->
+            val parts = key.split('\u0001')
+            if (parts.size < 3) return@mapNotNull null
+            val youtubeId = parts[0]
+            val sourceConfigId = parts[1]
+            val trackId = parts[2]
+            if (youtubeId.isBlank() || sourceConfigId.isBlank() || trackId.isBlank()) {
+                return@mapNotNull null
+            }
+            Entry(youtubeId, sourceConfigId, trackId, verified)
+        }
     }
 
     private fun keyOf(youtubeId: String, sourceConfigId: String?, trackId: String?): String =

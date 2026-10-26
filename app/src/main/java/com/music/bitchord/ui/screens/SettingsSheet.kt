@@ -122,6 +122,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.download.MvSoundRedownload
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -292,6 +293,9 @@ fun SettingsScreen(
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val autoRedownloadMvSound by AppSettings.autoRedownloadMvSound.collectAsStateWithLifecycle()
+    val autoReplaceHqDownloads by AppSettings.autoReplaceHqDownloads.collectAsStateWithLifecycle()
+    val autoPrefetchHq by AppSettings.autoPrefetchHq.collectAsStateWithLifecycle()
+    val hqPrefetchLimit by AppSettings.hqPrefetchLimit.collectAsStateWithLifecycle()
     val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -731,6 +735,30 @@ fun SettingsScreen(
                         }
                     },
                     subtitle = stringResource(R.string.auto_redownload_mv_sound_subtitle),
+                )
+            }
+            val autoReplaceHqTitle = stringResource(R.string.auto_replace_hq_downloads)
+            row(autoReplaceHqTitle, "hq", "high quality", "lossless", "replace", "고음질", divided = false) {
+                SettingsSubRow(
+                    title = autoReplaceHqTitle,
+                    checked = autoReplaceHqDownloads,
+                    onCheckedChange = { checked ->
+                        AppSettings.setAutoReplaceHqDownloads(checked)
+                        HqLibraryUpgrade.onSettingsChanged(context)
+                    },
+                    subtitle = stringResource(R.string.auto_replace_hq_downloads_subtitle),
+                )
+            }
+            val autoPrefetchHqTitle = stringResource(R.string.auto_prefetch_hq)
+            row(autoPrefetchHqTitle, "hq", "high quality", "prefetch", "offline", "고음질", divided = false) {
+                SettingsSubRow(
+                    title = autoPrefetchHqTitle,
+                    checked = autoPrefetchHq,
+                    onCheckedChange = { checked ->
+                        AppSettings.setAutoPrefetchHq(checked)
+                        HqLibraryUpgrade.onSettingsChanged(context)
+                    },
+                    subtitle = stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit),
                 )
             }
             val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)

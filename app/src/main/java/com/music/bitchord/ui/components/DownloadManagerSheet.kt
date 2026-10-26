@@ -62,6 +62,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.download.DownloadProgress
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -196,6 +197,7 @@ fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val session by DownloadSession.state.collectAsStateWithLifecycle()
+    val hqProgress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
     // Newest ask last, the order the queue will actually reach them in.
     val items = remember(session.items) { session.items.sortedBy { it.sequence } }
 
@@ -221,6 +223,17 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
+                if (hqProgress.visible) {
+                    Text(
+                        text = stringResource(
+                            R.string.hq_library_progress,
+                            hqProgress.done,
+                            hqProgress.total,
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             if (session.busy) {
                 TextButton(
@@ -281,6 +294,28 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/**
+ * The high-quality pass's one line, shown at the top of the Downloads screen.
+ *
+ * Drawn from the persisted pass state, so it survives the sheet being closed
+ * and the process being restarted. Nothing is shown when no pass is running.
+ */
+@Composable
+fun HqLibraryProgressLine(modifier: Modifier = Modifier) {
+    val progress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
+    if (!progress.visible) return
+    Text(
+        text = stringResource(
+            R.string.hq_library_progress,
+            progress.done,
+            progress.total,
+        ),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier,
+    )
 }
 
 /** One track: its cover, what it is, and where it has got to. */
