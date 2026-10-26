@@ -113,8 +113,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
-import com.music.bitchord.ui.components.MeasuredQualityBadge
-import com.music.bitchord.ui.components.measuredLosslessQuality
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -352,31 +350,6 @@ internal fun PlaybackQualityLabel(
         stillRacing = song.videoId in racingLossless,
         losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
         nerdStats = nerdStats,
-        modifier = modifier,
-    )
-}
-
-/**
- * The measured lossless badge beside the credits, in Apple Music's quiet grey.
- *
- * [PlaybackQualityLabel] under the seek bar already reports the same fact, but
- * the title is where a listener looks first, and the under-bar slot is also
- * shared with the loading and mixing states. This one is only ever a result:
- * no shimmer, no colour from the sleeve, and nothing at all when the decoder
- * did not confirm a lossless stream. See [NerdStats.Snapshot.showsLosslessBadge].
- */
-@Composable
-internal fun TitleMeasuredQualityBadge(
-    song: Song,
-    modifier: Modifier = Modifier,
-) {
-    val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
-    val playing = nerdStats?.takeIf { it.mediaId == song.videoId } ?: return
-    if (playing.measuredLosslessQuality() == null) return
-    MeasuredQualityBadge(
-        stats = playing,
-        color = Color.White.copy(alpha = 0.55f),
-        style = MaterialTheme.typography.labelSmall,
         modifier = modifier,
     )
 }
