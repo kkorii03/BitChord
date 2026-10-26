@@ -15,7 +15,6 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqLibraryAction
 import com.music.bitchord.data.sources.HqLibraryEntry
@@ -105,7 +104,7 @@ object HqLibraryUpgrade {
     private var activeVideoId: String? = null
 
     /**
-     * A pass the listener asked for with "지금 전부 고음질로".
+     * A pass the listener asked for with "모두 고음질로 다시 받기".
      *
      * The automatic switches decide whether the background pass may run at
      * all. A button is a one-off instruction, so it keeps its own flag: the
@@ -164,7 +163,7 @@ object HqLibraryUpgrade {
     }
 
     /**
-     * The Downloads screen's "지금 전부 고음질로" button.
+     * The Downloads screen's "모두 고음질로 다시 받기" button.
      *
      * Starts the replacement half of the pass at once, even with the automatic
      * switches off. It is still the same one-target-at-a-time worker and the
@@ -198,16 +197,26 @@ object HqLibraryUpgrade {
      * A verified higher pair is fetched through the same pinned replacement as
      * the automatic pass. With no verdict yet, one search runs for this track
      * only, and the candidate must clear the same sound comparison before it is
-     * allowed to replace the file. The fallback — no source proved better — is
-     * a deliberate re-fetch at the best rung the download setting offers, with
-     * adoption of the old file explicitly disabled.
+     * allowed to replace the file. A deliberate upgrade with no proved better
+     * pair does nothing; a repair may fall back to a re-fetch only when the
+     * served rendition is at least the rung of the file it replaces.
      */
     fun requestUpgrade(context: Context, song: Song, allowEqual: Boolean = false) {
         ensureLoaded(context)
         val meta = Downloads.savedMetadataFor(song.videoId)
         val badge = song.downloadFormat ?: meta?.downloadFormat
-        val currentTier = DownloadedQuality.tierOf(badge)
-        val entry = bestEntryFor(context, song.videoId, song.title, song.artist)
+        val currentTier = DownloadedQuality.tierOf(badge, meta?.hqTier)
+        // A repair must not ask the very source that supplied the wrong
+        // recording. Computed before the entry lookup so it can be excluded
+        // there, not only from the later search.
+        val wrongSource = meta?.takeIf { it.wrongRecording }?.hqSourceConfigId
+        val entry = bestEntryFor(
+            context = context,
+            videoId = song.videoId,
+            songTitle = song.title,
+            songArtist = song.artist,
+            excludeSourceConfigId = wrongSource,
+        )
         // A repair may accept an equal rung, but never a lower one: replacing
         // a lossless file with a verified 320kbps copy would be a downgrade
         // dressed as a fix.
@@ -231,7 +240,6 @@ object HqLibraryUpgrade {
         }
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
-            val wrongSource = meta?.takeIf { it.wrongRecording }?.hqSourceConfigId
             val candidate = runCatching {
                 SourceResolver.upgradeFor(
                     target = target,
@@ -244,7 +252,13 @@ object HqLibraryUpgrade {
                 val trackId = candidate.trackId
                 if (!sourceId.isNullOrBlank() && !trackId.isNullOrBlank()) {
                     val verified = HqAudioVerify.verify(context, song.videoId, target, candidate)
-                    if (verified != null) {
+                    val acceptable = verified != null &&
+                        if (allowEqual) {
+                            verified.tier.rank <= currentTier.rank
+                        } else {
+                            HqLibraryPolicy.isBetter(currentTier, verified.tier)
+                        }
+                    if (verified != null && acceptable) {
                         enqueueVerified(
                             context,
                             song,
@@ -254,20 +268,20 @@ object HqLibraryUpgrade {
                     }
                 }
             }
+            // A deliberate upgrade only ever replaces a file with a pair the
+            // sound comparison proved better. Falling back to an unverified
+            // search here used to fetch a lower rendition (320 AAC asked for,
+            // 160 Opus served) under the banner of an upgrade.
+            if (!allowEqual) return@launch
+            // The repair could not be proved first, so the download itself has
+            // to prove it: the served rendition must be at least the rung of
+            // the file being replaced, or [Downloads.prepare] refuses it and
+            // the old file stays.
             val fallbackQuality = if (currentTier == HqTier.DOLBY_ATMOS) {
                 DownloadedQuality.qualityFor(currentTier)
             } else {
                 DownloadedQuality.qualityForUpgrade(badge, null)
             }
-            val fallbackTier = when (fallbackQuality) {
-                DownloadQuality.LOSSLESS -> HqTier.LOSSLESS_16
-                DownloadQuality.HIGH -> HqTier.HIGH_LOSSY
-                DownloadQuality.STANDARD -> HqTier.NORMAL
-            }
-            // A deliberate upgrade only replaces a file when the requested
-            // rung is genuinely higher. A repair may replace at the same rung:
-            // the file it is replacing is the wrong recording.
-            if (!allowEqual && fallbackTier.rank >= currentTier.rank) return@launch
             Downloads.enqueue(
                 context = context,
                 song = song,
@@ -276,6 +290,7 @@ object HqLibraryUpgrade {
                 avoidSourceConfigId = wrongSource,
                 forceReplace = true,
                 youtubeOnly = true,
+                minimumTier = currentTier,
             )
         }
     }
@@ -307,11 +322,13 @@ object HqLibraryUpgrade {
         videoId: String,
         songTitle: String,
         songArtist: String,
+        excludeSourceConfigId: String? = null,
     ): HqVerificationStore.Entry? =
         HqVerificationStore.entries(context)
             .asSequence()
             .filter { it.youtubeId == videoId }
             .filter { !it.sourceConfigId.isBlank() && !it.trackId.isBlank() }
+            .filter { excludeSourceConfigId == null || it.sourceConfigId != excludeSourceConfigId }
             .filter {
                 !DownloadHealthPolicy.isArrangement(
                     sourceTitle = it.verified.sourceTitle,
@@ -544,25 +561,18 @@ object HqLibraryUpgrade {
             .filterValues { it == LikeStatus.LIKE }
             .keys
 
-        // One entry per song, on the best rung any accepted pair proved. A
-        // second source that proved a higher rung is the one to fetch; keeping
-        // the first would leave the better copy unseen.
-        val best = verified
-            .groupBy { it.youtubeId }
-            .mapValues { (_, candidates) ->
-                candidates.minWith(
-                    compareBy<HqVerificationStore.Entry> { it.verified.tier.rank }
-                        .thenBy { it.sourceConfigId }
-                        .thenBy { it.trackId },
-                )
-            }
-
-        val entries = best.values.mapNotNull { entry ->
+        // Every accepted pair is handed on, not one pre-collapsed winner per
+        // song: a higher-tier piano cover must not hide a lower-tier verified
+        // entry before [HqLibraryPolicy] has had the chance to drop the cover
+        // and group the rest by song.
+        val entries = verified.mapNotNull { entry ->
             val meta = downloaded[entry.youtubeId]
             val recentRow = recent[entry.youtubeId]
             HqLibraryEntry(
                 videoId = entry.youtubeId,
-                currentTier = meta?.let { DownloadedQuality.tierOf(it.downloadFormat) },
+                currentTier = meta?.let {
+                    DownloadedQuality.tierOf(it.downloadFormat, it.hqTier)
+                },
                 verifiedTier = entry.verified.tier,
                 sourceConfigId = entry.sourceConfigId,
                 trackId = entry.trackId,

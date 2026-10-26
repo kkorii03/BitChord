@@ -18,6 +18,7 @@ class DownloadHealthPolicyTest {
         current: HqTier? = HqTier.NORMAL,
         verified: HqTier? = null,
         online: Boolean = true,
+        soundCached: Boolean = false,
     ) = DownloadHealthPolicy.Input(
         songTitle = songTitle,
         songArtist = songArtist,
@@ -29,6 +30,7 @@ class DownloadHealthPolicyTest {
         currentTier = current,
         verifiedTier = verified,
         online = online,
+        soundCached = soundCached,
     )
 
     @Test
@@ -116,6 +118,49 @@ class DownloadHealthPolicyTest {
             input(soundAccepted = true, sourceTitle = "Song (Remix)"),
         )
         assertEquals(DownloadHealthPolicy.Verdict.OK, decision.verdict)
+    }
+
+    @Test
+    fun `a cached acceptance does not hide a runtime mismatch`() {
+        val decision = DownloadHealthPolicy.judge(
+            input(
+                soundAccepted = true,
+                soundCached = true,
+                fileMs = 200_000L + DownloadHealthPolicy.DURATION_TOLERANCE_MS + 1,
+            ),
+        )
+        assertEquals(DownloadHealthPolicy.Verdict.WRONG_RECORDING, decision.verdict)
+    }
+
+    @Test
+    fun `a cached acceptance does not hide an arrangement marker`() {
+        val decision = DownloadHealthPolicy.judge(
+            input(
+                soundAccepted = true,
+                soundCached = true,
+                sourceTitle = "Song (Piano Cover)",
+                sourceArtist = "Piano Dream",
+            ),
+        )
+        assertEquals(DownloadHealthPolicy.Verdict.ARRANGEMENT, decision.verdict)
+    }
+
+    @Test
+    fun `a file replaced during verification is not marked wrong`() {
+        assertFalse(
+            DownloadHealthPolicy.shouldMarkWrong(
+                currentUri = "file:///new.flac",
+                inspectedUri = "file:///old.flac",
+                alreadyWrong = false,
+            ),
+        )
+        assertTrue(
+            DownloadHealthPolicy.shouldMarkWrong(
+                currentUri = "file:///old.flac",
+                inspectedUri = "file:///old.flac",
+                alreadyWrong = false,
+            ),
+        )
     }
 
     @Test

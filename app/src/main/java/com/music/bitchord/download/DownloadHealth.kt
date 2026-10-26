@@ -12,7 +12,6 @@ import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -45,7 +44,7 @@ object DownloadHealth {
      * again. The version is part of each file's signature, so an old entry
      * simply stops matching — no migration is needed.
      */
-    const val CHECK_VERSION = 1
+    const val CHECK_VERSION = 2
 
     data class Outcome(
         val verdict: DownloadHealthPolicy.Verdict,
@@ -75,7 +74,7 @@ object DownloadHealth {
         if (!Downloads.isDownloaded(id)) return@withContext null
         if (!inFlight.add(id)) return@withContext null
         try {
-            val currentTier = DownloadedQuality.tierOf(meta.downloadFormat)
+            val currentTier = DownloadedQuality.tierOf(meta.downloadFormat, meta.hqTier)
             val bestTier = HqVerificationStore.bestTier(context, id)
             val online = online(context)
 
@@ -97,7 +96,8 @@ object DownloadHealth {
                 return@withContext outcome
             }
 
-            val signature = signature(context, meta)
+            val version = Downloads.fileVersion(context, meta.uri)
+            val signature = signature(meta, version)
             if (isChecked(context, id, signature)) return@withContext null
 
             val sound = HqAudioVerify.verifyDownloaded(
@@ -113,6 +113,14 @@ object DownloadHealth {
                 HqAudioVerify.DownloadedSound.Rejected -> false
                 HqAudioVerify.DownloadedSound.Unavailable -> null
             }
+            val soundCached = sound is HqAudioVerify.DownloadedSound.Accepted && sound.cached
+            // A repair can commit while the decode is running. The verdict is
+            // about the file that was opened, so a different file now in the
+            // record must not inherit it — not the wrong flag, not the stream
+            // handoff, not another repair.
+            val stillCurrent = Downloads.savedMetadataFor(id)?.uri == meta.uri &&
+                Downloads.fileVersion(context, meta.uri) == version
+            if (!stillCurrent) return@withContext null
             val decision = DownloadHealthPolicy.judge(
                 DownloadHealthPolicy.Input(
                     songTitle = meta.title,
@@ -123,6 +131,7 @@ object DownloadHealth {
                     sourceTitle = meta.hqSourceTitle,
                     sourceArtist = meta.hqSourceArtist,
                     soundAccepted = soundAccepted,
+                    soundCached = soundCached,
                     currentTier = currentTier,
                     verifiedTier = bestTier,
                     online = online,
@@ -142,7 +151,9 @@ object DownloadHealth {
                 DownloadHealthPolicy.Action.STREAM,
                 DownloadHealthPolicy.Action.REDOWNLOAD,
                 -> {
-                    Downloads.markWrongRecording(id)
+                    if (!Downloads.markWrongRecording(id, meta.uri, version)) {
+                        return@withContext null
+                    }
                     HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true)
                 }
                 DownloadHealthPolicy.Action.UPGRADE -> {
@@ -180,17 +191,9 @@ object DownloadHealth {
         )
     }
 
-    private fun signature(context: Context, meta: SavedSongMetadata): String {
-        val uri = meta.uri
-        val parsed = android.net.Uri.parse(uri)
-        val file = runCatching { File(parsed.path.orEmpty()) }.getOrNull()?.takeIf { it.exists() }
-        val length = file?.length() ?: runCatching {
-            context.contentResolver.openAssetFileDescriptor(parsed, "r")?.use { it.length }
-        }.getOrNull() ?: 0L
-        val modified = file?.lastModified() ?: 0L
-        return "$CHECK_VERSION|$uri|$length|$modified|" +
+    private fun signature(meta: SavedSongMetadata, version: String): String =
+        "$CHECK_VERSION|${meta.uri}|$version|" +
             "${meta.hqSourceConfigId.orEmpty()}|${meta.hqTrackId.orEmpty()}|${meta.hqTier.orEmpty()}"
-    }
 
     private fun isChecked(context: Context, id: String, signature: String): Boolean {
         val prefs = prefs(context)

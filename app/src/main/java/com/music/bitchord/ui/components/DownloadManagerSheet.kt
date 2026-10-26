@@ -320,7 +320,7 @@ fun HqLibraryProgressLine(modifier: Modifier = Modifier) {
 }
 
 /**
- * The Downloads screen's "지금 전부 고음질로" control.
+ * The Downloads screen's "모두 고음질로 다시 받기" control.
  *
  * A deliberate one-off run of the replacement pass, independent of the two
  * automatic switches. It goes through [HqLibraryUpgrade.startReplacementPass],

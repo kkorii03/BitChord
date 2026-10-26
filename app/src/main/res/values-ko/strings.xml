@@ -1333,7 +1333,7 @@
     <string name="auto_prefetch_hq">자주 듣는 곡 고음질로 미리 저장</string>
     <string name="auto_prefetch_hq_subtitle">좋아요한 곡과 자주 들은 곡을 최대 %1$d곡까지 미리 저장합니다. 데이터와 저장공간은 제한하지 않습니다.</string>
     <string name="hq_library_progress">고음질로 바꾸는 중 %1$d/%2$d</string>
-    <string name="hq_library_upgrade_all">지금 전부 고음질로</string>
+    <string name="hq_library_upgrade_all">모두 고음질로 다시 받기</string>
     <string name="hq_library_upgrade_all_subtitle">다운로드한 곡을 소리로 검증된 고음질 음원으로 지금 교체합니다. 곡마다 하나씩 진행됩니다.</string>
     <string name="download_health_recheck">다운로드 곡 다시 점검</string>
     <string name="download_health_recheck_subtitle">다운로드한 곡이 다음에 재생될 때 파일을 한 번 더 확인하고, 틀린 녹음이나 더 낮은 음질이면 바로잡습니다. 지금 바로 실행하지는 않습니다.</string>

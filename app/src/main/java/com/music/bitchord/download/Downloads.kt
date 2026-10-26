@@ -15,6 +15,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceResolver
@@ -210,6 +211,9 @@ object Downloads {
     /** Ids that must be fetched from YouTube, never from a configured source. */
     private val youtubeOnlyIds = HashSet<String>()
 
+    /** A repair's minimum served rung; see [enqueue]. Guarded by [lock]. */
+    private val minimumTiers = HashMap<String, HqTier>()
+
     private val lock = Any()
 
     /**
@@ -301,6 +305,9 @@ object Downloads {
      * @param hq the exact verified pair the automatic high-quality pass wants,
      *   or null for an ordinary download. When present the search is skipped:
      *   only that source's that track is opened.
+     * @param minimumTier a repair's floor: the served rendition must be at
+     *   least this good, or the download fails and the old file stays. Used
+     *   when the replacement itself could not be verified first.
      */
     fun enqueue(
         context: Context,
@@ -312,6 +319,7 @@ object Downloads {
         avoidSourceConfigId: String? = null,
         forceReplace: Boolean = false,
         youtubeOnly: Boolean = false,
+        minimumTier: HqTier? = null,
     ) {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
@@ -336,6 +344,7 @@ object Downloads {
             if (avoidSourceConfigId != null) avoidSources[id] = avoidSourceConfigId
             if (forceReplace) forceReplaceIds.add(id)
             if (youtubeOnly) youtubeOnlyIds.add(id)
+            if (minimumTier != null) minimumTiers[id] = minimumTier
         }
         _active.update { it + (id to DownloadState.Queued) }
         DownloadSession.queued(song, from)
@@ -355,6 +364,7 @@ object Downloads {
                 avoidSources.remove(id)
                 forceReplaceIds.remove(id)
                 youtubeOnlyIds.remove(id)
+                minimumTiers.remove(id)
             }
             fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
@@ -551,17 +561,60 @@ object Downloads {
      * the repair download commits, so a failed repair leaves something to
      * inspect rather than silently losing the listener's data.
      */
-    internal fun markWrongRecording(videoId: String) {
+    internal fun markWrongRecording(
+        videoId: String,
+        inspectedUri: String,
+        inspectedVersion: String? = null,
+    ): Boolean {
         open()
-        if (_savedMetadata.value[videoId]?.wrongRecording == true) return
+        val context = appContext
         record(
             saved = { it },
             meta = { map ->
-                map.mapValues { (id, value) ->
-                    if (id == videoId) value.copy(wrongRecording = true) else value
+                val current = map[videoId] ?: return@record map
+                val version = context?.let { fileVersion(it, current.uri) }
+                if (!DownloadHealthPolicy.shouldMarkWrong(
+                        currentUri = current.uri,
+                        inspectedUri = inspectedUri,
+                        alreadyWrong = current.wrongRecording,
+                        currentVersion = version,
+                        inspectedVersion = inspectedVersion,
+                    )
+                ) {
+                    return@record map
                 }
+                map + (videoId to current.copy(wrongRecording = true))
             },
         )
+        val current = _savedMetadata.value[videoId] ?: return false
+        val version = context?.let { fileVersion(it, current.uri) }
+        return DownloadHealthPolicy.shouldMarkWrong(
+            currentUri = current.uri,
+            inspectedUri = inspectedUri,
+            alreadyWrong = false,
+            currentVersion = version,
+            inspectedVersion = inspectedVersion,
+        ) && current.wrongRecording
+    }
+
+    /**
+     * The file's own length and modified time, as one value.
+     *
+     * The health check compares this before and after its multi-second
+     * verification so a repair that commits in the window is not mistaken for
+     * the file that was inspected. A `content://` uri has no modified time,
+     * but a replacement there gets a new uri anyway.
+     */
+    internal fun fileVersion(context: Context, uriString: String): String {
+        val parsed = Uri.parse(uriString)
+        val file = runCatching { File(parsed.path.orEmpty()) }
+            .getOrNull()
+            ?.takeIf { it.exists() }
+        if (file != null) return "${file.length()}|${file.lastModified()}"
+        val length = runCatching {
+            context.contentResolver.openAssetFileDescriptor(parsed, "r")?.use { it.length }
+        }.getOrNull() ?: 0L
+        return "$length|0"
     }
 
     /** Whether [videoId] is one of this app's downloads, rather than a local file. */
@@ -1067,6 +1120,8 @@ object Downloads {
         artworkUri: String? = null,
         soundSourceVideoId: String = fetched.videoId,
         hq: HqDownloadSource? = null,
+        sourceTitle: String? = null,
+        sourceArtist: String? = null,
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
@@ -1119,8 +1174,8 @@ object Downloads {
             hqOffsetMs = hq?.offsetMs,
             hqRate = hq?.rate,
             hqTier = hq?.tier?.name,
-            hqSourceTitle = hq?.sourceTitle,
-            hqSourceArtist = hq?.sourceArtist,
+            hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
+            hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
         )
         val metaFetched = SavedSongMetadata(
             videoId = fetched.videoId,
@@ -1138,8 +1193,8 @@ object Downloads {
             hqOffsetMs = hq?.offsetMs,
             hqRate = hq?.rate,
             hqTier = hq?.tier?.name,
-            hqSourceTitle = hq?.sourceTitle,
-            hqSourceArtist = hq?.sourceArtist,
+            hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
+            hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -1520,6 +1575,7 @@ object Downloads {
         val avoidSource = synchronized(lock) { avoidSources[song.videoId] }
         val forceReplace = synchronized(lock) { forceReplaceIds.contains(song.videoId) }
         val youtubeOnly = synchronized(lock) { youtubeOnlyIds.contains(song.videoId) }
+        val minimumTier = synchronized(lock) { minimumTiers[song.videoId] }
 
         // Asked before the lookup rather than after it, unlike the check on the
         // route's own filename below. A file already sitting in Music under a
@@ -1547,7 +1603,9 @@ object Downloads {
         // Asked for from the Cached songs folder: the copy already on disk is
         // the answer, if it is whole. See [fromCache]. A pinned high-quality
         // replacement is not asking for whatever the cache happens to hold.
-        if (hq == null && (fromCache.remove(song.videoId) || fromCache.remove(track.videoId))) {
+        if (hq == null && minimumTier == null &&
+            (fromCache.remove(song.videoId) || fromCache.remove(track.videoId))
+        ) {
             AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)?.let { route ->
                 Log.d(TAG, "downloading ${track.videoId} from the song cache as .${route.extension}")
                 return@withContext Prepared(
@@ -1572,10 +1630,23 @@ object Downloads {
             // song cache is still the song, and better saved than refused.
             // A pinned replacement has no such fallback: the cache is not the
             // verified higher rung, so the old file stays instead.
-            if (hq != null) throw e
+            if (hq != null || minimumTier != null) throw e
             AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)
                 ?.also { Log.w(TAG, "${track.videoId} could not be fetched (${e.message}); saving the cached copy") }
                 ?: throw e
+        }
+        // A repair that could not prove its replacement first must still not
+        // leave a lower rendition in place of the file it is replacing. An
+        // unknown rung (the song cache) cannot make that promise either, so
+        // both keep the old file.
+        if (minimumTier != null) {
+            val served = route.tier
+            if (served == null || served.rank > minimumTier.rank) {
+                error(
+                    "고음질 복구 음원이 기존 파일보다 낮은 등급으로 응답했습니다 " +
+                        "(${served?.label ?: "unknown"}, ${minimumTier.label})",
+                )
+            }
         }
         Log.d(TAG, "downloading ${track.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
         Prepared(
@@ -1706,7 +1777,15 @@ object Downloads {
                             artwork = artwork?.await(),
                         )
                     }
-                    remember(song, track, savedUri, route.downloadFormat, hq = plan.hq)
+                    remember(
+                        song,
+                        track,
+                        savedUri,
+                        route.downloadFormat,
+                        hq = plan.hq,
+                        sourceTitle = route.sourceTitle,
+                        sourceArtist = route.sourceArtist,
+                    )
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
                     clear(id)
@@ -1731,7 +1810,16 @@ object Downloads {
                 val artworkUri = MediaTagger.persistArtwork(context, track.thumbnailUrl, cover)
                 val savedUri = destination.commit()
                 pending = null
-                remember(song, track, savedUri, route.downloadFormat, artworkUri, hq = plan.hq)
+                remember(
+                    song,
+                    track,
+                    savedUri,
+                    route.downloadFormat,
+                    artworkUri,
+                    hq = plan.hq,
+                    sourceTitle = route.sourceTitle,
+                    sourceArtist = route.sourceArtist,
+                )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
                 clear(id)
@@ -1768,6 +1856,11 @@ object Downloads {
         val describe: String,
         /** Short premium-rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
+        /** The rung these bytes are actually served at, when known. */
+        val tier: HqTier? = null,
+        /** The source row's own names, when these bytes came from a catalogue. */
+        val sourceTitle: String? = null,
+        val sourceArtist: String? = null,
         val taggable: Boolean = true,
         val offlineHls: Manifest? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
@@ -1818,6 +1911,12 @@ object Downloads {
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
             downloadFormat = youtubeDownloadBadge(stream.downloadExtension, stream.kbps),
+            tier = HqQuality.tierOf(
+                StreamFormat(
+                    codec = if (stream.downloadExtension == "m4a") "aac" else "opus",
+                    kbps = stream.kbps,
+                ),
+            ),
             write = { sink, onProgress ->
                 Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a, sink, onProgress)
             },
@@ -1887,6 +1986,9 @@ object Downloads {
                 mimeType = storable.mimeType,
                 describe = "${stream.format.summary} (assembled from ${if (dash) "DASH" else "HLS"})",
                 downloadFormat = stream.format.downloadBadge(),
+                tier = HqQuality.tierOf(stream.format),
+                sourceTitle = stream.trackTitle,
+                sourceArtist = stream.trackArtist,
                 write = { sink, onProgress ->
                     ManifestFile.write(
                         context.cacheDir, stream.url, stream.headers, dash,
@@ -1907,6 +2009,9 @@ object Downloads {
             mimeType = if (packaged) "application/vnd.apple.mpegurl" else storable.mimeType,
             describe = stream.format.summary,
             downloadFormat = stream.format.downloadBadge(),
+            tier = HqQuality.tierOf(stream.format),
+            sourceTitle = stream.trackTitle,
+            sourceArtist = stream.trackArtist,
             taggable = true,
             offlineHls = Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
             write = { sink, onProgress ->
@@ -2012,6 +2117,7 @@ object Downloads {
             avoidSources.remove(videoId)
             forceReplaceIds.remove(videoId)
             youtubeOnlyIds.remove(videoId)
+            minimumTiers.remove(videoId)
         }
     }
 

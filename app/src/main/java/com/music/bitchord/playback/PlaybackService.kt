@@ -9340,7 +9340,12 @@ class PlaybackService : MediaLibraryService() {
             val outcome = DownloadHealth.onPlayback(this@PlaybackService, song) ?: return@launch
             val wrong = outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.WRONG_RECORDING ||
                 outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.ARRANGEMENT
-            if (!wrong || song.localUri == null) return@launch
+            // Only a stream verdict means the network can stand in. Offline the
+            // policy answers REDOWNLOAD, and swapping the condemned local file
+            // for a stream that cannot open would turn a wrong recording into
+            // no playback at all; keep the local file until the repair lands.
+            val canStream = outcome.action == com.music.bitchord.data.sources.DownloadHealthPolicy.Action.STREAM
+            if (!wrong || !canStream || song.localUri == null) return@launch
             withContext(Dispatchers.Main) {
                 val live = this@PlaybackService.player ?: return@withContext
                 val item = live.currentMediaItem ?: return@withContext

@@ -80,6 +80,18 @@ object HqLibraryPolicy {
 
     fun isBetter(current: HqTier, verified: HqTier): Boolean = verified.rank < current.rank
 
+    /**
+     * The rung a downloaded file is actually on.
+     *
+     * The display badge only names the container and codec: every FLAC file
+     * reads `FLAC`, whether it is 16/44.1 or 24/96, so the badge cannot rank a
+     * hi-res file above its own stored provenance. When the file came from a
+     * verified pair, [storedHqTier] is the only record of the depth and rate
+     * that were actually fetched, and it wins.
+     */
+    fun currentTier(badgeTier: HqTier, storedHqTier: HqTier?): HqTier =
+        storedHqTier ?: badgeTier
+
     fun isWorthPrefetching(verified: HqTier): Boolean = verified.rank <= PREFETCH_FLOOR.rank
 
     /**

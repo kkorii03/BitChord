@@ -251,7 +251,16 @@ object HqAudioVerify {
 
     /** What the sound comparison says about a file already on the device. */
     sealed interface DownloadedSound {
-        data class Accepted(val verified: HqVerificationStore.Verified) : DownloadedSound
+        /**
+         * [cached] is true when this is the stored verdict for the source/track
+         * pair rather than a fresh decode of the file in hand. The health check
+         * still runs its runtime and arrangement checks for a cached answer:
+         * the pair may be right while the bytes on disk are not.
+         */
+        data class Accepted(
+            val verified: HqVerificationStore.Verified,
+            val cached: Boolean = false,
+        ) : DownloadedSound
         data object Rejected : DownloadedSound
         data object Unavailable : DownloadedSound
     }
@@ -287,7 +296,7 @@ object HqAudioVerify {
             )
         }
         HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
-            return@withContext DownloadedSound.Accepted(it)
+            return@withContext DownloadedSound.Accepted(it, cached = true)
         }
         if (sourceConfigId != null && HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)) {
             return@withContext DownloadedSound.Rejected
@@ -300,7 +309,7 @@ object HqAudioVerify {
             return@withContext lock.withLock {
                 coroutineScope {
                     HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
-                        return@coroutineScope DownloadedSound.Accepted(it)
+                        return@coroutineScope DownloadedSound.Accepted(it, cached = true)
                     }
                     if (sourceConfigId != null &&
                         HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)

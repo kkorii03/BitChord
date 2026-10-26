@@ -57,6 +57,16 @@ object DownloadHealthPolicy {
         val sourceArtist: String? = null,
         /** Null when the audio could not be compared (no reference, screen off). */
         val soundAccepted: Boolean? = null,
+        /**
+         * True when [soundAccepted] came from a stored verdict rather than a
+         * fresh decode of the file in hand.
+         *
+         * A cached answer is proof about the source/track pair, not about the
+         * bytes now on disk: a repair or a bad transfer can leave a different
+         * recording under the same pair. The runtime and arrangement checks
+         * therefore still run for a cached acceptance.
+         */
+        val soundCached: Boolean = false,
         /** The rung of the file on disk. */
         val currentTier: HqTier? = null,
         /** The best rung a sound comparison has proved for this song. */
@@ -76,12 +86,14 @@ object DownloadHealthPolicy {
         if (input.soundAccepted == false) {
             return wrong(input.online)
         }
-        // An accepted comparison is proof of the recording; the title markers
-        // are only a substitute for the answer the audio already gave.
-        if (input.soundAccepted == null && isArrangement(input)) {
+        // A fresh accepted comparison is proof of the recording; the title
+        // markers are only a substitute for the answer the audio already gave.
+        // A cached acceptance is not: it proves the pair, not the bytes, so it
+        // must not skip the checks that can condemn a file the pair once fitted.
+        if ((input.soundAccepted == null || input.soundCached) && isArrangement(input)) {
             return Decision(Verdict.ARRANGEMENT, if (input.online) Action.STREAM else Action.REDOWNLOAD)
         }
-        if (input.soundAccepted == null && lengthDiffers(input)) {
+        if ((input.soundAccepted == null || input.soundCached) && lengthDiffers(input)) {
             return wrong(input.online)
         }
         val current = input.currentTier
@@ -91,6 +103,26 @@ object DownloadHealthPolicy {
         }
         return Decision(Verdict.OK, Action.NONE)
     }
+
+    /**
+     * Whether a verdict about the file at [inspectedUri] may still be written
+     * to the record now.
+     *
+     * Verification takes seconds, and a repair can commit in that window. The
+     * new file is not the one that was inspected, so a flag written by id alone
+     * would condemn the replacement. [inspectedVersion] is the file's own
+     * length/modified stamp, which catches a same-uri rewrite as well.
+     */
+    fun shouldMarkWrong(
+        currentUri: String?,
+        inspectedUri: String,
+        alreadyWrong: Boolean = false,
+        currentVersion: String? = null,
+        inspectedVersion: String? = null,
+    ): Boolean =
+        !alreadyWrong &&
+            currentUri == inspectedUri &&
+            (inspectedVersion == null || currentVersion == inspectedVersion)
 
     private fun wrong(online: Boolean) =
         Decision(Verdict.WRONG_RECORDING, if (online) Action.STREAM else Action.REDOWNLOAD)

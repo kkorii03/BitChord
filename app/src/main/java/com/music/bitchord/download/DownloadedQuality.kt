@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.HqLibraryPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.StreamFormat
@@ -17,6 +18,23 @@ import java.util.Locale
  * second ranking.
  */
 object DownloadedQuality {
+
+    /**
+     * The rung a saved file is actually on, using its verified provenance when
+     * the badge cannot state it.
+     *
+     * A badge is the container and codec only: every FLAC file reads `FLAC`,
+     * so a hi-res replacement would look like a plain lossless one on the next
+     * pass and be fetched again. [storedHqTier] is the rung the verified pair
+     * was proved at, and it wins over the badge.
+     */
+    fun tierOf(badge: String?, storedHqTier: String?): HqTier {
+        val stored = storedHqTier
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { runCatching { HqTier.valueOf(it.uppercase(Locale.ROOT)) }.getOrNull() }
+        return HqLibraryPolicy.currentTier(tierOf(badge), stored)
+    }
 
     /** The rung a saved file's badge describes; an unknown badge is the normal rung. */
     fun tierOf(badge: String?): HqTier {
