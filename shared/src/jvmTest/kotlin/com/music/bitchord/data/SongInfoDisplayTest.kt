@@ -127,6 +127,23 @@ class SongInfoDisplayTest {
     }
 
     @Test
+    fun `quality names the catalogue that served the stream`() {
+        val snapshot = NerdStats.Snapshot(
+            mimeType = "audio/flac",
+            bitrateKbps = null,
+            sampleRateHz = 96_000,
+            channels = 2,
+            bitDepth = 24,
+            sourceName = "Tidal",
+            mediaId = "abcdefghijk",
+        )
+        assertEquals(
+            "FLAC · 24-bit · 96 kHz · Tidal",
+            SongInfoQuality.label(song(), snapshot),
+        )
+    }
+
+    @Test
     fun `a snapshot for another track is not shown`() {
         val snapshot = NerdStats.Snapshot(
             mimeType = "audio/flac",
