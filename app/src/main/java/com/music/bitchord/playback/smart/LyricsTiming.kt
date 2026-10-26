@@ -1249,6 +1249,23 @@ object LyricsTiming {
         return running.await()
     }
 
+    /**
+     * Drops the sync check started for a next row that will not play.
+     *
+     * The request runs on [aiScope] so a track change does not lose an answer
+     * already paid for. That is right when the row becomes current, and wrong
+     * when the row is removed or replaced: the check would keep the one song
+     * gate and spend Whisper on a recording nobody will hear. The caller only
+     * asks for this once it knows the row was discarded.
+     */
+    fun cancelSongCheck(song: Song, lines: List<LyricLine>) {
+        val key = textKey(
+            lines,
+            audioSourceKey(song.videoId, song.localUri != null),
+        )
+        songInFlight.remove("song:${song.videoId}:$key")?.cancel()
+    }
+
     private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
 
     /**

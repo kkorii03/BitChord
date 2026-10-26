@@ -753,16 +753,27 @@ object Downloads {
      * version the video was resolved to).
      */
     fun catalogDurationMs(videoId: String, rowDurationMs: Long?): Long? {
+        return (recordedDurations(videoId) +
+            listOfNotNull(rowDurationMs?.takeIf { it > 0L })).minOrNull()
+    }
+
+    /**
+     * The longest duration recorded against [videoId]'s file, without opening
+     * it: the upload whose bytes were saved when it is not the catalogue song.
+     *
+     * Used before playback to compare a legacy file with the catalogue length
+     * on the main thread. A record that names no length is not evidence.
+     */
+    internal fun recordedFileDurationMs(videoId: String): Long? =
+        recordedDurations(videoId).maxOrNull()
+
+    private fun recordedDurations(videoId: String): List<Long> {
         open()
-        val uri = _saved.value[videoId] ?: _savedMetadata.value[videoId]?.uri
-        val recorded = if (uri != null) {
-            _savedMetadata.value.values
-                .filter { it.uri == uri }
-                .mapNotNull { it.durationText?.durationMillis()?.takeIf { ms -> ms > 0L } }
-        } else {
-            emptyList()
-        }
-        return (recorded + listOfNotNull(rowDurationMs?.takeIf { it > 0L })).minOrNull()
+        val meta = _savedMetadata.value[videoId] ?: return emptyList()
+        val uri = _saved.value[videoId] ?: meta.uri
+        return _savedMetadata.value.values
+            .filter { it.uri == uri }
+            .mapNotNull { it.durationText?.durationMillis()?.takeIf { ms -> ms > 0L } }
     }
 
     /**

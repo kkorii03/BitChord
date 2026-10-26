@@ -18,6 +18,9 @@ internal enum class CrossfadeSkipReason(val wire: String) {
 
     /** The queue pointed at the item already playing, so there was nothing to fade into. */
     SAME_ITEM("same-item"),
+
+    /** The incoming row was replaced by another recording while the standby held a copy. */
+    INCOMING_REPLACED("incoming-replaced"),
 }
 
 /**
@@ -60,6 +63,21 @@ internal object CrossfadeArmPolicy {
     /** The deadline for one arming attempt, including any tempo-ramp beats. */
     fun armTimeoutMs(rampMs: Long = 0L): Long =
         (ARM_TIMEOUT_MS + rampMs.coerceAtLeast(0L)).coerceAtLeast(1L)
+
+    /**
+     * Whether the standby's incoming item no longer matches the session queue.
+     *
+     * The standby is loaded with a copy of the queue when it arms. A version
+     * swap of the same next row only changes the session player's item, so
+     * without this the copy that survives the handoff is the old recording.
+     * After the handoff the incoming player *is* the session, so there is
+     * nothing stale to compare.
+     */
+    fun incomingRowReplaced(
+        sessionIncomingId: String?,
+        standbyIncomingId: String?,
+        handedOff: Boolean,
+    ): Boolean = !handedOff && sessionIncomingId != standbyIncomingId
 
     /** Whether the two decoded tracks can be rendered at the same time. */
     fun canMix(outgoing: CrossfadeTrackFormat?, incoming: CrossfadeTrackFormat?): Boolean {

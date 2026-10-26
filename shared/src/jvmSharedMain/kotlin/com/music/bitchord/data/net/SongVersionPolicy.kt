@@ -206,6 +206,109 @@ object SongVersionPolicy {
     }
 
     /**
+     * Whether the next-row bundle must build a streaming item even though a
+     * file is recorded for [playId].
+     *
+     * The bundle installs a version before it has ever played, so it cannot
+     * rely on the post-start correction in
+     * [com.music.bitchord.playback.SongVersionController]: by the time a
+     * crossfade makes the row audible that correction has already been
+     * skipped. The same provenance rule and the remembered length verdict
+     * therefore have to decide the item now.
+     *
+     * [fileDurationMs] and [catalogDurationMs] are the recorded lengths, when
+     * the caller has them, so a legacy file with no provenance is judged by
+     * [mvSoundDeltaMs] even before [com.music.bitchord.download.Downloads] has
+     * remembered a verdict for it.
+     *
+     * Offline the file stays either way — it is the only sound there is.
+     */
+    fun nextPrepStreamsInsteadOfFile(
+        playId: String,
+        soundSourceId: String?,
+        lengthSuspect: Boolean,
+        online: Boolean,
+        fileDurationMs: Long? = null,
+        catalogDurationMs: Long? = null,
+    ): Boolean {
+        if (!online) return false
+        if (downloadedFileUse(playId, soundSourceId, online = true) ==
+            DownloadedFileUse.STREAM_SONG
+        ) {
+            return true
+        }
+        if (lengthSuspect) return true
+        return mvSoundDeltaMs(
+            fileDurationMs = fileDurationMs,
+            catalogDurationMs = catalogDurationMs,
+            isVideo = false,
+            localFile = true,
+            soundSourceId = soundSourceId,
+        ) != null
+    }
+
+    /**
+     * Whether a row that is already a resolved catalogue release must stream
+     * instead of using the file saved under its id.
+     *
+     * A video row and a row whose type is not yet known still have to be
+     * resolved, and a row that was never a video is not this question at all.
+     * Only a resolved catalogue row ([isVideoOrigin] with [isVideo] false) is
+     * handed to a crossfade as the song, and it must not carry the video's
+     * sound or an overlong legacy file into that hand-over.
+     *
+     * The music-video verdict itself is [DownloadedMvPolicy], the same rule
+     * the post-start correction and the Downloads scan use; [mvSoundDeltaMs]
+     * keeps the older length rule those paths also apply, so a file cannot be
+     * streamed after its first sound but played from disk before it.
+     */
+    fun resolvedRowStreamsInsteadOfFile(
+        isVideo: Boolean,
+        typeUnknown: Boolean,
+        isVideoOrigin: Boolean,
+        playId: String,
+        soundSourceId: String?,
+        lengthSuspect: Boolean,
+        online: Boolean,
+        rowVideoId: String = playId,
+        title: String = "",
+        fileDurationMs: Long? = null,
+        catalogVideoId: String? = null,
+        catalogDurationMs: Long? = null,
+        storedIsVideo: Boolean? = null,
+        storedTypeUnknown: Boolean = false,
+    ): Boolean {
+        if (isVideo || typeUnknown || !isVideoOrigin) return false
+        if (!online) return false
+        if (downloadedFileUse(playId, soundSourceId, online = true) ==
+            DownloadedFileUse.STREAM_SONG
+        ) {
+            return true
+        }
+        if (lengthSuspect) return true
+        if (DownloadedMvPolicy.isMvSound(
+                rowVideoId = rowVideoId,
+                title = title,
+                fileDurationMs = fileDurationMs,
+                storedIsVideo = storedIsVideo,
+                storedTypeUnknown = storedTypeUnknown,
+                soundSourceVideoId = soundSourceId,
+                catalogVideoId = catalogVideoId,
+                catalogDurationMs = catalogDurationMs,
+            )
+        ) {
+            return true
+        }
+        return mvSoundDeltaMs(
+            fileDurationMs = fileDurationMs,
+            catalogDurationMs = catalogDurationMs,
+            isVideo = false,
+            localFile = true,
+            soundSourceId = soundSourceId,
+        ) != null
+    }
+
+    /**
      * Whether an existing file may be adopted as [targetId]'s download.
      *
      * Only a file this app recorded as having been fetched from [targetId]'s

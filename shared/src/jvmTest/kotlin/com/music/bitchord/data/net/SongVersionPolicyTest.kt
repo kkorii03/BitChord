@@ -542,4 +542,187 @@ class SongVersionPolicyTest {
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", "video"))
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", null))
     }
+
+    @Test
+    fun `next prep streams a file recorded from another upload`() {
+        assertTrue(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = "song",
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `next prep streams a legacy file the length verdict suspects`() {
+        assertTrue(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = true,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `next prep judges a legacy file by its recorded lengths too`() {
+        assertTrue(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = false,
+                online = true,
+                fileDurationMs = 200_000L + SongVersionPolicy.MV_SOUND_SLACK_MS,
+                catalogDurationMs = 200_000L,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = false,
+                online = true,
+                fileDurationMs = 200_000L + SongVersionPolicy.MV_SOUND_SLACK_MS - 1,
+                catalogDurationMs = 200_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a resolved catalogue row streams a file that is another recording`() {
+        assertTrue(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = false,
+                online = true,
+                fileDurationMs = 200_000L + SongVersionPolicy.MV_SOUND_SLACK_MS,
+                catalogDurationMs = 200_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a resolved row uses the canonical mv verdict for title and stored type`() {
+        assertTrue(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = "song",
+                lengthSuspect = false,
+                online = true,
+                rowVideoId = "song",
+                title = "Song (Official Video)",
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = "song",
+                lengthSuspect = false,
+                online = true,
+                rowVideoId = "song",
+                title = "Song",
+                storedTypeUnknown = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `only a resolved catalogue row is rebuilt as a stream`() {
+        assertFalse(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = false,
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = true,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = true,
+                typeUnknown = false,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = true,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = true,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = true,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+                isVideo = false,
+                typeUnknown = false,
+                isVideoOrigin = true,
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = true,
+                online = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `offline next prep keeps the file even when it is suspect`() {
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = true,
+                online = false,
+            ),
+        )
+    }
 }
