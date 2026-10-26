@@ -69,4 +69,20 @@ class BatteryPolicyTest {
         assertFalse(BatteryPolicy.cacheEntryNeedsPurge("YOUTUBE", "OTHER", false, true, true))
         assertFalse(BatteryPolicy.cacheEntryNeedsPurge("YOUTUBE", "OTHER", true, true, true))
     }
+
+    @Test
+    fun `automix decodes only when neither low power nor a party stops it`() {
+        assertTrue(BatteryPolicy.automixAnalysisActive(lowPower = false, inParty = false))
+        assertFalse(BatteryPolicy.automixAnalysisActive(lowPower = true, inParty = false))
+        assertFalse(BatteryPolicy.automixAnalysisActive(lowPower = false, inParty = true))
+        assertFalse(BatteryPolicy.automixAnalysisActive(lowPower = true, inParty = true))
+    }
+
+    @Test
+    fun `read-ahead spends bytes only unmetered and out of low power`() {
+        assertTrue(BatteryPolicy.cachePrefetchBytesAllowed(metered = false, lowPower = false))
+        assertFalse(BatteryPolicy.cachePrefetchBytesAllowed(metered = true, lowPower = false))
+        assertFalse(BatteryPolicy.cachePrefetchBytesAllowed(metered = false, lowPower = true))
+        assertFalse(BatteryPolicy.cachePrefetchBytesAllowed(metered = true, lowPower = true))
+    }
 }

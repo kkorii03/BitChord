@@ -1591,12 +1591,26 @@ object AudioCache {
                 // metered connection only the URL half runs: resolving the next
                 // item's stream costs a few small round trips and is what keeps
                 // the track change instant; prefetching its audio would spend
-                // mobile data on a track a skip may skip over.
+                // mobile data on a track a skip may skip over. Low power is the
+                // same answer for the bytes half — the URL is still warmed so a
+                // transition does not wait on a client walk.
                 val metered = AppSettings.meteredConnection.value == true
-                val cacheBytes = !metered && (!substitutable || warmed != null) && !pinnedToYouTube
+                val cacheBytes = BatteryPolicy.cachePrefetchBytesAllowed(
+                    metered = metered,
+                    lowPower = AppSettings.lowPower.value,
+                ) && (!substitutable || warmed != null) && !pinnedToYouTube
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
+                        // Low power can begin during the grace delay. Re-read
+                        // it here, where the bytes would actually be spent.
+                        if (!BatteryPolicy.cachePrefetchBytesAllowed(
+                                metered = AppSettings.meteredConnection.value == true,
+                                lowPower = AppSettings.lowPower.value,
+                            )
+                        ) {
+                            return@launch
+                        }
                         // Visible to [requestAnalysisHead] while these bytes are
                         // being written: an analysis round for the same track
                         // would meet this writer's lock and come up empty. Not

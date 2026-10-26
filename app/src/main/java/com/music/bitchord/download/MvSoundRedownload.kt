@@ -28,6 +28,18 @@ object MvSoundRedownload {
 
     private const val WORK_NAME = "mv-sound-redownload"
 
+    /**
+     * A new schedule queues behind a repair pass already in flight.
+     *
+     * The old [ExistingWorkPolicy.REPLACE] cancelled that pass and started the
+     * same scan again on every app start, playback transition and verdict. A
+     * library with several suspects could therefore never finish the queue it
+     * had already started. Appending is what HqLibraryUpgrade does for the
+     * same reason; if the chain has already finished or been cancelled,
+     * APPEND_OR_REPLACE starts a fresh one.
+     */
+    internal val WORK_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
+
     fun scheduleIfEnabled(context: Context) {
         if (!AppSettings.autoRedownloadMvSound.value) return
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
@@ -39,7 +51,7 @@ object MvSoundRedownload {
             .build()
         runCatching {
             WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork(WORK_NAME, WORK_POLICY, request)
         }.onFailure {
             TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
         }

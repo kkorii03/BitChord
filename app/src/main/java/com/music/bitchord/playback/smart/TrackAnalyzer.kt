@@ -39,6 +39,7 @@ import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.BatteryPolicy
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -102,11 +103,21 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * an uncached track a megabyte fetched over the same connection the party's
      * own sync is sharing.
      *
+     * Low power is the same kind of "not now": [AppSettings.heavyWorkAllowed]
+     * is false under the system saver, a low battery, or the listener's own
+     * switch, and a whole-track decode plus two model passes is exactly the
+     * work that setting exists to defer. The crossfade ticker asks again on
+     * its next tick once power saving is off, so nothing here needs a timer.
+     *
      * Read fresh at every entry point and between the stages of a pass in
-     * flight, rather than latched when the party starts, so joining one stops
-     * the work already running instead of only the work not yet queued.
+     * flight, rather than latched when the party starts, so joining one (or
+     * power saving beginning) stops the work already running instead of only
+     * the work not yet queued.
      */
-    private val stopped: Boolean get() = ListenTogether.state.value.inParty
+    private val stopped: Boolean get() = !BatteryPolicy.automixAnalysisActive(
+        lowPower = AppSettings.lowPower.value,
+        inParty = ListenTogether.state.value.inParty,
+    )
 
     /**
      * Resolved on first use, not at construction, for the reason [AnalysisStore]
@@ -311,12 +322,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Nothing shorter than [MIN_ANALYSIS_SECONDS] is mixed, and even one
         // region costs a decode plus two model runs.
         if (!trackLongEnoughToAnalyse(durationSeconds)) return
-        if (stopped) return
+        // A party never mixes. Low power is handled after the stored result is
+        // restored: reading a previous measurement back from disk is cheap and
+        // still useful, while starting a new decode is not.
+        if (ListenTogether.state.value.inParty) return
         if (trackId in running) return
         // Whatever an earlier session already measured comes back first: it is
         // a disk read, not a decode.
         restoreOnce(trackId)
         if (hasWindow(trackId, window)) return
+        if (!AppSettings.heavyWorkAllowed) return
         // Everything below reads the cache index and, through it, the
         // filesystem. One queued reconsideration per track and window is
         // enough, and the single-threaded executor keeps them in order with the
@@ -349,6 +364,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     suspend fun awaitWindow(trackId: String, window: AnalysisWindow, timeoutMs: Long): Boolean {
         if (hasWindow(trackId, window)) return true
+        // Deferred work will not publish inside this wait, so do not hold the
+        // next-song bundle here for the full timeout.
+        if (stopped) return false
         val key = "$trackId@${window.name}"
         val waiter = windowWaiters.computeIfAbsent(key) { CompletableDeferred() }
         if (hasWindow(trackId, window)) {
