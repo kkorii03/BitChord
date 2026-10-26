@@ -5839,6 +5839,11 @@ class PlaybackService : MediaLibraryService() {
                 if (manualUpgradeFor == mediaId && !manualJoinedRunningUpgrade) {
                     manualUpgradeFor = null
                 }
+                // Every way out of this job puts the badge down. A second search
+                // that found nothing (lookAgain == null) used to return with the
+                // race still marked, and the player menu greys "Upgrade quality"
+                // out while a race is marked — for the rest of the song.
+                NerdStats.onLosslessRaceEnd(mediaId)
             }
         }
         return true
