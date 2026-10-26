@@ -2,7 +2,6 @@ package com.music.bitchord.data.net
 
 import com.music.bitchord.data.CatalogSongMapper
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.sources.TrackMatcher
 
 /**
  * The two decisions behind the pre-playback song-version lookup, kept free of
@@ -144,23 +143,21 @@ object SongVersionPolicy {
     ): Boolean = wantsSongVersion(isVideo, typeUnknown) && !knownMissing
 
     /**
-     * Whether [version] is the same song's song version of [row], so an
-     * automatic pre-audio replacement may install it.
+     * Whether an automatic song version may replace [row].
      *
-     * A cover stays the performance the listener chose: its arrangement marker,
-     * its singer, or the original artist its byline names are not the same
-     * recording as the catalogue release, however exactly the title reads. A
-     * music video and the catalogue release it promotes are the same song, so
-     * the ordinary MV → ATV swap still passes.
+     * A cover stays the performance the listener chose: its arrangement
+     * marker, its singer, or the original artist its byline names are not the
+     * catalogue release, however exactly the title reads.
+     *
+     * Nothing else is compared. A music video and the catalogue release it
+     * promotes are the same song even when the release's title carries a
+     * feature or bonus-track tag the video's title does not
+     * ("Dancing With A Stranger (with Normani) [Bonus Track]"). Re-matching
+     * titles or runtimes here is what left such a video playing instead of its
+     * song version, so only the cover verdict is asked.
      */
-    fun sameSongVersion(row: Song, version: Song): Boolean {
-        if (CatalogSongMapper.isCover(row)) return false
-        // A music video's runtime includes visual intros/outros the catalogue
-        // release does not, so runtime cannot decide identity here.
-        val target = TrackMatcher.targetOf(row).copy(durationSec = null)
-        return TrackMatcher.sameRecording(version, target) ||
-            TrackMatcher.isOriginalRecording(version, target)
-    }
+    fun mayInstallSongVersion(row: Song): Boolean =
+        !CatalogSongMapper.isCover(row)
 
     /**
      * How much longer than the catalogue track a downloaded song's file may be

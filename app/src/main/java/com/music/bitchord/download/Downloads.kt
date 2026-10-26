@@ -1650,7 +1650,7 @@ object Downloads {
             )
         ) {
             runCatching { YtMusicRepository.songVersion(versionSong) }.getOrNull()
-                ?.takeIf { SongVersionPolicy.sameSongVersion(versionSong, it) }
+                ?.takeIf { SongVersionPolicy.mayInstallSongVersion(versionSong) }
                 ?: versionSong
         } else {
             versionSong

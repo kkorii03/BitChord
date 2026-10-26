@@ -154,7 +154,7 @@ internal class SongVersionController(
                     null
                 } ?: continue
                 if (resolved.videoId == song.videoId) continue
-                if (!SongVersionPolicy.sameSongVersion(song, resolved)) continue
+                if (!SongVersionPolicy.mayInstallSongVersion(song)) continue
                 if (index == exoPlayer.currentMediaItemIndex) continue
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
@@ -455,7 +455,7 @@ internal class SongVersionController(
             null
         }
         if (cached != null && cachedFile != null &&
-            SongVersionPolicy.sameSongVersion(lookupSong, cached)
+            SongVersionPolicy.mayInstallSongVersion(lookupSong)
         ) {
             // A cached answer whose recording is already on the device plays
             // from that file, with no network, even offline.
@@ -473,7 +473,7 @@ internal class SongVersionController(
             // this run has not looked it up ? see Downloads.remember. Playing
             // that id needs no network at all.
             downloadedSongVersionFor(lookupSong, offline)
-                ?.takeIf { SongVersionPolicy.sameSongVersion(lookupSong, it) }
+                ?.takeIf { SongVersionPolicy.mayInstallSongVersion(lookupSong) }
                 ?.let { downloaded ->
                     val streamOnly = downloaded.localUri == null
                     installPreResolvedVersion(
@@ -488,7 +488,7 @@ internal class SongVersionController(
                 }
         }
         if (cached != null && !offline &&
-            SongVersionPolicy.sameSongVersion(lookupSong, cached)
+            SongVersionPolicy.mayInstallSongVersion(lookupSong)
         ) {
             // Offline, a cached answer is only usable when its recording is
             // already on the device. Otherwise the downloaded video file keeps
@@ -574,7 +574,7 @@ internal class SongVersionController(
             }
             try {
                 if (resolved != null &&
-                    SongVersionPolicy.sameSongVersion(lookupSong, resolved)
+                    SongVersionPolicy.mayInstallSongVersion(lookupSong)
                 ) {
                     // Verification of an old download resolved a different
                     // recording: the file is the video's sound even when its
