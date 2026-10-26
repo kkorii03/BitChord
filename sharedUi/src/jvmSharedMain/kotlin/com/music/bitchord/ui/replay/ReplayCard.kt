@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
+import com.music.bitchord.ui.theme.AppType
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -158,7 +159,7 @@ fun ReplayCreditCard(
             Text(
                 text = value,
                 style = MaterialTheme.typography.headlineMedium.copy(
-                    fontSize = 27.sp,
+                    fontSize = AppType.Display,
                     lineHeight = 30.sp,
                     fontWeight = FontWeight.W800,
                     brush = PolishedInk,

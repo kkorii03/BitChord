@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.animation.AnimatedVisibility
+import com.music.bitchord.ui.theme.AppType
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -232,7 +233,7 @@ internal fun LyricsOffsetSheet(
                 Text(
                     text = stringResource(Res.string.lyrics_offset),
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = 19.sp,
+                        fontSize = AppType.Title,
                         fontWeight = FontWeight.Bold,
                     ),
                     color = Color.White,

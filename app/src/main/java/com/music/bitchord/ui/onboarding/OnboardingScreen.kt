@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.onboarding
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -234,7 +236,7 @@ private fun ColumnScope.NamePage(
     Text(
         text = stringResource(R.string.onboarding_name_prompt),
         style = MaterialTheme.typography.titleMedium,
-        fontSize = 17.sp,
+        fontSize = AppType.Body,
         color = Color.White.copy(alpha = 0.78f),
         modifier = Modifier.padding(start = 4.dp),
     )
@@ -271,7 +273,7 @@ private fun ColumnScope.ConnectPage(
     Text(
         text = stringResource(R.string.onboarding_connect_body),
         style = MaterialTheme.typography.bodyLarge,
-        fontSize = 17.sp,
+        fontSize = AppType.Body,
         lineHeight = 23.sp,
         color = Color.White.copy(alpha = 0.72f),
     )
@@ -305,7 +307,7 @@ private fun Title(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.displayLarge.copy(
-            fontSize = 40.sp,
+            fontSize = AppType.DisplayLarge,
             lineHeight = 44.sp,
             letterSpacing = (-1.2).sp,
         ),
@@ -320,7 +322,7 @@ private fun Title(text: String) {
 @Composable
 private fun NameField(value: String, onValueChange: (String) -> Unit, onDone: () -> Unit) {
     val style = MaterialTheme.typography.displayLarge.copy(
-        fontSize = 26.sp,
+        fontSize = AppType.Section,
         lineHeight = 30.sp,
         letterSpacing = (-0.6).sp,
         color = Color.White,
@@ -403,7 +405,7 @@ private fun PillButton(
         Text(
             text = label,
             style = MaterialTheme.typography.titleMedium,
-            fontSize = 17.sp,
+            fontSize = AppType.Body,
             fontWeight = FontWeight.W700,
             color = if (primary) Color.Black else Color.White,
             textAlign = TextAlign.Center,

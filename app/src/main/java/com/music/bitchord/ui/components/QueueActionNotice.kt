@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.theme.AppSpacing
 
 /** A unique queue result, so repeating the same action restarts its lifetime. */
 data class QueueActionNotice(
@@ -57,18 +58,18 @@ fun QueueActionNoticeHost(
             Surface(
                 color = Color(0xFF282828),
                 contentColor = Color.White,
-                shape = RoundedCornerShape(5.dp),
+                shape = RoundedCornerShape(14.dp),
                 shadowElevation = 4.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    .padding(horizontal = AppSpacing.ScreenHorizontal)
                     .padding(bottom = 8.dp)
                     .semantics { liveRegion = LiveRegionMode.Polite },
             ) {
                 Text(
                     text = current.message,
                     style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
                 )
             }
         }

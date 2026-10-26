@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppSpacing
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -118,7 +120,7 @@ fun AccountProfileSelector(
 @Composable private fun ProfileRow(profile: YouTubeProfile, selected: Boolean, managing: Boolean,
     onClick: () -> Unit, onRemove: () -> Unit) {
     val description = stringResource(if (selected) R.string.selected_account else R.string.switch_account)
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = Role.RadioButton, onClick = if (managing) onRemove else onClick)
+    Row(Modifier.fillMaxWidth().heightIn(min = AppSpacing.ListRowMinHeight).clickable(role = Role.RadioButton, onClick = if (managing) onRemove else onClick)
         .semantics { contentDescription = description }
         .padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (profile.avatar != null) AsyncImage(profile.avatar, null, Modifier.size(38.dp).clip(MaterialTheme.shapes.extraLarge))
@@ -134,7 +136,7 @@ fun AccountProfileSelector(
 }
 
 @Composable private fun SelectorAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(role = Role.Button, onClick = onClick)
+    Row(Modifier.fillMaxWidth().heightIn(min = AppSpacing.ListRowMinHeight).clickable(role = Role.Button, onClick = onClick)
         .semantics { contentDescription = label }.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null); Spacer(Modifier.width(16.dp)); Text(label)
     }

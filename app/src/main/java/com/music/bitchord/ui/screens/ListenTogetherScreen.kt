@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.theme.AppSpacing
+
 import android.content.Intent
 import android.text.format.DateFormat
 import android.widget.Toast
@@ -1003,7 +1005,7 @@ private fun MemberRow(member: PartyMember, isYou: Boolean, canKick: Boolean = fa
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .heightIn(min = AppSpacing.ListRowMinHeight)
             .padding(horizontal = ROW_INSET, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

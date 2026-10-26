@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -147,7 +149,7 @@ fun AppLanguageDialog(
                 Text(
                     text = stringResource(R.string.app_language),
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
+                        fontSize = AppType.Body,
                         fontWeight = FontWeight.W600,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -157,7 +159,7 @@ fun AppLanguageDialog(
                     text = stringResource(R.string.app_language_description),
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
+                        fontSize = AppType.Caption,
                         lineHeight = 17.sp,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -209,7 +211,7 @@ private fun LanguageRow(language: AppLanguage, selected: Boolean, onClick: () ->
     ) {
         Text(
             text = stringResource(language.nameRes),
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )

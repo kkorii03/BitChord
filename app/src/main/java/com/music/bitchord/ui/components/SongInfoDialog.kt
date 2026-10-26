@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -80,14 +82,14 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
             ) {
                 Text(
                     text = stringResource(R.string.song_info),
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Body, fontWeight = FontWeight.W600),
                     color = onSurface,
                     textAlign = TextAlign.Center,
                 )
                 Text(
                     text = song.title,
                     modifier = Modifier.padding(top = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 17.sp),
                     color = onSurface,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
@@ -96,7 +98,7 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
                 if (song.artist.isNotBlank()) {
                     Text(
                         text = song.artist,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 17.sp),
                         color = onSurface.copy(alpha = 0.6f),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
@@ -127,7 +129,7 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
                     Text(
                         text = stringResource(R.string.song_info_error),
                         modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Caption, lineHeight = 15.sp),
                         color = onSurface.copy(alpha = 0.6f),
                     )
                 }
@@ -156,7 +158,7 @@ private fun SongInfoRow(label: String, value: String?, unknown: Boolean = false)
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
             color = onSurface.copy(alpha = 0.6f),
         )
         Spacer(Modifier.width(12.dp))
@@ -170,7 +172,7 @@ private fun SongInfoRow(label: String, value: String?, unknown: Boolean = false)
             } else {
                 Text(
                     text = value,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
                     color = if (unknown) onSurface.copy(alpha = 0.6f) else onSurface,
                     textAlign = TextAlign.End,
                 )

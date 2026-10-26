@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -141,7 +143,7 @@ fun UpdateAvailableDialog(
                 Text(
                     text = stringResource(R.string.software_update),
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 17.sp,
+                        fontSize = AppType.Body,
                         fontWeight = FontWeight.W600,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -160,7 +162,7 @@ fun UpdateAvailableDialog(
                     },
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.sp,
+                        fontSize = AppType.Caption,
                         lineHeight = 17.sp,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
@@ -195,7 +197,7 @@ fun UpdateAvailableDialog(
                     Text(
                         text = (state as AppUpdateChecker.DownloadState.Failed).message,
                         modifier = Modifier.padding(top = 6.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Micro),
                         color = MaterialTheme.colorScheme.error,
                         textAlign = TextAlign.Center,
                     )
@@ -213,7 +215,7 @@ fun UpdateAvailableDialog(
                             .fillMaxWidth()
                             .padding(top = 12.dp),
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 12.sp,
+                            fontSize = AppType.Caption,
                             fontWeight = FontWeight.W600,
                         ),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
@@ -303,7 +305,7 @@ internal fun AlertAction(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 17.sp,
+                fontSize = AppType.Body,
                 fontWeight = if (emphasised) FontWeight.W600 else FontWeight.W400,
             ),
             color = (if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)

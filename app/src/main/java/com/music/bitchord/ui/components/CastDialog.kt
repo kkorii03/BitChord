@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -145,7 +147,7 @@ private fun CastDeviceRow(
             Text(
                 text = name,
                 style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = 15.sp,
+                    fontSize = AppType.Secondary,
                     fontWeight = if (connected) FontWeight.W600 else FontWeight.Normal,
                 ),
                 color = Color.White,
@@ -158,7 +160,7 @@ private fun CastDeviceRow(
                         if (connecting) R.string.cast_device_connecting else R.string.cast_device_connected,
                     ),
                     modifier = Modifier.padding(top = 1.dp),
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Caption),
                     color = Color.White.copy(alpha = 0.6f),
                 )
             }
@@ -196,13 +198,13 @@ private fun SearchingRow() {
         Spacer(Modifier.height(12.dp))
         Text(
             text = stringResource(R.string.cast_searching),
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
             color = Color.White,
         )
         Text(
             text = stringResource(R.string.cast_searching_hint),
             modifier = Modifier.padding(top = 4.dp),
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, lineHeight = 17.sp),
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Caption, lineHeight = 17.sp),
             color = Color.White.copy(alpha = 0.6f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
@@ -224,7 +226,7 @@ private fun CastActionRow(label: String, onClick: () -> Unit) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 15.sp,
+                fontSize = AppType.Secondary,
                 fontWeight = FontWeight.W600,
             ),
             color = Color(0xFFFF6B63),

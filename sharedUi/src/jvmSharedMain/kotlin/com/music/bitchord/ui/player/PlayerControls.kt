@@ -10,6 +10,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.isSpecified
 import com.music.bitchord.data.model.ArtistCredit
+import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.data.model.CreditSegment
 import com.music.bitchord.data.model.creditSegments
 import com.music.bitchord.sharedui.resources.*
@@ -1057,7 +1058,7 @@ private fun PillSegment(
                         Text(
                             text = trailingLabel,
                             color = tint,
-                            fontSize = 13.sp,
+                            fontSize = AppType.Caption,
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -1066,7 +1067,7 @@ private fun PillSegment(
                 Text(
                     text = label,
                     color = tint,
-                    fontSize = 17.sp,
+                    fontSize = AppType.Body,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -1132,7 +1133,7 @@ internal fun OutputCaption(
     when {
         badge.inParty -> Text(
             text = jamName,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = AppType.Micro),
             color = LocalPlayerTint.current.copy(alpha = 0.55f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1143,7 +1144,7 @@ internal fun OutputCaption(
         isHiResOutput -> ShimmerText(
             text = outputName,
             style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = 11.sp,
+                fontSize = AppType.Micro,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
             ),
@@ -1151,7 +1152,7 @@ internal fun OutputCaption(
         )
         else -> Text(
             text = outputName,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = AppType.Micro),
             color = LocalPlayerTint.current.copy(alpha = 0.55f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1270,7 +1271,7 @@ private fun BottomGlyph(
             Text(
                 text = label,
                 color = tint,
-                fontSize = 19.sp,
+                fontSize = AppType.Title,
                 fontWeight = FontWeight.Bold,
             )
         }

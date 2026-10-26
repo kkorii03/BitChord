@@ -19,6 +19,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import com.music.bitchord.ui.theme.rememberPlayerTint
+import com.music.bitchord.ui.theme.AppType
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import androidx.compose.animation.core.AnimationVector1D
@@ -3452,7 +3453,7 @@ fun NowPlayingScreen(
                                         MarqueeText(
                                             text = song.title,
                                             style = MaterialTheme.typography.titleLarge.copy(
-                                                fontSize = 20.sp,
+                                                fontSize = AppType.Title,
                                             ),
                                             color = Color.White,
                                             enabled = scrolling,
@@ -3474,7 +3475,7 @@ fun NowPlayingScreen(
                                             },
                                             style = MaterialTheme.typography.titleLarge.copy(
                                                 fontWeight = FontWeight.W500,
-                                                fontSize = 20.sp,
+                                                fontSize = AppType.Title,
                                             ),
                                             color = LocalPlayerTint.current.copy(alpha = 0.55f),
                                             enabled = scrolling,

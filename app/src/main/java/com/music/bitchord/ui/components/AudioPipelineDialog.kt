@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.theme.AppType
+
 import android.media.AudioFormat
 import android.provider.Settings
 import androidx.compose.animation.core.Animatable
@@ -881,7 +883,7 @@ private fun PipelineSection(
             Text(
                 text = title.uppercase(),
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 11.5.sp,
+                    fontSize = AppType.Micro,
                     fontWeight = FontWeight.W600,
                     letterSpacing = 0.5.sp,
                 ),
@@ -917,7 +919,7 @@ private fun PipelineRow(label: String, value: String) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall.copy(
-                fontSize = 12.5.sp,
+                fontSize = AppType.Caption,
                 lineHeight = 17.sp,
             ),
         )
@@ -957,7 +959,7 @@ internal fun PipelineDoneAction(label: String, onClick: () -> Unit) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 17.sp,
+                fontSize = AppType.Body,
                 fontWeight = FontWeight.W600,
             ),
             color = Color.White,
@@ -970,7 +972,7 @@ private fun PipelineNote(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall.copy(
-            fontSize = 11.sp,
+            fontSize = AppType.Micro,
             lineHeight = 14.sp,
             color = Color.White.copy(alpha = 0.60f),
         ),
