@@ -119,12 +119,12 @@ cleanup_logcat() {
 trap cleanup_logcat EXIT
 
 if [ -n "$SETTINGS_DEVICE" ]; then
-  adb shell am broadcast -a com.music.bitchord.debug.IMPORT_SETTINGS -p "$PKG" \
-    --es path "$SETTINGS_DEVICE" \
-    --es file "$SETTINGS_DEVICE" \
-    --es settings "$SETTINGS_DEVICE" \
-    --es uri "file://$SETTINGS_DEVICE" \
-    -d "file://$SETTINGS_DEVICE" >/dev/null 2>&1 || true
+  # Explicit component and no data URI: a file:// data on the intent does not
+  # match the receiver's action-only filter, which is why the first run got
+  # no debug-import line at all.
+  adb shell am broadcast -a com.music.bitchord.debug.IMPORT_SETTINGS \
+    -n "$PKG/com.music.bitchord.debug.DebugSettingsImportReceiver" \
+    --es path "$SETTINGS_DEVICE" </dev/null || true
   for i in $(seq 1 10); do
     grep -q 'debug-import:' "$OUT/smoke-logcat.txt" && break
     sleep 1
@@ -211,7 +211,9 @@ play_song() {
   fi
 }
 
-while IFS=$'\t' read -r key kind _rest || [ -n "$key" ]; do
+# fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
+# rest of the song list after the first song on the first run.
+while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
   key=${key%$'\r'}
   kind=${kind%$'\r'}
   case "$key" in
@@ -222,7 +224,7 @@ while IFS=$'\t' read -r key kind _rest || [ -n "$key" ]; do
     continue
   }
   play_song "$key" "$kind"
-done < "$SONGS_FILE"
+done 3< "$SONGS_FILE"
 
 # `track-summary` is written for the outgoing track, so the last song only gets
 # its summary when another track becomes current. Move on once more (and fall
