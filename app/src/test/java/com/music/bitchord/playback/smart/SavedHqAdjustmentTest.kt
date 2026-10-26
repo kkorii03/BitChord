@@ -1,8 +1,10 @@
 package com.music.bitchord.playback.smart
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SavedHqAdjustmentTest {
@@ -22,6 +24,21 @@ class SavedHqAdjustmentTest {
 
         assertNotNull(adjustment)
         assertEquals(1_010L, adjustment!!.map.map(1_000L))
+    }
+
+    @Test
+    fun `an automatic measurement on a local file already has the file's clock`() {
+        val measured = LyricsTiming.savedHqAdjustment(offsetMs = 1_200L, rate = 1.0)
+
+        assertFalse(LyricsTiming.hqApplies(localFile = true, base = measured))
+        assertTrue(LyricsTiming.hqApplies(localFile = false, base = measured))
+        assertTrue(LyricsTiming.hqApplies(localFile = true, base = null))
+        assertFalse(
+            LyricsTiming.hqApplies(
+                localFile = true,
+                base = LyricsTiming.Adjustment.Shift(400L, byAi = true),
+            ),
+        )
     }
 
     @Test

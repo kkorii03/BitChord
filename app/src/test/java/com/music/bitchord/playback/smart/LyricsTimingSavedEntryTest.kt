@@ -174,4 +174,41 @@ class LyricsTimingSavedEntryTest {
             assertNull(LyricsTiming.timing(context, "b", emptyList(), baseAllowed = true))
         }
     }
+
+    @Test
+    fun `replacing the file forgets the measurement and the sync check too`() {
+        write(
+            """
+            {"entries":{"replaced":{
+              "autoVersion":4,
+              "auto":{"knots":[0,1000],"headRate":1.0,"tailRate":1.0,"rate":1.0},
+              "autoComplete":true,
+              "autoVideoBytes":123,
+              "autoVideoSeconds":60.0,
+              "autoNote":"old file",
+              "searchVersion":3,
+              "syncCheckVersion":1,
+              "manualMs":250
+            }}}
+            """.trimIndent(),
+        )
+
+        runBlocking {
+            LyricsTiming.resetSongCheck(context, "replaced")
+
+            assertFalse(LyricsTiming.measured(context, "replaced"))
+            assertFalse(LyricsTiming.measuredTiming(context, "replaced"))
+            assertNull(LyricsTiming.note(context, "replaced"))
+            assertEquals(250L, LyricsTiming.manual(context, "replaced"))
+        }
+
+        val file = File(directory, "lyrics_timing_v1.json")
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (System.nanoTime() < deadline) {
+            if (file.exists() && !file.readText().contains("\"syncCheckVersion\"")) break
+            Thread.sleep(25L)
+        }
+
+        assertEquals(false, file.readText().contains("\"syncCheckVersion\""))
+    }
 }

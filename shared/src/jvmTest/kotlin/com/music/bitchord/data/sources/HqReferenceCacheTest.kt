@@ -61,6 +61,32 @@ class HqReferenceCacheTest {
         assertTrue(!HqReferenceCache.bothCompleteEnough(full, full, seconds = 0.0))
     }
 
+    @Test
+    fun `a read that reached the end is complete even when the track is shorter than the window`() {
+        val short = features(frames = 60, hopSeconds = 1.0)
+
+        assertTrue(HqReferenceCache.completeEnough(short, seconds = 90.0, reachedEnd = true))
+        assertTrue(!HqReferenceCache.completeEnough(short, seconds = 90.0, reachedEnd = false))
+        assertTrue(
+            HqReferenceCache.bothCompleteEnough(
+                short,
+                short,
+                seconds = 90.0,
+                referenceReachedEnd = true,
+                candidateReachedEnd = true,
+            ),
+        )
+        assertTrue(
+            !HqReferenceCache.bothCompleteEnough(
+                short,
+                short,
+                seconds = 90.0,
+                referenceReachedEnd = true,
+                candidateReachedEnd = false,
+            ),
+        )
+    }
+
     private fun features(frames: Int, hopSeconds: Double = 1.0): ChromaAlignment.Features =
         ChromaAlignment.Features(
             chroma = FloatArray(frames * 12),

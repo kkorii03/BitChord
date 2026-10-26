@@ -116,8 +116,32 @@ object HqAudioVerify {
         data object Unavailable : Outcome
     }
 
+    /**
+     * A decoded profile plus whether its read reached the end of the track.
+     * A short song that ended is complete; a read that stopped before the
+     * requested window is not.
+     */
+    private data class Profile(
+        val features: ChromaAlignment.Features,
+        val reachedEnd: Boolean,
+        val declaredDurationSeconds: Double? = null,
+    ) {
+        fun complete(seconds: Double): Boolean {
+            // A container that states its length lets a clean early close be
+            // told apart from a genuinely short recording: if the bytes ended
+            // well before the declared length, the read was cut short.
+            val declared = declaredDurationSeconds
+            if (reachedEnd && declared != null &&
+                features.durationSeconds + 1.0 < minOf(declared, seconds)
+            ) {
+                return false
+            }
+            return HqReferenceCache.completeEnough(features, seconds, reachedEnd)
+        }
+    }
+
     private sealed interface Reference {
-        data class Ready(val features: ChromaAlignment.Features) : Reference
+        data class Ready(val profile: Profile) : Reference
         data class Missing(val reason: NoReferenceReason) : Reference
     }
 
@@ -246,12 +270,13 @@ object HqAudioVerify {
                         candidateDeferred.cancel()
                         return@coroutineScope Outcome.NoReference(reference.reason)
                     }
-                    val referenceFeatures = (reference as Reference.Ready).features
+                    val referenceProfile = (reference as Reference.Ready).profile
+                    val referenceFeatures = referenceProfile.features
                     // A truncated profile is not a shorter recording. Comparing
                     // it would only produce a poor match, and a poor match is
                     // stored as a permanent rejection — so a partial reference
                     // means "try again later", not "this candidate is wrong".
-                    if (!HqReferenceCache.completeEnough(referenceFeatures, COMPARE_SECONDS)) {
+                    if (!referenceProfile.complete(COMPARE_SECONDS)) {
                         candidateDeferred.cancel()
                         logNoReference(target.title, youtubeId, NoReferenceReason.DECODE_FAILED)
                         return@coroutineScope Outcome.NoReference(NoReferenceReason.DECODE_FAILED)
@@ -264,11 +289,8 @@ object HqAudioVerify {
                     // The same rule on the candidate side: a read cut short by
                     // a slow or closing stream says nothing about the
                     // recording and must not become a stored rejection.
-                    if (!HqReferenceCache.bothCompleteEnough(
-                            referenceFeatures,
-                            candidate,
-                            COMPARE_SECONDS,
-                        )
+                    if (!referenceProfile.complete(COMPARE_SECONDS) ||
+                        !candidate.complete(COMPARE_SECONDS)
                     ) {
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
                         return@coroutineScope Outcome.Unavailable
@@ -276,7 +298,7 @@ object HqAudioVerify {
                     val result = runCatching {
                         ChromaAlignment.align(
                             referenceFeatures,
-                            candidate,
+                            candidate.features,
                             videoComplete = false,
                         )
                     }.getOrNull()
@@ -376,6 +398,13 @@ object HqAudioVerify {
         )
     }
 
+    /**
+     * A profile that came from the memory or disk cache. Only complete reads
+     * are ever stored there, so it counts as having reached the end.
+     */
+    private fun cachedProfile(features: ChromaAlignment.Features): Profile =
+        Profile(features = features, reachedEnd = true)
+
     /** A stored reference profile for [youtubeId], or null when there is none usable. */
     private fun diskReference(context: Context, youtubeId: String): ChromaAlignment.Features? {
         val file = referenceFile(context, youtubeId)
@@ -383,7 +412,7 @@ object HqAudioVerify {
         val features = runCatching {
             ChromaAlignment.Features.fromBytes(file.readBytes())
         }.getOrNull()
-        if (features == null || !HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
+        if (features == null) {
             runCatching { file.delete() }
             return null
         }
@@ -441,15 +470,15 @@ object HqAudioVerify {
         title: String,
         manual: Boolean,
     ): Reference {
-        referenceCache.get(youtubeId)?.let { return Reference.Ready(it) }
+        referenceCache.get(youtubeId)?.let { return Reference.Ready(cachedProfile(it)) }
         val lock = referenceLocks.acquire(youtubeId)
         try {
             return lock.mutex.withLock {
-                referenceCache.get(youtubeId)?.let { return@withLock Reference.Ready(it) }
+                referenceCache.get(youtubeId)?.let { return@withLock Reference.Ready(cachedProfile(it)) }
                 diskReference(context, youtubeId)?.let { cached ->
                     referenceCache.put(youtubeId, cached)
                     noReference.remove(youtubeId)
-                    return@withLock Reference.Ready(cached)
+                    return@withLock Reference.Ready(cachedProfile(cached))
                 }
                 referenceFeaturesUncached(context, youtubeId, title, manual)
             }
@@ -495,8 +524,8 @@ object HqAudioVerify {
         }
         return try {
             val coroutine = currentCoroutineContext()
-            val features = featuresOf(source) { coroutine.isActive }
-            if (features == null) {
+            val profile = featuresOf(source) { coroutine.isActive }
+            if (profile == null) {
                 // A cancelled decode is not a missing reference: the next
                 // playback must be free to try again.
                 val reason = if (coroutine.isActive) {
@@ -513,12 +542,14 @@ object HqAudioVerify {
                 // A partial head is returned for this comparison but not kept:
                 // the rest of the bytes may still arrive, and freezing a short
                 // profile would make every later candidate compare against it.
-                if (HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
-                    referenceCache.put(youtubeId, features)
-                    storeReference(context, youtubeId, features)
+                // A short recording that reached its end is complete, so it is
+                // kept like any other.
+                if (profile.complete(COMPARE_SECONDS)) {
+                    referenceCache.put(youtubeId, profile.features)
+                    storeReference(context, youtubeId, profile.features)
                 }
                 noReference.remove(youtubeId)
-                Reference.Ready(features)
+                Reference.Ready(profile)
             }
         } finally {
             runCatching { source.close() }
@@ -526,7 +557,7 @@ object HqAudioVerify {
     }
 
     /** The candidate's opening, read straight from its stream URL. */
-    private suspend fun candidateFeatures(stream: SourceStream): ChromaAlignment.Features? {
+    private suspend fun candidateFeatures(stream: SourceStream): Profile? {
         val dataSource = ProxyAwareDataSourceFactory().createDataSource()
         val source = UrlMediaDataSource(dataSource, Uri.parse(stream.url), stream.headers)
         return try {
@@ -553,7 +584,7 @@ object HqAudioVerify {
     private fun featuresOf(
         source: MediaDataSource,
         abort: () -> Boolean = { false },
-    ): ChromaAlignment.Features? {
+    ): Profile? {
         // Checked before the extractor opens the source and before the decoder
         // gate is taken: an abandoned verification must not queue behind the
         // work it was cancelled to avoid.
@@ -561,8 +592,9 @@ object HqAudioVerify {
         var extractor: ChromaAlignment.Extractor? = null
         var sampleRate = 0
         var startSeconds = 0.0
+        var decoded: AudioDecoder.Decoded? = null
         try {
-            val decoded = AudioDecoder.decodeMonoStream(
+            decoded = AudioDecoder.decodeMonoStreamDecoded(
                 source,
                 0.0,
                 COMPARE_SECONDS + 1.0,
@@ -590,7 +622,14 @@ object HqAudioVerify {
         // infinite; it cannot be compared, so it is refused here rather than
         // carried into the aligner as a bogus profile.
         if (sampleRate <= 0) return null
-        return extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
+        val result = decoded ?: return null
+        val features = extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
+            ?: return null
+        return Profile(
+            features = features,
+            reachedEnd = result.reachedEnd,
+            declaredDurationSeconds = result.declaredDurationSeconds,
+        )
     }
 
     /**

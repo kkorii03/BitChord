@@ -106,6 +106,16 @@ object HqLibraryUpgrade {
     fun enabled(): Boolean =
         AppSettings.autoReplaceHqDownloads.value || AppSettings.autoPrefetchHq.value
 
+    /**
+     * A prefetch is a new file nobody asked for, so it follows the Wi-Fi-only
+     * setting. It must not be handed to [Downloads.enqueue] while that setting
+     * refuses it: the refusal settles the target as failed and the pass moves
+     * on, burning through the whole prefetch plan one WorkManager job at a
+     * time. Waiting here leaves the plan intact for the unmetered run.
+     */
+    internal fun waitsForWifi(action: HqLibraryAction, downloadsAllowedNow: Boolean): Boolean =
+        action == HqLibraryAction.PREFETCH && !downloadsAllowedNow
+
     /** Called at app start and on playback; safe to call repeatedly. */
     fun scheduleIfEnabled(context: Context) {
         ensureLoaded(context)
@@ -225,6 +235,16 @@ object HqLibraryUpgrade {
             return@withContext
         }
 
+        if (waitsForWifi(pending.target.action, AppSettings.downloadsAllowedNow)) {
+            TrackLog.d(
+                TAG,
+                "hq-library: '${pending.song.title}' is a prefetch waiting for Wi-Fi",
+                pending.target.videoId,
+            )
+            enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, unmetered = true)
+            return@withContext
+        }
+
         synchronized(lock) {
             activeVideoId = pending.target.videoId
             persistLocked()
@@ -321,7 +341,11 @@ object HqLibraryUpgrade {
             TrackLog.w(TAG, "hq-library: $videoId did not land; it will be retried next time")
         }
         if (enabled() && (rebuild || (scheduleNext && remaining.isNotEmpty()))) {
-            enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
+            val unmetered = remaining.isNotEmpty() &&
+                remaining.all {
+                    waitsForWifi(it.target.action, AppSettings.downloadsAllowedNow)
+                }
+            enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, unmetered)
         }
     }
 
@@ -416,12 +440,18 @@ object HqLibraryUpgrade {
             ?.takeIf { it.title.isNotBlank() }
     }
 
-    private fun enqueue(context: Context, policy: ExistingWorkPolicy) {
+    private fun enqueue(
+        context: Context,
+        policy: ExistingWorkPolicy,
+        unmetered: Boolean = false,
+    ) {
         if (!enabled()) return
         val request = OneTimeWorkRequestBuilder<HqLibraryUpgradeWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiredNetworkType(
+                        if (unmetered) NetworkType.UNMETERED else NetworkType.CONNECTED,
+                    )
                     .build(),
             )
             .build()

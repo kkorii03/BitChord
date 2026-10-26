@@ -1136,6 +1136,7 @@ object AppSettings {
         // Read before the migrations below write their defaults: on a fresh
         // install this is the only moment the file is still empty.
         val onboardingSaved = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
+        val hadSettingsBeforeMigrations = prefs.all.isNotEmpty()
         val existingInstall = !onboardingSaved && hadDataBeforeOnboarding()
         migrateCellularQualityDefault()
         migrateSingleQuality()
@@ -1146,7 +1147,7 @@ object AppSettings {
             DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS,
         ).coerceIn(MIN_UPGRADE_LENGTH_SLACK_SECONDS, MAX_UPGRADE_LENGTH_SLACK_SECONDS)
         migrateDownloadQuality()
-        migrateHqAutomationDefaults(existingInstall)
+        migrateHqAutomationDefaults(hadSettingsBeforeMigrations)
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
@@ -1521,9 +1522,14 @@ object AppSettings {
      * its onboarding copy names what it does. An absent key on a later reload
      * (a settings file that predates the switches) is treated the same as an
      * upgrade, so restoring an old backup cannot silently turn it back on.
+     *
+     * [hadSettingsBeforeMigrations] is whether the file held anything before
+     * this launch wrote its own defaults — not whether onboarding is complete.
+     * A normal app update has already finished onboarding, so that flag would
+     * call it a fresh install and turn both switches on.
      */
-    private fun migrateHqAutomationDefaults(existingInstall: Boolean) {
-        val default = hqAutomationDefault(existingInstall)
+    private fun migrateHqAutomationDefaults(hadSettingsBeforeMigrations: Boolean) {
+        val default = hqAutomationDefault(hadSettingsBeforeMigrations)
         val edit = prefs.edit()
         var changed = false
         if (!prefs.contains(KEY_AUTO_REPLACE_HQ_DOWNLOADS)) {
@@ -2821,13 +2827,18 @@ object AppSettings {
      * settings are clamped to what their own setters accept, non-finite floats
      * are replaced, and an unknown float that is not finite is dropped rather
      * than written.
+     *
+     * A known key carrying the wrong type is dropped instead of passed through:
+     * writing a string under [KEY_SPEED] would leave the preference file
+     * unreadable to [readAll]'s `getFloat`, and that throw happens after the
+     * file has already been cleared.
      */
     private fun sanitizeImportedPref(key: String, value: Any?): Any? = when (key) {
-        KEY_SPEED -> (value as? Float)?.let(PlaybackParametersMath::clampSpeed) ?: value
-        KEY_REPEAT_MODE -> (value as? Int)?.let(PlaybackParametersMath::clampRepeatMode) ?: value
-        KEY_EQ_BALANCE -> (value as? Float)?.let(::clampBalance) ?: value
-        KEY_SCROBBLE_DELAY_PERCENT -> (value as? Float)?.let(::clampScrobbleDelay) ?: value
-        KEY_EQ_BANDS -> (value as? String)?.let(::sanitizeImportedBands) ?: value
+        KEY_SPEED -> (value as? Float)?.let(PlaybackParametersMath::clampSpeed)
+        KEY_REPEAT_MODE -> (value as? Int)?.let(PlaybackParametersMath::clampRepeatMode)
+        KEY_EQ_BALANCE -> (value as? Float)?.let(::clampBalance)
+        KEY_SCROBBLE_DELAY_PERCENT -> (value as? Float)?.let(::clampScrobbleDelay)
+        KEY_EQ_BANDS -> (value as? String)?.let(::sanitizeImportedBands)
         else -> if (value is Float && !value.isFinite()) null else value
     }
 
@@ -3374,7 +3385,14 @@ object AppSettings {
 internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
     if (existingInstall) AudioQuality.LOSSLESS else AudioQuality.HIGH
 
-/** Off for an install that updated into the feature; on for a fresh one. */
+/**
+ * Off for an install that updated into the feature; on for a fresh one.
+ *
+ * [existingInstall] is whether the preference file already held settings before
+ * this launch wrote any — not whether onboarding is complete. A normal app
+ * update has finished onboarding, so the onboarding flag cannot stand in for
+ * this.
+ */
 internal fun hqAutomationDefault(existingInstall: Boolean): Boolean = !existingInstall
 
 

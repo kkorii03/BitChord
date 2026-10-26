@@ -76,6 +76,21 @@ object AudioDecoder {
     data class StereoPcm(val left: FloatArray, val right: FloatArray, val sampleRate: Double)
 
     /**
+     * What a decode loop learned beyond the samples it handed back.
+     *
+     * [reachedEnd] means the extractor ran out of samples (the track ended),
+     * not that the requested window was reached. [declaredDurationSeconds] is
+     * the container's own length when it states one, which tells a genuinely
+     * short recording apart from a stream that closed early.
+     */
+    data class Decoded(
+        val sampleRate: Double,
+        val startSeconds: Double,
+        val reachedEnd: Boolean,
+        val declaredDurationSeconds: Double?,
+    )
+
+    /**
      * Reads the audio duration a fully-cached container advertises, without
      * decoding it. Queue metadata isn't always trustworthy, so this is the
      * fallback [TrackAnalyzer] reaches for when a track's own duration is
@@ -130,7 +145,7 @@ object AudioDecoder {
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             chunks += toMono(buffer, info, channels)
         } ?: return null
-        return Pcm(flatten(chunks), decoded.first) to decoded.second
+        return Pcm(flatten(chunks), decoded.sampleRate) to decoded.startSeconds
     }
 
     /**
@@ -152,11 +167,30 @@ object AudioDecoder {
         abort: () -> Boolean = { false },
         label: String = "analysis",
         onChunk: (samples: FloatArray, sampleRate: Int, atSeconds: Double) -> Unit,
-    ): Double? {
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, rate ->
-            onChunk(toMono(buffer, info, channels), rate, info.presentationTimeUs / 1_000_000.0)
-        } ?: return null
-        return decoded.second
+    ): Double? = decodeMonoStreamDecoded(
+        source,
+        startSeconds,
+        endSeconds,
+        abort,
+        label,
+        onChunk,
+    )?.startSeconds
+
+    /**
+     * As [decodeMonoStream], also saying whether the decode reached the end of
+     * the track rather than stopping at [endSeconds]. A caller comparing
+     * recordings needs the difference: a short song that ended is complete,
+     * while a read that closed early is not.
+     */
+    fun decodeMonoStreamDecoded(
+        source: MediaDataSource,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean = { false },
+        label: String = "analysis",
+        onChunk: (samples: FloatArray, sampleRate: Int, atSeconds: Double) -> Unit,
+    ): Decoded? = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, rate ->
+        onChunk(toMono(buffer, info, channels), rate, info.presentationTimeUs / 1_000_000.0)
     }
 
     /**
@@ -179,7 +213,7 @@ object AudioDecoder {
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
-        return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
+        return StereoPcm(flatten(left), flatten(right), decoded.sampleRate) to decoded.startSeconds
     }
 
     /** Concatenates the decoded chunks into one contiguous buffer. */
@@ -208,7 +242,7 @@ object AudioDecoder {
         abort: () -> Boolean,
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
-    ): Pair<Double, Double>? {
+    ): Decoded? {
         if (endSeconds <= startSeconds) return null
         val acquired = try {
             decodeGate.acquire()
@@ -232,7 +266,7 @@ object AudioDecoder {
         abort: () -> Boolean,
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
-    ): Pair<Double, Double>? {
+    ): Decoded? {
         DecoderMonitor.start(label)
         val extractor = runCatching { MediaExtractor() }.getOrElse {
             DecoderMonitor.stop(label)
@@ -250,6 +284,9 @@ object AudioDecoder {
 
             val startUs = (startSeconds * 1_000_000).toLong()
             val endUs = (endSeconds * 1_000_000).toLong()
+            val declaredDurationSeconds = format.longOrNull(MediaFormat.KEY_DURATION)
+                ?.div(1_000_000.0)
+                ?.takeIf { it.isFinite() && it > 0.0 }
             extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
 
             codec = runCatching { MediaCodec.createDecoderByType(mime) }
@@ -265,6 +302,7 @@ object AudioDecoder {
             var sawFirstSample = false
             var inputDone = false
             var outputDone = false
+            var reachedEnd = false
 
             while (!outputDone) {
                 // Polled at the top of the loop rather than only around the
@@ -283,7 +321,11 @@ object AudioDecoder {
                         } else {
                             val sampleSize = extractor.readSampleData(inputBuffer, 0)
                             val sampleTimeUs = extractor.sampleTime
-                            if (sampleSize < 0 || (sampleTimeUs in 0..Long.MAX_VALUE && sampleTimeUs > endUs)) {
+                            if (sampleSize < 0) {
+                                reachedEnd = true
+                                codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputDone = true
+                            } else if (sampleTimeUs in 0..Long.MAX_VALUE && sampleTimeUs > endUs) {
                                 codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                                 inputDone = true
                             } else {
@@ -321,7 +363,12 @@ object AudioDecoder {
             }
 
             if (!sawFirstSample || outputRate <= 0) return null
-            return outputRate.toDouble() to actualStartSeconds
+            return Decoded(
+                sampleRate = outputRate.toDouble(),
+                startSeconds = actualStartSeconds,
+                reachedEnd = reachedEnd,
+                declaredDurationSeconds = declaredDurationSeconds,
+            )
         } catch (error: Exception) {
             Log.w(TAG, "Region decode failed", error)
             return null
@@ -390,4 +437,6 @@ object AudioDecoder {
     }
 
     private fun MediaFormat.intOrNull(key: String): Int? = if (containsKey(key)) getInteger(key) else null
+
+    private fun MediaFormat.longOrNull(key: String): Long? = if (containsKey(key)) getLong(key) else null
 }

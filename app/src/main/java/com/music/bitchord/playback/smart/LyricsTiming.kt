@@ -183,13 +183,10 @@ object LyricsTiming {
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
         val localFile = audioSource?.endsWith("|file") == true
-        // A file's AI answer was measured against that very file, so it is
-        // already on the file's clock; the saved HQ map belongs on top only
-        // while no such answer is in place.
-        val hq = if (localFile && base?.byAi == true) {
-            null
-        } else {
+        val hq = if (hqApplies(localFile, base)) {
             hqAdjustment(context, videoId, localFile)
+        } else {
+            null
         }
         val timing = Timing(
             base = base,
@@ -287,6 +284,18 @@ object LyricsTiming {
             lines.timedBy(baseMap).timedBy(hq, timing.extraMs)
         }
     }
+
+    /**
+     * Whether the saved HQ map still belongs on top of [base].
+     *
+     * A measurement for a local file is made against that file, and an AI
+     * answer that matches its key was made against it too. Either already puts
+     * the words on the file's clock, so the saved HQ map would shift them a
+     * second time. The map is for lyrics still on the YouTube version's clock
+     * — a file with no timing answer yet.
+     */
+    internal fun hqApplies(localFile: Boolean, base: Adjustment?): Boolean =
+        !(localFile && base != null)
 
     /**
      * The YouTube → high-quality map for the copy serving [videoId], when it
@@ -1546,14 +1555,15 @@ object LyricsTiming {
     }
 
     /**
-     * Forgets the song check's answer and the engines it spent for [videoId],
+     * Forgets the song check's answers and the engines it spent for [videoId],
      * leaving the listener's own correction alone.
      *
      * Called when a downloaded file judged to hold the video's sound is
-     * replaced by the song version: the answer was measured against the old
-     * recording, and the same lyrics must be checked again against the new
-     * one. The text key already names file vs stream, but a replaced file can
-     * keep the same path, so the record itself has to be dropped.
+     * replaced by the song version: every answer was measured against the old
+     * recording — the AI's, the automatic measurement's, and the downloaded
+     * sync re-check's — and the same lyrics must be checked again against the
+     * new one. The text key already names file vs stream, but a replaced file
+     * can keep the same path, so the record itself has to be dropped.
      */
     suspend fun resetSongCheck(context: Context, videoId: String) {
         store(context).update(videoId) {
@@ -1571,6 +1581,20 @@ object LyricsTiming {
                 whisperKey = null,
                 songRetryKey = null,
                 songRetryAtMs = null,
+                // The measurement and the sync re-check were made against the
+                // bytes that have just been replaced. Keeping them would leave
+                // the new file timed on the old file's clock.
+                autoVersion = 0,
+                auto = null,
+                autoComplete = false,
+                autoNoChange = false,
+                autoRecordPartial = false,
+                autoVideoBytes = 0L,
+                autoVideoSeconds = 0.0,
+                autoNote = null,
+                searchVersion = 0,
+                biasSampled = false,
+                syncCheckVersion = 0,
             )
         }
         _changes.tryEmit(videoId)

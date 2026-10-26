@@ -50,8 +50,19 @@ class HqReferenceCache(private val limit: Int = MAX_ENTRIES) {
         /** Below this share of the comparison window the profile is not worth keeping. */
         const val COMPLETE_FRACTION = 0.9
 
-        fun completeEnough(features: ChromaAlignment.Features, seconds: Double): Boolean =
-            seconds > 0.0 && features.durationSeconds >= seconds * COMPLETE_FRACTION
+        /**
+         * [reachedEnd] says the decode ran out of track rather than stopping at
+         * [seconds]. A complete short song is then complete even though its
+         * profile cannot cover the full comparison window; only a read cut
+         * short before the window (no end, not enough duration) is refused.
+         */
+        fun completeEnough(
+            features: ChromaAlignment.Features,
+            seconds: Double,
+            reachedEnd: Boolean = false,
+        ): Boolean =
+            seconds > 0.0 &&
+                (reachedEnd || features.durationSeconds >= seconds * COMPLETE_FRACTION)
 
         /**
          * Whether both sides of a comparison cover the window.
@@ -66,7 +77,10 @@ class HqReferenceCache(private val limit: Int = MAX_ENTRIES) {
             reference: ChromaAlignment.Features,
             candidate: ChromaAlignment.Features,
             seconds: Double,
+            referenceReachedEnd: Boolean = false,
+            candidateReachedEnd: Boolean = false,
         ): Boolean =
-            completeEnough(reference, seconds) && completeEnough(candidate, seconds)
+            completeEnough(reference, seconds, referenceReachedEnd) &&
+                completeEnough(candidate, seconds, candidateReachedEnd)
     }
 }
