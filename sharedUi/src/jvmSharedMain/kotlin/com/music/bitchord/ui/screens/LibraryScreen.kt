@@ -265,19 +265,19 @@ private fun LibraryLinkList(links: List<LibraryLink>, onClick: (ShelfItem) -> Un
                     .padding(horizontal = PAGE_GUTTER),
             ) {
                 if (link.logo != null) {
-                    // A mark, not a glyph: white on dark, black on light, with
+                    // A mark, not a glyph: the library's accent colour with
                     // its cut-outs left clear.
                     Icon(
                         painter = painterResource(link.logo),
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onBackground,
+                        tint = LibraryLinkAccent,
                         modifier = Modifier.size(LINK_ICON_SIZE),
                     )
                 } else {
                     Icon(
                         imageVector = link.icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = LibraryLinkAccent,
                         modifier = Modifier.size(LINK_ICON_SIZE),
                     )
                 }
@@ -310,6 +310,9 @@ private fun LibraryLinkList(links: List<LibraryLink>, onClick: (ShelfItem) -> Un
 
 private val LINK_ICON_SIZE = 24.dp
 private val LINK_ICON_GAP = 16.dp
+
+/** Apple Music's library glyphs are tinted, not left white. */
+private val LibraryLinkAccent = Color(0xFFFA2D48)
 
 /**
  * The one shelf on this page that can be written to: it leads with the tile

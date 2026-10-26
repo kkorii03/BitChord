@@ -992,6 +992,21 @@ private fun BitChordApp(
         if (AppRoute.Settings !in navigator) navigator.push(AppRoute.Settings)
     }
     val account by viewModel.account.collectAsStateWithLifecycle()
+    // One account affordance, two homes: beside Home's large title while it is
+    // up, and in the bar once the heading has scrolled away. Reusing the same
+    // composable keeps the swipe-to-switch profile gesture in both places.
+    val accountButton: @Composable () -> Unit = {
+        TopBarAccountButton(
+            account = account,
+            onClick = {
+                if (signedIn) {
+                    viewModel.loadChannels()
+                    showAccountSelector = true
+                } else navigator.push(AppRoute.Settings)
+            },
+            onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
+        )
+    }
     val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
     val googleAccounts by viewModel.googleAccounts.collectAsStateWithLifecycle()
     val activeAccountId by viewModel.activeAccountId.collectAsStateWithLifecycle()
@@ -3761,6 +3776,7 @@ private fun BitChordApp(
                                 currentSong = player.song,
                                 isPlaying = player.isPlaying,
                                 title = stringResource(R.string.listen_now),
+                                titleAccessory = accountButton,
                                 signedIn = signedIn,
                                 onSignIn = { webSession = WebSessionMode.SIGN_IN },
                                 onItemClick = { item, shelfTitle ->
@@ -4483,17 +4499,11 @@ private fun BitChordApp(
                             TopBarDownloadButton(onClick = { showDownloadManager = true })
                             // Not on a release page, whose pill already carries
                             // three of its own controls — Apple Music leaves the
-                            // profile off its album pages too.
-                            if (!isReleaseDetail) TopBarAccountButton(
-                                account = account,
-                                onClick = {
-                                    if (signedIn) {
-                                        viewModel.loadChannels()
-                                        showAccountSelector = true
-                                    } else navigator.push(AppRoute.Settings)
-                                },
-                                onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
-                            )
+                            // profile off its album pages too. On Home at rest
+                            // the profile sits beside the large title instead.
+                            if (!isReleaseDetail && !(homeHeadingVisible && !scrolled)) {
+                                accountButton()
+                            }
                         }
                     },
                 )

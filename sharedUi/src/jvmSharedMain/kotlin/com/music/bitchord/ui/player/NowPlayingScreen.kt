@@ -165,6 +165,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
@@ -812,6 +813,12 @@ fun NowPlayingScreen(
     val density = LocalDensity.current
     val haptics = rememberHaptics()
 
+    // A restored track can be on screen before its player has reported a
+    // length, which used to draw "0:00 / -0:00" over a song whose row already
+    // knew how long it is. The metadata length is the honest fallback until the
+    // stream answers; a real duration always wins over it.
+    val displayDurationMs = durationMs.takeIf { it > 0 } ?: song.durationMillis()
+
     // Remote tracks whose art lives inside the file resolve it here, once —
     // every surface below reads the same value rather than each triggering
     // its own extraction.
@@ -948,9 +955,9 @@ fun NowPlayingScreen(
     // rather than full-bleed, and is averaged on a stride off the main thread.
     val meshRefreshMs = MESH_REFRESH_MS
 
-    val scrub = rememberPlayerScrub(song.videoId, position, durationMs)
+    val scrub = rememberPlayerScrub(song.videoId, position, displayDurationMs)
     // Read by the scrubber itself — see [PlayerScrubber.shown].
-    val shown: () -> Float = { scrub.shown(position.positionMs, durationMs) }
+    val shown: () -> Float = { scrub.shown(position.positionMs, displayDurationMs) }
     // Back restarts the track rather than stepping back once it is a few
     // seconds in. Derived, so this scope hears about the playhead once, when
     // it crosses that point, rather than on every tick.
@@ -2096,7 +2103,7 @@ fun NowPlayingScreen(
                                         trackKey = song.videoId,
                                         playhead = lyricsPlayhead,
                                         isPlaying = isPlaying && position.advancing,
-                                        durationMs = durationMs,
+                                        durationMs = displayDurationMs,
                                         lyricsUnavailable = lyricsUnavailable,
                                         loadingText = lyricsLoadingText,
                                         onClick = openLyrics,
@@ -2109,7 +2116,7 @@ fun NowPlayingScreen(
                             scrubber = {
                                 PlayerScrubber(
                                     shown = shown,
-                                    durationMs = durationMs,
+                                    durationMs = displayDurationMs,
                                     loading = versionAligning || audioVersionSwitching,
                                     mixing = mixing && !scrub.scrubbing,
                                     transitionWindow = transitionWindow
@@ -3796,7 +3803,7 @@ fun NowPlayingScreen(
                             trackKey = song.videoId,
                             playhead = lyricsPlayhead,
                             isPlaying = isPlaying && position.advancing,
-                            durationMs = durationMs,
+                            durationMs = displayDurationMs,
                             lyricsUnavailable = lyricsUnavailable,
                             loadingText = lyricsLoadingText,
                             // Still visible over the queue, so still a valid way in:
@@ -3831,7 +3838,7 @@ fun NowPlayingScreen(
                     val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
                     PlayerScrubber(
                         shown = shown,
-                        durationMs = durationMs,
+                        durationMs = displayDurationMs,
                         loading = versionSwitching,
                         mixing = mixing && !scrub.scrubbing,
                         // Hidden while scrubbing: the planner is still describing

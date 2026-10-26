@@ -535,8 +535,8 @@ private fun artworkPageSurface(
  * out, or before the account menu has come back, it falls back to a person
  * glyph on a filled circle so the tap target never disappears.
  *
- * The hairline ring is what keeps a photo with light edges from dissolving into
- * the bar's glass; it is the same one thumbnails elsewhere carry.
+ * No ring: Apple Music's avatar is a plain circle, and the photo carries
+ * itself against the glass.
  */
 @Composable
 fun TopBarAccountButton(
@@ -576,23 +576,21 @@ fun TopBarAccountButton(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(AVATAR_SIZE)
-                    .clip(CircleShape)
-                    .thumbnailBorder(CircleShape),
+                    .clip(CircleShape),
             )
         } else {
             Box(
                 modifier = Modifier
                     .size(AVATAR_SIZE)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .thumbnailBorder(CircleShape),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Rounded.Person,
                     contentDescription = stringResource(R.string.switch_account),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
@@ -682,9 +680,9 @@ private val PUCK_REST = 16.dp
 private val PUCK_OVERSHOOT = 20.dp
 
 /**
- * The account photo's diameter.
+ * The account photo's diameter, at Apple Music's small-avatar size.
  *
- * Smaller than an icon's 24dp box: a filled circle carries more weight than a
- * glyph does, and at 24 it sat heavier in the bar than the wordmark opposite it.
+ * A plain circle rather than a ringed tile, so it reads as a person at the end
+ * of the large heading rather than as another button.
  */
-private val AVATAR_SIZE = 28.dp
+private val AVATAR_SIZE = 36.dp
