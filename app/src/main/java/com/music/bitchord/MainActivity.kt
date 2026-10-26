@@ -202,6 +202,7 @@ import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.BoundedShuffleStart
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
 import com.music.bitchord.playback.OriginalVersion
@@ -2428,6 +2429,67 @@ private fun BitChordApp(
         }
     }
 
+    /**
+     * Shuffles a card without collecting its whole collection first.
+     *
+     * The card menu used to follow every continuation and only then hand the
+     * finished list to the player, so a nine-page mix spent about ten seconds
+     * on round trips before the first note. The first page is enough to pick a
+     * random starting row; the playback service follows the rest of the
+     * continuation and mixes each page into what has not played yet.
+     */
+    val shuffleBrowseTarget: (BrowseTarget) -> Unit = { target ->
+        browseActions = null
+        val browseId = target.browseId
+        if (browseId == null) {
+            Toast.makeText(context, context.getString(R.string.no_tracks_here), Toast.LENGTH_SHORT).show()
+        } else {
+            val source = QueueSource(target.title, PlaybackSourceType.BROWSE, browseId)
+            val request = ++playRequestGeneration
+            scope.launch {
+                if (refusedByHost()) return@launch
+                val page = YtMusicRepository.browseSongs(browseId).getOrElse { failure ->
+                    if (request == playRequestGeneration) {
+                        val message = failure.message ?: context.getString(R.string.couldnt_load_tracks)
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                if (request != playRequestGeneration) return@launch
+                val songs = page.songs.map { song ->
+                    song.copy(
+                        albumName = if (target.type == BrowseType.ALBUM) {
+                            song.albumName ?: target.title
+                        } else {
+                            song.albumName
+                        },
+                    )
+                }
+                if (songs.isEmpty()) {
+                    if (request == playRequestGeneration) {
+                        Toast.makeText(context, context.getString(R.string.no_tracks_here), Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val bounded = BoundedShuffleStart.canContinue(
+                    browseId = browseId,
+                    type = target.type,
+                    preview = false,
+                    casting = CastController.state.value.casting,
+                    continuation = page.continuation,
+                )
+                QueueShuffle.enableForNextQueue()
+                playFrom(
+                    songs,
+                    songs.indices.random(),
+                    source,
+                    boundedContext = bounded,
+                    continuationToken = if (bounded) page.continuation else null,
+                )
+            }
+        }
+    }
+
     // ---- Downloads ----
     // Two permissions, and never both on one device: writing to the shared
     // Music folder needs storage access below API 29 and none at all from
@@ -3622,13 +3684,18 @@ private fun BitChordApp(
                                         if (rows.isEmpty()) return@launch
                                         val queue = if (preview) rows.asTypeUnknown() else rows
                                         QueueShuffle.enableForNextQueue()
-                                        val remote =
-                                            (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
-                                                !page.browseId.startsWith("local:")
                                         val continuation = latestPage?.continuation ?: page.continuation
-                                        val bounded = remote && !preview &&
-                                            continuation != null &&
-                                            !CastController.state.value.casting
+                                        // A mix can open as OTHER rather than
+                                        // PLAYLIST; the first page and its
+                                        // continuation are what make it
+                                        // playable at once either way.
+                                        val bounded = BoundedShuffleStart.canContinue(
+                                            browseId = page.browseId,
+                                            type = page.type,
+                                            preview = preview,
+                                            casting = CastController.state.value.casting,
+                                            continuation = continuation,
+                                        )
                                         TrackLog.i(
                                             "BitChord",
                                             "queue: shuffle start n=${queue.size} " +
@@ -5420,13 +5487,28 @@ private fun BitChordApp(
                 onPlayNext = act(playSongsNext),
                 onAddToQueue = act(addSongsToQueue),
                 onPlay = act { songs -> play(songs, 0) }.takeIf { target.fromCard },
-                onShuffle = act { songs ->
-                    // As on a release page: shuffle goes on before the queue
-                    // is built, so it is built shuffled rather than played
-                    // out of order.
-                    QueueShuffle.enableForNextQueue()
-                    play(songs, songs.indices.random())
-                }.takeIf { target.fromCard },
+                onShuffle = if (target.fromCard) {
+                    // A card has no page open yet. Fetch only its first page
+                    // and let the service continue; collecting every page
+                    // first made a long mix wait on nine round trips. Local
+                    // lists and a Cast session still take the full path.
+                    if (target.songs.isEmpty() &&
+                        target.browseId?.startsWith("local:") == false &&
+                        !CastController.state.value.casting
+                    ) {
+                        { shuffleBrowseTarget(target) }
+                    } else {
+                        act { songs ->
+                            // As on a release page: shuffle goes on before the
+                            // queue is built, so it is built shuffled rather
+                            // than played out of order.
+                            QueueShuffle.enableForNextQueue()
+                            play(songs, songs.indices.random())
+                        }
+                    }
+                } else {
+                    null
+                },
                 onOpen = target.browseId
                     ?.takeIf { target.fromCard }
                     ?.let { id ->

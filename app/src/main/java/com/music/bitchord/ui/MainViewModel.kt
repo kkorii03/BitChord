@@ -3230,7 +3230,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val index = stack.indexOfLast { it.browseId == browseId }
         if (index < 0) return
         val page = stack[index]
-        if (page.type != BrowseType.ALBUM && page.type != BrowseType.PLAYLIST) return
+        // Mix/radio pages can open as OTHER; their continuation is walked by
+        // the service exactly like a playlist's. An artist page is a
+        // selection, not a bounded running order.
+        if (page.type == BrowseType.ARTIST) return
         // Exactly one loader walks the continuation. While the service owns
         // it the page's own fill-in stops; when the service gives up (or never
         // took it — a party, a Cast race) the page resumes from the newest token.
