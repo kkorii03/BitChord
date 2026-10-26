@@ -152,10 +152,18 @@ object LyricsTiming {
         /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
 
-        /** The refine's move at [atMs], capped at ±[RefinePolicy.MAX_SHIFT_MS]. */
+        /** The refine's move at [atMs], capped at the narrow or wide limit it belongs to. */
         fun refineAt(atMs: Long): Long {
             val move = refineMs + refineSlopePerMin / 60_000.0 * atMs
-            return move.roundToLong().coerceIn(-RefinePolicy.MAX_SHIFT_MS, RefinePolicy.MAX_SHIFT_MS)
+            // A constant move larger than the narrow cap can only be the wide
+            // window's arrangement-sized shift; a drift and every narrow move
+            // keep the ±[RefinePolicy.MAX_SHIFT_MS] guard.
+            val cap = if (refineSlopePerMin == 0.0 && abs(refineMs) > RefinePolicy.MAX_SHIFT_MS) {
+                RefinePolicy.MAX_WIDE_SHIFT_MS
+            } else {
+                RefinePolicy.MAX_SHIFT_MS
+            }
+            return move.roundToLong().coerceIn(-cap, cap)
         }
     }
 
@@ -348,8 +356,10 @@ object LyricsTiming {
         // The HQ map is the second half of the clock: YouTube song version →
         // the copy playing. The refine is a move after both — a constant, or
         // an offset and a drift — capped at ±[RefinePolicy.MAX_SHIFT_MS] even
-        // where the transcript only covered the opening. A manual correction
-        // belongs on top of all of them, in the clock the listener is hearing.
+        // where the transcript only covered the opening, or at the wide
+        // window's ±[RefinePolicy.MAX_WIDE_SHIFT_MS] for an arrangement-sized
+        // constant. A manual correction belongs on top of all of them, in the
+        // clock the listener is hearing.
         val mapped = if (hq == null) {
             lines.timedBy(baseMap)
         } else {
@@ -468,7 +478,11 @@ object LyricsTiming {
             "BitChord",
             "lyrics-refine: $videoId lines=${result.lines} median=${result.medianMs}ms " +
                 "mad=${result.madMs}ms slope=${result.slopePerMin.roundToLong()} " +
-                "model=${if (result.applied && result.slopePerMin != 0.0) "linear" else "const"} " +
+                "model=${when (result.model) {
+                    RefinePolicy.Model.WIDE -> "wide"
+                    RefinePolicy.Model.LINEAR -> "linear"
+                    RefinePolicy.Model.CONST -> "const"
+                }} " +
                 "applied=${if (result.applied) "y" else "n"} base=$baseLabel",
             videoId,
         )
