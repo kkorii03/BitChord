@@ -363,7 +363,12 @@ internal class SongVersionController(
         val versionSong = if (verifyUnknownDownload) {
             song?.copy(typeUnknown = true, localUri = null, localPath = null)
         } else {
-            song
+            // What the download recorded about the upload counts even when the
+            // queue row lost it, or a saved video/unknown row skips the lookup.
+            song?.copy(
+                isVideo = song.isVideo || storedIsVideo == true,
+                typeUnknown = song.typeUnknown || storedTypeUnknown,
+            )
         }
         // A catalogue row whose file was recorded from another upload's stream
         // must not play that sound. Online, the row's own recording is
@@ -599,8 +604,11 @@ internal class SongVersionController(
                 } else if (localFile && !lookupFailed) {
                     // The lookup answered "there is no version" rather than
                     // failing; keep the downloaded video with a reason that
-                    // says why it stayed.
-                    if (verifyUnknownDownload) backfillVerifiedSong(song)
+                    // says why it stayed. Nothing is recorded about the file
+                    // here: [YtMusicRepository.songVersion] also answers null
+                    // when its search failed, and a legacy MV must not be filed
+                    // as a verified song on a network error. Only a lookup that
+                    // positively named this very id (above) records that.
                     TrackLog.i(
                         "BitChord",
                         "song version: ${song.videoId} kept (local file, none)",
