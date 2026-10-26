@@ -174,10 +174,12 @@ object LocalGroups {
  * into the Search tab with its Library source picked, which has to find the
  * same tracks a folder would.
  */
-fun Song.matchesSearch(query: String): Boolean =
-    title.contains(query, ignoreCase = true) ||
-        artist.contains(query, ignoreCase = true) ||
-        albumName?.contains(query, ignoreCase = true) == true
+fun Song.matchesSearch(query: String): Boolean {
+    if (query.isBlank()) return true
+    return HangulSearch.matches(query, title) ||
+        HangulSearch.matches(query, artist) ||
+        albumName?.let { HangulSearch.matches(query, it) } == true
+}
 
 /** A device folder's running order, per the sort its top bar menu picked. */
 fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = when (order) {
