@@ -209,12 +209,22 @@ class NextPrepPolicyTest {
     }
 
     @Test
-    fun aSyncFlightIsKeptOnlyWhenItsRowBecameCurrent() {
+    fun aSyncFlightIsKeptWhenItsRecordingIsStillCurrent() {
         assertFalse(
             NextPrepPolicy.abandonSyncFlight(
                 rowId = "row-1",
                 songVideoId = "song",
                 currentRowId = "row-1",
+                currentMediaId = "song",
+            ),
+        )
+        // Removing a queued duplicate of the playing song changes the row but
+        // not the recording; LyricsController is still awaiting this flight.
+        assertFalse(
+            NextPrepPolicy.abandonSyncFlight(
+                rowId = "row-1",
+                songVideoId = "song",
+                currentRowId = "row-2",
                 currentMediaId = "song",
             ),
         )
@@ -226,12 +236,13 @@ class NextPrepPolicyTest {
                 currentMediaId = "other",
             ),
         )
+        // A version swap of the same row is a different recording.
         assertTrue(
             NextPrepPolicy.abandonSyncFlight(
                 rowId = "row-1",
                 songVideoId = "song",
-                currentRowId = "row-2",
-                currentMediaId = "song",
+                currentRowId = "row-1",
+                currentMediaId = "song-version",
             ),
         )
     }

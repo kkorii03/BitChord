@@ -593,6 +593,30 @@ object Downloads {
     }
 
     /**
+     * The recorded lengths that can judge a legacy file's sound without opening
+     * it: the longest duration filed against the same file (the upload whose
+     * bytes were saved) and the shortest (the catalogue song).
+     *
+     * Null when provenance already answers the question, or when the record
+     * does not name two lengths. One id's own row is not evidence that its file
+     * is longer than itself; [scanForMvSoundSuspects] still reads the file when
+     * a single recorded length could be the video's.
+     */
+    internal fun mvSoundDurations(videoId: String): Pair<Long, Long>? {
+        open()
+        val meta = _savedMetadata.value[videoId] ?: return null
+        if (meta.soundSourceVideoId != null) return null
+        val uri = _saved.value[videoId] ?: meta.uri
+        val durations = _savedMetadata.value.values
+            .filter { it.uri == uri }
+            .mapNotNull { it.durationText?.durationMillis()?.takeIf { ms -> ms > 0L } }
+        if (durations.size < 2) return null
+        val longest = durations.max()
+        val shortest = durations.min()
+        return (longest to shortest).takeIf { longest > shortest }
+    }
+
+    /**
      * Scans the downloads whose provenance is unknown for files longer than
      * their song, using only lengths already written down. No network; the
      * file's own metadata is read only for records that have a catalogue

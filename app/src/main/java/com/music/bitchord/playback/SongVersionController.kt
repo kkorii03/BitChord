@@ -157,8 +157,12 @@ internal class SongVersionController(
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
                 if (now.mediaId != song.videoId) continue
+                // This row is resolved before it can play, so the same
+                // saved-file guard the current track gets after its first
+                // sound has to choose its item now: a crossfade hands it over
+                // already audible, where that correction is skipped.
                 val replacement = QueueShuffle.withQueueMetadata(
-                    resolved.toMediaItem(),
+                    resolved.toResolvedMediaItem(),
                     newEntryId = now.queueEntryId,
                     newCanonicalIndex = now.canonicalIndex,
                     newTier = now.queueTier,

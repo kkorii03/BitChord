@@ -20,14 +20,15 @@ import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
-import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
@@ -417,15 +418,8 @@ internal class NextTrackPreparation(
         // length rules that guard the current track must choose this item now.
         // Otherwise a saved file that is the video's sound, or a legacy file
         // judged too long, would be handed to the crossfade as the song.
-        val playId = resolved.videoId
-        val streamOnly = SongVersionPolicy.nextPrepStreamsInsteadOfFile(
-            playId = playId,
-            soundSourceId = Downloads.savedSoundSourceFor(playId),
-            lengthSuspect = Downloads.mvSoundSuspectMs(Downloads.songIdForFile(playId)) != null,
-            online = !AudioCache.isOffline(),
-        )
         val replacement = QueueShuffle.withQueueMetadata(
-            resolved.toMediaItem(useDownloadedFile = !streamOnly),
+            resolved.toResolvedMediaItem(),
             newEntryId = item.queueEntryId,
             newCanonicalIndex = item.canonicalIndex,
             newTier = item.queueTier,
@@ -441,7 +435,10 @@ internal class NextTrackPreparation(
 
     // ---- (b) lyrics, (c) high quality ---------------------------------------
 
-    private fun preparedSteps(song: Song, lyrics: TranslationAhead.AheadLyrics?): Set<Step> =
+    private suspend fun preparedSteps(
+        song: Song,
+        lyrics: TranslationAhead.AheadLyrics?,
+    ): Set<Step> =
         buildSet {
             if (!versionWanted(song) || versionAnswered(song)) add(Step.VERSION)
             if (lyrics?.lines != null) add(Step.LYRICS)
@@ -455,7 +452,7 @@ internal class NextTrackPreparation(
         return SourceResolver.canSubstituteForYouTube()
     }
 
-    private fun existingHq(song: Song): HqTier? {
+    private suspend fun existingHq(song: Song): HqTier? {
         val chosen = StreamChoice.of(song.videoId)
         val sourceId = chosen?.sourceConfigId
         if (chosen != null && sourceId != null &&
@@ -463,7 +460,11 @@ internal class NextTrackPreparation(
         ) {
             return HqQuality.tierOf(chosen.format)
         }
-        return HqVerificationStore.bestTier(context, song.videoId)
+        // The store parses its prefs on the first read of the process. This
+        // runs from the first-sound bundle, so it belongs off the main thread.
+        return withContext(Dispatchers.IO) {
+            HqVerificationStore.bestTier(context, song.videoId)
+        }
     }
 
     private suspend fun prepareHq(song: Song): HqTier? {

@@ -180,6 +180,11 @@ object SongVersionPolicy {
      * skipped. The same provenance rule and the remembered length verdict
      * therefore have to decide the item now.
      *
+     * [fileDurationMs] and [catalogDurationMs] are the recorded lengths, when
+     * the caller has them, so a legacy file with no provenance is judged by
+     * [mvSoundDeltaMs] even before [com.music.bitchord.download.Downloads] has
+     * remembered a verdict for it.
+     *
      * Offline the file stays either way — it is the only sound there is.
      */
     fun nextPrepStreamsInsteadOfFile(
@@ -187,11 +192,55 @@ object SongVersionPolicy {
         soundSourceId: String?,
         lengthSuspect: Boolean,
         online: Boolean,
+        fileDurationMs: Long? = null,
+        catalogDurationMs: Long? = null,
     ): Boolean {
-        if (downloadedFileUse(playId, soundSourceId, online) == DownloadedFileUse.STREAM_SONG) {
+        if (!online) return false
+        if (downloadedFileUse(playId, soundSourceId, online = true) ==
+            DownloadedFileUse.STREAM_SONG
+        ) {
             return true
         }
-        return online && lengthSuspect
+        if (lengthSuspect) return true
+        return mvSoundDeltaMs(
+            fileDurationMs = fileDurationMs,
+            catalogDurationMs = catalogDurationMs,
+            isVideo = false,
+            localFile = true,
+            soundSourceId = soundSourceId,
+        ) != null
+    }
+
+    /**
+     * Whether a row that is already a resolved catalogue release must stream
+     * instead of using the file saved under its id.
+     *
+     * A video row and a row whose type is not yet known still have to be
+     * resolved, and a row that was never a video is not this question at all.
+     * Only a resolved catalogue row ([isVideoOrigin] with [isVideo] false) is
+     * handed to a crossfade as the song, and it must not carry the video's
+     * sound or an overlong legacy file into that hand-over.
+     */
+    fun resolvedRowStreamsInsteadOfFile(
+        isVideo: Boolean,
+        typeUnknown: Boolean,
+        isVideoOrigin: Boolean,
+        playId: String,
+        soundSourceId: String?,
+        lengthSuspect: Boolean,
+        online: Boolean,
+        fileDurationMs: Long? = null,
+        catalogDurationMs: Long? = null,
+    ): Boolean {
+        if (isVideo || typeUnknown || !isVideoOrigin) return false
+        return nextPrepStreamsInsteadOfFile(
+            playId = playId,
+            soundSourceId = soundSourceId,
+            lengthSuspect = lengthSuspect,
+            online = online,
+            fileDurationMs = fileDurationMs,
+            catalogDurationMs = catalogDurationMs,
+        )
     }
 
     /**

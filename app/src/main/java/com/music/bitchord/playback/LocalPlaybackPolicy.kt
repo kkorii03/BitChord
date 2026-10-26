@@ -29,12 +29,16 @@ internal object LocalPlaybackPolicy {
         }
         if (isFileUri(localConfigurationUri)) return true
         if (isFileUri(requestMetadataUri)) return true
-        if (isFileUri(extraLocalUri)) return true
-        if (!extraLocalPath.isNullOrBlank()) return true
         // The item states a source to open and it is not a file: the player is
         // reading that source, not the saved file that happens to share the id.
+        // The extras are only evidence when there is no source at all, or when
+        // the source is itself a file. A file deleted from under a saved row
+        // leaves its old EXTRA_LOCAL_PATH behind while the rebuilt item streams
+        // from `bitchord://`, and trusting it removed the network wake lock.
         if (hasScheme(localConfigurationUri)) return false
         if (hasScheme(requestMetadataUri)) return false
+        if (isFileUri(extraLocalUri)) return true
+        if (!extraLocalPath.isNullOrBlank()) return true
         return savedUri != null
     }
 

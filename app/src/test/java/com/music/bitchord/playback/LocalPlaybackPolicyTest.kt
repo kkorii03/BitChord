@@ -93,10 +93,60 @@ class LocalPlaybackPolicyTest {
         assertTrue(
             LocalPlaybackPolicy.isLocal(
                 mediaId = "song",
+                localConfigurationUri = null,
+                requestMetadataUri = null,
+                extraLocalUri = null,
+                extraLocalPath = "/storage/song.flac",
+                savedUri = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a stream item does not become local from a stale local extra`() {
+        // The saved file was deleted and the item was rebuilt as a stream, but
+        // the old EXTRA_LOCAL_PATH/EXTRA_LOCAL_URI stayed on the metadata.
+        assertFalse(
+            LocalPlaybackPolicy.isLocal(
+                mediaId = "song",
                 localConfigurationUri = "https://example.test/song",
                 requestMetadataUri = null,
                 extraLocalUri = null,
                 extraLocalPath = "/storage/song.flac",
+                savedUri = null,
+            ),
+        )
+        assertFalse(
+            LocalPlaybackPolicy.isLocal(
+                mediaId = "song",
+                localConfigurationUri = "bitchord://watch?v=song",
+                requestMetadataUri = null,
+                extraLocalUri = "content://downloads/song.m4a",
+                extraLocalPath = null,
+                savedUri = null,
+            ),
+        )
+        assertFalse(
+            LocalPlaybackPolicy.isLocal(
+                mediaId = "song",
+                localConfigurationUri = null,
+                requestMetadataUri = "https://example.test/song",
+                extraLocalUri = "content://downloads/song.m4a",
+                extraLocalPath = null,
+                savedUri = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `an actual file source wins over a stream in the other field`() {
+        assertTrue(
+            LocalPlaybackPolicy.isLocal(
+                mediaId = "song",
+                localConfigurationUri = "https://example.test/song",
+                requestMetadataUri = "content://media/song.flac",
+                extraLocalUri = null,
+                extraLocalPath = null,
                 savedUri = null,
             ),
         )

@@ -30,6 +30,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -681,6 +682,43 @@ private fun Song.pickedMixQuery(configId: String): String {
 }
 
 /**
+ * Whether this row is a resolved catalogue release whose saved file must not
+ * be attached to its item.
+ *
+ * A row resolved by the queue look-ahead or by Autoplay is already the song,
+ * but the saved file under its id can still be the music video's sound or a
+ * legacy file longer than the catalogue track. A crossfade makes such a row
+ * audible before the post-start correction can run, so the decision has to be
+ * made here, where every resolved row's [MediaItem] is built.
+ */
+internal fun Song.streamsInsteadOfSavedFile(): Boolean {
+    if (isVideo || typeUnknown || !isVideoOrigin) return false
+    if (!Downloads.isDownloaded(videoId)) return false
+    val playId = Downloads.songIdForFile(videoId)
+    val soundSource = Downloads.savedSoundSourceFor(videoId)
+    val remembered = Downloads.mvSoundSuspectMs(playId) != null
+    val lengths = Downloads.mvSoundDurations(videoId)
+    if (!remembered && lengths == null && (soundSource == null || soundSource == playId)) {
+        return false
+    }
+    return SongVersionPolicy.resolvedRowStreamsInsteadOfFile(
+        isVideo = isVideo,
+        typeUnknown = typeUnknown,
+        isVideoOrigin = isVideoOrigin,
+        playId = playId,
+        soundSourceId = soundSource,
+        lengthSuspect = remembered,
+        online = !AudioCache.isOffline(),
+        fileDurationMs = lengths?.first,
+        catalogDurationMs = lengths?.second,
+    )
+}
+
+/** Builds a resolved row's item with the same saved-file guard as the queue. */
+internal fun Song.toResolvedMediaItem(): MediaItem =
+    toMediaItem(useDownloadedFile = !streamsInsteadOfSavedFile())
+
+/**
  * @param useDownloadedFile false builds an item that streams this recording even
  *   when a file is recorded for it. Used when the file is known to be another
  *   upload's sound (see [com.music.bitchord.data.net.SongVersionPolicy]).
@@ -715,8 +753,9 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // that has become stale since it was created. Checking only the lookup
     // leaves that path unguarded.
     val offlineUri = if (!useDownloadedFile) null else {
-        localUri?.takeUnless(Downloads::isMissingLocalFile)
+        val saved = localUri?.takeUnless(Downloads::isMissingLocalFile)
             ?: Downloads.verifiedSavedUri(videoId)
+        if (saved != null && streamsInsteadOfSavedFile()) null else saved
     }
     val uriString = offlineUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId

@@ -125,14 +125,18 @@ object NextPrepPolicy {
      * that bundle is abandoned.
      *
      * Becoming the current track is not abandonment: the same flight is what
-     * the track's own lyrics pass would use. A row that was removed, skipped
-     * over, or replaced by another recording is, and its paid check must not
-     * outlive it.
+     * the track's own lyrics pass would use. Removing a queued duplicate of
+     * the playing song is not abandonment either — the row id changes, but the
+     * recording [currentMediaId] names is still the one the shared flight is
+     * checking and [com.music.bitchord.ui.LyricsController] is still awaiting
+     * it. A row that was skipped over or replaced by another recording is, and
+     * its paid check must not outlive it. The recording is therefore the whole
+     * test; the row id only identifies the bundle that started it.
      */
     fun abandonSyncFlight(
         rowId: String,
         songVideoId: String,
         currentRowId: String?,
         currentMediaId: String?,
-    ): Boolean = currentRowId != rowId || currentMediaId != songVideoId
+    ): Boolean = currentMediaId != songVideoId
 }
