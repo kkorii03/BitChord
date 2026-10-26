@@ -385,6 +385,40 @@ object SourceRegistry {
         publish(reordered + configs.value.filterNot { it.kind.isUserAdded })
     }
 
+    /** The stored source list as it stands, for [SettingsTransfer]. */
+    fun transferSnapshot(): List<SourceConfig> {
+        open()
+        return configs.value
+    }
+
+    /**
+     * Replaces the source list with one received from another device.
+     *
+     * Ids are kept where they exist so an addon's cached answers and the
+     * listener's own order survive a round trip; a missing id gets a fresh one.
+     * Built-ins are seeded the same way first launch seeds them, which means a
+     * file that names only an addon still leaves YouTube Music in place. The
+     * opt-in marker is written too: an imported JioSaavn switch is a choice,
+     * and the next launch must not mistake it for the pre-opt-in migration.
+     */
+    fun replaceFromTransfer(incoming: List<SourceConfig>): Int {
+        open()
+        val cleaned = incoming.mapNotNull { config ->
+            if (config.kind == SourceKind.MODULE) return@mapNotNull null
+            config.copy(
+                id = config.id.ifBlank { UUID.randomUUID().toString() },
+                baseUrl = config.baseUrl.trim(),
+                label = config.label.trim(),
+            ).tidied()
+        }.distinctBy { if (it.kind.isUserAdded) it.id else it.kind }
+        val next = sourcesForInit(cleaned, forceJioSaavnOff = false)
+        publish(next)
+        if (::prefs.isInitialized) {
+            prefs.edit().putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true).apply()
+        }
+        return next.size
+    }
+
     private fun publish(next: List<SourceConfig>, persist: Boolean = true) {
         configs.value = next
         // Search answers and verified originals describe the source list they
