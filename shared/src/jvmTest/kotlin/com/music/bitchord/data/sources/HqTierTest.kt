@@ -74,6 +74,26 @@ class HqTierTest {
     }
 
     @Test
+    fun `same or better keeps the rung and refuses a downgrade`() {
+        val cd = format("flac", 1411, 44_100, 16)
+        val hiRes = format("flac", 2304, 48_000, 24)
+        val aac = format("aac", 320)
+        val atmos = format("eac3-joc", 768)
+        assertTrue(HqQuality.isSameOrBetter(cd, cd))
+        assertTrue(HqQuality.isSameOrBetter(hiRes, cd))
+        assertFalse(HqQuality.isSameOrBetter(aac, cd))
+        assertFalse(HqQuality.isSameOrBetter(cd, hiRes))
+        // An immersive mix stays ahead of every stereo rung.
+        assertTrue(HqQuality.isSameOrBetter(atmos, cd))
+        assertFalse(HqQuality.isSameOrBetter(cd, atmos))
+        // An unknown floor is cleared only by Atmos or lossless.
+        assertTrue(HqQuality.isSameOrBetter(cd, null))
+        assertTrue(HqQuality.isSameOrBetter(atmos, null))
+        assertFalse(HqQuality.isSameOrBetter(aac, null))
+        assertFalse(HqQuality.isSameOrBetter(null, cd))
+    }
+
+    @Test
     fun `an unstated format is the normal rung and beats nothing`() {
         assertEquals(HqTier.NORMAL, HqQuality.tierOf(null))
         assertFalse(HqQuality.isBetter(null, format("opus", 160)))
