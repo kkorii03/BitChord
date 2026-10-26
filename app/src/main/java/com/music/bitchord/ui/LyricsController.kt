@@ -927,10 +927,11 @@ class LyricsController(
         val base = timing?.base
         val note = if (timingBaseAllowed && timingMeasureAllowed) LyricsTiming.note(app, request.videoId) else null
         if (generation != lyricsGeneration || timingLines !== lines) return
+        val refineShift = timing?.let { it.refineAt(LyricsTiming.baseDisplayedMs(lines, it)) } ?: 0L
         val shiftMs = base?.let { adjustment ->
             LyricsTiming.shownShiftMs(lines, adjustment) -
                 (if (adjustment.byAi) (timing?.aiBiasMs ?: 0L) else 0L) +
-                (timing?.refineMs ?: 0L)
+                refineShift
         }
         val matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent
         val manualMs = timing?.manualMs ?: 0L
