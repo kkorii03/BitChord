@@ -2735,6 +2735,278 @@ object AppSettings {
         reload()
     }
 
+    // ── Settings transfer ───────────────────────────────────────────────
+
+    /**
+     * The only preferences [SettingsTransfer] may carry.
+     *
+     * Named one by one, with the type each must arrive as. A setting added to
+     * this file next month is therefore not in a settings transfer until it is
+     * listed here — the whitelist is the feature, not a shortcut around one.
+     *
+     * What is absent is as deliberate as what is present: account cookies,
+     * listening history, likes, playlists, downloads, diagnostics, device-local
+     * values, Spotify tokens and every user-supplied API key stay behind.
+     */
+    internal val TRANSFERABLE_KEYS: Map<String, TransferKey> = buildMap {
+        val quality = AudioQuality.entries.map { it.name }.toSet()
+        val downloadQuality = DownloadQuality.entries.map { it.name }.toSet()
+        val automix = AutomixPerformanceMode.entries.map { it.name }.toSet()
+        val lyrics = LyricsSource.entries.map { it.name }.toSet()
+        val pcm = OutputPcmMode.entries.map { it.name }.toSet()
+        val eqMode = EqualizerMode.entries.map { it.name }.toSet()
+        val theme = ThemeMode.entries.map { it.name }.toSet()
+        val lowPower = LowPowerMode.entries.map { it.name }.toSet()
+
+        fun put(key: String, category: TransferCategory, type: TransferType, allowed: Set<String>? = null) {
+            this[key] = TransferKey(category, TransferSpec(type, allowed))
+        }
+
+        // Audio quality and downloads.
+        put(KEY_QUALITY_WIFI, TransferCategory.QUALITY, TransferType.STRING, quality)
+        put(KEY_QUALITY_CELLULAR, TransferCategory.QUALITY, TransferType.STRING, quality)
+        put(KEY_QUALITY_DOWNLOAD, TransferCategory.QUALITY, TransferType.STRING, downloadQuality)
+        put(KEY_UPGRADE_LENGTH_SLACK_SECONDS, TransferCategory.QUALITY, TransferType.INT)
+        put(KEY_WIFI_ONLY_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
+        put(KEY_AUTO_REDOWNLOAD_MV_SOUND, TransferCategory.QUALITY, TransferType.BOOLEAN)
+        put(KEY_EXPORT_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
+
+        // Automix and transitions.
+        put(KEY_CROSSFADE, TransferCategory.AUTOMIX, TransferType.INT)
+        put(KEY_SMART_FADE, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
+        put(KEY_AUTOMIX_VIDEOS, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
+        put(KEY_AUTOMIX_PERFORMANCE_MODE, TransferCategory.AUTOMIX, TransferType.STRING, automix)
+        put(KEY_SKIP_SILENCE, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
+        put(KEY_SMART_VERSION_ALIGNMENT, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
+
+        // Lyrics: providers, order, translation and timing. No API keys.
+        put(KEY_LYRICS_BLUR, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_LYRICS_OFFSET_MS, TransferCategory.LYRICS, TransferType.INT)
+        put(KEY_TRANSLATION_LANGUAGE, TransferCategory.LYRICS, TransferType.STRING)
+        put(KEY_SYNCED_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_LYRICS_SOURCES, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
+        put(KEY_LYRICS_SOURCES_SEEN, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
+        put(KEY_LYRICS_SOURCE_ORDER, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
+        put(KEY_PRIORITIZE_SYLLABLE_SYNC, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_GEMINI_TRANSLATION, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_PREFETCH_TRANSLATION, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_KEEP_DOWNLOAD_TRANSLATION, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_AUTO_TRANSLATE_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_AUTO_LYRICS_TIMING, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_AI_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_AI_TIMING_AHEAD, TransferCategory.LYRICS, TransferType.BOOLEAN)
+        put(KEY_LOCK_SCREEN_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
+
+        // Playback, including the equalizer and the audio pipeline.
+        put(KEY_RESUME_ON_HEADPHONES, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_PERSONALISED_AUTOPLAY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_AUTOPLAY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_PREFER_MUSIC_ONLY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_SKIP_NON_MUSIC_PARTS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_SKIP_SPONSOR_PARTS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_OUTPUT_PCM_MODE, TransferCategory.PLAYBACK, TransferType.STRING, pcm)
+        put(KEY_PREFER_USB_DAC, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_LOUDNESS_NORMALIZATION, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_LOUDNESS_OFF_ON_SPEAKER, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_DOLBY_ATMOS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_SPATIAL_AUDIO, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_EQ_ENABLED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_EQ_MODE, TransferCategory.PLAYBACK, TransferType.STRING, eqMode)
+        put(KEY_EQ_TONE_X, TransferCategory.PLAYBACK, TransferType.INT)
+        put(KEY_EQ_TONE_Y, TransferCategory.PLAYBACK, TransferType.INT)
+        put(KEY_EQ_FOCUSED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_EQ_BALANCE, TransferCategory.PLAYBACK, TransferType.FLOAT)
+        put(KEY_EQ_BANDS, TransferCategory.PLAYBACK, TransferType.FLOAT_LIST)
+        put(KEY_SPEED, TransferCategory.PLAYBACK, TransferType.FLOAT)
+        put(KEY_PITCH, TransferCategory.PLAYBACK, TransferType.INT)
+        put(KEY_SHUFFLE_ENABLED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_REPEAT_MODE, TransferCategory.PLAYBACK, TransferType.INT)
+        put(KEY_DONT_REPEAT_SUGGESTIONS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_SWIPE_TO_PLAY_NEXT, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_STOP_ON_TASK_REMOVED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_SHOW_QUEUE_HISTORY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_FILTER_NON_MUSIC_AUDIO, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_AUTO_DOWNLOAD_LIKED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+
+        // What the screen looks like and how the player is laid out.
+        put(KEY_THEME, TransferCategory.DISPLAY, TransferType.STRING, theme)
+        put(KEY_REDUCE_ANIMATION, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_LOW_POWER_MODE, TransferCategory.DISPLAY, TransferType.STRING, lowPower)
+        put(KEY_REDUCE_BLUR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_LIQUID_GLASS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_FULL_BLEED_ARTWORK, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_LEGACY_MESH_GRADIENT, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_ANIMATED_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_CANVAS_OVER_CELLULAR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_VIDEO_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_SPOTIFY_CANVAS_AUTO_HIDE, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_PRIORITIZE_SPOTIFY_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_HIGH_PERFORMANCE_MODE, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_PERFORMANCE_REFRESH_RATE, TransferCategory.DISPLAY, TransferType.INT)
+        put(KEY_HIDE_VOLUME_BAR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_HIDE_STATUS_BAR_IN_PLAYER, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_HIDE_SONG_STATUS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_NERD_STATS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_WIDGET_OPENS_PLAYER, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+    }
+
+    /**
+     * The whitelisted preferences as they are on this device, for an export.
+     *
+     * Built from the live values rather than from the preference file, because
+     * most settings are only written when they are first changed. A key still
+     * sitting on its default is absent from the file, and exporting only what
+     * is stored would let the receiving phone keep its own non-default value —
+     * the opposite of "send my settings". Metadata with no flow (the lyrics
+     * source list this build has shown) falls back to what is stored, or to
+     * this build's offered list.
+     */
+    internal fun transferablePrefs(): Map<String, Any?> {
+        if (!this::prefs.isInitialized) return emptyMap()
+        return TRANSFERABLE_KEYS.keys
+            .associateWith { transferableValue(it) }
+            .filterValues { it != null }
+    }
+
+    private fun transferableValue(key: String): Any? = when (key) {
+        KEY_QUALITY_WIFI -> audioQualityWifi.value.name
+        KEY_QUALITY_CELLULAR -> audioQualityCellular.value.name
+        KEY_QUALITY_DOWNLOAD -> downloadQuality.value.name
+        KEY_UPGRADE_LENGTH_SLACK_SECONDS -> upgradeLengthSlackSeconds.value
+        KEY_WIFI_ONLY_DOWNLOADS -> wifiOnlyDownloads.value
+        KEY_AUTO_REDOWNLOAD_MV_SOUND -> autoRedownloadMvSound.value
+        KEY_EXPORT_DOWNLOADS -> exportDownloads.value
+
+        KEY_CROSSFADE -> crossfadeSeconds.value
+        KEY_SMART_FADE -> smartFadeEnabled.value
+        KEY_AUTOMIX_VIDEOS -> automixVideos.value
+        KEY_AUTOMIX_PERFORMANCE_MODE -> automixPerformanceMode.value.name
+        KEY_SKIP_SILENCE -> skipSilence.value
+        KEY_SMART_VERSION_ALIGNMENT -> smartVersionAlignment.value
+
+        KEY_LYRICS_BLUR -> lyricsBlur.value
+        KEY_LYRICS_OFFSET_MS -> lyricsOffsetMs.value
+        KEY_TRANSLATION_LANGUAGE -> translationLanguage.value
+        KEY_SYNCED_LYRICS -> syncedLyrics.value
+        KEY_LYRICS_SOURCES -> lyricsSources.value.joinToString(",") { it.name }
+        KEY_LYRICS_SOURCES_SEEN -> prefs.getString(KEY_LYRICS_SOURCES_SEEN, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: LyricsSource.offered.joinToString(",") { it.name }
+        KEY_LYRICS_SOURCE_ORDER -> lyricsSourceOrder.value.joinToString(",") { it.name }
+        KEY_PRIORITIZE_SYLLABLE_SYNC -> prioritizeSyllableSync.value
+        KEY_GEMINI_TRANSLATION -> geminiTranslation.value
+        KEY_PREFETCH_TRANSLATION -> prefetchTranslation.value
+        KEY_KEEP_DOWNLOAD_TRANSLATION -> keepDownloadTranslation.value
+        KEY_AUTO_TRANSLATE_LYRICS -> autoTranslateLyrics.value
+        KEY_AUTO_LYRICS_TIMING -> autoLyricsTiming.value
+        KEY_AI_LYRICS -> aiLyrics.value
+        KEY_AI_TIMING_AHEAD -> aiTimingAhead.value
+        KEY_LOCK_SCREEN_LYRICS -> lockScreenLyrics.value
+
+        KEY_RESUME_ON_HEADPHONES -> resumeOnHeadphones.value
+        KEY_PERSONALISED_AUTOPLAY -> personalisedAutoplay.value
+        KEY_AUTOPLAY -> autoplay.value
+        KEY_PREFER_MUSIC_ONLY -> preferMusicOnly.value
+        KEY_SKIP_NON_MUSIC_PARTS -> skipNonMusicParts.value
+        KEY_SKIP_SPONSOR_PARTS -> skipSponsorParts.value
+        KEY_OUTPUT_PCM_MODE -> outputPcmMode.value.name
+        KEY_PREFER_USB_DAC -> preferUsbDac.value
+        KEY_LOUDNESS_NORMALIZATION -> loudnessNormalization.value
+        KEY_LOUDNESS_OFF_ON_SPEAKER -> loudnessOffOnSpeaker.value
+        KEY_DOLBY_ATMOS -> dolbyAtmos.value
+        KEY_SPATIAL_AUDIO -> spatialAudio.value
+        KEY_EQ_ENABLED -> equalizerEnabled.value
+        KEY_EQ_MODE -> equalizerMode.value.name
+        KEY_EQ_TONE_X -> equalizerToneX.value
+        KEY_EQ_TONE_Y -> equalizerToneY.value
+        KEY_EQ_FOCUSED -> equalizerFocused.value
+        KEY_EQ_BALANCE -> equalizerBalance.value
+        KEY_EQ_BANDS -> equalizerBands.value.joinToString(",")
+        KEY_SPEED -> playbackSpeed.value
+        KEY_PITCH -> pitchSemitones.value
+        KEY_SHUFFLE_ENABLED -> shuffleEnabled.value
+        KEY_REPEAT_MODE -> repeatMode.value
+        KEY_DONT_REPEAT_SUGGESTIONS -> dontRepeatSuggestions.value
+        KEY_SWIPE_TO_PLAY_NEXT -> swipeToPlayNext.value
+        KEY_STOP_ON_TASK_REMOVED -> stopOnTaskRemoved.value
+        KEY_SHOW_QUEUE_HISTORY -> showQueueHistory.value
+        KEY_FILTER_NON_MUSIC_AUDIO -> filterNonMusicAudio.value
+        KEY_AUTO_DOWNLOAD_LIKED -> autoDownloadLiked.value
+
+        KEY_THEME -> themeMode.value.name
+        KEY_REDUCE_ANIMATION -> reduceAnimation.value
+        KEY_LOW_POWER_MODE -> lowPowerMode.value.name
+        KEY_REDUCE_BLUR -> reduceDynamicBlur.value
+        KEY_LIQUID_GLASS -> liquidGlass.value
+        KEY_FULL_BLEED_ARTWORK -> fullBleedArtwork.value
+        KEY_LEGACY_MESH_GRADIENT -> legacyMeshGradient.value
+        KEY_ANIMATED_CANVAS -> animatedCanvas.value
+        KEY_CANVAS_OVER_CELLULAR -> canvasOverCellular.value
+        KEY_VIDEO_CANVAS -> videoCanvas.value
+        KEY_SPOTIFY_CANVAS_AUTO_HIDE -> spotifyCanvasAutoHide.value
+        KEY_PRIORITIZE_SPOTIFY_CANVAS -> prioritizeSpotifyCanvas.value
+        KEY_HIGH_PERFORMANCE_MODE -> highPerformanceMode.value
+        KEY_PERFORMANCE_REFRESH_RATE -> performanceRefreshRate.value
+        KEY_HIDE_VOLUME_BAR -> hideVolumeBar.value
+        KEY_HIDE_STATUS_BAR_IN_PLAYER -> hideStatusBarInPlayer.value
+        KEY_HIDE_SONG_STATUS -> hideSongStatus.value
+        KEY_NERD_STATS -> showNerdStats.value
+        KEY_WIDGET_OPENS_PLAYER -> widgetOpensPlayer.value
+
+        else -> prefs.all[key]
+    }
+
+    /**
+     * Writes only the keys in [values] that are on the whitelist and carry the
+     * type they are declared with. Everything else is counted and skipped.
+     *
+     * A merge rather than [importPrefs]'s replace: this file says nothing about
+     * history, accounts or downloads, so clearing the preference file would
+     * quietly sign the listener out of services the transfer never mentioned.
+     */
+    internal fun applyTransferablePrefs(values: Map<String, Any?>): TransferApplyResult {
+        if (!this::prefs.isInitialized) return TransferApplyResult(0, values.size)
+        val accepted = linkedMapOf<String, Any>()
+        var skipped = 0
+        for ((key, raw) in values) {
+            val spec = TRANSFERABLE_KEYS[key]?.spec
+            val normalized = spec?.normalize(raw)
+            if (normalized == null) {
+                skipped++
+            } else {
+                accepted[key] = normalized
+            }
+        }
+        if (accepted.isNotEmpty()) {
+            prefs.edit().apply {
+                accepted.forEach { (key, value) ->
+                    when (value) {
+                        is Boolean -> putBoolean(key, value)
+                        is Int -> putInt(key, value)
+                        is Long -> putLong(key, value)
+                        is Float -> putFloat(key, value)
+                        is String -> putString(key, value)
+                        is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+                    }
+                }
+            }.apply()
+            reload()
+        }
+        return TransferApplyResult(accepted.size, skipped)
+    }
+
+    /** The proxy as it stands, credentials included, for [SettingsTransfer]. */
+    fun currentProxyConfig(): ProxyConfig = ProxyConfig(
+        mode = proxyMode.value,
+        host = proxyHost.value,
+        port = proxyPort.value,
+        backupHost = proxyBackupHost.value,
+        backupPort = proxyBackupPort.value,
+        username = proxyUsername.value,
+        password = proxyPassword.value,
+        scope = proxyScope.value,
+    ).normalized()
+
     /**
      * Preferences an export must not carry — credentials, not configuration.
      * See [exportPrefs].

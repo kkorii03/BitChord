@@ -170,6 +170,7 @@ import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.SettingsTransferInbox
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.data.settings.ThemeMode
@@ -440,6 +441,9 @@ class MainActivity : AppCompatActivity() {
             launchedFromHistory = intent.isLaunchedFromHistory(),
         )
         JamInviteLink.consume(intent)
+        // A settings file shared from another device, which opens the import
+        // preview in Settings once the composition exists.
+        SettingsTransferInbox.consume(intent)
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
         applyDebugLaunchSwitches(intent)
@@ -543,6 +547,7 @@ class MainActivity : AppCompatActivity() {
             launchedFromHistory = intent.isLaunchedFromHistory(),
         )
         JamInviteLink.consume(intent)
+        SettingsTransferInbox.consume(intent)
         MusicLink.consume(intent)
         applyDebugLaunchSwitches(intent)
     }
@@ -971,6 +976,18 @@ private fun BitChordApp(
         if (signedIn && activeJamInviteCode != null) {
             navigator.pushAll(AppRoute.Settings, AppRoute.ListenTogether)
         }
+    }
+    // A .bitchord-settings file from the share sheet or a file manager: bring
+    // Settings forward so its own import preview can read the file. The inbox
+    // clears only after that preview has it, so a cold launch still works.
+    val incomingSettingsTransfer by SettingsTransferInbox.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(incomingSettingsTransfer) {
+        if (incomingSettingsTransfer == null) return@LaunchedEffect
+        dismissPlayer()
+        replayStory = null
+        showReplayShare = false
+        webSession = null
+        if (AppRoute.Settings !in navigator) navigator.push(AppRoute.Settings)
     }
     val account by viewModel.account.collectAsStateWithLifecycle()
     val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()

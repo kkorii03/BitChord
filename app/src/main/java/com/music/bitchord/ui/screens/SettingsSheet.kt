@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Public
@@ -156,6 +157,9 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.SettingsTransfer
+import com.music.bitchord.data.settings.SettingsTransferInbox
+import com.music.bitchord.data.settings.TransferCategory
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.playback.AudioOutputStatus
@@ -435,6 +439,101 @@ fun SettingsScreen(
             )
         }
     }
+    // Settings transfer: a short file of proxy, sources and sound/screen
+    // choices. Separate from the backup above, which replaces history too.
+    var settingsSendStatus by remember { mutableStateOf<String?>(null) }
+    var settingsImportStatus by remember { mutableStateOf<String?>(null) }
+    var confirmSendSettings by remember { mutableStateOf(false) }
+    var settingsPreview by remember { mutableStateOf<SettingsTransfer.Preview?>(null) }
+
+    val settingsImportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { source ->
+        if (source == null) return@rememberLauncherForActivityResult
+        backupScope.launch {
+            SettingsTransfer.importFrom(context, source).fold(
+                onSuccess = { settingsPreview = it },
+                onFailure = {
+                    settingsImportStatus = context.getString(
+                        R.string.settings_transfer_import_failed,
+                        it.message ?: context.getString(R.string.unknown_error),
+                    )
+                },
+            )
+        }
+    }
+
+    // A file shared to BitChord from a chat app or file manager. The activity
+    // has already brought Settings forward; reading it here is the other half.
+    val incomingSettingsFile by SettingsTransferInbox.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(incomingSettingsFile) {
+        val source = incomingSettingsFile ?: return@LaunchedEffect
+        SettingsTransferInbox.handled()
+        SettingsTransfer.importFrom(context, source).fold(
+            onSuccess = { settingsPreview = it },
+            onFailure = {
+                settingsImportStatus = context.getString(
+                    R.string.settings_transfer_import_failed,
+                    it.message ?: context.getString(R.string.unknown_error),
+                )
+            },
+        )
+    }
+
+    val sendSettings: () -> Unit = {
+        confirmSendSettings = false
+        backupScope.launch {
+            SettingsTransfer.share(context).fold(
+                onSuccess = { intent ->
+                    settingsSendStatus = context.getString(R.string.settings_transfer_share_opened)
+                    context.startActivity(
+                        Intent.createChooser(intent, context.getString(R.string.settings_transfer_send))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                },
+                onFailure = {
+                    settingsSendStatus = context.getString(
+                        R.string.settings_transfer_send_failed,
+                        it.message ?: context.getString(R.string.unknown_error),
+                    )
+                },
+            )
+        }
+    }
+
+    val applySettingsImport: (SettingsTransfer.Preview) -> Unit = { preview ->
+        settingsPreview = null
+        backupScope.launch {
+            SettingsTransfer.apply(preview).fold(
+                onSuccess = { summary ->
+                    val parts = mutableListOf(
+                        context.getString(
+                            R.string.settings_transfer_applied,
+                            summary.settings,
+                            summary.sources,
+                        ),
+                    )
+                    if (summary.proxy) {
+                        parts += context.getString(R.string.settings_transfer_applied_proxy)
+                    }
+                    if (summary.skipped > 0) {
+                        parts += context.getString(
+                            R.string.settings_transfer_skipped,
+                            summary.skipped,
+                        )
+                    }
+                    settingsImportStatus = parts.joinToString(" ")
+                },
+                onFailure = {
+                    settingsImportStatus = context.getString(
+                        R.string.settings_transfer_import_failed,
+                        it.message ?: context.getString(R.string.unknown_error),
+                    )
+                },
+            )
+        }
+    }
+
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
@@ -1648,6 +1747,30 @@ fun SettingsScreen(
                     onClick = { confirmImport = true },
                 )
             }
+            val sendSettingsTitle = stringResource(R.string.settings_transfer_send)
+            row(sendSettingsTitle, "settings", "transfer", "share", "proxy") {
+                SettingsRow(
+                    icon = Icons.Rounded.IosShare,
+                    title = sendSettingsTitle,
+                    subtitle = settingsSendStatus
+                        ?: stringResource(R.string.settings_transfer_send_subtitle),
+                    onClick = { confirmSendSettings = true },
+                )
+            }
+            val importSettingsTitle = stringResource(R.string.settings_transfer_import)
+            row(importSettingsTitle, "settings", "transfer", "import", "proxy") {
+                SettingsRow(
+                    icon = Icons.Rounded.FileDownload,
+                    title = importSettingsTitle,
+                    subtitle = settingsImportStatus
+                        ?: stringResource(R.string.settings_transfer_import_subtitle),
+                    onClick = {
+                        settingsImportPicker.launch(
+                            arrayOf("application/json", "application/octet-stream", "text/plain", "*/*"),
+                        )
+                    },
+                )
+            }
         }
 
         // No footer: it only restated the stop-on-close row's own subtitle,
@@ -2040,6 +2163,108 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmImport = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    // The password leaves the phone in this file, so say so before the share
+    // sheet opens rather than after somebody has already sent it.
+    if (confirmSendSettings) {
+        AlertDialog(
+            onDismissRequest = { confirmSendSettings = false },
+            title = { Text(stringResource(R.string.settings_transfer_send)) },
+            text = { Text(stringResource(R.string.settings_transfer_send_warning)) },
+            confirmButton = {
+                TextButton(onClick = sendSettings) {
+                    Text(stringResource(R.string.settings_transfer_send_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSendSettings = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    // Nothing has been written yet: this is the list of what would change, and
+    // the only button that writes is the one that says so.
+    settingsPreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = { settingsPreview = null },
+            title = { Text(stringResource(R.string.settings_transfer_preview_title)) },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    Text(stringResource(R.string.settings_transfer_preview_body))
+                    if (!preview.hasChanges) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(stringResource(R.string.settings_transfer_preview_none))
+                    }
+                    if (preview.sourcesChanged) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            stringResource(
+                                R.string.settings_transfer_preview_sources,
+                                preview.sources.size,
+                                preview.sourceNames.joinToString(", "),
+                            ),
+                        )
+                    }
+                    if (preview.proxyChanged) {
+                        Spacer(Modifier.height(12.dp))
+                        val proxy = preview.proxy
+                        Text(
+                            stringResource(
+                                R.string.settings_transfer_preview_proxy,
+                                if (proxy == null || proxy.host.isBlank()) {
+                                    stringResource(R.string.off)
+                                } else {
+                                    "${proxy.host}:${proxy.port}"
+                                },
+                            ),
+                        )
+                    }
+                    if (preview.changedCategoryCounts.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        preview.changedCategoryCounts.forEach { (category, count) ->
+                            Text(
+                                stringResource(
+                                    when (category) {
+                                        TransferCategory.QUALITY -> R.string.settings_transfer_preview_quality
+                                        TransferCategory.AUTOMIX -> R.string.settings_transfer_preview_automix
+                                        TransferCategory.LYRICS -> R.string.settings_transfer_preview_lyrics
+                                        TransferCategory.PLAYBACK -> R.string.settings_transfer_preview_playback
+                                        TransferCategory.DISPLAY -> R.string.settings_transfer_preview_display
+                                    },
+                                    count,
+                                ),
+                            )
+                        }
+                    }
+                    if (preview.skipped > 0) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            stringResource(
+                                R.string.settings_transfer_preview_skipped,
+                                preview.skipped,
+                            ),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { applySettingsImport(preview) }) {
+                    Text(stringResource(R.string.settings_transfer_apply))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { settingsPreview = null }) {
                     Text(stringResource(R.string.cancel))
                 }
             },
