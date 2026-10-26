@@ -16,6 +16,8 @@ import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
+import com.music.bitchord.playback.smart.AnalysisWindow
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.FILTER_ECHO_AT
 import com.music.bitchord.playback.smart.FilterTransitionVariant
@@ -150,7 +152,7 @@ class CrossfadeController(
      * recording from a differently-cut one before reusing an analysis across
      * them, and this class is the only place that already knows it.
      */
-    private val requestAnalysis: (MediaItem, Long) -> Unit = { _, _ -> },
+    private val requestAnalysis: (MediaItem, Long, AnalysisWindow) -> Unit = { _, _, _ -> },
     /**
      * The low-pass and high-pass riding each side of a transition. This is what
      * makes a plan's
@@ -165,6 +167,17 @@ class CrossfadeController(
      * Only feeds the stats line — nothing about a transition waits on it.
      */
     private val analysisRunningFor: (MediaItem) -> Boolean = { false },
+    /**
+     * Milliseconds spent decoding and measuring a media item so far. Only
+     * feeds the per-transition `analysisMs` log line; nothing waits on it.
+     */
+    private val analysisTimeMs: (MediaItem) -> Long = { 0L },
+    /**
+     * Whether a specific end of a media item has already been measured. The
+     * analyzer caches each window separately, so a track whose opening is known
+     * can still be missing the tail that describes its own mix-out.
+     */
+    private val analysisWindowMeasured: (MediaItem, AnalysisWindow) -> Boolean = { _, _ -> false },
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -207,11 +220,11 @@ class CrossfadeController(
     /**
      * Whether the screen is interactive.
      *
-     * The standby player's decoder and Automix's planner both exist to make a
-     * blend look right, and nobody sees a blend with the phone in a pocket. Off
-     * screen the planner is skipped (the manual fade, if any, still runs) and
-     * the standby is armed much later, so its decoder is open for a second or
-     * two rather than for the whole arm window. Playback itself is untouched.
+     * Only the idle tick cadence reads this. Automix and its analysis keep
+     * running with the screen off — that is when a listener most wants the next
+     * track prepared — but a slower tick is enough to notice the transition
+     * approaching, and the marker it updates is not being watched. Playback
+     * itself is untouched.
      */
     private val screenOn: () -> Boolean = { true },
     /** Invoked after [finish] has completed cleanup and returned to IDLE. */
@@ -775,10 +788,10 @@ class CrossfadeController(
      * still has to step at its own rate whatever the player is doing.
      */
     private fun tickStepMs(): Long = when (phase) {
-        // Off screen the planner has nothing to plan (see [screenOn]) and the
-        // marker is not being watched. The track still has to be noticed
-        // running out, but once a second is plenty for that; the four-a-second
-        // cadence exists to keep a visible marker and a mix decision current.
+        // Off screen the marker is not being watched, so once a second is
+        // plenty to notice the transition approaching; the four-a-second
+        // cadence exists to keep a visible marker current. The plan itself is
+        // still made off screen.
         Phase.IDLE -> if (active().isPlaying) {
             if (screenOn()) IDLE_STEP_MS else SCREEN_OFF_IDLE_STEP_MS
         } else {
@@ -985,7 +998,7 @@ class CrossfadeController(
         // measurement is the same either way, so it may as well be made during
         // the loop rather than after it.
         if (player.repeatMode == Player.REPEAT_MODE_ONE) {
-            if (AppSettings.smartFadeEnabled.value && screenOn()) requestAnalysisAround(player, duration)
+            if (AppSettings.smartFadeEnabled.value) requestAnalysisAround(player, duration)
             // Stale otherwise: the marker would keep describing the transition
             // planned for this pair before the loop went on, at a point the
             // playhead now runs past on every lap without anything happening.
@@ -1008,7 +1021,7 @@ class CrossfadeController(
             player.currentMediaItem?.isVideoOrigin == true ||
                 player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
             )
-        if (AppSettings.smartFadeEnabled.value && !videoPair && screenOn()) {
+        if (AppSettings.smartFadeEnabled.value && !videoPair) {
             considerSmartTransition(duration)
             return
         }
@@ -1041,7 +1054,7 @@ class CrossfadeController(
         // Arm early: the standby has to open the incoming track and buffer to
         // its cue point, and that work has to be finished by the time the fade
         // is due rather than started then.
-        if (remaining > fade + armLeadMs()) return
+        if (!AutomixWorkPolicy.shouldArmStandby(remaining, leadMs = armLeadMs())) return
 
         begin(fade, endMs = duration, smart = false, automixFallback = fallbackLength)
     }
@@ -1129,6 +1142,9 @@ class CrossfadeController(
                     "beatAligned=${if (plan.beatAligned) "y" else "n"} " +
                     "phrase=${if (plan.phraseAligned) "y" else "n"} " +
                     "key=${plan.keyRelation.wire} " +
+                    "keyRaw=${currentAnalysis.key}/${nextAnalysis.key} " +
+                    "keyConf=${"%.2f".format(Locale.ROOT, currentAnalysis.keyConfidence)}/" +
+                    "${"%.2f".format(Locale.ROOT, nextAnalysis.keyConfidence)} " +
                     "loudness=${"%+.1f".format(Locale.ROOT, plan.loudnessGainDb)}dB " +
                     "style=${plan.transitionStyle.name.lowercase(Locale.ROOT)}" +
                     (if (plan.transitionStyle == TransitionStyle.DJ_FILTER) {
@@ -1207,7 +1223,7 @@ class CrossfadeController(
         // starts that much earlier, from arming.
         val beatMs = (plan.beatSeconds * 1000).roundToLong()
         val rampMs = if (beatMs > 0L) rampStepsFor(plan.outgoingPlaybackRate) * beatMs else 0L
-        if (remaining > armLeadMs() + rampMs) return
+        if (!AutomixWorkPolicy.shouldArmStandby(remaining, rampMs = rampMs, leadMs = armLeadMs())) return
 
         begin(
             fade,
@@ -1235,11 +1251,13 @@ class CrossfadeController(
     }
 
     /**
-     * Queues the playing track and the one queued after it for analysis.
+     * Queues the incoming track's opening and the outgoing track's tail for
+     * analysis.
      *
      * Cheap no-ops once a track is analysed or already in flight; called every
      * tick so a track that finishes caching mid-song is picked up without a
-     * separate trigger.
+     * separate trigger. Only the immediate next transition is considered, and
+     * only the 45 s window at each end of it.
      *
      * Not folded into [considerSmartTransition], because the pair still needs
      * measuring in the one case that never plans a transition at all: a track
@@ -1247,14 +1265,30 @@ class CrossfadeController(
      * the loop is switched off.
      */
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
-        if (!screenOn()) return
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
         if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) return
-        requestAnalysis(currentItem, duration)
-        requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem))
+        // Only the immediate next transition, and only its two useful windows:
+        // the incoming track's opening and the outgoing track's tail. Each is
+        // skipped once it has been measured, so a track is decoded once rather
+        // than on every tick.
+        val automix = AppSettings.smartFadeEnabled.value
+        val nextTarget = AutomixWorkPolicy.nextAnalysisTarget(
+            nextId = nextItem.mediaId,
+            nextAnalysed = analysisWindowMeasured(nextItem, AnalysisWindow.HEAD),
+            automixEnabled = automix,
+        )
+        nextTarget?.let {
+            requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem), it.window)
+        }
+        val outgoingTarget = AutomixWorkPolicy.outgoingAnalysisTarget(
+            currentId = currentItem.mediaId,
+            currentAnalysed = analysisWindowMeasured(currentItem, AnalysisWindow.TAIL),
+            automixEnabled = automix,
+        )
+        outgoingTarget?.let { requestAnalysis(currentItem, duration, it.window) }
     }
 
     /**
@@ -1419,7 +1453,13 @@ class CrossfadeController(
         rampStep = 0
         render = renderStyle
         armStartedAt = SystemClock.elapsedRealtime()
-        armDeadline = armStartedAt + CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
+        // The standby is now armed a full [AutomixWorkPolicy.STANDBY_LEAD_MS]
+        // before the transition, so the readiness timeout has to start after
+        // that lead rather than immediately. Otherwise a cold stream that is
+        // merely slower than three seconds would be dropped with twelve seconds
+        // of the lead still to run.
+        armDeadline = armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
+            CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         handedOff = false
         outgoing = out
         incoming = into
@@ -1509,7 +1549,8 @@ class CrossfadeController(
      * Which is what the standard crossfade kept doing. This used to be set
      * at arm time and trusted an estimate of the read-ahead — the sink's lead
      * plus a second and a half for the decoder — and the standard path arms
-     * only its fade plus [ARM_LEAD_MS] before the file ends, inside what a
+     * only its fade plus [AutomixWorkPolicy.STANDBY_LEAD_MS] before the file
+     * ends, inside what a
      * deep decoder pipeline (FLAC frames, a software decoder's queue) really
      * reads ahead. Automix mostly escaped it by arming off a mix-out point
      * well clear of the file end. So the estimate is gone: this only holds
@@ -1693,11 +1734,20 @@ class CrossfadeController(
         outgoingAnalysis = out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
         incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
 
+        val standbyLeadMs = SystemClock.elapsedRealtime() - armStartedAt
+        val outItem = out.currentMediaItem
+        val inItem = into.currentMediaItem
+        val analysisMs = listOfNotNull(outItem, inItem).distinctBy { it.mediaId }
+            .sumOf { analysisTimeMs(it) }
         Log.d(TAG, "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
         Log.d(
             TAG,
-            "arm ready out=${out.currentMediaItem?.mediaId} in=${into.currentMediaItem?.mediaId} " +
-                "took=${SystemClock.elapsedRealtime() - armStartedAt}ms",
+            "automix: ${outItem?.mediaId}->${inItem?.mediaId} " +
+                "analysisMs=$analysisMs standbyLeadMs=$standbyLeadMs",
+        )
+        Log.d(
+            TAG,
+            "arm ready out=${outItem?.mediaId} in=${inItem?.mediaId} took=${standbyLeadMs}ms",
         )
 
         // Published before the mix flag, in the same tick: the scrubber shows
@@ -2200,14 +2250,11 @@ class CrossfadeController(
     private fun configuredFadeMs(): Long = AppSettings.crossfadeSeconds.value * 1000L
 
     /**
-     * How early the standby is loaded before the fade. Off screen this is cut
-     * to the shortest lead that still lets a cached incoming track stand up its
-     * decoder: the standby is the second decoder the measurement saw running
-     * alongside playback, and there is no listener watching the blend it exists
-     * for.
+     * How early the standby is loaded before the fade. Before this point it
+     * holds nothing, so a whole track spends no time as a second decoder; from
+     * it, the incoming track has time to stand up and buffer to its cue.
      */
-    private fun armLeadMs(): Long =
-        if (screenOn()) ARM_LEAD_MS else SCREEN_OFF_ARM_LEAD_MS
+    private fun armLeadMs(): Long = AutomixWorkPolicy.STANDBY_LEAD_MS
 
     /**
      * The configured length, kept off tracks too short to spend it on. A fade
@@ -3015,29 +3062,6 @@ class CrossfadeController(
         const val BAIL_MS = 120L
 
         /**
-         * Head start the standby gets to open the incoming track and buffer to
-         * its cue point.
-         *
-         * Sized for a *stream being opened*, which is the only thing arming
-         * waits on now — there is no alignment to converge. Usually instant, as
-         * the next track has normally been read ahead onto disk by the time it
-         * matters, but a cold one has to be resolved and fetched, and a
-         * transition that arrives before its incoming track is ready is one that
-         * gets dropped.
-         */
-        const val ARM_LEAD_MS = 4_000L
-
-        /**
-         * The same head start with the screen off. Long enough for a cached
-         * incoming track to stand its decoder up, short enough that the standby
-         * is not a second decoder running through the whole arm window while
-         * nobody is watching. A cold stream that misses it falls back to the
-         * ordinary gapless advance, which is the same trade the arm timeout
-         * already makes.
-         */
-        const val SCREEN_OFF_ARM_LEAD_MS = 1_500L
-
-        /**
          * The earliest, in wall-clock ms before the next item starts, that
          * Media3 1.11 lets a player's renderers move on to reading it:
          * `ExoPlayerImplInternal.DURATION_TO_ADVANCE_READING_THRESHOLD_US`,
@@ -3418,10 +3442,9 @@ class CrossfadeController(
         const val IDLE_STEP_MS = 250L
 
         /**
-         * The idle cadence with the screen off. The planner and its marker are
-         * skipped there (see [screenOn]), so the only thing this tick has to
-         * notice is the track running out — and it is still measured in
-         * seconds, not in quarters of one.
+         * The idle cadence with the screen off. The marker is not being watched
+         * there, so the tick only has to notice the track approaching its
+         * transition — still measured in seconds, not in quarters of one.
          */
         const val SCREEN_OFF_IDLE_STEP_MS = 1_000L
 

@@ -14,7 +14,9 @@ import android.os.PowerManager
  * the broadcasts are already arriving.
  *
  * Playback itself is never gated on this. A decoder that is making sound keeps
- * running; only background analysis, verification and silent auditions read it.
+ * running; only work that exists for someone looking at the screen — verification,
+ * lyric timing, video audio and silent auditions — reads it. Automix analysis is
+ * deliberately not gated here: it has to be ready when the next track arrives.
  */
 internal object PowerState {
 

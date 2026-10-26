@@ -29,9 +29,9 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
 import com.music.bitchord.playback.DecoderMonitor
-import com.music.bitchord.playback.PowerState
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.Semaphore
 import kotlin.math.max
 
 /**
@@ -51,6 +51,16 @@ object AudioDecoder {
 
     private const val TAG = "BitChordAudioDecoder"
     private const val TIMEOUT_US = 10_000L
+
+    /**
+     * One decode at a time, across every caller.
+     *
+     * Automix's window passes and HQ verification both reach this object, and
+     * the battery rule is explicit: a ninety-second verification decode
+     * must not run beside transition preparation. The gate is taken here rather
+     * than at each caller so a new path cannot forget it.
+     */
+    private val decodeGate = Semaphore(1, true)
 
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)
@@ -200,11 +210,29 @@ object AudioDecoder {
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) return null
-        // No analysis decode starts with the screen off. Every caller has its
-        // own deferral too, but this is the one gate every path through the
-        // decoder shares, including one queued a moment before the screen went
-        // dark.
-        if (!PowerState.screenOn) return null
+        val acquired = try {
+            decodeGate.acquire()
+            true
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!acquired) return null
+        try {
+            return decodeRawLocked(source, startSeconds, endSeconds, abort, label, onBuffer)
+        } finally {
+            decodeGate.release()
+        }
+    }
+
+    private fun decodeRawLocked(
+        source: MediaDataSource,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? {
         DecoderMonitor.start(label)
         val extractor = runCatching { MediaExtractor() }.getOrElse {
             DecoderMonitor.stop(label)
@@ -245,10 +273,7 @@ object AudioDecoder {
                 // costs in both time and heap. `finally` still tears the codec
                 // and extractor down.
                 //
-                // The screen going off is the same kind of abort: this is
-                // background work, nobody is looking at the result, and the
-                // next request after the screen comes back starts it again.
-                if (!PowerState.screenOn || abort()) return null
+                if (abort()) return null
                 if (!inputDone) {
                     val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
                     if (inputIndex >= 0) {
