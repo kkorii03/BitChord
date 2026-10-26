@@ -324,10 +324,12 @@ def sync_row(
         return row
 
     wav = wav_dir / f"{video_id}.wav"
-    if (not wav.exists() or wav.stat().st_size <= 1000) and kind == "cover":
+    if (not wav.exists() or wav.stat().st_size <= 1000) and kind in ("cover", "plain"):
         # The app kept no WAV (no song check ran - an emulator without audio or
-        # Deepgram). A cover plays as itself, so YouTube's own copy is the same
-        # recording: judge the timing the app displayed against its opening.
+        # Deepgram, or a song version, which never needs one). A cover plays as
+        # itself and a plain row plays its song version (an HQ copy is verified
+        # to within a few ms of it), so YouTube's own copy of the played id is
+        # the same recording: judge the timing the app displayed against it.
         fetch_reference_wav(video_id, wav)
     if not wav.exists() or wav.stat().st_size <= 1000:
         row["error"] = "no wav (song check skipped)"
