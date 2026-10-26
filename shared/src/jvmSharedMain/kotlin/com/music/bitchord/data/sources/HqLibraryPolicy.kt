@@ -22,6 +22,12 @@ data class HqLibraryEntry(
     val trackId: String? = null,
     val plays: Int = 0,
     val liked: Boolean = false,
+    /** The song's own title and credit, for the arrangement check. */
+    val songTitle: String = "",
+    val songArtist: String = "",
+    /** The source row's title and uploader, when the verification stored them. */
+    val sourceTitle: String? = null,
+    val sourceArtist: String? = null,
 )
 
 enum class HqLibraryAction {
@@ -39,6 +45,9 @@ data class HqLibraryTarget(
     val verifiedTier: HqTier,
     val sourceConfigId: String,
     val trackId: String,
+    /** The source row's names, so the fetched file can be checked again later. */
+    val sourceTitle: String? = null,
+    val sourceArtist: String? = null,
 )
 
 data class HqLibraryPlan(
@@ -71,6 +80,18 @@ object HqLibraryPolicy {
 
     fun isBetter(current: HqTier, verified: HqTier): Boolean = verified.rank < current.rank
 
+    /**
+     * The rung a downloaded file is actually on.
+     *
+     * The display badge only names the container and codec: every FLAC file
+     * reads `FLAC`, whether it is 16/44.1 or 24/96, so the badge cannot rank a
+     * hi-res file above its own stored provenance. When the file came from a
+     * verified pair, [storedHqTier] is the only record of the depth and rate
+     * that were actually fetched, and it wins.
+     */
+    fun currentTier(badgeTier: HqTier, storedHqTier: HqTier?): HqTier =
+        storedHqTier ?: badgeTier
+
     fun isWorthPrefetching(verified: HqTier): Boolean = verified.rank <= PREFETCH_FLOOR.rank
 
     /**
@@ -91,6 +112,18 @@ object HqLibraryPolicy {
             .filter { it.videoId.isNotBlank() }
             .filter { it.verifiedTier != null }
             .filter { !it.sourceConfigId.isNullOrBlank() && !it.trackId.isNullOrBlank() }
+            // A pair proved before the arrangement check existed, or a
+            // catalogue that renamed the row since, must not be fetched again.
+            // The same vocabulary the playback check uses keeps a piano cover
+            // out of the library pass.
+            .filter {
+                !DownloadHealthPolicy.isArrangement(
+                    sourceTitle = it.sourceTitle,
+                    sourceArtist = it.sourceArtist,
+                    songTitle = it.songTitle,
+                    songArtist = it.songArtist,
+                )
+            }
             // One song may have been proved against more than one source row.
             // The best rung wins; a second, lower verdict must not hide it just
             // because it was written first.
@@ -156,5 +189,7 @@ object HqLibraryPolicy {
             verifiedTier = requireNotNull(verifiedTier),
             sourceConfigId = requireNotNull(sourceConfigId),
             trackId = requireNotNull(trackId),
+            sourceTitle = sourceTitle,
+            sourceArtist = sourceArtist,
         )
 }

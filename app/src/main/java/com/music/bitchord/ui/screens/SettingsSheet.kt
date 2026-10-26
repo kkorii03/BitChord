@@ -124,6 +124,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.music.bitchord.download.DownloadHealth
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.download.MvSoundRedownload
 import androidx.compose.ui.platform.LocalView
@@ -763,6 +764,16 @@ fun SettingsScreen(
                         HqLibraryUpgrade.onSettingsChanged(context)
                     },
                     subtitle = stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit),
+                )
+            }
+            val recheckDownloadsTitle = stringResource(R.string.download_health_recheck)
+            row(recheckDownloadsTitle, "download", "recheck", "verify", "다운로드", "점검", divided = false) {
+                SettingsRow(
+                    icon = Icons.Rounded.Cached,
+                    title = recheckDownloadsTitle,
+                    subtitle = stringResource(R.string.download_health_recheck_subtitle),
+                    trailing = { Chevron() },
+                    onClick = { DownloadHealth.resetChecks(context) },
                 )
             }
             val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)

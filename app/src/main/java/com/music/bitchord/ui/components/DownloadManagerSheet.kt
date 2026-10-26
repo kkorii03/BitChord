@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -316,6 +317,55 @@ fun HqLibraryProgressLine(modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier,
     )
+}
+
+/**
+ * The Downloads screen's "모두 고음질로 다시 받기" control.
+ *
+ * A deliberate one-off run of the replacement pass, independent of the two
+ * automatic switches. It goes through [HqLibraryUpgrade.startReplacementPass],
+ * which is the same worker and the same verified-pair downloads the automatic
+ * pass uses — never a second implementation.
+ */
+@Composable
+fun HqLibraryUpgradeAllRow(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val progress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { HqLibraryUpgrade.startReplacementPass(context) }
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.HighQuality,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.hq_library_upgrade_all),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = if (progress.visible) {
+                    stringResource(
+                        R.string.hq_library_progress,
+                        progress.done,
+                        progress.total,
+                    )
+                } else {
+                    stringResource(R.string.hq_library_upgrade_all_subtitle)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** One track: its cover, what it is, and where it has got to. */

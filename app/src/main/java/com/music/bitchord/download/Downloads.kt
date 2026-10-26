@@ -15,8 +15,10 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -70,6 +72,9 @@ data class HqDownloadSource(
     val tier: HqTier,
     val offsetMs: Long = 0L,
     val rate: Double = 1.0,
+    /** The source row's own names, for the arrangement check on a later play. */
+    val sourceTitle: String? = null,
+    val sourceArtist: String? = null,
 )
 
 /**
@@ -193,6 +198,24 @@ object Downloads {
      */
     private val hqOverrides = HashMap<String, HqDownloadSource>()
 
+    /**
+     * A source that must not be asked for this track's repair.
+     *
+     * The health check names the source that supplied a wrong recording, so
+     * the re-download does not land on the very same row again. Guarded by
+     * [lock], like the other per-download overrides.
+     */
+    private val avoidSources = HashMap<String, String>()
+
+    /** Ids whose existing file must not be adopted, even under the same name. */
+    private val forceReplaceIds = HashSet<String>()
+
+    /** Ids that must be fetched from YouTube, never from a configured source. */
+    private val youtubeOnlyIds = HashSet<String>()
+
+    /** A repair's minimum served rung; see [enqueue]. Guarded by [lock]. */
+    private val minimumTiers = HashMap<String, HqTier>()
+
     private val lock = Any()
 
     /**
@@ -284,6 +307,9 @@ object Downloads {
      * @param hq the exact verified pair the automatic high-quality pass wants,
      *   or null for an ordinary download. When present the search is skipped:
      *   only that source's that track is opened.
+     * @param minimumTier a repair's floor: the served rendition must be at
+     *   least this good, or the download fails and the old file stays. Used
+     *   when the replacement itself could not be verified first.
      */
     fun enqueue(
         context: Context,
@@ -292,6 +318,10 @@ object Downloads {
         allowMetered: Boolean = false,
         quality: DownloadQuality? = null,
         hq: HqDownloadSource? = null,
+        avoidSourceConfigId: String? = null,
+        forceReplace: Boolean = false,
+        youtubeOnly: Boolean = false,
+        minimumTier: HqTier? = null,
     ) {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
@@ -313,6 +343,10 @@ object Downloads {
             pending[id] = song
             if (quality != null) qualityOverrides[id] = quality
             if (hq != null) hqOverrides[id] = hq
+            if (avoidSourceConfigId != null) avoidSources[id] = avoidSourceConfigId
+            if (forceReplace) forceReplaceIds.add(id)
+            if (youtubeOnly) youtubeOnlyIds.add(id)
+            if (minimumTier != null) minimumTiers[id] = minimumTier
         }
         _active.update { it + (id to DownloadState.Queued) }
         DownloadSession.queued(song, from)
@@ -329,6 +363,10 @@ object Downloads {
                 pending.remove(id)
                 qualityOverrides.remove(id)
                 hqOverrides.remove(id)
+                avoidSources.remove(id)
+                forceReplaceIds.remove(id)
+                youtubeOnlyIds.remove(id)
+                minimumTiers.remove(id)
             }
             fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
@@ -394,6 +432,7 @@ object Downloads {
     suspend fun savedUri(context: Context, videoId: String): Uri? = withContext(Dispatchers.IO) {
         open()
         val recorded = _saved.value[videoId] ?: return@withContext null
+        if (isWrongRecording(videoId)) return@withContext null
         val uri = recorded.toUri()
         if (DownloadStore.exists(context, uri)) return@withContext uri
         Log.d(TAG, "$videoId was downloaded but the file is gone; forgetting it")
@@ -444,6 +483,7 @@ object Downloads {
     fun verifiedSavedUri(videoId: String): String? {
         open()
         val recorded = _saved.value[videoId] ?: return null
+        if (isWrongRecording(videoId)) return null
         if (!isMissingLocalFile(recorded)) return recorded
         Log.d(TAG, "$videoId was downloaded but the file is gone; forgetting it")
         forget(videoId)
@@ -502,6 +542,92 @@ object Downloads {
         return meta.hqSourceConfigId == hq.sourceConfigId &&
             meta.hqTrackId == hq.trackId &&
             meta.hqTier == hq.tier.name
+    }
+
+    /**
+     * Whether [videoId]'s file was proved to be another recording.
+     *
+     * The flag survives until a replacement lands, so a wrong file is neither
+     * served to the player nor adopted as the answer to a repair download.
+     */
+    internal fun isWrongRecording(videoId: String): Boolean {
+        open()
+        return _savedMetadata.value[videoId]?.wrongRecording == true
+    }
+
+    /**
+     * Marks [videoId]'s file as the wrong recording without touching its bytes.
+     *
+     * Called by the playback health check once the sound comparison or the
+     * arrangement evidence has condemned it. The file stays where it is until
+     * the repair download commits, so a failed repair leaves something to
+     * inspect rather than silently losing the listener's data.
+     */
+    internal fun markWrongRecording(
+        videoId: String,
+        inspectedUri: String,
+        inspectedVersion: String? = null,
+    ): Boolean {
+        open()
+        val context = appContext
+        record(
+            saved = { it },
+            meta = { map ->
+                val current = map[videoId] ?: return@record map
+                val version = context?.let { fileVersion(it, current.uri) }
+                if (!DownloadHealthPolicy.shouldMarkWrong(
+                        currentUri = current.uri,
+                        inspectedUri = inspectedUri,
+                        alreadyWrong = current.wrongRecording,
+                        currentVersion = version,
+                        inspectedVersion = inspectedVersion,
+                    )
+                ) {
+                    return@record map
+                }
+                map + (videoId to current.copy(wrongRecording = true))
+            },
+        )
+        val current = _savedMetadata.value[videoId] ?: return false
+        val version = context?.let { fileVersion(it, current.uri) }
+        val marked = DownloadHealthPolicy.shouldMarkWrong(
+            currentUri = current.uri,
+            inspectedUri = inspectedUri,
+            alreadyWrong = false,
+            currentVersion = version,
+            inspectedVersion = inspectedVersion,
+        ) && current.wrongRecording
+        // The source pair that supplied the wrong recording must not be picked
+        // again: the replacement plan reads accepted pairs from the store, and
+        // a flag on the file alone left this very pair first in line.
+        if (marked && context != null && current.hqSourceConfigId != null) {
+            HqVerificationStore.reject(context, videoId, current.hqSourceConfigId, current.hqTrackId)
+        }
+        return marked
+    }
+
+    /** The verified rung a downloaded file was saved at, when the download recorded one. */
+    fun storedTier(videoId: String): HqTier? =
+        _savedMetadata.value[videoId]?.hqTier?.let { name -> runCatching { HqTier.valueOf(name) }.getOrNull() }
+
+    /**
+     * The file's own length and modified time, as one value.
+     *
+     * The health check compares this before and after its multi-second
+     * verification so a repair that commits in the window is not mistaken for
+     * the file that was inspected. A `content://` uri has no modified time,
+     * but a replacement there gets a new uri anyway.
+     */
+    internal fun fileVersion(context: Context, uriString: String): String {
+        val parsed = Uri.parse(uriString)
+        val file = runCatching { File(parsed.path.orEmpty()) }
+            .getOrNull()
+            ?.takeIf { it.exists() }
+        if (file != null) return "${file.length()}|${file.lastModified()}"
+        val length = runCatching {
+            context.contentResolver.openAssetFileDescriptor(parsed, "r")?.use { it.length }
+        }.getOrNull() ?: 0L
+        return "$length|0"
     }
 
     /** Whether [videoId] is one of this app's downloads, rather than a local file. */
@@ -649,7 +775,7 @@ object Downloads {
     }
 
     /** The file's own length from its container metadata, or null if it cannot be read. */
-    private fun localDurationMs(context: Context, uriString: String): Long? = runCatching {
+    internal fun localDurationMs(context: Context, uriString: String): Long? = runCatching {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uriString.toUri())
@@ -705,7 +831,8 @@ object Downloads {
     internal fun savedFileIsRecording(videoId: String, uri: String): Boolean {
         open()
         val meta = _savedMetadata.value[videoId] ?: return false
-        return meta.uri == uri &&
+        return !meta.wrongRecording &&
+            meta.uri == uri &&
             SongVersionPolicy.mayAdoptDownloadedFile(videoId, meta.soundSourceVideoId)
     }
 
@@ -1006,6 +1133,8 @@ object Downloads {
         artworkUri: String? = null,
         soundSourceVideoId: String = fetched.videoId,
         hq: HqDownloadSource? = null,
+        sourceTitle: String? = null,
+        sourceArtist: String? = null,
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
@@ -1058,6 +1187,8 @@ object Downloads {
             hqOffsetMs = hq?.offsetMs,
             hqRate = hq?.rate,
             hqTier = hq?.tier?.name,
+            hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
+            hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
         )
         val metaFetched = SavedSongMetadata(
             videoId = fetched.videoId,
@@ -1075,6 +1206,8 @@ object Downloads {
             hqOffsetMs = hq?.offsetMs,
             hqRate = hq?.rate,
             hqTier = hq?.tier?.name,
+            hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
+            hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -1452,6 +1585,10 @@ object Downloads {
         // same filename as the FLAC it is replacing, and adopting that would
         // answer a hi-res verdict with yesterday's lossless bytes.
         val hq = synchronized(lock) { hqOverrides[song.videoId] }
+        val avoidSource = synchronized(lock) { avoidSources[song.videoId] }
+        val forceReplace = synchronized(lock) { forceReplaceIds.contains(song.videoId) }
+        val youtubeOnly = synchronized(lock) { youtubeOnlyIds.contains(song.videoId) }
+        val minimumTier = synchronized(lock) { minimumTiers[song.videoId] }
 
         // Asked before the lookup rather than after it, unlike the check on the
         // route's own filename below. A file already sitting in Music under a
@@ -1462,28 +1599,42 @@ object Downloads {
         // be lossless are worth guessing at: an `.m4a` may be this app's ALAC
         // or its AAC, and adopting the wrong one would quietly answer a request
         // for lossless with a transcode.
-        if (hq == null && quality.keepsLossless) {
+        if (hq == null && !forceReplace && quality.keepsLossless) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
                 DownloadStore.existing(context, DownloadStore.fileNameFor(track, extension))
             }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
-                return@withContext Prepared(song.videoId, track, route = null, alreadyAt = uri)
+                return@withContext Prepared(
+                    song.videoId,
+                    track,
+                    route = null,
+                    alreadyAt = uri,
+                    forceReplace = forceReplace,
+                )
             }
         }
 
         // Asked for from the Cached songs folder: the copy already on disk is
         // the answer, if it is whole. See [fromCache]. A pinned high-quality
         // replacement is not asking for whatever the cache happens to hold.
-        if (hq == null && (fromCache.remove(song.videoId) || fromCache.remove(track.videoId))) {
+        if (hq == null && minimumTier == null &&
+            (fromCache.remove(song.videoId) || fromCache.remove(track.videoId))
+        ) {
             AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)?.let { route ->
                 Log.d(TAG, "downloading ${track.videoId} from the song cache as .${route.extension}")
-                return@withContext Prepared(song.videoId, track, route = route, alreadyAt = null)
+                return@withContext Prepared(
+                    song.videoId,
+                    track,
+                    route = route,
+                    alreadyAt = null,
+                    forceReplace = forceReplace,
+                )
             }
         }
         val route = try {
             if (hq != null) {
                 routeForVerified(context, track, quality, hq)
             } else {
-                routeFor(context, track, quality)
+                routeFor(context, track, quality, avoidSource, youtubeOnly)
             }
         } catch (e: CancellationException) {
             throw e
@@ -1492,13 +1643,33 @@ object Downloads {
             // song cache is still the song, and better saved than refused.
             // A pinned replacement has no such fallback: the cache is not the
             // verified higher rung, so the old file stays instead.
-            if (hq != null) throw e
+            if (hq != null || minimumTier != null) throw e
             AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)
                 ?.also { Log.w(TAG, "${track.videoId} could not be fetched (${e.message}); saving the cached copy") }
                 ?: throw e
         }
+        // A repair that could not prove its replacement first must still not
+        // leave a lower rendition in place of the file it is replacing. An
+        // unknown rung (the song cache) cannot make that promise either, so
+        // both keep the old file.
+        if (minimumTier != null) {
+            val served = route.tier
+            if (served == null || served.rank > minimumTier.rank) {
+                error(
+                    "고음질 복구 음원이 기존 파일보다 낮은 등급으로 응답했습니다 " +
+                        "(${served?.label ?: "unknown"}, ${minimumTier.label})",
+                )
+            }
+        }
         Log.d(TAG, "downloading ${track.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
-        Prepared(song.videoId, track, route = route, alreadyAt = null, hq = hq)
+        Prepared(
+            song.videoId,
+            track,
+            route = route,
+            alreadyAt = null,
+            hq = hq,
+            forceReplace = forceReplace,
+        )
     }
 
     /**
@@ -1519,6 +1690,8 @@ object Downloads {
         val alreadyAt: Uri?,
         /** The verified pair this download must carry, when the automatic pass asked. */
         val hq: HqDownloadSource? = null,
+        /** A deliberate replacement: do not adopt a file already under this name. */
+        val forceReplace: Boolean = false,
     )
 
     /**
@@ -1571,6 +1744,7 @@ object Downloads {
                 val name = DownloadStore.fileNameFor(track, route.extension)
                 val alreadyThere = DownloadStore.existing(context, name)
                 if (plan.hq == null &&
+                    !plan.forceReplace &&
                     alreadyThere != null &&
                     savedFileIsRecording(track.videoId, alreadyThere.toString())
                 ) {
@@ -1581,7 +1755,7 @@ object Downloads {
                     clear(id)
                     return@coroutineScope
                 }
-                if (alreadyThere != null && plan.hq == null) {
+                if (alreadyThere != null && plan.hq == null && !plan.forceReplace) {
                     // Same name, but not a file this record knows to be the
                     // requested recording. A video's sound sitting under the
                     // song's name is exactly what used to be adopted here.
@@ -1616,7 +1790,15 @@ object Downloads {
                             artwork = artwork?.await(),
                         )
                     }
-                    remember(song, track, savedUri, route.downloadFormat, hq = plan.hq)
+                    remember(
+                        song,
+                        track,
+                        savedUri,
+                        route.downloadFormat,
+                        hq = plan.hq,
+                        sourceTitle = route.sourceTitle,
+                        sourceArtist = route.sourceArtist,
+                    )
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
                     clear(id)
@@ -1641,7 +1823,16 @@ object Downloads {
                 val artworkUri = MediaTagger.persistArtwork(context, track.thumbnailUrl, cover)
                 val savedUri = destination.commit()
                 pending = null
-                remember(song, track, savedUri, route.downloadFormat, artworkUri, hq = plan.hq)
+                remember(
+                    song,
+                    track,
+                    savedUri,
+                    route.downloadFormat,
+                    artworkUri,
+                    hq = plan.hq,
+                    sourceTitle = route.sourceTitle,
+                    sourceArtist = route.sourceArtist,
+                )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
                 clear(id)
@@ -1678,6 +1869,11 @@ object Downloads {
         val describe: String,
         /** Short premium-rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
+        /** The rung these bytes are actually served at, when known. */
+        val tier: HqTier? = null,
+        /** The source row's own names, when these bytes came from a catalogue. */
+        val sourceTitle: String? = null,
+        val sourceArtist: String? = null,
         val taggable: Boolean = true,
         val offlineHls: Manifest? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
@@ -1706,9 +1902,17 @@ object Downloads {
      *   than to the middle of this one. [Downloader.fetch] resolves again after
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
-    private suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Route {
-        fromSources(track, quality)?.let { (stream, storable) ->
-            routeFromSource(context, track, stream, storable)?.let { return it }
+    private suspend fun routeFor(
+        context: Context,
+        track: Song,
+        quality: DownloadQuality,
+        avoidSourceConfigId: String? = null,
+        youtubeOnly: Boolean = false,
+    ): Route {
+        if (!youtubeOnly) {
+            fromSources(track, quality, avoidSourceConfigId)?.let { (stream, storable) ->
+                routeFromSource(context, track, stream, storable)?.let { return it }
+            }
         }
         // MediaStore.Audio refuses audio/webm on affected Android versions.
         // Keep Opus for app-private downloads, but pin exported downloads to
@@ -1720,6 +1924,12 @@ object Downloads {
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
             downloadFormat = youtubeDownloadBadge(stream.downloadExtension, stream.kbps),
+            tier = HqQuality.tierOf(
+                StreamFormat(
+                    codec = if (stream.downloadExtension == "m4a") "aac" else "opus",
+                    kbps = stream.kbps,
+                ),
+            ),
             write = { sink, onProgress ->
                 Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a, sink, onProgress)
             },
@@ -1789,6 +1999,9 @@ object Downloads {
                 mimeType = storable.mimeType,
                 describe = "${stream.format.summary} (assembled from ${if (dash) "DASH" else "HLS"})",
                 downloadFormat = stream.format.downloadBadge(),
+                tier = HqQuality.tierOf(stream.format),
+                sourceTitle = stream.trackTitle,
+                sourceArtist = stream.trackArtist,
                 write = { sink, onProgress ->
                     ManifestFile.write(
                         context.cacheDir, stream.url, stream.headers, dash,
@@ -1809,6 +2022,9 @@ object Downloads {
             mimeType = if (packaged) "application/vnd.apple.mpegurl" else storable.mimeType,
             describe = stream.format.summary,
             downloadFormat = stream.format.downloadBadge(),
+            tier = HqQuality.tierOf(stream.format),
+            sourceTitle = stream.trackTitle,
+            sourceArtist = stream.trackArtist,
             taggable = true,
             offlineHls = Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
             write = { sink, onProgress ->
@@ -1863,6 +2079,7 @@ object Downloads {
     private suspend fun fromSources(
         track: Song,
         quality: DownloadQuality,
+        avoidSourceConfigId: String? = null,
     ): Pair<SourceStream, DownloadStore.Storable>? {
         // Wrapped so the two ways this can come back empty stay apart in the
         // log. `withTimeoutOrNull` collapses them into one null, and the
@@ -1876,6 +2093,7 @@ object Downloads {
                 SourceResolver.forDownload(
                     TrackMatcher.targetOf(track),
                     SourceResolver.requestForDownload(quality),
+                    excludeSources = setOfNotNull(avoidSourceConfigId),
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -1909,6 +2127,10 @@ object Downloads {
         synchronized(lock) {
             qualityOverrides.remove(videoId)
             hqOverrides.remove(videoId)
+            avoidSources.remove(videoId)
+            forceReplaceIds.remove(videoId)
+            youtubeOnlyIds.remove(videoId)
+            minimumTiers.remove(videoId)
         }
     }
 
@@ -2040,6 +2262,18 @@ internal data class SavedSongMetadata(
     val hqOffsetMs: Long? = null,
     val hqRate: Double? = null,
     val hqTier: String? = null,
+    /** The source row's own title and uploader, for the arrangement check. */
+    val hqSourceTitle: String? = null,
+    val hqSourceArtist: String? = null,
+    /**
+     * This file's sound was proved not to be the song version.
+     *
+     * Kept until a replacement lands. A wrong file is never served again — see
+     * [Downloads.verifiedSavedUri] — and [Downloads.savedFileIsRecording]
+     * refuses to adopt it, which is what lets the repair download write over
+     * the same name instead of being mistaken for an existing copy.
+     */
+    val wrongRecording: Boolean = false,
 )
 
 /**

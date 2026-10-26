@@ -194,6 +194,10 @@
     <string name="auto_prefetch_hq">Pre-save high quality for frequently played songs</string>
     <string name="auto_prefetch_hq_subtitle">Liked and often-played songs are saved ahead of time, up to %1$d songs. Data and storage are not limited.</string>
     <string name="hq_library_progress">Upgrading to high quality %1$d/%2$d</string>
+    <string name="hq_library_upgrade_all">Redownload all in high quality</string>
+    <string name="hq_library_upgrade_all_subtitle">Replaces downloaded files with sound-verified higher-quality copies. One song at a time.</string>
+    <string name="download_health_recheck">Re-check downloaded songs</string>
+    <string name="download_health_recheck_subtitle">Checks each downloaded file once more the next time it plays, and repairs a wrong recording or a lower-quality copy. Nothing runs now.</string>
     <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version automatically. Wi-Fi only does not apply.</string>
     <string name="mv_sound_suspect_banner">%1$d downloaded song(s) have the music video\'s sound · Re-download as the song</string>
     <string name="convert_to_audio">Convert to audio</string>

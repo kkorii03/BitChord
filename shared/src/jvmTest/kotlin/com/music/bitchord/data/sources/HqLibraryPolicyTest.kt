@@ -25,6 +25,20 @@ class HqLibraryPolicyTest {
     )
 
     @Test
+    fun `a stored hi-res tier outranks a FLAC badge that cannot state depth`() {
+        val current = HqLibraryPolicy.currentTier(
+            badgeTier = HqTier.LOSSLESS_16,
+            storedHqTier = HqTier.HI_RES_24_88,
+        )
+        assertEquals(HqTier.HI_RES_24_88, current)
+        val plan = HqLibraryPolicy.select(
+            listOf(entry("song", current = current, verified = HqTier.HI_RES_24_88)),
+            prefetchLimit = 500,
+        )
+        assertTrue(plan.replace.isEmpty())
+    }
+
+    @Test
     fun `a downloaded file is replaced only by a strictly higher verified rung`() {
         val plan = HqLibraryPolicy.select(
             listOf(
@@ -147,6 +161,23 @@ class HqLibraryPolicyTest {
             prefetchLimit = 500,
         )
         assertEquals(1, plan.replace.size)
+    }
+
+    @Test
+    fun `an arrangement source is kept out of the library pass`() {
+        val plan = HqLibraryPolicy.select(
+            listOf(
+                entry("song", current = HqTier.NORMAL, verified = HqTier.LOSSLESS_16)
+                    .copy(
+                        songTitle = "Song",
+                        songArtist = "Artist",
+                        sourceTitle = "Song (Piano Cover)",
+                        sourceArtist = "Piano Dream",
+                    ),
+            ),
+            prefetchLimit = 500,
+        )
+        assertTrue(plan.isEmpty)
     }
 
     @Test

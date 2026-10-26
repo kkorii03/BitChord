@@ -165,6 +165,7 @@ import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.HqLibraryProgressLine
+import com.music.bitchord.ui.components.HqLibraryUpgradeAllRow
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
@@ -649,6 +650,11 @@ fun DetailScreen(
                 item(key = "hq-library-progress") {
                     HqLibraryProgressLine(
                         Modifier.padding(horizontal = HEADER_GUTTER, vertical = 6.dp),
+                    )
+                }
+                item(key = "hq-library-upgrade-all") {
+                    HqLibraryUpgradeAllRow(
+                        Modifier.padding(horizontal = HEADER_GUTTER, vertical = 2.dp),
                     )
                 }
                 item(key = "mv-sound-suspects") {
