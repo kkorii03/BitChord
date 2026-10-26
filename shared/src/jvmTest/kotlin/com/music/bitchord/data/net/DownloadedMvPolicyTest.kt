@@ -94,20 +94,22 @@ class DownloadedMvPolicyTest {
     }
 
     @Test
-    fun `a stored video or unknown type alone is not conclusive`() {
-        assertFalse(
+    fun `playing, a downloaded official video with a cleaned title is still looked up`() {
+        // ko-88 cleans "(Official Video)" off titles; the stored type is the only sign left.
+        assertTrue(
             DownloadedMvPolicy.isMvSound(
-                rowVideoId = "id",
-                title = "Song",
+                rowVideoId = "-RJSbO8UZVY",
+                title = "Youngblood",
                 fileDurationMs = null,
                 storedIsVideo = true,
                 storedTypeUnknown = false,
-                soundSourceVideoId = "id",
+                soundSourceVideoId = "-RJSbO8UZVY",
                 catalogVideoId = null,
                 catalogDurationMs = null,
+                artist = "5 Seconds of Summer",
             ),
         )
-        assertFalse(
+        assertTrue(
             DownloadedMvPolicy.isMvSound(
                 rowVideoId = "id",
                 title = "Song",
@@ -117,6 +119,41 @@ class DownloadedMvPolicyTest {
                 soundSourceVideoId = "id",
                 catalogVideoId = null,
                 catalogDurationMs = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `playing, a downloaded cover video stays the cover`() {
+        assertFalse(
+            DownloadedMvPolicy.isMvSound(
+                rowVideoId = "etyHAg3sADA",
+                title = "ダンスホール - Dance Hall",
+                fileDurationMs = null,
+                storedIsVideo = true,
+                storedTypeUnknown = false,
+                soundSourceVideoId = "etyHAg3sADA",
+                catalogVideoId = "xhoKTYHaQXU",
+                catalogDurationMs = null,
+                artist = "Mrs. GREEN APPLE · 오화요 커버",
+            ),
+        )
+    }
+
+    @Test
+    fun `playing, an MV row whose file was repaired to the song is left alone`() {
+        assertFalse(
+            DownloadedMvPolicy.isMvSound(
+                rowVideoId = "-RJSbO8UZVY",
+                title = "Youngblood",
+                fileDurationMs = null,
+                storedIsVideo = true,
+                storedTypeUnknown = false,
+                soundSourceVideoId = "Jqs5EaAaueA",
+                catalogVideoId = null,
+                catalogDurationMs = null,
+                artist = "5 Seconds of Summer",
+                sourceRecordedAsMv = false,
             ),
         )
     }

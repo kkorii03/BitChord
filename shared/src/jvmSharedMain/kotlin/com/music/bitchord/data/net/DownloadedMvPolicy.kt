@@ -137,6 +137,12 @@ object DownloadedMvPolicy {
         if (soundSourceVideoId != null && soundSourceVideoId != rowVideoId) {
             return sourceRecordedAsMv
         }
+        // Playing, a video row that is not a cover is the MV's sound: titles
+        // are cleaned for display (ko-88), so a downloaded official video often
+        // has no "(Official Video)" left to find, and the stored type is the
+        // only sign. An unknown type is looked up rather than trusted. This is
+        // a lookup before audio, never a re-download, so it cannot cost a file.
+        if (storedIsVideo == true || storedTypeUnknown) return true
         if (hasMvTitleMarker(title)) return true
         val catalogId = catalogVideoId?.takeIf { it.isNotBlank() } ?: return false
         if (catalogId == rowVideoId) return false
