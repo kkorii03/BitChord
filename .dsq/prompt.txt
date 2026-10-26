@@ -1,8 +1,10 @@
-(공통 주의 10-26 10시: 이 PC 셸에는 rg(ripgrep)가 없다 — 검색은 OpenCode 내장 grep/glob 도구나 PowerShell Select-String/Get-ChildItem 을 쓴다. 도구 하나가 실패해도 멈추지 말고 다른 방법으로 계속해 작업을 끝까지 하고, 마지막 요약을 반드시 출력한다.)
-(10-26 06:55 Opus: 원래 '12 화면 정리' — 15 자리에서 빈 응답 nochange, 재투입.)
-작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-lane2 (브랜치 task/lane2 의 지금 HEAD 에서 작업. ko-101 태그는 비교 기준점일 뿐 되돌리지 말 것). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지(컴파일은 CI). .github/, keys\, 서명 설정, .ds-ctx/ 수정 금지.
-검사 범위(사용자 지시, 필수): ko-101 이후 오늘·밤사이 추가·수정된 모든 기능과 코드(git log ko-101..HEAD, git diff ko-101..HEAD — 예: 노래 검증, 가사 제목 정규화, 크로스페이드·자동 믹스, 싱크 채점 모드, 다운로드 곡 메뉴·사진, 고음질 소스·등급·다음 곡 준비, 설정 공유, 커버 가수 이동, 충전 조건 제거 등)를 기존 코드와 똑같이 이 작업의 대상에 포함한다. 새로 들어온 코드일수록 먼저 본다. 이 작업 전에 끝난 대기열 작업의 결과도 포함.
-공통 원칙: 사용자 기능·동작·설정·저장 데이터 형식은 바꾸지 않는다(이 작업이 명시한 것 제외). 한 번에 너무 많이 바꾸지 말고 이 지시의 범위만. 바꾼 함수·클래스의 모든 호출부와 타입을 다시 읽고 확인(널 안전·스마트캐스트 주의, 과거 Song? 스마트캐스트 컴파일 오류 있었음). 기존 주석의 의도를 지울 때는 요약에 이유. 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 사용자 폰은 저장공간 1TB·데이터 무제한이라 데이터/용량보다 배터리를 우선한다. 새 순수 로직은 shared com.music.bitchord.data... 패키지 테스트(자동 실행)로 검증. 결과 기록은 C:\Users\jang\Desktop\BitChord\BitChord-lane2\docs\cleanup\ 아래 해당 md 파일(새로 만들 수 있음)에 남긴다.
-마지막에 10줄 이내로 요약: 수정 파일 수 / 핵심 변경 / 테스트 / 다음 단계에 남긴 것.
-작업:
-[UI/UX 3차: 애플뮤직다움 전수] C:\Users\jang\Desktop\BitChord\ship\UI-AUDIT.md(.ds-ctx\UI-AUDIT.md) 1·2차 이후 남은 부분을 전 화면에서 찾아 고친다: (1) 말투 — 모든 한국어 문자열(values-ko)을 애플뮤직 한국어 톤으로 통일: 짧은 해요체, 명사형 메뉴(예: 보관함에 추가, 다음에 재생), 느낌표·이모지·기술 용어 지양, 같은 개념은 같은 단어(재생목록/플레이리스트 혼용 금지 등). 바꾼 문자열 전후 표를 docs\cleanup\tone.md 에. (2) 글꼴·크기·굵기 — 큰 제목(34sp 굵게), 섹션 제목(22sp 굵게), 본문(17sp), 보조(15/13sp 회색) 체계를 공통 Typography로 정리하고 화면별 하드코딩 글자 크기를 공통 값으로 교체. 한글과 영문 글꼴이 섞여 어색한 곳 정리. (3) 간격 — 좌우 여백 20dp, 섹션 간격, 목록 줄 높이를 공통 값으로 통일. (4) 남은 머티리얼 요소(리플, 원형 프로그레스, 토스트 모양, 다이얼로그)를 iOS 느낌으로. 기능 삭제 금지.
+[폰 검증 한 번에 — PC(Windows)에서 실행하는 스크립트, 앱 코드 수정 금지]
+오늘 밤 사용자가 폰(S24, 무선 ADB, 이미 사용자 설정이 들어 있음)을 PC 에 연결하면 명령 하나로 MV·품질 업그레이드·싱크를 검증한다. 에뮬레이터는 YouTube 음원을 못 받아서 폰으로만 가능하다.
+ scripts/phonecheck.py (표준 라이브러리, 실행: tools\python\python.exe -I scripts\phonecheck.py --apk <apk> 또는 --no-install):
+ 1) adb 연결 확인(없으면 tools\phone_auto.py 실행 — scripts/synctest.py 의 ensure_phone 재사용).
+ 2) --apk 가 주어지면 adb install -r(설정 유지).
+ 3) scripts/smoke/songs.txt 를 읽어(형식: id 또는 search:<검색어>, 탭, 종류 mv/hq/cover/plain) 순서대로 재생: id 는 am start VIEW https://music.youtube.com/watch?v=<id> -p com.music.bitchord, search: 는 MEDIA_PLAY_FROM_SEARCH(query) -p com.music.bitchord. 종류별 대기: mv 45초, hq 90초, cover/plain 75초. 재생 전 sync-test.flag 생성·미디어 볼륨 0(끝나면 복구) — scripts/synctest.py 의 방식 재사용.
+ 4) logcat 을 전체 시간 동안 스트리밍으로 phone-out\phonecheck\logcat.txt 에 저장, 끝나면 synctest/*.wav 를 phone-out\phonecheck\synctest\ 로 pull.
+ 5) 판정: scripts/smokecheck.py 를 그 로그에 실행(종류별 판정 --songs), 싱크는 scripts/synctest.py 의 채점 함수를 import 해서 cover/plain 곡별 줄 오차(로그의 sync-dump + WAV, Deepgram 키는 keys\deepgram_key.txt 를 읽기만) → phone-out\phonecheck\report.md 하나로 합친다: 맨 위에 MV n/5 통과, HQ accepted 수, 싱크 중앙값·0.3초 이내 비율·곡별 표.
+ 6) 사용자 폰을 쓰는 중이면 안 되므로 시작할 때 '약 40분 소요' 출력.
+ python -I -m py_compile 와 가짜 로그로 판정 단위 테스트(scripts/test_phonecheck.py) 실행. 마지막에 6줄 요약.
