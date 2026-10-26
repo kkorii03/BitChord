@@ -3833,13 +3833,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loadHome("session")
     }
 
-    private fun Throwable.friendly(): String = when {
-        message?.contains("resolve host", true) == true ||
-            message?.contains("Unable to resolve", true) == true -> text(R.string.no_internet_connection)
-        message?.contains("401") == true || message?.contains("403") == true ->
-            text(R.string.youtube_request_rejected)
-        else -> message ?: text(R.string.something_went_wrong)
-    }
+    private fun Throwable.friendly(): String =
+        FriendlyError.message(getApplication(), this)
 
     private fun text(id: Int): String = getApplication<Application>().getString(id)
 

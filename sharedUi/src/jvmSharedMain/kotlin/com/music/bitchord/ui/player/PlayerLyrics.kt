@@ -57,6 +57,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -1499,6 +1500,8 @@ internal fun TranslationToggleButton(
     )
     Box(
         modifier = Modifier
+            // The disc stays 34dp; the touch target around it is 48dp.
+            .minimumInteractiveComponentSize()
             .size(34.dp)
             .clip(CircleShape)
             .background(LocalPlayerTint.current.copy(alpha = discAlpha))
@@ -1550,6 +1553,8 @@ internal fun RomanizationToggleButton(
     )
     Box(
         modifier = Modifier
+            // The disc stays 34dp; the touch target around it is 48dp.
+            .minimumInteractiveComponentSize()
             .size(34.dp)
             .clip(CircleShape)
             .background(LocalPlayerTint.current.copy(alpha = discAlpha))

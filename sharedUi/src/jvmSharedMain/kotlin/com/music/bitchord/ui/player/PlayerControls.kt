@@ -71,6 +71,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
@@ -230,6 +231,8 @@ internal fun PlayerScrubber(
             mixing = mixing,
             mixPulse = mixPulse,
             transitionWindow = transitionWindow,
+            contentDescription = stringResource(Res.string.playback_position),
+            stateDescription = "${formatTime((shown * durationMs).toLong())} / ${formatTime(durationMs)}",
         )
         Box(
             modifier = Modifier
@@ -576,6 +579,8 @@ internal fun VolumeRow(
             idleHeight = 6.dp,
             activeHeight = 10.dp,
             modifier = Modifier.weight(1f),
+            contentDescription = stringResource(Res.string.volume),
+            stateDescription = "${(value() * 100).roundToInt()}%",
         )
         Spacer(Modifier.width(10.dp))
         Icon(
@@ -755,6 +760,8 @@ internal fun CircleGlyph(
     )
     Box(
         modifier = Modifier
+            // The disc stays 34dp; the touch target around it is 48dp.
+            .minimumInteractiveComponentSize()
             .size(34.dp)
             .clip(CircleShape)
             .background(LocalPlayerTint.current.copy(alpha = discAlpha))

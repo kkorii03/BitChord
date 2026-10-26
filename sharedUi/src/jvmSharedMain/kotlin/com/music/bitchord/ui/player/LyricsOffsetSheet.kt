@@ -288,6 +288,8 @@ internal fun LyricsOffsetSheet(
                             idleHeight = 6.dp,
                             activeHeight = 10.dp,
                             modifier = Modifier.weight(1f),
+                            contentDescription = stringResource(Res.string.lyrics_offset),
+                            stateDescription = formatOffset(offsetMs),
                         )
                         OffsetButton(
                             label = "+",

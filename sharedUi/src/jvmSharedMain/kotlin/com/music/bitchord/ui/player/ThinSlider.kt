@@ -43,6 +43,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.settings.MixBlend
@@ -100,6 +106,10 @@ fun ThinSlider(
     inactiveColor: Color = Color.White.copy(alpha = 0.26f),
     /** Halfway between the two track colours: visible against unplayed, invisible under played. */
     markerColor: Color = Color.White.copy(alpha = 0.5f),
+    /** What TalkBack names this control — "Playback position", "Volume". */
+    contentDescription: String? = null,
+    /** What TalkBack reads for the current value — "1:23 / 3:45", "60%". */
+    stateDescription: String? = null,
 ) {
     var dragging by remember { mutableStateOf(false) }
     val height by animateDpAsState(
@@ -143,6 +153,20 @@ fun ThinSlider(
             .fillMaxWidth()
             // Generous invisible touch target — the visible bar is only ~7dp.
             .height(activeHeight + 22.dp)
+            // TalkBack reads this as a progress bar and can change it with a
+            // two-finger swipe. Without it the control does not exist in the
+            // accessibility tree at all, however obvious it is on screen.
+            .semantics(mergeDescendants = true) {
+                contentDescription?.let { this.contentDescription = it }
+                stateDescription?.let { this.stateDescription = it }
+                progressBarRangeInfo = ProgressBarRangeInfo(value.coerceIn(0f, 1f), 0f..1f)
+                setProgress { target ->
+                    val next = target.coerceIn(0f, 1f)
+                    onValueChange(next)
+                    onValueChangeFinished?.invoke()
+                    true
+                }
+            }
             // One gesture loop for both taps and drags. Two separate detectors
             // — a drag one plus a tap one — meant taps never landed: the drag
             // detector took the pointer and a tap has no drag to report.
