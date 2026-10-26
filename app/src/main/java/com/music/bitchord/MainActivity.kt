@@ -4830,7 +4830,11 @@ private fun BitChordApp(
                 if (songIsDownloaded) HqVerificationStore.bestTier(context, song.videoId) else null
             }
             val redownloadAtBest = remember(song.videoId, song.downloadFormat, verifiedTier) {
-                songIsDownloaded && DownloadedQuality.isAtBest(song.downloadFormat, verifiedTier)
+                songIsDownloaded && DownloadedQuality.isAtBest(
+                    song.downloadFormat,
+                    verifiedTier,
+                    Downloads.storedTier(song.videoId),
+                )
             }
             val share: () -> Unit = {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {

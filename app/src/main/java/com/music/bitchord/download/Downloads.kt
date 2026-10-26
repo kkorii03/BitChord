@@ -18,6 +18,7 @@ import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -588,14 +589,25 @@ object Downloads {
         )
         val current = _savedMetadata.value[videoId] ?: return false
         val version = context?.let { fileVersion(it, current.uri) }
-        return DownloadHealthPolicy.shouldMarkWrong(
+        val marked = DownloadHealthPolicy.shouldMarkWrong(
             currentUri = current.uri,
             inspectedUri = inspectedUri,
             alreadyWrong = false,
             currentVersion = version,
             inspectedVersion = inspectedVersion,
         ) && current.wrongRecording
+        // The source pair that supplied the wrong recording must not be picked
+        // again: the replacement plan reads accepted pairs from the store, and
+        // a flag on the file alone left this very pair first in line.
+        if (marked && context != null && current.hqSourceConfigId != null) {
+            HqVerificationStore.reject(context, videoId, current.hqSourceConfigId, current.hqTrackId)
+        }
+        return marked
     }
+
+    /** The verified rung a downloaded file was saved at, when the download recorded one. */
+    fun storedTier(videoId: String): HqTier? =
+        _savedMetadata.value[videoId]?.hqTier?.let { name -> runCatching { HqTier.valueOf(name) }.getOrNull() }
 
     /**
      * The file's own length and modified time, as one value.

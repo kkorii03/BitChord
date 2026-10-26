@@ -67,8 +67,10 @@ object DownloadedQuality {
      * row stays actionable — "고음질로 다시 받기" — because silence is not
      * evidence that a better copy does not exist.
      */
-    fun isAtBest(badge: String?, verified: HqTier?): Boolean {
-        val current = tierOf(badge)
+    fun isAtBest(badge: String?, verified: HqTier?, stored: HqTier? = null): Boolean {
+        // The badge says only "FLAC" for every lossless file; the rung the
+        // download recorded is the better witness when there is one.
+        val current = listOfNotNull(tierOf(badge), stored).minBy { it.rank }
         if (current == HqTier.DOLBY_ATMOS) return true
         return verified != null && verified.rank >= current.rank
     }
