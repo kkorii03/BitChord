@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.session.MediaController
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaylistPrivacy
@@ -59,6 +60,7 @@ import com.music.bitchord.playback.commitRadioQueue
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.ui.MainViewModel
+import com.music.bitchord.ui.player.coverSingerChannelId
 import com.music.bitchord.ui.tv.components.TvActivityIndicator
 import com.music.bitchord.ui.tv.components.TvArtwork
 import com.music.bitchord.ui.tv.components.TvDialog
@@ -94,8 +96,15 @@ fun TvSongMenu(
         onOpenAlbum = song.albumId?.let { id ->
             { _: String -> onNavigateToDetail(id, song.albumName.orEmpty(), song.artist, song.thumbnailUrl, BrowseType.ALBUM) }
         },
-        onOpenArtist = song.artistId?.let { id ->
-            { _: String -> onNavigateToDetail(id, song.artist, "", null, BrowseType.ARTIST) }
+        onOpenArtist = coverSingerChannelId(song)?.let { id ->
+            {
+                val artistName = if (CoverTitles.isCover(song)) {
+                    CoverTitles.creditedArtist(song)
+                } else {
+                    song.artist
+                }
+                onNavigateToDetail(id, artistName, "", null, BrowseType.ARTIST)
+            }
         },
         onDismiss = onDismiss,
     )

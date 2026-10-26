@@ -3469,8 +3469,8 @@ fun NowPlayingScreen(
                                         )
                                         ArtistCreditsMarquee(
                                             text = song.artist,
-                                            credits = remember(song.artist, song.artists, song.artistId) {
-                                                artistCredits(song.artist, song.artists, song.artistId)
+                                            credits = remember(song) {
+                                                songArtistCredits(song)
                                             },
                                             style = MaterialTheme.typography.titleLarge.copy(
                                                 fontWeight = FontWeight.W500,

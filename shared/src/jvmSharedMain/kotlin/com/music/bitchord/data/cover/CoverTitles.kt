@@ -100,6 +100,9 @@ object CoverTitles {
     private const val COVER_WORD = "커버"
     private const val SEPARATOR = " · "
 
+    /** A "원곡" label left on the original artist's name — never part of the name. */
+    private val ORIGINAL_LABEL = Regex("""^\s*원곡\s*[:：-]?\s*""")
+
     /** "cover by", "Covered By", "covey by", "coverby", "커버 by" — then the singer. */
     private val COVER_BY = Regex("""(?i)(?<![a-z])(?:cover(?:ed)?|covey|커버)\s*by\s*[:：]?\s*""")
 
@@ -303,6 +306,21 @@ object CoverTitles {
             return withoutWord.substringAfterLast(SEPARATOR).trim().ifEmpty { byline }
         }
         return byline
+    }
+
+    /**
+     * The original artist a cover's byline names, with the "커버" decoration
+     * taken off. Null when the byline names only the singer, or when the cover
+     * was read from a title that never credited the original.
+     */
+    fun creditedOriginalArtist(song: Song): String? {
+        val fromField = song.coverOriginalArtist?.takeIf { it.isNotBlank() }?.trim()
+        val named = fromField ?: run {
+            val byline = song.artist.trim()
+            if (!byline.endsWith(" $COVER_WORD")) return null
+            byline.removeSuffix(" $COVER_WORD").trim().substringBeforeLast(SEPARATOR, "").trim()
+        }
+        return ORIGINAL_LABEL.replace(named, "").trim().ifEmpty { null }
     }
 
     // ---- Clip titles, tidied ------------------------------------------------

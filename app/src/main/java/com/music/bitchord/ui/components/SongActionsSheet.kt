@@ -101,6 +101,7 @@ import com.music.bitchord.playback.PlaybackParametersMath
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.player.coverSingerChannelId
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
@@ -331,7 +332,9 @@ fun SongActionsSheet(
                     accent = palette.accent,
                 ) { onOpenAlbum(id) }
             }
-            when (val id = song.artistId) {
+            // A cover's singer is its uploader, which may be known from the
+            // cover fields even when the row carried no artist id.
+            when (val id = coverSingerChannelId(song)) {
                 null -> if (resolvingLinks) {
                     LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
                 }

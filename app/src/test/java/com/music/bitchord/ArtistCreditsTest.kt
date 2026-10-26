@@ -3,10 +3,13 @@ package com.music.bitchord
 import com.music.bitchord.data.model.ArtistCredit
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.ArtistRef
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.completeArtistCredits
 import com.music.bitchord.data.model.creditSegments
 import com.music.bitchord.data.scrobbling.primaryArtist
 import com.music.bitchord.ui.player.artistCredits
+import com.music.bitchord.ui.player.coverCreditTarget
+import com.music.bitchord.ui.player.songArtistCredits
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Assert.assertNull
@@ -35,6 +38,98 @@ class ArtistCreditsTest {
 
     private fun split(line: String, primaryId: String? = null) =
         artistCredits(artist = line, artists = emptyList(), primaryArtistId = primaryId)
+
+    private fun coverSong(
+        artistId: String? = "UC_akane",
+        artists: List<ArtistRef> = emptyList(),
+    ) = Song(
+        videoId = "cover",
+        title = "청록",
+        artist = "It's · 아카네 리제 커버",
+        thumbnailUrl = null,
+        artistId = artistId,
+        artists = artists,
+        isVideo = true,
+        originalTitle = "청록[Blue Rock] - it's | 아카네 리제(Akane Lize) 【COVER】",
+        originalArtist = "아카네 리제 AKANE LIZE",
+        coverSinger = "아카네 리제",
+        coverOriginalArtist = "It's",
+    )
+
+    // --- a cover's two people, resolved from the displayed byline
+
+    @Test
+    fun `a cover's displayed singer resolves to the uploader channel`() {
+        // The bug: this stretch was searched verbatim as "아카네 리제 커버".
+        val target = coverCreditTarget("아카네 리제 커버", coverSong())
+        assertEquals("아카네 리제", target?.name)
+        assertEquals("UC_akane", target?.browseId)
+    }
+
+    @Test
+    fun `a cover's displayed original resolves to the original artist`() {
+        val song = coverSong(artists = listOf(ArtistRef("It's", "UC_its")))
+        val target = coverCreditTarget("It's", song)
+        assertEquals("It's", target?.name)
+        assertEquals("UC_its", target?.browseId)
+    }
+
+    @Test
+    fun `an unlinked cover original falls back to its clean name`() {
+        val target = coverCreditTarget("It's", coverSong())
+        assertEquals("It's", target?.name)
+        assertNull("nothing was stated for the original", target?.browseId)
+    }
+
+    @Test
+    fun `a cover singer with no row id takes the stated uploader channel`() {
+        val song = coverSong(
+            artistId = null,
+            artists = listOf(ArtistRef("아카네 리제 AKANE LIZE", "UC_uploader")),
+        )
+        val target = coverCreditTarget("아카네 리제 커버", song)
+        assertEquals("아카네 리제", target?.name)
+        assertEquals("UC_uploader", target?.browseId)
+    }
+
+    @Test
+    fun `a cover singer with no channel is searched without the decoration`() {
+        val target = coverCreditTarget("아카네 리제 커버", coverSong(artistId = null))
+        assertEquals("아카네 리제", target?.name)
+        assertNull(target?.browseId)
+    }
+
+    @Test
+    fun `a cover byline makes both people tappable and leaves the decoration plain`() {
+        val song = coverSong(artists = listOf(ArtistRef("It's", "UC_its")))
+        val credits = songArtistCredits(song)
+        assertEquals(listOf("It's", "아카네 리제"), credits.map { it.name })
+        assertEquals(listOf("UC_its", "UC_akane"), credits.map { it.browseId })
+
+        val segments = creditSegments(song.artist, credits)
+        assertEquals(listOf("It's", " · ", "아카네 리제", " 커버"), segments.map { it.text })
+        assertNull("the word 커버 is not a person", segments.last().credit)
+        assertEquals("UC_akane", segments[2].credit?.browseId)
+    }
+
+    @Test
+    fun `a saved cover byline still resolves both people without stored fields`() {
+        val song = coverSong().copy(coverSinger = null, coverOriginalArtist = null)
+        val credits = songArtistCredits(song)
+        assertEquals(listOf("It's", "아카네 리제"), credits.map { it.name })
+        assertEquals("UC_akane", credits.single { it.name == "아카네 리제" }.browseId)
+    }
+
+    @Test
+    fun `an 원곡 label never reaches the artist name`() {
+        val song = coverSong().copy(
+            artist = "원곡 : It's · 아카네 리제 커버",
+            coverSinger = null,
+            coverOriginalArtist = null,
+        )
+        val target = coverCreditTarget("원곡 : It's", song)
+        assertEquals("It's", target?.name)
+    }
 
     // --- where the names and their pages come from
 

@@ -5031,7 +5031,14 @@ private fun BitChordApp(
                     )
                 },
                 onOpenArtist = { id ->
-                    openPage(id, song.artist, context.getString(R.string.artist), BrowseType.ARTIST)
+                    // The page belongs to the singer, not to the cover byline's
+                    // "원곡자 · 가수 커버" display string.
+                    val artistName = if (com.music.bitchord.data.cover.CoverTitles.isCover(song)) {
+                        com.music.bitchord.data.cover.CoverTitles.creditedArtist(song)
+                    } else {
+                        song.artist
+                    }
+                    openPage(id, artistName, context.getString(R.string.artist), BrowseType.ARTIST)
                 },
                 // The player backfills its own track; any other row is
                 // looked up as the menu opens — see `needsLinks` above.

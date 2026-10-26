@@ -451,8 +451,8 @@ internal fun LandscapeCredits(
                 Spacer(Modifier.height(2.dp))
                 ArtistCreditsMarquee(
                     text = song.artist,
-                    credits = remember(song.artist, song.artists, song.artistId) {
-                        artistCredits(song.artist, song.artists, song.artistId)
+                    credits = remember(song) {
+                        songArtistCredits(song)
                     },
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.W500),
                     color = LocalPlayerTint.current.copy(alpha = 0.55f),
