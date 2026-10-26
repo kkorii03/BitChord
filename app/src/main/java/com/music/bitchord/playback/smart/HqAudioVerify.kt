@@ -228,7 +228,7 @@ object HqAudioVerify {
         // A manifest is a container the decoder here cannot read; it cannot be
         // proved and must not be swapped in blind.
         if (StreamContainer.isManifest(stream.url)) {
-            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
             return@withContext Outcome.Unavailable
         }
 
@@ -263,7 +263,7 @@ object HqAudioVerify {
                     }
                     val candidate = candidateDeferred.await()
                     if (candidate == null) {
-                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
                         return@coroutineScope Outcome.Unavailable
                     }
                     // A head that stops short of the window while the reference
@@ -287,6 +287,7 @@ object HqAudioVerify {
                             reference = "wav",
                             candidate = "file",
                             bytes = candidate.bytes,
+                            measured = false,
                         )
                         return@coroutineScope Outcome.Unavailable
                     }
@@ -301,7 +302,7 @@ object HqAudioVerify {
                         // The aligner failed rather than finding a poor match;
                         // that says nothing about the candidate, so it must not
                         // become a stored rejection.
-                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
                         return@coroutineScope Outcome.Unavailable
                     }
                     val match = result.matchPercent
@@ -496,7 +497,7 @@ object HqAudioVerify {
         val source = VersionAudioAligner.openDataSource(context, song) ?: return null
         return try {
             val coroutine = currentCoroutineContext()
-            featuresOf(source) { coroutine.isActive }
+            featuresOf(source) { !coroutine.isActive }
         } finally {
             runCatching { source.close() }
         }
@@ -513,11 +514,12 @@ object HqAudioVerify {
         reference: String? = null,
         candidate: String? = null,
         bytes: Long? = null,
+        measured: Boolean = true,
     ) {
         TrackLog.i(
             TAG,
             "hq-verify: $title $sourceName match=$match% offset=$offset -> " +
-                (if (accepted) "accepted" else "rejected") +
+                (if (accepted) "accepted" else if (measured) "rejected" else "unmeasured") +
                 (reference?.let { " reference=$it" } ?: "") +
                 (candidate?.let { " candidate=$it" } ?: "") +
                 (bytes?.let { " bytes=$it" } ?: ""),
@@ -743,7 +745,13 @@ object HqAudioVerify {
                 return null
             }
             val coroutine = currentCoroutineContext()
-            val features = featuresOf(file) { coroutine.isActive } ?: return null
+            // abort answers "stop now?", so it is the inverse of isActive. Passing
+            // isActive itself stopped every decode on its first pass, which is why
+            // no candidate ever reached the comparison.
+            val features = featuresOf(file) { !coroutine.isActive } ?: run {
+                TrackLog.w(TAG, "decode: hq-verify failed at=candidate-decode bytes=$bytes")
+                return null
+            }
             Candidate(features, bytes)
         } finally {
             runCatching { file.delete() }
