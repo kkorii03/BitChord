@@ -10,7 +10,7 @@ internal enum class CrossfadeSkipReason(val wire: String) {
     /** The two decoded formats cannot share an output path. */
     FORMAT_MISMATCH("format-mismatch"),
 
-    /** The incoming player never became ready inside [CrossfadeArmPolicy.ARM_TIMEOUT_MS]. */
+    /** The incoming player was not ready with the whole fade buffered in time. */
     ARM_TIMEOUT("arm-timeout"),
 
     /** The outgoing player advanced into the incoming item while we were still arming. */
@@ -48,7 +48,8 @@ internal data class CrossfadeTrackFormat(
  */
 internal object CrossfadeArmPolicy {
     /**
-     * Grace after the standby lead, before a not-yet-ready player is dropped.
+     * Grace after the standby lead, before an unready or underbuffered player
+     * is dropped.
      *
      * The standby is armed [com.music.bitchord.playback.smart.AutomixWorkPolicy.STANDBY_LEAD_MS]
      * before the transition, so this is not the whole wait — it is how long the
@@ -60,6 +61,27 @@ internal object CrossfadeArmPolicy {
     /** The deadline for one arming attempt, including any tempo-ramp beats. */
     fun armTimeoutMs(rampMs: Long = 0L): Long =
         (ARM_TIMEOUT_MS + rampMs.coerceAtLeast(0L)).coerceAtLeast(1L)
+
+    /**
+     * Whether the incoming player is safe to fade in now.
+     *
+     * `STATE_READY` alone only says the first frames are available; a stream
+     * can report it and then underrun halfway through the blend. Starting the
+     * fade then lowers the outgoing track over silence the listener cannot
+     * hear yet — the high-quality incoming side is still buffering — and the
+     * ordinary advance is a better outcome than a broken blend. Requiring the
+     * whole fade to be buffered is the same evidence the transition needs,
+     * not a guess about the network.
+     */
+    fun canStartFade(
+        incomingReady: Boolean,
+        bufferedAheadMs: Long,
+        fadeMs: Long,
+    ): Boolean {
+        if (!incomingReady) return false
+        if (fadeMs <= 0L) return true
+        return bufferedAheadMs >= fadeMs
+    }
 
     /** Whether the two decoded tracks can be rendered at the same time. */
     fun canMix(outgoing: CrossfadeTrackFormat?, incoming: CrossfadeTrackFormat?): Boolean {

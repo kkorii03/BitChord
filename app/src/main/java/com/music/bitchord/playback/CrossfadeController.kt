@@ -1669,15 +1669,22 @@ class CrossfadeController(
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
+        val bufferedAheadMs = (into.bufferedPosition - into.currentPosition).coerceAtLeast(0L)
+        val canStart = CrossfadeArmPolicy.canStartFade(
+            incomingReady = ready,
+            bufferedAheadMs = bufferedAheadMs,
+            fadeMs = fadeMs,
+        )
 
-        // A standby that never got the incoming track ready has nothing to fade
-        // up. Give up and let the queue move on plainly rather than fading into
-        // silence.
-        if (expired && !ready) {
+        // A standby that never got the incoming track ready, or has only a
+        // sliver buffered, has nothing to fade up. Give up and let the queue
+        // move on plainly rather than fading into silence.
+        if (expired && !canStart) {
             Log.d(
                 TAG,
                 "arm timeout after ${SystemClock.elapsedRealtime() - armStartedAt}ms " +
-                    "out=$outId in=$inId state=${into.playbackState}",
+                    "out=$outId in=$inId state=${into.playbackState} " +
+                    "bufferedAhead=${bufferedAheadMs}ms fade=${fadeMs}ms",
             )
             return bail(CrossfadeSkipReason.ARM_TIMEOUT)
         }
@@ -1693,7 +1700,7 @@ class CrossfadeController(
         // the outgoing filter (or an echo's dry gain) toward the blend while a
         // cold stream is still being resolved is what made a failed ARMING
         // audible as several seconds of near-silence.
-        if (ready) {
+        if (canStart) {
             val outgoingAt = if (fadeMs > 0L && fadeEndMs > 0L) {
                 (out.currentPosition + tracks.outgoingLeadMs() - (fadeEndMs - fadeMs)).toFloat() / fadeMs
             } else {
@@ -1711,7 +1718,7 @@ class CrossfadeController(
         // analyzed mix-out anchor when it ends before the file does.
         val atFadePoint = fadeEndMs <= 0L || fadeEndMs - out.currentPosition <= fadeMs
         if (!atFadePoint) return
-        if (ready) startFade()
+        if (canStart) startFade()
     }
 
     /**

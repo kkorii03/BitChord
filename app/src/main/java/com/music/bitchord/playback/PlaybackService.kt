@@ -92,6 +92,7 @@ import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import com.music.bitchord.playback.audio.ResamplingAudioProcessor
 import com.music.bitchord.playback.audio.SilenceSkipper
+import com.music.bitchord.playback.audio.SilentAudioOutputProvider
 import com.music.bitchord.playback.dsd.DsdExtractorsFactory
 import com.music.bitchord.playback.audio.DirectAudioProbe
 import com.music.bitchord.playback.audio.OutputNegotiator
@@ -6564,10 +6565,12 @@ class PlaybackService : MediaLibraryService() {
      * old stream back. See [watchUpgrade], which is now the backstop for this
      * rather than the first line of defence.
      *
-     * Silent by construction rather than by volume: with `playWhenReady` false
-     * the renderers are enabled and decode — which is all the proof needed —
-     * but nothing is started and no second `AudioTrack` is ever opened. It takes
-     * no audio focus and backs no session, so nothing else in the app can see it.
+     * Silent by construction rather than by volume: the renderers are enabled
+     * and decode — which is all the proof needed — but the sink writes into
+     * [SilentAudioOutputProvider] instead of opening an `AudioTrack`, so a
+     * hi-res candidate cannot create a second hardware track beside the one
+     * being listened to. It takes no audio focus and backs no session, so
+     * nothing else in the app can see it.
      *
      * @return how far into the track the upgrade is buffered and ready, or null
      *   if it never got there.
@@ -6822,6 +6825,16 @@ class PlaybackService : MediaLibraryService() {
      * player.
      */
     private fun buildAuditionPlayer(meter: BandwidthMeter): ExoPlayer = ExoPlayer.Builder(this)
+        .setRenderersFactory(object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink = DefaultAudioSink.Builder(context)
+                .setAudioOutputProvider(SilentAudioOutputProvider())
+                .setEnableAudioOutputPlaybackParameters(false)
+                .build()
+        })
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setBandwidthMeter(meter)
         .setLoadControl(
