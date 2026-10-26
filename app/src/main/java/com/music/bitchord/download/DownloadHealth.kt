@@ -38,6 +38,7 @@ object DownloadHealth {
     private const val PREFS = "download_health"
     private const val KEY_CHECKED = "checked"
     private const val KEY_VERSION = "version"
+    private const val KEY_REPAIR_REQUESTED = "repair_requested"
 
     /**
      * Bump when the rules change enough that every file should be looked at
@@ -81,7 +82,11 @@ object DownloadHealth {
             // Already condemned: keep it out of the player and let the repair
             // run again if the last attempt did not land. No second decode.
             if (Downloads.isWrongRecording(id)) {
-                HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
+                val now = System.currentTimeMillis()
+                if (DownloadHealthPolicy.mayRequestRepair(lastRepairRequest(context, id), now)) {
+                    HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
+                    markRepairRequested(context, id, now)
+                }
                 val action = if (online) {
                     DownloadHealthPolicy.Action.STREAM
                 } else {
@@ -177,6 +182,7 @@ object DownloadHealth {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .remove(KEY_CHECKED)
+            .remove(KEY_REPAIR_REQUESTED)
             .putInt(KEY_VERSION, CHECK_VERSION)
             .apply()
         TrackLog.i(TAG, "download-check: versions cleared")
@@ -215,6 +221,31 @@ object DownloadHealth {
             .putInt(KEY_VERSION, CHECK_VERSION)
             .apply()
     }
+
+    private fun lastRepairRequest(context: Context, id: String): Long? =
+        readRepairRequests(prefs(context))[id]
+
+    private fun markRepairRequested(context: Context, id: String, nowMs: Long) {
+        val prefs = prefs(context)
+        val next = readRepairRequests(prefs) + (id to nowMs)
+        prefs.edit()
+            .putString(
+                KEY_REPAIR_REQUESTED,
+                next.entries.joinToString("\n") { (key, value) -> "$key\t$value" },
+            )
+            .apply()
+    }
+
+    private fun readRepairRequests(prefs: android.content.SharedPreferences): Map<String, Long> =
+        prefs.getString(KEY_REPAIR_REQUESTED, null).orEmpty()
+            .lineSequence()
+            .mapNotNull { line ->
+                val tab = line.indexOf('\t')
+                if (tab <= 0) return@mapNotNull null
+                val requested = line.substring(tab + 1).toLongOrNull() ?: return@mapNotNull null
+                line.substring(0, tab) to requested
+            }
+            .toMap()
 
     private fun readChecked(prefs: android.content.SharedPreferences): Map<String, String> =
         prefs.getString(KEY_CHECKED, null).orEmpty()

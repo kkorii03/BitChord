@@ -27,10 +27,7 @@ internal object OfflineHls {
         lyrics: LyricsTag.Embeddable?,
         artwork: MediaTagger.Artwork?,
     ): Uri = withContext(Dispatchers.IO) {
-        val root = File(File(context.filesDir, "offline-hls"), id.hashCode().toUInt().toString(16))
-        root.deleteRecursively()
-        if (!root.mkdirs()) error("Could not create offline HLS package")
-        try {
+        OfflinePackage.writeNew(File(context.filesDir, "offline-hls"), id) { root ->
             fun request(target: String) = Request.Builder().url(target).apply {
                 headers.forEach { (name, value) -> header(name, value) }
             }.build()
@@ -72,9 +69,6 @@ internal object OfflineHls {
             lyrics?.let { File(root, "lyrics.lrc").writeText(it.enhanced ?: it.plain.orEmpty()) }
             artwork?.let { File(root, "cover.${if (it.mime.contains("png")) "png" else "jpg"}").writeBytes(it.bytes) }
             Uri.fromFile(File(root, "playlist.m3u8"))
-        } catch (e: Throwable) {
-            root.deleteRecursively()
-            throw e
         }
     }
 }

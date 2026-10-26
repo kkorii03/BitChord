@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -9,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.AutomaticRetryPolicy
 import com.music.bitchord.data.settings.AppSettings
 
 /**
@@ -27,6 +29,73 @@ import com.music.bitchord.data.settings.AppSettings
 object MvSoundRedownload {
 
     private const val WORK_NAME = "mv-sound-redownload"
+    private const val PREFS = "mv_sound_redownload"
+    private const val KEY_FAILURES = "failures"
+
+    private val failureLock = Any()
+
+    private data class Failure(val attempts: Int, val lastFailureMs: Long)
+
+    /**
+     * Whether this suspect may be attempted now.
+     *
+     * A repair that failed is not retried on the next app start or track
+     * transition: it rests for [AutomaticRetryPolicy.COOLDOWN_MS], and after
+     * [AutomaticRetryPolicy.MAX_FAILURES] automatic attempts only the banner
+     * tap ([manual]) may start it again.
+     */
+    fun mayAttempt(context: Context, videoId: String, nowMs: Long, manual: Boolean): Boolean {
+        val failure = readFailures(context)[videoId] ?: return true
+        return AutomaticRetryPolicy.mayRetry(
+            attempts = failure.attempts,
+            lastFailureMs = failure.lastFailureMs,
+            nowMs = nowMs,
+            manual = manual,
+        )
+    }
+
+    fun markFailed(context: Context, videoId: String) {
+        synchronized(failureLock) {
+            val failures = readFailures(context).toMutableMap()
+            val previous = failures[videoId]?.attempts ?: 0
+            failures[videoId] = Failure(previous + 1, System.currentTimeMillis())
+            writeFailures(context, failures)
+        }
+    }
+
+    fun clearFailed(context: Context, videoId: String) {
+        synchronized(failureLock) {
+            val failures = readFailures(context)
+            if (videoId !in failures) return
+            writeFailures(context, failures - videoId)
+        }
+    }
+
+    private fun readFailures(context: Context): Map<String, Failure> =
+        prefs(context).getString(KEY_FAILURES, null).orEmpty()
+            .lineSequence()
+            .mapNotNull { line ->
+                val parts = line.split('\t')
+                if (parts.size < 3) return@mapNotNull null
+                val attempts = parts[1].toIntOrNull()?.coerceAtLeast(0) ?: return@mapNotNull null
+                val lastFailureMs = parts[2].toLongOrNull()?.coerceAtLeast(0L) ?: return@mapNotNull null
+                parts[0] to Failure(attempts, lastFailureMs)
+            }
+            .toMap()
+
+    private fun writeFailures(context: Context, failures: Map<String, Failure>) {
+        prefs(context).edit()
+            .putString(
+                KEY_FAILURES,
+                failures.entries.joinToString("\n") { (id, failure) ->
+                    "$id\t${failure.attempts}\t${failure.lastFailureMs}"
+                },
+            )
+            .apply()
+    }
+
+    private fun prefs(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /**
      * A new schedule queues behind a repair pass already in flight.
@@ -42,6 +111,10 @@ object MvSoundRedownload {
 
     fun scheduleIfEnabled(context: Context) {
         if (!AppSettings.autoRedownloadMvSound.value) return
+        // Every suspect still cooling down is not work. Scheduling a worker
+        // for it would run the same scan on every app start and playback
+        // without ever changing anything.
+        if (!Downloads.hasRepairableMvSuspects(context, System.currentTimeMillis())) return
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
             .setConstraints(
                 Constraints.Builder()

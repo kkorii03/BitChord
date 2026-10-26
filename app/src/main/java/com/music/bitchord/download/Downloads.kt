@@ -231,6 +231,16 @@ object Downloads {
     /** Ids that must be fetched from YouTube, never from a configured source. */
     private val youtubeOnlyIds = HashSet<String>()
 
+    /**
+     * File names another transfer in this process has already claimed.
+     *
+     * Two downloads of different songs can share a name and run at the same
+     * time. The second must not choose the same destination while the first is
+     * still writing it, even though neither final file exists yet. Guarded by
+     * [lock].
+     */
+    private val reservedNames = HashSet<String>()
+
     /** A repair's minimum served rung; see [enqueue]. Guarded by [lock]. */
     private val minimumTiers = HashMap<String, HqTier>()
 
@@ -243,6 +253,16 @@ object Downloads {
      * Guarded by [lock].
      */
     private val automaticIds = HashSet<String>()
+
+    /**
+     * Downloads that are repairing a file judged to be a music video's sound.
+     *
+     * Their whole point is to fetch a *different* upload. If the catalogue has
+     * no song version the lookup falls back to the same id, and fetching that
+     * would write the same MV stream again while clearing the warning. Guarded
+     * by [lock].
+     */
+    private val mvSoundRepairIds = HashSet<String>()
 
     private val lock = Any()
 
@@ -344,6 +364,9 @@ object Downloads {
      * @param automatic the high-quality pass asked, not a listener. Its
      *   failures are retried by that pass and never become a user-facing
      *   failure row.
+     * @param mvSoundRepair this is the music-video-sound repair. If no different
+     *   song version can be found, the download fails and the suspect stays
+     *   instead of fetching the same MV stream again.
      */
     fun enqueue(
         context: Context,
@@ -357,6 +380,7 @@ object Downloads {
         youtubeOnly: Boolean = false,
         minimumTier: HqTier? = null,
         automatic: Boolean = false,
+        mvSoundRepair: Boolean = false,
     ) {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
@@ -385,6 +409,7 @@ object Downloads {
             if (youtubeOnly) youtubeOnlyIds.add(id)
             if (minimumTier != null) minimumTiers[id] = minimumTier
             if (automatic) automaticIds.add(id)
+            if (mvSoundRepair) mvSoundRepairIds.add(id)
         }
         _active.update { it + (id to DownloadState.Queued) }
         if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
@@ -408,6 +433,7 @@ object Downloads {
                 youtubeOnlyIds.remove(id)
                 minimumTiers.remove(id)
                 automaticIds.remove(id)
+                mvSoundRepairIds.remove(id)
             }
             fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
@@ -955,8 +981,11 @@ object Downloads {
      * Queues every remembered suspect as its song version. The old file is
      * replaced once the new recording is on disk; until then the banner stays,
      * so a failure is visible rather than silently forgotten.
+     *
+     * A suspect that failed recently is skipped until its cooldown passes;
+     * [manual] is the banner tap, which is allowed to try again immediately.
      */
-    suspend fun redownloadSuspected(context: Context): Int {
+    suspend fun redownloadSuspected(context: Context, manual: Boolean = false): Int {
         val all = suspectedSongs(context)
         // The scan already refuses covers, but a verdict persisted by an older
         // build can still name one. Check again right before downloading: a
@@ -973,8 +1002,22 @@ object Downloads {
                 },
             )
         }
-        songs.forEach { enqueue(context, it, allowMetered = true) }
-        return songs.size
+        val now = System.currentTimeMillis()
+        val retryable = songs.filter { song ->
+            MvSoundRedownload.mayAttempt(context, song.videoId, now, manual)
+        }
+        retryable.forEach {
+            enqueue(context, it, allowMetered = true, mvSoundRepair = true)
+        }
+        return retryable.size
+    }
+
+    /** Whether any suspect may be repaired now, rather than waiting out a failure. */
+    fun hasRepairableMvSuspects(context: Context, nowMs: Long): Boolean {
+        open()
+        return _mvSoundSuspects.value.keys.any { id ->
+            MvSoundRedownload.mayAttempt(context, id, nowMs, manual = false)
+        }
     }
 
     /**
@@ -1428,7 +1471,12 @@ object Downloads {
         // nothing else names it — that is the "replace the old file" half of a
         // re-download.
         if (soundSourceVideoId in ids) {
-            clearMvSoundSuspects(previousSuspects + ids)
+            // Only a different upload proves the MV sound has been replaced.
+            // A same-id re-fetch wrote the same bytes again; clearing here is
+            // what made the warning disappear while the file stayed wrong.
+            if (DownloadedMvPolicy.repairFetchedSongVersion(asked.videoId, fetched.videoId)) {
+                clearMvSoundSuspects(previousSuspects + ids)
+            }
             val context = appContext
             val fileReplaced = previousUris.any { it != uri.toString() }
             if (context != null && (fileReplaced || previousSuspects.isNotEmpty())) {
@@ -1715,6 +1763,7 @@ object Downloads {
     internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
         val automatic = synchronized(lock) { automaticIds.remove(id) }
+        val mvRepair = synchronized(lock) { mvSoundRepairIds.remove(id) }
         // Set before the lookup, not after it. Resolving where a lossless track
         // comes from is the long part of a download, and leaving the row on
         // "Queued" for all of it reads as a queue that has stopped rather than
@@ -1723,10 +1772,11 @@ object Downloads {
         DownloadSession.running(id, 0f)
 
         var completed = false
+        var cancelled = false
         var failure: DownloadFailure? = null
         var host: String? = null
         try {
-            val plan = prepare(context, song)
+            val plan = prepare(context, song, mvSoundRepair = mvRepair)
             // The manager is showing the row that was tapped, which for a music
             // video is the wrong title and the wrong cover for the file actually
             // being written. Corrected here rather than left to disagree with
@@ -1755,6 +1805,7 @@ object Downloads {
             }
             completed = true
         } catch (e: CancellationException) {
+            cancelled = true
             clear(id)
             throw e
         } catch (e: Exception) {
@@ -1770,6 +1821,13 @@ object Downloads {
             }
         } finally {
             if (host != null) HqHostTracker.endDownload(id, host)
+            if (mvRepair && !cancelled) {
+                if (completed) {
+                    MvSoundRedownload.clearFailed(context, id)
+                } else {
+                    MvSoundRedownload.markFailed(context, id)
+                }
+            }
             // One HQ target at a time: the next one is only queued once this
             // one has landed or failed, so the pass cannot fan out into the
             // four-worker download queue. Cheap for ordinary downloads — the
@@ -1815,7 +1873,11 @@ object Downloads {
      * running for a track that is still queued — or for one that gets cancelled
      * before its turn — and a preparation is not a download.
      */
-    internal suspend fun prepare(context: Context, song: Song): Prepared = withContext(Dispatchers.IO) {
+    internal suspend fun prepare(
+        context: Context,
+        song: Song,
+        mvSoundRepair: Boolean = false,
+    ): Prepared = withContext(Dispatchers.IO) {
         // A music video keeps the video's sound if downloaded as its own row.
         // The catalogue release is the recording the app plays, so a video row
         // is resolved first and the bytes, the name and the record all follow
@@ -1854,6 +1916,12 @@ object Downloads {
                 ?: versionSong
         } else {
             versionSong
+        }
+        // A repair exists to fetch a different upload. Falling back to the same
+        // id would save the same MV stream again and then clear the warning, so
+        // fail instead and leave the suspect for the next attempt.
+        if (mvSoundRepair && !DownloadedMvPolicy.repairFetchedSongVersion(song.videoId, track.videoId)) {
+            error("MV sound repair found no different song version")
         }
         // Read once, here, for the whole of this track. Both routes below
         // and the re-resolve inside [Downloader.fetch] have to agree on
@@ -2000,6 +2068,7 @@ object Downloads {
         val route = plan.route ?: error("다운로드할 항목이 없습니다")
 
         var pending: DownloadStore.Pending? = null
+        var reservedName: String? = null
         var lyrics: Deferred<LyricsTag.Embeddable?>? = null
         var artwork: Deferred<MediaTagger.Artwork?>? = null
         try {
@@ -2024,25 +2093,51 @@ object Downloads {
                     artwork = async { MediaTagger.artworkFor(context, track) }
                 }
 
-                val name = DownloadStore.fileNameFor(track, route.extension)
-                val alreadyThere = DownloadStore.existing(context, name)
+                val baseName = DownloadStore.fileNameFor(track, route.extension)
+                val alreadyThere = DownloadStore.existing(context, baseName)
+                val existingIsRecording = alreadyThere != null &&
+                    savedFileIsRecording(track.videoId, alreadyThere.toString())
                 if (plan.hq == null &&
                     !plan.forceReplace &&
                     alreadyThere != null &&
-                    savedFileIsRecording(track.videoId, alreadyThere.toString())
+                    existingIsRecording
                 ) {
-                    Log.d(TAG, "$name is already in Music; adopting it")
+                    Log.d(TAG, "$baseName is already in Music; adopting it")
                     remember(song, track, alreadyThere)
                     TranslationAhead.downloaded(context, track, alreadyThere.toString())
                     DownloadSession.done(id)
                     clear(id)
                     return@coroutineScope
                 }
-                if (alreadyThere != null && plan.hq == null && !plan.forceReplace) {
+                val name = synchronized(lock) {
+                    var candidate = DownloadStore.downloadFileName(
+                        song = track,
+                        extension = route.extension,
+                        nameTaken = alreadyThere != null,
+                        existingIsRecording = existingIsRecording,
+                        replacing = plan.hq != null || plan.forceReplace,
+                    )
+                    if (!reservedNames.add(candidate)) {
+                        // A different transfer is already writing this name.
+                        // Its final file does not exist yet, so `existing` could
+                        // not see it; the id suffix keeps the two apart.
+                        candidate = DownloadStore.disambiguatedFileName(track, route.extension)
+                        reservedNames.add(candidate)
+                    }
+                    reservedName = candidate
+                    candidate
+                }
+                if (alreadyThere != null && name == baseName && plan.hq == null && !plan.forceReplace) {
                     // Same name, but not a file this record knows to be the
                     // requested recording. A video's sound sitting under the
                     // song's name is exactly what used to be adopted here.
-                    Log.d(TAG, "$name exists but is not ${track.videoId}'s verified recording; downloading it")
+                    Log.d(TAG, "$baseName exists but is not ${track.videoId}'s verified recording; downloading it")
+                }
+                if (alreadyThere != null && name != baseName) {
+                    // A different upload already owns this name. Keep both
+                    // files; overwriting would make the old record play these
+                    // bytes under the old song's name.
+                    Log.d(TAG, "$baseName belongs to another recording; saving as $name")
                 }
 
                 val manifest = route.offlineHls
@@ -2132,6 +2227,9 @@ object Downloads {
             // a lyrics search per already-downloaded track.
             lyrics?.cancel()
             artwork?.cancel()
+            reservedName?.let { claimed ->
+                synchronized(lock) { reservedNames.remove(claimed) }
+            }
         }
     }
 
@@ -2420,6 +2518,7 @@ object Downloads {
             youtubeOnlyIds.remove(videoId)
             minimumTiers.remove(videoId)
             automaticIds.remove(videoId)
+            mvSoundRepairIds.remove(videoId)
         }
     }
 

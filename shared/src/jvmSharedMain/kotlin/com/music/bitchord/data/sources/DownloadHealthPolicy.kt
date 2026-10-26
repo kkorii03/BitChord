@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources
 
+import com.music.bitchord.data.net.AutomaticRetryPolicy
 import java.util.Locale
 import kotlin.math.abs
 
@@ -29,6 +30,22 @@ object DownloadHealthPolicy {
      * same length; this is the cheap check for the ones that are obviously not.
      */
     const val DURATION_TOLERANCE_MS = 8_000L
+
+    /**
+     * How long a condemned file waits before the next automatic repair request.
+     *
+     * Playback calls the health check on every track. A repair that cannot land
+     * would otherwise be requested again on every play, which is a repeated
+     * network search and download for a file that has not changed.
+     */
+    const val REPAIR_COOLDOWN_MS = AutomaticRetryPolicy.COOLDOWN_MS
+
+    /** Whether a condemned file may ask for another repair at [nowMs]. */
+    fun mayRequestRepair(
+        lastRequestMs: Long?,
+        nowMs: Long,
+        cooldownMs: Long = REPAIR_COOLDOWN_MS,
+    ): Boolean = lastRequestMs == null || nowMs - lastRequestMs >= cooldownMs
 
     enum class Verdict(val wire: String) {
         OK("ok"),

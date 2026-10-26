@@ -410,6 +410,13 @@ class DownloadedMvPolicyTest {
     }
 
     @Test
+    fun `a repair that fetched the same upload did not replace the mv sound`() {
+        assertFalse(DownloadedMvPolicy.repairFetchedSongVersion(askedVideoId = "same", fetchedVideoId = "same"))
+        assertFalse(DownloadedMvPolicy.repairFetchedSongVersion(askedVideoId = "asked", fetchedVideoId = ""))
+        assertTrue(DownloadedMvPolicy.repairFetchedSongVersion(askedVideoId = "video-id", fetchedVideoId = "song-id"))
+    }
+
+    @Test
     fun `a different source recorded as a video is an mv even at equal length`() {
         assertEquals(
             0L,

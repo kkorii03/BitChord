@@ -96,6 +96,36 @@ object DownloadStore {
     }
 
     /**
+     * The name a download may actually use.
+     *
+     * `Artist - Title.ext` is only unique when two different uploads never
+     * share a name. When they do, the legacy and app-private paths rename the
+     * new `.part` over the old file, and the old record keeps pointing at the
+     * same path — so the old song starts playing the new song's bytes. A
+     * collision that is not this track's own recorded file gets the video id
+     * appended instead; a deliberate replacement (or the file the record
+     * already names) keeps the plain name so the old file is still replaced.
+     */
+    fun downloadFileName(
+        song: Song,
+        extension: String,
+        nameTaken: Boolean,
+        existingIsRecording: Boolean,
+        replacing: Boolean,
+    ): String = when {
+        !nameTaken || existingIsRecording || replacing -> fileNameFor(song, extension)
+        else -> disambiguatedFileName(song, extension)
+    }
+
+    /** `Artist - Title (videoId).ext`, for a file that would otherwise be overwritten. */
+    fun disambiguatedFileName(song: Song, extension: String): String {
+        val base = fileNameFor(song, extension)
+        val stem = base.removeSuffix(".$extension")
+        val suffix = sanitise(song.videoId).replace(WHITESPACE, "").ifEmpty { "copy" }
+        return "$stem ($suffix).$extension"
+    }
+
+    /**
      * Everything a FAT32 volume, the media store or a shell would each object
      * to for its own reasons, plus the whitespace that survives them.
      */

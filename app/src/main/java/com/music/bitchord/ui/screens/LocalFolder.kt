@@ -385,7 +385,7 @@ internal fun MvSoundSuspectBanner(palette: ArtworkPalette) {
             .padding(bottom = 14.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(palette.accent.copy(alpha = 0.14f))
-            .clickable { scope.launch { Downloads.redownloadSuspected(context) } }
+            .clickable { scope.launch { Downloads.redownloadSuspected(context, manual = true) } }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
