@@ -156,6 +156,7 @@ class CatalogSongMapperTest {
             artistId = "UC_upload",
             setVideoId = "set",
             isVideo = true,
+            typeUnknown = true,
             isVideoOrigin = true,
         )
 
@@ -171,7 +172,56 @@ class CatalogSongMapperTest {
         assertTrue(mapped.artists.isEmpty())
         assertNull(mapped.setVideoId)
         assertFalse(mapped.isVideo)
+        assertFalse(mapped.typeUnknown)
         assertFalse(mapped.isVideoOrigin)
+    }
+
+    @Test
+    fun `a local video's catalogue row does not inherit the video file`() {
+        val catalog = CatalogSongMapper.CatalogSong(
+            videoId = "catalogue-id",
+            title = "7 rings",
+            artist = "Ariana Grande",
+            albumTitle = "thank u, next",
+            albumId = "MPREb_album",
+            artworkUrl = null,
+            durationText = "2:58",
+        )
+        val source = Song(
+            videoId = "QYh6mYIJG2Y",
+            title = "7 rings (Official Video)",
+            artist = "Ariana Grande",
+            thumbnailUrl = null,
+            durationText = "3:04",
+            isVideo = true,
+            localUri = "content://media/external/audio/media/7",
+            localPath = "/music/7 rings.webm",
+        )
+
+        val mapped = catalog.toSong(source)
+
+        assertEquals("catalogue-id", mapped.videoId)
+        assertNull(mapped.localUri)
+        assertNull(mapped.localPath)
+    }
+
+    @Test
+    fun `an unknown-type row is a video source`() {
+        assertTrue(
+            CatalogSongMapper.isVideoSource(
+                Song(videoId = "v", title = "t", artist = "a", thumbnailUrl = null, typeUnknown = true),
+            ),
+        )
+        assertTrue(
+            CatalogSongMapper.isVideoSource(
+                Song(videoId = "v", title = "t", artist = "a", thumbnailUrl = null, isVideo = true),
+            ),
+        )
+        assertFalse(
+            CatalogSongMapper.isVideoSource(
+                Song(videoId = "v", title = "t", artist = "a", thumbnailUrl = null),
+            ),
+        )
     }
 
     @Test

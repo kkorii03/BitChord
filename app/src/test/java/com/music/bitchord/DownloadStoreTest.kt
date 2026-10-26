@@ -45,6 +45,7 @@ class DownloadStoreTest {
         )
 
         assertNull(old.dateAddedSeconds)
+        assertNull(old.isVideo)
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.download.Downloads
@@ -203,17 +204,45 @@ internal class SongVersionController(
     }
 
     /**
-     * Treats a downloaded song whose file is longer than the catalogue track as
-     * a music video's sound.
+     * Records that verification found a different recording behind this file
+     * and queues the song version for download. Idempotent, so a file already
+     * marked by [DownloadedMvPolicy] is not announced or queued twice.
+     */
+    private fun markVerifiedMvSound(song: Song) {
+        val playId = Downloads.songIdForFile(song.videoId)
+        if (Downloads.mvSoundSuspectMs(playId) != null) return
+        Downloads.markMvSoundSuspect(playId, 0L)
+        MvSoundRedownload.scheduleIfEnabled(context)
+        TrackLog.i(
+            "BitChord",
+            "song version: $playId verified as the video's sound; scheduling the song download",
+            about = song.videoId,
+        )
+    }
+
+    /**
+     * Fills in a pre-field download's upload type after the catalogue agreed it
+     * is the song, so the same file is trusted without another lookup.
+     */
+    private fun backfillVerifiedSong(song: Song) {
+        Downloads.backfillUploadType(song.videoId, isVideo = false, typeUnknown = false)
+    }
+
+    /**
+     * Treats a downloaded song whose file is a music video's sound as one.
      *
-     * The verdict is remembered on the device the first time it is reached, so
-     * the same file is not re-measured and its song version is not re-requested
-     * on every play. Online the song is streamed through the same path as a
-     * recorded provenance mismatch; offline the file stays, because it is the
-     * only sound there is.
+     * The verdict comes from [DownloadedMvPolicy], so a legacy download with no
+     * recorded upload type is still caught by its title or by its length beside
+     * the catalogue release. The verdict is remembered on the device the first
+     * time it is reached, so the same file is not re-measured and its song
+     * version is not re-requested on every play. Online the song is streamed
+     * through the same path as a recorded provenance mismatch; offline the file
+     * stays, because it is the only sound there is.
      *
      * @return true when the row was handled and the caller must not fall
-     *   through to the ordinary song-version lookup.
+     *   through to the ordinary song-version lookup. False after marking a file
+     *   whose catalogue release is not known yet: the ordinary verification
+     *   lookup resolves it, with the repair already scheduled.
      */
     fun streamLongDownloadedSong(
         exoPlayer: ExoPlayer,
@@ -228,30 +257,54 @@ internal class SongVersionController(
         // the recording the app calls the song.
         val playId = Downloads.songIdForFile(song.videoId)
         val remembered = Downloads.mvSoundSuspectMs(playId)
-        val delta = remembered ?: run {
-            if (Downloads.savedSoundSourceFor(song.videoId) != null) return false
-            val catalog = listOfNotNull(
-                Downloads.catalogDurationMs(song.videoId, song.durationMillis()),
-                YtMusicRepository.cachedSongVersionFor(song)
-                    ?.durationMillis()
-                    ?.takeIf { it > 0L },
-            ).minOrNull() ?: return false
-            val file = fileDurationMs?.takeIf { it > 0L } ?: return false
-            SongVersionPolicy.mvSoundDeltaMs(
-                fileDurationMs = file,
-                catalogDurationMs = catalog,
-                isVideo = false,
-                localFile = true,
-                soundSourceId = null,
-            ) ?: return false
+        val cached = YtMusicRepository.cachedSongVersionFor(song)
+        val catalogDuration = listOfNotNull(
+            Downloads.catalogDurationMs(song.videoId, song.durationMillis()),
+            cached?.durationMillis()?.takeIf { it > 0L },
+        ).minOrNull()
+        val file = fileDurationMs?.takeIf { it > 0L }
+        val soundSource = Downloads.savedSoundSourceFor(song.videoId)
+        val catalogId = cached?.videoId?.takeIf { it != song.videoId }
+            ?: playId.takeIf { it != song.videoId }
+        val mvSound = DownloadedMvPolicy.isMvSound(
+            rowVideoId = song.videoId,
+            title = song.title,
+            fileDurationMs = file,
+            storedIsVideo = Downloads.savedIsVideoFor(song.videoId),
+            storedTypeUnknown = Downloads.savedTypeUnknownFor(song.videoId),
+            soundSourceVideoId = soundSource,
+            catalogVideoId = catalogId,
+            catalogDurationMs = catalogDuration,
+        )
+        // The older two-and-a-half-second rule still guards a file with no
+        // recorded source; it is the rule the downloads scan uses and must not
+        // be weakened here.
+        val lengthDelta = SongVersionPolicy.mvSoundDeltaMs(
+            fileDurationMs = file,
+            catalogDurationMs = catalogDuration,
+            isVideo = false,
+            localFile = true,
+            soundSourceId = soundSource,
+        )
+        if (remembered == null && !mvSound && lengthDelta == null) return false
+        val delta = remembered ?: lengthDelta ?: run {
+            val catalog = catalogDuration
+            if (file != null && catalog != null) (file - catalog).coerceAtLeast(0L) else 0L
         }
         if (remembered == null) {
             Downloads.markMvSoundSuspect(playId, delta)
             MvSoundRedownload.scheduleIfEnabled(context)
         }
         if (offline) return true
-        logMvSoundFile(playId, delta)
-        installStreamedRecording(exoPlayer, mediaId, song, playId)
+        if (delta > 0L) logMvSoundFile(playId, delta) else logStreamingSongFile(playId, song.videoId)
+        val streamId = cached?.videoId?.takeIf { it != song.videoId }
+            ?: playId.takeIf { it != song.videoId }
+        if (streamId == null) {
+            // The catalogue release is not known yet; the ordinary verification
+            // lookup resolves it, with the file already marked for repair.
+            return false
+        }
+        installStreamedRecording(exoPlayer, mediaId, song, streamId)
         return true
     }
 
@@ -283,26 +336,62 @@ internal class SongVersionController(
         val song = item?.toSong()
         val localFile = song?.localUri != null
         val offline = AudioCache.isOffline()
+        // A file saved before provenance or upload type was recorded cannot say
+        // which stream produced it. Online it is verified as a possible video
+        // copy: the catalogue release is streamed and the file stays as the
+        // offline fallback. Offline the file is the only sound, so it is kept.
+        val soundSourceId = song?.let { Downloads.savedSoundSourceFor(it.videoId) }
+        val storedIsVideo = song?.let { Downloads.savedIsVideoFor(it.videoId) }
+        val storedTypeUnknown = song?.let { Downloads.savedTypeUnknownFor(it.videoId) } == true
+        val effectiveIsVideo: Boolean? = song?.let {
+            when {
+                it.isVideo || storedIsVideo == true -> true
+                storedIsVideo == null -> null
+                else -> false
+            }
+        }
+        val verifyUnknownDownload = song != null &&
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = localFile,
+                downloaded = Downloads.isDownloaded(song.videoId),
+                provenanceKnown = soundSourceId != null,
+                provenanceIsOwnId = soundSourceId == song.videoId,
+                isVideo = effectiveIsVideo,
+                typeUnknown = song.typeUnknown || storedTypeUnknown,
+                offline = offline,
+            )
+        val versionSong = if (verifyUnknownDownload) {
+            song?.copy(typeUnknown = true, localUri = null, localPath = null)
+        } else {
+            // What the download recorded about the upload counts even when the
+            // queue row lost it, or a saved video/unknown row skips the lookup.
+            song?.copy(
+                isVideo = song.isVideo || storedIsVideo == true,
+                typeUnknown = song.typeUnknown || storedTypeUnknown,
+            )
+        }
         // A catalogue row whose file was recorded from another upload's stream
         // must not play that sound. Online, the row's own recording is
-        // streamed and the file stays only as the offline fallback; a file with
-        // no provenance is left alone because its source cannot be known.
+        // streamed and the file stays only as the offline fallback. A file with
+        // no provenance or no upload type is judged by [DownloadedMvPolicy]
+        // here instead of being trusted blindly; when its catalogue release is
+        // not known yet, the verification lookup below resolves it after the
+        // file has already been marked for repair.
         if (!alreadyAudible && item != null && song != null && localFile &&
             !SongVersionPolicy.hasMadeFirstSound(item.mediaId, currentAudibleMediaId()) &&
             !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
         ) {
-            // A file saved before provenance was recorded is judged by length:
-            // a music video is longer than the song it carries. The player's
-            // own duration is preferred; the recorded durations are what the
-            // Downloads page compares without opening anything.
+            // The player's own duration is preferred; the recorded durations
+            // are what the Downloads page compares without opening anything.
             val playerDuration = exoPlayer.duration
                 .takeIf { exoPlayer.playbackState == Player.STATE_READY && it > 0L }
             if (streamLongDownloadedSong(exoPlayer, item.mediaId, song, offline, playerDuration)) {
                 return
             }
-            if (SongVersionPolicy.downloadedFileUse(
+            if (!verifyUnknownDownload &&
+                SongVersionPolicy.downloadedFileUse(
                     song.videoId,
-                    Downloads.savedSoundSourceFor(song.videoId),
+                    soundSourceId,
                     online = !offline,
                 ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
             ) {
@@ -311,25 +400,30 @@ internal class SongVersionController(
                 return
             }
         }
+        if (item == null || song == null) {
+            releaseVersionHold(exoPlayer)
+            return
+        }
+        val lookupSong = versionSong ?: song
         val skipReason = when {
             alreadyAudible -> "already audible"
             !AppSettings.preferMusicOnly.value -> "music only off"
             ListenTogether.state.value.inParty -> "listen together"
-            item == null || song == null -> "no row"
-            !SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) -> "not a video"
+            !SongVersionPolicy.wantsSongVersion(
+                lookupSong.isVideo,
+                lookupSong.typeUnknown,
+            ) -> "not a video"
             SongVersionPolicy.keepsLocalFile(
-                song.localUri != null,
-                song.isVideo,
-                song.typeUnknown,
+                lookupSong.localUri != null,
+                lookupSong.isVideo,
+                lookupSong.typeUnknown,
             ) -> "local file"
             SongVersionPolicy.hasMadeFirstSound(item.mediaId, currentAudibleMediaId()) -> "first sound"
             else -> null
         }
         if (skipReason != null) {
-            val id = song?.videoId ?: item?.mediaId
-            if (id != null && song != null &&
-                SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
-            ) {
+            val id = song.videoId
+            if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
                 TrackLog.i(
                     "BitChord",
                     "song version: $id hold skipped ($skipReason)",
@@ -339,13 +433,12 @@ internal class SongVersionController(
             releaseVersionHold(exoPlayer)
             return
         }
-        if (item == null || song == null) return
         val mediaId = item.mediaId
         // A definitive answer from the queue build needs no network wait, but
         // the first sound is still held for the single dispatch that installs
         // it, so the replacement cannot land after audio. Deferring it also
         // keeps the timeline change out of the transition callback.
-        val cached = YtMusicRepository.cachedSongVersionFor(song)
+        val cached = YtMusicRepository.cachedSongVersionFor(lookupSong)
         val cachedUse = cached?.let {
             SongVersionPolicy.downloadedFileUse(
                 it.videoId,
@@ -376,7 +469,7 @@ internal class SongVersionController(
             // The download record can name this file's song version even when
             // this run has not looked it up ? see Downloads.remember. Playing
             // that id needs no network at all.
-            downloadedSongVersionFor(song, offline)?.let { downloaded ->
+            downloadedSongVersionFor(lookupSong, offline)?.let { downloaded ->
                 val streamOnly = downloaded.localUri == null
                 installPreResolvedVersion(
                     exoPlayer,
@@ -414,7 +507,7 @@ internal class SongVersionController(
             releaseVersionHold(exoPlayer)
             return
         }
-        if (YtMusicRepository.isSongVersionMissing(song.videoId)) {
+        if (YtMusicRepository.isSongVersionMissing(lookupSong.videoId)) {
             // The queue build already established this row has no song version.
             TrackLog.i(
                 "BitChord",
@@ -436,7 +529,7 @@ internal class SongVersionController(
             var lookupFailed = false
             val resolved = try {
                 withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
-                    YtMusicRepository.songVersion(song, beforeAudio = true)
+                    YtMusicRepository.songVersion(lookupSong, beforeAudio = true)
                 }
             } catch (timeout: TimeoutCancellationException) {
                 lookupFailed = true
@@ -452,7 +545,7 @@ internal class SongVersionController(
                 // The lookup itself keeps running in the repository's shared
                 // scope. If it lands while this video is still playing, use it
                 // as the lyrics reference (never as a mid-song swap).
-                watchForLateVersion(exoPlayer, mediaId, song)
+                watchForLateVersion(exoPlayer, mediaId, lookupSong)
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -474,6 +567,15 @@ internal class SongVersionController(
             }
             try {
                 if (resolved != null) {
+                    // Verification of an old download resolved a different
+                    // recording: the file is the video's sound even when its
+                    // title and length did not prove it up front. Mark it and
+                    // let the repair queue fetch the catalogue release.
+                    if (verifyUnknownDownload && resolved.videoId != song.videoId) {
+                        markVerifiedMvSound(song)
+                    } else if (verifyUnknownDownload) {
+                        backfillVerifiedSong(song)
+                    }
                     val resolvedUse = SongVersionPolicy.downloadedFileUse(
                         resolved.videoId,
                         Downloads.savedSoundSourceFor(resolved.videoId),
@@ -502,7 +604,11 @@ internal class SongVersionController(
                 } else if (localFile && !lookupFailed) {
                     // The lookup answered "there is no version" rather than
                     // failing; keep the downloaded video with a reason that
-                    // says why it stayed.
+                    // says why it stayed. Nothing is recorded about the file
+                    // here: [YtMusicRepository.songVersion] also answers null
+                    // when its search failed, and a legacy MV must not be filed
+                    // as a verified song on a network error. Only a lookup that
+                    // positively named this very id (above) records that.
                     TrackLog.i(
                         "BitChord",
                         "song version: ${song.videoId} kept (local file, none)",

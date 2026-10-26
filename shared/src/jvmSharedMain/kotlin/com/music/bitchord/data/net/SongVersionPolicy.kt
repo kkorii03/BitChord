@@ -91,6 +91,42 @@ object SongVersionPolicy {
     ): Boolean = localFile && !wantsSongVersion(isVideo, typeUnknown)
 
     /**
+     * Whether a downloaded file with no recorded provenance must still be
+     * checked against the catalogue before it is trusted.
+     *
+     * A download saved before provenance was recorded cannot say which stream
+     * produced its bytes. When that row also reads as a song (`isVideo` and
+     * `typeUnknown` both false), the old blanket "has a file, so skip" rule
+     * played the file — and a music video downloaded under its own id is
+     * exactly the case it cannot see. [isVideo] is therefore tri-state: null
+     * means the record predates the field, so even a record whose source is
+     * its own id is verified. Online, such a file is verified like a video
+     * candidate: its catalogue release is streamed while the file stays as the
+     * offline fallback. Offline the file is the only sound there is, so it is
+     * kept without a request.
+     *
+     * [provenanceIsOwnId] separates a legacy own-id record from one whose
+     * source names a different upload: the latter's bytes are already known
+     * to come from the catalogue release, so it needs no verification. The
+     * listener's own files, downloads whose provenance is known, and rows
+     * already known to be videos are left to their existing paths.
+     */
+    fun verifiesUnknownDownload(
+        localFile: Boolean,
+        downloaded: Boolean,
+        provenanceKnown: Boolean,
+        isVideo: Boolean?,
+        typeUnknown: Boolean,
+        offline: Boolean,
+        provenanceIsOwnId: Boolean = false,
+    ): Boolean {
+        if (!localFile || !downloaded || offline) return false
+        if (wantsSongVersion(isVideo == true, typeUnknown)) return false
+        if (!provenanceKnown) return true
+        return isVideo == null && provenanceIsOwnId
+    }
+
+    /**
      * Whether choosing a download for this row has to fetch the song version.
      *
      * A music video's own stream is its video's sound, never what the app plays

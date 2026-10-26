@@ -20,6 +20,7 @@ import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
@@ -316,9 +317,31 @@ internal class NextTrackPreparation(
 
     private fun versionWanted(song: Song): Boolean {
         if (!AppSettings.preferMusicOnly.value) return false
-        if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) return false
-        if (song.localUri != null && AudioCache.isOffline()) return false
+        val lookup = lookupSong(song)
+        if (!SongVersionPolicy.wantsSongVersion(lookup.isVideo, lookup.typeUnknown)) return false
+        if (lookup.localUri != null && AudioCache.isOffline()) return false
         return true
+    }
+
+    /**
+     * A downloaded file with no recorded provenance may be a video copy under a
+     * song-looking row. Online it is looked up like a video (the song version
+     * is streamed, the file stays for offline); offline the file is kept.
+     */
+    private fun lookupSong(song: Song): Song {
+        val verify = SongVersionPolicy.verifiesUnknownDownload(
+            localFile = song.localUri != null,
+            downloaded = Downloads.isDownloaded(song.videoId),
+            provenanceKnown = Downloads.savedSoundSourceFor(song.videoId) != null,
+            isVideo = song.isVideo,
+            typeUnknown = song.typeUnknown,
+            offline = AudioCache.isOffline(),
+        )
+        return if (verify) {
+            song.copy(typeUnknown = true, localUri = null, localPath = null)
+        } else {
+            song
+        }
     }
 
     /** A definitive answer already exists, so no lookup is needed — only an install. */
@@ -331,12 +354,13 @@ internal class NextTrackPreparation(
         rowId: String,
         installed: (Song) -> Unit,
     ): Song? {
-        val cached = YtMusicRepository.cachedSongVersionFor(song)
-        val resolved = cached ?: if (YtMusicRepository.isSongVersionMissing(song.videoId)) {
+        val lookup = lookupSong(song)
+        val cached = YtMusicRepository.cachedSongVersionFor(lookup)
+        val resolved = cached ?: if (YtMusicRepository.isSongVersionMissing(lookup.videoId)) {
             null
         } else {
             try {
-                YtMusicRepository.songVersion(song, beforeAudio = true)
+                YtMusicRepository.songVersion(lookup, beforeAudio = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {

@@ -270,6 +270,134 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `an unknown-provenance download is verified online but kept offline`() {
+        assertTrue(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = false,
+                isVideo = false,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = false,
+                isVideo = false,
+                typeUnknown = false,
+                offline = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a known download or the listener's own file is not re-verified`() {
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                isVideo = false,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = false,
+                provenanceKnown = false,
+                isVideo = false,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a video or unknown-type row keeps its own version path`() {
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = false,
+                isVideo = true,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = false,
+                isVideo = false,
+                typeUnknown = true,
+                offline = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a pre-field own-id download is verified before its file is trusted`() {
+        assertTrue(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = true,
+                isVideo = null,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = true,
+                isVideo = null,
+                typeUnknown = false,
+                offline = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a pre-field record from another upload is already the catalogue release`() {
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = false,
+                isVideo = null,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a new own-id song record is trusted without a lookup`() {
+        assertFalse(
+            SongVersionPolicy.verifiesUnknownDownload(
+                localFile = true,
+                downloaded = true,
+                provenanceKnown = true,
+                provenanceIsOwnId = true,
+                isVideo = false,
+                typeUnknown = false,
+                offline = false,
+            ),
+        )
+    }
+
+    @Test
     fun `a proven-empty counterpart endpoint is off for a week and then tried again`() {
         val now = 1_000_000L
         val offUntil = SongVersionPolicy.counterpartOffUntil(now)
