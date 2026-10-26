@@ -108,8 +108,12 @@ data class OutputNegotiationResult(
  *
  * Core Rules:
  * - Internal DSP is ALWAYS canonical Float32.
- * - Built-in phone speaker is strictly capped at 16-bit PCM for hardware safety.
- * - External routes evaluate Float32, 24-bit packed, and 16-bit based on runtime direct profiles & advertised encodings.
+ * - Built-in phone speaker is strictly capped at 16-bit PCM: some OEM speaker
+ *   paths accept a float track and then distort it inside AudioFlinger, which
+ *   the sink's rejection fallback cannot catch.
+ * - External routes (Bluetooth, wired, USB, HDMI) take Float32 whenever float
+ *   was requested, regardless of advertised encodings, because the framework
+ *   mixer accepts float; the sink falls back to PCM16 only if rejected.
  * - Native source sample rate is prioritized to eliminate unnecessary SRC.
  * - Zero marketing claims: only factual, runtime-verified capabilities are reported.
  */
@@ -200,10 +204,12 @@ object OutputNegotiator {
         val advertisesFloat = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_FLOAT)
         val advertisesPcm24 = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED)
 
-        // 1. Phone Speaker: the framework mixer takes float, so the speaker is
-        // not capped when the listener asked for it. If this particular device
-        // refuses the float track, PrecisionAudioSink reconfigures the same
-        // stream as PCM16.
+        // 1. Phone Speaker: always PCM16. Some OEM speaker paths accept a
+        // float AudioTrack and then convert it to PCM16 inside AudioFlinger,
+        // which on the affected Samsung FLAC decoder causes timestamp
+        // discontinuities and severe distortion. Because the track is accepted
+        // rather than rejected, PrecisionAudioSink's PCM16 fallback cannot
+        // catch it, so the speaker is never opened as float.
         if (routeKind == AudioRouting.Kind.PHONE) {
             val wantsFloat = AudioOutputPolicy.shouldUseFloatOutput(
                 requestedMode = requestedMode,
@@ -216,7 +222,7 @@ object OutputNegotiator {
                 FallbackReason.NONE
             }
             val fallbackDetail = if (fallbackReason != FallbackReason.NONE) {
-                "기기가 Float32 AudioTrack을 거부해 16비트 PCM으로 대체"
+                "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트 PCM으로 제한"
             } else {
                 null
             }

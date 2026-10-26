@@ -16,8 +16,6 @@ import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -47,11 +45,11 @@ class OutputNegotiatorTest {
         assertEquals("Float32", result.dsp.format)
         assertEquals(96000, result.dsp.sampleRateHz)
         assertEquals(2, result.dsp.channelCount)
-        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
+        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
     }
 
     @Test
-    fun phoneSpeakerUsesFloatOnTheMixerWhenRequested() {
+    fun phoneSpeakerStaysPcm16EvenWhenFloatRequested() {
         val result = OutputNegotiator.negotiate(
             source = flac96kHz24BitSource,
             decoderName = "c2.android.flac.decoder",
@@ -64,9 +62,12 @@ class OutputNegotiatorTest {
             requestedMode = OutputPcmMode.FLOAT_32,
         )
 
-        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
-        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
-        assertNull(result.output.fallbackDetail)
+        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
+        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
+        assertEquals(
+            "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트 PCM으로 제한",
+            result.output.fallbackDetail,
+        )
     }
 
     @Test

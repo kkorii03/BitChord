@@ -5,19 +5,28 @@ import com.music.bitchord.data.settings.OutputPcmMode
 /**
  * Decides whether Media3 may open a PCM-float AudioTrack.
  *
- * AudioFlinger's mixer takes float input on every mix path, so a route's
- * `AudioDeviceInfo` encoding list is not a limit on what an ordinary
- * (non-direct) AudioTrack can be opened with. Bluetooth in particular
- * advertises the codec's own PCM16 profile even when the mixer below it is
- * perfectly able to take float; reading that list as a cap truncated 24-bit
- * sources to 16 bits before the codec ever saw them.
+ * Two rules apply to an ordinary (non-direct) mix-path AudioTrack:
  *
- * The only real check is whether the listener asked for float. Direct and
- * offloaded paths are chosen by [com.music.bitchord.playback.audio.OutputNegotiator]
- * before this applies, and if a device genuinely refuses the float track
- * `PrecisionAudioSink` reconfigures the same stream as PCM16. That is also
- * why the speaker is no longer special-cased here: the fallback is the
- * device's answer, not a guess about its OEM mixer.
+ * - External routes (Bluetooth, wired, USB, HDMI) take float whenever the
+ *   listener asked for it, regardless of what the route's `AudioDeviceInfo`
+ *   encoding list advertises. AudioFlinger's mixer accepts float input on
+ *   every mix path, so the advertised list describes what the codec/device
+ *   profile can be handed directly, not what the mixer can accept. Reading
+ *   it as a cap truncated 24-bit sources (e.g. LDAC) to 16 bits before the
+ *   codec ever saw them. If such a device genuinely refuses the float track,
+ *   [com.music.bitchord.playback.audio.PrecisionAudioSink] reconfigures the
+ *   same stream as PCM16.
+ *
+ * - The built-in phone speaker is always PCM16. Some OEM speaker paths
+ *   accept a float AudioTrack and only then convert it to PCM16 inside
+ *   AudioFlinger; on the affected Samsung FLAC decoder that produces
+ *   timestamp discontinuities and severe distortion. Because the track is
+ *   accepted rather than rejected, the sink's rejection fallback cannot
+ *   catch it, so the speaker must never be opened as float in the first
+ *   place.
+ *
+ * Direct and offloaded paths are chosen by
+ * [com.music.bitchord.playback.audio.OutputNegotiator] before this applies.
  */
 internal object AudioOutputPolicy {
     /** Backwards-compatible USB-specific check. */
@@ -30,17 +39,22 @@ internal object AudioOutputPolicy {
     /**
      * Route-aware float output decision.
      *
-     * A mix-path AudioTrack (PHONE, BLUETOOTH, WIRED, HDMI) takes float
-     * whenever float was requested. The route's advertised encodings are
-     * accepted for compatibility but deliberately do not gate the answer —
-     * see the class comment. The sink falls back to PCM16 if the device
-     * rejects the track.
+     * The phone speaker is always PCM16: some OEM speaker paths accept float
+     * and then distort it inside AudioFlinger, so the sink's rejection
+     * fallback cannot help. Every external mix path (BLUETOOTH, WIRED, USB,
+     * HDMI) takes float whenever float was requested; the route's advertised
+     * encodings are accepted for compatibility but deliberately do not gate
+     * the answer — see the class comment. The sink falls back to PCM16 if the
+     * device rejects the track.
      */
     fun shouldUseFloatOutput(
         requestedMode: OutputPcmMode,
         routeKind: AudioRouting.Kind,
         advertisesPcmFloat: Boolean,
-    ): Boolean = requestedMode == OutputPcmMode.FLOAT_32
+    ): Boolean {
+        if (routeKind == AudioRouting.Kind.PHONE) return false
+        return requestedMode == OutputPcmMode.FLOAT_32
+    }
 
     /** Samsung's vendor FLAC decoder emits invalid timestamps with PCM float. */
     fun isUnsafeFloatFlacDecoder(name: String): Boolean {

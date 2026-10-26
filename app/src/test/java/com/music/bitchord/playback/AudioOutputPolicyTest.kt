@@ -53,12 +53,19 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun routeAwarePhoneTakesFloatOnTheMixerWhenRequested() {
-        assertTrue(
+    fun routeAwarePhoneAlwaysUsesPcm16EvenWhenFloatRequested() {
+        assertFalse(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.PHONE,
                 advertisesPcmFloat = true,
+            ),
+        )
+        assertFalse(
+            AudioOutputPolicy.shouldUseFloatOutput(
+                OutputPcmMode.FLOAT_32,
+                routeKind = AudioRouting.Kind.PHONE,
+                advertisesPcmFloat = false,
             ),
         )
     }
@@ -82,7 +89,7 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun routeAwareBluetoothAllowsFloatOnlyWhenAdvertised() {
+    fun routeAwareBluetoothTakesFloatEvenWhenOnlyPcm16IsAdvertised() {
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
