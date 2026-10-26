@@ -62,6 +62,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.download.DownloadProgress
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.HqBatch
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -84,13 +85,22 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 @Composable
 fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val session by DownloadSession.state.collectAsStateWithLifecycle()
+    val batch by HqBatch.state.collectAsStateWithLifecycle()
 
     val haptics = rememberHaptics()
+    // A high-quality batch reports its own settled count; everything else keeps
+    // the session's overall fraction.
+    val batchActive = batch.active && batch.running && batch.total > 0
+    val target = if (batchActive) {
+        batch.completed.toFloat() / batch.total
+    } else {
+        session.fraction
+    }
     // Animated, because the fraction lands in steps — one track at a time, plus
     // whatever the running one reports — and a ring that jumps in twenty-fifths
     // reads as a stutter rather than as progress.
     val progress by animateFloatAsState(
-        targetValue = session.fraction,
+        targetValue = target,
         animationSpec = tween(300),
         label = "downloadRingProgress",
     )
@@ -153,6 +163,11 @@ fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
                         else -> Icons.Rounded.DownloadDone
                     },
                     contentDescription = when {
+                        batchActive -> stringResource(
+                            R.string.hq_batch_progress,
+                            batch.completed,
+                            batch.total,
+                        )
                         session.busy -> stringResource(
                             R.string.downloads_progress,
                             (session.fraction * 100).toInt(),
@@ -196,6 +211,7 @@ fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val session by DownloadSession.state.collectAsStateWithLifecycle()
+    val batch by HqBatch.state.collectAsStateWithLifecycle()
     // Newest ask last, the order the queue will actually reach them in.
     val items = remember(session.items) { session.items.sortedBy { it.sequence } }
 
@@ -213,7 +229,11 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                    text = session.summary(),
+                    text = if (batch.active && batch.running) {
+                        stringResource(R.string.hq_batch_progress, batch.completed, batch.total)
+                    } else {
+                        session.summary()
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (session.failed > 0 && !session.busy) {
                         MaterialTheme.colorScheme.error
@@ -225,6 +245,9 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
             if (session.busy) {
                 TextButton(
                     onClick = {
+                        // The high-quality batch is one logical job; cancelling
+                        // its current row alone would just start the next one.
+                        HqBatch.cancel(context)
                         // Only what is still going. Cancelling a finished row
                         // would drop it from the list, which is the one thing
                         // this sheet exists to still be showing.
@@ -251,7 +274,13 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
         // longer", which is what someone opening this sheet mid-album wants.
         if (session.busy) {
             LinearProgressIndicator(
-                progress = { session.fraction },
+                progress = {
+                    if (batch.active && batch.running && batch.total > 0) {
+                        batch.completed.toFloat() / batch.total
+                    } else {
+                        session.fraction
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp)
@@ -275,7 +304,16 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                 DownloadManagerRow(
                     item = item,
                     onCancel = { Downloads.cancel(item.videoId) },
-                    onRetry = { Downloads.enqueue(context, item.song, item.from) },
+                    onRetry = {
+                        if (HqBatch.isPending(item.videoId)) {
+                            // A failed high-quality row is part of the batch:
+                            // retry it within the batch so the pinned rung is
+                            // used and the batch's own bookkeeping moves on.
+                            HqBatch.retry(context, item.videoId)
+                        } else {
+                            Downloads.enqueue(context, item.song, item.from)
+                        }
+                    },
                 )
             }
         }

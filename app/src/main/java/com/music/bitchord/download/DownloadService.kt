@@ -61,6 +61,7 @@ class DownloadService : Service() {
         promote()
 
         if (intent?.action == ACTION_CANCEL_ALL) {
+            HqBatch.cancel(this)
             Downloads.active.value.keys.toList().forEach(Downloads::cancel)
             shutdown(stopWork = true)
             return START_NOT_STICKY
@@ -184,20 +185,27 @@ class DownloadService : Service() {
 
     private fun buildNotification(): Notification {
         val active = Downloads.active.value
+        val batch = HqBatch.state.value
+        val batchActive = batch.active && batch.running
         val runningStates = active.values.filterIsInstance<DownloadState.Running>()
         val waiting = active.count { it.value is DownloadState.Queued }
 
         // Several tracks are in flight, so the bar is the average across them
         // rather than any one track's — a bar that jumped backwards every time
         // a different worker happened to report last would be worse than no bar.
-        val percent = runningStates
-            .takeIf { it.isNotEmpty() }
-            ?.let { states -> states.sumOf { it.fraction.toDouble() } / states.size }
-            ?.times(100)?.toInt()
-            ?: 0
+        // A high-quality batch reports how many of its own tracks have settled,
+        // because that is the number its button and dialog use too.
+        val percent = when {
+            batchActive && batch.total > 0 -> batch.completed * 100 / batch.total
+            runningStates.isNotEmpty() -> {
+                (runningStates.sumOf { it.fraction.toDouble() } / runningStates.size * 100).toInt()
+            }
+            else -> 0
+        }
 
         val song = current
         val title = when {
+            batchActive -> getString(R.string.hq_batch_progress_title)
             runningStates.size > 1 -> resources.getQuantityString(
                 R.plurals.downloading_song_count,
                 runningStates.size,
@@ -206,6 +214,7 @@ class DownloadService : Service() {
             else -> song?.title ?: getString(R.string.download_notification_title)
         }
         val text = when {
+            batchActive -> getString(R.string.hq_batch_progress, batch.completed, batch.total)
             runningStates.size > 1 && waiting > 0 ->
                 getString(R.string.download_notification_more_queued, waiting)
             runningStates.size > 1 -> song?.title.orEmpty()
@@ -226,7 +235,7 @@ class DownloadService : Service() {
             .setContentTitle(title)
             .setContentText(text)
             // Indeterminate until something has a length to measure against.
-            .setProgress(100, percent, runningStates.isEmpty())
+            .setProgress(100, percent, runningStates.isEmpty() && !batchActive)
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)

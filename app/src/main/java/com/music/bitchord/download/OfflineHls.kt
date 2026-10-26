@@ -28,8 +28,20 @@ internal object OfflineHls {
         artwork: MediaTagger.Artwork?,
     ): Uri = withContext(Dispatchers.IO) {
         val root = File(File(context.filesDir, "offline-hls"), id.hashCode().toUInt().toString(16))
-        root.deleteRecursively()
-        if (!root.mkdirs()) error("Could not create offline HLS package")
+        // A process killed between the two renames of a swap leaves the old
+        // package as `.old` and nothing at the final path. Put it back before
+        // doing anything else.
+        val backup = File(root.parentFile, "${root.name}.old")
+        if (!root.exists() && backup.exists() && !backup.renameTo(root)) {
+            error("Could not restore the offline HLS package")
+        }
+        // A replacement must not delete the package it is replacing until the
+        // new one is complete. Everything is written beside the final folder
+        // and swapped in only after the last fragment and the playlist are on
+        // disk; a failure leaves the old package untouched.
+        val staging = File(root.parentFile, "${root.name}.new")
+        staging.deleteRecursively()
+        if (!staging.mkdirs()) error("Could not create offline HLS package")
         try {
             fun request(target: String) = Request.Builder().url(target).apply {
                 headers.forEach { (name, value) -> header(name, value) }
@@ -57,7 +69,7 @@ internal object OfflineHls {
                 val local = "segment-${index.toString().padStart(5, '0')}.m4s"
                 Http.client.newCall(request(target)).execute().use { response ->
                     if (!response.isSuccessful) error("HLS fragment failed (HTTP ${response.code})")
-                    response.body?.byteStream()?.use { input -> File(root, local).outputStream().use(input::copyTo) }
+                    response.body?.byteStream()?.use { input -> File(staging, local).outputStream().use(input::copyTo) }
                         ?: error("Empty HLS fragment")
                 }
                 localNames[remote] = local
@@ -68,13 +80,42 @@ internal object OfflineHls {
                     match.groupValues[1] + (localNames[match.groupValues[2]] ?: match.groupValues[2]) + match.groupValues[3]
                 }
                 .lineSequence().joinToString("\n") { line -> localNames[line.trim()] ?: line }
-            File(root, "playlist.m3u8").writeText(localPlaylist)
-            lyrics?.let { File(root, "lyrics.lrc").writeText(it.enhanced ?: it.plain.orEmpty()) }
-            artwork?.let { File(root, "cover.${if (it.mime.contains("png")) "png" else "jpg"}").writeBytes(it.bytes) }
+            File(staging, "playlist.m3u8").writeText(localPlaylist)
+            if (lyrics != null) {
+                File(staging, "lyrics.lrc").writeText(lyrics.enhanced ?: lyrics.plain.orEmpty())
+            } else {
+                // A lyrics server being down must not cost the old package the
+                // lyrics it already had.
+                File(root, "lyrics.lrc")
+                    .takeIf { it.isFile }
+                    ?.copyTo(File(staging, "lyrics.lrc"), overwrite = true)
+            }
+            if (artwork != null) {
+                File(staging, "cover.${if (artwork.mime.contains("png")) "png" else "jpg"}").writeBytes(artwork.bytes)
+            } else {
+                root.listFiles()
+                    ?.firstOrNull { it.name.startsWith("cover.") }
+                    ?.copyTo(File(staging, it.name), overwrite = true)
+            }
+            commit(staging, root)
             Uri.fromFile(File(root, "playlist.m3u8"))
         } catch (e: Throwable) {
-            root.deleteRecursively()
+            staging.deleteRecursively()
             throw e
         }
+    }
+
+    /** Put a finished [staging] package in [root]'s place without losing the old one on failure. */
+    private fun commit(staging: File, root: File) {
+        val backup = File(root.parentFile, "${root.name}.old")
+        backup.deleteRecursively()
+        if (root.exists() && !root.renameTo(backup)) {
+            error("Could not replace the offline HLS package")
+        }
+        if (!staging.renameTo(root)) {
+            backup.renameTo(root)
+            error("Could not finish the offline HLS package")
+        }
+        backup.deleteRecursively()
     }
 }

@@ -3392,6 +3392,7 @@ private fun BitChordApp(
                                     viewType = folderViewTypeOf(page.browseId),
                                     collections = downloadCollections,
                                     selectable = isDownloads || isCache,
+                                    canUpgradeQuality = isDownloads,
                                     onOpenGroup = viewModel::openLocalGroup,
                                     onGroupLongPress = { group ->
                                         openBrowseMenu(

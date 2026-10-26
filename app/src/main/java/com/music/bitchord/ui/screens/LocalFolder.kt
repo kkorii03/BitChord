@@ -32,8 +32,10 @@ import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,6 +80,7 @@ import com.music.bitchord.data.settings.LocalMusicSort
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.DownloadedCollection
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.HqBatch
 import com.music.bitchord.ui.components.CoverPlaceholder
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
@@ -124,6 +127,11 @@ class LocalFolder(
      * [onUpload] to act on, and the row's ⋮ carries the actions sheet instead.
      */
     val selectable: Boolean = false,
+    /**
+     * Downloads only: the selection bar offers "download again in higher
+     * quality", which runs through the same batch as the header button.
+     */
+    val canUpgradeQuality: Boolean = false,
     val onOpenGroup: (LocalGroup) -> Unit,
     /** An album or artist held — its menu, with the rows it covers in hand. */
     val onGroupLongPress: (LocalGroup) -> Unit,
@@ -401,6 +409,145 @@ internal fun MvSoundSuspectBanner(palette: ArtworkPalette) {
             style = MaterialTheme.typography.bodyMedium,
         )
     }
+}
+
+/**
+ * The Downloads page's bulk upgrade: count what can improve, ask once, then
+ * feed the ordinary download queue one track at a time.
+ *
+ * The counts come from [HqBatch.plan], which reads the same verified-tier
+ * record and source list the per-track ⋯ row uses, so the two cannot disagree
+ * about what "higher quality" means.
+ */
+@Composable
+internal fun HqBatchButton(songs: List<Song>, palette: ArtworkPalette) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state by HqBatch.state.collectAsStateWithLifecycle()
+    var plan by remember { mutableStateOf<HqBatch.Plan?>(null) }
+    val active = state.active
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER)
+            .padding(bottom = 14.dp)
+            .clip(shape)
+            .background(palette.accent.copy(alpha = 0.14f))
+            .clickable(enabled = !state.running) {
+                if (active) {
+                    scope.launch { HqBatch.resume(context) }
+                } else {
+                    plan = HqBatch.plan(context, songs)
+                }
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (active) {
+            CircularProgressIndicator(
+                progress = {
+                    if (state.total > 0) state.completed.toFloat() / state.total else 0f
+                },
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = palette.accent,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.HighQuality,
+                contentDescription = null,
+                tint = palette.accent,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = when {
+                    state.running -> stringResource(R.string.hq_batch_progress_title)
+                    state.waitingForNetwork -> stringResource(R.string.hq_batch_waiting_network)
+                    active -> stringResource(R.string.hq_batch_waiting)
+                    else -> stringResource(R.string.hq_batch_button)
+                },
+                color = palette.onBackground,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (active) {
+                Text(
+                    text = stringResource(R.string.hq_batch_progress, state.completed, state.total),
+                    color = palette.onBackgroundVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+        if (active) {
+            TextButton(onClick = { HqBatch.cancel(context) }) {
+                Text(stringResource(R.string.cancel), color = palette.accent)
+            }
+        }
+    }
+    plan?.let { pending ->
+        HqBatchDialog(
+            plan = pending,
+            onDismiss = { plan = null },
+            onConfirm = {
+                HqBatch.start(context, pending)
+                plan = null
+            },
+        )
+    }
+}
+
+/** The one confirmation the batch asks for, shared by the header and the selection bar. */
+@Composable
+internal fun HqBatchDialog(
+    plan: HqBatch.Plan,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.HighQuality, contentDescription = null) },
+        title = { Text(stringResource(R.string.hq_batch_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(
+                        R.string.hq_batch_summary,
+                        plan.candidates.size,
+                        plan.alreadyBest,
+                        plan.none,
+                    ),
+                )
+                Text(
+                    text = stringResource(R.string.hq_batch_summary_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (plan.candidates.isEmpty() && plan.none > 0) {
+                    Text(
+                        text = stringResource(R.string.hq_batch_no_source),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = plan.candidates.isNotEmpty(),
+            ) {
+                Text(stringResource(R.string.hq_batch_start))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
 }
 
 /**
@@ -757,6 +904,8 @@ internal fun LocalFolderSelectionBar(
     val count = state.selectedIds.size
     val allSelected = songs.isNotEmpty() && songs.all { it.videoId in state.selectedIds }
     fun chosen() = songs.filter { it.videoId in state.selectedIds }.also { state.clear() }
+    val context = LocalContext.current
+    var upgradePlan by remember { mutableStateOf<HqBatch.Plan?>(null) }
     val shape = RoundedCornerShape(14.dp)
     val dark = isSystemInDarkTheme()
     Row(
@@ -809,6 +958,23 @@ internal fun LocalFolderSelectionBar(
                 onClick = { remove(chosen()) },
             )
         }
+        if (folder.canUpgradeQuality) {
+            SelectionAction(
+                icon = Icons.Rounded.HighQuality,
+                label = stringResource(R.string.hq_batch_selection),
+                color = MaterialTheme.colorScheme.primary,
+                enabled = count > 0,
+                onClick = {
+                    // Keep the selection until the dialog is answered: clearing
+                    // it here would remove this bar (and the dialog inside it)
+                    // from the composition before the user could confirm.
+                    upgradePlan = HqBatch.plan(
+                        context,
+                        songs.filter { it.videoId in state.selectedIds },
+                    )
+                },
+            )
+        }
         folder.onDelete?.let { delete ->
             SelectionAction(
                 icon = Icons.Rounded.Delete,
@@ -819,6 +985,17 @@ internal fun LocalFolderSelectionBar(
             )
         }
         TextButton(onClick = state::clear) { Text(stringResource(R.string.cancel)) }
+    }
+    upgradePlan?.let { pending ->
+        HqBatchDialog(
+            plan = pending,
+            onDismiss = { upgradePlan = null },
+            onConfirm = {
+                HqBatch.start(context, pending)
+                upgradePlan = null
+                state.clear()
+            },
+        )
     }
 }
 

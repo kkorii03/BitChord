@@ -907,6 +907,18 @@ object SourceResolver {
         SourceRegistry.activeForPlayback().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
 
     /**
+     * The download-path counterpart of [canSubstituteForYouTube].
+     *
+     * Downloads deliberately ignore the connection's streaming ceiling — see
+     * [forDownload] — so a source that is above YouTube for a file may still be
+     * below the current playback ceiling. Asking this keeps the bulk
+     * high-quality dialog from counting a track as "none" for a setting that
+     * has nothing to do with downloads.
+     */
+    fun canSubstituteForDownload(): Boolean =
+        SourceRegistry.activeForDownload().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
+
+    /**
      * The sources ranked above [configId], in order.
      *
      * A config that isn't in [active] ranks last: it is disabled or incomplete,

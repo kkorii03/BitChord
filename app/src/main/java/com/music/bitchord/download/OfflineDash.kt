@@ -78,8 +78,17 @@ internal object OfflineDash {
         // and is left alone on purpose: it is a path already stored in the
         // download records of every device that has one.
         val root = File(File(context.filesDir, "offline-hls"), id.hashCode().toUInt().toString(16))
-        root.deleteRecursively()
-        if (!root.mkdirs()) error("Could not create offline package")
+        // Recover a package left as `.old` by a process death between the two
+        // renames of a previous swap.
+        val backup = File(root.parentFile, "${root.name}.old")
+        if (!root.exists() && backup.exists() && !backup.renameTo(root)) {
+            error("Could not restore the offline package")
+        }
+        // As with HLS: write beside the final package and swap only once it is
+        // whole, so a failed replacement keeps the old file playable.
+        val staging = File(root.parentFile, "${root.name}.new")
+        staging.deleteRecursively()
+        if (!staging.mkdirs()) error("Could not create offline package")
         try {
             fun request(target: String) = Request.Builder().url(target).apply {
                 headers.forEach { (name, value) -> header(name, value) }
@@ -101,19 +110,46 @@ internal object OfflineDash {
                 Http.client.newCall(request(target)).execute().use { response ->
                     if (!response.isSuccessful) error("DASH segment failed (HTTP ${response.code})")
                     val body = response.body?.byteStream() ?: error("Empty DASH segment")
-                    body.use { input -> File(root, localName(index)).outputStream().use(input::copyTo) }
+                    body.use { input -> File(staging, localName(index)).outputStream().use(input::copyTo) }
                 }
                 onProgress((index + 1).toLong(), remotes.size.toLong())
             }
 
-            File(root, "playlist.m3u8").writeText(playlist(plan))
-            lyrics?.let { File(root, "lyrics.lrc").writeText(it.enhanced ?: it.plain.orEmpty()) }
-            artwork?.let { File(root, "cover.${if (it.mime.contains("png")) "png" else "jpg"}").writeBytes(it.bytes) }
+            File(staging, "playlist.m3u8").writeText(playlist(plan))
+            if (lyrics != null) {
+                File(staging, "lyrics.lrc").writeText(lyrics.enhanced ?: lyrics.plain.orEmpty())
+            } else {
+                File(root, "lyrics.lrc")
+                    .takeIf { it.isFile }
+                    ?.copyTo(File(staging, "lyrics.lrc"), overwrite = true)
+            }
+            if (artwork != null) {
+                File(staging, "cover.${if (artwork.mime.contains("png")) "png" else "jpg"}").writeBytes(artwork.bytes)
+            } else {
+                root.listFiles()
+                    ?.firstOrNull { it.name.startsWith("cover.") }
+                    ?.copyTo(File(staging, it.name), overwrite = true)
+            }
+            commit(staging, root)
             Uri.fromFile(File(root, "playlist.m3u8"))
         } catch (e: Throwable) {
-            root.deleteRecursively()
+            staging.deleteRecursively()
             throw e
         }
+    }
+
+    /** Put a finished [staging] package in [root]'s place without losing the old one on failure. */
+    private fun commit(staging: File, root: File) {
+        val backup = File(root.parentFile, "${root.name}.old")
+        backup.deleteRecursively()
+        if (root.exists() && !root.renameTo(backup)) {
+            error("Could not replace the offline package")
+        }
+        if (!staging.renameTo(root)) {
+            backup.renameTo(root)
+            error("Could not finish the offline package")
+        }
+        backup.deleteRecursively()
     }
 
     private fun localName(index: Int) = "segment-${index.toString().padStart(5, '0')}.m4s"

@@ -643,6 +643,12 @@ fun DetailScreen(
             }
 
             if (page.browseId == "local:downloads") {
+                item(key = "hq-batch") {
+                    HqBatchButton(songs = songs, palette = palette)
+                }
+            }
+
+            if (page.browseId == "local:downloads") {
                 item(key = "mv-sound-suspects") {
                     MvSoundSuspectBanner(palette)
                 }

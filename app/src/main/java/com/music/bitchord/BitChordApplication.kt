@@ -221,6 +221,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
+        // A high-quality batch is a list of files still to replace; it survives
+        // process death and is picked up again on the next network or launch.
+        com.music.bitchord.download.HqBatch.init(this)
         // A verdict remembered by an earlier launch is repaired in the
         // background without waiting for the Downloads page or another play.
         com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)

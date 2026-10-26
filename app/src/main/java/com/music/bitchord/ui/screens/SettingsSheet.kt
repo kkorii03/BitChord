@@ -286,6 +286,7 @@ fun SettingsScreen(
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
+    val preferHighQualityDownloads by AppSettings.preferHighQualityDownloads.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val autoRedownloadMvSound by AppSettings.autoRedownloadMvSound.collectAsStateWithLifecycle()
     val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
@@ -609,6 +610,15 @@ fun SettingsScreen(
             // Reads as part of Download quality above it, not as a setting
             // of its own — same treatment as Play animated cover over
             // cellular gets under Animated cover art.
+            val preferHighQualityTitle = stringResource(R.string.prefer_high_quality_downloads)
+            row(preferHighQualityTitle, "high quality", "lossless", "offline", divided = false) {
+                SettingsSubRow(
+                    title = preferHighQualityTitle,
+                    checked = preferHighQualityDownloads,
+                    onCheckedChange = AppSettings::setPreferHighQualityDownloads,
+                    subtitle = stringResource(R.string.prefer_high_quality_downloads_subtitle),
+                )
+            }
             val downloadWifiOnlyTitle = stringResource(R.string.download_wifi_only)
             row(downloadWifiOnlyTitle, "wi-fi", "cellular", divided = false) {
                 SettingsSubRow(

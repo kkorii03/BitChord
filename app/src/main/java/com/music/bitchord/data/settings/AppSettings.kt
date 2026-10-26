@@ -240,6 +240,16 @@ object AppSettings {
     val downloadQuality = MutableStateFlow(DownloadQuality.LOSSLESS)
 
     /**
+     * Ask for the best available rendition for every *new* download, even when
+     * the standing [downloadQuality] is a lower rung.
+     *
+     * Off by default. The Downloads page's "download everything again in higher
+     * quality" button is the bulk counterpart for files already on the device;
+     * this switch only decides what a fresh download asks for.
+     */
+    val preferHighQualityDownloads = MutableStateFlow(false)
+
+    /**
      * Refuse to start a download while the connection charges for data.
      *
      * Metered rather than literally-Wi-Fi, the same test [effectiveAudioQuality]
@@ -1131,6 +1141,7 @@ object AppSettings {
         ).coerceIn(MIN_UPGRADE_LENGTH_SLACK_SECONDS, MAX_UPGRADE_LENGTH_SLACK_SECONDS)
         migrateDownloadQuality()
         downloadQuality.value = readDownloadQuality()
+        preferHighQualityDownloads.value = prefs.getBoolean(KEY_PREFER_HIGH_QUALITY_DOWNLOADS, false)
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
@@ -1571,6 +1582,11 @@ object AppSettings {
     fun setDownloadQuality(value: DownloadQuality) {
         downloadQuality.value = value
         prefs.edit().putString(KEY_QUALITY_DOWNLOAD, value.name).apply()
+    }
+
+    fun setPreferHighQualityDownloads(value: Boolean) {
+        preferHighQualityDownloads.value = value
+        prefs.edit().putBoolean(KEY_PREFER_HIGH_QUALITY_DOWNLOADS, value).apply()
     }
 
     fun setWifiOnlyDownloads(value: Boolean) {
@@ -2801,6 +2817,7 @@ object AppSettings {
     private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
     private const val KEY_UPGRADE_LENGTH_SLACK_SECONDS = "upgrade_length_slack_seconds"
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
+    private const val KEY_PREFER_HIGH_QUALITY_DOWNLOADS = "prefer_high_quality_downloads"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_AUTO_REDOWNLOAD_MV_SOUND = "auto_redownload_mv_sound"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"

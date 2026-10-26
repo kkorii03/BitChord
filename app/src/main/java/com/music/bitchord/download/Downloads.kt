@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import com.music.bitchord.R
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
 import com.music.bitchord.data.YtMusicRepository
@@ -262,7 +263,7 @@ object Downloads {
         from: String? = null,
         allowMetered: Boolean = false,
         quality: DownloadQuality? = null,
-    ) {
+    ): Boolean {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
         // rule has nothing to say about it.
@@ -276,10 +277,10 @@ object Downloads {
                 DownloadSession.queued(song, from)
                 fail(id, WIFI_ONLY_REFUSAL)
             }
-            return
+            return false
         }
         synchronized(lock) {
-            if (id in pending || id in running) return
+            if (id in pending || id in running) return false
             pending[id] = song
             if (quality != null) qualityOverrides[id] = quality
         }
@@ -299,7 +300,9 @@ object Downloads {
                 qualityOverrides.remove(id)
             }
             fail(id, "지금은 다운로드를 시작할 수 없습니다")
+            return false
         }
+        return true
     }
 
     /**
@@ -338,6 +341,7 @@ object Downloads {
      * told to run is no longer wanted, and stops it on arrival.
      */
     fun cancel(videoId: String) {
+        HqBatch.onCancelled(videoId)
         val job = synchronized(lock) {
             pending.remove(videoId)
             if (videoId !in running) return@synchronized null
@@ -587,14 +591,46 @@ object Downloads {
 
     /** The file's own length from its container metadata, or null if it cannot be read. */
     private fun localDurationMs(context: Context, uriString: String): Long? = runCatching {
+        val uri = uriString.toUri()
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(context, uriString.toUri())
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            var duration: String? = null
+            if (uri.scheme == "file") {
+                val path = uri.path ?: return@runCatching null
+                java.io.FileInputStream(File(path)).use { input ->
+                    retriever.setDataSource(input.fd)
+                    duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                }
+            } else {
+                context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                    retriever.setDataSource(descriptor.fileDescriptor)
+                    duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                } ?: return@runCatching null
+            }
+            duration?.toLongOrNull()
         } finally {
             retriever.release()
         }
     }.getOrNull()?.takeIf { it > 0L }
+
+    /**
+     * Why [uri] may not replace the file already saved for [track], or null
+     * when it may.
+     *
+     * A pending media-store row and a legacy `.part` file are both read
+     * through their descriptor, which is the only way to open either without
+     * relying on the temporary name's extension.
+     */
+    private fun replacementProblem(context: Context, track: Song, uri: Uri): String? {
+        val actual = localDurationMs(context, uri.toString())
+        val expected = catalogDurationMs(track.videoId, track.durationMillis())
+        return when (HqBatchPolicy.replacement(actual, expected)) {
+            HqBatchPolicy.Replacement.ACCEPT -> null
+            HqBatchPolicy.Replacement.UNREADABLE -> context.getString(R.string.download_verify_unreadable)
+            HqBatchPolicy.Replacement.TOO_LONG -> context.getString(R.string.download_verify_too_long)
+            HqBatchPolicy.Replacement.TOO_SHORT -> context.getString(R.string.download_verify_too_short)
+        }
+    }
 
     /** The downloaded rows still on disk that are remembered as the video's sound. */
     suspend fun suspectedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
@@ -627,7 +663,11 @@ object Downloads {
      */
     suspend fun redownloadSuspected(context: Context): Int {
         val songs = suspectedSongs(context)
-        songs.forEach { enqueue(context, it, allowMetered = true) }
+        // A repair is a deliberate replacement: pin the standing rung so the
+        // "already have a file under this name" shortcut cannot adopt the very
+        // file the verdict says is wrong.
+        val quality = AppSettings.downloadQuality.value
+        songs.forEach { enqueue(context, it, allowMetered = true, quality = quality) }
         return songs.size
     }
 
@@ -1268,6 +1308,7 @@ object Downloads {
      */
     internal fun onStopped() {
         synchronized(lock) { running.clear() }
+        HqBatch.onServiceStopped()
     }
 
     /**
@@ -1316,7 +1357,12 @@ object Downloads {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "download failed for $id: ${e.message}", e)
-            fail(id, e.friendly())
+            if (e.isOutOfSpace()) {
+                HqBatch.onOutOfSpace(id)
+                fail(id, context.getString(R.string.download_out_of_space))
+            } else {
+                fail(id, e.friendly())
+            }
         }
     }
 
@@ -1363,8 +1409,26 @@ object Downloads {
         // would let a change made mid-download splice two renditions into
         // one file. A replacement asked for at a specific rung keeps that
         // rung instead of the standing setting.
-        val quality = synchronized(lock) { qualityOverrides[song.videoId] }
-            ?: AppSettings.downloadQuality.value
+        //
+        // A deliberate replacement, unlike a fresh download, has to bypass
+        // both "already have a file under this name" shortcuts below, or an
+        // upgrade from one FLAC to a better one would adopt the old file and
+        // report success without fetching anything.
+        val qualityOverride = synchronized(lock) { qualityOverrides[song.videoId] }
+        val deliberate = qualityOverride != null
+        val quality = qualityOverride
+            ?: if (AppSettings.preferHighQualityDownloads.value) {
+                DownloadQuality.LOSSLESS
+            } else {
+                AppSettings.downloadQuality.value
+            }
+        // A file already on record is being replaced, even when the caller did
+        // not ask for a specific rung (the MV-sound repair is one such caller).
+        // The new bytes still have to prove themselves before they take over.
+        open()
+        val replacing = deliberate || setOf(song.videoId, track.videoId).any { id ->
+            _saved.value[id] != null || _savedMetadata.value[id]?.uri != null
+        }
 
         // Asked before the lookup rather than after it, unlike the check on the
         // route's own filename below. A file already sitting in Music under a
@@ -1375,7 +1439,7 @@ object Downloads {
         // be lossless are worth guessing at: an `.m4a` may be this app's ALAC
         // or its AAC, and adopting the wrong one would quietly answer a request
         // for lossless with a transcode.
-        if (quality.keepsLossless) {
+        if (quality.keepsLossless && !deliberate) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
                 DownloadStore.existing(context, DownloadStore.fileNameFor(track, extension))
             }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
@@ -1388,7 +1452,14 @@ object Downloads {
         if (fromCache.remove(song.videoId) || fromCache.remove(track.videoId)) {
             AudioCache.completeCopyOf(track.videoId)?.let(::cachedRoute)?.let { route ->
                 Log.d(TAG, "downloading ${track.videoId} from the song cache as .${route.extension}")
-                return@withContext Prepared(song.videoId, track, route = route, alreadyAt = null)
+                return@withContext Prepared(
+                    song.videoId,
+                    track,
+                    route = route,
+                    alreadyAt = null,
+                    replacing = replacing,
+                    deliberate = deliberate,
+                )
             }
         }
         val route = try {
@@ -1403,7 +1474,7 @@ object Downloads {
                 ?: throw e
         }
         Log.d(TAG, "downloading ${track.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
-        Prepared(song.videoId, track, route = route, alreadyAt = null)
+        Prepared(song.videoId, track, route = route, alreadyAt = null, replacing = replacing, deliberate = deliberate)
     }
 
     /**
@@ -1422,6 +1493,16 @@ object Downloads {
         val route: Route?,
         /** A file already in Music that is this download, if there is one. */
         val alreadyAt: Uri?,
+        /**
+         * A file is already on record, so the new bytes must prove themselves
+         * before they are allowed to take its place.
+         */
+        val replacing: Boolean = false,
+        /**
+         * The caller asked for a specific rung, so an existing file of the same
+         * name must not be adopted as the answer.
+         */
+        val deliberate: Boolean = false,
     )
 
     /**
@@ -1442,6 +1523,7 @@ object Downloads {
             TranslationAhead.downloaded(context, track, uri.toString())
             DownloadSession.done(id)
             clear(id)
+            HqBatch.onDone(id)
             return
         }
         val route = plan.route ?: error("다운로드할 항목이 없습니다")
@@ -1473,7 +1555,8 @@ object Downloads {
 
                 val name = DownloadStore.fileNameFor(track, route.extension)
                 val alreadyThere = DownloadStore.existing(context, name)
-                if (alreadyThere != null &&
+                if (!plan.deliberate &&
+                    alreadyThere != null &&
                     savedFileIsRecording(track.videoId, alreadyThere.toString())
                 ) {
                     Log.d(TAG, "$name is already in Music; adopting it")
@@ -1481,6 +1564,7 @@ object Downloads {
                     TranslationAhead.downloaded(context, track, alreadyThere.toString())
                     DownloadSession.done(id)
                     clear(id)
+                    HqBatch.onDone(id)
                     return@coroutineScope
                 }
                 if (alreadyThere != null) {
@@ -1522,6 +1606,7 @@ object Downloads {
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
                     clear(id)
+                    HqBatch.onDone(id)
                     Log.d(TAG, "saved offline ${if (manifest.dash) "DASH" else "HLS"} package for $name")
                     return@coroutineScope
                 }
@@ -1541,12 +1626,26 @@ object Downloads {
                 // concurrent album workers from exposing untagged tracks.
                 MediaTagger.embed(context, destination.tagUri, track, route.extension, words, cover)
                 val artworkUri = MediaTagger.persistArtwork(context, track.thumbnailUrl, cover)
+                // A replacement may only take the old file's place once the
+                // new one has proved it is the same recording: it has to open
+                // and its length has to agree with the catalogue. Everything
+                // before this point wrote to a `.part` file or a pending media
+                // store row, so a refusal leaves the old file untouched.
+                if (plan.replacing) {
+                    val reason = replacementProblem(context, track, destination.tagUri)
+                    if (reason != null) {
+                        destination.abort()
+                        pending = null
+                        throw IllegalStateException(reason)
+                    }
+                }
                 val savedUri = destination.commit()
                 pending = null
                 remember(song, track, savedUri, route.downloadFormat, artworkUri)
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
                 clear(id)
+                HqBatch.onDone(id)
                 Log.d(TAG, "saved $name")
             }
         } catch (e: Throwable) {
@@ -1764,12 +1863,41 @@ object Downloads {
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
     private fun clear(videoId: String) {
         _active.update { it - videoId }
+        forgetQualityOverride(videoId)
+    }
+
+    /**
+     * Drop a pinned replacement rung without touching the download state.
+     *
+     * A batch that stops before fetching a track (disk full, or the track no
+     * longer qualifies on resume) must not leave its rung behind: a later
+     * ordinary download of the same song would otherwise be treated as a
+     * deliberate replacement and skip the "already have this" checks.
+     */
+    internal fun forgetQualityOverride(videoId: String) {
         synchronized(lock) { qualityOverrides.remove(videoId) }
     }
 
     private fun fail(videoId: String, reason: String) {
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)
+        HqBatch.onFailed(videoId)
+    }
+
+    /**
+     * Whether [this] is the filesystem refusing more bytes.
+     *
+     * The message is checked through the cause chain because a writer can wrap
+     * the original `ENOSPC` in a `FileNotFoundException` or a plain `IOException`
+     * several frames deep, and a batch that kept trying every remaining track
+     * against a full disk would just fail them all.
+     */
+    private fun Throwable.isOutOfSpace(): Boolean = generateSequence(this) { it.cause }.any { cause ->
+        cause is java.io.IOException && cause.message?.let { message ->
+            message.contains("ENOSPC", ignoreCase = true) ||
+                message.contains("No space left", ignoreCase = true) ||
+                message.contains("not enough space", ignoreCase = true)
+        } == true
     }
 
     /**
