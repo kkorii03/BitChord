@@ -106,6 +106,20 @@ object DownloadedMvPolicy {
         soundSourceVideoId == rowVideoId
 
     /**
+     * Whether a repair actually fetched a different upload from the one it was
+     * asked to replace.
+     *
+     * A repair is queued under the song id, and when the catalogue has no song
+     * version the lookup falls back to that same id. That download is the same
+     * MV stream again: it must fail and leave the suspect in place, and a
+     * finished download must only clear the suspect when this is true.
+     */
+    fun repairFetchedSongVersion(askedVideoId: String, fetchedVideoId: String): Boolean =
+        askedVideoId.isNotBlank() &&
+            fetchedVideoId.isNotBlank() &&
+            fetchedVideoId != askedVideoId
+
+    /**
      * Whether the file is the music video's sound.
      *
      * A cover is never an MV, whatever its upload type says. Otherwise only

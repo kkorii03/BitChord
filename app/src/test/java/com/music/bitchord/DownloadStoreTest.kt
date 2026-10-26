@@ -137,6 +137,42 @@ class DownloadStoreTest {
         assertEquals("xyz789.m4a", DownloadStore.fileNameFor(song("", "", "xyz789"), "m4a"))
     }
 
+    @Test
+    fun `a different song with the same name gets its own file name`() {
+        val first = song("Song", "Artist", "videoA")
+        val second = song("Song", "Artist", "videoB")
+
+        assertEquals("Artist - Song.flac", DownloadStore.fileNameFor(first, "flac"))
+        assertEquals(
+            "Artist - Song (videoB).flac",
+            DownloadStore.downloadFileName(
+                song = second,
+                extension = "flac",
+                nameTaken = true,
+                existingIsRecording = false,
+                replacing = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `an existing recording or a deliberate replacement keeps the plain name`() {
+        val track = song("Song", "Artist", "abc123")
+
+        assertEquals(
+            "Artist - Song.flac",
+            DownloadStore.downloadFileName(track, "flac", nameTaken = true, existingIsRecording = true, replacing = false),
+        )
+        assertEquals(
+            "Artist - Song.flac",
+            DownloadStore.downloadFileName(track, "flac", nameTaken = true, existingIsRecording = false, replacing = true),
+        )
+        assertEquals(
+            "Artist - Song.flac",
+            DownloadStore.downloadFileName(track, "flac", nameTaken = false, existingIsRecording = false, replacing = false),
+        )
+    }
+
     // ---- What quality is kept ----------------------------------------------
 
     /**

@@ -216,4 +216,17 @@ class DownloadHealthPolicyTest {
         assertEquals(DownloadHealthPolicy.Verdict.WRONG_RECORDING, decision.verdict)
         assertEquals(DownloadHealthPolicy.Action.STREAM, decision.action)
     }
+
+    @Test
+    fun `a repair request waits out its cooldown`() {
+        val now = 1_000_000_000L
+        assertTrue(DownloadHealthPolicy.mayRequestRepair(lastRequestMs = null, nowMs = now))
+        assertFalse(DownloadHealthPolicy.mayRequestRepair(lastRequestMs = now - 1_000L, nowMs = now))
+        assertTrue(
+            DownloadHealthPolicy.mayRequestRepair(
+                lastRequestMs = now - DownloadHealthPolicy.REPAIR_COOLDOWN_MS,
+                nowMs = now,
+            ),
+        )
+    }
 }

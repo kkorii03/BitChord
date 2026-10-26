@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.AutomaticRetryPolicy
 import com.music.bitchord.data.net.HqAutoDownloadPolicy
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.LikeStatus
@@ -81,9 +82,18 @@ object HqLibraryUpgrade {
     private const val KEY_TOTAL = "total"
     private const val KEY_ACTIVE = "active"
     private const val KEY_MANUAL = "manual"
+    private const val KEY_FAILURES = "failures"
 
     /** How much history is read when ranking prefetch targets. */
     private const val HISTORY_LIMIT = 1_000
+
+    /**
+     * Short server-requested retries allowed before a target is treated as a
+     * failed replacement. Past this the long cooldown in
+     * [AutomaticRetryPolicy] owns it, so a host that never recovers cannot keep
+     * the pass retrying on every app start.
+     */
+    private const val MAX_TRANSIENT_ATTEMPTS = 3
 
     /**
      * Playback asks on every track. The queue is unique-work with KEEP, so a
@@ -111,6 +121,26 @@ object HqLibraryUpgrade {
         /** The earliest this target may be asked for again, on the wall clock. */
         val notBeforeMs: Long = 0L,
     )
+
+    /** A target that failed for a reason a retry is unlikely to change. */
+    private data class Failure(val attempts: Int, val lastFailureMs: Long)
+
+    private val failures = HashMap<String, Failure>()
+
+    private fun failureKey(target: HqLibraryTarget): String =
+        failureKey(target.videoId, target.sourceConfigId, target.trackId)
+
+    private fun failureKey(videoId: String, sourceConfigId: String, trackId: String): String =
+        "$videoId\u0002$sourceConfigId\u0002$trackId"
+
+    private fun mayRetry(failure: Failure?, nowMs: Long): Boolean =
+        failure == null ||
+            AutomaticRetryPolicy.mayRetry(
+                attempts = failure.attempts,
+                lastFailureMs = failure.lastFailureMs,
+                nowMs = nowMs,
+                manual = manualPass,
+            )
 
     private val lock = Any()
     private val _progress = MutableStateFlow(Progress())
@@ -159,7 +189,36 @@ object HqLibraryUpgrade {
         val now = System.currentTimeMillis()
         if (now - lastScheduleRequestMs < SCHEDULE_DEBOUNCE_MS) return
         lastScheduleRequestMs = now
-        enqueue(context, ExistingWorkPolicy.KEEP)
+        if (failures.isEmpty()) {
+            enqueue(context, ExistingWorkPolicy.KEEP)
+            return
+        }
+        // Only after a failure does answering this need the verdict store,
+        // which can be a large decode. Keep it off the main thread; the common
+        // path above stays a cheap schedule.
+        manualScope.launch {
+            if (hasRetryableWork(context, now)) enqueue(context, ExistingWorkPolicy.KEEP)
+        }
+    }
+
+    /**
+     * Whether there is a target that has not failed out of the automatic pass.
+     *
+     * Without this the worker is queued on every app start and playback even
+     * when every verified pair is parked, so the same search and download is
+     * restarted forever. A manual pass ignores the park by design.
+     */
+    private fun hasRetryableWork(context: Context, nowMs: Long): Boolean {
+        val entries = HqVerificationStore.entries(context)
+        synchronized(lock) {
+            if (activeVideoId != null || plan.isNotEmpty()) return true
+            return entries.any { entry ->
+                mayRetry(
+                    failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
+                    nowMs,
+                )
+            }
+        }
     }
 
     /** Playback paused or its buffer went idle: this is the event the pass waits for. */
@@ -568,15 +627,19 @@ object HqLibraryUpgrade {
         ensureLoaded(context)
         var rebuild = false
         var retryWaitMs: Long? = null
+        var recordedFailure: Failure? = null
         val remaining = synchronized(lock) {
             if (activeVideoId != videoId) return
             val index = plan.indexOfFirst { it.target.videoId == videoId }
-            if (!success && failure?.transient == true && index >= 0) {
+            val pending = if (index >= 0) plan[index] else null
+            val key = pending?.let { failureKey(it.target) }
+            if (!success && failure?.transient == true && pending != null &&
+                pending.attempt + 1 < MAX_TRANSIENT_ATTEMPTS
+            ) {
                 // Keep the target where it is. A 429 or a reset stream is the
                 // server asking for time, not the file being wrong, so the
                 // pass must not advance to the next song and leave this one
                 // counted as done.
-                val pending = plan[index]
                 val wait = failure.retryAfterMs
                     ?: HqAutoDownloadPolicy.retryDelayMs(
                         retryAfterHeader = failure.retryAfterHeader,
@@ -594,6 +657,15 @@ object HqLibraryUpgrade {
                 persistLocked()
                 publishLocked()
                 return@synchronized plan
+            }
+            if (key != null) {
+                if (success) {
+                    failures.remove(key)
+                } else {
+                    val previous = failures[key]?.attempts ?: 0
+                    recordedFailure = Failure(previous + 1, System.currentTimeMillis())
+                    failures[key] = recordedFailure!!
+                }
             }
             val left = plan.filterNot { it.target.videoId == videoId }
             plan = left
@@ -624,7 +696,19 @@ object HqLibraryUpgrade {
             return
         }
         if (!success) {
-            TrackLog.w(TAG, "hq-library: $videoId did not land; it will be retried next time")
+            val failureState = recordedFailure
+            if (failureState != null && failureState.attempts >= AutomaticRetryPolicy.MAX_FAILURES) {
+                TrackLog.w(
+                    TAG,
+                    "hq-library: $videoId did not land; automatic retries exhausted, " +
+                        "waiting for a manual pass",
+                )
+            } else {
+                TrackLog.w(
+                    TAG,
+                    "hq-library: $videoId did not land; it will be retried after the cooldown",
+                )
+            }
         }
         if (runAllowed() && (rebuild || (scheduleNext && remaining.isNotEmpty()))) {
             enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
@@ -662,25 +746,35 @@ object HqLibraryUpgrade {
         // song: a higher-tier piano cover must not hide a lower-tier verified
         // entry before [HqLibraryPolicy] has had the chance to drop the cover
         // and group the rest by song.
-        val entries = verified.mapNotNull { entry ->
-            val meta = downloaded[entry.youtubeId]
-            val recentRow = recent[entry.youtubeId]
-            HqLibraryEntry(
-                videoId = entry.youtubeId,
-                currentTier = meta?.let {
-                    DownloadedQuality.tierOf(it.downloadFormat, it.hqTier)
-                },
-                verifiedTier = entry.verified.tier,
-                sourceConfigId = entry.sourceConfigId,
-                trackId = entry.trackId,
-                plays = recentRow?.plays ?: 0,
-                liked = entry.youtubeId in liked,
-                songTitle = meta?.title ?: recentRow?.title.orEmpty(),
-                songArtist = meta?.artist ?: recentRow?.artist.orEmpty(),
-                sourceTitle = entry.verified.sourceTitle,
-                sourceArtist = entry.verified.sourceArtist,
-            )
-        }
+        val now = System.currentTimeMillis()
+        val entries = verified
+            .filter { entry ->
+                synchronized(lock) {
+                    mayRetry(
+                        failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
+                        now,
+                    )
+                }
+            }
+            .mapNotNull { entry ->
+                val meta = downloaded[entry.youtubeId]
+                val recentRow = recent[entry.youtubeId]
+                HqLibraryEntry(
+                    videoId = entry.youtubeId,
+                    currentTier = meta?.let {
+                        DownloadedQuality.tierOf(it.downloadFormat, it.hqTier)
+                    },
+                    verifiedTier = entry.verified.tier,
+                    sourceConfigId = entry.sourceConfigId,
+                    trackId = entry.trackId,
+                    plays = recentRow?.plays ?: 0,
+                    liked = entry.youtubeId in liked,
+                    songTitle = meta?.title ?: recentRow?.title.orEmpty(),
+                    songArtist = meta?.artist ?: recentRow?.artist.orEmpty(),
+                    sourceTitle = entry.verified.sourceTitle,
+                    sourceArtist = entry.verified.sourceArtist,
+                )
+            }
 
         val selected = HqLibraryPolicy.select(
             entries = entries,
@@ -761,6 +855,17 @@ object HqLibraryUpgrade {
             total = prefs.getInt(KEY_TOTAL, 0)
             activeVideoId = prefs.getString(KEY_ACTIVE, null)?.takeIf { it.isNotBlank() }
             manualPass = prefs.getBoolean(KEY_MANUAL, false)
+            failures.clear()
+            prefs.getString(KEY_FAILURES, null).orEmpty()
+                .lineSequence()
+                .mapNotNull { line ->
+                    val parts = line.split('\t')
+                    if (parts.size < 3) return@mapNotNull null
+                    val attempts = parts[1].toIntOrNull()?.coerceAtLeast(0) ?: return@mapNotNull null
+                    val lastFailureMs = parts[2].toLongOrNull()?.coerceAtLeast(0L) ?: return@mapNotNull null
+                    parts[0] to Failure(attempts, lastFailureMs)
+                }
+                .forEach { (key, failure) -> failures[key] = failure }
             if (plan.isEmpty() && activeVideoId != null) activeVideoId = null
             if (plan.isEmpty()) {
                 done = 0
@@ -780,6 +885,12 @@ object HqLibraryUpgrade {
             .putInt(KEY_TOTAL, total)
             .putString(KEY_ACTIVE, activeVideoId)
             .putBoolean(KEY_MANUAL, manualPass)
+            .putString(
+                KEY_FAILURES,
+                failures.entries.joinToString("\n") { (key, failure) ->
+                    "$key\t${failure.attempts}\t${failure.lastFailureMs}"
+                },
+            )
             .apply()
     }
 
