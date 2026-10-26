@@ -1502,7 +1502,7 @@ class CrossfadeController(
         // Carried across so the incoming track inherits the listener's own
         // settings rather than whatever the standby was left on last time.
         into.skipSilenceEnabled = out.skipSilenceEnabled
-        into.repeatMode = out.repeatMode
+        into.repeatMode = AppSettings.repeatMode.value
         into.shuffleModeEnabled = out.shuffleModeEnabled
         // Stacks on top of the listener's speed control rather than replacing
         // it, so a beatmatched transition and "play everything at 1.25x" don't

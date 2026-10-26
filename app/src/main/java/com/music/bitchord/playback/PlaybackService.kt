@@ -107,6 +107,7 @@ import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.autoplayTopUpNeeded
+import com.music.bitchord.data.net.staleRepeatNeedsAutoplay
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.Innertube
@@ -1050,6 +1051,7 @@ class PlaybackService : MediaLibraryService() {
     private var stationActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
     private var autoplaySeed: String? = null
+    private var autoplaySkipLogged: String? = null
 
     /** Index in the live queue represented by entry zero of the persisted window. */
     private var persistedQueueStart = 0
@@ -1401,6 +1403,23 @@ class PlaybackService : MediaLibraryService() {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            if (staleRepeatNeedsAutoplay(
+                    transitionReasonRepeat = reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+                    currentIndex = exoPlayer.currentMediaItemIndex,
+                    itemCount = exoPlayer.mediaItemCount,
+                    playerRepeatMode = exoPlayer.repeatMode,
+                    settingsRepeatMode = AppSettings.repeatMode.value,
+                )
+            ) {
+                TrackLog.w(
+                    "BitChord",
+                    "mode: repeat resync player=${DiagnosticsState.repeatLabel(exoPlayer.repeatMode)} " +
+                        "settings=${DiagnosticsState.repeatLabel(AppSettings.repeatMode.value)} " +
+                        "idx=${exoPlayer.currentMediaItemIndex}/${exoPlayer.mediaItemCount} reason=REPEAT",
+                    about = mediaItem?.mediaId,
+                )
+                exoPlayer.repeatMode = AppSettings.repeatMode.value
+            }
             loadAutoplayForCurrentTrack()
             // Lyrics are loaded by [onTrackBecameCurrent], which every way a
             // track becomes current goes through. Asking again here started a
@@ -2616,7 +2635,7 @@ class PlaybackService : MediaLibraryService() {
             standbyPlayer.stop()
             standbyPlayer.clearMediaItems()
             standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
-            standbyPlayer.repeatMode = activePlayer.repeatMode
+            standbyPlayer.repeatMode = AppSettings.repeatMode.value
             standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
             // The listener's speed, not the active player's: straight after an
             // Advanced Automix blend the active player is still easing off its
@@ -2941,6 +2960,8 @@ class PlaybackService : MediaLibraryService() {
         outgoing.removeListener(playbackListener)
         outgoing.removeAnalyticsListener(formatListener)
 
+        incoming.repeatMode = AppSettings.repeatMode.value
+        incoming.shuffleModeEnabled = outgoing.shuffleModeEnabled
         player = incoming
         spare = outgoing
 
@@ -3506,6 +3527,13 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private fun logAutoplaySkip(videoId: String?, reason: String) {
+        val key = "${videoId.orEmpty()}:$reason"
+        if (autoplaySkipLogged == key) return
+        autoplaySkipLogged = key
+        TrackLog.i("BitChord", "autoplay: skip reason=$reason", about = videoId)
+    }
+
     /**
      * Tops the queue back up to [MAX_QUEUED_AUTOPLAY] AutoPlay-suggested tracks
      * ahead of whatever is currently playing. Run on every track change rather
@@ -3514,9 +3542,15 @@ class PlaybackService : MediaLibraryService() {
      * everything arriving in one burst at the end of the queue.
      */
     private fun loadAutoplayForCurrentTrack() {
-        val exoPlayer = player ?: return
+        val exoPlayer = player ?: run {
+            logAutoplaySkip(null, "no-player")
+            return
+        }
         val party = ListenTogether.state.value
-        val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        val current = exoPlayer.currentMediaItem?.toSong() ?: run {
+            logAutoplaySkip(exoPlayer.currentMediaItem?.mediaId, "no-current")
+            return
+        }
         // Every track after the current one, not just AutoPlay's own tail.
         // Counting only suggestions meant ten were topped back up to ten on
         // every change, so a station was fetched for nearly every track played
@@ -3532,16 +3566,30 @@ class PlaybackService : MediaLibraryService() {
         } else {
             (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount).count()
         }
+        val enabled = autoplayEnabled(party)
+        val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
         if (!autoplayTopUpNeeded(
-                enabled = autoplayEnabled(party),
-                repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+                enabled = enabled,
+                repeatAll = repeatAll,
                 queuedAhead = queuedAhead,
-            ) ||
-            (party.inParty && autoplaySupplierId(party) != party.you?.memberId)
+            )
         ) {
+            logAutoplaySkip(
+                current.videoId,
+                when {
+                    !enabled -> "autoplay-off"
+                    repeatAll -> "repeat-all"
+                    else -> "enough-ahead"
+                },
+            )
+            return
+        }
+        if (party.inParty && autoplaySupplierId(party) != party.you?.memberId) {
+            logAutoplaySkip(current.videoId, "party-supplier")
             return
         }
         if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) {
+            logAutoplaySkip(current.videoId, "bounded-context")
             return
         }
         autoplaySessionIds += current.videoId
@@ -3554,8 +3602,14 @@ class PlaybackService : MediaLibraryService() {
             ?: (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
                 .count { exoPlayer.getMediaItemAt(it).fromAutoplay }
         val needed = MAX_QUEUED_AUTOPLAY - queuedAutoplay
-        if (needed <= 0) return
-        if (autoplaySeed == current.videoId) return
+        if (needed <= 0) {
+            logAutoplaySkip(current.videoId, "autoplay-full")
+            return
+        }
+        if (autoplaySeed == current.videoId) {
+            logAutoplaySkip(current.videoId, "seed-latched")
+            return
+        }
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
             var remaining = needed
@@ -3919,6 +3973,12 @@ class PlaybackService : MediaLibraryService() {
 
         outgoing.removeListener(playbackListener)
         outgoing.removeAnalyticsListener(formatListener)
+        // A repeat-mode change made while the blend was running landed on the
+        // outgoing player only, because the standby was copied when it armed.
+        // Re-apply the listener's setting before the incoming player becomes
+        // the session, or a one-track queue loops with the screen showing off.
+        incoming.repeatMode = AppSettings.repeatMode.value
+        incoming.shuffleModeEnabled = outgoing.shuffleModeEnabled
         // The fields move before the listeners are attached, so anything the
         // first callback reads already describes the new arrangement.
         player = incoming
@@ -8560,7 +8620,6 @@ class PlaybackService : MediaLibraryService() {
         val index = oldActive.currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
         val position = oldActive.currentPosition.coerceAtLeast(0L)
         val playWhenReady = oldActive.playWhenReady
-        val repeatMode = oldActive.repeatMode
         val shuffleMode = oldActive.shuffleModeEnabled
 
         oldActive.playWhenReady = false
@@ -8591,7 +8650,7 @@ class PlaybackService : MediaLibraryService() {
         AppSettings.audioSessionId.value = newActive.audioSessionId
         applySettings(newActive)
         applySettings(newSpare)
-        newActive.repeatMode = repeatMode
+        lastRepeatMode = newActive.repeatMode
         newActive.shuffleModeEnabled = shuffleMode
         applyEqualizer()
         applySpatialAudioEnabled()
@@ -10262,6 +10321,12 @@ class PlaybackService : MediaLibraryService() {
             )
             onUserIntent()
             super.seekToDefaultPosition(mediaItemIndex)
+        }
+
+        override fun setRepeatMode(repeatMode: Int) {
+            val clamped = PlaybackParametersMath.clampRepeatMode(repeatMode)
+            AppSettings.setRepeatMode(clamped)
+            super.setRepeatMode(clamped)
         }
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {

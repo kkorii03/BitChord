@@ -27,3 +27,27 @@ fun autoplayTopUpNeeded(
     queuedAhead: Int,
     minAhead: Int = AUTOPLAY_MIN_QUEUED_AHEAD,
 ): Boolean = enabled && !repeatAll && queuedAhead < minAhead
+
+/**
+ * Whether a repeat transition exposed a player looping a queue the listener
+ * asked it not to loop.
+ *
+ * Repeat modes are Media3's values (0 off, 1 one, 2 all), passed as plain ints
+ * so this module needs no player dependency. A crossfade used to copy the mode
+ * onto the standby only when it armed; a change made while the blend was
+ * running reached the outgoing player alone, and the incoming one became the
+ * session still repeating. With a one-track queue that is `idx=0/1
+ * reason=REPEAT` forever, while [autoplayTopUpNeeded] refuses to fill it
+ * because it reads the stale repeat-all.
+ */
+fun staleRepeatNeedsAutoplay(
+    transitionReasonRepeat: Boolean,
+    currentIndex: Int,
+    itemCount: Int,
+    playerRepeatMode: Int,
+    settingsRepeatMode: Int,
+): Boolean = transitionReasonRepeat &&
+    itemCount > 0 &&
+    currentIndex >= 0 &&
+    currentIndex == itemCount - 1 &&
+    playerRepeatMode != settingsRepeatMode
