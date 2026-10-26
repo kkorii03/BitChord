@@ -60,6 +60,10 @@ internal enum class TransferType {
 internal data class TransferSpec(
     val type: TransferType,
     val allowed: Set<String>? = null,
+    /** Finite values outside this are clamped; non-finite values are skipped. */
+    val floatRange: ClosedFloatingPointRange<Float>? = null,
+    /** Values outside this are clamped. */
+    val intRange: IntRange? = null,
 )
 
 internal data class TransferKey(
@@ -428,9 +432,11 @@ object SettingsTransfer {
 /** Accepts only the declared shape; anything else is skipped by the caller. */
 internal fun TransferSpec.normalize(value: Any?): Any? = when (type) {
     TransferType.BOOLEAN -> value as? Boolean
-    TransferType.INT -> value as? Int
+    TransferType.INT -> (value as? Int)?.let { intRange?.let { range -> it.coerceIn(range) } ?: it }
     TransferType.LONG -> value as? Long
-    TransferType.FLOAT -> value as? Float
+    TransferType.FLOAT -> (value as? Float)
+        ?.takeIf { it.isFinite() }
+        ?.let { floatRange?.let { range -> it.coerceIn(range) } ?: it }
     TransferType.STRING -> (value as? String)?.takeIf { allowed == null || it in allowed }
     TransferType.STRING_LIST -> {
         val text = value as? String ?: return null
@@ -446,8 +452,14 @@ internal fun TransferSpec.normalize(value: Any?): Any? = when (type) {
     TransferType.FLOAT_LIST -> {
         val text = value as? String ?: return null
         val parts = text.split(',').map { it.trim() }
-        if (parts.any { it.toFloatOrNull() == null }) return null
-        parts.joinToString(",")
+        val parsed = parts.map { part ->
+            part.toFloatOrNull()?.takeIf { it.isFinite() } ?: return null
+        }
+        if (floatRange == null) {
+            parts.joinToString(",")
+        } else {
+            parsed.joinToString(",") { it.coerceIn(floatRange).toString() }
+        }
     }
 }
 
