@@ -1135,6 +1135,18 @@
 
     <string name="advanced_options">Advanced &amp; experimental options</string>
 
+    <string name="sync_safety_next_prep">Next-song lyrics preparation</string>
+
+    <string name="sync_safety_next_prep_subtitle">Developer option. Looks up and verifies the next song\'s lyrics and sync before it starts. Off keeps the earlier sync path.</string>
+
+    <string name="sync_safety_download_recheck">Downloaded lyrics re-check</string>
+
+    <string name="sync_safety_download_recheck_subtitle">Developer option. Re-checks a downloaded file\'s saved lyrics and sync, and reads a stored override. Off ignores both.</string>
+
+    <string name="sync_safety_hq_sync">HQ sync re-apply</string>
+
+    <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
+
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
 
     <string name="lyrics_debug_logs_subtitle">Show live API queries and scraper activity in the lyrics panel</string>

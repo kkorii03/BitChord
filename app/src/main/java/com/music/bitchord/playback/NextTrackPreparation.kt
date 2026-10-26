@@ -140,6 +140,7 @@ internal class NextTrackPreparation(
 
     private suspend fun run(snapshot: Snapshot) {
         val startedAt = SystemClock.elapsedRealtime()
+        val switches = AppSettings.syncSafetySwitches
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
         val steps = attemptsFor(snapshot.rowId)
@@ -165,20 +166,27 @@ internal class NextTrackPreparation(
         if (!stillCurrent()) return
 
         // (b) The lyrics for that recording, then (c) its high-quality copy.
-        var lyrics: TranslationAhead.AheadLyrics? = synchronized(lyricsByRow) {
-            lyricsByRow[snapshot.rowId]
+        // The lyrics switch is off by default: the cache may hold lines from
+        // an earlier run, so it is not even read while the switch is off.
+        var lyrics: TranslationAhead.AheadLyrics? = if (switches.nextPrepLyrics) {
+            synchronized(lyricsByRow) { lyricsByRow[snapshot.rowId] }
+        } else {
+            null
         }
         var hq = existingHq(song)
         var mix = mixReady(song.videoId)
 
-        val wanted = buildSet {
-            if (AppSettings.syncedLyrics.value) {
-                add(Step.LYRICS)
-                if (syncWanted(song)) add(Step.SYNC)
-            }
-            if (hqWanted(song)) add(Step.HQ)
-            if (mixWanted(song)) add(Step.MIX)
-        }
+        val wanted = SyncSafetyPolicy.nextPrepSteps(
+            buildSet {
+                if (AppSettings.syncedLyrics.value) {
+                    add(Step.LYRICS)
+                    if (syncWanted(song)) add(Step.SYNC)
+                }
+                if (hqWanted(song)) add(Step.HQ)
+                if (mixWanted(song)) add(Step.MIX)
+            },
+            switches,
+        )
         val prepared = preparedSteps(song, lyrics = null)
         val plan = NextPrepPolicy.plan(
             NextPrepPolicy.Request(
@@ -253,7 +261,7 @@ internal class NextTrackPreparation(
         } else {
             lines
         }
-        if (lines != null && shown != null) {
+        if (lines != null && shown != null && SyncSafetyPolicy.firstFrameCacheAllowed(switches)) {
             NextPrepCache.put(
                 NextPrepCache.Ready(
                     videoId = song.videoId,

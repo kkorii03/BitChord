@@ -9524,8 +9524,13 @@ class PlaybackService : MediaLibraryService() {
         // the lookup is in flight; the ticker would advance into the wrong
         // song's lyrics until publish() replaces them. The next-song bundle
         // already has this track's lines and correction, so they go up on the
-        // first frame instead of after the lookup.
-        val prepared = NextPrepCache.get(currentSong.videoId)
+        // first frame instead of after the lookup — only while its lyrics
+        // switch is on; off, this frame waits for the ordinary lookup.
+        val prepared = if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
+            NextPrepCache.get(currentSong.videoId)
+        } else {
+            null
+        }
         if (prepared != null) {
             serviceLyrics = prepared.shown
             com.music.bitchord.lockscreen.NowPlayingLyrics.publish(
