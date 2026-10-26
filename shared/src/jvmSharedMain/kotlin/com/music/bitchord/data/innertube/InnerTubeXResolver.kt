@@ -111,23 +111,47 @@ object InnerTubeXResolver {
         warmup?.cancel()
         warmup = scope.launch {
             delay(delayMs)
+            // Settle the shell's visitor first: [ensureVisitorData] otherwise
+            // mints an anonymous id that [ensureSessionScope] can replace a
+            // moment later, and a BotGuard page is bound to the visitor that
+            // created it (see [com.music.bitchord.data.innertube.potoken.PoTokenGenerator]).
+            try {
+                Innertube.ensureSessionScope()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "session scope warm-up failed: ${e.message}")
+            }
             val start = MonotonicClock.nowMs()
-            runCatching {
+            val visitor = runCatching {
                 innerTube.cookie = Innertube.cookie
                 innerTube.visitorData = Innertube.ensureVisitorData()
                 innerTube.locale = YouTubeLocale(gl = Innertube.currentRegion, hl = Innertube.currentLanguage)
+                innerTube.visitorData
+            }.onFailure { if (it is CancellationException) throw it }
+                .onFailure { TrackLog.w(TAG, "InnerTubeX warm-up failed: ${it.message}") }
+                .getOrNull()
+            // BotGuard page creation does not depend on the EJS/player warm-up,
+            // so it runs beside it. Sequenced after, a 3.5s warm-up left the
+            // first play to create the page itself, which is the cold-start
+            // delay this exists to remove.
+            val poPrewarm = poTokenPrewarm?.let { prewarm ->
+                launch {
+                    try {
+                        prewarm(visitor ?: Innertube.ensureVisitorData())
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        TrackLog.w(TAG, "PoToken prewarm failed type=${e::class.simpleName ?: "unknown"}")
+                    }
+                }
+            }
+            runCatching {
                 extractor.prewarm()
             }.onFailure { if (it is CancellationException) throw it }
                 .onFailure { TrackLog.w(TAG, "InnerTubeX warm-up failed: ${it.message}") }
                 .onSuccess { TrackLog.d(TAG, "InnerTubeX warmed in ${MonotonicClock.nowMs() - start}ms") }
-            val visitor = innerTube.visitorData ?: Innertube.ensureVisitorData()
-            try {
-                poTokenPrewarm?.invoke(visitor)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                TrackLog.w(TAG, "PoToken prewarm failed type=${e::class.simpleName ?: "unknown"}")
-            }
+            poPrewarm?.join()
         }
     }
 
