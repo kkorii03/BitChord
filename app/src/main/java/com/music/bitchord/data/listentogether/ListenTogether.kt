@@ -9,6 +9,7 @@ import com.music.bitchord.BitChordApplication
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.BatteryPolicy
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -514,7 +515,13 @@ object ListenTogether {
     }
 
     private fun syncHealthMonitor() {
-        if (isScreenActive || _state.value.inParty) {
+        val snapshot = _state.value
+        if (BatteryPolicy.healthMonitorActive(
+                screenActive = isScreenActive,
+                inParty = snapshot.code != null,
+                connectionLive = snapshot.connection == Connection.LIVE,
+            )
+        ) {
             startHealthMonitor()
         } else {
             stopHealthMonitor()
@@ -1272,6 +1279,9 @@ object ListenTogether {
                     session = this
                     backoffMs = 1_000L
                     _state.update { it.copy(connection = Connection.LIVE, error = null) }
+                    // The socket proves reachability now, so the idle health
+                    // poll has nothing left to do until it drops again.
+                    syncHealthMonitor()
                     launch { pingLoop() }
                     launch { reportLoop() }
                     for (frame in incoming) {
@@ -1287,6 +1297,9 @@ object ListenTogether {
             }
             if (!currentScopeActive()) return
             _state.update { it.copy(connection = Connection.CONNECTING) }
+            // The socket is gone, so the screen (if open) needs the health
+            // poll again to say whether the server itself is reachable.
+            syncHealthMonitor()
             // The clock is not carried across a gap. Whatever the offset was
             // before the socket died, the only honest thing to say afterwards is
             // that it has not been measured since.
@@ -1378,6 +1391,7 @@ object ListenTogether {
                     connection = Connection.LIVE,
                     error = null,
                 ) }
+                syncHealthMonitor()
             }
 
             "pong" -> {

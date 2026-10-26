@@ -145,10 +145,14 @@ fun DiscordLoginScreen(
                 settings.domStorageEnabled = true
                 settings.userAgentString = browserUserAgent(settings.userAgentString)
 
+                val self = this
                 var captured = false
                 var attempts = 0
 
                 fun harvestToken() {
+                    // A callback can arrive after this screen released the
+                    // WebView; it must not evaluate JavaScript on a dead view.
+                    if (webView !== self) return
                     if (captured) return
                     if (attempts >= MAX_TOKEN_ATTEMPTS) {
                         TrackLog.w(
@@ -165,7 +169,7 @@ fun DiscordLoginScreen(
                 webViewClient = object : WebViewClient() {
                     @Deprecated("Deprecated in Java")
                     override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                        if (isSignedIn(url)) harvestToken()
+                        if (view === self && isSignedIn(url)) harvestToken()
                         return false
                     }
 
@@ -182,11 +186,12 @@ fun DiscordLoginScreen(
                         url: String?,
                         isReload: Boolean,
                     ) {
-                        if (isSignedIn(url)) harvestToken()
+                        if (view === self && isSignedIn(url)) harvestToken()
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        canGoBack = view?.canGoBack() == true
+                        if (view === null || view !== self) return
+                        canGoBack = view.canGoBack()
                         if (isSignedIn(url)) harvestToken()
                     }
                 }
@@ -199,6 +204,7 @@ fun DiscordLoginScreen(
                         result: JsResult,
                     ): Boolean {
                         result.confirm()
+                        if (webView !== self) return true
                         if (captured) return true
 
                         val token = message.takeUnless {
@@ -223,6 +229,15 @@ fun DiscordLoginScreen(
 
                 webView = this
                 loadUrl("https://discord.com/login")
+            }
+        },
+        onRelease = { view ->
+            // Closing the login screen must tear down the renderer and the JS
+            // client running inside it, not just drop the view from Compose.
+            if (webView === view) webView = null
+            runCatching {
+                view.stopLoading()
+                view.destroy()
             }
         },
     )
