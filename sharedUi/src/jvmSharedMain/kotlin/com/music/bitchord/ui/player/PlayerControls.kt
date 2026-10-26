@@ -437,10 +437,11 @@ internal fun SleeveNerdStats(
                 textAlign = TextAlign.Center,
             )
         }
-        // Only when Automix is actually switched on: otherwise this would
-        // report on analysis nothing is going to use, which is noise rather
-        // than a stat.
-        if (smartFadeOn) {
+        // Only when Automix is actually switched on and the listener has asked
+        // for the diagnostic readout: otherwise this would report on analysis
+        // nothing is going to use, and a tap on the sleeve must not surface it
+        // for someone who never turned the setting on.
+        if (showNerdStats && smartFadeOn) {
             Text(
                 // Both sides always named, even when they agree, so the line
                 // reads the same way every time and the eye can find the half

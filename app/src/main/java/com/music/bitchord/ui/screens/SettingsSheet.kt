@@ -3195,11 +3195,26 @@ internal fun RowDivider() {
  */
 @Composable
 private fun settingsSwitchColors() = SwitchDefaults.colors(
-    checkedTrackColor = MaterialTheme.colorScheme.primary,
-    checkedBorderColor = MaterialTheme.colorScheme.primary,
-    uncheckedTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
-    uncheckedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
-    uncheckedThumbColor = MaterialTheme.colorScheme.onSurface,
+    checkedTrackColor = IosSwitchGreen,
+    checkedBorderColor = IosSwitchGreen,
+    checkedThumbColor = Color.White,
+    uncheckedTrackColor = IosSwitchGrey,
+    uncheckedBorderColor = IosSwitchGrey,
+    uncheckedThumbColor = Color.White,
+)
+
+/** iOS's switch palette: green when on, graphite when off, white knob in both. */
+private val IosSwitchGreen = Color(0xFF34C759)
+private val IosSwitchGrey = Color(0xFF39393D)
+
+/**
+ * A row's explanation, a clear step below its title: four-fifths of the title
+ * size with a tight leading, so two-line subtitles stay compact.
+ */
+@Composable
+private fun settingsSubtitleStyle() = MaterialTheme.typography.bodyLarge.copy(
+    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+    lineHeight = MaterialTheme.typography.bodyLarge.fontSize * 0.96f,
 )
 
 /**
@@ -3260,7 +3275,7 @@ internal fun SettingsRow(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (badge != null) {
@@ -3273,7 +3288,7 @@ internal fun SettingsRow(
             } else if (subtitle != null) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = settingsSubtitleStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 5,
                 )
@@ -3326,7 +3341,7 @@ internal fun SettingsSubRow(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (badge != null) {
@@ -3337,7 +3352,7 @@ internal fun SettingsSubRow(
             if (subtitle != null) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = settingsSubtitleStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 5,
                 )

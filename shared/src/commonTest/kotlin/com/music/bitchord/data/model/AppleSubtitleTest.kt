@@ -64,4 +64,23 @@ class AppleSubtitleTest {
     fun aCommaIsPartOfANameNotASeparator() {
         assertEquals("A, B", appleSubtitleCredit("Song • A, B"))
     }
+
+    @Test
+    fun aSongRowNamesOnlyItsArtist() {
+        assertEquals("aespa", appleSubtitleLine(AppleCardKind.SONG, "노래", "aespa"))
+        assertEquals("Chelsea Wolfe", appleSubtitleLine(AppleCardKind.SONG, "Song", "Chelsea Wolfe"))
+    }
+
+    @Test
+    fun everyOtherRowKeepsItsKind() {
+        assertEquals("앨범 · aespa", appleSubtitleLine(AppleCardKind.ALBUM, "앨범", "aespa"))
+        assertEquals("재생목록 · aespa", appleSubtitleLine(AppleCardKind.PLAYLIST, "재생목록", "aespa"))
+        assertEquals("아티스트", appleSubtitleLine(AppleCardKind.ARTIST, "아티스트", "aespa"))
+    }
+
+    @Test
+    fun aSongWithoutACreditKeepsItsKind() {
+        assertEquals("노래", appleSubtitleLine(AppleCardKind.SONG, "노래", null))
+        assertEquals("노래", appleSubtitleLine(AppleCardKind.SONG, "노래", "   "))
+    }
 }

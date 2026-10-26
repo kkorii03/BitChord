@@ -194,6 +194,7 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
+import com.music.bitchord.ui.theme.trackingFor
 import kotlin.math.roundToInt
 import java.util.Locale
 
@@ -1053,7 +1054,7 @@ private fun CompactReleaseHeader(page: DetailPage, palette: ArtworkPalette) {
             Spacer(Modifier.height(5.dp))
             Text(
                 text = meta,
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = trackingFor(meta, 0.7.sp)),
                 color = palette.onBackgroundVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -144,6 +144,7 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.theme.PhraseLineBreak
 import com.music.bitchord.ui.theme.AppType
+import com.music.bitchord.ui.theme.trackingFor
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
@@ -2206,10 +2207,11 @@ internal fun LyricsPanel(
                             .background(Color.White.copy(alpha = 0.14f))
                             .padding(horizontal = 11.dp, vertical = 4.dp),
                     ) {
+                        val upperSection = sectionTitle.uppercase()
                         Text(
-                            text = sectionTitle.uppercase(),
+                            text = upperSection,
                             style = MaterialTheme.typography.labelMedium.copy(
-                                letterSpacing = 1.3.sp,
+                                letterSpacing = trackingFor(upperSection, 1.3.sp),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = AppType.Micro,
                             ),

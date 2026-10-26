@@ -24,7 +24,7 @@
     <string name="home">홈</string>
     <string name="play">재생</string>
     <string name="explore">둘러보기</string>
-    <string name="listen_now">지금 듣기</string>
+    <string name="listen_now">홈</string>
     <string name="downloads">다운로드</string>
     <string name="downloaded_songs">다운로드한 노래</string>
     <string name="local_music">로컬 음악</string>

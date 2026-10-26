@@ -72,6 +72,23 @@ fun appleSubtitleCredit(subtitle: String): String? {
     }
 }
 
+/**
+ * The second line a card draws, from its localized kind label and credit.
+ *
+ * A song names only its artist, the way Apple Music's song rows do; albums and
+ * playlists keep the kind in front of the credit, and an artist card names the
+ * kind alone because its title is already the name.
+ */
+fun appleSubtitleLine(kind: AppleCardKind, label: String, credit: String?): String {
+    val name = credit?.trim()?.takeIf { it.isNotEmpty() }
+    return when (kind) {
+        AppleCardKind.SONG -> name ?: label
+        AppleCardKind.ARTIST -> label
+        AppleCardKind.ALBUM, AppleCardKind.PLAYLIST ->
+            if (name == null) label else "$label · $name"
+    }
+}
+
 private val DURATION = Regex("""\d+(?::\d{2}){1,2}""")
 private val YEAR = Regex("""(?:19|20)\d{2}(?:년|年)?""")
 

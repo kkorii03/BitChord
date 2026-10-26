@@ -66,6 +66,7 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.ui.theme.AccentRed
+import com.music.bitchord.ui.theme.trackingFor
 
 /** Whether the Replay page is being shown in dark mode (vs light). */
 @Composable
@@ -588,7 +589,7 @@ private fun StatTile(label: String, value: String, dark: Boolean, modifier: Modi
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = textColor.copy(alpha = 0.55f),
-            letterSpacing = 1.sp,
+            letterSpacing = trackingFor(label, 1.sp),
         )
     }
 }

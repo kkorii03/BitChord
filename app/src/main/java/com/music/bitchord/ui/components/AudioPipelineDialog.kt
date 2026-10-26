@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.components
 
 import com.music.bitchord.ui.theme.AppType
+import com.music.bitchord.ui.theme.trackingFor
 
 import android.media.AudioFormat
 import android.provider.Settings
@@ -880,12 +881,13 @@ private fun PipelineSection(
         Column(
             modifier = Modifier.weight(1f),
         ) {
+            val upperTitle = title.uppercase()
             Text(
-                text = title.uppercase(),
+                text = upperTitle,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = AppType.Micro,
                     fontWeight = FontWeight.W600,
-                    letterSpacing = 0.5.sp,
+                    letterSpacing = trackingFor(upperTitle, 0.5.sp),
                 ),
                 color = Color.White,
                 modifier = Modifier

@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import com.music.bitchord.ui.theme.AppType
+import com.music.bitchord.ui.theme.trackingFor
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -130,6 +131,8 @@ fun ReplayCreditCard(
         )
 
         Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 16.dp)) {
+            val experienceLabel =
+                stringResource(Res.string.your_listening_experience).uppercase(Locale.getDefault())
             // The two things a card says about itself, at the two corners a card
             // says them from: what it is on the left, whose it is on the right.
             // The wordmark that used to sit here is gone — the logo says it, and
@@ -137,10 +140,10 @@ fun ReplayCreditCard(
             // a card and an advert.
             Row(verticalAlignment = Alignment.Top) {
                 Text(
-                    text = stringResource(Res.string.your_listening_experience).uppercase(Locale.getDefault()),
+                    text = experienceLabel,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.W700,
-                    letterSpacing = 1.4.sp,
+                    letterSpacing = trackingFor(experienceLabel, 1.4.sp),
                     lineHeight = 13.sp,
                     color = Color.White.copy(alpha = 0.72f),
                     modifier = Modifier.weight(1f),
@@ -168,11 +171,12 @@ fun ReplayCreditCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            val upperLabel = label.uppercase(Locale.ROOT)
             Text(
-                text = label.uppercase(Locale.ROOT),
+                text = upperLabel,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.W700,
-                letterSpacing = 1.8.sp,
+                letterSpacing = trackingFor(upperLabel, 1.8.sp),
                 color = Color.White.copy(alpha = 0.65f),
             )
 
@@ -199,13 +203,15 @@ fun ReplayCreditCard(
                 }
                 if (memberSince != null) {
                     Spacer(Modifier.width(10.dp))
+                    val memberLabel =
+                        stringResource(Res.string.member_since).uppercase(Locale.getDefault())
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = stringResource(Res.string.member_since).uppercase(Locale.getDefault()),
+                            text = memberLabel,
                             style = MaterialTheme.typography.labelSmall,
                             fontSize = 7.sp,
                             lineHeight = 8.sp,
-                            letterSpacing = 0.8.sp,
+                            letterSpacing = trackingFor(memberLabel, 0.8.sp),
                             color = Color.White.copy(alpha = 0.55f),
                             // Both lines to the right edge, not just the block.
                             // Column alignment places the text *box*; inside it
@@ -240,7 +246,7 @@ private fun Embossed(text: String, size: TextUnit) {
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.W600,
             fontSize = size,
-            letterSpacing = 1.6.sp,
+            letterSpacing = trackingFor(text, 1.6.sp),
             brush = PolishedInk,
             shadow = EmbossShadow,
         ),

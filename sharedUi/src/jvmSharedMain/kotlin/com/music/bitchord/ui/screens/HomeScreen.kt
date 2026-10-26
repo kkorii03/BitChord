@@ -7,7 +7,6 @@ import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.DrawableResource
 import androidx.compose.foundation.Image
 import org.jetbrains.compose.resources.stringResource
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -106,6 +105,13 @@ private const val RECENT_TRACKS_PER_COLUMN = 4
 private fun isRecentsShelf(shelf: HomeShelf): Boolean =
     shelf.title.trim().equals(RECENTS_TITLE, ignoreCase = true)
 
+/** "Listen again", in the feed's own words — its subtitle is the account name. */
+private fun isListenAgainShelf(title: String): Boolean =
+    when (title.trim().lowercase(Locale.ROOT)) {
+        "listen again", "다시 듣기", "もう一度聴く", "nghe lại" -> true
+        else -> false
+    }
+
 /**
  * YouTube's Shorts rail is a video feed, not music: Apple Music has no
  * equivalent, so the Home page never draws it. Matched by title because the
@@ -161,6 +167,8 @@ fun HomeScreen(
     contentPadding: PaddingValues,
     /** The page's heading, or null for none — the desktop's pages carry no heading. */
     title: String?,
+    /** Drawn at the trailing end of the large heading; Home puts its profile there. */
+    titleAccessory: (@Composable () -> Unit)? = null,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
     /**
@@ -213,7 +221,7 @@ fun HomeScreen(
             },
         ) {
             if (title != null) {
-                item { HomeTitle(title) }
+                item { HomeTitle(title, accessory = titleAccessory) }
             }
             if (!signedIn && onSignIn != null) {
                 item {
@@ -660,40 +668,33 @@ fun CompactTrackRow(
 }
 
 /**
- * Listen now's large heading, with the wordmark stacked above it.
- *
- * Only the home tab carries it — the top bar no longer shows the logo, so this
- * is where the app's mark lives. Its height is taken from the heading's own
- * font size rather than a fixed dp, so the two keep their proportion under the
- * system font scale.
+ * The home tab's large heading, with an optional trailing control on the same
+ * line — the account avatar, as Apple Music places it.
  */
 @Composable
-private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
-    val style = MaterialTheme.typography.displayLarge
-    val logoHeight = with(LocalDensity.current) { (style.fontSize * LOGO_TO_FONT).toDp() }
-    Column(modifier = modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp)) {
-        Icon(
-            painter = painterResource(Res.drawable.ic_logo),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier
-                .padding(bottom = 14.dp)
-                .height(logoHeight)
-                .aspectRatio(LOGO_ASPECT),
-        )
+private fun HomeTitle(
+    title: String,
+    modifier: Modifier = Modifier,
+    accessory: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             text = title,
-            style = style,
+            style = MaterialTheme.typography.displayLarge,
             color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.weight(1f),
         )
+        if (accessory != null) {
+            Spacer(Modifier.width(8.dp))
+            accessory()
+        }
     }
 }
-
-/** The wordmark's height against the heading's font size. */
-private const val LOGO_TO_FONT = 0.9f
-
-/** ic_logo's viewport, 730 x 484. */
-private const val LOGO_ASPECT = 730f / 484f
 
 /**
  * Shared by the home feed, Explore and Library so headings line up across tabs.
@@ -705,7 +706,9 @@ private const val LOGO_ASPECT = 730f / 484f
 @Composable
 internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
     val displayTitle = localizeShelfTitle(title)
-    val displaySubtitle = localizeShelfSubtitle(subtitle)
+    // YouTube puts the listener's own name under "Listen again"; Apple Music
+    // leaves that shelf with just its title.
+    val displaySubtitle = if (isListenAgainShelf(title)) "" else localizeShelfSubtitle(subtitle)
     Row(
         modifier = Modifier
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)

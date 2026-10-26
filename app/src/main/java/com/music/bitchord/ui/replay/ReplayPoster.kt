@@ -22,6 +22,7 @@ import coil3.toBitmap
 import com.music.bitchord.R
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.ui.theme.containsHangul
 import com.music.bitchord.data.stats.ReplaySummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -417,7 +418,8 @@ private fun drawHeader(
         holder.ifBlank { context.getString(R.string.default_replay_holder) },
         memberSince?.let { context.getString(R.string.member_since_value, it) },
     ).joinToString(" · ")
-    canvas.drawText(credit.uppercase(Locale.ROOT), MARGIN, 182f, type.label(24f, 0x8CFFFFFF.toInt()))
+    val creditLabel = credit.uppercase(Locale.ROOT)
+    canvas.drawText(creditLabel, MARGIN, 182f, type.label(creditLabel, 24f, 0x8CFFFFFF.toInt()))
     return 300f
 }
 
@@ -434,11 +436,13 @@ private fun drawTotals(
         top + 120f,
         type.heading(148f, Color.WHITE),
     )
+    val minutesLabel =
+        context.getString(R.string.minutes_listened).uppercase(context.resources.configuration.locales[0])
     canvas.drawText(
-        context.getString(R.string.minutes_listened).uppercase(context.resources.configuration.locales[0]),
+        minutesLabel,
         MARGIN,
         top + 176f,
-        type.label(30f, 0xB3FFFFFF.toInt(), tracking = 0.14f),
+        type.label(minutesLabel, 30f, 0xB3FFFFFF.toInt(), tracking = 0.14f),
     )
     canvas.drawText(
         "${context.replayCount(summary.totalPlays, R.plurals.replay_play_count)} · " +
@@ -471,17 +475,19 @@ private fun drawColumns(
     val right = MARGIN + columnWidth + COLUMN_GAP
 
     val locale = context.resources.configuration.locales[0]
+    val songsLabel = context.getString(R.string.top_songs).uppercase(locale)
+    val artistsLabel = context.getString(R.string.top_artists).uppercase(locale)
     canvas.drawText(
-        context.getString(R.string.top_songs).uppercase(locale),
+        songsLabel,
         MARGIN,
         top,
-        type.label(28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
+        type.label(songsLabel, 28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
     )
     canvas.drawText(
-        context.getString(R.string.top_artists).uppercase(locale),
+        artistsLabel,
         right,
         top,
-        type.label(28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
+        type.label(artistsLabel, 28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
     )
 
     val rows = maxOf(songs.size, artists.size)
@@ -537,11 +543,13 @@ private fun drawAlbums(
     top: Float,
 ): Float {
     if (albums.isEmpty()) return top
+    val albumsLabel =
+        context.getString(R.string.top_albums).uppercase(context.resources.configuration.locales[0])
     canvas.drawText(
-        context.getString(R.string.top_albums).uppercase(context.resources.configuration.locales[0]),
+        albumsLabel,
         MARGIN,
         top,
-        type.label(28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
+        type.label(albumsLabel, 28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
     )
     val size = 200f
     val gap = (POSTER_W - MARGIN * 2 - size * POSTER_ALBUMS) / (POSTER_ALBUMS - 1)
@@ -565,11 +573,13 @@ private fun drawAlbums(
 private fun drawGenres(canvas: Canvas, context: Context, type: Fonts, summary: ReplaySummary, top: Float) {
     val genres = summary.genreRows(POSTER_GENRES)
     if (genres.isEmpty()) return
+    val genresLabel =
+        context.getString(R.string.top_genres).uppercase(context.resources.configuration.locales[0])
     canvas.drawText(
-        context.getString(R.string.top_genres).uppercase(context.resources.configuration.locales[0]),
+        genresLabel,
         MARGIN,
         top,
-        type.label(28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
+        type.label(genresLabel, 28f, 0xB3FFFFFF.toInt(), tracking = 0.16f),
     )
     val paint = type.body(32f, Color.WHITE, bold = true)
     val chip = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x26FFFFFF }
@@ -585,11 +595,12 @@ private fun drawGenres(canvas: Canvas, context: Context, type: Fonts, summary: R
 }
 
 private fun drawFooter(canvas: Canvas, context: Context, type: Fonts) {
+    val footerLabel = context.getString(R.string.counted_on_device_with_bitchord)
     canvas.drawText(
-        context.getString(R.string.counted_on_device_with_bitchord),
+        footerLabel,
         MARGIN,
         POSTER_H - 64f,
-        type.label(24f, 0x73FFFFFF, tracking = 0.08f),
+        type.label(footerLabel, 24f, 0x73FFFFFF, tracking = 0.08f),
     )
 }
 
@@ -737,8 +748,10 @@ internal class Fonts(context: Context) {
     fun body(size: Float, color: Int, bold: Boolean = false) =
         paint(if (bold) semibold else regular, size, color)
 
-    fun label(size: Float, color: Int, tracking: Float = 0.10f) =
-        paint(semibold, size, color).apply { letterSpacing = tracking }
+    fun label(text: String, size: Float, color: Int, tracking: Float = 0.10f) =
+        paint(semibold, size, color).apply {
+            letterSpacing = if (containsHangul(text)) 0f else tracking
+        }
 
     private fun paint(face: Typeface, size: Float, color: Int) =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
