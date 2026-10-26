@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.LocalTimingPolicy
 import com.music.bitchord.playback.NextPrepCache
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
@@ -588,7 +589,11 @@ class LyricsController(
             adjustable,
             searchedAs = result?.searchedAs,
             measure = !videoOwn,
-            measureNow = request?.localUri == null,
+            measureNow = LocalTimingPolicy.measureNow(
+                request?.localUri,
+                request?.isVideo == true,
+                request?.fileTimingForeign == true,
+            ),
             videoOwn = adjustable && videoOwn,
         )
     }
@@ -753,9 +758,16 @@ class LyricsController(
                     artist = request.artist,
                     thumbnailUrl = null,
                     isVideo = true,
-                    // A file's lyrics timed for another recording are measured
-                    // against the file that is actually playing.
-                    localUri = request.localUri.takeIf { request.fileTimingForeign },
+                    // A downloaded file is the sound that is playing: measure
+                    // it directly. This used to be only for lyrics timed for
+                    // another recording, so a local cover with its own (or an
+                    // older, unknown-id) sheet looked for a stream that was
+                    // never cached and stayed at base=none.
+                    localUri = LocalTimingPolicy.measurementUri(
+                        request.localUri,
+                        request.isVideo,
+                        request.fileTimingForeign,
+                    ),
                 )
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
@@ -836,6 +848,8 @@ class LyricsController(
      * names, and is kept per video for whichever lyrics turn up. Only for a
      * cover that names its original's artist — one that doesn't is searched
      * better under the name its lyrics are found as, so it waits for them.
+     * A downloaded video is measured from its own file; a song's file has no
+     * other recording to compare against, so it is left to the song check.
      */
     private fun startEarlyMeasure(
         videoId: String,
@@ -848,9 +862,17 @@ class LyricsController(
         artistKnown: Boolean,
     ) {
         earlyMeasureJob?.cancel()
-        if (!isVideo || !artistKnown || localUri != null || durationMs <= 0L) return
+        if (!isVideo || !artistKnown || durationMs <= 0L) return
+        if (!LocalTimingPolicy.measureNow(localUri, isVideo, timingForeign = false)) return
         val context = app
-        val video = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = true)
+        val video = Song(
+            videoId = videoId,
+            title = title,
+            artist = artist,
+            thumbnailUrl = null,
+            isVideo = true,
+            localUri = LocalTimingPolicy.measurementUri(localUri, isVideo, timingForeign = false),
+        )
         val names = (listOf(title to artist) + alternatives).distinct()
         earlyMeasureJob = scope.launch {
             if (LyricsTiming.worthMeasuring(context, videoId)) {
@@ -1060,7 +1082,11 @@ class LyricsController(
                     searchedAs = rawLyricsResult?.searchedAs,
                     cancelAi = false,
                     measure = timingMeasureAllowed,
-                    measureNow = request.localUri == null,
+                    measureNow = LocalTimingPolicy.measureNow(
+                        request.localUri,
+                        request.isVideo,
+                        request.fileTimingForeign,
+                    ),
                     videoOwn = _lyricsTiming.value.videoOwn,
                 )
             }
