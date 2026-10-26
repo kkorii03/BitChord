@@ -76,6 +76,9 @@ object HqAudioVerify {
     /** One verification per pair at a time while that verification is running. */
     private val locks = ConcurrentHashMap<String, Mutex>()
 
+    /** Serialises candidate downloads per host; see [downloadCandidate]. */
+    private val candidateHostLocks = ConcurrentHashMap<String, Mutex>()
+
     /**
      * References whose opening could not be had during this playback, and why.
      *
@@ -857,9 +860,16 @@ object HqAudioVerify {
         epoch: PlaybackEpoch,
     ): Long? {
         var attempt = 0
+        // One candidate download per host at a time. With AutoPlay filling the
+        // queue, the read-ahead verified the current track and the next ones
+        // together against the same Cloudflare edge, and the phone run of
+        // 10-26 22:23-22:30 got 429 on every second request; the pairs of
+        // refusals were always within a second of each other.
+        val host = runCatching { java.net.URI(stream.url).host }.getOrNull().orEmpty()
+        val hostLock = candidateHostLocks.getOrPut(host) { Mutex() }
         while (true) {
             try {
-                return downloadPrefix(stream, file, limit, client)
+                return hostLock.withLock { downloadPrefix(stream, file, limit, client) }
             } catch (limited: RateLimitedDownload) {
                 val retry = HqVerifyPolicy.retryCandidateDownload(
                     retryAfterHeader = limited.retryAfter,

@@ -110,7 +110,11 @@ object HqVerifyPolicy {
     ): CandidateRetry {
         if (attempt >= MAX_CANDIDATE_RETRIES) return CandidateRetry(retry = false, waitMs = 0L)
         val stated = HqRetryPolicy.retryAfterMs(retryAfterHeader, nowMs)
-        val wait = (stated ?: HqRetryPolicy.backoffMs(attempt))
+        // No Retry-After (Cloudflare in front of Monochrome sends none): the
+        // loader's one-second backoff came back 429 every time on the phone
+        // (10-26, 22:23-22:30, 14 of 14). A refusal from that edge lasts tens
+        // of seconds, so the one retry waits long enough to mean something.
+        val wait = (stated ?: UNSTATED_RETRY_WAIT_MS)
             .coerceIn(0L, MAX_CANDIDATE_RETRY_WAIT_MS)
         return CandidateRetry(retry = true, waitMs = wait)
     }
@@ -120,4 +124,7 @@ object HqVerifyPolicy {
 
     /** Verification may sleep longer than a loader thread, but never a minute. */
     const val MAX_CANDIDATE_RETRY_WAIT_MS = 60_000L
+
+    /** The wait when the server says nothing about how long to stay away. */
+    const val UNSTATED_RETRY_WAIT_MS = 20_000L
 }

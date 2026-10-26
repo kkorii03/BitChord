@@ -119,9 +119,11 @@ class HqVerifyPolicyTest {
     }
 
     @Test
-    fun `a missing retry-after uses the ordinary backoff`() {
+    fun `a missing retry-after waits twenty seconds, not the loader's one`() {
+        // Cloudflare in front of Monochrome sends no Retry-After; a 1 s retry was
+        // refused 14 of 14 times on the phone (10-26 22:23-22:30).
         assertEquals(
-            1_000L,
+            20_000L,
             HqVerifyPolicy.retryCandidateDownload(null, attempt = 0, nowMs = 0L).waitMs,
         )
     }
