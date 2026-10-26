@@ -84,6 +84,59 @@ class DownloadedArtworkCandidatesTest {
         )
     }
 
+
+    @Test
+    fun `a dead sidecar is skipped and the still is used without a retry`() {
+        val candidates = downloadedArtworkCandidates(song(), savedArtworkExists = false)
+
+        assertEquals(
+            listOf(
+                ArtworkCandidateKind.EMBEDDED,
+                ArtworkCandidateKind.YOUTUBE,
+                ArtworkCandidateKind.DEFAULT,
+            ),
+            candidates.map { it.kind },
+        )
+        assertEquals(
+            "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+            candidates[1].value,
+        )
+    }
+
+
+    @Test
+    fun `a recorded square cover is kept ahead of the video still`() {
+        val square = "https://is1-ssl.mzstatic.com/image/thumb/600x600bb.jpg"
+        val candidates = downloadedArtworkCandidates(
+            song(thumbnailUrl = square),
+            savedArtworkExists = false,
+        )
+
+        assertEquals(
+            listOf(
+                ArtworkCandidateKind.EMBEDDED,
+                ArtworkCandidateKind.RECORDED,
+                ArtworkCandidateKind.DEFAULT,
+            ),
+            candidates.map { it.kind },
+        )
+        assertEquals(square, candidates[1].value)
+    }
+
+    @Test
+    fun `the reported cover ids keep their own still when their sidecar is gone`() {
+        listOf("etyHAg3sADA", "vqskFsBLeUs", "v59g4HRNIkc").forEach { id ->
+            val candidates = downloadedArtworkCandidates(
+                song(videoId = id),
+                savedArtworkExists = false,
+            )
+            assertEquals(
+                "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+                candidates.first { it.kind == ArtworkCandidateKind.YOUTUBE }.value,
+            )
+        }
+    }
+
     @Test
     fun `a remote file with no YouTube id has no still to fall back to`() {
         val candidates = downloadedArtworkCandidates(

@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.cover.isLocalArtworkUri
+import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import kotlinx.coroutines.sync.Mutex
@@ -82,7 +84,17 @@ object MediaTagger {
 
     /** Fetch artwork before publication so batch downloads can overlap it with audio. */
     internal fun artworkFor(context: Context, track: Song): Artwork? {
-        val thumbnailUrl = track.thumbnailUrl
+        val recorded = track.thumbnailUrl?.takeIf { it.isNotBlank() }
+        // A re-download of a track whose record already names the sidecar can
+        // reuse that picture without a request. If it has since gone, the
+        // recorded file:// path must not be fetched (OkHttp cannot read it) —
+        // fall through to the video's own still so the sidecar is recreated.
+        if (recorded != null && isLocalArtworkUri(recorded)) {
+            localArtwork(context, recorded)?.let { return it }
+        }
+        val thumbnailUrl = recorded
+            ?.takeIf { !isLocalArtworkUri(it) }
+            ?: videoThumbnailUrl(track.videoId)
         if (thumbnailUrl.isNullOrBlank()) {
             // Said out loud rather than returned as a quiet null. An album's own
             // track rows carry no artwork — the release is billed once in the
@@ -95,8 +107,19 @@ object MediaTagger {
             return null
         }
         cachedArtwork(context, thumbnailUrl)?.let { return it }
-        return fetchCover(track)
+        return fetchCover(thumbnailUrl.artworkAt(1200) ?: thumbnailUrl, track.videoId)
     }
+
+    /** The bytes of an already-saved local sidecar, or null when it is gone. */
+    private fun localArtwork(context: Context, value: String): Artwork? = runCatching {
+        val uri = Uri.parse(value)
+        val bytes = when (uri.scheme?.lowercase()) {
+            "file" -> uri.path?.let(::File)?.takeIf { it.isFile }?.readBytes()
+            "content" -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            else -> null
+        }
+        bytes?.takeIf { it.isNotEmpty() }?.let { Artwork(it, "image/jpeg") }
+    }.getOrNull()
 
     /**
      * One tagging pass at a time, across every download worker.
@@ -143,7 +166,14 @@ object MediaTagger {
                     if (!folder.exists() && !folder.mkdirs()) error("Could not create artwork folder")
                     val temp = File(folder, ".$name-${System.nanoTime()}.part")
                     try {
-                        temp.writeBytes(artwork.bytes)
+                        // Flushed before the rename so a process death or a
+                        // reboot cannot leave the record pointing at an empty
+                        // or missing sidecar. The record trusts this path for
+                        // the life of the download.
+                        temp.outputStream().use { sink ->
+                            sink.write(artwork.bytes)
+                            sink.fd.sync()
+                        }
                         if (!temp.renameTo(target) && !target.exists()) {
                             temp.copyTo(target, overwrite = false)
                         }
@@ -152,6 +182,7 @@ object MediaTagger {
                     }
                 }
             }
+            if (!target.isFile || target.length() == 0L) error("artwork sidecar was not written")
             Uri.fromFile(target).toString()
         }.onFailure {
             Log.w(TAG, "could not save artwork sidecar: ${it.message}")
@@ -162,6 +193,9 @@ object MediaTagger {
     internal fun cacheArtwork(context: Context, sourceUrl: String?): String? {
         if (sourceUrl.isNullOrBlank()) return null
         artworkFile(context, sourceUrl).takeIf { it.isFile }?.let { return Uri.fromFile(it).toString() }
+        // A dead local path cannot be fetched. The caller still has the remote
+        // URL in hand and must pass that one to recreate the sidecar.
+        if (isLocalArtworkUri(sourceUrl)) return null
         val artwork = fetchCover(sourceUrl.artworkAt(1200) ?: sourceUrl, "collection") ?: return null
         return persistArtwork(context, sourceUrl, artwork)
     }
@@ -402,11 +436,6 @@ object MediaTagger {
             if (read() == -1) error("file ended ${left}B before its audio frames")
             left--
         }
-    }
-
-    private fun fetchCover(track: Song): Artwork? {
-        val url = track.artworkAt(1200) ?: return null
-        return fetchCover(url, track.videoId)
     }
 
     private fun fetchCover(url: String, logId: String): Artwork? {

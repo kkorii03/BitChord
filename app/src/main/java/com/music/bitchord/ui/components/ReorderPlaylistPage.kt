@@ -321,7 +321,7 @@ private fun ReorderRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = song.artworkAt(ROW_ART_PX),
+            model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
