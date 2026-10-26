@@ -1,0 +1,7 @@
+(Opus 검토 2차 수정 지시 — 이 브랜치의 다운로드 곡 싱크 재검증은 유지. '새 가사를 어디에 저장하느냐'만 바꾼다.)
+문제: fresh 가사가 이기면 DownloadedLyrics.replace 가 다운로드된 음원 파일 자체(FLAC/M4A/WebM 태그)를 다시 쓴다. 위험 두 가지 — (1) replaceBytes 가 파일 전체를 메모리에 읽는다: 고음질 ALAC/긴 곡은 100MB 이상이라 OutOfMemory 로 앱이 튕긴다. (2) 이 재검증은 바로 그 곡이 '재생 중'일 때 돈다. cacheDir 임시 파일 → renameTo 가 저장소가 달라 실패하면 대상 파일을 'wt'로 잘라 다시 쓰는데, 플레이어가 그 파일을 읽는 중이라 재생이 깨지거나 파일이 손상된다.
+고칠 것: 음원 파일은 절대 다시 쓰지 않는다. 대신 '곡별 가사 덮어쓰기 저장소'(LyricsOverrideStore: 앱 내부 files 아래 JSON 하나 또는 기존 저장 방식과 같은 방식, 키 = videoId, 값 = 가사 줄·제공처 이름·저장 시각)를 만들고, LyricsController 가 가사를 고를 때 덮어쓰기가 있으면 그것을 가장 먼저 쓴다(다운로드 곡 태그·lyrics.lrc·온라인 제공처보다 앞). recheckDownloaded 에서 fresh 가 이기면 이 저장소에 쓰고 싱크는 fresh 의 textKey 로 — 지금 decide/키 로직은 그대로.
+되돌릴 것: 이 브랜치에서 추가한 Mp4Tagger/FlacTagger/WebmTagger 의 replaceLyrics·replaceLyricsHeader 와 DownloadedLyrics 의 음원 재작성 경로를 제거(다운로드할 때 태그를 넣던 기존 코드는 건드리지 않는다). m3u8 패키지의 lyrics.lrc 사이드카도 쓰지 말고 같은 저장소로.
+나중 확장 고려: 이 저장소는 사용자가 곡별로 가사 제공처를 고정하거나 직접 고친 가사를 저장하는 데도 쓸 것이므로, 저장 형식에 source 필드와 'user'/'recheck' 구분 필드를 둔다.
+테스트: 저장소 읽기/쓰기·우선순위 판정을 순수 함수로 jvmTest, 컴파일·테스트 직접 실행.
+마지막에 8줄 이내로 요약: 수정 파일 / 저장소 위치·형식 / 가사 선택 우선순위 / 테스트 결과
