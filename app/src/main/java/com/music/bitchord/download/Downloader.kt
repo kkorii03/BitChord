@@ -12,8 +12,20 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
+import java.io.IOException
 import java.io.OutputStream
 import kotlin.coroutines.coroutineContext
+
+/**
+ * A response that refused the bytes, with the headers that say when to come
+ * back. The automatic high-quality pass schedules its retry from [retryAfter]
+ * rather than guessing; a tap still gets the ordinary friendly message.
+ */
+internal class DownloadHttpException(
+    val code: Int,
+    val retryAfter: String?,
+    message: String,
+) : IOException(message)
 
 /**
  * Pulls a resolved stream onto disk.
@@ -111,7 +123,13 @@ object Downloader {
             }
 
             response.use {
-                if (it.code !in 200..299) error("Download failed (HTTP ${it.code})")
+                if (it.code !in 200..299) {
+                    throw DownloadHttpException(
+                        code = it.code,
+                        retryAfter = it.header("Retry-After"),
+                        message = "Download failed (HTTP ${it.code})",
+                    )
+                }
                 val body = it.body ?: error("Download failed: empty response")
                 val source = body.byteStream()
                 var readForChunk = 0L
@@ -175,7 +193,13 @@ object Downloader {
             .build()
 
         Http.client.newCall(request).execute().use { response ->
-            if (response.code !in 200..299) error("Download failed (HTTP ${response.code})")
+            if (response.code !in 200..299) {
+                throw DownloadHttpException(
+                    code = response.code,
+                    retryAfter = response.header("Retry-After"),
+                    message = "Download failed (HTTP ${response.code})",
+                )
+            }
             val body = response.body ?: error("Download failed: empty response")
             val total = response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 }
             val source = body.byteStream()

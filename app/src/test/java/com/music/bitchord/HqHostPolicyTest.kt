@@ -57,6 +57,36 @@ class HqHostPolicyTest {
     }
 
     @Test
+    fun `two automatic requests to one host start one after the other`() = runBlocking {
+        val gate = HqHostGate { 0L }
+        gate.begin("auto-1", "monochrome.example")
+
+        var secondStarted = false
+        val second = launch {
+            gate.awaitIdle("monochrome.example", exceptTrack = "auto-2")
+            secondStarted = true
+            gate.begin("auto-2", "monochrome.example")
+        }
+
+        kotlinx.coroutines.yield()
+        assertFalse("the second automatic request must wait for the first", secondStarted)
+
+        gate.end("auto-1", "monochrome.example")
+        second.join()
+        assertTrue(secondStarted)
+        gate.end("auto-2", "monochrome.example")
+    }
+
+    @Test
+    fun `a resting host reports the time left before it may be asked again`() {
+        val gate = HqHostGate { 1_000L }
+        gate.noteRateLimited("monochrome.example", header = "120", code = 429)
+
+        assertEquals(120_000L, gate.restRemainingMs("monochrome.example", nowMs = 1_000L))
+        assertEquals(0L, gate.restRemainingMs("monochrome.example", nowMs = 121_000L))
+    }
+
+    @Test
     fun `the same host waits for the current download while another host runs`() = runBlocking {
         val gate = HqHostGate { 0L }
         gate.begin("current", "tracks.example")

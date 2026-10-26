@@ -757,9 +757,9 @@ object HqAudioVerify {
      * B is not implemented here: starting this only after the current track's
      * ExoPlayer loader goes idle needs a loading event from PlaybackService and
      * a gate for ordinary streams ([HqHostGate][com.music.bitchord.playback.HqHostGate]
-     * tracks only upgrade and whole-rendition downloads today). The bounded
-     * retry below fixes the observed 429s without changing when verification
-     * starts.
+     * tracks upgrade, whole-rendition and automatic library downloads). The
+     * bounded retry below fixes the observed 429s without changing when
+     * verification starts.
      */
     private suspend fun candidateFeatures(
         context: Context,
@@ -866,10 +866,9 @@ object HqAudioVerify {
         // 10-26 22:23-22:30 got 429 on every second request; the pairs of
         // refusals were always within a second of each other.
         val host = runCatching { java.net.URI(stream.url).host }.getOrNull().orEmpty()
-        val hostLock = candidateHostLocks.getOrPut(host) { Mutex() }
         while (true) {
             try {
-                return hostLock.withLock { downloadPrefix(stream, file, limit, client) }
+                return withCandidateHost(host) { downloadPrefix(stream, file, limit, client) }
             } catch (limited: RateLimitedDownload) {
                 val retry = HqVerifyPolicy.retryCandidateDownload(
                     retryAfterHeader = limited.retryAfter,
@@ -885,6 +884,20 @@ object HqAudioVerify {
                 attempt++
             }
         }
+    }
+
+    /**
+     * Runs [block] while holding the one slot for [host] that a candidate
+     * download and an automatic library download share.
+     *
+     * The library pass used to open its own request to a catalogue whose edge
+     * was already serving a verification; both are reads of the same server,
+     * so they queue here rather than racing for its rate limit.
+     */
+    internal suspend fun <T> withCandidateHost(host: String?, block: suspend () -> T): T {
+        val key = host?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            ?: return block()
+        return candidateHostLocks.getOrPut(key) { Mutex() }.withLock { block() }
     }
 
     /** Waits [waitMs], returning false as soon as the play this attempt belongs to ends. */
