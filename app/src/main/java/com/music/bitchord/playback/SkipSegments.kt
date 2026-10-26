@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.TrackLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -261,12 +262,16 @@ object SkipSegments {
             client.newCall(request).execute().use { response ->
                 when {
                     response.code == 404 -> emptyList()
-                    !response.isSuccessful -> null
+                    !response.isSuccessful -> {
+                        TrackLog.w(TAG, "lookup HTTP ${response.code}")
+                        null
+                    }
                     else -> parseHashedSkipSegments(response.body?.string().orEmpty(), videoId)
                 }
             }
         }.onFailure {
             Log.d(TAG, "lookup failed for $videoId: ${it.message}")
+            TrackLog.w(TAG, "lookup failed: ${it.javaClass.simpleName}")
         }.getOrNull()
     }
 

@@ -427,7 +427,8 @@ class PlaybackService : MediaLibraryService() {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.recents().getOrNull()
             } ?: emptyList()
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            TrackLog.w("BitChord", "auto recents failed: ${failure.javaClass.simpleName}")
             emptyList()
         }
         if (songs.isNotEmpty()) {
@@ -460,7 +461,8 @@ class PlaybackService : MediaLibraryService() {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.quickPicks(excludeSongIds = recentsIds).getOrNull()
             } ?: emptyList()
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            TrackLog.w("BitChord", "auto quick picks failed: ${failure.javaClass.simpleName}")
             emptyList()
         }
         if (songs.isNotEmpty()) {
@@ -508,7 +510,8 @@ class PlaybackService : MediaLibraryService() {
                     }
                     ?: YtMusicRepository.browseSongs("FEmusic_liked_videos").getOrNull()?.songs
             } ?: emptyList()
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            TrackLog.w("BitChord", "auto liked failed: ${failure.javaClass.simpleName}")
             emptyList()
         }
         if (songs.isNotEmpty()) {
@@ -538,7 +541,8 @@ class PlaybackService : MediaLibraryService() {
             withTimeoutOrNull(HOME_NETWORK_TIMEOUT_MS) {
                 YtMusicRepository.home().getOrNull()
             }
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            TrackLog.w("BitChord", "auto home failed: ${failure.javaClass.simpleName}")
             null
         } ?: return null
         cachedHome = SystemClock.elapsedRealtime() to feed
@@ -564,7 +568,8 @@ class PlaybackService : MediaLibraryService() {
                     )
                 }
         } ?: emptyList()
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
+        TrackLog.w("BitChord", "auto playlists failed: ${failure.javaClass.simpleName}")
         emptyList()
     }
 
@@ -638,8 +643,12 @@ class PlaybackService : MediaLibraryService() {
                 if (freshCount > 0) {
                     session.notifyChildrenChanged(browser, parentId, freshCount, params)
                 }
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
                 // The existing snapshot remains usable when revalidation fails.
+                TrackLog.w(
+                    "BitChord",
+                    "auto folder refresh failed: ${failure.javaClass.simpleName}",
+                )
             }
         }
     }
@@ -8478,6 +8487,21 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
         scope.launch {
+            // SponsorBlock settings change what this track still has to skip.
+            // The switch used to wait for the next play/pause or the next
+            // scheduled message, so turning extras on mid-song did nothing
+            // until the following track. Re-read the current track on the
+            // toggle itself; no timer is involved.
+            AppSettings.skipNonMusicParts.drop(1).collect {
+                refreshSkipSegmentsForSettings()
+            }
+        }
+        scope.launch {
+            AppSettings.skipSponsorParts.drop(1).collect {
+                refreshSkipSegmentsForSettings()
+            }
+        }
+        scope.launch {
             // Event-driven: the toggle itself is the only thing that wakes this.
             // On the way in, drop whatever is already pending so nothing from
             // before the switch can be written afterwards; on the way out,
@@ -9463,6 +9487,33 @@ class PlaybackService : MediaLibraryService() {
     private fun cancelSkipSegmentMessages() {
         skipSegmentMessages.forEach { runCatching { it.cancel() } }
         skipSegmentMessages.clear()
+    }
+
+    /**
+     * Applies a SponsorBlock switch to the track already playing.
+     *
+     * Off cancels the pending messages and forgets the lookup, so nothing can
+     * jump the playhead after the listener turned the feature off. On reuses
+     * the segments already held for this track (the sponsor-only switch only
+     * changes which categories are eligible) and otherwise asks once. It is
+     * called from the settings flows, never from a timer.
+     */
+    private fun refreshSkipSegmentsForSettings() {
+        if (!AppSettings.skipNonMusicParts.value) {
+            cancelSkipSegmentMessages()
+            skipSegments = emptyList()
+            skipSegmentsVideoId = null
+            return
+        }
+        val videoId = player?.currentMediaItem?.mediaId ?: return
+        if (videoId == skipSegmentsVideoId && skipSegments.isNotEmpty()) {
+            // Same track, already answered: only the category filter moved.
+            scheduleSkipSegmentMessages()
+        } else {
+            // Nothing held for this track yet (or it was switched on after the
+            // track started). [checkSkipSegments] fetches when it is safe to.
+            checkSkipSegments()
+        }
     }
 
     /**
