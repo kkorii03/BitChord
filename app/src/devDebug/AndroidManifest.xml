@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Dev-debug only. Deliberately not in src/debug or src/dev: this hook is
+      for emulator smoke tests and must never reach a release APK.
+    -->
+    <application>
+        <receiver
+            android:name="com.music.bitchord.debug.DebugSettingsImportReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.music.bitchord.debug.IMPORT_SETTINGS" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
