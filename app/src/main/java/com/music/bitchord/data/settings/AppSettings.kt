@@ -1130,6 +1130,7 @@ object AppSettings {
         // Baked into this personal build after CI, like Gemini's — never committed.
         // Also only a default: a key typed in Settings (or removed there) wins.
         bundledDeepgramApiKey = context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
+        sanitizeStoredPreferences()
         deepgramApiKey.value = prefs.getString(KEY_DEEPGRAM_API_KEY, null) ?: bundledDeepgramApiKey
         com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
         this.authStore = authStore
@@ -1155,9 +1156,11 @@ object AppSettings {
     }
 
     private fun readAll() {
+        sanitizeStoredPreferences()
         // Read before the migrations below write their defaults: on a fresh
         // install this is the only moment the file is still empty.
         val onboardingSaved = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
+        val hadSettingsBeforeMigrations = prefs.all.isNotEmpty()
         val existingInstall = !onboardingSaved && hadDataBeforeOnboarding()
         migrateCellularQualityDefault()
         migrateSingleQuality()
@@ -1168,6 +1171,7 @@ object AppSettings {
             DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS,
         ).coerceIn(MIN_UPGRADE_LENGTH_SLACK_SECONDS, MAX_UPGRADE_LENGTH_SLACK_SECONDS)
         migrateDownloadQuality()
+        migrateHqAutomationDefaults(hadSettingsBeforeMigrations)
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
@@ -1203,10 +1207,10 @@ object AppSettings {
         equalizerToneX.value = prefs.getInt(KEY_EQ_TONE_X, 0).coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS)
         equalizerToneY.value = prefs.getInt(KEY_EQ_TONE_Y, 0).coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS)
         equalizerFocused.value = prefs.getBoolean(KEY_EQ_FOCUSED, false)
-        equalizerBalance.value = prefs.getFloat(KEY_EQ_BALANCE, 0f).coerceIn(-1f, 1f)
+        equalizerBalance.value = clampBalance(prefs.getFloat(KEY_EQ_BALANCE, 0f))
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
-        playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
+        playbackSpeed.value = PlaybackParametersMath.clampSpeed(prefs.getFloat(KEY_SPEED, 1.0f))
         pitchSemitones.value = PlaybackParametersMath.clampPitchSemitones(prefs.getInt(KEY_PITCH, 0))
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
@@ -1215,7 +1219,9 @@ object AppSettings {
         personalisedAutoplay.value = prefs.getBoolean(KEY_PERSONALISED_AUTOPLAY, true)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         notificationPermissionAsked.value = prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, false)
-        repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
+        repeatMode.value = PlaybackParametersMath.clampRepeatMode(
+            prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF),
+        )
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
         lowPowerMode.value = runCatching {
@@ -1336,7 +1342,9 @@ object AppSettings {
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
         lastfmPrimaryArtistOnly.value = prefs.getBoolean(KEY_LASTFM_PRIMARY_ARTIST_ONLY, false)
         scrobbleMinDuration.value = prefs.getInt(KEY_SCROBBLE_MIN_DURATION, 30)
-        scrobbleDelayPercent.value = prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f)
+        scrobbleDelayPercent.value = clampScrobbleDelay(
+            prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f),
+        )
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
@@ -1534,6 +1542,34 @@ object AppSettings {
         prefs.edit().putString(KEY_QUALITY_DOWNLOAD, DownloadQuality.LOSSLESS.name).apply()
     }
 
+    /**
+     * The automatic HQ pass is new. An install that updates into it never chose
+     * to spend mobile data or storage on hundreds of background downloads, so
+     * both switches start off there; a fresh install gets the feature on, and
+     * its onboarding copy names what it does. An absent key on a later reload
+     * (a settings file that predates the switches) is treated the same as an
+     * upgrade, so restoring an old backup cannot silently turn it back on.
+     *
+     * [hadSettingsBeforeMigrations] is whether the file held anything before
+     * this launch wrote its own defaults — not whether onboarding is complete.
+     * A normal app update has already finished onboarding, so that flag would
+     * call it a fresh install and turn both switches on.
+     */
+    private fun migrateHqAutomationDefaults(hadSettingsBeforeMigrations: Boolean) {
+        val default = hqAutomationDefault(existingInstall = hadSettingsBeforeMigrations)
+        val edit = prefs.edit()
+        var changed = false
+        if (!prefs.contains(KEY_AUTO_REPLACE_HQ_DOWNLOADS)) {
+            edit.putBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, default)
+            changed = true
+        }
+        if (!prefs.contains(KEY_AUTO_PREFETCH_HQ)) {
+            edit.putBoolean(KEY_AUTO_PREFETCH_HQ, default)
+            changed = true
+        }
+        if (changed) edit.apply()
+    }
+
     private fun readDownloadQuality(): DownloadQuality {
         val stored = prefs.getString(KEY_QUALITY_DOWNLOAD, null) ?: return DownloadQuality.LOSSLESS
         return runCatching { DownloadQuality.valueOf(stored) }.getOrDefault(DownloadQuality.LOSSLESS)
@@ -1589,8 +1625,9 @@ object AppSettings {
     }
 
     fun setRepeatMode(value: Int) {
-        repeatMode.value = value
-        prefs.edit().putInt(KEY_REPEAT_MODE, value).apply()
+        val clamped = PlaybackParametersMath.clampRepeatMode(value)
+        repeatMode.value = clamped
+        prefs.edit().putInt(KEY_REPEAT_MODE, clamped).apply()
     }
 
     fun setAudioQualityWifi(value: AudioQuality) {
@@ -1734,10 +1771,21 @@ object AppSettings {
     }
 
     fun setEqualizerBalance(value: Float) {
-        val clamped = value.coerceIn(-1f, 1f)
+        val clamped = clampBalance(value)
         equalizerBalance.value = clamped
         prefs.edit().putFloat(KEY_EQ_BALANCE, clamped).apply()
     }
+
+    private fun clampBalance(value: Float): Float =
+        value.takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
+
+    private fun clampScrobbleDelay(value: Float): Float =
+        value.takeIf { it.isFinite() }?.coerceIn(0.1f, 1f) ?: 0.5f
+
+    private fun clampBand(value: Float): Float =
+        value.takeIf { it.isFinite() }
+            ?.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+            ?: 0f
 
     /**
      * Writes the manual tab's seven gains, and renames the preset row to suit.
@@ -1748,7 +1796,7 @@ object AppSettings {
      */
     fun setEqualizerBands(values: List<Float>) {
         val clamped = List(EqLayout.MANUAL_COUNT) {
-            values.getOrElse(it) { 0f }.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+            clampBand(values.getOrElse(it) { 0f })
         }
         equalizerBands.value = clamped
         equalizerPreset.value = EqualizerPreset.matching(clamped)
@@ -1769,13 +1817,14 @@ object AppSettings {
         // Padded rather than rejected: a backup written by a build with a
         // different number of bands should restore the ones it does have.
         return List(EqLayout.MANUAL_COUNT) {
-            stored.getOrElse(it) { 0f }.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+            clampBand(stored.getOrElse(it) { 0f })
         }
     }
 
     fun setPlaybackSpeed(value: Float) {
-        playbackSpeed.value = value
-        prefs.edit().putFloat(KEY_SPEED, value).apply()
+        val clamped = PlaybackParametersMath.clampSpeed(value)
+        playbackSpeed.value = clamped
+        prefs.edit().putFloat(KEY_SPEED, clamped).apply()
     }
 
     fun setPitchSemitones(value: Int) {
@@ -2377,8 +2426,9 @@ object AppSettings {
     }
 
     fun setScrobbleDelayPercent(value: Float) {
-        scrobbleDelayPercent.value = value
-        prefs.edit().putFloat(KEY_SCROBBLE_DELAY_PERCENT, value).apply()
+        val clamped = clampScrobbleDelay(value)
+        scrobbleDelayPercent.value = clamped
+        prefs.edit().putFloat(KEY_SCROBBLE_DELAY_PERCENT, clamped).apply()
     }
 
     fun setScrobbleDelaySeconds(value: Int) {
@@ -2794,20 +2844,351 @@ object AppSettings {
         val kept = prefs.all.filterKeys { it in SECRETS || it in DEVICE_LOCAL }
         prefs.edit().apply {
             clear()
-            val incoming = values.filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
-            (kept + incoming).forEach { (key, value) ->
-                when (value) {
-                    is Boolean -> putBoolean(key, value)
-                    is Int -> putInt(key, value)
-                    is Long -> putLong(key, value)
-                    is Float -> putFloat(key, value)
-                    is String -> putString(key, value)
-                    is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
-                    else -> Unit
+            val incoming = values
+                .filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
+                .mapNotNull { (key, value) ->
+                    val sanitized = when {
+                        key in KNOWN_PREFS -> sanitizeKnownPref(key, value)
+                        value is Float && !value.isFinite() -> null
+                        else -> value
+                    }
+                    sanitized?.let { key to it }
                 }
+                .toMap()
+            (kept + incoming).forEach { (key, value) ->
+                putSanitized(key, value)
             }
         }.apply()
         reload()
+    }
+
+    private enum class PrefCarrier { BOOLEAN, INT, LONG, FLOAT, STRING, STRING_SET }
+
+    private data class KnownPref(
+        val carrier: PrefCarrier,
+        val allowed: Set<String>? = null,
+        val intRange: IntRange? = null,
+        val floatRange: ClosedFloatingPointRange<Float>? = null,
+    )
+
+    /**
+     * Every preference [readAll] knows how to read, with the carrier type it
+     * must have and any bound its own setter enforces.
+     *
+     * A restored value is untrusted input. A string under [KEY_SPEED] would
+     * make Android's `getFloat` throw the first time the file is read — after
+     * [importPrefs] has already cleared it — and a speed of zero or a repeat
+     * mode outside Media3's three throws in the playback service. Known keys
+     * therefore accept only their declared type; numeric values are clamped to
+     * what the setter accepts, non-finite floats are refused, and enum-like
+     * strings must name a rung this build knows.
+     */
+    private val KNOWN_PREFS: Map<String, KnownPref> = buildMap {
+        fun bools(vararg keys: String) = keys.forEach {
+            this[it] = KnownPref(PrefCarrier.BOOLEAN)
+        }
+        fun ints(vararg keys: String) = keys.forEach {
+            this[it] = KnownPref(PrefCarrier.INT)
+        }
+        fun longs(vararg keys: String) = keys.forEach {
+            this[it] = KnownPref(PrefCarrier.LONG)
+        }
+        fun floats(vararg keys: String) = keys.forEach {
+            this[it] = KnownPref(PrefCarrier.FLOAT)
+        }
+        fun strings(vararg keys: String) = keys.forEach {
+            this[it] = KnownPref(PrefCarrier.STRING)
+        }
+        fun enums(key: String, allowed: Set<String>) {
+            this[key] = KnownPref(PrefCarrier.STRING, allowed)
+        }
+        fun stringSets(vararg keys: String) = keys.forEach {
+            this[it] = KnownPref(PrefCarrier.STRING_SET)
+        }
+
+        bools(
+            KEY_ONBOARDING_COMPLETE,
+            KEY_WIFI_ONLY_DOWNLOADS,
+            KEY_AUTO_REDOWNLOAD_MV_SOUND,
+            KEY_AUTO_REPLACE_HQ_DOWNLOADS,
+            KEY_AUTO_PREFETCH_HQ,
+            KEY_EXPORT_DOWNLOADS,
+            KEY_SMART_FADE,
+            KEY_AUTOMIX_VIDEOS,
+            KEY_SKIP_SILENCE,
+            KEY_PRIVATE_LISTENING,
+            KEY_PREFER_USB_DAC,
+            KEY_LOUDNESS_NORMALIZATION,
+            KEY_LOUDNESS_OFF_ON_SPEAKER,
+            KEY_DOLBY_ATMOS,
+            KEY_SPATIAL_AUDIO,
+            KEY_EQ_ENABLED,
+            KEY_EQ_FOCUSED,
+            KEY_AUTOPLAY,
+            KEY_PERSONALISED_AUTOPLAY,
+            KEY_SHUFFLE_ENABLED,
+            KEY_NOTIFICATION_PERMISSION_ASKED,
+            KEY_NERD_STATS,
+            KEY_REDUCE_ANIMATION,
+            KEY_HIGH_PERFORMANCE_MODE,
+            KEY_STOP_ON_TASK_REMOVED,
+            KEY_HIDE_VOLUME_BAR,
+            KEY_HIDE_STATUS_BAR_IN_PLAYER,
+            KEY_HIDE_SONG_STATUS,
+            KEY_WIDGET_OPENS_PLAYER,
+            KEY_SHOW_QUEUE_HISTORY,
+            KEY_SWIPE_TO_PLAY_NEXT,
+            KEY_DONT_REPEAT_SUGGESTIONS,
+            KEY_PREFER_MUSIC_ONLY,
+            KEY_SKIP_NON_MUSIC_PARTS,
+            KEY_SKIP_SPONSOR_PARTS,
+            KEY_SMART_VERSION_ALIGNMENT,
+            KEY_REDUCE_BLUR,
+            KEY_LIQUID_GLASS,
+            KEY_LYRICS_BLUR,
+            KEY_ANIMATED_CANVAS,
+            KEY_CANVAS_OVER_CELLULAR,
+            KEY_SPOTIFY_CANVAS_AUTO_HIDE,
+            KEY_PRIORITIZE_SPOTIFY_CANVAS,
+            KEY_VIDEO_CANVAS,
+            KEY_SIGNATURE_API_ENABLED,
+            KEY_FULL_BLEED_ARTWORK,
+            KEY_LEGACY_MESH_GRADIENT,
+            KEY_SYNCED_LYRICS,
+            KEY_PRIORITIZE_SYLLABLE_SYNC,
+            KEY_GEMINI_TRANSLATION,
+            KEY_PREFETCH_TRANSLATION,
+            KEY_KEEP_DOWNLOAD_TRANSLATION,
+            KEY_AUTO_DOWNLOAD_LIKED,
+            KEY_AUTO_TRANSLATE_LYRICS,
+            KEY_AUTO_LYRICS_TIMING,
+            KEY_AI_LYRICS,
+            KEY_AI_TIMING_AHEAD,
+            KEY_SYLLABLE_DEFAULT_MIGRATED,
+            KEY_LOCK_SCREEN_LYRICS,
+            KEY_HIDDEN_EXPLORE_SEEDED_V1,
+            KEY_RESUME_ON_HEADPHONES,
+            KEY_REPLAY_GENRES,
+            KEY_FILTER_NON_MUSIC_AUDIO,
+            KEY_SHOW_CACHE_FOLDER,
+            KEY_LASTFM_ENABLED,
+            KEY_LASTFM_SCROBBLE_ENABLED,
+            KEY_LASTFM_NOW_PLAYING,
+            KEY_LASTFM_PRIMARY_ARTIST_ONLY,
+            KEY_LISTENBRAINZ_ENABLED,
+            KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY,
+            KEY_DISCORD_RPC_ENABLED,
+            KEY_DISCORD_USE_DETAILS,
+            KEY_DISCORD_SHOW_AUDIO_QUALITY,
+            KEY_DISCORD_ADVANCED_MODE,
+            KEY_DISCORD_BUTTON_1_VISIBLE,
+            KEY_DISCORD_BUTTON_2_VISIBLE,
+            KEY_DISCORD_INFO_DISMISSED,
+        )
+        ints(
+            KEY_UPGRADE_LENGTH_SLACK_SECONDS,
+            KEY_HQ_PREFETCH_LIMIT,
+            KEY_CROSSFADE,
+            KEY_EQ_TONE_X,
+            KEY_EQ_TONE_Y,
+            KEY_PITCH,
+            KEY_REPEAT_MODE,
+            KEY_PERFORMANCE_REFRESH_RATE,
+            KEY_LYRICS_OFFSET_MS,
+            KEY_PROXY_PORT,
+            KEY_PROXY_BACKUP_PORT,
+            KEY_SCROBBLE_MIN_DURATION,
+            KEY_SCROBBLE_DELAY_SECONDS,
+            KEY_LAST_VERSION_CODE,
+        )
+        longs(KEY_PRIVATE_LISTENING_SINCE, KEY_CACHE_LIMIT)
+        floats(KEY_EQ_BALANCE, KEY_SPEED, KEY_SCROBBLE_DELAY_PERCENT)
+        strings(
+            KEY_DEEPGRAM_API_KEY,
+            KEY_QUALITY_LEGACY,
+            KEY_QUALITY_WIFI,
+            KEY_QUALITY_CELLULAR,
+            KEY_QUALITY_DOWNLOAD,
+            KEY_AUTOMIX_PERFORMANCE_MODE,
+            KEY_OUTPUT_PCM_MODE,
+            KEY_EQ_MODE,
+            KEY_EQ_BANDS,
+            KEY_THEME,
+            KEY_LOW_POWER_MODE,
+            KEY_TRANSLATION_LANGUAGE,
+            KEY_SIGNATURE_API_URL,
+            KEY_LAST_PLAYER_SCREEN,
+            KEY_LYRICS_SOURCES,
+            KEY_LYRICS_SOURCES_SEEN,
+            KEY_LYRICS_SOURCE_ORDER,
+            KEY_PAXSENIX_API_KEY,
+            KEY_GEMINI_API_KEY,
+            KEY_CONTENT_COUNTRY,
+            KEY_CHARTS_COUNTRY,
+            KEY_LOCAL_MUSIC_SORT,
+            KEY_DOWNLOADED_MUSIC_SORT,
+            KEY_LIBRARY_SORT,
+            KEY_DETAIL_SONG_SORTS,
+            KEY_LOCAL_MUSIC_VIEW_TYPE,
+            KEY_DOWNLOADED_MUSIC_VIEW_TYPE,
+            KEY_HOME_RECENTS_VIEW_TYPE,
+            KEY_LOCAL_MUSIC_FOLDER_URI,
+            KEY_WEBDAV_URL,
+            KEY_WEBDAV_USERNAME,
+            KEY_SMB_HOST,
+            KEY_SMB_SHARE,
+            KEY_SMB_BASE_PATH,
+            KEY_SMB_USERNAME,
+            KEY_PROXY_MODE,
+            KEY_PROXY_HOST,
+            KEY_PROXY_BACKUP_HOST,
+            KEY_PROXY_USERNAME,
+            KEY_PROXY_SCOPE,
+            KEY_PINNED_PLAYLISTS,
+            KEY_LASTFM_USERNAME,
+            KEY_LASTFM_SESSION_KEY,
+            KEY_LASTFM_API_KEY,
+            KEY_LASTFM_SECRET,
+            KEY_LASTFM_ENDPOINT,
+            KEY_LISTENBRAINZ_TOKEN,
+            KEY_SPOTIFY_SPDC_TOKEN,
+            KEY_DISCORD_USERNAME,
+            KEY_DISCORD_NAME,
+            KEY_DISCORD_AVATAR,
+            KEY_DISCORD_STATUS,
+            KEY_DISCORD_ACTIVITY_TYPE,
+            KEY_DISCORD_ACTIVITY_NAME,
+            KEY_DISCORD_BUTTON_1_TEXT,
+            KEY_DISCORD_BUTTON_2_TEXT,
+        )
+        stringSets(KEY_COVER_CHANNELS, KEY_COVER_SINGERS, KEY_HIDDEN_EXPLORE_CATEGORIES)
+
+        enums(KEY_QUALITY_WIFI, AudioQuality.entries.map { it.name }.toSet())
+        enums(KEY_QUALITY_CELLULAR, AudioQuality.entries.map { it.name }.toSet())
+        enums(KEY_QUALITY_DOWNLOAD, DownloadQuality.entries.map { it.name }.toSet())
+        enums(KEY_AUTOMIX_PERFORMANCE_MODE, AutomixPerformanceMode.entries.map { it.name }.toSet())
+        enums(KEY_OUTPUT_PCM_MODE, OutputPcmMode.entries.map { it.name }.toSet())
+        enums(KEY_EQ_MODE, EqualizerMode.entries.map { it.name }.toSet())
+        enums(KEY_THEME, ThemeMode.entries.map { it.name }.toSet())
+        enums(KEY_LOW_POWER_MODE, LowPowerMode.entries.map { it.name }.toSet())
+        enums(KEY_LAST_PLAYER_SCREEN, LastPlayerScreen.entries.map { it.name }.toSet())
+        enums(KEY_PROXY_MODE, ProxyMode.entries.map { it.name }.toSet())
+        enums(KEY_PROXY_SCOPE, ProxyScope.entries.map { it.name }.toSet())
+        enums(KEY_LIBRARY_SORT, LibrarySort.entries.map { it.name }.toSet())
+        enums(KEY_LOCAL_MUSIC_SORT, LocalMusicSort.entries.map { it.name }.toSet())
+        enums(KEY_DOWNLOADED_MUSIC_SORT, LocalMusicSort.entries.map { it.name }.toSet())
+        enums(KEY_LOCAL_MUSIC_VIEW_TYPE, LibraryViewType.entries.map { it.name }.toSet())
+        enums(KEY_DOWNLOADED_MUSIC_VIEW_TYPE, LibraryViewType.entries.map { it.name }.toSet())
+        enums(KEY_HOME_RECENTS_VIEW_TYPE, LibraryViewType.entries.map { it.name }.toSet())
+
+        this[KEY_UPGRADE_LENGTH_SLACK_SECONDS] = KnownPref(
+            PrefCarrier.INT,
+            intRange = MIN_UPGRADE_LENGTH_SLACK_SECONDS..MAX_UPGRADE_LENGTH_SLACK_SECONDS,
+        )
+        this[KEY_HQ_PREFETCH_LIMIT] = KnownPref(PrefCarrier.INT, intRange = 0..10_000)
+        this[KEY_EQ_TONE_X] = KnownPref(
+            PrefCarrier.INT,
+            intRange = -EqLayout.TONE_STEPS..EqLayout.TONE_STEPS,
+        )
+        this[KEY_EQ_TONE_Y] = KnownPref(
+            PrefCarrier.INT,
+            intRange = -EqLayout.TONE_STEPS..EqLayout.TONE_STEPS,
+        )
+        this[KEY_PITCH] = KnownPref(
+            PrefCarrier.INT,
+            intRange = PlaybackParametersMath.MIN_PITCH_SEMITONES..
+                PlaybackParametersMath.MAX_PITCH_SEMITONES,
+        )
+        this[KEY_REPEAT_MODE] = KnownPref(
+            PrefCarrier.INT,
+            intRange = PlaybackParametersMath.MIN_REPEAT_MODE..
+                PlaybackParametersMath.MAX_REPEAT_MODE,
+        )
+        this[KEY_LYRICS_OFFSET_MS] = KnownPref(
+            PrefCarrier.INT,
+            intRange = MIN_LYRICS_OFFSET_MS..MAX_LYRICS_OFFSET_MS,
+        )
+        this[KEY_PROXY_PORT] = KnownPref(PrefCarrier.INT, intRange = 0..65535)
+        this[KEY_PROXY_BACKUP_PORT] = KnownPref(PrefCarrier.INT, intRange = 0..65535)
+        this[KEY_EQ_BALANCE] = KnownPref(PrefCarrier.FLOAT, floatRange = -1f..1f)
+        this[KEY_SPEED] = KnownPref(
+            PrefCarrier.FLOAT,
+            floatRange = PlaybackParametersMath.MIN_SPEED..PlaybackParametersMath.MAX_SPEED,
+        )
+        this[KEY_SCROBBLE_DELAY_PERCENT] = KnownPref(
+            PrefCarrier.FLOAT,
+            floatRange = 0.1f..1f,
+        )
+    }
+
+    private fun sanitizeKnownPref(key: String, value: Any?): Any? {
+        if (key == KEY_EQ_BANDS) return sanitizeEqualizerBands(value)
+        val spec = KNOWN_PREFS[key] ?: return value
+        return when (spec.carrier) {
+            PrefCarrier.BOOLEAN -> value as? Boolean
+            PrefCarrier.INT -> (value as? Int)?.let { raw ->
+                spec.intRange?.let { raw.coerceIn(it) } ?: raw
+            }
+            PrefCarrier.LONG -> value as? Long
+            PrefCarrier.FLOAT -> (value as? Float)
+                ?.takeIf { it.isFinite() }
+                ?.let { raw -> spec.floatRange?.let { raw.coerceIn(it) } ?: raw }
+            PrefCarrier.STRING -> (value as? String)
+                ?.takeIf { spec.allowed == null || it in spec.allowed }
+            PrefCarrier.STRING_SET -> (value as? Set<*>)
+                ?.filterIsInstance<String>()
+                ?.toSet()
+        }
+    }
+
+    private fun sanitizeEqualizerBands(value: Any?): Any? {
+        val text = value as? String ?: return null
+        val parts = text.split(',').map { it.trim() }
+        if (parts.any { it.isEmpty() }) return null
+        val parsed = parts.map { part ->
+            part.toFloatOrNull()?.takeIf { it.isFinite() } ?: return null
+        }
+        return parsed.joinToString(",") {
+            clampBand(it).toString()
+        }
+    }
+
+    /**
+     * Drops or repairs values already in the file, before [readAll]'s typed
+     * getters touch them. An import writes through [importPrefs], but a file
+     * restored by an older build can still hold a string under a float key.
+     */
+    private fun sanitizeStoredPreferences() {
+        if (!this::prefs.isInitialized) return
+        val snapshot = prefs.all
+        if (snapshot.isEmpty()) return
+        val removals = mutableListOf<String>()
+        val corrections = linkedMapOf<String, Any>()
+        for ((key, value) in snapshot) {
+            if (key !in KNOWN_PREFS) continue
+            val normalized = sanitizeKnownPref(key, value)
+            when {
+                normalized == null -> removals += key
+                normalized != value -> corrections[key] = normalized
+            }
+        }
+        if (removals.isEmpty() && corrections.isEmpty()) return
+        prefs.edit().apply {
+            removals.forEach { remove(it) }
+            corrections.forEach { (key, value) -> putSanitized(key, value) }
+        }.apply()
+    }
+
+    private fun SharedPreferences.Editor.putSanitized(key: String, value: Any?) {
+        when (value) {
+            is Boolean -> putBoolean(key, value)
+            is Int -> putInt(key, value)
+            is Long -> putLong(key, value)
+            is Float -> putFloat(key, value)
+            is String -> putString(key, value)
+            is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+            else -> Unit
+        }
     }
 
     // ── Settings transfer ───────────────────────────────────────────────
@@ -2833,8 +3214,15 @@ object AppSettings {
         val theme = ThemeMode.entries.map { it.name }.toSet()
         val lowPower = LowPowerMode.entries.map { it.name }.toSet()
 
-        fun put(key: String, category: TransferCategory, type: TransferType, allowed: Set<String>? = null) {
-            this[key] = TransferKey(category, TransferSpec(type, allowed))
+        fun put(
+            key: String,
+            category: TransferCategory,
+            type: TransferType,
+            allowed: Set<String>? = null,
+            floatRange: ClosedFloatingPointRange<Float>? = null,
+            intRange: IntRange? = null,
+        ) {
+            this[key] = TransferKey(category, TransferSpec(type, allowed, floatRange, intRange))
         }
 
         // Audio quality and downloads.
@@ -2890,12 +3278,32 @@ object AppSettings {
         put(KEY_EQ_TONE_X, TransferCategory.PLAYBACK, TransferType.INT)
         put(KEY_EQ_TONE_Y, TransferCategory.PLAYBACK, TransferType.INT)
         put(KEY_EQ_FOCUSED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_EQ_BALANCE, TransferCategory.PLAYBACK, TransferType.FLOAT)
-        put(KEY_EQ_BANDS, TransferCategory.PLAYBACK, TransferType.FLOAT_LIST)
-        put(KEY_SPEED, TransferCategory.PLAYBACK, TransferType.FLOAT)
+        put(
+            KEY_EQ_BALANCE,
+            TransferCategory.PLAYBACK,
+            TransferType.FLOAT,
+            floatRange = -1f..1f,
+        )
+        put(
+            KEY_EQ_BANDS,
+            TransferCategory.PLAYBACK,
+            TransferType.FLOAT_LIST,
+            floatRange = -EqLayout.MANUAL_RANGE_DB..EqLayout.MANUAL_RANGE_DB,
+        )
+        put(
+            KEY_SPEED,
+            TransferCategory.PLAYBACK,
+            TransferType.FLOAT,
+            floatRange = PlaybackParametersMath.MIN_SPEED..PlaybackParametersMath.MAX_SPEED,
+        )
         put(KEY_PITCH, TransferCategory.PLAYBACK, TransferType.INT)
         put(KEY_SHUFFLE_ENABLED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_REPEAT_MODE, TransferCategory.PLAYBACK, TransferType.INT)
+        put(
+            KEY_REPEAT_MODE,
+            TransferCategory.PLAYBACK,
+            TransferType.INT,
+            intRange = PlaybackParametersMath.MIN_REPEAT_MODE..PlaybackParametersMath.MAX_REPEAT_MODE,
+        )
         put(KEY_DONT_REPEAT_SUGGESTIONS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_SWIPE_TO_PLAY_NEXT, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_STOP_ON_TASK_REMOVED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
@@ -3324,5 +3732,12 @@ object AppSettings {
 internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
     if (existingInstall) AudioQuality.LOSSLESS else AudioQuality.HIGH
 
-
-
+/**
+ * Off for an install that updated into the feature; on for a fresh one.
+ *
+ * [existingInstall] is whether the preference file already held settings before
+ * this launch wrote any — not whether onboarding is complete. A normal app
+ * update has finished onboarding, so the onboarding flag cannot stand in for
+ * this.
+ */
+internal fun hqAutomationDefault(existingInstall: Boolean): Boolean = !existingInstall

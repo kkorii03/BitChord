@@ -412,4 +412,28 @@ class SettingsTransferEdgeCasesTest {
         assertTrue(name.endsWith(".${SettingsTransfer.FILE_EXTENSION}"))
         assertNotEquals("bitchord-settings-.${SettingsTransfer.FILE_EXTENSION}", name)
     }
+
+    @Test
+    fun `playback speed and repeat mode are clamped to values the player accepts`() {
+        val speed = AppSettings.TRANSFERABLE_KEYS.getValue("playback_speed").spec
+        assertEquals(0.5f, speed.normalize(0f))
+        assertEquals(0.5f, speed.normalize(-4f))
+        assertEquals(2.0f, speed.normalize(9f))
+        assertNull(speed.normalize(Float.NaN))
+        assertNull(speed.normalize(Float.POSITIVE_INFINITY))
+
+        val repeat = AppSettings.TRANSFERABLE_KEYS.getValue("repeat_mode").spec
+        assertEquals(0, repeat.normalize(-1))
+        assertEquals(2, repeat.normalize(99))
+        assertEquals(1, repeat.normalize(1))
+    }
+
+    @Test
+    fun `float lists reject non-finite values and clamp each gain`() {
+        val bands = AppSettings.TRANSFERABLE_KEYS.getValue("equalizer_bands").spec
+
+        assertEquals("-12.0,0.0,12.0", bands.normalize("-999,0,999"))
+        assertNull(bands.normalize("1,NaN"))
+        assertNull(bands.normalize("1,Infinity"))
+    }
 }
