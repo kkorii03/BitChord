@@ -1213,7 +1213,11 @@ object YtMusicRepository {
         }
         if (resolved.none { it.second != null }) return songs
         return songs.toMutableList().also { out ->
-            resolved.forEach { (index, version) -> if (version != null) out[index] = version }
+            resolved.forEach { (index, version) ->
+                if (version != null && !CatalogSongMapper.isCover(songs[index])) {
+                    out[index] = version
+                }
+            }
         }
     }
 

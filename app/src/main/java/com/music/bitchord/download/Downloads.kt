@@ -1719,7 +1719,9 @@ object Downloads {
                 YtMusicRepository.isSongVersionMissing(versionSong.videoId),
             )
         ) {
-            runCatching { YtMusicRepository.songVersion(versionSong) }.getOrNull() ?: versionSong
+            runCatching { YtMusicRepository.songVersion(versionSong) }.getOrNull()
+                ?.takeIf { SongVersionPolicy.mayInstallSongVersion(versionSong) }
+                ?: versionSong
         } else {
             versionSong
         }
