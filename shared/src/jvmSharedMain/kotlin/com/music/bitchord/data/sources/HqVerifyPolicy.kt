@@ -52,6 +52,32 @@ object HqVerifyPolicy {
     const val HEADROOM_FRACTION = 1.2
 
     /**
+     * The Range header for exactly the first [limit] bytes, or null when there
+     * is nothing to ask for.
+     *
+     * A bounded range lets the server finish the response at the comparison
+     * window. An open-ended `bytes=0-` keeps the response alive past the last
+     * byte the verifier needs, and an edge that resets such a stream before the
+     * app closes it (HTTP/2 INTERNAL_ERROR) loses the whole head. The last byte
+     * is inclusive, so `limit` bytes are requested and no more.
+     */
+    fun prefixRangeHeader(limit: Long): String? =
+        limit.takeIf { it > 0L }?.let { "bytes=0-${it - 1}" }
+
+    /**
+     * Whether a failed fetch that already wrote [bytes] left a head worth
+     * decoding.
+     *
+     * A reset can arrive after enough bytes for the comparison have landed. The
+     * temp file is a head, not a downloaded track, and a container with a
+     * missing tail still opens. How much of the window the profile really
+     * covers is decided later by [HqReferenceCache.completeEnough], so a short
+     * partial is returned as unmeasurable and can never become a stored
+     * rejection.
+     */
+    fun keepPartialDownload(bytes: Long): Boolean = bytes > 0L
+
+    /**
      * How long a manual request still has to wait, or zero when it may start.
      *
      * [manual] is the whole point: an explicit request ignores the automatic

@@ -737,8 +737,23 @@ object HqAudioVerify {
                 // A cancelled call surfaces as an IOException; only report it
                 // as a download failure when the coroutine is still wanted.
                 currentCoroutineContext().ensureActive()
-                TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
-                return null
+                val partial = file.length()
+                if (!HqVerifyPolicy.keepPartialDownload(partial)) {
+                    TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
+                    return null
+                }
+                // A reset can arrive after the bytes the comparison needs have
+                // already landed. The file is a head, not a downloaded track,
+                // and a missing tail does not stop the extractor opening it.
+                // The completeness check below still refuses a profile that is
+                // too short to be a measurement, so a partial can only turn an
+                // Unavailable into a measurement, never into a stored rejection.
+                TrackLog.w(
+                    TAG,
+                    "decode: hq-verify download interrupted at=${partial}B of $needed " +
+                        "(${e.message}); using the partial head",
+                )
+                partial
             }
             if (bytes <= 0L) {
                 TrackLog.w(TAG, "decode: hq-verify failed at=download bytes=0")
@@ -762,9 +777,12 @@ object HqAudioVerify {
      * Fetches the first [limit] bytes of [stream] into [file], using the same
      * client, headers and proxy route as HQ playback.
      *
-     * `Range: bytes=0-` lets the server stream from the start; the copy stops
-     * as soon as [limit] is reached, so a server that ignores Range cannot
-     * make this read the whole track. The call is cancelled when the calling
+     * The Range is bounded to the exact last byte ([HqVerifyPolicy.prefixRangeHeader]),
+     * so a server that honours it finishes the response at the comparison
+     * window instead of holding an open-ended stream that an HTTP/2 edge may
+     * reset with INTERNAL_ERROR before the app closes it. The copy still stops
+     * as soon as [limit] is reached, so a server that ignores Range cannot make
+     * this read the whole track. The call is cancelled when the calling
      * coroutine is, including while a read is blocked.
      */
     private suspend fun downloadPrefix(
@@ -772,10 +790,11 @@ object HqAudioVerify {
         file: File,
         limit: Long,
     ): Long {
+        val range = HqVerifyPolicy.prefixRangeHeader(limit) ?: return 0L
         val request = Request.Builder()
             .url(stream.url)
             .apply { stream.headers.forEach { (name, value) -> header(name, value) } }
-            .header("Range", "bytes=0-")
+            .header("Range", range)
             .build()
         val call = ProxyPlayback.mediaClientFor(stream.url).newCall(request)
         val cancel = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->

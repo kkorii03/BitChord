@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -124,5 +125,20 @@ class HqVerifyPolicyTest {
     fun `hi res lossless is capped`() {
         val hiRes = StreamFormat(codec = "flac", sampleRateHz = 192_000, bitDepth = 24)
         assertEquals(HqVerifyPolicy.LOSSLESS_MAX_BYTES, HqVerifyPolicy.bytesToFetch(hiRes, seconds = 92.0))
+    }
+
+    @Test
+    fun `the prefix request ends at the exact last byte of the window`() {
+        assertEquals("bytes=0-0", HqVerifyPolicy.prefixRangeHeader(1))
+        assertEquals("bytes=0-4415999", HqVerifyPolicy.prefixRangeHeader(4_416_000))
+        assertNull(HqVerifyPolicy.prefixRangeHeader(0))
+        assertNull(HqVerifyPolicy.prefixRangeHeader(-1))
+    }
+
+    @Test
+    fun `a failed fetch keeps a head only when bytes landed`() {
+        assertFalse(HqVerifyPolicy.keepPartialDownload(0))
+        assertTrue(HqVerifyPolicy.keepPartialDownload(1))
+        assertTrue(HqVerifyPolicy.keepPartialDownload(4_416_000))
     }
 }
