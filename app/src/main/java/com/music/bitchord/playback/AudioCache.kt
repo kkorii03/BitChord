@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -1337,6 +1338,25 @@ object AudioCache {
     private var pendingQueue: List<String> = emptyList()
 
     /**
+     * The next row's high-quality answer, completed by read-ahead once it has
+     * been searched and (when one exists) pinned. The next-song bundle waits
+     * on this instead of running the same search a second time.
+     */
+    private val hqHeadReady = ConcurrentHashMap<String, CompletableDeferred<SourceStream?>>()
+
+    /** Waits for read-ahead's high-quality answer for [videoId], or null when it is not running. */
+    suspend fun awaitHqHead(videoId: String, timeoutMs: Long): SourceStream? {
+        StreamChoice.of(videoId)?.let { stream ->
+            val sourceId = stream.sourceConfigId
+            if (sourceId != null && SourceRegistry.config(sourceId)?.kind != SourceKind.YOUTUBE) {
+                return stream
+            }
+        }
+        val flight = hqHeadReady[videoId] ?: return null
+        return withTimeoutOrNull(timeoutMs) { flight.await() }
+    }
+
+    /**
      * Gets the queue ahead of the one playing warmed up, in play order.
      *
      * The first id gets the full treatment: its opening onto disk first, so
@@ -1368,6 +1388,11 @@ object AudioCache {
         if (mediaIds == pendingQueue) return
         android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
         pendingQueue = mediaIds
+        val headId = mediaIds.firstOrNull()
+        val headFlight = if (headId != null) CompletableDeferred<SourceStream?>() else null
+        if (headId != null && headFlight != null) {
+            hqHeadReady[headId] = headFlight
+        }
         job?.cancel()
         // Both halves of the read-ahead below go through [StreamResolver],
         // which speaks YouTube ids and nothing else. A source-backed track
@@ -1388,6 +1413,11 @@ object AudioCache {
             // next playlist entry ahead of reach); there is no entry left for
             // read-ahead to own. Re-checked when the fetch actually runs.
             .filterNot(::playerHoldsVideo)
+        // A head that read-ahead will not resolve (a download, a source-backed
+        // row) has no high-quality answer coming; release anyone waiting on it.
+        if (headId != null && headId !in videoIds) {
+            headFlight?.complete(null)
+        }
         // With substitution possible, only the *bytes* half drops out. Read-
         // ahead builds its own spec below from an id alone and carries none of
         // the title and artist a substitution is matched on — so it resolves
@@ -1415,6 +1445,7 @@ object AudioCache {
             // never going to use. The URL half below is still worth having: a
             // reverted track resolves through YouTube, which is what it warms.
             val pinnedToYouTube = OriginalVersion.isPinned(next)
+            val nextFlight = if (next == headId) headFlight else null
             scope.launch {
                 // With substitution on, the *bytes* half above used to be
                 // switched off outright, and the paragraph explaining why is
@@ -1466,6 +1497,9 @@ object AudioCache {
                 } else {
                     null
                 }
+                // The next-song bundle may be suspended on this; a null is a
+                // real answer too (nothing on a higher source passed).
+                nextFlight?.complete(warmed)
                 // Safe to fill for the same reason in both cases: either nothing
                 // outranks YouTube and read-ahead is the only writer, or a
                 // source has been pinned and every writer now resolves to it.
@@ -1527,6 +1561,9 @@ object AudioCache {
                         delay(QUEUE_RESOLVE_STAGGER_MS)
                     }
                 }
+            }.also { warm ->
+                // Cancellation before the answer lands still releases waiters.
+                warm.invokeOnCompletion { nextFlight?.complete(null) }
             }
         }
     }

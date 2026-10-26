@@ -321,6 +321,13 @@ private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 private const val TRANSLATION_AHEAD_DELAY_MS = 12_000L
 
 /**
+ * How long the next-song bundle waits for the incoming track's opening
+ * analysis. Waiting is a suspension, not a poll; the analysis itself keeps
+ * running either way and the crossfade path still uses it when it lands late.
+ */
+private const val NEXT_PREP_MIX_WAIT_MS = 20_000L
+
+/**
  * The controller that draws the media notification. It is always attached
  * while the service has a session, and it never draws lyric subtitles, so it
  * does not count as a reason to keep the lyric ticker awake with the screen
@@ -1171,6 +1178,17 @@ class PlaybackService : MediaLibraryService() {
         override fun onEvents(player: Player, events: Player.Events) {
             val activePlayer = this@PlaybackService.player ?: return
             if (player === activePlayer) updateAudioEffectSession(activePlayer)
+            // A queue edit changes what "next" means. Re-snapshot on the
+            // timeline event; the bundle cancels itself only when the row it
+            // was preparing is no longer the one that will play.
+            if (player === activePlayer && activePlayer.isPlaying &&
+                events.contains(Player.EVENT_TIMELINE_CHANGED)
+            ) {
+                // Read-ahead follows the queue edit too, so the bundle's
+                // high-quality step has the same next row to wait on.
+                prefetchAround(activePlayer)
+                scheduleNextPrep(activePlayer)
+            }
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1213,6 +1231,11 @@ class PlaybackService : MediaLibraryService() {
             // Nothing to read ahead for while paused, and a pause is often
             // the last thing that happens before the process goes idle.
             if (isPlaying) prefetchAround(exoPlayer) else cancelPrefetch()
+            // The one-row bundle for the next track, after read-ahead has
+            // started so its high-quality half is already in flight. A pause
+            // leaves it alone: its work is already under way, and cancelling
+            // here would only make the resume start the same steps again.
+            if (isPlaying) scheduleNextPrep(exoPlayer)
             if (isPlaying) lookForBetterCopy(exoPlayer)
             savePlaybackState(exoPlayer)
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
@@ -4270,6 +4293,7 @@ class PlaybackService : MediaLibraryService() {
             // The crossfaded track never reports playing, so its look-ahead
             // is scheduled here instead.
             scheduleUpcomingSongVersions(exoPlayer)
+            scheduleNextPrep(exoPlayer)
         }
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].
@@ -7750,6 +7774,32 @@ class PlaybackService : MediaLibraryService() {
     private fun cancelPrefetch() = prefetchController.cancelPrefetch()
 
     /**
+     * The one-row bundle that prepares the next track's version, lyrics, high
+     * quality, sync check and mix analysis while this one plays. It is started
+     * only by the first-sound event or a queue change — never a timer.
+     */
+    private val nextTrackPreparation by lazy {
+        NextTrackPreparation(
+            context = this,
+            scope = scope,
+            currentPlayer = { player },
+            prepareMix = { exoPlayer -> crossfade?.prepareNextTransition(exoPlayer) },
+            mixReady = { id -> trackAnalyzer.analysisFor(id).isUsable },
+            awaitMix = { id ->
+                trackAnalyzer.awaitWindow(
+                    id,
+                    com.music.bitchord.playback.smart.AnalysisWindow.HEAD,
+                    NEXT_PREP_MIX_WAIT_MS,
+                ) && trackAnalyzer.analysisFor(id).isUsable
+            },
+        )
+    }
+
+    private fun scheduleNextPrep(player: ExoPlayer) = nextTrackPreparation.schedule(player)
+
+    private fun cancelNextPrep() = nextTrackPreparation.cancel()
+
+    /**
      * Feeds played-seconds to [PlaybackTracker]. The tracker can't read the
      * player itself — ExoPlayer is confined to this thread — and a history
      * entry with no watchtime behind it barely registers as a listen, so the
@@ -9100,6 +9150,7 @@ class PlaybackService : MediaLibraryService() {
         translationAheadJob = null
         currentTranslationAheadJob?.cancel()
         currentTranslationAheadJob = null
+        cancelNextPrep()
         serviceLyrics = null
         skipSegmentsJob?.cancel()
         skipSegmentsJob = null
@@ -9263,8 +9314,20 @@ class PlaybackService : MediaLibraryService() {
 
         // The old track's lines must not be read against the new playhead while
         // the lookup is in flight; the ticker would advance into the wrong
-        // song's lyrics until publish() replaces them.
-        serviceLyrics = null
+        // song's lyrics until publish() replaces them. The next-song bundle
+        // already has this track's lines and correction, so they go up on the
+        // first frame instead of after the lookup.
+        val prepared = NextPrepCache.get(currentSong.videoId)
+        if (prepared != null) {
+            serviceLyrics = prepared.shown
+            com.music.bitchord.lockscreen.NowPlayingLyrics.publish(
+                currentSong.videoId,
+                prepared.shown,
+            )
+            if (player?.isPlaying == true) startLyricsTicker()
+        } else {
+            serviceLyrics = null
+        }
         lastPublishedSubtitle = null
 
         // The catalogue's length stands in until the player has its own, as it

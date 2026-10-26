@@ -1265,6 +1265,17 @@ class CrossfadeController(
      * on repeat-one, which will hand over to this same next track as soon as
      * the loop is switched off.
      */
+    /**
+     * Asks for the next transition's analysis now, at the first-sound event,
+     * instead of waiting for the tick that would have done it. The same
+     * [AutomixWorkPolicy] windows and the same skip rules are used; this is
+     * only an earlier trigger for the next-song bundle, not a second planner.
+     */
+    fun prepareNextTransition(player: ExoPlayer) {
+        val duration = player.duration.takeIf { it > 0 } ?: return
+        requestAnalysisAround(player, duration)
+    }
+
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
