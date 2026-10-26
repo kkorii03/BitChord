@@ -21,6 +21,7 @@ import com.music.bitchord.data.lyrics.RefinePolicy
 import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
+import com.music.bitchord.data.lyrics.retimedBy
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -34,6 +35,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -135,15 +137,26 @@ object LyricsTiming {
         val hq: Adjustment.Mapped? = null,
         /**
          * The last line-level correction, on top of [base] and [hq] and under
-         * [manualMs]: a constant move learned from the words heard for this
-         * video. See [RefinePolicy].
+         * [manualMs]: the constant offset learned from the words heard for
+         * this video, plus the drift per minute when the residuals followed a
+         * straight line. See [RefinePolicy].
          */
         val refineMs: Long = 0L,
+        /** The refine's drift in ms per minute; 0 for a constant move. */
+        val refineSlopePerMin: Double = 0.0,
     ) {
-        val isEmpty: Boolean get() = base == null && manualMs == 0L && hq == null && refineMs == 0L
+        val isEmpty: Boolean
+            get() = base == null && manualMs == 0L && hq == null &&
+                refineMs == 0L && refineSlopePerMin == 0.0
 
         /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
+
+        /** The refine's move at [atMs], capped at ±[RefinePolicy.MAX_SHIFT_MS]. */
+        fun refineAt(atMs: Long): Long {
+            val move = refineMs + refineSlopePerMin / 60_000.0 * atMs
+            return move.roundToLong().coerceIn(-RefinePolicy.MAX_SHIFT_MS, RefinePolicy.MAX_SHIFT_MS)
+        }
     }
 
     /**
@@ -199,26 +212,34 @@ object LyricsTiming {
         )
         // The provider's own line times can stay a fifth of a second early or
         // late even when [base] has already put the record on the video's
-        // clock. One constant move, learned from the words heard, goes on top
-        // of base and HQ and under the listener's own correction.
+        // clock, and a longer video can drift. One constant move or one
+        // straight line, learned from the words heard, goes on top of base and
+        // HQ and under the listener's own correction.
         val refineWords = refineWords(entry, key, base)
         val refineClock = onHqClock(refineWords, timing)
         val refine = if (base != null && refineClock.isNotEmpty()) {
-            RefinePolicy.compute(apply(lines, timing.copy(manualMs = 0L, refineMs = 0L)), refineClock)
+            RefinePolicy.compute(
+                apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
+                refineClock,
+            )
         } else {
             RefinePolicy.Result.NONE
         }
-        val refined = timing.copy(refineMs = if (refine.applied) refine.medianMs else 0L)
+        val refined = timing.copy(
+            refineMs = if (refine.applied) refine.medianMs else 0L,
+            refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
+        )
         // The transcript is kept on the video's own clock, and a displayed line
-        // is map(record) + refineMs + extraMs; the words are already video
-        // time, so the rest is still missing. Read it here rather than bake it
-        // into the kept words: a correction by hand, a refine, or a newly
-        // learned engine lateness must move the heard words with their line.
+        // is map(record) + refine + extraMs; the words are already video time,
+        // so the rest is still missing. Read it here rather than bake it into
+        // the kept words: a correction by hand, a refine, or a newly learned
+        // engine lateness must move the heard words with their line.
         val heard = if (base?.byAi == true && entry.aiTextKey == key) {
-            val shift = refined.refineMs + refined.extraMs
             val hqMap = refined.hq?.map
-            fun heardAt(ms: Long): Long =
-                ((hqMap?.map(ms) ?: ms) + shift).coerceAtLeast(0L)
+            fun heardAt(ms: Long): Long {
+                val onClock = hqMap?.map(ms) ?: ms
+                return (onClock + refined.refineAt(onClock) + refined.extraMs).coerceAtLeast(0L)
+            }
             entry.heardWords.map { word ->
                 val start = heardAt(word.s)
                 LyricsWordAlign.Heard(
@@ -325,15 +346,18 @@ object LyricsTiming {
         }
         val hq = timing.hq?.map
         // The HQ map is the second half of the clock: YouTube song version →
-        // the copy playing. The refine is a constant move after both, and a
-        // manual correction belongs on top of all of them, in the clock the
-        // listener is actually hearing.
+        // the copy playing. The refine is a move after both — a constant, or
+        // an offset and a drift — capped at ±[RefinePolicy.MAX_SHIFT_MS] even
+        // where the transcript only covered the opening. A manual correction
+        // belongs on top of all of them, in the clock the listener is hearing.
         val mapped = if (hq == null) {
             lines.timedBy(baseMap)
         } else {
             lines.timedBy(baseMap).timedBy(hq)
         }
-        return mapped.timedBy(null, timing.refineMs + timing.extraMs)
+        return mapped.retimedBy { ms ->
+            (ms + timing.refineAt(ms) + timing.extraMs).coerceAtLeast(0L)
+        }
     }
 
     /**
@@ -380,6 +404,18 @@ object LyricsTiming {
         }
     }
 
+    /** Where the first sung line sits after [Timing.base] and [Timing.hq], before refine and the hand. */
+    fun baseDisplayedMs(lines: List<LyricLine>, timing: Timing): Long {
+        val first = lines.firstOrNull { it.text.isNotBlank() } ?: lines.firstOrNull() ?: return 0L
+        val baseMap = when (val base = timing.base) {
+            null -> null
+            is Adjustment.Shift -> LyricsTimeMap.shift(base.ms)
+            is Adjustment.Mapped -> base.map
+        }
+        val afterBase = baseMap?.map(first.timeMs) ?: first.timeMs
+        return timing.hq?.map?.map(afterBase) ?: afterBase
+    }
+
     // ---- The last line-level correction ----------------------------------------------
 
     /**
@@ -401,14 +437,20 @@ object LyricsTiming {
         val words = refineWords(entry, key, base)
         if (words.isEmpty()) return
         val result = RefinePolicy.compute(
-            apply(lines, timing.copy(manualMs = 0L, refineMs = 0L)),
+            apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
             onHqClock(words, timing),
         )
         val appliedMs = if (result.applied) result.medianMs else null
-        if (entry.refineMs == appliedMs && entry.refineLines == result.lines && entry.refineMad == result.madMs) return
+        val appliedSlope = if (result.applied) result.slopePerMin else 0.0
+        if (entry.refineMs == appliedMs && entry.refineSlopePerMin == appliedSlope &&
+            entry.refineLines == result.lines && entry.refineMad == result.madMs
+        ) {
+            return
+        }
         store(context).update(videoId) {
             it.copy(
                 refineMs = appliedMs,
+                refineSlopePerMin = appliedSlope,
                 refineLines = result.lines,
                 refineMad = result.madMs,
             )
@@ -417,7 +459,9 @@ object LyricsTiming {
         TrackLog.i(
             "BitChord",
             "lyrics-refine: $videoId lines=${result.lines} median=${result.medianMs}ms " +
-                "mad=${result.madMs}ms applied=${if (result.applied) "y" else "n"} base=$baseLabel",
+                "mad=${result.madMs}ms slope=${result.slopePerMin.roundToLong()} " +
+                "model=${if (result.applied && result.slopePerMin != 0.0) "linear" else "const"} " +
+                "applied=${if (result.applied) "y" else "n"} base=$baseLabel",
             videoId,
         )
     }
@@ -2287,12 +2331,14 @@ object LyricsTiming {
         /** The words behind the AI answer, on the video's clock; see [timing]. */
         val heardWords: List<SavedWord> = emptyList(),
         /**
-         * The line-level refine: the constant move [RefinePolicy] found, how
-         * many lines agreed and their spread. [refineMs] is null when it did
-         * not apply. The lines themselves are re-derived from the words on
-         * every [timing], so a changed base is followed without a stale move.
+         * The line-level refine: the offset [RefinePolicy] found, the drift
+         * per minute when the residuals followed a straight line, how many
+         * lines agreed and their spread. [refineMs] is null when it did not
+         * apply. The lines themselves are re-derived from the words on every
+         * [timing], so a changed base is followed without a stale move.
          */
         val refineMs: Long? = null,
+        val refineSlopePerMin: Double = 0.0,
         val refineLines: Int = 0,
         val refineMad: Long? = null,
         /** The lyrics (text key) the refine transcript belongs to, and its words on the video's clock. */

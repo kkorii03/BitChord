@@ -1,11 +1,12 @@
 package com.music.bitchord.data.lyrics
 
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** The last line-level correction: one constant move only when a whole song agrees. */
+/** The last line-level correction: one move, or one straight drift, only when a whole song agrees. */
 class RefinePolicyTest {
 
     private fun line(at: Long, text: String) = LyricLine(timeMs = at, text = text)
@@ -73,5 +74,46 @@ class RefinePolicyTest {
 
         assertTrue(result.applied)
         assertEquals(1_500L, result.medianMs)
+    }
+
+    @Test
+    fun japaneseLinesWithoutSpacesAreMatchedByTheirOpeningLetters() {
+        // The reported failure: Whisper hears a whole unspaced Japanese line as
+        // one word, so "the first word" never equals a heard word. The first
+        // four letters do match, and every line sits 200 ms early.
+        val texts = listOf(
+            "ダンスホール",
+            "フォニイ",
+            "夜に駆ける",
+            "残酷な天使のテーゼ",
+            "紅蓮華",
+            "群青",
+        )
+        val lines = texts.mapIndexed { index, text -> line(10_000L + index * 10_000L, text) }
+        val heard = lines.map { line -> heard(line.text, line.timeMs + 200L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(200L, result.medianMs)
+        assertEquals(0.0, result.slopePerMin)
+        assertEquals(lines.size, result.lines)
+    }
+
+    @Test
+    fun aSteadyDriftIsFittedAsALine() {
+        // 260 ms per minute over 63 s: a constant move leaves the last lines
+        // further out than the first, so the slope is what the residuals say.
+        val startMs = 10_000L
+        val stepMs = 7_000L
+        val slopePerMs = 260.0 / 60_000.0
+        val lines = List(10) { index -> line(startMs + index * stepMs, "line$index") }
+        val heard = lines.map { line ->
+            heard(line.text, line.timeMs + (slopePerMs * line.timeMs).toLong())
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertTrue(abs(result.slopePerMin - 260.0) <= 26.0, "slope ${result.slopePerMin} ms/min")
+        assertEquals(lines.size, result.lines)
     }
 }
