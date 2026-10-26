@@ -7266,30 +7266,15 @@ class PlaybackService : MediaLibraryService() {
      * omit — better a shorter line than a made-up number.
      */
     private fun isLocalPlayback(mediaId: String, mediaItem: MediaItem?): Boolean {
-        if (mediaId.startsWith("content://") || mediaId.startsWith("file://") || mediaId.startsWith("/")) {
-            return true
-        }
-        val uri = mediaItem?.localConfiguration?.uri
-        if (uri != null && (uri.scheme == "file" || uri.scheme == "content")) {
-            return true
-        }
-        val requestUri = mediaItem?.requestMetadata?.mediaUri
-        if (requestUri != null && (requestUri.scheme == "file" || requestUri.scheme == "content")) {
-            return true
-        }
         val extras = mediaItem?.mediaMetadata?.extras
-        val localUri = extras?.getString(EXTRA_LOCAL_URI)
-        if (!localUri.isNullOrBlank() && (localUri.startsWith("content://") || localUri.startsWith("file://"))) {
-            return true
-        }
-        val localPath = extras?.getString(EXTRA_LOCAL_PATH)
-        if (!localPath.isNullOrBlank()) {
-            return true
-        }
-        if (Downloads.verifiedSavedUri(mediaId) != null) {
-            return true
-        }
-        return false
+        return LocalPlaybackPolicy.isLocal(
+            mediaId = mediaId,
+            localConfigurationUri = mediaItem?.localConfiguration?.uri?.toString(),
+            requestMetadataUri = mediaItem?.requestMetadata?.mediaUri?.toString(),
+            extraLocalUri = extras?.getString(EXTRA_LOCAL_URI),
+            extraLocalPath = extras?.getString(EXTRA_LOCAL_PATH),
+            savedUri = Downloads.verifiedSavedUri(mediaId),
+        )
     }
 
     private fun currentSourceName(mediaId: String?, mediaItem: MediaItem?): String? {

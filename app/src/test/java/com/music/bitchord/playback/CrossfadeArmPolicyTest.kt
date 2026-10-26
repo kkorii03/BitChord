@@ -59,4 +59,33 @@ class CrossfadeArmPolicyTest {
         assertFalse(CrossfadeArmPolicy.canMix(pcm, passthrough))
         assertFalse(CrossfadeArmPolicy.canMix(passthrough, pcm))
     }
+
+    @Test
+    fun aVersionSwapOfTheIncomingRowMakesTheArmedCopyStale() {
+        assertFalse(
+            CrossfadeArmPolicy.incomingRowReplaced(
+                sessionIncomingId = "song",
+                standbyIncomingId = "song",
+                handedOff = false,
+            ),
+        )
+        assertTrue(
+            CrossfadeArmPolicy.incomingRowReplaced(
+                sessionIncomingId = "song-new",
+                standbyIncomingId = "song-old",
+                handedOff = false,
+            ),
+        )
+    }
+
+    @Test
+    fun afterTheHandoffTheIncomingPlayerIsTheSession() {
+        assertFalse(
+            CrossfadeArmPolicy.incomingRowReplaced(
+                sessionIncomingId = "song-new",
+                standbyIncomingId = "song-old",
+                handedOff = true,
+            ),
+        )
+    }
 }

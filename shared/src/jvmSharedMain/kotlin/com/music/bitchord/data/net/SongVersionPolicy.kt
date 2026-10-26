@@ -170,6 +170,31 @@ object SongVersionPolicy {
     }
 
     /**
+     * Whether the next-row bundle must build a streaming item even though a
+     * file is recorded for [playId].
+     *
+     * The bundle installs a version before it has ever played, so it cannot
+     * rely on the post-start correction in
+     * [com.music.bitchord.playback.SongVersionController]: by the time a
+     * crossfade makes the row audible that correction has already been
+     * skipped. The same provenance rule and the remembered length verdict
+     * therefore have to decide the item now.
+     *
+     * Offline the file stays either way — it is the only sound there is.
+     */
+    fun nextPrepStreamsInsteadOfFile(
+        playId: String,
+        soundSourceId: String?,
+        lengthSuspect: Boolean,
+        online: Boolean,
+    ): Boolean {
+        if (downloadedFileUse(playId, soundSourceId, online) == DownloadedFileUse.STREAM_SONG) {
+            return true
+        }
+        return online && lengthSuspect
+    }
+
+    /**
      * Whether an existing file may be adopted as [targetId]'s download.
      *
      * Only a file this app recorded as having been fetched from [targetId]'s

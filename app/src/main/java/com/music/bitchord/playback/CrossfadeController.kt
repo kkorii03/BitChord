@@ -715,6 +715,34 @@ class CrossfadeController(
             wakeTicker()
         }
 
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            // A version swap of the next row replaces its item on the session
+            // player only; the standby armed with a copy still holds the old
+            // recording. Bail rather than hand the stale copy over at the
+            // handoff. Appends and edits to later rows leave the incoming item
+            // alone, so they are not affected.
+            val out = outgoing
+            val into = incoming
+            if (!handedOff && out != null && into != null && phase != Phase.IDLE) {
+                val index = out.nextMediaItemIndex
+                val sessionIncoming =
+                    if (index == C.INDEX_UNSET || index !in 0 until out.mediaItemCount) {
+                        null
+                    } else {
+                        out.getMediaItemAt(index).mediaId
+                    }
+                if (CrossfadeArmPolicy.incomingRowReplaced(
+                        sessionIncomingId = sessionIncoming,
+                        standbyIncomingId = into.currentMediaItem?.mediaId,
+                        handedOff = handedOff,
+                    )
+                ) {
+                    bail(CrossfadeSkipReason.INCOMING_REPLACED)
+                }
+            }
+            wakeTicker()
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             bail()
             wakeTicker()

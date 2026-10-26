@@ -107,4 +107,132 @@ class NextPrepPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aRunningBundleForTheSameRecordingIsLeftAlone() {
+        assertEquals(
+            NextPrepPolicy.ScheduleAction.IGNORE,
+            NextPrepPolicy.scheduleAction(
+                running = true,
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|old",
+                completedRowId = null,
+                completedQueueKey = null,
+                nextRowId = "row-1",
+                nextQueueKey = "row-1|old",
+            ),
+        )
+    }
+
+    @Test
+    fun aRunningBundleRestartsWhenTheSameRowChangesRecording() {
+        assertEquals(
+            NextPrepPolicy.ScheduleAction.RESTART,
+            NextPrepPolicy.scheduleAction(
+                running = true,
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|old",
+                completedRowId = null,
+                completedQueueKey = null,
+                nextRowId = "row-1",
+                nextQueueKey = "row-1|new",
+            ),
+        )
+    }
+
+    @Test
+    fun aFinishedBundleForTheSameRecordingIsNotRepeated() {
+        assertEquals(
+            NextPrepPolicy.ScheduleAction.IGNORE,
+            NextPrepPolicy.scheduleAction(
+                running = false,
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|old",
+                completedRowId = "row-1",
+                completedQueueKey = "row-1|old",
+                nextRowId = "row-1",
+                nextQueueKey = "row-1|old",
+            ),
+        )
+    }
+
+    @Test
+    fun aFinishedBundleRestartsWhenTheRecordingChanged() {
+        assertEquals(
+            NextPrepPolicy.ScheduleAction.RESTART,
+            NextPrepPolicy.scheduleAction(
+                running = false,
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|old",
+                completedRowId = "row-1",
+                completedQueueKey = "row-1|old",
+                nextRowId = "row-1",
+                nextQueueKey = "row-1|new",
+            ),
+        )
+    }
+
+    @Test
+    fun aDifferentNextRowRestartsAndNoNextRowStops() {
+        assertEquals(
+            NextPrepPolicy.ScheduleAction.RESTART,
+            NextPrepPolicy.scheduleAction(
+                running = true,
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|old",
+                completedRowId = null,
+                completedQueueKey = null,
+                nextRowId = "row-2",
+                nextQueueKey = "row-2|new",
+            ),
+        )
+        assertEquals(
+            NextPrepPolicy.ScheduleAction.STOP,
+            NextPrepPolicy.scheduleAction(
+                running = true,
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|old",
+                completedRowId = null,
+                completedQueueKey = null,
+                nextRowId = null,
+                nextQueueKey = null,
+            ),
+        )
+    }
+
+    @Test
+    fun theMemoKeyDistinguishesTwoRecordingsOfOneRow() {
+        val old = NextPrepPolicy.recordingKey("row-1", "old-video")
+        val new = NextPrepPolicy.recordingKey("row-1", "new-video")
+        assertTrue(old != new)
+        assertEquals(old, NextPrepPolicy.recordingKey("row-1", "old-video"))
+    }
+
+    @Test
+    fun aSyncFlightIsKeptOnlyWhenItsRowBecameCurrent() {
+        assertFalse(
+            NextPrepPolicy.abandonSyncFlight(
+                rowId = "row-1",
+                songVideoId = "song",
+                currentRowId = "row-1",
+                currentMediaId = "song",
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.abandonSyncFlight(
+                rowId = "row-1",
+                songVideoId = "song",
+                currentRowId = "row-current",
+                currentMediaId = "other",
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.abandonSyncFlight(
+                rowId = "row-1",
+                songVideoId = "song",
+                currentRowId = "row-2",
+                currentMediaId = "song",
+            ),
+        )
+    }
 }

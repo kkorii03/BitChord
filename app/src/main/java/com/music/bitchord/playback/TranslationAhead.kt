@@ -132,6 +132,18 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
     ): AheadLyrics {
+        // A per-song override is what the player will show, so the bundle must
+        // look up and sync *those* lines. Reading the file's older tags here
+        // overwrote the re-checked sheet's text key with the old one, leaving
+        // the override on screen with no matching sync.
+        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
+            return AheadLyrics(
+                lines = override.lines,
+                source = override.source,
+                searchedAs = null,
+                fromFile = true,
+            )
+        }
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.withSource(app, uri)
             if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {

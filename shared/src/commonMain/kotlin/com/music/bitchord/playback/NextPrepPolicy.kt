@@ -69,4 +69,70 @@ object NextPrepPolicy {
         if (currentRowId != startedRowId) return true
         return startedQueueKey != currentQueueKey
     }
+
+    /** What a schedule call should do with the bundle it finds. */
+    enum class ScheduleAction {
+        /** The same row and recording is already running or finished. */
+        IGNORE,
+
+        /** A different row or recording must be prepared. */
+        RESTART,
+
+        /** There is no next row to prepare. */
+        STOP,
+    }
+
+    /**
+     * What to do with the bundle already in hand.
+     *
+     * A running bundle is only still about the same recording when both the
+     * row and its [queueKey] match. The old rule compared the row id alone and
+     * returned before [shouldCancel], so a version swap of the same next row
+     * left the bundle finishing against the old recording and never restarted
+     * for the new one.
+     */
+    fun scheduleAction(
+        running: Boolean,
+        startedRowId: String?,
+        startedQueueKey: String?,
+        completedRowId: String?,
+        completedQueueKey: String?,
+        nextRowId: String?,
+        nextQueueKey: String?,
+    ): ScheduleAction {
+        if (nextRowId.isNullOrBlank()) return ScheduleAction.STOP
+        if (nextRowId == startedRowId) {
+            if (running && nextQueueKey == startedQueueKey) return ScheduleAction.IGNORE
+            if (!running && completedRowId == nextRowId && completedQueueKey == nextQueueKey) {
+                return ScheduleAction.IGNORE
+            }
+        }
+        return ScheduleAction.RESTART
+    }
+
+    /**
+     * The identity of one recording of a queue row, used for the per-row
+     * attempts and lyrics memos.
+     *
+     * A row keeps its id across a version swap, so keying either memo by the
+     * row alone let the old recording's lyrics and attempted steps answer for
+     * the new one. The video id is part of the key.
+     */
+    fun recordingKey(rowId: String, videoId: String): String = "$rowId|$videoId"
+
+    /**
+     * Whether the sync flight started for a next row should be cancelled when
+     * that bundle is abandoned.
+     *
+     * Becoming the current track is not abandonment: the same flight is what
+     * the track's own lyrics pass would use. A row that was removed, skipped
+     * over, or replaced by another recording is, and its paid check must not
+     * outlive it.
+     */
+    fun abandonSyncFlight(
+        rowId: String,
+        songVideoId: String,
+        currentRowId: String?,
+        currentMediaId: String?,
+    ): Boolean = currentRowId != rowId || currentMediaId != songVideoId
 }

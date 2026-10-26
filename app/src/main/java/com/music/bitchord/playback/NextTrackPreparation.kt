@@ -20,6 +20,7 @@ import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
@@ -63,21 +64,35 @@ internal class NextTrackPreparation(
     private var completedQueueKey: String? = null
 
     /**
-     * Steps already tried for a row in this session. A failed network step is
-     * not retried for the same row: the ordinary post-start path takes over,
-     * which is where the user's battery would otherwise be spent twice.
+     * Steps already tried for a recording in this session. A failed network
+     * step is not retried for the same recording: the ordinary post-start path
+     * takes over, which is where the user's battery would otherwise be spent
+     * twice.
+     *
+     * Keyed by [queueKey] rather than the row id: a row whose version changed
+     * is a different recording and starts with a clean set.
      */
     private val attempted = object : LinkedHashMap<String, MutableSet<Step>>(8, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MutableSet<Step>>) =
             size > MAX_ROWS_REMEMBERED
     }
 
-    /** Lyrics already fetched for a row, so a resumed bundle keeps its answer. */
+    /** Lyrics already fetched for a recording, so a resumed bundle keeps its answer. */
     private val lyricsByRow = object : LinkedHashMap<String, TranslationAhead.AheadLyrics>(8, 0.75f, true) {
         override fun removeEldestEntry(
             eldest: MutableMap.MutableEntry<String, TranslationAhead.AheadLyrics>,
         ) = size > MAX_ROWS_REMEMBERED
     }
+
+    /** The sync check this bundle started, so a discarded row can cancel it. */
+    private data class SyncFlight(
+        val rowId: String,
+        val song: Song,
+        val lines: List<LyricLine>,
+    )
+
+    @Volatile
+    private var syncFlight: SyncFlight? = null
 
     private data class Snapshot(
         val rowId: String,
@@ -97,13 +112,32 @@ internal class NextTrackPreparation(
             cancel()
             return
         }
-        if (snapshot.rowId == rowId) {
-            if (job?.isActive == true) return
-            if (completedRowId == snapshot.rowId && completedQueueKey == snapshot.queueKey) return
+        when (NextPrepPolicy.scheduleAction(
+            running = job?.isActive == true,
+            startedRowId = rowId,
+            startedQueueKey = queueKey,
+            completedRowId = completedRowId,
+            completedQueueKey = completedQueueKey,
+            nextRowId = snapshot.rowId,
+            nextQueueKey = snapshot.queueKey,
+        )) {
+            NextPrepPolicy.ScheduleAction.IGNORE -> return
+            NextPrepPolicy.ScheduleAction.STOP -> {
+                cancel()
+                return
+            }
+            NextPrepPolicy.ScheduleAction.RESTART -> Unit
         }
-        if (NextPrepPolicy.shouldCancel(rowId, queueKey, snapshot.rowId, snapshot.queueKey)) {
-            job?.cancel()
+        val discarded = NextPrepPolicy.shouldCancel(
+            rowId,
+            queueKey,
+            snapshot.rowId,
+            snapshot.queueKey,
+        )
+        job?.cancel()
+        if (discarded) {
             NextPrepCache.clear()
+            cancelSyncFlightIfDiscarded()
         }
         rowId = snapshot.rowId
         queueKey = snapshot.queueKey
@@ -122,6 +156,7 @@ internal class NextTrackPreparation(
         completedRowId = null
         completedQueueKey = null
         NextPrepCache.clear()
+        cancelSyncFlightIfDiscarded()
     }
 
     private fun snapshot(player: ExoPlayer): Snapshot? {
@@ -131,18 +166,34 @@ internal class NextTrackPreparation(
         val song = runCatching { item.toSong() }.getOrNull() ?: return null
         val rowId = item.queueEntryId ?: item.mediaId
         if (rowId.isBlank()) return null
-        return Snapshot(rowId, index, song, "$rowId|${song.videoId}")
+        return Snapshot(rowId, index, song, NextPrepPolicy.recordingKey(rowId, song.videoId))
     }
 
-    private fun attemptsFor(rowId: String): MutableSet<Step> = synchronized(attempted) {
-        attempted.getOrPut(rowId) { mutableSetOf() }
+    private fun attemptsFor(queueKey: String): MutableSet<Step> = synchronized(attempted) {
+        attempted.getOrPut(queueKey) { mutableSetOf() }
+    }
+
+    private fun cancelSyncFlightIfDiscarded() {
+        val flight = syncFlight ?: return
+        syncFlight = null
+        val current = currentPlayer()?.currentMediaItem
+        val currentRow = current?.queueEntryId ?: current?.mediaId
+        if (NextPrepPolicy.abandonSyncFlight(
+                rowId = flight.rowId,
+                songVideoId = flight.song.videoId,
+                currentRowId = currentRow,
+                currentMediaId = current?.mediaId,
+            )
+        ) {
+            LyricsTiming.cancelSongCheck(flight.song, flight.lines)
+        }
     }
 
     private suspend fun run(snapshot: Snapshot) {
         val startedAt = SystemClock.elapsedRealtime()
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
-        val steps = attemptsFor(snapshot.rowId)
+        var steps = attemptsFor(snapshot.queueKey)
 
         fun stillCurrent(): Boolean {
             val player = currentPlayer() ?: return false
@@ -157,16 +208,25 @@ internal class NextTrackPreparation(
         if (versionWanted(song) && Step.VERSION !in steps && !versionAnswered(song)) {
             steps += Step.VERSION
             val resolved = resolveVersion(song, snapshot.rowId) { expected ->
-                expectedQueueKey = "${snapshot.rowId}|${expected.videoId}"
+                expectedQueueKey = NextPrepPolicy.recordingKey(snapshot.rowId, expected.videoId)
                 queueKey = expectedQueueKey
             }
-            if (resolved != null) song = resolved
+            if (resolved != null) {
+                song = resolved
+                // The version step changed the recording. Its old attempts and
+                // lyrics must not answer for the new one, so switch to the new
+                // key before the remaining steps are planned.
+                if (expectedQueueKey != snapshot.queueKey) {
+                    steps = attemptsFor(expectedQueueKey)
+                    steps += Step.VERSION
+                }
+            }
         }
         if (!stillCurrent()) return
 
         // (b) The lyrics for that recording, then (c) its high-quality copy.
         var lyrics: TranslationAhead.AheadLyrics? = synchronized(lyricsByRow) {
-            lyricsByRow[snapshot.rowId]
+            lyricsByRow[expectedQueueKey]
         }
         var hq = existingHq(song)
         var mix = mixReady(song.videoId)
@@ -204,7 +264,7 @@ internal class NextTrackPreparation(
                             allowHeavy = AppSettings.heavyWorkAllowed,
                         )
                         synchronized(lyricsByRow) {
-                            lyrics?.let { lyricsByRow[snapshot.rowId] = it }
+                            lyrics?.let { lyricsByRow[expectedQueueKey] = it }
                         }
                     }
                     Step.HQ -> hq = prepareHq(song) ?: hq
@@ -213,7 +273,13 @@ internal class NextTrackPreparation(
                         val lines = found?.lines
                         if (lines != null && lines.any { it.timeMs > 0 } && !song.isVideo) {
                             if (!LyricsTiming.songVerified(context, song, lines)) {
-                                LyricsTiming.verifySong(context, song, lines)
+                                val flight = SyncFlight(snapshot.rowId, song, lines)
+                                syncFlight = flight
+                                try {
+                                    LyricsTiming.verifySong(context, song, lines)
+                                } finally {
+                                    if (syncFlight === flight) syncFlight = null
+                                }
                             }
                         }
                     }
@@ -347,8 +413,19 @@ internal class NextTrackPreparation(
         val item = player.getMediaItemAt(index)
         if ((item.queueEntryId ?: item.mediaId) != rowId) return null
         if (item.mediaId != song.videoId) return null
+        // The row is replaced before it can play, so the same provenance and
+        // length rules that guard the current track must choose this item now.
+        // Otherwise a saved file that is the video's sound, or a legacy file
+        // judged too long, would be handed to the crossfade as the song.
+        val playId = resolved.videoId
+        val streamOnly = SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+            playId = playId,
+            soundSourceId = Downloads.savedSoundSourceFor(playId),
+            lengthSuspect = Downloads.mvSoundSuspectMs(Downloads.songIdForFile(playId)) != null,
+            online = !AudioCache.isOffline(),
+        )
         val replacement = QueueShuffle.withQueueMetadata(
-            resolved.toMediaItem(),
+            resolved.toMediaItem(useDownloadedFile = !streamOnly),
             newEntryId = item.queueEntryId,
             newCanonicalIndex = item.canonicalIndex,
             newTier = item.queueTier,

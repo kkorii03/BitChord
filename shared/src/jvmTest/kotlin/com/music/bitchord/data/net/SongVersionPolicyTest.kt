@@ -414,4 +414,56 @@ class SongVersionPolicyTest {
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", "video"))
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", null))
     }
+
+    @Test
+    fun `next prep streams a file recorded from another upload`() {
+        assertTrue(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = "song",
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `next prep streams a legacy file the length verdict suspects`() {
+        assertTrue(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = true,
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = null,
+                lengthSuspect = false,
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `offline next prep keeps the file even when it is suspect`() {
+        assertFalse(
+            SongVersionPolicy.nextPrepStreamsInsteadOfFile(
+                playId = "song",
+                soundSourceId = "video",
+                lengthSuspect = true,
+                online = false,
+            ),
+        )
+    }
 }
