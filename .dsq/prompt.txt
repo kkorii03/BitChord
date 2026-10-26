@@ -1,0 +1,11 @@
+﻿작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-merge (브랜치 task/proxy-fallback). 커밋·push·브랜치 변경 금지. .github/, keys\, 서명 설정 수정 금지. 로컬 Gradle 빌드 금지. 프록시 비밀번호·서버 접속 정보는 코드·로그에 넣지 말 것(이미 사용자 설정 저장소에 있음).
+먼저 .ds-ctx\FIXLIST.md 의 20, 21, 32번과 '로그 분석 2026-10-22' G항(함께 듣기 서버 주소 확인 실패, 프록시 불통 1회)을 읽어라.
+
+20. 프록시 예비 서버 + 자동 전환(앱 쪽만): 설정의 프록시에 '예비 서버'(host:port, 같은 인증 방식) 1개를 선택적으로 넣을 수 있게 하고, 주 서버가 ProxyHealthMonitor 기준 불통이면 예비 서버로 자동 전환, 주 서버가 회복되면 되돌림(이벤트 기반: 요청 실패/성공 시점에만 판단, 주기 점검 금지). 예비 서버가 비어 있으면 기존 동작(직접 연결로 1회 재시도) 그대로. 설정 화면에 현재 쓰는 서버(주/예비) 표시. 새 문자열 values/values-ko. 로그: 'proxy: switched to backup (reason)', 'proxy: back to primary'.
+21. 게이트 폴백 축소: 프록시가 usable 하고 건강하면 youtube.com 대체 경로(MusicGateFallback, YouTubeFallback)로 가는 판정을 하지 않도록 정리 — 이미 그런 규칙이 있으면 확인만 하고 요약에 파일:줄. 프록시가 불통일 때만 기존 대체 경로 사용. 기존 사용자(프록시 없음)의 동작은 바꾸지 말 것. 단, 오늘 추가한 'RDCLAK 재생목록은 music.youtube.com 익명 → youtube.com' 순서(YtMusicRepository.browseSongs, songsPaged)는 유지.
+32. 함께 듣기 서버 주소 확인 실패가 앱 시작마다 반복: 로그 문구를 코드에서 찾아 원인을 확인(주소 미설정/네트워크/서버 다운). 사용자가 함께 듣기를 쓰지 않으면 앱 시작 시 확인하지 않게(필요할 때만), 실패 로그는 하루 1회로.
+원칙: 배터리 우선(폴링·타이머 금지). 바꾼 함수의 모든 호출부·타입 재확인. 기존 의도 지울 때 요약에 이유. 주변 관례. 최근 커밋(프록시 경유 재생 ProxyPlayback, proxyMediaClient 연결 풀 분리)을 깨지 말 것 — 예비 서버로 바뀌면 proxyMediaClient의 연결 풀도 비워야 함.
+테스트: 전환 판정(주→예비→주) 순수 함수는 com.music.bitchord.data.net 패키지 단위 테스트.
+작업 순서: 탐색 → 설계 → 구현 → 테스트 → 자체 검토(git diff 전체, 컴파일 점검).
+마지막에 10줄 이내로 요약: 수정 파일 / 20·21·32 핵심 변경과 원인(파일:줄) / 테스트 / 미해결.
+
