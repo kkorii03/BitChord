@@ -462,10 +462,6 @@ internal fun LandscapeCredits(
                     running = running,
                     onOpenArtist = onOpenArtist,
                 )
-                TitleMeasuredQualityBadge(
-                    song = song,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
             }
         }
         Spacer(Modifier.width(10.dp))

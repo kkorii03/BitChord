@@ -151,7 +151,7 @@
     <string name="use_this_channel">이 채널 사용</string>
     <string name="sign_in_discord">Discord에 로그인</string>
     <string name="personalized_recommendations">나를 위한 맞춤 추천 받기</string>
-    <string name="play_next">다음 항목 재생</string>
+    <string name="play_next">다음에 재생</string>
     <string name="queue">대기열</string>
     <string name="source_unrecognised">BitChord가 이 링크를 인식할 수 없습니다.</string>
     <string name="source_already_added">이미 %1$s(으)로 추가됨</string>
@@ -352,7 +352,7 @@
     <string name="clear_song_cache_subtitle">다운로드된 오디오가 차지한 공간을 확보합니다.</string>
     <string name="clear_image_cache">이미지 캐시 지우기</string>
     <string name="clear_image_cache_subtitle">앨범 아트워크가 차지한 공간을 확보합니다.</string>
-    <string name="play_next_on_swipe">스와이프하여 다음 항목 재생</string>
+    <string name="play_next_on_swipe">스와이프하여 다음에 재생</string>
     <string name="dont_repeat_songs">현재 세션에서 노래 반복하지 않기</string>
     <string name="stop_music_on_close">최근 앱에서 닫으면 음악 중단</string>
     <string name="stop_music_on_close_subtitle">최근 앱 화면에서 쓸어 넘겨 닫으면 재생을 중단합니다.</string>
@@ -402,7 +402,7 @@
     <string name="activity_watching">시청 중</string>
     <string name="add_addon">애드온 추가</string>
     <string name="add_addon_detail">직접 운영하거나 링크로 받은 애드온 서버를 BitChord에 연결합니다.</string>
-    <string name="add_to_queue">나중에 재생</string>
+    <string name="add_to_queue">마지막에 재생</string>
     <string name="after_this_song">이 노래가 끝난 후</string>
     <string name="always_on">항상 켬</string>
     <string name="api_token">API 토큰</string>
@@ -555,13 +555,13 @@
         <item quantity="other">%1$d시간</item>
     </plurals>
     <plurals name="songs_will_play_next">
-        <item quantity="other">%1$d곡이 다음 항목으로 재생됩니다</item>
+        <item quantity="other">%1$d곡이 다음에 재생됩니다</item>
     </plurals>
-    <string name="song_will_play_next">다음 항목으로 재생됩니다</string>
+    <string name="song_will_play_next">다음에 재생됩니다</string>
     <plurals name="songs_added_to_queue">
-        <item quantity="other">나중에 재생에 %1$d곡 추가됨</item>
+        <item quantity="other">마지막에 재생에 %1$d곡 추가됨</item>
     </plurals>
-    <string name="song_added_to_queue">나중에 재생됨</string>
+    <string name="song_added_to_queue">마지막에 재생됨</string>
     <string name="song_added_to_playlist">플레이리스트에 추가됨</string>
     <string name="song_already_in_playlist">이미 플레이리스트에 있음</string>
     <plurals name="add_to_playlists_count">
@@ -846,8 +846,8 @@
     <string name="song_cache_limit_subtitle">다운로드된 오디오를 저장해서 탐색과 다시 재생을 빠르게 합니다.</string>
     <string name="replay_genres_enabled_subtitle">Last.fm에 아티스트의 장르를 요청합니다. 아티스트 이름만 전송됩니다.</string>
     <string name="replay_genres_disabled_subtitle">이 기능을 끄면 Replay 장르 차트가 표시되지 않습니다.</string>
-    <string name="swipe_plays_next">노래를 스와이프하면 다음 항목으로 재생됩니다.</string>
-    <string name="swipe_adds_to_queue">끄면 스와이프한 노래가 나중에 재생 맨 끝에 추가됩니다.</string>
+    <string name="swipe_plays_next">노래를 스와이프하면 다음에 재생됩니다.</string>
+    <string name="swipe_adds_to_queue">끄면 스와이프한 노래가 마지막에 재생되는 목록의 맨 끝에 추가됩니다.</string>
     <string name="import_backup_warning">이 기기의 설정과 청취 기록이 파일 내용으로 대체됩니다. 지금 데이터를 지키려면 먼저 내보내십시오.</string>
     <string name="youtube_music_account">YouTube Music 계정</string>
     <string name="tap_to_sign_in_google">탭하여 Google로 로그인</string>
@@ -921,7 +921,7 @@
     <string name="listen_together_activity_seeked">재생 위치 이동함</string>
     <string name="listen_together_activity_skipped">다음으로 건너뜀</string>
     <string name="listen_together_activity_went_back">이전으로 돌아감</string>
-    <string name="listen_together_activity_added">나중에 재생에 추가함</string>
+    <string name="listen_together_activity_added">마지막에 재생에 추가함</string>
     <string name="listen_together_activity_removed_track">대기열에서 노래 제거함</string>
     <string name="listen_together_activity_cleared">대기열 비움</string>
     <string name="listen_together_activity_reordered">대기열 순서 변경함</string>
@@ -1148,7 +1148,7 @@
     <string name="cover_original_title_copied">원래 제목 복사됨</string>
     <string name="cover_channel_set">이 채널을 커버 채널로 지정</string>
     <string name="cover_channel_unset">커버 채널 지정 해제</string>
-    <string name="cover_channel_set_done">이제부터 나중에 재생으로 추가하는 이 채널의 노래는 커버로 표시됩니다.</string>
+    <string name="cover_channel_set_done">이제부터 마지막에 재생으로 추가하는 이 채널의 노래는 커버로 표시됩니다.</string>
     <string name="cover_channel_unset_done">커버 채널에서 해제했습니다.</string>
     <string name="upstream_channel_name">원본 BitChord 새 버전</string>
     <string name="upstream_new_version">원본 BitChord %1$s 버전이 출시되었습니다</string>
