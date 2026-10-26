@@ -1,6 +1,5 @@
 package com.music.bitchord.data.lyrics
 
-import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
@@ -32,46 +31,15 @@ internal object LyricsQueryVariants {
         album: String? = null,
         artistAliases: List<String> = emptyList(),
     ): List<Name> {
-        // A fan clip's uploader is not the performer, and an official upload
-        // may put the artist after a bar. CoverTitles already reads both, so
-        // the title/artist that reach the providers are the song's own.
-        val upload = runCatching {
-            CoverTitles.lyricsQuery(
-                Song(
-                    videoId = "",
-                    title = title,
-                    artist = artist,
-                    thumbnailUrl = null,
-                    albumName = album,
-                    isVideo = true,
-                ),
-            )
-        }.getOrNull()
-        val wantedTitle = upload?.title?.takeIf { it.isNotBlank() } ?: title
-        val wantedArtist = upload?.artist?.takeIf { it.isNotBlank() } ?: artist
-        val subtitles = upload?.subtitles.orEmpty()
-
-        val parts = TrackMatcher.parseTitle(wantedTitle, wantedArtist)
+        val parts = TrackMatcher.parseTitle(title, artist)
         val primary = (parts.words + parts.versions).joinToString(" ")
             .trim()
-            .ifBlank { wantedTitle.forLyricsSearch() }
-        val altTitles = buildList {
-            parts.altWords.forEach { words ->
-                val alt = (words + parts.versions).joinToString(" ").trim()
-                if (alt.isNotBlank()) add(alt)
-            }
-            subtitles.forEach { subtitle ->
-                val alt = (TrackMatcher.parseTitle(subtitle, wantedArtist).words +
-                    parts.versions).joinToString(" ").trim()
-                if (alt.isNotBlank() && alt != primary) add(alt)
-            }
-        }.distinct()
-        val names = ArtistAliases.forArtist(
-            wantedArtist,
-            album,
-            extra = artistAliases + upload?.artistAliases.orEmpty(),
-        )
-        val first = names.firstOrNull().orEmpty().ifBlank { wantedArtist.artistForLyricsSearch() }
+            .ifBlank { title.forLyricsSearch() }
+        val altTitles = parts.altWords
+            .map { (it + parts.versions).joinToString(" ").trim() }
+            .filter { it.isNotBlank() }
+        val names = ArtistAliases.forArtist(artist, album, extra = artistAliases)
+        val first = names.firstOrNull().orEmpty().ifBlank { artist.artistForLyricsSearch() }
         val all = names.distinct().joinToString(", ")
         val out = LinkedHashSet<Name>()
         fun add(t: String, a: String) {

@@ -754,16 +754,7 @@ object YtMusicRepository {
     }
 
     private suspend fun resolveAudioUncached(song: Song): Song {
-        val base = TrackMatcher.targetOf(song)
-        // A fan clip's channel is not the performer; the title names them.
-        // Searching under the uploader is how the official upload of the same
-        // song was never found. See CoverTitles.lyricsQuery.
-        val clip = CoverTitles.lyricsQuery(song)
-        val target = if (clip.clipUpload) {
-            base.copy(title = clip.title, artist = clip.artist)
-        } else {
-            base
-        }
+        val target = TrackMatcher.targetOf(song)
         var searched = false
         var videoRowsOnly = false
         for (query in TrackMatcher.queries(target)) {
