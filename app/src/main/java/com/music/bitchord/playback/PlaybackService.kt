@@ -1174,6 +1174,12 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            PlaybackActivity.onPlayingChanged(isPlaying)
+            // The automatic high-quality pass waits for this event rather than
+            // polling; a pause is when its host slots become free.
+            if (!isPlaying && !PlaybackActivity.active) {
+                com.music.bitchord.download.HqLibraryUpgrade.onPlaybackStopped(this@PlaybackService)
+            }
             stoppedPlayingAt = if (isPlaying) 0L else android.os.SystemClock.elapsedRealtime()
             // Wakes or parks the sampler; see [samplerPlaying].
             samplerPlaying.value = isPlaying
@@ -1438,6 +1444,10 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            PlaybackActivity.onBufferingChanged(state == Player.STATE_BUFFERING)
+            if (state != Player.STATE_BUFFERING && !exoPlayer.isPlaying) {
+                com.music.bitchord.download.HqLibraryUpgrade.onPlaybackStopped(this@PlaybackService)
+            }
             if (state == Player.STATE_READY && !songVersionController.isResolvingBeforeAudio) {
                 // A local file's own length is known from here, which is the
                 // first moment a legacy download can be judged without reading
@@ -9272,6 +9282,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        PlaybackActivity.stopped()
         com.music.bitchord.lockscreen.LockScreenLyrics.detach(this)
         headphoneResume.detach()
         runCatching { unregisterReceiver(screenStateReceiver) }

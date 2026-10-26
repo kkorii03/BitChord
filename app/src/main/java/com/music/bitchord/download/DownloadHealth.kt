@@ -81,7 +81,7 @@ object DownloadHealth {
             // Already condemned: keep it out of the player and let the repair
             // run again if the last attempt did not land. No second decode.
             if (Downloads.isWrongRecording(id)) {
-                HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true)
+                HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
                 val action = if (online) {
                     DownloadHealthPolicy.Action.STREAM
                 } else {
@@ -154,10 +154,10 @@ object DownloadHealth {
                     if (!Downloads.markWrongRecording(id, meta.uri, version)) {
                         return@withContext null
                     }
-                    HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true)
+                    HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
                 }
                 DownloadHealthPolicy.Action.UPGRADE -> {
-                    HqLibraryUpgrade.requestUpgrade(context, song)
+                    HqLibraryUpgrade.requestUpgrade(context, song, automatic = true)
                 }
                 DownloadHealthPolicy.Action.NONE -> Unit
             }

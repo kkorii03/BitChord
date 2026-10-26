@@ -114,17 +114,19 @@ internal class HqHostGate(
         }
     }
 
-    fun isResting(host: String?, nowMs: Long = clock()): Boolean {
-        val key = normalize(host) ?: return false
+    fun isResting(host: String?, nowMs: Long = clock()): Boolean =
+        restRemainingMs(host, nowMs) > 0L
+
+    /** How much longer [host] must rest, or zero when it may be asked again. */
+    fun restRemainingMs(host: String?, nowMs: Long = clock()): Long {
+        val key = normalize(host) ?: return 0L
         return synchronized(this) {
-            val state = states[key]
-            if (state == null) {
-                false
-            } else if (state.restUntilMs > nowMs) {
-                true
+            val state = states[key] ?: return@synchronized 0L
+            if (state.restUntilMs > nowMs) {
+                state.restUntilMs - nowMs
             } else {
                 if (state.restUntilMs != 0L) state.restUntilMs = 0L
-                false
+                0L
             }
         }
     }
@@ -230,6 +232,8 @@ internal object HqHostTracker {
     fun rest(host: String?, durationMs: Long) = gate.rest(host, durationMs)
 
     fun isResting(host: String?) = gate.isResting(host)
+
+    fun restRemainingMs(host: String?) = gate.restRemainingMs(host)
 
     fun noteTransfer(host: String?, bytes: Long, elapsedMs: Long, ok: Boolean) =
         gate.noteTransfer(host, bytes, elapsedMs, ok)

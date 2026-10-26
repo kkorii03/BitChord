@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.HqAutoDownloadPolicy
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
@@ -25,6 +26,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.TrackEntry
+import com.music.bitchord.playback.PlaybackActivity
 import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 
 /**
  * The automatic high-quality pass over the listener's library.
@@ -84,13 +87,19 @@ object HqLibraryUpgrade {
         val running: Boolean = false,
         val done: Int = 0,
         val total: Int = 0,
+        /** A server asked the pass to come back later; nothing is in flight. */
+        val waiting: Boolean = false,
     ) {
-        val visible: Boolean get() = running && total > 0
+        val visible: Boolean get() = (running || waiting) && total > 0
     }
 
     private data class PendingTarget(
         val target: HqLibraryTarget,
         val song: Song,
+        /** How many transient refusals this target has already waited out. */
+        val attempt: Int = 0,
+        /** The earliest this target may be asked for again, on the wall clock. */
+        val notBeforeMs: Long = 0L,
     )
 
     private val lock = Any()
@@ -133,10 +142,21 @@ object HqLibraryUpgrade {
     fun scheduleIfEnabled(context: Context) {
         ensureLoaded(context)
         if (!enabled()) return
+        // Nothing is fetched while the player is using the same servers. The
+        // pause (or buffer-idle) event calls [onPlaybackStopped], so this is
+        // event-driven rather than a retry loop.
+        if (PlaybackActivity.active) return
         val now = System.currentTimeMillis()
         if (now - lastScheduleRequestMs < SCHEDULE_DEBOUNCE_MS) return
         lastScheduleRequestMs = now
         enqueue(context, ExistingWorkPolicy.KEEP)
+    }
+
+    /** Playback paused or its buffer went idle: this is the event the pass waits for. */
+    fun onPlaybackStopped(context: Context) {
+        if (PlaybackActivity.active) return
+        lastScheduleRequestMs = 0L
+        scheduleIfEnabled(context)
     }
 
     /**
@@ -201,7 +221,12 @@ object HqLibraryUpgrade {
      * pair does nothing; a repair may fall back to a re-fetch only when the
      * served rendition is at least the rung of the file it replaces.
      */
-    fun requestUpgrade(context: Context, song: Song, allowEqual: Boolean = false) {
+    fun requestUpgrade(
+        context: Context,
+        song: Song,
+        allowEqual: Boolean = false,
+        automatic: Boolean = false,
+    ) {
         ensureLoaded(context)
         val meta = Downloads.savedMetadataFor(song.videoId)
         val badge = song.downloadFormat ?: meta?.downloadFormat
@@ -227,7 +252,7 @@ object HqLibraryUpgrade {
                 HqLibraryPolicy.isBetter(currentTier, entry.verified.tier)
             }
         if (entry != null && entryUsable) {
-            enqueueVerified(context, song, entry)
+            enqueueVerified(context, song, entry, automatic = automatic)
             if (!allowEqual) {
                 TrackLog.i(
                     TAG,
@@ -263,6 +288,7 @@ object HqLibraryUpgrade {
                             context,
                             song,
                             HqVerificationStore.Entry(song.videoId, sourceId, trackId, verified),
+                            automatic = automatic,
                         )
                         return@launch
                     }
@@ -291,6 +317,7 @@ object HqLibraryUpgrade {
                 forceReplace = true,
                 youtubeOnly = true,
                 minimumTier = currentTier,
+                automatic = automatic,
             )
         }
     }
@@ -299,6 +326,7 @@ object HqLibraryUpgrade {
         context: Context,
         song: Song,
         entry: HqVerificationStore.Entry,
+        automatic: Boolean,
     ) {
         Downloads.enqueue(
             context = context,
@@ -314,6 +342,7 @@ object HqLibraryUpgrade {
                 sourceTitle = entry.verified.sourceTitle,
                 sourceArtist = entry.verified.sourceArtist,
             ),
+            automatic = automatic,
         )
     }
 
@@ -376,10 +405,15 @@ object HqLibraryUpgrade {
      * a failed replacement leaves the old file in place and must not be
      * mistaken for a completed one.
      */
-    fun onDownloadSettled(context: Context, videoId: String, success: Boolean) {
+    internal fun onDownloadSettled(
+        context: Context,
+        videoId: String,
+        success: Boolean,
+        failure: DownloadFailure? = null,
+    ) {
         if (!ready) return
         if (synchronized(lock) { activeVideoId } != videoId) return
-        settle(context, videoId, success)
+        settle(context, videoId, success, failure = failure)
     }
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {
@@ -388,6 +422,7 @@ object HqLibraryUpgrade {
             finishRun()
             return@withContext
         }
+        if (PlaybackActivity.active) return@withContext
         if (recoverActive(context)) return@withContext
         if (!runAllowed()) {
             finishRun()
@@ -413,6 +448,13 @@ object HqLibraryUpgrade {
         }
 
         val pending = target ?: return@withContext
+        val now = System.currentTimeMillis()
+        if (pending.notBeforeMs > now) {
+            // WorkManager owns the wait: the next attempt is scheduled, not
+            // slept in this worker and not polled.
+            enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, pending.notBeforeMs - now)
+            return@withContext
+        }
         val verified = HqVerificationStore.get(
             context,
             pending.target.videoId,
@@ -449,17 +491,19 @@ object HqLibraryUpgrade {
                 sourceTitle = pending.target.sourceTitle ?: verified.sourceTitle,
                 sourceArtist = pending.target.sourceArtist ?: verified.sourceArtist,
             ),
+            automatic = true,
         )
 
         // A refused start leaves a Failed row and never reaches Downloads.run,
         // so the finally hook will not fire for it. Settle it here instead of
-        // leaving the pass stuck on this id until the next launch.
+        // leaving the pass stuck on this id until the next launch. A null is
+        // not settled: the download may already have finished and called
+        // [onDownloadSettled] itself, which is the answer to keep.
         when (Downloads.active.value[pending.target.videoId]) {
             is DownloadState.Failed -> {
                 Downloads.dismissFailure(pending.target.videoId)
                 settle(context, pending.target.videoId, success = false)
             }
-            null -> settle(context, pending.target.videoId, success = false)
             else -> Unit
         }
     }
@@ -503,12 +547,39 @@ object HqLibraryUpgrade {
         context: Context,
         videoId: String,
         success: Boolean,
+        failure: DownloadFailure? = null,
         scheduleNext: Boolean = true,
     ) {
         ensureLoaded(context)
         var rebuild = false
+        var retryWaitMs: Long? = null
         val remaining = synchronized(lock) {
             if (activeVideoId != videoId) return
+            val index = plan.indexOfFirst { it.target.videoId == videoId }
+            if (!success && failure?.transient == true && index >= 0) {
+                // Keep the target where it is. A 429 or a reset stream is the
+                // server asking for time, not the file being wrong, so the
+                // pass must not advance to the next song and leave this one
+                // counted as done.
+                val pending = plan[index]
+                val wait = failure.retryAfterMs
+                    ?: HqAutoDownloadPolicy.retryDelayMs(
+                        retryAfterHeader = failure.retryAfterHeader,
+                        attempt = pending.attempt,
+                        nowMs = System.currentTimeMillis(),
+                    )
+                plan = plan.toMutableList().also {
+                    it[index] = pending.copy(
+                        attempt = pending.attempt + 1,
+                        notBeforeMs = System.currentTimeMillis() + wait,
+                    )
+                }
+                activeVideoId = null
+                retryWaitMs = wait
+                persistLocked()
+                publishLocked()
+                return@synchronized plan
+            }
             val left = plan.filterNot { it.target.videoId == videoId }
             plan = left
             done += 1
@@ -525,6 +596,17 @@ object HqLibraryUpgrade {
             persistLocked()
             publishLocked()
             left
+        }
+        val wait = retryWaitMs
+        if (wait != null) {
+            TrackLog.w(
+                TAG,
+                "hq-library: $videoId deferred ${wait / 1_000}s; the server asked for time",
+            )
+            if (runAllowed() && scheduleNext) {
+                enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, wait)
+            }
+            return
         }
         if (!success) {
             TrackLog.w(TAG, "hq-library: $videoId did not land; it will be retried next time")
@@ -626,7 +708,11 @@ object HqLibraryUpgrade {
             ?.takeIf { it.title.isNotBlank() }
     }
 
-    private fun enqueue(context: Context, policy: ExistingWorkPolicy) {
+    private fun enqueue(
+        context: Context,
+        policy: ExistingWorkPolicy,
+        delayMs: Long = 0L,
+    ) {
         if (!runAllowed()) return
         val request = OneTimeWorkRequestBuilder<HqLibraryUpgradeWorker>()
             .setConstraints(
@@ -634,6 +720,9 @@ object HqLibraryUpgrade {
                     .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build(),
             )
+            .apply {
+                if (delayMs > 0L) setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            }
             .build()
         runCatching {
             WorkManager.getInstance(context.applicationContext)
@@ -680,10 +769,13 @@ object HqLibraryUpgrade {
     }
 
     private fun publishLocked() {
+        val waiting = activeVideoId == null &&
+            plan.firstOrNull()?.notBeforeMs?.let { it > System.currentTimeMillis() } == true
         _progress.value = Progress(
             running = plan.isNotEmpty() || activeVideoId != null,
             done = done,
             total = total,
+            waiting = waiting,
         )
     }
 
@@ -698,6 +790,8 @@ object HqLibraryUpgrade {
         pending.song.thumbnailUrl.orEmpty(),
         pending.song.durationText.orEmpty(),
         pending.song.albumName.orEmpty(),
+        pending.attempt.toString(),
+        pending.notBeforeMs.toString(),
     ).joinToString(FIELD_SEPARATOR) { it.sanitizedField() }
 
     private fun parseTarget(line: String): PendingTarget? {
@@ -726,7 +820,12 @@ object HqLibraryUpgrade {
             albumName = parts[9].takeIf { it.isNotBlank() },
         )
         if (song.title.isBlank()) return null
-        return PendingTarget(target, song)
+        return PendingTarget(
+            target = target,
+            song = song,
+            attempt = parts.getOrNull(10)?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+            notBeforeMs = parts.getOrNull(11)?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+        )
     }
 
     private fun String.sanitizedField(): String =

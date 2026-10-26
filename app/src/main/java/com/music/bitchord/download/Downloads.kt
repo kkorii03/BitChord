@@ -10,7 +10,9 @@ import androidx.core.content.ContextCompat
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.net.DownloadedMvPolicy
+import com.music.bitchord.data.net.HqAutoDownloadPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -19,6 +21,7 @@ import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
@@ -58,6 +61,19 @@ sealed interface DownloadState {
 
     data class Failed(val reason: String) : DownloadState
 }
+
+/**
+ * What an automatic high-quality download's failure means to the pass.
+ *
+ * [transient] keeps the target in the plan and schedules it again; a permanent
+ * failure lets the pass move on. [retryAfterHeader] is the server's own wait,
+ * when the response carried one.
+ */
+internal data class DownloadFailure(
+    val transient: Boolean,
+    val retryAfterHeader: String? = null,
+    val retryAfterMs: Long? = null,
+)
 
 /**
  * The verified pair a high-quality replacement must fetch.
@@ -218,6 +234,16 @@ object Downloads {
     /** A repair's minimum served rung; see [enqueue]. Guarded by [lock]. */
     private val minimumTiers = HashMap<String, HqTier>()
 
+    /**
+     * Downloads the automatic high-quality pass asked for, not a listener.
+     *
+     * Read once when the download starts. These stay out of [DownloadSession]
+     * entirely: a server's back-pressure on work nobody requested must not
+     * become a red failure badge, and the pass has its own progress line.
+     * Guarded by [lock].
+     */
+    private val automaticIds = HashSet<String>()
+
     private val lock = Any()
 
     /**
@@ -312,6 +338,9 @@ object Downloads {
      * @param minimumTier a repair's floor: the served rendition must be at
      *   least this good, or the download fails and the old file stays. Used
      *   when the replacement itself could not be verified first.
+     * @param automatic the high-quality pass asked, not a listener. Its
+     *   failures are retried by that pass and never become a user-facing
+     *   failure row.
      */
     fun enqueue(
         context: Context,
@@ -324,6 +353,7 @@ object Downloads {
         forceReplace: Boolean = false,
         youtubeOnly: Boolean = false,
         minimumTier: HqTier? = null,
+        automatic: Boolean = false,
     ) {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
@@ -335,7 +365,9 @@ object Downloads {
             // connection that allowed it and is none of this check's business.
             val inFlight = _active.value[id]
             if (inFlight !is DownloadState.Queued && inFlight !is DownloadState.Running) {
-                DownloadSession.queued(song, from)
+                if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
+                    DownloadSession.queued(song, from)
+                }
                 fail(id, WIFI_ONLY_REFUSAL)
             }
             return
@@ -349,9 +381,12 @@ object Downloads {
             if (forceReplace) forceReplaceIds.add(id)
             if (youtubeOnly) youtubeOnlyIds.add(id)
             if (minimumTier != null) minimumTiers[id] = minimumTier
+            if (automatic) automaticIds.add(id)
         }
         _active.update { it + (id to DownloadState.Queued) }
-        DownloadSession.queued(song, from)
+        if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
+            DownloadSession.queued(song, from)
+        }
 
         val app = context.applicationContext
         runCatching {
@@ -369,6 +404,7 @@ object Downloads {
                 forceReplaceIds.remove(id)
                 youtubeOnlyIds.remove(id)
                 minimumTiers.remove(id)
+                automaticIds.remove(id)
             }
             fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
@@ -1632,6 +1668,7 @@ object Downloads {
      */
     internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
+        val automatic = synchronized(lock) { automaticIds.remove(id) }
         // Set before the lookup, not after it. Resolving where a lossless track
         // comes from is the long part of a download, and leaving the row on
         // "Queued" for all of it reads as a queue that has stopped rather than
@@ -1640,6 +1677,8 @@ object Downloads {
         DownloadSession.running(id, 0f)
 
         var completed = false
+        var failure: DownloadFailure? = null
+        var host: String? = null
         try {
             val plan = prepare(context, song)
             // The manager is showing the row that was tapped, which for a music
@@ -1647,21 +1686,66 @@ object Downloads {
             // being written. Corrected here rather than left to disagree with
             // the notification and with the Downloads page afterwards.
             DownloadSession.retitle(id, plan.track)
-            transfer(context, song, plan)
+            if (automatic) {
+                host = plan.route?.host
+                if (host != null) {
+                    // A host the pass or playback has just been refused by is
+                    // not asked again until its own wait has passed. The
+                    // scheduler gets the remaining time, so this is not a poll.
+                    val rest = HqHostTracker.restRemainingMs(host)
+                    if (rest > 0L) throw AutoDownloadDeferred(rest)
+                    // Playback's upgrade/read-ahead and its verification hold
+                    // the same host slots; an automatic file waits for them
+                    // rather than opening a second request to the same server.
+                    HqHostTracker.awaitIdle(host, exceptTrack = id)
+                    HqHostTracker.beginDownload(id, host)
+                }
+            }
+            val work = suspend { transfer(context, song, plan) }
+            if (automatic && host != null) {
+                HqAudioVerify.withCandidateHost(host) { work() }
+            } else {
+                work()
+            }
             completed = true
         } catch (e: CancellationException) {
             clear(id)
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "download failed for $id: ${e.message}", e)
-            fail(id, e.friendly())
+            if (automatic) {
+                failure = e.automaticFailure()
+                // No DownloadSession row: the pass reports its own wait, and a
+                // server's 429 is not a failure the listener needs a badge for.
+                DownloadSession.forget(id)
+                clear(id)
+            } else {
+                fail(id, e.friendly())
+            }
         } finally {
+            if (host != null) HqHostTracker.endDownload(id, host)
             // One HQ target at a time: the next one is only queued once this
             // one has landed or failed, so the pass cannot fan out into the
             // four-worker download queue. Cheap for ordinary downloads — the
             // id is not the pass's active target and the call returns.
-            HqLibraryUpgrade.onDownloadSettled(context, id, completed)
+            HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure)
         }
+    }
+
+    /** The pass has parked this host until the time it named. */
+    private class AutoDownloadDeferred(val waitMs: Long) : Exception("server busy")
+
+    /** What an automatic download's exception means to [HqLibraryUpgrade]. */
+    private fun Exception.automaticFailure(): DownloadFailure {
+        val deferred = this as? AutoDownloadDeferred
+        val http = this as? DownloadHttpException
+        val code = http?.code ?: HqAutoDownloadPolicy.statusCode(message)
+        return DownloadFailure(
+            transient = deferred != null ||
+                HqAutoDownloadPolicy.isTransientFailure(code, message),
+            retryAfterHeader = http?.retryAfter,
+            retryAfterMs = deferred?.waitMs,
+        )
     }
 
     /**
@@ -2020,6 +2104,8 @@ object Downloads {
         val mimeType: String,
         /** For the log line, so a download's provenance is on the record. */
         val describe: String,
+        /** The server these bytes come from, for the automatic pass's host slot. */
+        val host: String? = null,
         /** Short premium-rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
         /** The rung these bytes are actually served at, when known. */
@@ -2076,6 +2162,7 @@ object Downloads {
             extension = stream.downloadExtension,
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
+            host = HqHostTracker.hostOf(stream.url),
             downloadFormat = youtubeDownloadBadge(stream.downloadExtension, stream.kbps),
             tier = HqQuality.tierOf(
                 StreamFormat(
@@ -2151,6 +2238,7 @@ object Downloads {
                 extension = storable.extension,
                 mimeType = storable.mimeType,
                 describe = "${stream.format.summary} (assembled from ${if (dash) "DASH" else "HLS"})",
+                host = HqHostTracker.hostOf(stream.url),
                 downloadFormat = stream.format.downloadBadge(),
                 tier = HqQuality.tierOf(stream.format),
                 sourceTitle = stream.trackTitle,
@@ -2174,6 +2262,7 @@ object Downloads {
             extension = if (packaged) "m3u8" else storable.extension,
             mimeType = if (packaged) "application/vnd.apple.mpegurl" else storable.mimeType,
             describe = stream.format.summary,
+            host = HqHostTracker.hostOf(stream.url),
             downloadFormat = stream.format.downloadBadge(),
             tier = HqQuality.tierOf(stream.format),
             sourceTitle = stream.trackTitle,
@@ -2284,6 +2373,7 @@ object Downloads {
             forceReplaceIds.remove(videoId)
             youtubeOnlyIds.remove(videoId)
             minimumTiers.remove(videoId)
+            automaticIds.remove(videoId)
         }
     }
 

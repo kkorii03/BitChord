@@ -226,11 +226,15 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                 )
                 if (hqProgress.visible) {
                     Text(
-                        text = stringResource(
-                            R.string.hq_library_progress,
-                            hqProgress.done,
-                            hqProgress.total,
-                        ),
+                        text = if (hqProgress.waiting) {
+                            stringResource(R.string.hq_library_waiting)
+                        } else {
+                            stringResource(
+                                R.string.hq_library_progress,
+                                hqProgress.done,
+                                hqProgress.total,
+                            )
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -308,11 +312,15 @@ fun HqLibraryProgressLine(modifier: Modifier = Modifier) {
     val progress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
     if (!progress.visible) return
     Text(
-        text = stringResource(
-            R.string.hq_library_progress,
-            progress.done,
-            progress.total,
-        ),
+        text = if (progress.waiting) {
+            stringResource(R.string.hq_library_waiting)
+        } else {
+            stringResource(
+                R.string.hq_library_progress,
+                progress.done,
+                progress.total,
+            )
+        },
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier,
@@ -353,11 +361,15 @@ fun HqLibraryUpgradeAllRow(modifier: Modifier = Modifier) {
             )
             Text(
                 text = if (progress.visible) {
-                    stringResource(
-                        R.string.hq_library_progress,
-                        progress.done,
-                        progress.total,
-                    )
+                    if (progress.waiting) {
+                        stringResource(R.string.hq_library_waiting)
+                    } else {
+                        stringResource(
+                            R.string.hq_library_progress,
+                            progress.done,
+                            progress.total,
+                        )
+                    }
                 } else {
                     stringResource(R.string.hq_library_upgrade_all_subtitle)
                 },
