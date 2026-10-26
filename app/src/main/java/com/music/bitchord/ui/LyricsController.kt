@@ -733,7 +733,9 @@ class LyricsController(
                 return@launch
             }
             if (request.isVideo || request.fileTimingForeign) {
-                if (!adjustable || !measure || !measureNow) return@launch
+                if (!LyricsTiming.videoTimingMayRun(adjustable, measure, measureNow, cancelAi, substituted)) {
+                    return@launch
+                }
                 // AI after the free measurement, not alongside it: each request
                 // uploads the whole song (twice — Deepgram, then Gemini), and the
                 // measurement times most covers on its own. A few videos still ask
@@ -1044,8 +1046,15 @@ class LyricsController(
         if (!AppSettings.heavyWorkAllowed) return
         if (!AppSettings.aiTimingAhead.value) return
         if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
-        if (!LyricsTiming.wantsAi(context, videoId, lines)) return
         val request = currentLyricsRequest
+        // A downloaded file's answer is keyed by the file, not by the stream
+        // that shares its video id. Asking and saving without that key made
+        // the paid answer invisible to [refreshTiming] and let the next
+        // automatic pass buy it again under the other key.
+        val audioSource = request?.takeIf { !it.isVideo }?.let {
+            LyricsTiming.audioSourceKey(it.videoId, it.localUri != null)
+        }
+        if (!LyricsTiming.wantsAi(context, videoId, lines, audioSource)) return
         runCatching {
             LyricsTiming.placeWithAi(
                 context,
@@ -1055,6 +1064,7 @@ class LyricsController(
                 title = request?.title.orEmpty(),
                 artist = request?.artist.orEmpty(),
                 isVideo = request?.isVideo == true,
+                audioSource = audioSource,
             )
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }

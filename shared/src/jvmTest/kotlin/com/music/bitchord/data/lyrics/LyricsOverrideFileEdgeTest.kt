@@ -155,6 +155,36 @@ class LyricsOverrideFileEdgeTest {
     }
 
     @Test
+    fun removingOneKindLeavesTheOtherKindsOverride() {
+        val file = tempFile()
+        val lines = listOf(LyricLine(0L, "line"))
+        assertTrue(
+            LyricsOverrideFile.write(
+                file,
+                "id",
+                lines,
+                LyricsSource.LRCLIB,
+                kind = LyricsOverrideFile.Kind.USER,
+            ),
+        )
+        // A replaced file cleans up the automatic answer only.
+        assertFalse(LyricsOverrideFile.remove(file, "id", LyricsOverrideFile.Kind.RECHECK))
+        assertEquals(LyricsOverrideFile.Kind.USER, LyricsOverrideFile.read(file, "id")?.kind)
+
+        assertTrue(
+            LyricsOverrideFile.write(
+                file,
+                "id",
+                lines,
+                LyricsSource.LRCLIB,
+                kind = LyricsOverrideFile.Kind.RECHECK,
+            ),
+        )
+        assertTrue(LyricsOverrideFile.remove(file, "id", LyricsOverrideFile.Kind.RECHECK))
+        assertNull(LyricsOverrideFile.read(file, "id"))
+    }
+
+    @Test
     fun wordsSyllablesBackgroundAndAlignmentComeBackExactly() {
         val file = tempFile()
         val line = LyricLine(
