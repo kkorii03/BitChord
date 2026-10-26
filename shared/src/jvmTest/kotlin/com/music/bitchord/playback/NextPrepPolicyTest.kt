@@ -229,4 +229,24 @@ class NextPrepPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aSingleItemQueueWrappedByRepeatAllIsNotANextRow() {
+        assertFalse(NextPrepPolicy.hasDistinctNextRow(nextIndex = 0, currentIndex = 0))
+    }
+
+    @Test
+    fun aRealNextRowIsDistinct() {
+        assertTrue(NextPrepPolicy.hasDistinctNextRow(nextIndex = 1, currentIndex = 0))
+    }
+
+    @Test
+    fun noNextRowIsNeverPrepared() {
+        assertFalse(NextPrepPolicy.hasDistinctNextRow(nextIndex = null, currentIndex = 0))
+    }
+
+    @Test
+    fun aNextRowWithNoCurrentRowIsStillPrepared() {
+        assertTrue(NextPrepPolicy.hasDistinctNextRow(nextIndex = 0, currentIndex = null))
+    }
 }

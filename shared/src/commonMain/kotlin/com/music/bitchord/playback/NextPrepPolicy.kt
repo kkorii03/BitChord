@@ -52,6 +52,19 @@ object NextPrepPolicy {
     }
 
     /**
+     * Whether [nextIndex] is a row other than the one playing at
+     * [currentIndex].
+     *
+     * Media3's next index is not "is there something after this": with
+     * REPEAT_MODE_ALL on a single-item queue it wraps to the current row.
+     * Treating that as the next row starts a bundle for the song already
+     * playing, which then waits the full mix timeout for a transition that
+     * cannot happen. A null index means the player has no such row.
+     */
+    fun hasDistinctNextRow(nextIndex: Int?, currentIndex: Int?): Boolean =
+        nextIndex != null && nextIndex != currentIndex
+
+    /**
      * Whether a running bundle must stop.
      *
      * It is about one queue row: when that row is replaced, removed, or the
