@@ -236,10 +236,10 @@ def check_log(
                 target = match.group("dst")
                 replacements.append((source, target))
                 version_subjects.add(source)
-            else:
-                kept = SONG_VERSION_KEPT_RE.search(line)
-                if kept:
-                    version_subjects.add(kept.group("id"))
+            # A "kept" line is not evidence of an MV: the lookup also runs for
+            # rows of unknown type and keeps a song version that is already one
+            # (10-26: Burn the House Down, Wbxh1fNakos = AJR - Topic, was failed
+            # as an MV). A real MV left playing shows as "no official song match".
 
         if "audio switch:" in line:
             match = AUDIO_SWITCH_NO_MATCH_RE.search(line)
