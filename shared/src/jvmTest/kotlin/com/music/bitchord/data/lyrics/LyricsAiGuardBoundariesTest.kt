@@ -1,6 +1,5 @@
 package com.music.bitchord.data.lyrics
 
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -144,10 +143,9 @@ class LyricsAiGuardBoundariesTest {
     }
 
     /**
-     * `abs(Long.MIN_VALUE)` stays negative, so the cap reads it as a tiny
-     * movement and lets through a shift no answer could ever mean.
+     * The cap is an inclusive range, so the smallest Long is outside it
+     * instead of overflowing to a negative absolute value.
      */
-    @Ignore("BUG: abs(Long.MIN_VALUE) overflows, so the shift cap accepts it")
     @Test
     fun theSmallestLongIsNotAcceptedAsASmallShift() {
         assertFalse(LyricsAiGuard.shiftAllows(isVideo = true, firstLineShiftMs = Long.MIN_VALUE))

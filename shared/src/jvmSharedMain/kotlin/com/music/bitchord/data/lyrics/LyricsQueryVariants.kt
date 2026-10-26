@@ -39,6 +39,8 @@ internal object LyricsQueryVariants {
             .map { (it + parts.versions).joinToString(" ").trim() }
             .filter { it.isNotBlank() }
         val names = ArtistAliases.forArtist(artist, album, extra = artistAliases)
+            .map { it.artistForLyricsSearch() }
+            .filter { it.isNotBlank() }
         val first = names.firstOrNull().orEmpty().ifBlank { artist.artistForLyricsSearch() }
         val all = names.distinct().joinToString(", ")
         val out = LinkedHashSet<Name>()

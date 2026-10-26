@@ -74,6 +74,7 @@ object Backup {
             val buckets = ListeningStats.exportAll()
             val overrides = LikeState.overrides.value
             val file = BackupFile(
+                app = APP_TAG,
                 version = SCHEMA_VERSION,
                 versionName = BuildConfig.VERSION_NAME,
                 exportedAt = Instant.now().toString(),
@@ -212,7 +213,11 @@ object Backup {
 
     @Serializable
     data class BackupFile(
-        val app: String = APP_TAG,
+        /**
+         * No default tag: a document that never names this app is not one of
+         * ours, and [validate] has to be able to tell the difference.
+         */
+        val app: String = "",
         /**
          * 1 is the oldest shape that ever shipped, so a file missing the key
          * is treated as the cautious case rather than as a current one. Export

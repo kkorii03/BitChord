@@ -72,8 +72,8 @@ fun appleSubtitleCredit(subtitle: String): String? {
     }
 }
 
-private val DURATION = Regex("""\d+:\d{2}""")
-private val YEAR = Regex("""(19|20)\d{2}""")
+private val DURATION = Regex("""\d+(?::\d{2}){1,2}""")
+private val YEAR = Regex("""(?:19|20)\d{2}(?:년|年)?""")
 
 /**
  * A counted quantity rather than a name — "1.2M plays", "구독자 423만명",

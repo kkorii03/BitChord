@@ -4,7 +4,6 @@ import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.ArtistRef
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -117,10 +116,9 @@ class LyricsQueryVariantsTest {
     }
 
     /**
-     * `artistForLyricsSearch()` trims the " - Topic" suffix, but the alias
-     * list always contains the raw byline first, so the fallback never runs.
+     * The " - Topic" suffix is trimmed from every alias before the first name
+     * is chosen, so the raw byline cannot shadow the cleaned fallback.
      */
-    @Ignore("BUG: the ' - Topic' artist suffix is not trimmed before the lyrics search")
     @Test
     fun aTopicChannelSuffixIsNotPartOfTheArtistName() {
         val names = LyricsQueryVariants.names("Song", "IU - Topic")

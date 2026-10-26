@@ -5,8 +5,7 @@
 
 ## 추가한 테스트
 
-앱 단위 테스트 5개 클래스, 총 51개. 그중 48개 통과, 3개는 아래 발견된
-버그를 고정하기 위해 `@Ignore`로 남겼다.
+앱 단위 테스트 5개 클래스, 총 51개. 모두 통과한다.
 
 - `data/settings/AppSettingsDefaultsTest.kt` (7)
   - `AudioQuality.permits` 전체 진리표: LOSSLESS는 모든 소스, HIGH는
@@ -15,7 +14,7 @@
     등급의 `keepsLossless`, 캐시·가사 오프셋·업그레이드 slack·핀 한도·
     기본 국가 상수.
   - `normalizeSignatureApiUrl`의 trim, 끝 슬래시 제거, 500자 상한.
-- `data/settings/SettingsTransferEdgeCasesTest.kt` (17, 2 ignored)
+- `data/settings/SettingsTransferEdgeCasesTest.kt` (17)
   - 다른 앱 태그·깨진 JSON 거부.
   - `TransferSpec.normalize` 경계: BOOLEAN/INT/LONG/FLOAT의 캐리어 타입,
     enum 문자열 대소문자, STRING_LIST의 trim·빈 값·전부 불명 거부,
@@ -27,7 +26,7 @@
     가져오기는 변경 아님, 프록시 동일/변경, skipped 합산.
   - `buildFile`이 화이트리스트·지원 타입만 쓰고 메타데이터를 기록하며
     비밀 키를 파일에 넣지 않는지, 다시 읽었을 때 값이 보존되는지.
-- `data/stats/BackupSecretsAndPrefsTest.kt` (11, 1 ignored)
+- `data/stats/BackupSecretsAndPrefsTest.kt` (11)
   - `AppSettings.exportPrefs`가 8개 자격 증명과 6개 기기 로컬 키를 모두
     제외하는지.
   - 그 결과로 만든 백업이 JSON 왕복 후에도 비밀/기기 로컬 키 없이 같은
@@ -56,24 +55,31 @@
 (in-memory `SharedPreferences`, 생성자를 우회한 `Context`). 테스트 클래스가
 아니므로 CI 목록에는 넣지 않아도 된다.
 
-## 발견된 버그
+## 발견된 버그 (고침)
 
-운영 코드는 고치지 않았고, 각각의 테스트에 이유를 적어 `@Ignore`했다.
+각 항목은 코드로 재현한 뒤 운영 코드를 고쳤고, 해당 테스트의 `@Ignore`를
+제거해 통과를 확인했다.
 
 1. **`Backup`이 app 태그 없는 JSON을 백업으로 받아들인다.**
    `BackupFile.app`의 `@Serializable` 기본값이 `"bitchord"`라 `{}`도
-   `decode`·`validate`를 통과한다. `importFrom`은 이를 schema 1 빈 백업으로
+   `decode`·`validate`를 통과했다. `importFrom`은 이를 schema 1 빈 백업으로
    보고 `AppSettings.importPrefs(emptyMap())`을 호출하므로, 잘못 고른 JSON
-   한 개가 설정을 지울 수 있다.
+   한 개가 설정을 지울 수 있었다.
+   → 고침: `BackupFile.app` 기본값을 빈 문자열로 바꾸고 `exportTo`가 항상
+   `APP_TAG`를 쓰도록 했다. `validate`는 태그가 다르거나 없는 파일을 거부한다.
    `BackupSecretsAndPrefsTest.a document without the app tag is not a backup`.
 2. **`SettingsTransfer`도 app 태그 없는 JSON을 설정 파일로 받아들인다.**
-   같은 기본값 때문에 `{}`가 `decode`를 통과한다. 이쪽은 빈 가져오기라
-   파괴적이진 않지만 "BitChord 설정 파일이 아닙니다" 계약과 어긋난다.
+   같은 기본값 때문에 `{}`가 `decode`를 통과했다. 이쪽은 빈 가져오기라
+   파괴적이진 않지만 "BitChord 설정 파일이 아닙니다" 계약과 어긋났다.
+   → 고침: `File.app` 기본값을 빈 문자열로 바꾸고 `buildFile`이 항상
+   `APP_TAG`를 쓰며, `decode`가 태그 없는 문서를 거부한다.
    `SettingsTransferEdgeCasesTest.a document without the app tag is not a settings file`.
 3. **`SettingsTransfer.ProxyTransfer.toConfig`가 사용할 수 없는 프록시를
    통과시킨다.** 포트를 `0..65535`로만 확인해 HTTP/SOCKS5 모드에서 포트 0과
-   빈 호스트를 허용한다. 미리보기는 변경으로 표시하고, 적용하면
-   `ProxyValidation`이 unusable로 판정하는 설정이 저장된다.
+   빈 호스트를 허용했다. 미리보기는 변경으로 표시하고, 적용하면
+   `ProxyValidation`이 unusable로 판정하는 설정이 저장됐다.
+   → 고침: 정규화한 뒤 `ProxyValidation.validate`가 null인 경우에만 구성을
+   반환한다. OFF 모드는 기존대로 유효하다.
    `SettingsTransferEdgeCasesTest.an enabled proxy without a host or a real port is not a configuration`.
 
 ## 실행
@@ -89,4 +95,4 @@
   -Pbitchord.arm64Only=true --console=plain -q
 ```
 
-결과: 51개 중 48 통과, 3 skipped(`@Ignore`), 실패 0.
+결과: 51개 모두 통과, skipped 0, 실패 0.

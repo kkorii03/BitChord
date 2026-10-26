@@ -3,7 +3,7 @@
 작업 범위: `shared/src/jvmSharedMain/.../data/net`, `.../data/innertube`의
 순수 판정 로직. 운영 코드는 수정하지 않았고 테스트 파일과 이 문서만 추가했다.
 
-## 추가한 테스트 (205개, 그중 2개는 발견된 버그로 `@Ignore`)
+## 추가한 테스트 (205개, 모두 통과)
 
 ### 프록시 경로 정책
 
@@ -39,7 +39,7 @@
 
 ### 재시도·Retry-After
 
-- `data/net/HqRetryPolicyEdgeTest.kt` (17, 1 ignored)
+- `data/net/HqRetryPolicyEdgeTest.kt` (17)
   - 429/503만 rate limit, 공백/음수/소수/과거 날짜/잘못된 날짜 header.
   - backoff 사다리 clamp, 3회 예산, 0초/음수/정확히 cap/초과 cap, rest 계산.
   - header 대소문자·다중 값·빈 리스트.
@@ -73,7 +73,7 @@
   - `itx:` round-trip/공백/대소문자, NewPipe 미학습, 비-winner refusal,
     winner 2회 miss, 최근 refusal 8개, direct 6-track window와 30분 bench,
     winner 24시간 경계, 저장된 winner load/만료/빈 path, attach, persist.
-- `app/.../data/innertube/PlayerClientSelectionTest.kt` (17, 1 ignored)
+- `app/.../data/innertube/PlayerClientSelectionTest.kt` (17)
   - `c`/`cver`별 IOS/IOS_RECENT/ANDROID/ANDROID_MUSIC/ANDROID_VR/TV/WEB/MWEB/
     알 수 없는 client의 IOS fallback, media header의 Origin/Referer, range 1MiB/512KiB.
 
@@ -81,21 +81,24 @@
 
 - `app/src/test/java/com/music/bitchord/data/innertube/PlayerClientSelectionTest.kt`
 
-## 발견된 버그
+## 발견된 버그 (고침)
 
 1. **`HqRetryPolicy.retryAfterMs`의 초 단위 곱셈 오버플로**
-   - `seconds * 1000L`에 overflow 보호가 없다. `Retry-After: 10000000000000000`
+   - `seconds * 1000L`에 overflow 보호가 없었다. `Retry-After: 10000000000000000`
      또는 `Long.MAX_VALUE`는 음수로 넘쳐 `coerceAtLeast(0L)`이 0ms로 만들고,
-     `decide()`가 즉시 재시도한다. 서버가 아주 긴 대기를 요구한 경우와 정반대다.
-   - `HqRetryPolicyEdgeTest.an absurdly large retry-after never becomes an immediate retry`에
-     `@Ignore("BUG: ...")`로 기록. 운영 코드는 수정하지 않았다.
+     `decide()`가 즉시 재시도했다. 서버가 아주 긴 대기를 요구한 경우와 정반대다.
+   - → 고침: 음수는 0으로, `Long.MAX_VALUE / 1000`을 넘는 초는 표현 불가로
+     null을 반환한다. `decide`는 원래 초 값을 따로 확인해 이런 값도
+     `retryAfterTooLong`으로 처리한다.
+   - `HqRetryPolicyEdgeTest.an absurdly large retry-after never becomes an immediate retry`.
 
 2. **`PlayerClient.rangeBytesFor`의 host suffix 경계 누락**
    - `host.endsWith("googlevideo.com")`이라 `notgooglevideo.com`도 googlevideo로
-     오인해 1MiB range cap을 적용한다. 같은 파일의 `ProxyScopeMatcher.isYouTubeHost`는
-     apex 또는 `.googlevideo.com`만 허용해 규칙이 서로 다르다.
-   - `PlayerClientSelectionTest.a lookalike host is not range-capped`에
-     `@Ignore("BUG: ...")`로 기록. 운영 코드는 수정하지 않았다.
+     오인해 1MiB range cap을 적용했다. 같은 파일의 `ProxyScopeMatcher.isYouTubeHost`는
+     apex 또는 `.googlevideo.com`만 허용해 규칙이 서로 달랐다.
+   - → 고침: apex이거나 `.googlevideo.com`으로 끝나는 host만 range cap 대상으로
+     삼는다.
+   - `PlayerClientSelectionTest.a lookalike host is not range-capped`.
 
 그 외 새 테스트는 모두 통과한다. `+80` 포트가 80으로 파싱되는 것과 direct 5회
 거절 뒤 성공 1회가 그 자체로는 bench하지 않는 것은 현재 의도된 동작으로
@@ -111,5 +114,5 @@
 ```
 
 - shared 전체 jvmTest 통과 (신규 188개 포함).
-- app 신규 테스트 17개 중 16개 통과, 1개 `@Ignore`(위 버그 2).
+- app 신규 테스트 17개 모두 통과.
 - `:app:compileProdReleaseKotlin` 통과.

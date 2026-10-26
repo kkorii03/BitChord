@@ -38,8 +38,13 @@ fun String.forLyricsSearch(): String {
  * YouTube's own artist channels for licensed music are named this way, and it
  * reaches the player as the artist on anything played from one.
  */
-fun String.artistForLyricsSearch(): String =
-    removeSuffix(" - Topic").trim().ifBlank { trim() }
+fun String.artistForLyricsSearch(): String {
+    val suffix = " - Topic"
+    val name = trim().let {
+        if (it.endsWith(suffix, ignoreCase = true)) it.dropLast(suffix.length) else it
+    }
+    return name.trim().ifBlank { trim() }
+}
 
 private val WHITESPACE = Regex("""\s+""")
 

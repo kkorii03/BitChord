@@ -86,12 +86,13 @@ class BackupLibraryRoundTripTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `a schema from a newer build is refused`() {
-        Backup.validate(Backup.BackupFile(version = 3))
+        Backup.validate(Backup.BackupFile(app = "bitchord", version = 3))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `a playlist row without a video id is refused before anything is written`() {
         val file = Backup.BackupFile(
+            app = "bitchord",
             version = 2,
             localPlaylists = listOf(
                 Backup.BackupPlaylist(

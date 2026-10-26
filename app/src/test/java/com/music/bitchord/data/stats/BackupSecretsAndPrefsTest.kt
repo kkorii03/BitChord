@@ -8,7 +8,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -176,10 +175,6 @@ class BackupSecretsAndPrefsTest {
         assertTrue(file.localPlaylists.isEmpty())
     }
 
-    @Ignore(
-        "버그: BackupFile.app 기본값이 bitchord라 app 키가 없는 {}도 디코드·검증을 " +
-            "통과한다. 가져오면 schema 1 빈 백업으로 취급되어 설정이 지워질 수 있다.",
-    )
     @Test(expected = IllegalArgumentException::class)
     fun `a document without the app tag is not a backup`() {
         Backup.validate(Backup.decode("{}"))
@@ -196,6 +191,7 @@ class BackupSecretsAndPrefsTest {
     @Test
     fun `a playlist row with a blank id is refused only for schema two and later`() {
         val broken = Backup.BackupFile(
+            app = "bitchord",
             version = 2,
             localPlaylists = listOf(
                 Backup.BackupPlaylist(id = "", title = "Broken"),
@@ -210,7 +206,9 @@ class BackupSecretsAndPrefsTest {
 
     @Test
     fun `a backup from a newer build is refused before any write`() {
-        val result = runCatching { Backup.validate(Backup.BackupFile(version = 3)) }
+        val result = runCatching {
+            Backup.validate(Backup.BackupFile(app = "bitchord", version = 3))
+        }
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("최신"))

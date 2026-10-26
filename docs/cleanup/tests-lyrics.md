@@ -6,8 +6,7 @@
 
 ## 추가한 테스트
 
-새 shared 테스트 클래스 8개, 테스트 메서드 130개. 128개 통과, 2개는 아래
-발견된 버그를 재현하므로 `@Ignore` 처리했다.
+새 shared 테스트 클래스 8개, 테스트 메서드 130개. 모두 통과한다.
 
 - `data/lyrics/LyricsQueryVariantsTest.kt` (13)
   - `3.여수밤바다 - Yeosu Night Sea`의 트랙 번호·번역 쌍, `(Prod. by …)`,
@@ -59,27 +58,29 @@
     `isCover`, 잃어버린 byline 복원, 적용된 커버의 원곡 검색, 보이스뱅크
     브래킷 양방향 검색.
 
-## 발견된 버그
+## 발견된 버그 (고침)
 
 1. **` - Topic` 아티스트 접미사가 가사 검색에서 제거되지 않는다**
    - 재현: `LyricsQueryVariants.names("Song", "IU - Topic")`의 첫 아티스트가
      `iu`가 아니라 `iu - topic`.
    - 원인: `ArtistAliases.forArtist`가 원문 byline을 항상 첫 이름으로 넣기
      때문에 `LyricsQueryVariants`의 `artist.artistForLyricsSearch()` 폴백이
-     실행되지 않는다. `artistForLyricsSearch()` 자체는 접미사를 제거한다.
-   - 테스트: `LyricsQueryVariantsTest.aTopicChannelSuffixIsNotPartOfTheArtistName`
-     (`@Ignore`, 소스는 수정하지 않음).
+     실행되지 않는다. 게다가 별칭은 소문자로 정규화되어 대문자 `Topic`
+     접미사 비교도 빗나간다.
+   - 고침: `LyricsQueryVariants`가 모든 별칭에 `artistForLyricsSearch()`를
+     적용하고, 이 함수의 ` - Topic` 비교를 대소문자 무시로 바꿨다.
+   - 테스트: `LyricsQueryVariantsTest.aTopicChannelSuffixIsNotPartOfTheArtistName`.
 2. **이동 상한이 `Long.MIN_VALUE`에서 오버플로한다**
    - 재현: `LyricsAiGuard.shiftAllows(isVideo = true, Long.MIN_VALUE)`와
      `songShiftAllows(Long.MIN_VALUE)`가 `true`.
    - 원인: `abs(Long.MIN_VALUE)`가 음수 그대로라 상한 비교를 통과한다.
-   - 테스트: `LyricsAiGuardBoundariesTest.theSmallestLongIsNotAcceptedAsASmallShift`
-     (`@Ignore`, 소스는 수정하지 않음).
+   - 고침: `abs` 대신 `-MAX..MAX` 포함 범위 비교를 쓴다.
+   - 테스트: `LyricsAiGuardBoundariesTest.theSmallestLongIsNotAcceptedAsASmallShift`.
 
 ## 검증
 
 - `./gradlew :shared:jvmTest --tests '<위 8개 클래스>' --tests '<기존 관련 6개 클래스>' --console=plain -q`
-  → 206개 실행, 실패 0, `@Ignore` 2개.
+  → 206개 실행, 실패 0.
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q`
   → 성공.
 
