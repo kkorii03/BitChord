@@ -25,6 +25,7 @@ DEFAULT_PER_PLAYLIST = 10
 
 MIN_RATIO = 0.6       # how alike a line's opening must be to the heard words
 SEARCH_S = 15.0       # a line is looked for this far either side of its displayed start
+DIST_PENALTY_PER_S = 0.01  # tie-break toward the displayed time (a 10 s-away repeat must match 0.1 better)
 PREFIX_CHARS = 8      # characters of each line used to find where it starts
 CONST_STD_S = 0.15
 
@@ -211,8 +212,12 @@ def align(lines, words):
             r = difflib.SequenceMatcher(None, key, heard[i:i + len(key)], autojunk=False).ratio()
             if heard[i] != key[0]:
                 r -= 0.05  # prefer a match that starts on the line's first sound
-            if best is None or r > best[0] + 1e-9:
-                best = (r, i)
+            # A chorus repeats its words: among near-equal matches the one nearest
+            # the displayed time is the line being sung, not an earlier or later
+            # repeat up to 15 s away (10-27: repeats were scored as 5 s errors).
+            rank = r - DIST_PENALTY_PER_S * abs(t - shown)
+            if best is None or rank > best[2] + 1e-9:
+                best = (r, i, rank)
         if best and best[0] >= MIN_RATIO:
             out.append((n, shown, times[best[1]], round(best[0], 2)))
             floor = best[1] + 1
