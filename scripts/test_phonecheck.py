@@ -164,11 +164,21 @@ class SyncTest(unittest.TestCase):
         self.assertIn("no wav", rows[0]["error"])
         self.assertIsNone(phonecheck.sync_summary(rows))
 
-    def test_search_row_takes_the_unclaimed_sync_dump_id(self):
-        text = "\n".join(dump_block("searchvid", [(1, 10000, "hello world")]))
-        rows = phonecheck.sync_candidates(
-            songs("search:Espresso Sabrina Carpenter\tplain"), text
+    def test_search_row_takes_the_id_it_played_not_an_unclaimed_dump(self):
+        # An MV's replacement id also appears as an unclaimed sync-dump; only the
+        # id logged right after the search played belongs to the search row.
+        text = "\n".join(
+            dump_block("mvreplace01", [(1, 10000, "other")])
+            + dump_block("searchvid", [(1, 10000, "hello world")])
         )
+        phonecheck.SEARCH_IDS.clear()
+        phonecheck.SEARCH_IDS["search:Espresso Sabrina Carpenter"] = "searchvid"
+        try:
+            rows = phonecheck.sync_candidates(
+                songs("search:Espresso Sabrina Carpenter\tplain"), text
+            )
+        finally:
+            phonecheck.SEARCH_IDS.clear()
         self.assertEqual(
             [("search:Espresso Sabrina Carpenter", "plain", "searchvid")], rows
         )
