@@ -23,6 +23,7 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.startup.StartupWork
+import com.music.bitchord.ui.FriendlyError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -1917,21 +1918,15 @@ object Downloads {
     }
 
     /**
-     * A failure a user can read. The message on an [error] raised in this
-     * package is already written for them; anything else is a network fault
-     * with a class name for a message.
-     *
-     * [IllegalArgumentException] is in here because of one that wasn't: the
-     * media store throws it for a MIME type it won't accept, and for a while
-     * every download on this device failed that way and reported itself as a
-     * connection problem. The message it carries is not written for a user, but
-     * `Unsupported MIME type audio/webm` at least sends someone looking in the
-     * right direction.
+     * A failure a user can read. The technical text an exception carries is
+     * logged here and replaced with one Korean sentence for the screen —
+     * `Unsupported MIME type audio/webm` belongs in the log, not in a row next
+     * to the song it stopped.
      */
-    private fun Exception.friendly(): String = when {
-        (this is IllegalStateException || this is IllegalArgumentException) &&
-            !message.isNullOrBlank() -> message!!
-        else -> "다운로드 실패 — 연결 상태를 확인하십시오"
+    private fun Exception.friendly(): String {
+        Log.w(TAG, "download failed: ${message.orEmpty()}", this)
+        return appContext?.let { FriendlyError.message(it, this) }
+            ?: "다운로드 실패 — 연결 상태를 확인하십시오"
     }
 
     /**

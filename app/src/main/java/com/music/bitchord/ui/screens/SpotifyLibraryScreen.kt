@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +47,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.spotify.SpotifyLibrary
 import com.music.bitchord.data.spotify.SpotifyPlaylist
 import com.music.bitchord.data.spotify.SpotifyTrack
+import com.music.bitchord.ui.FriendlyError
 
 /**
  * The signed-in Spotify account's playlists. A tap opens one as an ordinary
@@ -60,6 +62,7 @@ fun SpotifyLibraryScreen(
     modifier: Modifier = Modifier,
 ) {
     val cookie by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var playlists by remember { mutableStateOf<List<SpotifyPlaylist>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -74,7 +77,7 @@ fun SpotifyLibraryScreen(
         error = null
         runCatching { SpotifyLibrary.playlists() }
             .onSuccess { playlists = it }
-            .onFailure { error = it.message }
+            .onFailure { error = FriendlyError.message(context, it) }
         loading = false
     }
 

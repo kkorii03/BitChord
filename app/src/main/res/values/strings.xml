@@ -582,6 +582,11 @@
     <string name="downloaded_playlist_empty">Nothing from this playlist remains on this device</string>
     <string name="no_local_audio_found">No audio files found on this device</string>
     <string name="no_internet_connection">No internet connection</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
+    <string name="connection_failed">Couldn\'t connect. Check your connection and try again.</string>
+    <string name="secure_connection_failed">Couldn\'t establish a secure connection. Try again.</string>
+    <string name="server_busy">The server is busy. Try again in a moment.</string>
+    <string name="proxy_unreachable">Couldn\'t reach the proxy. Check its settings and try again.</string>
     <string name="youtube_request_rejected">YouTube Music rejected the request. Try signing in again.</string>
     <string name="something_went_wrong">Something went wrong</string>
     <string name="unknown_artist">Unknown artist</string>

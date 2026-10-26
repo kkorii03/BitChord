@@ -109,6 +109,7 @@
     <string name="no_lyrics_for_track">No lyrics for this track</string>
     <string name="no_lyrics_found">No lyrics found</string>
     <string name="now_playing">Now playing</string>
+    <string name="playback_position">Playback position</string>
     <string name="previously_played">Previously played</string>
     <string name="open_lyrics">Lyrics</string>
     <string name="pause">Pause</string>
@@ -133,6 +134,7 @@
     <string name="up_next">Up next</string>
     <string name="upgrading_quality">Upgrading quality</string>
     <string name="waiting">waiting</string>
+    <string name="volume">Volume</string>
     <string name="widget_next">Next</string>
     <string name="widget_previous">Previous</string>
     <string name="wired_headphones">Wired headphones</string>

@@ -107,6 +107,7 @@
     <string name="no_lyrics_for_track">이 노래에는 가사가 없습니다.</string>
     <string name="no_lyrics_found">가사를 찾을 수 없습니다.</string>
     <string name="now_playing">지금 재생 중</string>
+    <string name="playback_position">재생 위치</string>
     <string name="open_lyrics">가사</string>
     <string name="pause">일시 정지</string>
     <string name="play">재생</string>
@@ -130,6 +131,7 @@
     <string name="up_next">다음 재생</string>
     <string name="upgrading_quality">품질 업그레이드 중</string>
     <string name="waiting">대기 중</string>
+    <string name="volume">음량</string>
     <string name="widget_next">다음</string>
     <string name="widget_previous">이전</string>
     <string name="wired_headphones">유선 헤드폰</string>

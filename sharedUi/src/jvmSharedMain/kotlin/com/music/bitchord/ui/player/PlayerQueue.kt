@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -747,14 +748,11 @@ private fun InlineQueueRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (draggable) {
-            Icon(
-                Icons.Rounded.DragHandle,
-                contentDescription = stringResource(Res.string.drag_to_reorder),
-                tint = Color.White.copy(alpha = 0.4f),
+            Box(
                 modifier = Modifier
-                    .size(20.dp)
-                    // The glyph sits well inset in its own box; this pulls it
-                    // back to the row's edge.
+                    // A 48dp target around the 20dp glyph, so reordering is
+                    // one thumb rather than two hands.
+                    .minimumInteractiveComponentSize()
                     .offset(x = (-4).dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
@@ -767,7 +765,15 @@ private fun InlineQueueRow(
                             },
                         )
                     },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.DragHandle,
+                    contentDescription = stringResource(Res.string.drag_to_reorder),
+                    tint = Color.White.copy(alpha = 0.4f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             Spacer(Modifier.width(4.dp))
         }
         AsyncImage(
@@ -807,6 +813,7 @@ private fun InlineQueueRow(
         if (!locked) {
             Box(
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
                     .size(32.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onRemove),
