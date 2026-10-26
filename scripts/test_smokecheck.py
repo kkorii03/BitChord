@@ -149,6 +149,15 @@ class SyncReportTest(unittest.TestCase):
         self.assertIn("slope=-200.0ms/줄", detail)
         self.assertIn("점점 좁아짐", detail)
 
+    def test_widening_early_errors_print_the_magnitude_slope(self):
+        log = "\n".join(
+            [self.report(1, -100), self.report(2, -300), self.report(3, -500)]
+        )
+        result = statuses(log)[3]
+        detail = next(d for d in result.details if d.startswith("sync-report"))
+        self.assertIn("slope=+200.0ms/줄", detail)
+        self.assertIn("점점 벌어짐", detail)
+
     def test_reports_are_grouped_by_song(self):
         log = "\n".join(
             [

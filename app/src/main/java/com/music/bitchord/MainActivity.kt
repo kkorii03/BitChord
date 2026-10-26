@@ -793,6 +793,12 @@ private fun BitChordApp(
     var showSpotifyLogin by remember { mutableStateOf(false) }
     var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
+    /**
+     * The track menu's sync-report row was chosen: the player now waits for a
+     * double tap when the next lyric line starts, rather than guessing a line
+     * from the playhead after the fact.
+     */
+    var syncReportArmed by remember { mutableStateOf(false) }
     var showLyricsOffset by remember { mutableStateOf(false) }
     /**
      * Whether the track menu that is up was opened from the player.
@@ -2745,6 +2751,15 @@ private fun BitChordApp(
     // is actually up — when the sheet is raised, so playing an album from the
     // mini player still costs nothing.
     val playerShowing = showNowPlaying
+    // A report armed from the menu belongs to the track that was playing when
+    // it was chosen, and to the player that was open. Neither a new track nor
+    // a closed player may leave it waiting for a tap on somebody else's line.
+    LaunchedEffect(player.song?.videoId) {
+        syncReportArmed = false
+    }
+    LaunchedEffect(showNowPlaying) {
+        if (!showNowPlaying) syncReportArmed = false
+    }
     // One answer per track for the life of this screen. Raising the player
     // again used to ask the watch queue the same question, and the answer is
     // the same recording's album and artist page either way.
@@ -3058,6 +3073,8 @@ private fun BitChordApp(
             lyricsOffsetOpen = showLyricsOffset,
             onDismissLyricsOffset = { showLyricsOffset = false },
             lyricsTiming = lyricsTiming,
+            syncReportArmed = syncReportArmed,
+            onSyncReportArmedChange = { syncReportArmed = it },
             onAiLyricsTiming = viewModel::toggleAiLyricsTiming,
             onSongLyricsOffset = viewModel::setSongLyricsOffset,
             onListenTogether = {
@@ -5219,56 +5236,18 @@ private fun BitChordApp(
                 } else {
                     null
                 },
-                // The lyric panel's long press is the card picker, so the
-                // "this line is being sung now" report lives here. It reads
-                // the line under the playhead, on the same offset clock the
-                // panel draws from.
+                // A lyric row reports the line under the finger. From the
+                // menu there is no line to point at, so this arms the player's
+                // "double-tap when the next line starts" instead: reading a
+                // line off the playhead could only name one that had already
+                // begun, which made every report late or exactly zero.
                 onReportSync = if (fromPlayer &&
                     controller?.currentMediaItem?.mediaId == song.videoId &&
-                    lyrics.orEmpty().any { it.timeMs > 0 }
+                    lyrics.orEmpty().any { it.timeMs > 0 && it.text.isNotBlank() }
                 ) {
                     {
-                        val offsetMs = AppSettings.lyricsOffsetMs.value.toLong()
-                        val tappedMs = (player.position.positionMs - offsetMs).coerceAtLeast(0L)
-                        val timed = lyrics.orEmpty()
-                        val index = timed.indexOfLast { it.timeMs > 0 && it.timeMs <= tappedMs }
-                        if (index >= 0) {
-                            val shownMs = timed[index].timeMs
-                            val error = shownMs - tappedMs
-                            val base = when {
-                                lyricsTiming.byAi -> "ai"
-                                lyricsTiming.shiftMs != null || lyricsTiming.rate != null -> "measured"
-                                else -> "none"
-                            }
-                            val source = lyricsSource?.label
-                                ?: if (timed.isEmpty()) "none" else "file"
-                            TrackDiagnostics.reportSync(
-                                videoId = song.videoId,
-                                line = index + 1,
-                                total = timed.size,
-                                shownMs = shownMs,
-                                tappedMs = tappedMs,
-                                source = source,
-                                base = base,
-                                shiftMs = lyricsTiming.shiftMs,
-                                manualMs = lyricsTiming.manualMs,
-                            )
-                            val seconds = com.music.bitchord.data.lyrics.LyricsSyncReport
-                                .seconds(error)
-                            Toast.makeText(
-                                context,
-                                context.getString(
-                                    if (error >= 0) {
-                                        R.string.lyrics_sync_report_late
-                                    } else {
-                                        R.string.lyrics_sync_report_early
-                                    },
-                                    seconds,
-                                ),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
                         songActions = null
+                        syncReportArmed = true
                     }
                 } else {
                     null

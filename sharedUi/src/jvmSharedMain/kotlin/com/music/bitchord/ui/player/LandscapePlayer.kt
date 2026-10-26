@@ -33,8 +33,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -513,6 +515,8 @@ internal fun LandscapeLyricsPane(
     picking: Boolean = false,
     /** The pick bar itself, drawn in place of the row below. */
     pickBar: @Composable () -> Unit = {},
+    /** Header share button: enter picking with nothing preselected. */
+    onShareLyrics: (() -> Unit)? = null,
     romanizationToggle: @Composable () -> Unit,
     translationToggle: @Composable () -> Unit,
     modifier: Modifier = Modifier,
@@ -529,6 +533,23 @@ internal fun LandscapeLyricsPane(
         ) {
             if (hasLyrics) {
                 panel(Modifier.fillMaxSize())
+                // The long press on a timed line reports its sync, so the
+                // way into picking has to be named here too — the landscape
+                // player has no header for the portrait one's share glyph.
+                if (onShareLyrics != null) {
+                    IconButton(
+                        onClick = onShareLyrics,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 2.dp, end = 2.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.IosShare,
+                            contentDescription = stringResource(Res.string.share),
+                            tint = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
+                }
             } else {
                 // Held at a fixed line rather than through
                 // [LyricsUnavailableLine] or [LyricsLoadingLine]: those fade

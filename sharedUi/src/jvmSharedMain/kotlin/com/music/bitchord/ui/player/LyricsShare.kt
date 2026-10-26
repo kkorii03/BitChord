@@ -206,10 +206,10 @@ internal fun rememberLyricsPicker(
             }
         }
     }
-    // The only way in, so it has to open the mode *and* — once the mode is open
-    // — behave exactly as a tap does. Otherwise the same press on the same line
-    // means one thing before and another after, which is a rule the reader has
-    // to learn for no reason.
+    // A long press on a reportable line belongs to the sync report, so the
+    // header's share button is the way in; where a line cannot be reported,
+    // this still opens the mode. Once the mode is open it behaves exactly as a
+    // tap does, so the same press never means two things at once.
     val pick: (Int) -> Unit = { index ->
         if (picking) {
             toggle(index)

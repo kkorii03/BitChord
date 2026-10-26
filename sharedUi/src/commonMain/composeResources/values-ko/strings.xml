@@ -234,6 +234,8 @@
     <string name="lyrics_timing_match">일치 %1$s%</string>
     <string name="lyrics_sync_report_late">가사 %1$s초 늦음 기록</string>
     <string name="lyrics_sync_report_early">가사 %1$s초 빠름 기록</string>
+    <string name="lyrics_sync_report_next_hint">다음 줄이 시작될 때 화면을 두 번 탭하십시오.</string>
+    <string name="lyrics_sync_report_no_next">신고할 다음 줄이 없습니다.</string>
     <string name="lyrics_timing_manual">%1$s · 이 노래 싱크 %2$s</string>
     <string name="lyrics_offset_song">이 노래</string>
     <string name="lyrics_offset_song_description">이 노래에만 적용되며, 자동 보정 위에 더해집니다.</string>

@@ -226,9 +226,10 @@ fun SongActionsSheet(
      */
     onReportProblem: (() -> Unit)? = null,
     /**
-     * Says the line being sung now is the one the listener hears. The lyric
-     * panel's long press is the pick gesture, so on the phone this is where a
-     * sync report is reached. Null hides the row.
+     * Starts a sync report from the menu: the player names the next timed line
+     * and waits for a double tap at its start. The lyric row's own long press
+     * reports the line under the finger; this is the menu's way in. Null hides
+     * the row.
      */
     onReportSync: (() -> Unit)? = null,
     /** Opens the timing control offered only by the main player's menu. */

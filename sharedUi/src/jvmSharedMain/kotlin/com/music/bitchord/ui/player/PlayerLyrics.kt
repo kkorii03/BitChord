@@ -579,6 +579,15 @@ internal fun adjustedLyricsSeekTarget(lineTimeMs: Long, offsetMs: Int): Long =
     (lineTimeMs + offsetMs.toLong()).coerceAtLeast(0L)
 
 /**
+ * The first timed, non-instrumental line after [afterMs], as an index into
+ * [lines], or -1 when there is none. The menu's report chooses its line here,
+ * before the tap, rather than reading the playhead afterwards — which could
+ * only name a line that had already started.
+ */
+internal fun nextSyncReportLine(lines: List<LyricLine>, afterMs: Long): Int =
+    lines.indexOfFirst { it.timeMs > 0L && it.timeMs > afterMs && it.text.isNotBlank() }
+
+/**
  * The current lyric, one line, directly above the scrubber — or the line
  * saying why there isn't one.
  */
@@ -2425,38 +2434,41 @@ internal fun LyricsPanel(
                     animationSpec = tween(durationMillis = 420),
                     label = "lyricGlow",
                 )
-                // A long press is the pick gesture wherever a card can be made,
-                // so the report is only offered on the plain row. It says the
-                // line under the finger is the one being sung, and leaves the
-                // song where it is.
-                val reportSync: (() -> Unit)? = if (syncFacts != null && isSynced) {
-                    {
-                        val tapped = clock.longValue
-                        val error = line.timeMs - tapped
-                        haptics.play(Haptic.Select)
-                        PlayerPlatform.host.reportLyricsSync(
-                            videoId = syncFacts.videoId,
-                            line = index + 1,
-                            total = lines.size,
-                            shownMs = line.timeMs,
-                            tappedMs = tapped,
-                            source = syncFacts.source,
-                            base = syncFacts.base,
-                            shiftMs = syncFacts.shiftMs,
-                            manualMs = syncFacts.manualMs,
-                        )
-                        val seconds = LyricsSyncReport.seconds(error)
-                        PlayerPlatform.host.showMessage(
-                            if (LyricsSyncReport.isLate(error)) {
-                                String.format(Locale.ROOT, syncLateTemplate, seconds)
-                            } else {
-                                String.format(Locale.ROOT, syncEarlyTemplate, seconds)
-                            },
-                        )
+                // The long press names the line under the finger, not the one
+                // the playhead happens to have reached: only a timed, sung row
+                // can be reported, and the press itself is the moment that
+                // line is checked against. This is the report even where a
+                // share card can also be made; picking starts from the header
+                // (or from a long press once picking is already open).
+                val reportSync: (() -> Unit)? =
+                    if (syncFacts != null && line.timeMs > 0L && line.text.isNotBlank()) {
+                        {
+                            val tapped = clock.longValue
+                            val error = line.timeMs - tapped
+                            haptics.play(Haptic.Select)
+                            PlayerPlatform.host.reportLyricsSync(
+                                videoId = syncFacts.videoId,
+                                line = index + 1,
+                                total = lines.size,
+                                shownMs = line.timeMs,
+                                tappedMs = tapped,
+                                source = syncFacts.source,
+                                base = syncFacts.base,
+                                shiftMs = syncFacts.shiftMs,
+                                manualMs = syncFacts.manualMs,
+                            )
+                            val seconds = LyricsSyncReport.seconds(error)
+                            PlayerPlatform.host.showMessage(
+                                if (LyricsSyncReport.isLate(error)) {
+                                    String.format(Locale.ROOT, syncLateTemplate, seconds)
+                                } else {
+                                    String.format(Locale.ROOT, syncEarlyTemplate, seconds)
+                                },
+                            )
+                        }
+                    } else {
+                        null
                     }
-                } else {
-                    null
-                }
                 // No width held back for the swell any more: nothing draws past
                 // its own bounds now that the playing line tops out at 1, so the
                 // text gets the full column and wraps where the panel does.
@@ -2521,36 +2533,38 @@ internal fun LyricsPanel(
                     // lines, choose while picking — so an unsynced row still
                     // passes taps through to the panel behind it.
                     .then(
-                        if (canPick) {
-                            Modifier.combinedClickable(
-                                enabled = picking || isSynced,
+                        when {
+                            // Already picking: the long press folds this line
+                            // into the pick, as it always has.
+                            picking -> Modifier.combinedClickable(
+                                enabled = true,
                                 interactionSource = interaction,
                                 indication = LocalIndication.current,
                                 onLongClick = { onPickLine(index) },
-                                onClick = {
-                                    if (picking) {
-                                        onTogglePick(index)
-                                    } else {
-                                        onSeekToLine(line.timeMs)
-                                    }
-                                },
+                                onClick = { onTogglePick(index) },
                             )
-                        } else if (reportSync != null) {
-                            // No card to pick, so the long press is free to say
-                            // this line is the one being sung.
-                            Modifier.combinedClickable(
-                                enabled = isSynced,
+                            // A timed, sung line reports itself on a long
+                            // press even where a card can also be made: the
+                            // row under the finger is the one the report
+                            // names, so it cannot be the wrong side of zero.
+                            reportSync != null -> Modifier.combinedClickable(
+                                enabled = true,
                                 interactionSource = interaction,
                                 indication = LocalIndication.current,
                                 onLongClick = reportSync,
                                 onClick = { onSeekToLine(line.timeMs) },
                             )
-                        } else {
-                            // Where a card cannot be made there is nothing to
-                            // pick, and a long press that did nothing would be
-                            // the only sign of it — so the row keeps the plain
-                            // tap it has always had.
-                            Modifier.clickable(
+                            // Nothing to report on this row (untimed, or an
+                            // instrumental break), but a card can still be
+                            // picked from it.
+                            canPick -> Modifier.combinedClickable(
+                                enabled = isSynced,
+                                interactionSource = interaction,
+                                indication = LocalIndication.current,
+                                onLongClick = { onPickLine(index) },
+                                onClick = { onSeekToLine(line.timeMs) },
+                            )
+                            else -> Modifier.clickable(
                                 enabled = isSynced,
                                 interactionSource = interaction,
                                 indication = LocalIndication.current,

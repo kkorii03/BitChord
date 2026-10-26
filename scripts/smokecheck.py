@@ -116,9 +116,6 @@ def sync_report_details(
             f"range={min(errors):+d}..{max(errors):+d}ms"
         )
         if len(song_reports) >= 3:
-            slope = _slope(
-                [(report.line, report.error) for report in song_reports]
-            )
             # Widening is about the size of the miss, whichever way it points:
             # 500 → 300 → 100 ms late is closing, not drifting apart.
             magnitude_slope = _slope(
@@ -130,7 +127,10 @@ def sync_report_details(
                 trend = "점점 좁아짐"
             else:
                 trend = "일정"
-            detail += f" slope={slope:+.1f}ms/줄 ({trend})"
+            # The verdict is about the size of the miss, so the printed
+            # slope is the magnitude one it was decided from — not the signed
+            # one, which would read as closing while the gap widens.
+            detail += f" slope={magnitude_slope:+.1f}ms/줄 ({trend})"
         details.append(detail)
     return details
 

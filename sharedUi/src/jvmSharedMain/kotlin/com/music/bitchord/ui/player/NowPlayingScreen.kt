@@ -37,6 +37,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -159,6 +160,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsSyncReport
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -173,6 +175,7 @@ import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -783,6 +786,14 @@ fun NowPlayingScreen(
      * happening under its skeleton instead of looking stuck.
      */
     lyricsTranscribing: Boolean = false,
+    /**
+     * Set by the host when the track menu's sync-report row was chosen. The
+     * player names the next timed line and waits for a double tap at its
+     * start, rather than reading a line off the playhead after the fact.
+     */
+    syncReportArmed: Boolean = false,
+    /** Clears [syncReportArmed] once the report is recorded or abandoned. */
+    onSyncReportArmedChange: (Boolean) -> Unit = {},
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
     /**
@@ -886,6 +897,34 @@ fun NowPlayingScreen(
     }
     val seekToLyric: (Long) -> Unit = { lineTimeMs ->
         onSeek(adjustedLyricsSeekTarget(lineTimeMs, lyricsOffsetMs))
+    }
+    // The lyric clock now, carried forward from the player's last reading the
+    // way the panel does: a double tap is timed to when it lands, not to the
+    // half-second poll before it.
+    val lyricClockNow: () -> Long = {
+        val sinceMs = if (isPlaying && position.advancing) {
+            ((System.nanoTime() - position.sampledAtNanos) / 1_000_000L).coerceIn(0L, 2_000L)
+        } else {
+            0L
+        }
+        adjustedLyricsPosition(position.positionMs + sinceMs, lyricsOffsetMs)
+    }
+    val noNextSyncLine = stringResource(Res.string.lyrics_sync_report_no_next)
+    val syncLateTemplate = stringResource(Res.string.lyrics_sync_report_late)
+    val syncEarlyTemplate = stringResource(Res.string.lyrics_sync_report_early)
+    var syncReportTarget by remember(song.videoId) { mutableIntStateOf(-1) }
+    LaunchedEffect(syncReportArmed, song.videoId, lyrics) {
+        if (!syncReportArmed) {
+            syncReportTarget = -1
+            return@LaunchedEffect
+        }
+        val target = nextSyncReportLine(lyrics.orEmpty(), lyricClockNow())
+        if (target < 0) {
+            PlayerPlatform.host.showMessage(noNextSyncLine)
+            onSyncReportArmedChange(false)
+        } else {
+            syncReportTarget = target
+        }
     }
     val hideVolumeBar by PlayerSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideSongStatus by PlayerSettings.hideSongStatus.collectAsStateWithLifecycle()
@@ -1773,6 +1812,39 @@ fun NowPlayingScreen(
                 onDismiss = { lyricsShare = null },
             )
         }
+        val targetLine = lyrics.orEmpty().getOrNull(syncReportTarget)
+        if (syncReportArmed && targetLine != null) {
+            SyncReportTapOverlay(
+                instruction = stringResource(Res.string.lyrics_sync_report_next_hint),
+                cancelLabel = stringResource(Res.string.cancel),
+                onCancel = { onSyncReportArmedChange(false) },
+                onDoubleTap = {
+                    val tapped = lyricClockNow()
+                    val error = targetLine.timeMs - tapped
+                    haptics.play(Haptic.Select)
+                    PlayerPlatform.host.reportLyricsSync(
+                        videoId = song.videoId,
+                        line = syncReportTarget + 1,
+                        total = lyrics.orEmpty().size,
+                        shownMs = targetLine.timeMs,
+                        tappedMs = tapped,
+                        source = lyricsSyncFacts.source,
+                        base = lyricsSyncFacts.base,
+                        shiftMs = lyricsSyncFacts.shiftMs,
+                        manualMs = lyricsSyncFacts.manualMs,
+                    )
+                    val seconds = LyricsSyncReport.seconds(error)
+                    PlayerPlatform.host.showMessage(
+                        if (LyricsSyncReport.isLate(error)) {
+                            String.format(Locale.ROOT, syncLateTemplate, seconds)
+                        } else {
+                            String.format(Locale.ROOT, syncEarlyTemplate, seconds)
+                        },
+                    )
+                    onSyncReportArmedChange(false)
+                },
+            )
+        }
     }
 
     // A landscape window — a tablet, or a phone on its side — takes an entirely
@@ -2185,6 +2257,11 @@ fun NowPlayingScreen(
                                     onCancel = lyricPicker.cancel,
                                     onShare = lyricPicker.share,
                                 )
+                            },
+                            onShareLyrics = if (lyricsShareEnabled && !lyricPicker.picking) {
+                                lyricPicker.beginPicking
+                            } else {
+                                null
                             },
                             romanizationToggle = {
                                 if (onAiLyricsTiming == null) {
@@ -3529,10 +3606,10 @@ fun NowPlayingScreen(
                                 Spacer(Modifier.width(8.dp))
                             }
                             // While the lyrics are up the menu glyph becomes the share
-                            // entry: the same pick mode a long-press on a line opens,
-                            // only on phones where a card can actually be made. While
-                            // picking it is the way back out again — the bar below
-                            // already holds Share.
+                            // entry: the way into pick mode on phones where a card can
+                            // actually be made, since a long press on a timed line now
+                            // reports its sync. While picking it is the way back out
+                            // again — the bar below already holds Share.
                             // Only once the sleeve has fully collapsed: the moment it starts
                             // coming back the glyph is the menu again.
                             // And only while the half player under the lyrics is tucked
@@ -3986,4 +4063,63 @@ private suspend fun AwaitPointerEventScope.dragQueueIn(
     }
     onHold(false)
     onSettle(open)
+}
+
+/**
+ * The full-screen target for a menu-armed sync report. It waits for a double
+ * tap rather than a single one, so the ordinary tap that seeks a lyric cannot
+ * be mistaken for the report, and it offers a way out without timing anything.
+ */
+@Composable
+private fun SyncReportTapOverlay(
+    instruction: String,
+    cancelLabel: String,
+    onCancel: () -> Unit,
+    onDoubleTap: () -> Unit,
+) {
+    val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        // The banner sits above the words rather than over them: the listener
+        // has to be able to see the next line arrive to time the tap.
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        // The catcher is a sibling behind the card, not its parent: a double
+        // tap anywhere on the player is the report, while Cancel still takes
+        // its own tap. Its key is fixed so a recomposition between the two
+        // taps cannot reset the detector and swallow the gesture.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = { currentOnDoubleTap() })
+                },
+        )
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 28.dp)
+                .padding(top = 80.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black.copy(alpha = 0.72f))
+                .padding(horizontal = 22.dp, vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = instruction,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = cancelLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = 0.75f),
+                modifier = Modifier
+                    .padding(top = 12.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable { onCancel() }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+    }
 }
