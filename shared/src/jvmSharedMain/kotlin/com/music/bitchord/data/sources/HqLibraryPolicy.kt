@@ -39,7 +39,14 @@ data class HqLibraryTarget(
     val verifiedTier: HqTier,
     val sourceConfigId: String,
     val trackId: String,
-)
+) {
+    /**
+     * A replacement repairs a file the listener already chose to keep, so it
+     * may use mobile data; a prefetch is a new file nobody asked for and
+     * follows the Wi-Fi-only setting.
+     */
+    val allowMetered: Boolean get() = action == HqLibraryAction.REPLACE
+}
 
 data class HqLibraryPlan(
     val replace: List<HqLibraryTarget> = emptyList(),

@@ -1146,6 +1146,7 @@ object AppSettings {
             DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS,
         ).coerceIn(MIN_UPGRADE_LENGTH_SLACK_SECONDS, MAX_UPGRADE_LENGTH_SLACK_SECONDS)
         migrateDownloadQuality()
+        migrateHqAutomationDefaults(existingInstall)
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
@@ -1181,10 +1182,10 @@ object AppSettings {
         equalizerToneX.value = prefs.getInt(KEY_EQ_TONE_X, 0).coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS)
         equalizerToneY.value = prefs.getInt(KEY_EQ_TONE_Y, 0).coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS)
         equalizerFocused.value = prefs.getBoolean(KEY_EQ_FOCUSED, false)
-        equalizerBalance.value = prefs.getFloat(KEY_EQ_BALANCE, 0f).coerceIn(-1f, 1f)
+        equalizerBalance.value = clampBalance(prefs.getFloat(KEY_EQ_BALANCE, 0f))
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
-        playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
+        playbackSpeed.value = PlaybackParametersMath.clampSpeed(prefs.getFloat(KEY_SPEED, 1.0f))
         pitchSemitones.value = PlaybackParametersMath.clampPitchSemitones(prefs.getInt(KEY_PITCH, 0))
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
@@ -1193,7 +1194,9 @@ object AppSettings {
         personalisedAutoplay.value = prefs.getBoolean(KEY_PERSONALISED_AUTOPLAY, true)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         notificationPermissionAsked.value = prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, false)
-        repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
+        repeatMode.value = PlaybackParametersMath.clampRepeatMode(
+            prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF),
+        )
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
         lowPowerMode.value = runCatching {
@@ -1311,7 +1314,9 @@ object AppSettings {
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
         lastfmPrimaryArtistOnly.value = prefs.getBoolean(KEY_LASTFM_PRIMARY_ARTIST_ONLY, false)
         scrobbleMinDuration.value = prefs.getInt(KEY_SCROBBLE_MIN_DURATION, 30)
-        scrobbleDelayPercent.value = prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f)
+        scrobbleDelayPercent.value = clampScrobbleDelay(
+            prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f),
+        )
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
@@ -1509,6 +1514,29 @@ object AppSettings {
         prefs.edit().putString(KEY_QUALITY_DOWNLOAD, DownloadQuality.LOSSLESS.name).apply()
     }
 
+    /**
+     * The automatic HQ pass is new. An install that updates into it never chose
+     * to spend mobile data or storage on hundreds of background downloads, so
+     * both switches start off there; a fresh install gets the feature on, and
+     * its onboarding copy names what it does. An absent key on a later reload
+     * (a settings file that predates the switches) is treated the same as an
+     * upgrade, so restoring an old backup cannot silently turn it back on.
+     */
+    private fun migrateHqAutomationDefaults(existingInstall: Boolean) {
+        val default = hqAutomationDefault(existingInstall)
+        val edit = prefs.edit()
+        var changed = false
+        if (!prefs.contains(KEY_AUTO_REPLACE_HQ_DOWNLOADS)) {
+            edit.putBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, default)
+            changed = true
+        }
+        if (!prefs.contains(KEY_AUTO_PREFETCH_HQ)) {
+            edit.putBoolean(KEY_AUTO_PREFETCH_HQ, default)
+            changed = true
+        }
+        if (changed) edit.apply()
+    }
+
     private fun readDownloadQuality(): DownloadQuality {
         val stored = prefs.getString(KEY_QUALITY_DOWNLOAD, null) ?: return DownloadQuality.LOSSLESS
         return runCatching { DownloadQuality.valueOf(stored) }.getOrDefault(DownloadQuality.LOSSLESS)
@@ -1564,8 +1592,9 @@ object AppSettings {
     }
 
     fun setRepeatMode(value: Int) {
-        repeatMode.value = value
-        prefs.edit().putInt(KEY_REPEAT_MODE, value).apply()
+        val clamped = PlaybackParametersMath.clampRepeatMode(value)
+        repeatMode.value = clamped
+        prefs.edit().putInt(KEY_REPEAT_MODE, clamped).apply()
     }
 
     fun setAudioQualityWifi(value: AudioQuality) {
@@ -1709,10 +1738,21 @@ object AppSettings {
     }
 
     fun setEqualizerBalance(value: Float) {
-        val clamped = value.coerceIn(-1f, 1f)
+        val clamped = clampBalance(value)
         equalizerBalance.value = clamped
         prefs.edit().putFloat(KEY_EQ_BALANCE, clamped).apply()
     }
+
+    private fun clampBalance(value: Float): Float =
+        value.takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
+
+    private fun clampScrobbleDelay(value: Float): Float =
+        value.takeIf { it.isFinite() }?.coerceIn(0.1f, 1.0f) ?: 0.5f
+
+    private fun clampBand(value: Float): Float =
+        value.takeIf { it.isFinite() }
+            ?.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+            ?: 0f
 
     /**
      * Writes the manual tab's seven gains, and renames the preset row to suit.
@@ -1723,7 +1763,7 @@ object AppSettings {
      */
     fun setEqualizerBands(values: List<Float>) {
         val clamped = List(EqLayout.MANUAL_COUNT) {
-            values.getOrElse(it) { 0f }.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+            clampBand(values.getOrElse(it) { 0f })
         }
         equalizerBands.value = clamped
         equalizerPreset.value = EqualizerPreset.matching(clamped)
@@ -1744,13 +1784,14 @@ object AppSettings {
         // Padded rather than rejected: a backup written by a build with a
         // different number of bands should restore the ones it does have.
         return List(EqLayout.MANUAL_COUNT) {
-            stored.getOrElse(it) { 0f }.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+            clampBand(stored.getOrElse(it) { 0f })
         }
     }
 
     fun setPlaybackSpeed(value: Float) {
-        playbackSpeed.value = value
-        prefs.edit().putFloat(KEY_SPEED, value).apply()
+        val clamped = PlaybackParametersMath.clampSpeed(value)
+        playbackSpeed.value = clamped
+        prefs.edit().putFloat(KEY_SPEED, clamped).apply()
     }
 
     fun setPitchSemitones(value: Int) {
@@ -2337,8 +2378,9 @@ object AppSettings {
     }
 
     fun setScrobbleDelayPercent(value: Float) {
-        scrobbleDelayPercent.value = value
-        prefs.edit().putFloat(KEY_SCROBBLE_DELAY_PERCENT, value).apply()
+        val clamped = clampScrobbleDelay(value)
+        scrobbleDelayPercent.value = clamped
+        prefs.edit().putFloat(KEY_SCROBBLE_DELAY_PERCENT, clamped).apply()
     }
 
     fun setScrobbleDelaySeconds(value: Int) {
@@ -2754,7 +2796,10 @@ object AppSettings {
         val kept = prefs.all.filterKeys { it in SECRETS || it in DEVICE_LOCAL }
         prefs.edit().apply {
             clear()
-            val incoming = values.filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
+            val incoming = values
+                .filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
+                .mapNotNull { (key, value) -> sanitizeImportedPref(key, value)?.let { key to it } }
+                .toMap()
             (kept + incoming).forEach { (key, value) ->
                 when (value) {
                     is Boolean -> putBoolean(key, value)
@@ -2769,6 +2814,27 @@ object AppSettings {
         }.apply()
         reload()
     }
+
+    /**
+     * A restored value is untrusted input: a speed of zero or a repeat mode
+     * outside Media3's three throws in the playback service. Known numeric
+     * settings are clamped to what their own setters accept, non-finite floats
+     * are replaced, and an unknown float that is not finite is dropped rather
+     * than written.
+     */
+    private fun sanitizeImportedPref(key: String, value: Any?): Any? = when (key) {
+        KEY_SPEED -> (value as? Float)?.let(PlaybackParametersMath::clampSpeed) ?: value
+        KEY_REPEAT_MODE -> (value as? Int)?.let(PlaybackParametersMath::clampRepeatMode) ?: value
+        KEY_EQ_BALANCE -> (value as? Float)?.let(::clampBalance) ?: value
+        KEY_SCROBBLE_DELAY_PERCENT -> (value as? Float)?.let(::clampScrobbleDelay) ?: value
+        KEY_EQ_BANDS -> (value as? String)?.let(::sanitizeImportedBands) ?: value
+        else -> if (value is Float && !value.isFinite()) null else value
+    }
+
+    private fun sanitizeImportedBands(text: String): String =
+        text.split(',')
+            .map { clampBand(it.trim().toFloatOrNull() ?: 0f) }
+            .joinToString(",")
 
     // ── Settings transfer ───────────────────────────────────────────────
 
@@ -2793,8 +2859,15 @@ object AppSettings {
         val theme = ThemeMode.entries.map { it.name }.toSet()
         val lowPower = LowPowerMode.entries.map { it.name }.toSet()
 
-        fun put(key: String, category: TransferCategory, type: TransferType, allowed: Set<String>? = null) {
-            this[key] = TransferKey(category, TransferSpec(type, allowed))
+        fun put(
+            key: String,
+            category: TransferCategory,
+            type: TransferType,
+            allowed: Set<String>? = null,
+            floatRange: ClosedFloatingPointRange<Float>? = null,
+            intRange: IntRange? = null,
+        ) {
+            this[key] = TransferKey(category, TransferSpec(type, allowed, floatRange, intRange))
         }
 
         // Audio quality and downloads.
@@ -2850,12 +2923,32 @@ object AppSettings {
         put(KEY_EQ_TONE_X, TransferCategory.PLAYBACK, TransferType.INT)
         put(KEY_EQ_TONE_Y, TransferCategory.PLAYBACK, TransferType.INT)
         put(KEY_EQ_FOCUSED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_EQ_BALANCE, TransferCategory.PLAYBACK, TransferType.FLOAT)
-        put(KEY_EQ_BANDS, TransferCategory.PLAYBACK, TransferType.FLOAT_LIST)
-        put(KEY_SPEED, TransferCategory.PLAYBACK, TransferType.FLOAT)
+        put(
+            KEY_EQ_BALANCE,
+            TransferCategory.PLAYBACK,
+            TransferType.FLOAT,
+            floatRange = -1f..1f,
+        )
+        put(
+            KEY_EQ_BANDS,
+            TransferCategory.PLAYBACK,
+            TransferType.FLOAT_LIST,
+            floatRange = -EqLayout.MANUAL_RANGE_DB..EqLayout.MANUAL_RANGE_DB,
+        )
+        put(
+            KEY_SPEED,
+            TransferCategory.PLAYBACK,
+            TransferType.FLOAT,
+            floatRange = PlaybackParametersMath.MIN_SPEED..PlaybackParametersMath.MAX_SPEED,
+        )
         put(KEY_PITCH, TransferCategory.PLAYBACK, TransferType.INT)
         put(KEY_SHUFFLE_ENABLED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_REPEAT_MODE, TransferCategory.PLAYBACK, TransferType.INT)
+        put(
+            KEY_REPEAT_MODE,
+            TransferCategory.PLAYBACK,
+            TransferType.INT,
+            intRange = PlaybackParametersMath.MIN_REPEAT_MODE..PlaybackParametersMath.MAX_REPEAT_MODE,
+        )
         put(KEY_DONT_REPEAT_SUGGESTIONS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_SWIPE_TO_PLAY_NEXT, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_STOP_ON_TASK_REMOVED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
@@ -3280,6 +3373,9 @@ object AppSettings {
  */
 internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
     if (existingInstall) AudioQuality.LOSSLESS else AudioQuality.HIGH
+
+/** Off for an install that updated into the feature; on for a fresh one. */
+internal fun hqAutomationDefault(existingInstall: Boolean): Boolean = !existingInstall
 
 
 

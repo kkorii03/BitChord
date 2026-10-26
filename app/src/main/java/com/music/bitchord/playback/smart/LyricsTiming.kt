@@ -24,6 +24,7 @@ import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
@@ -181,12 +182,21 @@ object LyricsTiming {
         val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo, audioSource) else null
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
+        val localFile = audioSource?.endsWith("|file") == true
+        // A file's AI answer was measured against that very file, so it is
+        // already on the file's clock; the saved HQ map belongs on top only
+        // while no such answer is in place.
+        val hq = if (localFile && base?.byAi == true) {
+            null
+        } else {
+            hqAdjustment(context, videoId, localFile)
+        }
         val timing = Timing(
             base = base,
             manualMs = entry.manualMs ?: 0L,
             aiBiasMs = bias,
             aiEngine = engine,
-            hq = hqAdjustment(context, videoId),
+            hq = hq,
         )
         // The transcript is kept on the video's own clock, and a displayed line
         // is map(record) + extraMs; the words are already video time, so only
@@ -279,33 +289,80 @@ object LyricsTiming {
     }
 
     /**
-     * The YouTube → high-quality map for the stream serving [videoId], when it
-     * is a substitute that was verified. Read from [StreamChoice] rather than
-     * passed by every caller: the player and the lyrics screen both already
-     * record and read that choice, and a caller that forgot would silently
-     * show the lyrics on the wrong clock.
+     * The YouTube → high-quality map for the copy serving [videoId], when it
+     * was verified.
+     *
+     * A substituted stream records its pair in [StreamChoice]; a downloaded
+     * replacement records the same alignment in its own metadata, because the
+     * file may be the one playing long after that choice was forgotten. Read
+     * from those stores rather than passed by every caller: the player and the
+     * lyrics screen both already write them, and a caller that forgot would
+     * silently show the lyrics on the wrong clock.
      */
-    private suspend fun hqAdjustment(context: Context, videoId: String): Adjustment.Mapped? =
-        withContext(Dispatchers.IO) {
-            val choice = StreamChoice.of(videoId) ?: return@withContext null
-            if (!StreamChoice.isSubstitute(videoId)) return@withContext null
-            val sourceId = choice.sourceConfigId ?: return@withContext null
-            val trackId = choice.trackId ?: return@withContext null
-            val verified = HqVerificationStore.get(
-                context,
-                videoId,
-                sourceId,
-                trackId,
-            ) ?: return@withContext null
-            val map = HqMatchPolicy.mapFor(verified.offsetMs, verified.rate)
-                ?: return@withContext null
-            Adjustment.Mapped(
-                map = map,
-                byAi = false,
-                rate = verified.rate,
-                matchPercent = verified.matchPercent,
-            )
+    private suspend fun hqAdjustment(
+        context: Context,
+        videoId: String,
+        localFile: Boolean,
+    ): Adjustment.Mapped? = withContext(Dispatchers.IO) {
+        if (localFile) return@withContext savedDownloadAdjustment(context, videoId)
+        val choice = StreamChoice.of(videoId) ?: return@withContext null
+        if (!StreamChoice.isSubstitute(videoId)) return@withContext null
+        val sourceId = choice.sourceConfigId ?: return@withContext null
+        val trackId = choice.trackId ?: return@withContext null
+        val verified = HqVerificationStore.get(
+            context,
+            videoId,
+            sourceId,
+            trackId,
+        ) ?: return@withContext null
+        val map = HqMatchPolicy.mapFor(verified.offsetMs, verified.rate)
+            ?: return@withContext null
+        Adjustment.Mapped(
+            map = map,
+            byAi = false,
+            rate = verified.rate,
+            matchPercent = verified.matchPercent,
+        )
+    }
+
+    /** The alignment saved with a downloaded HQ replacement, if there is one. */
+    private fun savedDownloadAdjustment(
+        context: Context,
+        videoId: String,
+    ): Adjustment.Mapped? {
+        val meta = Downloads.savedMetadataFor(videoId) ?: return null
+        val sourceId = meta.hqSourceConfigId
+        val trackId = meta.hqTrackId
+        val verified = if (sourceId != null && trackId != null) {
+            HqVerificationStore.get(context, videoId, sourceId, trackId)
+        } else {
+            null
         }
+        return savedHqAdjustment(meta.hqOffsetMs, meta.hqRate, verified?.matchPercent)
+    }
+
+    /**
+     * The saved metadata's offset and rate as the lyric clock's map.
+     *
+     * Pure so the fallback for a missing or non-finite rate is testable: an
+     * alignment with no pace is still a real shift, and dropping it would put
+     * the old file's clock back on the replacement.
+     */
+    internal fun savedHqAdjustment(
+        offsetMs: Long?,
+        rate: Double?,
+        matchPercent: Int? = null,
+    ): Adjustment.Mapped? {
+        val offset = offsetMs ?: return null
+        val safeRate = rate?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+        val map = HqMatchPolicy.mapFor(offset, safeRate) ?: return null
+        return Adjustment.Mapped(
+            map = map,
+            byAi = false,
+            rate = safeRate,
+            matchPercent = matchPercent,
+        )
+    }
 
     /** How far [adjustment] moves the first sung line of [lines] — the figure worth showing. */
     fun shownShiftMs(lines: List<LyricLine>, adjustment: Adjustment): Long {

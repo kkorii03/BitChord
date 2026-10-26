@@ -471,6 +471,17 @@ class ChunkedDataSource(
                         },
                 )
                 if (!decision.retry) {
+                    if (decision.retryAfterTooLong) {
+                        // The server asked for longer than this thread may
+                        // wait. Keeping the URL cached — or pinned in
+                        // [StreamChoice] — would send the next recovery
+                        // straight back to it, so drop both and let the
+                        // failure path resolve another client or route.
+                        val refusedUrl = spec.uri.toString()
+                        val videoId = StreamResolver.videoIdFor(refusedUrl)
+                        StreamResolver.forgetRateLimitedUrl(refusedUrl)
+                        videoId?.let(StreamChoice::forget)
+                    }
                     HqHostTracker.noteFailure(host)
                     throw e
                 }

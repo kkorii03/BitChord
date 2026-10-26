@@ -59,4 +59,31 @@ class PlaybackParametersMathTest {
         assertTrue(VersionSwapPolicy.shouldSwap(0.851))
         assertTrue(VersionSwapPolicy.shouldSwap(0.999))
     }
+
+    @Test
+    fun storedSpeedsAreClampedToThePickerRangeAndNonFiniteValuesReset() {
+        assertEquals(0.5f, PlaybackParametersMath.clampSpeed(0f))
+        assertEquals(0.5f, PlaybackParametersMath.clampSpeed(-1f))
+        assertEquals(1f, PlaybackParametersMath.clampSpeed(1f))
+        assertEquals(2f, PlaybackParametersMath.clampSpeed(8f))
+        assertEquals(1f, PlaybackParametersMath.clampSpeed(Float.NaN))
+        assertEquals(1f, PlaybackParametersMath.clampSpeed(Float.POSITIVE_INFINITY))
+    }
+
+    @Test
+    fun crossfadeSpeedsKeepTheirOwnFactorButNeverReachThePlayerAsZero() {
+        assertEquals(2.4f, PlaybackParametersMath.safeSpeed(2.4f))
+        assertEquals(1f, PlaybackParametersMath.safeSpeed(0f))
+        assertEquals(1f, PlaybackParametersMath.safeSpeed(-0.5f))
+        assertEquals(1f, PlaybackParametersMath.safeSpeed(Float.NaN))
+    }
+
+    @Test
+    fun repeatModesAreClampedToOffAllAndOne() {
+        assertEquals(0, PlaybackParametersMath.clampRepeatMode(-5))
+        assertEquals(0, PlaybackParametersMath.clampRepeatMode(0))
+        assertEquals(1, PlaybackParametersMath.clampRepeatMode(1))
+        assertEquals(2, PlaybackParametersMath.clampRepeatMode(2))
+        assertEquals(2, PlaybackParametersMath.clampRepeatMode(99))
+    }
 }

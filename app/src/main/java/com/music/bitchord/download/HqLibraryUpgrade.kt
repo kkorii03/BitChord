@@ -234,7 +234,7 @@ object HqLibraryUpgrade {
         Downloads.enqueue(
             context = context,
             song = pending.song,
-            allowMetered = true,
+            allowMetered = pending.target.allowMetered,
             quality = DownloadedQuality.qualityFor(pending.target.verifiedTier),
             hq = HqDownloadSource(
                 sourceConfigId = pending.target.sourceConfigId,

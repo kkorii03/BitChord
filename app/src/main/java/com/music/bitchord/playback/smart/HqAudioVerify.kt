@@ -29,7 +29,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -79,7 +79,7 @@ object HqAudioVerify {
     private const val MANUAL_REFERENCE_HEAD_TIMEOUT_MS = 20_000L
 
     /** One verification per pair at a time while that verification is running. */
-    private val locks = ConcurrentHashMap<String, Mutex>()
+    private val locks = RefCountedKeyedMutex<String>()
 
     /**
      * References whose opening could not be had during this playback, and why.
@@ -156,7 +156,7 @@ object HqAudioVerify {
      * the first's profile instead of paying for it again. Pair locks are always
      * taken before this one, so the two cannot deadlock.
      */
-    private val referenceLocks = ConcurrentHashMap<String, Mutex>()
+    private val referenceLocks = RefCountedKeyedMutex<String>()
 
     /**
      * The verified answer for [stream] against [youtubeId], or null when the
@@ -218,9 +218,9 @@ object HqAudioVerify {
         }
 
         val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
-        val lock = locks.getOrPut(key) { Mutex() }
+        val lock = locks.acquire(key)
         try {
-            return@withContext lock.withLock {
+            return@withContext lock.mutex.withLock {
                 coroutineScope {
                     HqVerificationStore.get(context, youtubeId, sourceId, trackId)
                         ?.let { return@coroutineScope Outcome.Verified(it) }
@@ -246,14 +246,36 @@ object HqAudioVerify {
                         candidateDeferred.cancel()
                         return@coroutineScope Outcome.NoReference(reference.reason)
                     }
+                    val referenceFeatures = (reference as Reference.Ready).features
+                    // A truncated profile is not a shorter recording. Comparing
+                    // it would only produce a poor match, and a poor match is
+                    // stored as a permanent rejection — so a partial reference
+                    // means "try again later", not "this candidate is wrong".
+                    if (!HqReferenceCache.completeEnough(referenceFeatures, COMPARE_SECONDS)) {
+                        candidateDeferred.cancel()
+                        logNoReference(target.title, youtubeId, NoReferenceReason.DECODE_FAILED)
+                        return@coroutineScope Outcome.NoReference(NoReferenceReason.DECODE_FAILED)
+                    }
                     val candidate = candidateDeferred.await()
                     if (candidate == null) {
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
                         return@coroutineScope Outcome.Unavailable
                     }
+                    // The same rule on the candidate side: a read cut short by
+                    // a slow or closing stream says nothing about the
+                    // recording and must not become a stored rejection.
+                    if (!HqReferenceCache.bothCompleteEnough(
+                            referenceFeatures,
+                            candidate,
+                            COMPARE_SECONDS,
+                        )
+                    ) {
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+                        return@coroutineScope Outcome.Unavailable
+                    }
                     val result = runCatching {
                         ChromaAlignment.align(
-                            (reference as Reference.Ready).features,
+                            referenceFeatures,
                             candidate,
                             videoComplete = false,
                         )
@@ -290,13 +312,11 @@ object HqAudioVerify {
                 }
             }
         } finally {
-            // The entry only has to live as long as the work it serialises.
-            // Keeping every pair for the session was a slow leak on a long
-            // queue; a caller already waiting keeps its reference, so removing
-            // it cannot let a second decode of this pair start alongside that
-            // one. At worst a third caller arriving after the wait starts a
-            // fresh lock, and the verdict cache still answers it.
-            locks.remove(key, lock)
+            // Kept until the last caller waiting on it has left. Removing it
+            // the moment the holder finished let a newcomer make a second
+            // mutex while an earlier waiter still held the first, decoding the
+            // same pair twice.
+            locks.release(key, lock)
         }
     }
 
@@ -422,9 +442,9 @@ object HqAudioVerify {
         manual: Boolean,
     ): Reference {
         referenceCache.get(youtubeId)?.let { return Reference.Ready(it) }
-        val lock = referenceLocks.getOrPut(youtubeId) { Mutex() }
+        val lock = referenceLocks.acquire(youtubeId)
         try {
-            return lock.withLock {
+            return lock.mutex.withLock {
                 referenceCache.get(youtubeId)?.let { return@withLock Reference.Ready(it) }
                 diskReference(context, youtubeId)?.let { cached ->
                     referenceCache.put(youtubeId, cached)
@@ -434,7 +454,7 @@ object HqAudioVerify {
                 referenceFeaturesUncached(context, youtubeId, title, manual)
             }
         } finally {
-            referenceLocks.remove(youtubeId, lock)
+            referenceLocks.release(youtubeId, lock)
         }
     }
 
@@ -511,7 +531,12 @@ object HqAudioVerify {
         val source = UrlMediaDataSource(dataSource, Uri.parse(stream.url), stream.headers)
         return try {
             val coroutine = currentCoroutineContext()
-            featuresOf(source) { coroutine.isActive }
+            // Cancelling the other half of the race must interrupt the decode,
+            // not leave it holding the global decoder gate for another ninety
+            // seconds while the caller has already moved on.
+            runInterruptible {
+                featuresOf(source) { coroutine.isActive }
+            }
         } finally {
             runCatching { source.close() }
         }
@@ -529,6 +554,10 @@ object HqAudioVerify {
         source: MediaDataSource,
         abort: () -> Boolean = { false },
     ): ChromaAlignment.Features? {
+        // Checked before the extractor opens the source and before the decoder
+        // gate is taken: an abandoned verification must not queue behind the
+        // work it was cancelled to avoid.
+        if (abort()) return null
         var extractor: ChromaAlignment.Extractor? = null
         var sampleRate = 0
         var startSeconds = 0.0

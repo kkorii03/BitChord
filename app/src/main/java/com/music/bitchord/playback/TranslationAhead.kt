@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -118,6 +119,15 @@ internal object TranslationAhead {
         val fromFile: Boolean,
     )
 
+    /** An override is the player's sheet, not the file's older tags. */
+    internal fun aheadFromOverride(override: LyricsOverrideFile.Stored): AheadLyrics =
+        AheadLyrics(
+            lines = override.lines,
+            source = override.source,
+            searchedAs = null,
+            fromFile = false,
+        )
+
     /**
      * The cheap half of [nextTrack] on its own, for the next-song bundle: the
      * same search the player will make, so the answer is already in
@@ -132,6 +142,12 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
     ): AheadLyrics {
+        // The per-song override is what the player shows, so preparing the
+        // file's older tags instead would put a different text key in front of
+        // the sync that belongs to these lines.
+        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
+            return aheadFromOverride(override)
+        }
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.withSource(app, uri)
             if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {

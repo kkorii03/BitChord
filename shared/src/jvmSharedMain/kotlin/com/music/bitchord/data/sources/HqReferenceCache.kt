@@ -52,5 +52,21 @@ class HqReferenceCache(private val limit: Int = MAX_ENTRIES) {
 
         fun completeEnough(features: ChromaAlignment.Features, seconds: Double): Boolean =
             seconds > 0.0 && features.durationSeconds >= seconds * COMPLETE_FRACTION
+
+        /**
+         * Whether both sides of a comparison cover the window.
+         *
+         * A truncated read — a slow proxy closing the socket, a head that
+         * arrived only partly — produces a profile that looks like a short
+         * recording. Comparing it can only produce a poor match, and a poor
+         * match is stored as a permanent rejection. Both must be whole before
+         * either is allowed to say anything.
+         */
+        fun bothCompleteEnough(
+            reference: ChromaAlignment.Features,
+            candidate: ChromaAlignment.Features,
+            seconds: Double,
+        ): Boolean =
+            completeEnough(reference, seconds) && completeEnough(candidate, seconds)
     }
 }

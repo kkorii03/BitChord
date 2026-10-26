@@ -161,4 +161,22 @@ class HqLibraryPolicyTest {
         assertEquals(HqTier.HI_RES_24_88, plan.replace.single().verifiedTier)
         assertEquals("better", plan.replace.single().sourceConfigId)
     }
+
+    @Test
+    fun `only a replacement may use metered data, never a prefetch`() {
+        val plan = HqLibraryPolicy.select(
+            listOf(
+                entry("downloaded", current = HqTier.NORMAL, verified = HqTier.LOSSLESS_16),
+                entry("not-downloaded", verified = HqTier.LOSSLESS_16),
+            ),
+            prefetchLimit = 500,
+        )
+
+        val replace = plan.replace.single()
+        val prefetch = plan.prefetch.single()
+        assertEquals(HqLibraryAction.REPLACE, replace.action)
+        assertTrue(replace.allowMetered)
+        assertEquals(HqLibraryAction.PREFETCH, prefetch.action)
+        assertTrue(!prefetch.allowMetered)
+    }
 }

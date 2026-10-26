@@ -1125,6 +1125,20 @@ object StreamResolver {
             ?: recent.entries.firstOrNull { it.value.url == url }?.key
 
     /**
+     * Drops [url] from the resolved cache after a 429/503 asked for a wait
+     * longer than a loader thread may hold.
+     *
+     * The URL is not dead, but retrying it inside this play only repeats the
+     * refusal and spends the recovery budget in seconds. Forgetting it makes
+     * the next resolve mint another client or route; the host rest recorded by
+     * [HqHostTracker] still keeps later requests away from the same server.
+     */
+    fun forgetRateLimitedUrl(url: String) {
+        val videoId = recent.entries.firstOrNull { it.value.url == url }?.key ?: return
+        recent.remove(videoId)
+    }
+
+    /**
      * Records that googlevideo refused [url] in the middle of playback and
      * returns what is needed to ask for the same track again.
      *

@@ -50,6 +50,17 @@ class HqReferenceCacheTest {
         assertTrue(!HqReferenceCache.completeEnough(full, seconds = 0.0))
     }
 
+    @Test
+    fun `a comparison needs both profiles to cover the window`() {
+        val full = features(frames = 100, hopSeconds = 1.0)
+        val partial = features(frames = 10, hopSeconds = 1.0)
+
+        assertTrue(HqReferenceCache.bothCompleteEnough(full, full, seconds = 90.0))
+        assertTrue(!HqReferenceCache.bothCompleteEnough(partial, full, seconds = 90.0))
+        assertTrue(!HqReferenceCache.bothCompleteEnough(full, partial, seconds = 90.0))
+        assertTrue(!HqReferenceCache.bothCompleteEnough(full, full, seconds = 0.0))
+    }
+
     private fun features(frames: Int, hopSeconds: Double = 1.0): ChromaAlignment.Features =
         ChromaAlignment.Features(
             chroma = FloatArray(frames * 12),

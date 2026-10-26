@@ -1091,7 +1091,10 @@ object Downloads {
             clearMvSoundSuspects(previousSuspects + ids)
             val context = appContext
             val fileReplaced = previousUris.any { it != uri.toString() }
-            if (context != null && (fileReplaced || previousSuspects.isNotEmpty())) {
+            // An HQ replacement can reuse the old filename, so it is not
+            // always visible as a different URI; its provenance is what says
+            // the bytes are a different recording.
+            if (context != null && (fileReplaced || previousSuspects.isNotEmpty() || hq != null)) {
                 // A song's file was replaced. Any AI timing answer was measured
                 // against the old bytes, so drop it (and the spent engine
                 // record) and let the song check run against the new
