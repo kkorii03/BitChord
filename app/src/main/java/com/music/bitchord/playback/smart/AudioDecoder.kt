@@ -28,6 +28,7 @@ import android.media.MediaDataSource
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.DecoderMonitor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -209,7 +210,10 @@ object AudioDecoder {
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
-        if (endSeconds <= startSeconds) return null
+        if (endSeconds <= startSeconds) {
+            fail(label, "range", "start=$startSeconds end=$endSeconds")
+            return null
+        }
         val acquired = try {
             decodeGate.acquire()
             true
@@ -217,7 +221,10 @@ object AudioDecoder {
             Thread.currentThread().interrupt()
             false
         }
-        if (!acquired) return null
+        if (!acquired) {
+            fail(label, "gate", "interrupted")
+            return null
+        }
         try {
             return decodeRawLocked(source, startSeconds, endSeconds, abort, label, onBuffer)
         } finally {
@@ -234,29 +241,46 @@ object AudioDecoder {
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         DecoderMonitor.start(label)
-        val extractor = runCatching { MediaExtractor() }.getOrElse {
+        val extractor = runCatching { MediaExtractor() }.getOrElse { error ->
+            fail(label, "extractor-create", reason(error))
             DecoderMonitor.stop(label)
             return null
         }
         var codec: MediaCodec? = null
         try {
-            extractor.setDataSource(source)
+            try {
+                extractor.setDataSource(source)
+            } catch (error: Exception) {
+                fail(label, "set-data-source", reason(error))
+                return null
+            }
             val trackIndex = (0 until extractor.trackCount).firstOrNull { index ->
                 extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-            } ?: return null
+            } ?: run {
+                fail(label, "no-audio-track", "tracks=${extractor.trackCount}")
+                return null
+            }
             extractor.selectTrack(trackIndex)
             val format = extractor.getTrackFormat(trackIndex)
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: run {
+                fail(label, "no-mime", "track=$trackIndex")
+                return null
+            }
 
             val startUs = (startSeconds * 1_000_000).toLong()
             val endUs = (endSeconds * 1_000_000).toLong()
             extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
 
             codec = runCatching { MediaCodec.createDecoderByType(mime) }
-                .onFailure { Log.w(TAG, "No decoder for $mime", it) }
+                .onFailure { fail(label, "codec-create", "mime=$mime ${reason(it)}") }
                 .getOrNull() ?: return null
-            codec.configure(format, null, null, 0)
-            codec.start()
+            try {
+                codec.configure(format, null, null, 0)
+                codec.start()
+            } catch (error: Exception) {
+                fail(label, "codec-start", "mime=$mime ${reason(error)}")
+                return null
+            }
 
             val bufferInfo = MediaCodec.BufferInfo()
             var outputChannels = format.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 1
@@ -320,10 +344,17 @@ object AudioDecoder {
                 }
             }
 
-            if (!sawFirstSample || outputRate <= 0) return null
+            if (!sawFirstSample || outputRate <= 0) {
+                fail(
+                    label,
+                    "no-first-sample",
+                    "rate=$outputRate first=$sawFirstSample channels=$outputChannels",
+                )
+                return null
+            }
             return outputRate.toDouble() to actualStartSeconds
         } catch (error: Exception) {
-            Log.w(TAG, "Region decode failed", error)
+            fail(label, "decode", reason(error))
             return null
         } finally {
             runCatching { codec?.stop() }
@@ -332,6 +363,14 @@ object AudioDecoder {
             DecoderMonitor.stop(label)
         }
     }
+
+    /** One line per failed decode, in the track log rather than only in logcat. */
+    private fun fail(label: String, stage: String, message: String) {
+        TrackLog.w(TAG, "decode: $label failed at=$stage ${message.replace('\n', ' ').trim()}")
+    }
+
+    private fun reason(error: Throwable): String =
+        error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
 
     /** Downmixes one 16-bit PCM output buffer to mono float in [-1, 1]. */
     private fun toMono(buffer: ByteBuffer, info: MediaCodec.BufferInfo, channels: Int): FloatArray {

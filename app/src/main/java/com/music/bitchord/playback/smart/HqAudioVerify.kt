@@ -10,6 +10,7 @@ import androidx.media3.datasource.DataSpec
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.data.lyrics.ChromaAlignment
+import com.music.bitchord.data.lyrics.WavAudio
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.HqQuality
@@ -21,9 +22,9 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
-import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.ProxyAwareDataSourceFactory
 import com.music.bitchord.playback.StreamContainer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -62,21 +63,6 @@ object HqAudioVerify {
 
     /** How much of each recording is compared. */
     const val COMPARE_SECONDS = 90.0
-
-    /**
-     * How long an automatic attempt waits for the reference's opening.
-     *
-     * Short because a missing reference is no longer remembered across plays:
-     * the next playback event asks again, so giving up early costs nothing but
-     * a retry later.
-     */
-    private const val REFERENCE_HEAD_TIMEOUT_MS = 10_000L
-
-    /**
-     * A manual request is someone waiting on the answer, so it gets the longer
-     * wait that makes a slow head arrive instead of being reported missing.
-     */
-    private const val MANUAL_REFERENCE_HEAD_TIMEOUT_MS = 20_000L
 
     /** One verification per pair at a time while that verification is running. */
     private val locks = ConcurrentHashMap<String, Mutex>()
@@ -176,8 +162,8 @@ object HqAudioVerify {
      * As [verify], with the reason when the candidate cannot be used.
      *
      * [manual] is a listener waiting on the answer: it ignores a missing
-     * reference remembered earlier in this play and waits longer for the
-     * YouTube opening. It never turns a missing reference into a rejection.
+     * reference remembered earlier in this play and asks the song check for
+     * the opening again. It never turns a missing reference into a rejection.
      */
     suspend fun verifyOutcome(
         context: Context,
@@ -228,13 +214,13 @@ object HqAudioVerify {
                         return@coroutineScope Outcome.Mismatch
                     }
                     // The two ninety-second reads do not depend on each other:
-                    // the reference comes from the cached YouTube opening and
-                    // the candidate from its own URL. Started together, a cold
-                    // verification costs the slower of the two rather than
-                    // their sum — the verification in front of the reported
-                    // 2.2–8.4 s prove times had the same sequential shape. A
-                    // missing reference cancels the candidate read before
-                    // anything waits on it.
+                    // the reference comes from the WAV the song check already
+                    // decodes and the candidate from its own URL. Started
+                    // together, a cold verification costs the slower of the
+                    // two rather than their sum — the verification in front of
+                    // the reported 2.2–8.4 s prove times had the same
+                    // sequential shape. A missing reference cancels the
+                    // candidate read before anything waits on it.
                     val candidateDeferred = async { candidateFeatures(stream) }
                     val reference = referenceFeatures(
                         context,
@@ -269,7 +255,15 @@ object HqAudioVerify {
                     val offset = result.map.map(0L)
                     val rate = result.rate
                     val verdict = HqMatchPolicy.verdict(match, offset, rate)
-                    logVerdict(target.title, sourceName, match, offset, verdict.accepted, about = youtubeId)
+                    logVerdict(
+                        target.title,
+                        sourceName,
+                        match,
+                        offset,
+                        verdict.accepted,
+                        about = youtubeId,
+                        reference = "wav",
+                    )
                     if (!verdict.accepted) {
                         if (HqVerifyPolicy.shouldPersistRejection(
                                 referenceAvailable = true,
@@ -323,11 +317,13 @@ object HqAudioVerify {
         offset: Long,
         accepted: Boolean,
         about: String? = null,
+        reference: String? = null,
     ) {
         TrackLog.i(
             TAG,
             "hq-verify: $title $sourceName match=$match% offset=$offset -> " +
-                if (accepted) "accepted" else "rejected",
+                (if (accepted) "accepted" else "rejected") +
+                (reference?.let { " reference=$it" } ?: ""),
             about,
         )
     }
@@ -452,57 +448,59 @@ object HqAudioVerify {
                 return Reference.Missing(remembered)
             }
         }
-        AudioCache.keepForTiming(youtubeId)
-        val opus = Uri.parse(AutomixAnalysisSource.opusUri(youtubeId))
-        AudioCache.requestAnalysisHead(opus)
-        val timeout = if (manual) MANUAL_REFERENCE_HEAD_TIMEOUT_MS else REFERENCE_HEAD_TIMEOUT_MS
-        if (!AudioCache.awaitAnalysisHead(opus, timeout)) {
-            noteNoReference(youtubeId, NoReferenceReason.HEAD_TIMEOUT)
-            logNoReference(title, youtubeId, NoReferenceReason.HEAD_TIMEOUT)
-            return Reference.Missing(NoReferenceReason.HEAD_TIMEOUT)
-        }
+        // The song check already knows how to open this track and decode its
+        // opening to a small WAV; using the same path avoids a second decoder
+        // reading a container the extractor may only have a truncated head of.
+        // [VideoAudio] keeps the WAV by song, so the lyrics check and this
+        // measurement share one decode rather than paying for two.
         val song = Song(
             videoId = youtubeId,
-            title = "",
+            title = title,
             artist = "",
             thumbnailUrl = null,
             isVideo = false,
         )
-        val source = VersionAudioAligner.openDataSource(context, song) ?: run {
-            noteNoReference(youtubeId, NoReferenceReason.NO_SOURCE)
-            logNoReference(title, youtubeId, NoReferenceReason.NO_SOURCE)
-            return Reference.Missing(NoReferenceReason.NO_SOURCE)
+        val wav = try {
+            VideoAudio.songWav(context, song, COMPARE_SECONDS)
+        } catch (cancelled: CancellationException) {
+            logNoReference(title, youtubeId, NoReferenceReason.CANCELLED)
+            return Reference.Missing(NoReferenceReason.CANCELLED)
         }
-        return try {
-            val coroutine = currentCoroutineContext()
-            val features = featuresOf(source) { coroutine.isActive }
-            if (features == null) {
-                // A cancelled decode is not a missing reference: the next
-                // playback must be free to try again.
-                val reason = if (coroutine.isActive) {
-                    NoReferenceReason.DECODE_FAILED
-                } else {
-                    NoReferenceReason.CANCELLED
-                }
-                if (reason != NoReferenceReason.CANCELLED) {
-                    noteNoReference(youtubeId, reason)
-                }
-                logNoReference(title, youtubeId, reason)
-                Reference.Missing(reason)
-            } else {
-                // A partial head is returned for this comparison but not kept:
-                // the rest of the bytes may still arrive, and freezing a short
-                // profile would make every later candidate compare against it.
-                if (HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
-                    referenceCache.put(youtubeId, features)
-                    storeReference(context, youtubeId, features)
-                }
-                noReference.remove(youtubeId)
-                Reference.Ready(features)
-            }
-        } finally {
-            runCatching { source.close() }
+        if (wav == null) {
+            noteNoReference(youtubeId, NoReferenceReason.DECODE_FAILED)
+            logNoReference(title, youtubeId, NoReferenceReason.DECODE_FAILED)
+            return Reference.Missing(NoReferenceReason.DECODE_FAILED)
         }
+        val features = featuresOfWav(wav)
+        if (features == null) {
+            noteNoReference(youtubeId, NoReferenceReason.DECODE_FAILED)
+            logNoReference(title, youtubeId, NoReferenceReason.DECODE_FAILED)
+            return Reference.Missing(NoReferenceReason.DECODE_FAILED)
+        }
+        // A partial opening is returned for this comparison but not kept: the
+        // rest of the WAV may still arrive, and freezing a short profile would
+        // make every later candidate compare against it.
+        if (HqReferenceCache.completeEnough(features, COMPARE_SECONDS)) {
+            referenceCache.put(youtubeId, features)
+            storeReference(context, youtubeId, features)
+        }
+        noReference.remove(youtubeId)
+        return Reference.Ready(features)
+    }
+
+    /**
+     * The WAV the song check already decoded, turned into a chroma profile.
+     *
+     * The header is parsed rather than handed to MediaExtractor: the samples
+     * are 16-bit PCM the app itself wrote, so the container question that
+     * made the stream reference fail does not arise here.
+     */
+    private fun featuresOfWav(wav: ByteArray): ChromaAlignment.Features? {
+        val pcm = WavAudio.monoFloat(wav) ?: return null
+        if (pcm.samples.isEmpty() || pcm.sampleRate <= 0) return null
+        val extractor = ChromaAlignment.Extractor(pcm.sampleRate)
+        extractor.push(pcm.samples)
+        return extractor.finish(startSeconds = 0.0).takeIf { it.frames > 0 }
     }
 
     /** The candidate's opening, read straight from its stream URL. */
