@@ -1,5 +1,8 @@
 package com.music.bitchord.data.net
 
+import com.music.bitchord.data.CatalogSongMapper
+import com.music.bitchord.data.model.Song
+
 /**
  * Whether a downloaded file is a music video's sound rather than the song.
  *
@@ -8,6 +11,10 @@ package com.music.bitchord.data.net
  * length beside the catalogue release, and any provenance the record did keep.
  * A music video downloaded under its own id is exactly the case the old
  * `wasVideoRow` test could not see, because its recorded source is its own id.
+ *
+ * A video upload is not automatically an MV's sound: a cover or a live clip is
+ * also a video, and the listener chose that performance. Only the official MV
+ * may be replaced, so every verdict first rules a cover out.
  */
 object DownloadedMvPolicy {
 
@@ -37,6 +44,32 @@ object DownloadedMvPolicy {
         val lower = title.lowercase()
         return MV_TITLE_MARKERS.any { lower.contains(it) } ||
             MV_WORD.containsMatchIn(title)
+    }
+
+    /**
+     * Whether this download is a cover, live clip or other chosen performance.
+     *
+     * A cover's byline is enough even when the record lost its video flag: the
+     * Korean "커버" suffix is written by [com.music.bitchord.data.cover.CoverTitles]
+     * for exactly this case. Otherwise the same reader the rest of the app uses
+     * decides, so a cover-looking title is not mistaken for the official MV.
+     */
+    fun isCover(
+        rowVideoId: String,
+        title: String,
+        artist: String,
+        isVideo: Boolean?,
+    ): Boolean {
+        if (artist.endsWith(" 커버")) return true
+        return CatalogSongMapper.isCover(
+            Song(
+                videoId = rowVideoId,
+                title = title,
+                artist = artist,
+                thumbnailUrl = null,
+                isVideo = isVideo == true,
+            ),
+        )
     }
 
     /**
@@ -75,14 +108,15 @@ object DownloadedMvPolicy {
     /**
      * Whether the file is the music video's sound.
      *
-     * A recorded video/unknown type is conclusive. When the file was fetched
-     * from a *different* upload, the provenance rule already owns the answer,
-     * so title and length add nothing. Otherwise the title's own packaging and
-     * a file more than [MV_DURATION_SLACK_MS] longer than a catalogue release
-     * under another id identify a legacy video download with no stored type.
-     *
-     * A cover has no catalogue release to compare against, so it stays the
-     * listener's chosen performance rather than being called an MV.
+     * A cover is never an MV, whatever its upload type says. Otherwise only
+     * evidence that names the official MV counts: a video title marker, or
+     * bytes recorded from a *different* upload that is itself recorded as a
+     * video. A stored video/unknown type alone is not evidence — that is what
+     * turned every downloaded cover and every unclassified song into a
+     * suspect. When provenance names a different upload that is not a video,
+     * that rule owns the answer, so title and length add nothing. Finally a
+     * file more than [MV_DURATION_SLACK_MS] longer than a catalogue release
+     * under another id identifies a legacy video download with no stored type.
      */
     fun isMvSound(
         rowVideoId: String,
@@ -93,9 +127,16 @@ object DownloadedMvPolicy {
         soundSourceVideoId: String?,
         catalogVideoId: String?,
         catalogDurationMs: Long?,
+        artist: String = "",
+        sourceRecordedAsMv: Boolean = false,
     ): Boolean {
-        if (storedIsVideo == true || storedTypeUnknown) return true
-        if (soundSourceVideoId != null && soundSourceVideoId != rowVideoId) return false
+        if (isRecordedSongVersion(storedIsVideo, storedTypeUnknown, soundSourceVideoId, rowVideoId)) {
+            return false
+        }
+        if (isCover(rowVideoId, title, artist, storedIsVideo)) return false
+        if (soundSourceVideoId != null && soundSourceVideoId != rowVideoId) {
+            return sourceRecordedAsMv
+        }
         if (hasMvTitleMarker(title)) return true
         val catalogId = catalogVideoId?.takeIf { it.isNotBlank() } ?: return false
         if (catalogId == rowVideoId) return false
@@ -110,10 +151,16 @@ object DownloadedMvPolicy {
      *
      * The scan used to look only at records with no provenance, so it walked
      * past the recognition those records already carried. This applies the
-     * same rules as playback — an own-stream song version is left alone, a
-     * recorded video/unknown type or another upload's stream is repaired, and
-     * only a legacy record is measured by length — while still returning the
-     * length difference the banner and log want when there is one.
+     * same rules as playback — a cover or an own-stream song version is left
+     * alone, a video title or another upload's recorded video stream is
+     * repaired, and only a legacy record is measured by length — while still
+     * returning the length difference the banner and log want when there is
+     * one.
+     *
+     * A stored `isVideo` or `typeUnknown` is not evidence on its own. A cover,
+     * a live clip and an ordinary song can all be video rows; treating the
+     * flag as the answer replaced the listener's chosen performance with the
+     * original recording.
      *
      * The legacy length rule keeps [SongVersionPolicy.MV_SOUND_SLACK_MS], not
      * [MV_DURATION_SLACK_MS]: the Downloads scan has always used the shorter
@@ -128,10 +175,13 @@ object DownloadedMvPolicy {
         soundSourceVideoId: String?,
         catalogDurationMs: Long?,
         legacySlackMs: Long = SongVersionPolicy.MV_SOUND_SLACK_MS,
+        artist: String = "",
+        sourceRecordedAsMv: Boolean = false,
     ): Long? {
         if (isRecordedSongVersion(storedIsVideo, storedTypeUnknown, soundSourceVideoId, rowVideoId)) {
             return null
         }
+        if (isCover(rowVideoId, title, artist, storedIsVideo)) return null
         val file = fileDurationMs?.takeIf { it > 0L }
         val catalog = catalogDurationMs?.takeIf { it > 0L }
         val delta = if (file != null && catalog != null) {
@@ -139,10 +189,10 @@ object DownloadedMvPolicy {
         } else {
             null
         }
-        val knownMv = storedIsVideo == true ||
-            storedTypeUnknown ||
-            (soundSourceVideoId != null && soundSourceVideoId != rowVideoId)
-        if (knownMv || hasMvTitleMarker(title)) return delta ?: 0L
+        val sourceIsMv = soundSourceVideoId != null &&
+            soundSourceVideoId != rowVideoId &&
+            sourceRecordedAsMv
+        if (sourceIsMv || hasMvTitleMarker(title)) return delta ?: 0L
         // A legacy record has no catalogue id of its own to compare with; the
         // shortest length recorded against the file is the song's. The scan has
         // always measured against that, even when it belongs to the same id.

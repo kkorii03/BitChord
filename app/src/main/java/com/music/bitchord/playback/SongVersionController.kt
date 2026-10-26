@@ -264,6 +264,15 @@ internal class SongVersionController(
         ).minOrNull()
         val file = fileDurationMs?.takeIf { it > 0L }
         val soundSource = Downloads.savedSoundSourceFor(song.videoId)
+        // A different source only means the official MV when that source was
+        // itself recorded as a video. A song version fetched from another id
+        // (a quality replacement) must not be replaced again.
+        val sourceMeta = soundSource
+            ?.takeIf { it != song.videoId }
+            ?.let { Downloads.savedMetadataFor(it) }
+        val sourceRecordedAsMv = sourceMeta != null &&
+            (sourceMeta.isVideo == true ||
+                (sourceMeta.isVideo == null && DownloadedMvPolicy.hasMvTitleMarker(sourceMeta.title)))
         val catalogId = cached?.videoId?.takeIf { it != song.videoId }
             ?: playId.takeIf { it != song.videoId }
         val mvSound = DownloadedMvPolicy.isMvSound(
@@ -275,6 +284,8 @@ internal class SongVersionController(
             soundSourceVideoId = soundSource,
             catalogVideoId = catalogId,
             catalogDurationMs = catalogDuration,
+            artist = song.artist,
+            sourceRecordedAsMv = sourceRecordedAsMv,
         )
         // The older two-and-a-half-second rule still guards a file with no
         // recorded source; it is the rule the downloads scan uses and must not
