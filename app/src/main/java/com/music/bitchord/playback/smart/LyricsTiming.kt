@@ -1429,6 +1429,23 @@ object LyricsTiming {
         audio: ByteArray,
         language: String,
         generation: Long,
+    ): com.music.bitchord.data.lyrics.Deepgram.Answer? =
+        listenForSongWith(context, videoId, key, audio, language, generation) { wav, lang ->
+            com.music.bitchord.data.lyrics.Deepgram.listen(
+                wav,
+                lang,
+                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
+            )
+        }
+
+    internal suspend fun listenForSongWith(
+        context: Context,
+        videoId: String,
+        key: Int,
+        audio: ByteArray,
+        language: String,
+        generation: Long,
+        listen: suspend (ByteArray, String) -> com.music.bitchord.data.lyrics.Deepgram.Answer,
     ): com.music.bitchord.data.lyrics.Deepgram.Answer? {
         var attempt = 0
         while (true) {
@@ -1447,18 +1464,22 @@ object LyricsTiming {
                     delay(quiet)
                 }
                 if (!songGenerations.isCurrent(videoId, generation)) return null
-                val heard = com.music.bitchord.data.lyrics.Deepgram.listen(
-                    audio,
-                    language,
-                    com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
-                )
+                val heard = listen(audio, language)
+                if (heard.httpCode == 429) {
+                    // Publish the account-wide deadline while the gate is
+                    // still held. Unlocking first would let a waiting song
+                    // acquire it in the gap and send another request before
+                    // this one was written down.
+                    val wait = SongSyncRetry.retryDelayMs(heard.retryAfterMs, attempt)
+                    songQuietUntilMs = System.currentTimeMillis() + wait
+                } else if (songGenerations.isCurrent(videoId, generation)) {
+                    songQuietUntilMs = 0L
+                }
                 if (!songGenerations.isCurrent(videoId, generation)) return null
-                if (heard.httpCode != 429) songQuietUntilMs = 0L
                 heard
             }
             if (answer.httpCode != 429) return answer
             val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
-            songQuietUntilMs = System.currentTimeMillis() + wait
             rateLimitedLog(videoId, wait)
             if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
                 !SongSyncRetry.canWaitInline(wait)
@@ -1812,7 +1833,11 @@ object LyricsTiming {
                     http = result.http,
                 )
             }
-            recheckTokens[song.videoId] = DownloadedSyncCheck.Recheck.DONE.token
+            recheckTokens[song.videoId] = DownloadedSyncCheck.recheckToken(
+                decision,
+                reason,
+                replacementApplied = decision.replace && chosen != null,
+            ).token
             _changes.tryEmit(song.videoId)
             if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
                 bestFresh

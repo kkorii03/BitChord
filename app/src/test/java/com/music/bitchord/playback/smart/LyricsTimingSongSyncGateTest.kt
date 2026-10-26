@@ -3,6 +3,7 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.testutil.FakeContext
@@ -13,11 +14,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.selects.SelectClause2
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -107,5 +110,84 @@ class LyricsTimingSongSyncGateTest {
         }
 
         assertNull(result)
+    }
+
+    /**
+     * The 429 quiet deadline is account-wide. It has to be written before the
+     * gate is released, otherwise a song waiting on that gate can acquire it
+     * and send its own request in the gap.
+     */
+    @Test
+    fun `a 429 publishes its quiet deadline before the gate is released`() = runBlocking {
+        val gate = gateField.get(LyricsTiming) as Mutex
+        val quietField = LyricsTiming::class.java.getDeclaredField("songQuietUntilMs").apply {
+            isAccessible = true
+        }
+        val observing = ObservingMutex(gate) { quietField.getLong(LyricsTiming) }
+        setStaticFinal(gateField, observing)
+        quietField.setLong(LyricsTiming, 0L)
+        val before = System.currentTimeMillis()
+        try {
+            val answer = LyricsTiming.listenForSongWith(
+                context = context,
+                videoId = "quiet-song",
+                key = 7,
+                audio = ByteArray(16),
+                language = "en",
+                generation = 0L,
+                listen = { _, _ ->
+                    Deepgram.Answer(
+                        words = null,
+                        httpCode = 429,
+                        retryAfterMs = SongSyncRetry.MAX_STATED_DELAY_MS,
+                    )
+                },
+            )
+
+            assertNull(answer)
+            val published = observing.quietAtUnlock
+            assertTrue(published != null && published > before)
+        } finally {
+            setStaticFinal(gateField, gate)
+            quietField.setLong(LyricsTiming, 0L)
+        }
+    }
+
+    /** [songSyncGate] is a `val`, which Kotlin compiles to a static final field. */
+    private fun setStaticFinal(field: java.lang.reflect.Field, value: Any?) {
+        val unsafeClass = Class.forName("sun.misc.Unsafe")
+        val unsafe = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+        val base = unsafeClass.getMethod("staticFieldBase", java.lang.reflect.Field::class.java)
+            .invoke(unsafe, field)
+        val offset = unsafeClass
+            .getMethod("staticFieldOffset", java.lang.reflect.Field::class.java)
+            .invoke(unsafe, field) as Long
+        unsafeClass
+            .getMethod("putObject", Any::class.java, Long::class.javaPrimitiveType, Any::class.java)
+            .invoke(unsafe, base, offset, value)
+    }
+}
+
+/** A gate that reads the quiet deadline at the moment it is unlocked. */
+private class ObservingMutex(
+    private val delegate: Mutex,
+    private val quiet: () -> Long,
+) : Mutex {
+    @Volatile
+    var quietAtUnlock: Long? = null
+
+    override val isLocked: Boolean get() = delegate.isLocked
+
+    override val onLock: SelectClause2<Any?, Mutex> get() = delegate.onLock
+
+    override suspend fun lock(owner: Any?) = delegate.lock(owner)
+
+    override fun tryLock(owner: Any?): Boolean = delegate.tryLock(owner)
+
+    override fun holdsLock(owner: Any): Boolean = delegate.holdsLock(owner)
+
+    override fun unlock(owner: Any?) {
+        quietAtUnlock = quiet()
+        delegate.unlock(owner)
     }
 }

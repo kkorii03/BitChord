@@ -95,6 +95,18 @@ object DownloadedSyncCheck {
     )
 
     /**
+     * The state to report after a re-check. A no-answer without a replacement
+     * did not complete the check, so keep the failure reason token for the
+     * next play rather than claiming [Recheck.DONE].
+     */
+    fun recheckToken(
+        decision: Replacement,
+        reason: Recheck,
+        replacementApplied: Boolean = false,
+    ): Recheck =
+        if (decision.recordVersion || replacementApplied) Recheck.DONE else reason
+
+    /**
      * Chooses between the file's own lyrics and a fresh provider answer.
      *
      * The comparison is the same one [shouldReplace] makes: the winner is

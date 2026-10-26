@@ -310,4 +310,58 @@ class DownloadedSyncCheckNoAnswerTest {
         assertFalse(decision.replace)
         assertTrue(decision.recordVersion)
     }
+
+    @Test
+    fun aNoAnswerWithoutAReplacementKeepsTheReasonToken() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownNoAnswer = true,
+        )
+
+        assertEquals(
+            Recheck.UNVERIFIED,
+            DownloadedSyncCheck.recheckToken(decision, Recheck.UNVERIFIED),
+        )
+    }
+
+    @Test
+    fun aReplacementThatWasNotAppliedKeepsTheReasonToken() {
+        val decision = DownloadedSyncCheck.Replacement(
+            replace = true,
+            winner = Winner.STORED,
+            key = 10,
+            recordVersion = false,
+        )
+
+        assertEquals(
+            Recheck.LOW_MATCH,
+            DownloadedSyncCheck.recheckToken(decision, Recheck.LOW_MATCH),
+        )
+    }
+
+    @Test
+    fun aReplacementReportsDoneEvenWhenTheReasonWasLowMatch() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = 90,
+            freshMatchPercent = null,
+            freshKey = 20,
+        )
+
+        assertEquals(
+            Recheck.DONE,
+            DownloadedSyncCheck.recheckToken(
+                decision,
+                Recheck.LOW_MATCH,
+                replacementApplied = true,
+            ),
+        )
+    }
 }

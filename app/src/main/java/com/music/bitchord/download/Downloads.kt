@@ -1006,6 +1006,7 @@ object Downloads {
         artworkUri: String? = null,
         soundSourceVideoId: String = fetched.videoId,
         hq: HqDownloadSource? = null,
+        rewritten: Boolean = false,
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
@@ -1091,28 +1092,16 @@ object Downloads {
             clearMvSoundSuspects(previousSuspects + ids)
             val context = appContext
             val fileReplaced = previousUris.any { it != uri.toString() }
-            if (context != null && (fileReplaced || previousSuspects.isNotEmpty())) {
-                // A song's file was replaced. Any AI timing answer was measured
-                // against the old bytes, so drop it (and the spent engine
-                // record) and let the song check run against the new
-                // recording. Video rows keep their own timing.
-                buildSet {
-                    if (!asked.isVideo) add(asked.videoId)
-                    if (!fetched.isVideo) add(fetched.videoId)
-                    addAll(previousSuspects)
-                }.forEach { id ->
-                    runCatching {
-                        com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, id)
-                    }
-                }
-            }
             // Other ids that named the old file are aliases of the same
             // download (a music video and its song). Point them at the new
             // file rather than dropping them, so a playlist that was filed
             // under the old id keeps its track.
-            val staleIds = _saved.value
-                .filterValues { value -> value != uri.toString() && value in previousUris }
-                .keys.toList()
+            val aliasIds = _saved.value
+                .filterValues { value ->
+                    value in previousUris || (rewritten && value == uri.toString())
+                }
+                .keys
+            val staleIds = aliasIds.filter { _saved.value[it] != uri.toString() }
             if (staleIds.isNotEmpty()) {
                 record(
                     saved = { it + staleIds.associateWith { uri.toString() } },
@@ -1130,6 +1119,31 @@ object Downloads {
                     },
                 )
             }
+            // A song's file was replaced. Any AI timing answer was measured
+            // against the old bytes, so drop it (and the spent engine record)
+            // and let the song check run against the new recording. A rewrite
+            // can land on the same URI — a private/legacy re-download, or an
+            // HQ upgrade of the same extension — so the write itself is a
+            // replacement, not just a changed path. Alias rows repointed above
+            // were measured against the old bytes too. Video rows keep their
+            // own timing.
+            val checkIds = replacedCheckIds(
+                asked = asked,
+                fetched = fetched,
+                previousSuspects = previousSuspects,
+                aliasIds = aliasIds,
+                fileReplaced = fileReplaced,
+                rewritten = rewritten,
+                hadPreviousFile = previousUris.isNotEmpty(),
+                hq = hq,
+            )
+            if (context != null) {
+                checkIds.forEach { id ->
+                    runCatching {
+                        com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, id)
+                    }
+                }
+            }
             if (context != null) {
                 previousUris.forEach { old ->
                     if (old != uri.toString() && _saved.value.values.none { it == old }) {
@@ -1137,6 +1151,39 @@ object Downloads {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * The rows whose stored check no longer belongs to the file on disk.
+     *
+     * [fileReplaced] means the new file landed under a different URI;
+     * [rewritten] means these bytes were written again even though the URI is
+     * unchanged (a private/legacy re-download, or an HQ upgrade of the same
+     * extension). [hadPreviousFile] keeps a first-ever download from counting
+     * as a replacement just because it wrote bytes. [hq] is always a
+     * replacement. [aliasIds] are the other rows that named the old file,
+     * including ones already pointing at the same path.
+     */
+    internal fun replacedCheckIds(
+        asked: Song,
+        fetched: Song,
+        previousSuspects: Collection<String>,
+        aliasIds: Collection<String>,
+        fileReplaced: Boolean,
+        rewritten: Boolean,
+        hadPreviousFile: Boolean,
+        hq: HqDownloadSource?,
+    ): Set<String> {
+        val replacedInPlace = rewritten && hadPreviousFile
+        if (!fileReplaced && previousSuspects.isEmpty() && !replacedInPlace && hq == null) {
+            return emptySet()
+        }
+        return buildSet {
+            if (!asked.isVideo) add(asked.videoId)
+            if (!fetched.isVideo) add(fetched.videoId)
+            addAll(previousSuspects)
+            addAll(aliasIds)
         }
     }
 
@@ -1616,7 +1663,14 @@ object Downloads {
                             artwork = artwork?.await(),
                         )
                     }
-                    remember(song, track, savedUri, route.downloadFormat, hq = plan.hq)
+                    remember(
+                        song,
+                        track,
+                        savedUri,
+                        route.downloadFormat,
+                        hq = plan.hq,
+                        rewritten = true,
+                    )
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
                     clear(id)
@@ -1641,7 +1695,15 @@ object Downloads {
                 val artworkUri = MediaTagger.persistArtwork(context, track.thumbnailUrl, cover)
                 val savedUri = destination.commit()
                 pending = null
-                remember(song, track, savedUri, route.downloadFormat, artworkUri, hq = plan.hq)
+                remember(
+                    song,
+                    track,
+                    savedUri,
+                    route.downloadFormat,
+                    artworkUri,
+                    hq = plan.hq,
+                    rewritten = true,
+                )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
                 clear(id)
