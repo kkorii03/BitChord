@@ -1017,7 +1017,7 @@ class LyricsController(
         // saved without words is heard once too (see ensureRefineHeard).
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
-        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, audioSource)) return
+        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, timing, audioSource)) return
         val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
         if (refineHeardStartedFor == key) return
         refineHeardStartedFor = key
