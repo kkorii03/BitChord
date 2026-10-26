@@ -1,0 +1,4 @@
+(Opus 검토 결과 수정 지시 — 이 브랜치의 고음질 배지·출력 비트 깊이 작업 중 한 군데가 위험하다. 다른 부분은 유지.)
+결함: AudioOutputPolicy.shouldUseFloatOutput / OutputNegotiator 에서 '폰 내장 스피커(AudioRouting.Kind.PHONE)는 PCM16 고정' 안전 규칙을 지웠다. 지워진 원래 주석의 근거: 일부 OEM 스피커 경로는 Float AudioTrack 을 '받아들인 뒤' AudioFlinger 에서 PCM16 으로 바꾸며, 영향받는 삼성 FLAC 디코더에서 타임스탬프 불연속과 심한 왜곡이 생긴다. 사용자 폰이 삼성 S24 Ultra 이고, 이 문제는 트랙이 '거부'되는 게 아니라 받아들여진 뒤 깨지는 것이라 PrecisionAudioSink 의 거부 시 PCM16 대체로는 막을 수 없다.
+고칠 것: (1) PHONE 경로는 다시 항상 PCM16(대체 사유 문구는 원래의 '제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트 PCM으로 제한' 유지). (2) Bluetooth·유선·USB·HDMI 같은 외부 경로는 이 브랜치처럼 광고된 인코딩과 무관하게 Float 요청이면 Float(거부 시 PCM16 대체) — 이게 이번 작업의 목적(LDAC 24비트)이므로 유지. (3) 클래스 주석을 위 두 규칙과 그 이유(스피커=받아들인 뒤 왜곡, 외부=믹서는 float 수용)로 정확히 다시 쓴다. (4) AudioOutputPolicyTest·OutputNegotiatorTest 에 'PHONE 은 FLOAT_32 요청이어도 PCM16', 'BLUETOOTH 는 PCM16 만 광고해도 FLOAT' 테스트를 넣고 직접 실행해 통과.
+마지막에 6줄 이내로 요약: 수정 파일 / 규칙 / 테스트 결과
