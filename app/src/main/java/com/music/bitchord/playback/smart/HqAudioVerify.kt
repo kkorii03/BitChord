@@ -11,6 +11,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqReferenceCache
@@ -145,6 +146,22 @@ object HqAudioVerify {
             return@withContext HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL)
         }
         val trackId = stream.trackId
+        val sourceName = SourceRegistry.config(sourceId)?.displayName ?: "source"
+        // A source row that names an arrangement the song itself does not is
+        // refused before the expensive decode. The same vocabulary decides the
+        // download health check, so a piano cover cannot enter through one
+        // path after being kept out of the other.
+        if (DownloadHealthPolicy.isArrangement(
+                sourceTitle = stream.trackTitle,
+                sourceArtist = stream.trackArtist,
+                songTitle = target.title,
+                songArtist = target.artist,
+            )
+        ) {
+            reject(context, youtubeId, sourceId, trackId)
+            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
+            return@withContext null
+        }
         HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let { return@withContext it }
         if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
             return@withContext null
@@ -155,7 +172,6 @@ object HqAudioVerify {
         // again once it is on — so this is exactly the work to leave undone
         // rather than to spend battery on.
         if (!PowerState.screenOn) return@withContext null
-        val sourceName = SourceRegistry.config(sourceId)?.displayName ?: "source"
         // A manifest is a container the decoder here cannot read; it cannot be
         // proved and must not be swapped in blind.
         if (StreamContainer.isManifest(stream.url)) {
@@ -207,7 +223,14 @@ object HqAudioVerify {
                         return@coroutineScope null
                     }
                     val tier = HqQuality.tierOf(stream.format)
-                    val verified = HqVerificationStore.Verified(offset, rate, match, tier)
+                    val verified = HqVerificationStore.Verified(
+                        offsetMs = offset,
+                        rate = rate,
+                        matchPercent = match,
+                        tier = tier,
+                        sourceTitle = stream.trackTitle,
+                        sourceArtist = stream.trackArtist,
+                    )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
                     // A downloaded or pre-saved copy may now be replaceable with
                     // this newly proved rung, even if it was already high quality.
@@ -223,6 +246,129 @@ object HqAudioVerify {
             // one. At worst a third caller arriving after the wait starts a
             // fresh lock, and the verdict cache still answers it.
             locks.remove(key, lock)
+        }
+    }
+
+    /** What the sound comparison says about a file already on the device. */
+    sealed interface DownloadedSound {
+        data class Accepted(val verified: HqVerificationStore.Verified) : DownloadedSound
+        data object Rejected : DownloadedSound
+        data object Unavailable : DownloadedSound
+    }
+
+    /**
+     * Compares a downloaded file with the YouTube song version.
+     *
+     * The reference is the same opening [verify] uses, so a downloaded file is
+     * held to the same standard as a stream candidate: a cover, a live take or
+     * another arrangement is refused. A verdict already stored for the pair is
+     * returned without decoding, and a rejection is remembered for the same
+     * reason. [Unavailable] means the question could not be answered — no
+     * reference, screen off, unreadable file — and must never be treated as a
+     * rejection: deleting a file because the network was down would be worse
+     * than leaving it alone.
+     *
+     * The file is decoded as a stream, ninety seconds at a time, never loaded
+     * whole. Nothing here polls or schedules itself; the playback health check
+     * calls it once for the file it is about to play.
+     */
+    suspend fun verifyDownloaded(
+        context: Context,
+        youtubeId: String,
+        uri: String,
+        sourceConfigId: String?,
+        trackId: String?,
+        tier: HqTier?,
+    ): DownloadedSound = withContext(Dispatchers.IO) {
+        if (youtubeId.isBlank() || uri.isBlank()) return@withContext DownloadedSound.Unavailable
+        if (SourceTrackKeys.parse(youtubeId) != null) {
+            return@withContext DownloadedSound.Accepted(
+                HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL),
+            )
+        }
+        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
+            return@withContext DownloadedSound.Accepted(it)
+        }
+        if (sourceConfigId != null && HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)) {
+            return@withContext DownloadedSound.Rejected
+        }
+        if (!PowerState.screenOn) return@withContext DownloadedSound.Unavailable
+
+        val key = "download\u0001$youtubeId\u0001${sourceConfigId.orEmpty()}\u0001${trackId.orEmpty()}"
+        val lock = locks.getOrPut(key) { Mutex() }
+        try {
+            return@withContext lock.withLock {
+                coroutineScope {
+                    HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
+                        return@coroutineScope DownloadedSound.Accepted(it)
+                    }
+                    if (sourceConfigId != null &&
+                        HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)
+                    ) {
+                        return@coroutineScope DownloadedSound.Rejected
+                    }
+                    val candidateDeferred = async { localCandidateFeatures(context, uri) }
+                    val reference = referenceFeatures(context, youtubeId)
+                    if (reference == null) {
+                        candidateDeferred.cancel()
+                        return@coroutineScope DownloadedSound.Unavailable
+                    }
+                    val candidate = candidateDeferred.await()
+                        ?: return@coroutineScope DownloadedSound.Unavailable
+                    val result = runCatching {
+                        ChromaAlignment.align(reference, candidate, videoComplete = false)
+                    }.getOrNull() ?: return@coroutineScope DownloadedSound.Unavailable
+                    val match = result.matchPercent ?: 0
+                    val offset = result.map?.map(0L) ?: 0L
+                    val rate = result.rate ?: 1.0
+                    val verdict = HqMatchPolicy.verdict(match, offset, rate)
+                    logVerdict(
+                        title = "downloaded file",
+                        sourceName = "download",
+                        match = match,
+                        offset = offset,
+                        accepted = verdict.accepted,
+                        about = youtubeId,
+                    )
+                    if (!verdict.accepted) {
+                        if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank()) {
+                            HqVerificationStore.reject(context, youtubeId, sourceConfigId, trackId)
+                        }
+                        return@coroutineScope DownloadedSound.Rejected
+                    }
+                    DownloadedSound.Accepted(
+                        HqVerificationStore.Verified(
+                            offsetMs = offset,
+                            rate = rate,
+                            matchPercent = match,
+                            tier = tier ?: HqTier.NORMAL,
+                        ),
+                    )
+                }
+            }
+        } finally {
+            locks.remove(key, lock)
+        }
+    }
+
+    /** The downloaded file's opening, read through the same extractor as a stream. */
+    private suspend fun localCandidateFeatures(
+        context: Context,
+        uri: String,
+    ): ChromaAlignment.Features? {
+        val song = Song(
+            videoId = "",
+            title = "",
+            artist = "",
+            thumbnailUrl = null,
+            localUri = uri,
+        )
+        val source = VersionAudioAligner.openDataSource(context, song) ?: return null
+        return try {
+            val coroutine = currentCoroutineContext()
+            featuresOf(source) { coroutine.isActive && PowerState.screenOn }
+        } finally {
+            runCatching { source.close() }
         }
     }
 

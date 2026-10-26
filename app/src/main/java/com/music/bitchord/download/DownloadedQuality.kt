@@ -62,6 +62,30 @@ object DownloadedQuality {
     fun qualityForUpgrade(badge: String?, verified: HqTier?): DownloadQuality =
         betterVerified(badge, verified)?.let { qualityFor(it) } ?: DownloadQuality.LOSSLESS
 
+    /**
+     * The format a saved badge describes, for callers that need to ask a
+     * source whether it has something better than what is already on disk.
+     *
+     * Only the properties the badge can honestly state are filled in: a
+     * lossless file is named FLAC, and a lossy one keeps the codec and the
+     * bitrate the badge carries. Nothing is invented about depth or rate.
+     */
+    fun formatOf(badge: String?): StreamFormat {
+        val value = badge?.trim()?.uppercase(Locale.ROOT).orEmpty()
+        return when {
+            value.startsWith("DOLBY") -> StreamFormat(codec = "eac3-joc")
+            value.startsWith("FLAC") || value.startsWith("ALAC") ->
+                StreamFormat(codec = if (value.startsWith("ALAC")) "alac" else "flac")
+            value.startsWith("AAC") ->
+                StreamFormat(codec = "aac", kbps = KBPS.find(value)?.groupValues?.getOrNull(1)?.toIntOrNull())
+            value.startsWith("OPUS") ->
+                StreamFormat(codec = "opus", kbps = KBPS.find(value)?.groupValues?.getOrNull(1)?.toIntOrNull())
+            value.startsWith("MP3") ->
+                StreamFormat(codec = "mp3", kbps = KBPS.find(value)?.groupValues?.getOrNull(1)?.toIntOrNull())
+            else -> StreamFormat()
+        }
+    }
+
     /** The download rung that asks a source for [tier]'s copy. */
     fun qualityFor(tier: HqTier): DownloadQuality = when (tier) {
         HqTier.DOLBY_ATMOS -> DownloadQuality.HIGH

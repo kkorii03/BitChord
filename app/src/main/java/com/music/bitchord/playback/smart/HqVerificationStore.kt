@@ -25,6 +25,15 @@ object HqVerificationStore {
         val rate: Double,
         val matchPercent: Int,
         val tier: HqTier,
+        /**
+         * The source row's own title and uploader, when the caller had them.
+         *
+         * Kept with the verdict so a later download can apply the arrangement
+         * check to the names the *source* used, not only to the catalogue row
+         * the file was filed under. Defaulted for verdicts stored before this.
+         */
+        val sourceTitle: String? = null,
+        val sourceArtist: String? = null,
     )
 
     /** One accepted pair, with the ids needed to ask for the very same stream again. */
@@ -144,6 +153,9 @@ object HqVerificationStore {
             .replace('\n', ' ')
             .replace('\t', ' ')
 
+    private fun String.sanitized(): String =
+        replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+
     private fun data(context: Context): Data {
         cached?.let { return it }
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -155,7 +167,9 @@ object HqVerificationStore {
             val rate = parts[2].toDoubleOrNull() ?: return@forEach
             val match = parts[3].toIntOrNull() ?: return@forEach
             val tier = runCatching { HqTier.valueOf(parts[4]) }.getOrNull() ?: return@forEach
-            data.verified[parts[0]] = Verified(offset, rate, match, tier)
+            val sourceTitle = parts.getOrNull(5)?.takeIf { it.isNotBlank() }
+            val sourceArtist = parts.getOrNull(6)?.takeIf { it.isNotBlank() }
+            data.verified[parts[0]] = Verified(offset, rate, match, tier, sourceTitle, sourceArtist)
         }
         prefs.getString(KEY_REJECTED, null)?.lineSequence()?.forEach { line ->
             if (line.isNotBlank()) data.rejected += line
@@ -166,8 +180,15 @@ object HqVerificationStore {
 
     private fun save(context: Context, data: Data) {
         val verified = data.verified.entries.joinToString("\n") { (key, value) ->
-            listOf(key, value.offsetMs, value.rate, value.matchPercent, value.tier.name)
-                .joinToString("\t")
+            listOf(
+                key,
+                value.offsetMs,
+                value.rate,
+                value.matchPercent,
+                value.tier.name,
+                value.sourceTitle.orEmpty().sanitized(),
+                value.sourceArtist.orEmpty().sanitized(),
+            ).joinToString("\t")
         }
         val rejected = data.rejected.joinToString("\n")
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

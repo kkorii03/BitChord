@@ -61,6 +61,16 @@ data class SourceStream(
      * may be the cover that the other is not.
      */
     val trackId: String? = null,
+    /**
+     * The source row's own title and uploader, when the caller had them.
+     *
+     * The downloaded file is filed under the catalogue song's name, so these
+     * are the only names that can still say the source supplied an arrangement
+     * (a piano cover, an instrumental, a karaoke backing) rather than the
+     * record. See [com.music.bitchord.data.sources.DownloadHealthPolicy].
+     */
+    val trackTitle: String? = null,
+    val trackArtist: String? = null,
 )
 
 /**

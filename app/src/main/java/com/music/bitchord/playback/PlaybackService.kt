@@ -125,6 +125,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.download.DownloadHealth
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
@@ -1131,6 +1132,8 @@ class PlaybackService : MediaLibraryService() {
     private var lastCompletedSong: Song? = null
 
     private var serviceLyricsJob: Job? = null
+    /** The one health check for the downloaded file now playing. */
+    private var downloadHealthJob: Job? = null
     private var translationAheadJob: Job? = null
     private var currentTranslationAheadJob: Job? = null
     private var serviceLyrics: List<LyricLine>? = null
@@ -4311,6 +4314,7 @@ class PlaybackService : MediaLibraryService() {
         // A pass interrupted by a process death resumes on the next play. The
         // scheduler debounces and uses unique work, so this is cheap per track.
         com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
+        scheduleDownloadHealthCheck(played, exoPlayer)
         // A play beginning is what ends the last one's upgrade verdict. Here
         // rather than in [QualityUpgrade.forget] because that runs on the
         // failure and rollback paths, where a previous "no" is exactly what
@@ -9318,6 +9322,61 @@ class PlaybackService : MediaLibraryService() {
         val item = exoPlayer.getMediaItemAt(index)
         val song = runCatching { item.toSong() }.getOrNull() ?: return null
         return song to item.fromAutoplay
+    }
+
+    /**
+     * Asks the download health check about the track that just became current.
+     *
+     * One job at a time, for the track in hand. The check is event-driven —
+     * this transition is the event — and a file whose version was already
+     * checked returns immediately. A wrong verdict swaps the item onto the
+     * song-version stream at the same position; the repair itself is queued by
+     * [DownloadHealth].
+     */
+    private fun scheduleDownloadHealthCheck(song: Song?, player: ExoPlayer) {
+        if (song == null || song.videoId.isBlank()) return
+        downloadHealthJob?.cancel()
+        downloadHealthJob = scope.launch(TrackLog.about(song.videoId)) {
+            val outcome = DownloadHealth.onPlayback(this@PlaybackService, song) ?: return@launch
+            val wrong = outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.WRONG_RECORDING ||
+                outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.ARRANGEMENT
+            if (!wrong || song.localUri == null) return@launch
+            withContext(Dispatchers.Main) {
+                val live = this@PlaybackService.player ?: return@withContext
+                val item = live.currentMediaItem ?: return@withContext
+                if (item.mediaId != song.videoId) return@withContext
+                restreamWrongRecording(live, item, live.currentPosition)
+            }
+        }
+    }
+
+    /**
+     * Replaces a condemned downloaded file with the song-version stream, in
+     * place and at the same position.
+     *
+     * The file is left on disk, marked wrong, until the repair download
+     * commits its replacement — see [Downloads.markWrongRecording]. Rebuilding
+     * the item without the local uri sends [Song.toMediaItem] down its
+     * streaming branch, and the record's wrong flag keeps every later build
+     * from offering the same file again.
+     */
+    private fun restreamWrongRecording(
+        player: ExoPlayer,
+        item: MediaItem,
+        position: Long,
+    ): Boolean {
+        val restreamed = item.toSong().copy(localUri = null, localPath = null).toMediaItem()
+        if (restreamed.localConfiguration?.uri == item.localConfiguration?.uri) return false
+        TrackLog.w(
+            "BitChord",
+            "${item.mediaId} is a wrong recording; streaming the song version instead",
+            about = item.mediaId,
+        )
+        recoveries.remove(item.mediaId)
+        player.replaceMediaItem(player.currentMediaItemIndex, restreamed)
+        player.seekTo(player.currentMediaItemIndex, position)
+        player.prepare()
+        return true
     }
 
     private fun loadLyricsForCurrentTrack() {

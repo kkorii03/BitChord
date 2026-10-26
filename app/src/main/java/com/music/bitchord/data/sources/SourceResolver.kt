@@ -684,6 +684,7 @@ object SourceResolver {
     suspend fun forDownload(
         target: TrackMatcher.Target,
         request: StreamRequest = requestForDownload(),
+        excludeSources: Set<String> = emptySet(),
     ): SourceStream? = coroutineScope {
         if (target.title.isBlank()) return@coroutineScope null
         val wantsLossless = when (request) {
@@ -704,6 +705,7 @@ object SourceResolver {
         // YouTube one. Minus any addon whose manifest says `allowDownloads: 0`:
         // that one plays, but the file comes from whoever is next in line.
         val active = SourceRegistry.activeForDownload()
+            .filterNot { it.configId in excludeSources }
         // YouTube can be switched off, and a download still goes to it when
         // nothing here answers — the download path never consults this list. So
         // an absent YouTube means everything enabled outranks it, which is
@@ -1325,6 +1327,8 @@ object SourceResolver {
                 durationSec = TrackMatcher.secondsOf(match.durationText),
                 sourceConfigId = source.configId,
                 trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId,
+                trackTitle = match.title,
+                trackArtist = match.artist,
             )
             val served = stream.format
             if (!wantsLossless || HqQuality.isLosslessTier(served) || served.isDolbyAtmos || served.statesNothingLossy) {

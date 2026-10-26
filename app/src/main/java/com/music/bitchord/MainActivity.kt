@@ -236,6 +236,7 @@ import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.download.DownloadSession
+import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.download.DownloadStore
 import com.music.bitchord.download.DownloadedQuality
 import com.music.bitchord.download.MediaTagger
@@ -5146,15 +5147,11 @@ private fun BitChordApp(
                 // have landed.
                 onRedownloadQuality = if (songIsDownloaded) {
                     {
-                        Downloads.enqueue(
-                            context,
-                            song,
-                            allowMetered = true,
-                            quality = DownloadedQuality.qualityForUpgrade(
-                                song.downloadFormat,
-                                HqVerificationStore.bestTier(context, song.videoId),
-                            ),
-                        )
+                        // The same verified-pair replacement the automatic pass
+                        // uses, started by hand. With no verdict yet it runs one
+                        // search and refuses to replace the file until the sound
+                        // comparison accepts the candidate.
+                        HqLibraryUpgrade.requestUpgrade(context, song)
                     }
                 } else {
                     null

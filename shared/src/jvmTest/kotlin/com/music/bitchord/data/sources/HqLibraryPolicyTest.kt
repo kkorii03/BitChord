@@ -150,6 +150,23 @@ class HqLibraryPolicyTest {
     }
 
     @Test
+    fun `an arrangement source is kept out of the library pass`() {
+        val plan = HqLibraryPolicy.select(
+            listOf(
+                entry("song", current = HqTier.NORMAL, verified = HqTier.LOSSLESS_16)
+                    .copy(
+                        songTitle = "Song",
+                        songArtist = "Artist",
+                        sourceTitle = "Song (Piano Cover)",
+                        sourceArtist = "Piano Dream",
+                    ),
+            ),
+            prefetchLimit = 500,
+        )
+        assertTrue(plan.isEmpty)
+    }
+
+    @Test
     fun `the best verified rung wins when one song has several proved rows`() {
         val plan = HqLibraryPolicy.select(
             listOf(
