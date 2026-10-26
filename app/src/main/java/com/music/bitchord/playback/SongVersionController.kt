@@ -154,6 +154,7 @@ internal class SongVersionController(
                     null
                 } ?: continue
                 if (resolved.videoId == song.videoId) continue
+                if (!SongVersionPolicy.sameSongVersion(song, resolved)) continue
                 if (index == exoPlayer.currentMediaItemIndex) continue
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
@@ -453,7 +454,9 @@ internal class SongVersionController(
         } else {
             null
         }
-        if (cached != null && cachedFile != null) {
+        if (cached != null && cachedFile != null &&
+            SongVersionPolicy.sameSongVersion(lookupSong, cached)
+        ) {
             // A cached answer whose recording is already on the device plays
             // from that file, with no network, even offline.
             installPreResolvedVersion(
@@ -469,20 +472,24 @@ internal class SongVersionController(
             // The download record can name this file's song version even when
             // this run has not looked it up ? see Downloads.remember. Playing
             // that id needs no network at all.
-            downloadedSongVersionFor(lookupSong, offline)?.let { downloaded ->
-                val streamOnly = downloaded.localUri == null
-                installPreResolvedVersion(
-                    exoPlayer,
-                    mediaId,
-                    song,
-                    downloaded,
-                    viaDownload = !streamOnly,
-                    forceStream = streamOnly,
-                )
-                return
-            }
+            downloadedSongVersionFor(lookupSong, offline)
+                ?.takeIf { SongVersionPolicy.sameSongVersion(lookupSong, it) }
+                ?.let { downloaded ->
+                    val streamOnly = downloaded.localUri == null
+                    installPreResolvedVersion(
+                        exoPlayer,
+                        mediaId,
+                        song,
+                        downloaded,
+                        viaDownload = !streamOnly,
+                        forceStream = streamOnly,
+                    )
+                    return
+                }
         }
-        if (cached != null && !offline) {
+        if (cached != null && !offline &&
+            SongVersionPolicy.sameSongVersion(lookupSong, cached)
+        ) {
             // Offline, a cached answer is only usable when its recording is
             // already on the device. Otherwise the downloaded video file keeps
             // playing rather than being replaced by a stream that cannot open.
@@ -566,7 +573,9 @@ internal class SongVersionController(
                 null
             }
             try {
-                if (resolved != null) {
+                if (resolved != null &&
+                    SongVersionPolicy.sameSongVersion(lookupSong, resolved)
+                ) {
                     // Verification of an old download resolved a different
                     // recording: the file is the video's sound even when its
                     // title and length did not prove it up front. Mark it and
@@ -601,7 +610,7 @@ internal class SongVersionController(
                         version,
                         forceStream = streamOnly,
                     )
-                } else if (localFile && !lookupFailed) {
+                } else if (resolved == null && localFile && !lookupFailed) {
                     // The lookup answered "there is no version" rather than
                     // failing; keep the downloaded video with a reason that
                     // says why it stayed. Nothing is recorded about the file

@@ -1,5 +1,9 @@
 package com.music.bitchord.data.net
 
+import com.music.bitchord.data.CatalogSongMapper
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher
+
 /**
  * The two decisions behind the pre-playback song-version lookup, kept free of
  * Android types so a plain JVM test can exercise them.
@@ -138,6 +142,25 @@ object SongVersionPolicy {
         typeUnknown: Boolean,
         knownMissing: Boolean,
     ): Boolean = wantsSongVersion(isVideo, typeUnknown) && !knownMissing
+
+    /**
+     * Whether [version] is the same song's song version of [row], so an
+     * automatic pre-audio replacement may install it.
+     *
+     * A cover stays the performance the listener chose: its arrangement marker,
+     * its singer, or the original artist its byline names are not the same
+     * recording as the catalogue release, however exactly the title reads. A
+     * music video and the catalogue release it promotes are the same song, so
+     * the ordinary MV → ATV swap still passes.
+     */
+    fun sameSongVersion(row: Song, version: Song): Boolean {
+        if (CatalogSongMapper.isCover(row)) return false
+        // A music video's runtime includes visual intros/outros the catalogue
+        // release does not, so runtime cannot decide identity here.
+        val target = TrackMatcher.targetOf(row).copy(durationSec = null)
+        return TrackMatcher.sameRecording(version, target) ||
+            TrackMatcher.isOriginalRecording(version, target)
+    }
 
     /**
      * How much longer than the catalogue track a downloaded song's file may be
