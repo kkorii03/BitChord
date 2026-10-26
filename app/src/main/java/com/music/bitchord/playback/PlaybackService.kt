@@ -4452,7 +4452,7 @@ class PlaybackService : MediaLibraryService() {
                 // Media3 to repeat that would turn three retries into twelve.
                 HqHostTracker.noteRateLimited(
                     null,
-                    HqRetryPolicy.retryAfterHeader(refusal.responseHeaders),
+                    HqRetryPolicy.retryAfterHeader(refusal.headerFields),
                     refusal.responseCode,
                 )
                 return C.TIME_UNSET
@@ -4557,7 +4557,7 @@ class PlaybackService : MediaLibraryService() {
             ) {
                 return RateLimit(
                     cause.responseCode,
-                    HqRetryPolicy.retryAfterHeader(cause.responseHeaders),
+                    HqRetryPolicy.retryAfterHeader(cause.headerFields),
                 )
             }
             cause = cause.cause?.takeIf { it !== cause }
@@ -5689,7 +5689,7 @@ class PlaybackService : MediaLibraryService() {
                     )
                     return@launch
                 }
-                var candidate = better
+                var candidate = better ?: return@launch
                 var round = 0
                 while (true) {
                     val outcome = try {
@@ -5733,7 +5733,7 @@ class PlaybackService : MediaLibraryService() {
                         )
                         return@launch
                     }
-                    candidate = next
+                    candidate = next ?: return@launch
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

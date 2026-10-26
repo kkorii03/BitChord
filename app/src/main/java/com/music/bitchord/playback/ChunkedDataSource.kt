@@ -445,7 +445,7 @@ class ChunkedDataSource(
                 val refusal = rateLimitedCause(e) ?: throw e
                 if (!HqRetryPolicy.isRateLimited(refusal.responseCode)) throw e
                 val host = HqHostTracker.hostOf(spec.uri.toString()) ?: spec.uri.host
-                val header = HqRetryPolicy.retryAfterHeader(refusal.responseHeaders)
+                val header = HqRetryPolicy.retryAfterHeader(refusal.headerFields)
                 val decision = HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
                 HqHostTracker.noteRateLimited(host, header, refusal.responseCode)
                 TrackLog.w(
