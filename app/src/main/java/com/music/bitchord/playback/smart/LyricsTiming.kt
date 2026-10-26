@@ -17,6 +17,7 @@ import com.music.bitchord.data.lyrics.LyricsTimeMap
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
+import com.music.bitchord.data.lyrics.RefineExtendPolicy
 import com.music.bitchord.data.lyrics.RefinePolicy
 import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
@@ -26,6 +27,7 @@ import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
@@ -443,7 +445,7 @@ object LyricsTiming {
         lines: List<LyricLine>,
         timing: Timing,
         audioSource: String? = null,
-    ) {
+    ): RefinePolicy.Result {
         // No base is a song version shown on its lyric provider's own clock —
         // the commonest case of all. That provider can still sit a fifth of a
         // second off (vc78: Espresso -0.23 s, Viva La Vida -0.25 s, never
@@ -451,18 +453,15 @@ object LyricsTiming {
         val base = timing.base
         val entry = store(context).get(videoId) ?: Entry()
         val key = textKey(lines, audioSource)
+        val result = refineResult(entry, key, base, lines, timing)
         val words = refineWords(entry, key, base)
-        if (words.isEmpty()) return
-        val result = RefinePolicy.compute(
-            apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
-            onHqClock(words, timing),
-        )
+        if (words.isEmpty()) return result
         val appliedMs = if (result.applied) result.medianMs else null
         val appliedSlope = if (result.applied) result.slopePerMin else 0.0
         if (entry.refineMs == appliedMs && entry.refineSlopePerMin == appliedSlope &&
             entry.refineLines == result.lines && entry.refineMad == result.madMs
         ) {
-            return
+            return result
         }
         store(context).update(videoId) {
             it.copy(
@@ -489,18 +488,49 @@ object LyricsTiming {
                 "applied=${if (result.applied) "y" else "n"} base=$baseLabel",
             videoId,
         )
+        return result
     }
+
+    /** The refine [result] for the words kept for these lyrics and sound, without writing anything. */
+    private fun refineResult(
+        entry: Entry,
+        key: Int,
+        base: Adjustment?,
+        lines: List<LyricLine>,
+        timing: Timing,
+    ): RefinePolicy.Result {
+        val words = refineWords(entry, key, base)
+        if (words.isEmpty()) return RefinePolicy.Result.NONE
+        return RefinePolicy.compute(
+            apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
+            onHqClock(words, timing),
+        )
+    }
+
+    /** The last sung line's time, or the last line when every one is blank. */
+    private fun lastLineMs(lines: List<LyricLine>): Long =
+        lines.lastOrNull { it.text.isNotBlank() }?.timeMs ?: lines.lastOrNull()?.timeMs ?: 0L
+
+    /** How much of the song the kept refine transcript covers; old entries were the first ninety seconds. */
+    private fun refineHeardSeconds(entry: Entry): Double =
+        entry.refineHeardSeconds.takeIf { it > 0.0 } ?: VideoAudio.SONG_CHECK_SECONDS
 
     /** Whether the words a refine needs are already kept for these lyrics and this sound. */
     suspend fun refineHeardKnown(
         context: Context,
         videoId: String,
         lines: List<LyricLine>,
+        timing: Timing,
         audioSource: String? = null,
     ): Boolean {
         val entry = store(context).get(videoId) ?: return false
         val key = textKey(lines, audioSource)
-        if (entry.refineHeardKey == key) return true
+        if (entry.refineHeardKey == key) {
+            if (entry.refineHeardExtended) return true
+            val heardSeconds = refineHeardSeconds(entry)
+            val result = refineResult(entry, key, timing.base, lines, timing)
+            return !RefineExtendPolicy.shouldExtend(result, heardSeconds, lastLineMs(lines))
+        }
         // Only word-level transcripts serve a refine; Gemini's are line-level.
         val wordLevel = entry.aiEngine != null && entry.aiEngine != ENGINE_GEMINI
         return wordLevel && entry.aiTextKey == key && entry.heardWords.isNotEmpty()
@@ -513,6 +543,13 @@ object LyricsTiming {
      * opening already on disk. Kept per lyrics and sound and reused, so a
      * replay pays nothing. Null audio or a refusal is not marked, and the next
      * playback may try again — there is no timer here.
+     *
+     * When that first listen could not apply and the lyrics run past it, the
+     * same song is heard once more to [RefineExtendPolicy.EXTEND_SECONDS] (or
+     * its own end, when shorter), so a cover's wide window can see the lines
+     * the opening missed. The longer transcript replaces the short one and the
+     * length is kept; a failed extension is not recorded and may be retried on
+     * the next playback. At most one extension per song.
      */
     suspend fun ensureRefineHeard(
         context: Context,
@@ -529,31 +566,82 @@ object LyricsTiming {
         // refine at all), so they are heard once like a measured song.
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return false
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
-        if (refineHeardKnown(context, videoId, lines, audioSource)) return false
+        if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return false
         val key = textKey(lines, audioSource)
         val lock = refining.getOrPut(videoId) { Mutex() }
         return lock.withLock {
-            if (refineHeardKnown(context, videoId, lines, audioSource)) return@withLock false
-            val audio = VideoAudio.songWav(context, song, VideoAudio.SONG_CHECK_SECONDS) ?: return@withLock false
-            val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
-                lines.filter { it.text.isNotBlank() }.map { it.text },
-            )
-            val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
-                audio,
-                language,
-                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
-            )
-            val words = answer.words ?: return@withLock false
+            if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return@withLock false
+            val before = store(context).get(videoId)
+            val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
+            if (!hadWords) {
+                val audio = VideoAudio.songWav(context, song, VideoAudio.SONG_CHECK_SECONDS)
+                    ?: return@withLock false
+                val words = listenForRefine(audio, lines) ?: return@withLock false
+                store(context).update(videoId) {
+                    it.copy(
+                        refineHeardKey = key,
+                        refineHeardWords = words,
+                        refineHeardSeconds = VideoAudio.SONG_CHECK_SECONDS,
+                        refineHeardExtended = false,
+                    )
+                }
+            }
+            val entry = store(context).get(videoId) ?: return@withLock false
+            val heardSeconds = refineHeardSeconds(entry)
+            val result = refine(context, videoId, lines, timing, audioSource)
+            if (entry.refineHeardExtended || heardSeconds >= RefineExtendPolicy.EXTEND_SECONDS ||
+                !RefineExtendPolicy.shouldExtend(result, heardSeconds, lastLineMs(lines))
+            ) {
+                if (!hadWords) _changes.tryEmit(videoId)
+                return@withLock !hadWords
+            }
+            val target = extendSeconds(song)
+            if (target <= heardSeconds) {
+                // The song is no longer than the listen already made: nothing
+                // more to hear, but it is not a failure to retry.
+                store(context).update(videoId) { it.copy(refineHeardExtended = true) }
+                if (!hadWords) _changes.tryEmit(videoId)
+                return@withLock !hadWords
+            }
+            val audio = VideoAudio.songWav(context, song, target) ?: return@withLock !hadWords
+            val words = listenForRefine(audio, lines) ?: return@withLock !hadWords
             store(context).update(videoId) {
                 it.copy(
                     refineHeardKey = key,
-                    refineHeardWords = words.take(MAX_HEARD_WORDS)
-                        .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    refineHeardWords = words,
+                    refineHeardSeconds = target,
+                    refineHeardExtended = true,
                 )
             }
             refine(context, videoId, lines, timing, audioSource)
             _changes.tryEmit(videoId)
             true
+        }
+    }
+
+    private suspend fun listenForRefine(
+        audio: ByteArray,
+        lines: List<LyricLine>,
+    ): List<SavedWord>? {
+        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
+            lines.filter { it.text.isNotBlank() }.map { it.text },
+        )
+        val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
+            audio,
+            language,
+            com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
+        )
+        return answer.words?.take(MAX_HEARD_WORDS)
+            ?.map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun extendSeconds(song: Song): Double {
+        val duration = TrackMatcher.secondsOf(song.durationText)?.toDouble()
+        return if (duration != null && duration < RefineExtendPolicy.EXTEND_SECONDS) {
+            duration
+        } else {
+            RefineExtendPolicy.EXTEND_SECONDS
         }
     }
 
@@ -2373,6 +2461,10 @@ object LyricsTiming {
         /** The lyrics (text key) the refine transcript belongs to, and its words on the video's clock. */
         val refineHeardKey: Int? = null,
         val refineHeardWords: List<SavedWord> = emptyList(),
+        /** How much of the song [refineHeardWords] covers, in seconds; 0 on entries saved before this was kept. */
+        val refineHeardSeconds: Double = 0.0,
+        /** The once-only longer listen has been made (or the song ends before it could help); see [RefineExtendPolicy]. */
+        val refineHeardExtended: Boolean = false,
         /**
          * The lyrics the last automatic request was for, and the engines it
          * has spent on them; see [AiTimingPolicy]. A song check's key also
