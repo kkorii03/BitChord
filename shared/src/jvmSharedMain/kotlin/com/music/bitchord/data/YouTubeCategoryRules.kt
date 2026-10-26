@@ -1,6 +1,5 @@
 package com.music.bitchord.data
 
-import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
@@ -16,12 +15,6 @@ import com.music.bitchord.data.sources.TrackMatcher
  * decides a category any more — those returned compilation uploads.
  */
 internal object YouTubeCategoryRules {
-
-    /** YouTube Music's featured-playlist search filter (measured Korean IP, 2026-10-19). */
-    const val FEATURED_PLAYLIST_PARAMS = Innertube.FEATURED_PLAYLISTS_PARAMS
-
-    /** Its community-playlist search filter. */
-    const val COMMUNITY_PLAYLIST_PARAMS = Innertube.COMMUNITY_PLAYLISTS_PARAMS
 
     /** The raw playlist-id prefix of a YouTube Music editorial collection. */
     const val OFFICIAL_PLAYLIST_PREFIX = "RDCLAK"
