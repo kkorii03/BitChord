@@ -515,11 +515,17 @@ def main(argv: list[str] | None = None) -> int:
         default=str(SONGS_FILE),
         help="song list (default: scripts/smoke/songs.txt)",
     )
+    parser.add_argument(
+        "--model",
+        help="Deepgram model for the judge (default whisper-large; nova-3 cross-checks the app's own whisper refine)",
+    )
     parser.add_argument("--out", help="output folder (default: phone-out/phonecheck); use a new one to resume a cut-off run")
     args = parser.parse_args(argv)
-    global OUT
+    global OUT, MODEL
     if args.out:
         OUT = Path(args.out)
+    if args.model:
+        MODEL = args.model
 
     if args.score_only:
         # The emulator run produces the same log and WAVs; score them with the
