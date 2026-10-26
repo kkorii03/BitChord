@@ -1,7 +1,5 @@
 package com.music.bitchord.data.lyrics
 
-import kotlin.math.abs
-
 /**
  * The rules that decide whether a paid-for AI timing answer may move the
  * lyrics, and which paid engines are worth asking at all.
@@ -44,7 +42,7 @@ object LyricsAiGuard {
 
     /** The first sung line's movement; a video may not be pushed further than [VIDEO_MAX_SHIFT_MS]. */
     fun shiftAllows(isVideo: Boolean, firstLineShiftMs: Long): Boolean =
-        !isVideo || abs(firstLineShiftMs) <= VIDEO_MAX_SHIFT_MS
+        !isVideo || firstLineShiftMs in -VIDEO_MAX_SHIFT_MS..VIDEO_MAX_SHIFT_MS
 
     /**
      * The same floor for a record-timed song: [SONG_MAX_SHIFT_MS], whichever
@@ -52,7 +50,7 @@ object LyricsAiGuard {
      * video rule and every existing record-timed path keep behaving as before.
      */
     fun songShiftAllows(firstLineShiftMs: Long): Boolean =
-        abs(firstLineShiftMs) <= SONG_MAX_SHIFT_MS
+        firstLineShiftMs in -SONG_MAX_SHIFT_MS..SONG_MAX_SHIFT_MS
 
     /** Whether this AI answer may be applied to these lyrics at all. */
     fun allowsAiTiming(isVideo: Boolean, matchPercent: Int?, firstLineShiftMs: Long): Boolean =

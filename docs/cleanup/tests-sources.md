@@ -42,7 +42,7 @@
 - 같은 곡의 여러 증명은 선호도보다 등급이 먼저이며, 같은 등급이면 출처/트랙 id 순.
 - 계획의 action/verifiedTier/sourceConfigId/trackId가 그대로 전달됨.
 
-### `TrackMatcherTitleEdgeTest.kt` (35, 3 `@Ignore`)
+### `TrackMatcherTitleEdgeTest.kt` (35)
 
 - 빈/문장부호뿐인 제목은 core·쿼리·변형이 모두 비어 있음.
 - 트랙 번호 표기 `3.`/`03`/`3)`/`3]`/`3-`/`Track 3 -`, 0으로 시작하는 번호.
@@ -62,7 +62,7 @@
   `namesTheSameArtist`의 정확한 이름 요구.
 - 쿼리의 주 아티스트 우선·맨 제목·다른 스크립트 1회 추가·번역 제목 양쪽 유지.
 
-### `TrackMatcherJudgementEdgeTest.kt` (55, 1 `@Ignore`)
+### `TrackMatcherJudgementEdgeTest.kt` (55)
 
 - `targetOf`의 원곡 업로드 우선, 런타임/앨범/아티스트 id 중복 제거·공백 제거.
 - 점수 구성: 정확/부분/없는 크레딧, 정확 런타임의 크레딧 대체(±2초),
@@ -86,15 +86,19 @@
   +90초 경계, 미상 런타임, 정확 크레딧 우선, 다른 아티스트 거부.
 - `matches`가 같은 `score`를 yes/no로만 감싸는지.
 
-## 발견된 버그
+## 발견된 버그 (고침)
 
-운영 코드는 고치지 않고 해당 테스트에 `@Ignore`와 이유를 적었다. 빌드는 초록이다.
+각 항목은 테스트로 재현한 뒤 운영 코드를 고쳤고, `@Ignore`를 제거해 통과를
+확인했다.
 
 1. **`with`가 들어간 실제 제목이 feat. 크레딧으로 잘린다**
    (`TrackMatcherTitleEdgeTest.with in a real title is not a featuring credit`).
    `FEATURING = \b(feat|ft|featuring|with)\b.*`가 제목 어디서든 `with`부터
-   끝을 지운다. `"Stay With Me"` → core `"stay"`, `"Dance With Me"` → `"dance"`,
+   끝을 지웠다. `"Stay With Me"` → core `"stay"`, `"Dance With Me"` → `"dance"`,
    `"With or Without You"`/`"With You"` → core `""`(검색·매칭 불가).
+   → 고침: 정규화가 소문자로 바꾸기 전에 대문자 `With`를 센티널 토큰으로
+   보호했다가 feat. 크레딧 제거가 끝난 뒤 `with`로 복원한다. 소문자 `with …`
+   크레딧 규칙과 괄호 안 `(Live with Orchestra)`의 버전 판정은 기존과 같다.
 
 2. **CJK/한글 제목의 core에 trailing 패키징이 남는다**
    (`TrackMatcherTitleEdgeTest.CJK trailing packaging does not leak into the identity`).
@@ -102,18 +106,21 @@
    `"紅蓮華 Official Video"` → `"紅蓮華officialvideo"`,
    `"여수 밤바다 Official"` → `"여수밤바다official"`,
    `"紅蓮華 Instrumental"` → core `"紅蓮華instrumental"` + versions `{instrumental}`.
-   괄호로 감싼 패키징은 정상 제거된다.
+   → 고침: 모든 스크립트에서 core를 정리된 `words`로 만든다. 괄호 패키징 제거는
+   기존과 같다.
 
 3. **`secondsOf`가 범위를 벗어난 시간 성분을 받아들인다**
    (`TrackMatcherJudgementEdgeTest.an out-of-range time component is not a runtime`).
    `"3:60"` → 240, `"3:-1"` → 179, `"1:60:00"` → 7200, `"3:99:00"` → 16740.
-   각 성분이 0..59인지, 음수가 아닌지 검사하지 않는다.
+   각 성분이 0..59인지, 음수가 아닌지 검사하지 않았다.
+   → 고침: 모든 성분이 음수가 아니어야 하고, 분·초는 0..59여야 한다.
 
 4. **`vs.`/`feat.`/`ft.` 구분자가 마침표를 다음 이름에 붙인다**
    (`TrackMatcherTitleEdgeTest.a dotted separator leaves the next name intact`).
    `ARTIST_SEPARATORS`의 `\bvs\.?\b` 등이 `vs`까지만 매칭해
-   `"A vs. B"`/`"A feat. B"`/`"A ft. B"`가 `["a", ". b"]`가 된다.
-   마침표 없는 표기는 정상이다.
+   `"A vs. B"`/`"A feat. B"`/`"A ft. B"`가 `["a", ". b"]`가 됐다. 마침표 없는
+   표기는 정상이었다.
+   → 고침: `\bvs\b\.?`처럼 단어 경계를 먼저 두고 마침표를 선택적으로 소비한다.
 
 ## 테스트로 고정한 현재 동작 (버그 아님)
 
@@ -139,6 +146,5 @@
   --console=plain -q
 ```
 
-`data.sources.*` 219개 중 215개 통과, 4개는 위 버그를 기록한 `@Ignore`.
-새로 추가한 5개 클래스는 132개 테스트(128 통과, 4 `@Ignore`)다.
-app 프로덕션 컴파일도 통과했다.
+`data.sources.*` 219개 모두 통과. 새로 추가한 5개 클래스는 132개 테스트 모두
+통과한다. app 프로덕션 컴파일도 통과했다.

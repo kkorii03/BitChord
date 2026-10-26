@@ -9,6 +9,7 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.net.ProxyConfig
 import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyScope
+import com.music.bitchord.data.net.ProxyValidation
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -127,7 +128,11 @@ object SettingsTransfer {
      */
     @Serializable
     data class File(
-        val app: String = APP_TAG,
+        /**
+         * No default tag: an app key that was never written cannot be the
+         * same as ours, and [decode] must refuse the document.
+         */
+        val app: String = "",
         val version: Int = SCHEMA_VERSION,
         val versionName: String = "",
         val exportedAt: String = "",
@@ -158,7 +163,7 @@ object SettingsTransfer {
             val parsedMode = ProxyMode.entries.firstOrNull { it.name == mode } ?: return null
             val parsedScope = ProxyScope.entries.firstOrNull { it.name == scope } ?: return null
             if (port !in 0..65535 || backupPort !in 0..65535) return null
-            return ProxyConfig(
+            val config = ProxyConfig(
                 mode = parsedMode,
                 host = host,
                 port = port,
@@ -168,6 +173,7 @@ object SettingsTransfer {
                 password = password,
                 scope = parsedScope,
             ).normalized()
+            return config.takeIf { ProxyValidation.validate(it) == null }
         }
 
         companion object {
@@ -302,6 +308,7 @@ object SettingsTransfer {
             }
             .toMap()
         return File(
+            app = APP_TAG,
             version = SCHEMA_VERSION,
             versionName = versionName,
             exportedAt = now.toString(),

@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -149,11 +148,6 @@ class PlayerClientSelectionTest {
         assertEquals(1024L * 1024, PlayerClient.rangeBytesFor(url("IOS", host = "rr1.googlevideo.com")))
     }
 
-    @Ignore(
-        "BUG: rangeBytesFor uses host.endsWith(\"googlevideo.com\") without a dot boundary, " +
-            "so a lookalike such as notgooglevideo.com is range-capped as if it were YouTube. " +
-            "ProxyScopeMatcher's isYouTubeHost correctly requires the apex or a .googlevideo.com suffix.",
-    )
     @Test
     fun `a lookalike host is not range-capped`() {
         assertEquals(

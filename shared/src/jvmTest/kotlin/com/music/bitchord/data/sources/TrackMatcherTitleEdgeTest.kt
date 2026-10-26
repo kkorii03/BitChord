@@ -3,7 +3,6 @@ package com.music.bitchord.data.sources
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -191,12 +190,9 @@ class TrackMatcherTitleEdgeTest {
     }
 
     /**
-     * BUG: the featuring regex treats the word "with" anywhere in a title as
-     * the start of a credit, so real titles are truncated ("Stay With Me" to
-     * "stay", "With or Without You" to nothing). This is recorded, not fixed,
-     * by this test-only change.
+     * "with" is a credit only in its lowercase printed form ("Song with
+     * Artist"); a capitalised With inside a title is part of the name.
      */
-    @Ignore("BUG: FEATURING regex truncates real titles containing 'with'")
     @Test
     fun `with in a real title is not a featuring credit`() {
         assertEquals("staywithme", core("Stay With Me"))
@@ -252,12 +248,10 @@ class TrackMatcherTitleEdgeTest {
     }
 
     /**
-     * BUG: for CJK/Hangul titles the core is built from the raw text instead
-     * of the cleaned word list, so an unbracketed trailing label or take word
-     * stays in the identity ("紅蓮華 Official Video" to
-     * "紅蓮華officialvideo"). This is recorded, not fixed.
+     * The core is the cleaned word list for every script, so an unbracketed
+     * trailing label or take word leaves the identity and only a take marker
+     * remains in versions.
      */
-    @Ignore("BUG: CJK core is built from raw text, so trailing packaging leaks in")
     @Test
     fun `CJK trailing packaging does not leak into the identity`() {
         assertEquals("紅蓮華", core("紅蓮華 Official Video"))
@@ -370,11 +364,9 @@ class TrackMatcherTitleEdgeTest {
     }
 
     /**
-     * BUG: the dotted abbreviations (`vs.`, `feat.`, `ft.`) match only the
-     * letters, leaving the period glued to the next name ("A vs. B" to
-     * ["a", ". b"]), so that name is never found. This is recorded, not fixed.
+     * The dotted abbreviations consume their period, so the next name starts
+     * with a letter rather than ". b".
      */
-    @Ignore("BUG: ARTIST_SEPARATORS leaves the period after 'vs.'/'feat.'/'ft.' on the next name")
     @Test
     fun `a dotted separator leaves the next name intact`() {
         listOf("A vs. B", "A feat. B", "A ft. B").forEach { raw ->

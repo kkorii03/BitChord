@@ -42,14 +42,35 @@ object HqRetryPolicy {
     /** `Retry-After` as milliseconds from [nowMs], or null when it did not say. */
     fun retryAfterMs(header: String?, nowMs: Long): Long? {
         val text = header?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val seconds = text.toLongOrNull() ?: text.toDoubleOrNull()?.toLong()
-        if (seconds != null) return (seconds * 1000L).coerceAtLeast(0L)
+        val seconds = statedSeconds(text)
+        if (seconds != null) {
+            if (seconds <= 0L) return 0L
+            // A value this build cannot express in milliseconds is not a
+            // small wait; null keeps it out of the arithmetic entirely.
+            if (seconds > Long.MAX_VALUE / 1000L) return null
+            return seconds * 1000L
+        }
         val at = runCatching {
             ZonedDateTime.parse(text, DateTimeFormatter.RFC_1123_DATE_TIME)
                 .toInstant()
                 .toEpochMilli()
         }.getOrNull() ?: return null
         return (at - nowMs).coerceAtLeast(0L)
+    }
+
+    private fun statedSeconds(text: String): Long? =
+        text.toLongOrNull() ?: text.toDoubleOrNull()?.toLong()
+
+    /**
+     * Whether the header names a wait past [MAX_WAIT_MS], including a value
+     * too large to represent as milliseconds. [retryAfterMs] returns null for
+     * that overflow, so [decide] checks the seconds themselves rather than
+     * treating the absence as "no instruction".
+     */
+    private fun retryAfterIsTooLong(header: String?): Boolean {
+        val text = header?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        val seconds = statedSeconds(text) ?: return false
+        return seconds > MAX_WAIT_MS / 1000L
     }
 
     /** 1s, 2s, 4s — the wait before retry [attempt] (0 is the first retry). */
@@ -72,7 +93,8 @@ object HqRetryPolicy {
 
     fun decide(header: String?, attempt: Int, nowMs: Long): Decision {
         val stated = retryAfterMs(header, nowMs)
-        val tooLong = stated != null && stated > MAX_WAIT_MS
+        val tooLong = retryAfterIsTooLong(header) ||
+            (stated != null && stated > MAX_WAIT_MS)
         val wait = stated ?: backoffMs(attempt)
         val retry = attempt < MAX_ATTEMPTS && !tooLong
         return Decision(

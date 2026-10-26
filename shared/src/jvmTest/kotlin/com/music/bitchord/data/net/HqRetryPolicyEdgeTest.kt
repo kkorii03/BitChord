@@ -1,6 +1,5 @@
 package com.music.bitchord.data.net
 
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -172,12 +171,6 @@ class HqRetryPolicyEdgeTest {
         assertNull(HqRetryPolicy.retryAfterHeader(mapOf("Date" to listOf("5"))))
     }
 
-    @Ignore(
-        "BUG: retryAfterMs multiplies seconds by 1000 without overflow protection. " +
-            "A header such as '10000000000000000' (or Long.MAX_VALUE) overflows to a " +
-            "negative value, coerceAtLeast(0) turns it into 0 ms, and decide() then " +
-            "retries immediately instead of treating the host as asking too long.",
-    )
     @Test
     fun `an absurdly large retry-after never becomes an immediate retry`() {
         val value = HqRetryPolicy.retryAfterMs("10000000000000000", nowMs = 0L)

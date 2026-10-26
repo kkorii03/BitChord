@@ -1,6 +1,5 @@
 package com.music.bitchord.data.model
 
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -73,22 +72,11 @@ class AppleSubtitleEdgeTest {
         assertEquals("Taylor Swift", appleSubtitleCredit("Taylor Swift • 1989"))
     }
 
-    @Ignore(
-        "BUG: DURATION is only \\d+:\\d{2}, so an hour-long duration such as " +
-            "1:23:45 is returned as the card's credit instead of being hidden. " +
-            "Recorded in docs/cleanup/tests-ui-state.md; source left unchanged by this test-only task.",
-    )
     @Test
     fun anHourLongDurationIsHidden() {
         assertNull(appleSubtitleCredit("1:23:45"))
     }
 
-    @Ignore(
-        "BUG: YEAR only matches a bare four-digit year, so a Korean year such as " +
-            "2026년 survives. When it comes before the artist (Album • 2026년 • Artist) " +
-            "it is returned as the credit and the artist is dropped. " +
-            "Recorded in docs/cleanup/tests-ui-state.md; source left unchanged by this test-only task.",
-    )
     @Test
     fun aKoreanYearIsNotACredit() {
         assertEquals("브루노 마스", appleSubtitleCredit("앨범 • 2026년 • 브루노 마스"))

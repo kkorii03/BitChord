@@ -13,7 +13,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 import java.time.Instant
 
@@ -50,10 +49,6 @@ class SettingsTransferEdgeCasesTest {
         assertTrue(SettingsTransfer.decode("").isFailure)
     }
 
-    @Ignore(
-        "버그: File.app 기본값이 bitchord-settings라 app 키가 없는 JSON도 " +
-            "BitChord 설정 파일로 통과한다. 다른 앱의 빈 JSON도 가져오기 미리보기가 된다.",
-    )
     @Test
     fun `a document without the app tag is not a settings file`() {
         assertTrue(SettingsTransfer.decode("{}").isFailure)
@@ -243,11 +238,6 @@ class SettingsTransferEdgeCasesTest {
         assertEquals(0, SettingsTransfer.readProxy(SettingsTransfer.File()).skipped)
     }
 
-    @Ignore(
-        "버그: ProxyTransfer.toConfig는 포트 범위를 0..65535로만 확인해 HTTP/SOCKS5 " +
-            "모드의 포트 0과 빈 호스트를 통과시킨다. 가져오기 미리보기는 변경으로 표시하지만 " +
-            "적용하면 ProxyValidation이 unusable로 판정하는 프록시가 저장된다.",
-    )
     @Test
     fun `an enabled proxy without a host or a real port is not a configuration`() {
         val transfer = SettingsTransfer.ProxyTransfer(

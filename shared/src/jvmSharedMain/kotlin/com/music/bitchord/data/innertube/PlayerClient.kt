@@ -146,7 +146,10 @@ data class PlayerClient(
         /** Largest single range googlevideo reliably serves for [url]'s client; mirrors InnerTubeX's `mediaRangeChunkSize`. */
         fun rangeBytesFor(url: String): Long {
             val parsed = url.toHttpUrlOrNull() ?: return Long.MAX_VALUE
-            if (!parsed.host.endsWith("googlevideo.com")) return Long.MAX_VALUE
+            val host = parsed.host.lowercase(Locale.ROOT)
+            if (host != "googlevideo.com" && !host.endsWith(".googlevideo.com")) {
+                return Long.MAX_VALUE
+            }
             val name = parsed.queryParameter("c")?.uppercase(Locale.ROOT)
             return if (name == "ANDROID_VR" || name?.startsWith("TVHTML5_SIMPLY") == true) {
                 NARROW_RANGE_BYTES

@@ -837,7 +837,10 @@ object TrackMatcher {
         // A playlist row prints its position in front of the name ("3.여수밤바다",
         // "03 Ditto", "Track 3 - Song"). It is the listing's, not the song's,
         // and every catalogue search for it misses.
-        var text = LEADING_TRACK_NUMBER.replace(normalize(raw), "")
+        var text = LEADING_TRACK_NUMBER.replace(
+            normalize(CAPITAL_WITH.replace(raw, WITH_SENTINEL)),
+            "",
+        )
         val altTexts = mutableListOf<String>()
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
@@ -898,21 +901,12 @@ object TrackMatcher {
 
         // A feat. credit belongs to the artist field wherever a catalogue
         // chooses to print it.
-        text = text.replace(FEATURING, " ")
+        text = text.replace(FEATURING, " ").replace(WITH_SENTINEL, "with")
 
         // CJK languages do not use spaces between
         // words. Standard word splitting and non-alphanumeric filtering fragment
         // these titles into empty or broken strings, so CJK titles keep their
         // raw character sequence intact (stripping only punctuation and whitespace).
-        val containsCJK = text.any {
-            Character.UnicodeBlock.of(it) in setOf(
-                Character.UnicodeBlock.HIRAGANA,
-                Character.UnicodeBlock.KATAKANA,
-                Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
-                Character.UnicodeBlock.HANGUL_SYLLABLES
-            )
-        }
-
         var words = text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
@@ -934,16 +928,12 @@ object TrackMatcher {
             } else break
         }
 
-        val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
-        } else {
-            words.joinToString("")
-        }
+        val coreString = words.joinToString("")
 
         val altWords = mutableListOf<List<String>>()
         val altCores = mutableListOf<String>()
         altTexts.forEach { alt ->
-            val clean = alt.replace(FEATURING, " ").trim()
+            val clean = alt.replace(FEATURING, " ").replace(WITH_SENTINEL, "with").trim()
             if (clean.isBlank()) return@forEach
             val altCjk = clean.any {
                 Character.UnicodeBlock.of(it) in setOf(
@@ -1337,6 +1327,18 @@ object TrackMatcher {
     internal fun albumVersionMarkers(album: String?): Set<String> =
         if (album.isNullOrBlank()) emptySet() else parseTitle(album).versions
 
+    /**
+     * A capitalised `With` inside a title ("Stay With Me") is part of the
+     * name, while a lowercase `with …` is a featuring credit. Normalisation
+     * lowercases the text before [FEATURING] runs, so the capital form is
+     * parked under a token that regex word boundaries cannot mistake for the
+     * credit, then restored once the credit pass is over. Bracket contents are
+     * removed before that pass, so "(Live with Orchestra)" keeps its take
+     * marker as before.
+     */
+    private val CAPITAL_WITH = Regex("""\bWith\b""")
+    private const val WITH_SENTINEL = "withcreditsentinelx"
+
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
     private fun albumKey(value: String?): String? {
         var text = normalize(value.orEmpty()).trim()
@@ -1352,6 +1354,9 @@ object TrackMatcher {
     fun secondsOf(text: String?): Int? {
         val parts = text?.trim()?.split(':')?.takeIf { it.size in 2..3 } ?: return null
         val numbers = parts.map { it.trim().toIntOrNull() ?: return null }
+        if (numbers.any { it < 0 }) return null
+        val minuteIndex = if (numbers.size == 3) 1 else 0
+        if (numbers[minuteIndex] > 59 || numbers.last() > 59) return null
         return numbers.fold(0) { total, part -> total * 60 + part }.takeIf { it > 0 }
     }
 
@@ -1424,7 +1429,7 @@ object TrackMatcher {
 
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
-    private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
+    private val FEATURING = Regex("""\b(?:feat|ft|featuring|with)\b.*""", RegexOption.IGNORE_CASE)
     /**
      * A listing's track number in front of the name: "3.", "03 ", "3) ",
      * "Track 3 - ". A bare number followed by a word ("7 Rings") is a title
@@ -1480,7 +1485,7 @@ object TrackMatcher {
     // Not the katakana middle dot `・`: it sits *inside* a transliterated
     // name (ジョン・レノン), and splitting there makes two Johns one artist.
     private val ARTIST_SEPARATORS =
-        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|및)\s*""")
+        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\b\.?|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b|\bwith\b|및)\s*""")
 
     /**
      * What makes a listing a different recording rather than a different

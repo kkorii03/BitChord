@@ -7,7 +7,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -341,12 +340,10 @@ class TrackMatcherJudgementEdgeTest {
     }
 
     /**
-     * BUG: secondsOf only parses the numbers, so an invalid component is
-     * silently carried ("3:60" becomes 240 seconds, "3:-1" becomes 179). A
-     * runtime from a malformed row can therefore pass a length check. This is
-     * recorded, not fixed.
+     * Every component must be non-negative, and minutes and seconds have to
+     * stay within a clock's 0..59 range; a malformed row cannot pass a length
+     * check by carrying an impossible runtime.
      */
-    @Ignore("BUG: secondsOf accepts out-of-range and negative time components")
     @Test
     fun `an out-of-range time component is not a runtime`() {
         assertNull(TrackMatcher.secondsOf("3:60"))

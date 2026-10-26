@@ -1,8 +1,7 @@
 # 화면 상태·문구 자동 테스트 보강 (tests-ui-state)
 
 프로덕션 코드는 바꾸지 않았고, 테스트 파일과 이 문서만 추가했다.
-추가한 테스트는 총 **45개**이며 그중 **2개는 기존 버그를 드러내 `@Ignore`** 로
-남겼다(실행되는 새 테스트 43개는 모두 통과).
+추가한 테스트는 총 **45개**이며 모두 통과한다.
 
 ## 추가한 테스트
 
@@ -35,8 +34,8 @@
 - 빈 문자열·구분자만 있는 문자열은 null.
 - 카드 id 계열(`UC`/`MPRE`/`OLAK`/`VL`/`PL`/`RD`/`LM`), 공백 trim,
   `isArtist` 우선, `BrowseType` 매핑.
-- **(버그 1, @Ignore)** `1:23:45` 같은 `h:mm:ss` 길이가 credit으로 노출됨.
-- **(버그 2, @Ignore)** `앨범 • 2026년 • 브루노 마스`에서 `2026년`이
+- **(버그 1, 고침)** `1:23:45` 같은 `h:mm:ss` 길이가 credit으로 노출됨.
+- **(버그 2, 고침)** `앨범 • 2026년 • 브루노 마스`에서 `2026년`이
   연도로 걸러지지 않아 credit으로 반환되고 가수가 사라짐.
 
 ### NerdStats — 무손실 배지 (`shared/src/jvmTest/.../data/NerdStatsBadgeEdgeTest.kt`, 10개)
@@ -79,17 +78,18 @@
 - 한국어 복수형은 `other`만 두는 규칙을 허용하되, `values`에 없는
   quantity가 생기면 실패.
 
-## 발견된 버그
+## 발견된 버그 (고침)
 
 1. **`appleSubtitleCredit`이 `h:mm:ss` 길이를 숨기지 않는다.**
-   `DURATION` 정규식이 `\d+:\d{2}`라서 `1:23:45`가 credit으로 반환된다.
-   `AppleSubtitleEdgeTest.anHourLongDurationIsHidden`을 `@Ignore` 처리.
+   `DURATION` 정규식이 `\d+:\d{2}`라서 `1:23:45`가 credit으로 반환됐다.
+   → 고침: `\d+(?::\d{2}){1,2}`로 시·분·초 길이도 인식한다.
+   `AppleSubtitleEdgeTest.anHourLongDurationIsHidden`.
 2. **`appleSubtitleCredit`이 한국어 연도를 숨기지 않는다.**
-   `YEAR` 정규식이 숫자 4자리만 매칭해 `2026년`이 남는다. 연도가 가수보다
+   `YEAR` 정규식이 숫자 4자리만 매칭해 `2026년`이 남았다. 연도가 가수보다
    앞에 오는 `앨범 • 2026년 • 브루노 마스`에서 연도가 credit이 되고 가수가
-   사라진다. `AppleSubtitleEdgeTest.aKoreanYearIsNotACredit`을 `@Ignore` 처리.
-
-소스는 이 작업에서 고치지 않았다.
+   사라졌다.
+   → 고침: `YEAR`가 선택적인 `년`/`年` 접미사를 함께 매칭한다.
+   `AppleSubtitleEdgeTest.aKoreanYearIsNotACredit`.
 
 ## 새 app 테스트 클래스 이름
 
@@ -112,4 +112,4 @@
   --tests 'com.music.bitchord.StringPlaceholderParityTest' --console=plain -q
 ```
 
-`@Ignore` 2개를 제외한 새 테스트 43개와 기존 관련 테스트가 모두 통과했다.
+새 테스트 45개와 기존 관련 테스트가 모두 통과했다.
