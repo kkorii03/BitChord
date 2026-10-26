@@ -30,7 +30,7 @@ adb logcat -d | python3 scripts/smokecheck.py -
 
 | # | 항목 | PASS 조건 | FAIL 조건 |
 |---|---|---|---|
-| 1 | MV 재생 | `track-summary ... video=y` 또는 제목에 `(Official Video)`·`Official Music Video`·`M/V`·독립 단어 `MV` 가 있는 곡이 모두 `song version: <mv> -> <song> via ...` 교체 로그를 가짐 | 그런 곡에 교체 로그가 없음 (MV 소리가 그대로 재생됨) |
+| 1 | MV 재생 | `track-summary ... video=y` 또는 제목에 `(Official Video)`·`Official Music Video`·`M/V`·독립 단어 `MV` 가 있는 곡이 모두 `song version: <mv> -> <song> via ...` 교체 로그를 가짐. 단, MV 제목 표식이 없고 `audio switch: no official song match` 로 카탈로그 곡을 못 찾았거나 `song version: <id> -> none via none (cover)` 인 커버·노래 영상은 그대로 재생돼도 통과 | MV 제목 표식이 있는 곡에 교체 로그가 없음 (MV 소리가 그대로 재생됨) |
 | 2 | 노래 버전 판정 | `audio switch: no official song match` 없음 | 한 건 이상. 곡명·가수와 건수를 표시 |
 | 3 | 가사 싱크 | `lyrics-sync`/`song-sync` 의 `abs(shift) <= 3000ms` 이고 `refused-shift` 없음 | `abs(shift) > 3000ms` 또는 `song-sync ... result=refused-shift` (MV 소리 의심) |
 | 4 | 품질 업그레이드 | `hq-verify ... -> accepted` 가 1건 이상, 또는 후보 자체가 없음 | 후보(`accepted`+`rejected`+`decode: hq-verify failed`+`no reference`)가 있는데 `accepted` 가 0 |
@@ -44,7 +44,11 @@ adb logcat -d | python3 scripts/smokecheck.py -
   (`kept` 포함)를 MV 후보로 본다. `song version: <mv> -> <song>` 의 도착 id 는
   이미 노래 버전이므로 MV 로 세지 않는다.
 - **1번의 교체 인정**: `track-summary` 의 id 가 교체 로그의 원본이거나 도착
-  id 이면 통과. `-> none`(공식 곡 없음)은 교체가 아니므로 실패다.
+  id 이면 통과. `-> none`(공식 곡 없음)은 교체가 아니므로 실패다. 다만 MV 제목
+  표식이 없는 커버·노래 영상은 예외다. 같은 제목의 `audio switch: no official
+  song match` 가 있거나, `kept (none)`/`-> none via none (cover)` 로 카탈로그
+  곡이 없음이 확인되면 그대로 재생돼도 통과한다. 제목에 MV 표식이 있으면 이
+  예외는 적용되지 않는다.
 - **3번은 경고가 아니라 FAIL**: `|shift| > 3000ms` 는 MV 소리 의심 신호이고,
   이 도구의 목적이 그 신호를 자동으로 잡는 것이므로 종료 코드에 반영한다.
   상세 줄에는 `WARN` 접두사를 붙여 목록으로 보여 준다.
@@ -62,7 +66,7 @@ adb logcat -d | python3 scripts/smokecheck.py -
 python3 -m unittest scripts/test_smokecheck.py -v
 ```
 
-테스트는 MV 교체 유무, MV 제목 표식, `no official song match`, 3000ms 경계,
+테스트는 MV 교체 유무, MV 제목 표식, 커버·노래 영상 예외, `no official song match`, 3000ms 경계,
 `refused-shift`, HQ accepted/rejected/decode 실패/no-reference, FATAL/ANR,
 `next-prep` 의 MV id 잔존, 마크다운 보고서와 종료 코드를 다룬다.
 

@@ -35,6 +35,14 @@ SONG_VERSION_RE = re.compile(
 )
 # `song version: <id> kept (none)`, `kept (timeout)`, `kept (local file, none)`.
 SONG_VERSION_KEPT_RE = re.compile(r"song version:\s+(?P<id>\S+)\s+kept\b")
+# A definitive "no catalogue song" answer from the pre-playback lookup.
+SONG_VERSION_KEPT_NONE_RE = re.compile(
+    r"song version:\s+(?P<id>\S+)\s+kept \(none\)"
+)
+# `song version: <id> -> none via none (cover)` — a cover plays as itself.
+SONG_VERSION_COVER_RE = re.compile(
+    r"song version:\s+(?P<id>\S+)\s+->\s+none\s+via\s+none\s+\(cover\)"
+)
 # `audio switch: no official song match for '<title>' by '<artist>'`
 AUDIO_SWITCH_NO_MATCH_RE = re.compile(
     r"audio switch: no official song match for '(?P<title>.*?)' by '(?P<artist>.*)'"
@@ -87,6 +95,11 @@ def is_mv_title(title: str) -> bool:
     return re.search(r"(?<![a-z0-9])mv(?![a-z0-9])", text) is not None
 
 
+def _same_title(left: str, right: str) -> bool:
+    """Same title once case and runs of whitespace are ignored."""
+    return " ".join(left.casefold().split()) == " ".join(right.casefold().split())
+
+
 def _display_width(text: str) -> int:
     return sum(
         2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text
@@ -117,6 +130,8 @@ def check_log(text: str) -> list[Check]:
     summaries: list[Summary] = []
     replacements: list[tuple[str, str]] = []
     version_subjects: set[str] = set()
+    cover_ids: set[str] = set()
+    no_version_ids: set[str] = set()
     audio_switch_failures: list[tuple[str, str]] = []
     hq_accepted = 0
     hq_rejected = 0
@@ -143,6 +158,12 @@ def check_log(text: str) -> list[Check]:
                 )
 
         if "song version:" in line:
+            cover = SONG_VERSION_COVER_RE.search(line)
+            if cover:
+                cover_ids.add(cover.group("id"))
+            kept_none = SONG_VERSION_KEPT_NONE_RE.search(line)
+            if kept_none:
+                no_version_ids.add(kept_none.group("id"))
             match = SONG_VERSION_RE.search(line)
             if match:
                 source = match.group("src")
@@ -221,13 +242,24 @@ def check_log(text: str) -> list[Check]:
 
     checks: list[Check] = []
 
-    # 1. A music video must have been swapped for its song version.
+    # 1. A music video must have been swapped for its song version. A cover or
+    #    song upload (`video=y` with no MV title marker) is allowed to play as
+    #    itself when the catalogue search found no song, or when the app already
+    #    recognised it as a cover.
+    no_match_titles = {title for title, _artist in audio_switch_failures}
     mv_failures: list[str] = []
     seen_mv: set[str] = set()
     for summary in summaries:
-        if not (summary.video or is_mv_title(summary.title)):
+        has_marker = is_mv_title(summary.title)
+        if not (summary.video or has_marker):
             continue
         if summary.video_id in replaced_sources or summary.video_id in replaced_targets:
+            continue
+        if not has_marker and (
+            summary.video_id in cover_ids
+            or summary.video_id in no_version_ids
+            or any(_same_title(summary.title, title) for title in no_match_titles)
+        ):
             continue
         if summary.video_id in seen_mv:
             continue

@@ -58,6 +58,66 @@ class MvPlaybackTest(unittest.TestCase):
         )
         self.assertEqual("PASS", statuses(log)[1].status)
 
+    def test_cover_video_with_no_catalogue_song_passes(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "audio switch: no official song match for 'Dance Monkey' by '오화요'"
+                ),
+                summary("cover1", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_cover_marker_without_version_swap_passes(self):
+        log = "\n".join(
+            [
+                log_line("song version: cover2 -> none via none (cover)"),
+                summary("cover2", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_kept_none_video_without_mv_marker_passes(self):
+        log = "\n".join(
+            [
+                log_line("song version: cover3 kept (none)"),
+                summary("cover3", "Dance Monkey", True),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_kept_none_with_mv_marker_still_fails(self):
+        log = "\n".join(
+            [
+                log_line("song version: vid6 kept (none)"),
+                summary("vid6", "Song (Official Video)", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_mv_title_still_fails_when_no_catalogue_song_was_found(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "audio switch: no official song match for 'Song' by 'Artist'"
+                ),
+                summary("vid4", "Song (Official Video)", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_no_match_for_a_different_title_does_not_excuse_the_video(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "audio switch: no official song match for 'Other Song' by 'Artist'"
+                ),
+                summary("vid5", "Song", True),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
 
 class SongVersionMatchTest(unittest.TestCase):
     def test_no_official_song_match_fails_with_name(self):
