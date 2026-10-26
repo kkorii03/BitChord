@@ -357,6 +357,13 @@ class AddonClient(rawBaseUrl: String) {
                         val decision =
                             HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
                         if (!decision.retry) {
+                            // Giving up here is not permission to call again at
+                            // once. The host was just rested for at least
+                            // REST_MS, or for the server's longer Retry-After;
+                            // the next request has to wait out that same rest
+                            // instead of turning one refusal into a stream of
+                            // them.
+                            quietUntilMs = System.currentTimeMillis() + decision.restMs
                             throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
                         }
                         decision.waitMs

@@ -138,6 +138,24 @@ object HqQuality {
     }
 
     /**
+     * Whether [candidate] is on [current]'s rung or a better one.
+     *
+     * [isBetter] is the bar for an ordinary upgrade, which must buy an
+     * improvement to justify cutting the audio. Continuing a track whose host
+     * just refused it is different: another source holding the same rung is
+     * the same recording at the quality already chosen, so it must not lose to
+     * YouTube merely for not being an improvement. A null [current] is an
+     * unknown floor and only Atmos or lossless clears it, matching
+     * [SourceResolver.worthSwapping]; a null [candidate] proves nothing and is
+     * never accepted.
+     */
+    fun isSameOrBetter(candidate: StreamFormat?, current: StreamFormat?): Boolean {
+        if (candidate == null) return false
+        if (current == null) return candidate.isDolbyAtmos || isLosslessTier(candidate)
+        return tierOf(candidate).rank <= tierOf(current).rank
+    }
+
+    /**
      * Whether [candidate] could still win a race whose best answer so far is
      * [current], given that [candidateEarlier] sits earlier in the user's
      * source order.

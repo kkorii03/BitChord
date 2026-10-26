@@ -531,6 +531,12 @@ object SourceResolver {
      *   stream already playing — which [worthSwapping] would reject anyway,
      *   but not before spending a search and a stream call on it. See the
      *   'isn't worth swapping ... off' log line this was written to stop.
+     * @param allowSameRendition accepts a candidate on [playing]'s rung instead
+     *   of requiring [worthSwapping]'s improvement. Only the 429 resume path
+     *   sets this: it is continuing a track already at the listener's chosen
+     *   quality, where another source at that same rung is the right answer
+     *   and YouTube is the last resort. Every ordinary upgrade leaves it false
+     *   and keeps the old bar.
      */
     suspend fun upgradeFor(
         target: TrackMatcher.Target,
@@ -538,6 +544,7 @@ object SourceResolver {
         servedBy: String? = null,
         excludeSources: Set<String> = emptySet(),
         excludeHosts: Set<String> = emptySet(),
+        allowSameRendition: Boolean = false,
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -583,7 +590,9 @@ object SourceResolver {
             strictOriginal = true,
             excludeHosts = excludeHosts,
         ) { candidate, stream ->
-            worthSwapping(stream.format, playing).also { worth ->
+            val acceptable = worthSwapping(stream.format, playing) ||
+                (allowSameRendition && HqQuality.isSameOrBetter(stream.format, playing))
+            acceptable.also { worth ->
                 // Named rather than skipped silently. This is the one refusal
                 // in the upgrade path that discards a stream already found,
                 // matched and length-checked, and a silent skip reads in the log

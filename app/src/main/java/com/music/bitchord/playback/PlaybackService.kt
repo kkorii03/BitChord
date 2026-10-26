@@ -4922,6 +4922,10 @@ class PlaybackService : MediaLibraryService() {
                         servedBy = failedSource,
                         excludeSources = sources,
                         excludeHosts = hosts,
+                        // Another source at the same rung is the point of this
+                        // path: the track was already at the listener's chosen
+                        // quality, and falling to YouTube is the last resort.
+                        allowSameRendition = true,
                     )
                 } ?: break
                 val verified = withContext(Dispatchers.IO) {
@@ -4935,7 +4939,8 @@ class PlaybackService : MediaLibraryService() {
                         failedVerified?.rate,
                         verified.offsetMs,
                         verified.rate,
-                    )
+                    ) &&
+                    HqResumePolicy.sameOrBetterRendition(failed?.format, candidate.format)
                 ) {
                     chosen = candidate
                     break

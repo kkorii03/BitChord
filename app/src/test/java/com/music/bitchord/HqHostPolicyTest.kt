@@ -5,6 +5,7 @@ import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.HqResumeCandidate
 import com.music.bitchord.playback.HqResumePolicy
 import com.music.bitchord.data.net.HqRetryPolicy
+import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.playback.QualityUpgrade
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -158,6 +159,65 @@ class HqHostPolicyTest {
         )
 
         assertNull(chosen)
+    }
+
+    @Test
+    fun `resume keeps the same rung on another source`() {
+        val cd = StreamFormat("flac", 1411, 44_100, 16)
+        val chosen = HqResumePolicy.choose(
+            failedSourceConfigId = "monochrome",
+            failedHost = "tracks.example",
+            failedOffsetMs = null,
+            failedRate = null,
+            failedFormat = cd,
+            candidates = listOf(
+                HqResumeCandidate(
+                    sourceConfigId = "qobuz",
+                    trackId = "b",
+                    url = "https://qobuz.example/b.flac",
+                    format = cd,
+                ),
+            ),
+        )
+
+        assertEquals("qobuz", chosen?.sourceConfigId)
+    }
+
+    @Test
+    fun `resume refuses a lower rung even from a healthy host`() {
+        val chosen = HqResumePolicy.choose(
+            failedSourceConfigId = "monochrome",
+            failedHost = "tracks.example",
+            failedOffsetMs = null,
+            failedRate = null,
+            failedFormat = StreamFormat("flac", 1411, 44_100, 16),
+            candidates = listOf(
+                HqResumeCandidate(
+                    sourceConfigId = "qobuz",
+                    trackId = "b",
+                    url = "https://qobuz.example/b.m4a",
+                    format = StreamFormat("aac", 320),
+                ),
+            ),
+        )
+
+        assertNull(chosen)
+    }
+
+    @Test
+    fun `resume accepts an unknown format when the other rules agree`() {
+        val chosen = HqResumePolicy.choose(
+            failedSourceConfigId = "monochrome",
+            failedHost = "tracks.example",
+            failedOffsetMs = null,
+            failedRate = null,
+            failedFormat = StreamFormat("flac", 1411, 44_100, 16),
+            candidates = listOf(
+                HqResumeCandidate("qobuz", "b", "https://qobuz.example/b.flac"),
+            ),
+        )
+
+        assertEquals("qobuz", chosen?.sourceConfigId)
     }
 
     @Test

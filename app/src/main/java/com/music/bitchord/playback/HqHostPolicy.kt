@@ -1,6 +1,8 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.data.net.HqRetryPolicy
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.StreamFormat
 import kotlinx.coroutines.CompletableDeferred
 import kotlin.math.abs
 
@@ -247,6 +249,7 @@ internal data class HqResumeCandidate(
     val durationSec: Int? = null,
     val verifiedOffsetMs: Long? = null,
     val verifiedRate: Double? = null,
+    val format: StreamFormat? = null,
 )
 
 /**
@@ -285,6 +288,19 @@ internal object HqResumePolicy {
         return true
     }
 
+    /**
+     * Whether a replacement is at the quality already chosen or better.
+     *
+     * A missing side is not evidence of a downgrade, so it is left to the
+     * other rules rather than rejected here. Both known sides use the same
+     * ladder as every other quality decision, so a lossy copy cannot replace a
+     * lossless one just because its host is healthy.
+     */
+    fun sameOrBetterRendition(failed: StreamFormat?, candidate: StreamFormat?): Boolean {
+        if (failed == null || candidate == null) return true
+        return HqQuality.isSameOrBetter(candidate, failed)
+    }
+
     fun choose(
         failedSourceConfigId: String?,
         failedHost: String?,
@@ -292,11 +308,13 @@ internal object HqResumePolicy {
         failedRate: Double?,
         candidates: List<HqResumeCandidate>,
         hostPenalty: (String?) -> Int = { 0 },
+        failedFormat: StreamFormat? = null,
     ): HqResumeCandidate? = candidates
         .asSequence()
         .filter { it.sourceConfigId != failedSourceConfigId }
         .filter { HqHostTracker.hostOf(it.url) != failedHost }
         .filter { sameRecording(failedOffsetMs, failedRate, it.verifiedOffsetMs, it.verifiedRate) }
+        .filter { sameOrBetterRendition(failedFormat, it.format) }
         .sortedWith(
             compareBy<HqResumeCandidate>(
                 { hostPenalty(HqHostTracker.hostOf(it.url)) },
