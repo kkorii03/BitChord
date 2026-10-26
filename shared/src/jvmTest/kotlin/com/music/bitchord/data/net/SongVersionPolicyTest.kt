@@ -268,4 +268,150 @@ class SongVersionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `a proven-empty counterpart endpoint is off for a week and then tried again`() {
+        val now = 1_000_000L
+        val offUntil = SongVersionPolicy.counterpartOffUntil(now)
+        assertEquals(now + SongVersionPolicy.COUNTERPART_OFF_MS, offUntil)
+        assertTrue(SongVersionPolicy.counterpartSuppressed(offUntil, now))
+        assertTrue(SongVersionPolicy.counterpartSuppressed(offUntil, offUntil - 1))
+        assertFalse(SongVersionPolicy.counterpartSuppressed(offUntil, offUntil))
+        assertFalse(SongVersionPolicy.counterpartSuppressed(offUntil, offUntil + 1))
+        assertFalse(SongVersionPolicy.counterpartSuppressed(null, now))
+    }
+
+    @Test
+    fun `only an undecided video or preview downloads its song version`() {
+        assertTrue(
+            SongVersionPolicy.downloadIsSongVersion(
+                isVideo = true,
+                typeUnknown = false,
+                knownMissing = false,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.downloadIsSongVersion(
+                isVideo = false,
+                typeUnknown = true,
+                knownMissing = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.downloadIsSongVersion(
+                isVideo = true,
+                typeUnknown = false,
+                knownMissing = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.downloadIsSongVersion(
+                isVideo = false,
+                typeUnknown = false,
+                knownMissing = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `the mv sound slack is inclusive and only for unknown provenance`() {
+        assertEquals(
+            SongVersionPolicy.MV_SOUND_SLACK_MS,
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 200_000L + SongVersionPolicy.MV_SOUND_SLACK_MS,
+                catalogDurationMs = 200_000L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 200_000L + SongVersionPolicy.MV_SOUND_SLACK_MS - 1,
+                catalogDurationMs = 200_000L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 210_700L,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = false,
+                soundSourceId = null,
+            ),
+        )
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 0L,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 210_700L,
+                catalogDurationMs = 0L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+        assertNull(
+            SongVersionPolicy.mvSoundDeltaMs(
+                fileDurationMs = 190_000L,
+                catalogDurationMs = 206_700L,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a saved file's use is decided by its recorded sound source`() {
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "song",
+                online = true,
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.STREAM_SONG,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = false,
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.UNKNOWN_PLAY_FILE,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy file is never adopted as a recording it does not name`() {
+        assertTrue(SongVersionPolicy.mayAdoptDownloadedFile("song", "song"))
+        assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", "video"))
+        assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", null))
+    }
 }

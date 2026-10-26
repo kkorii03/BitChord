@@ -114,4 +114,36 @@ class LyricsAiGuardTest {
         assertFalse(LyricsAiGuard.isInstrumentalTitle("Instinct"))
         assertFalse(LyricsAiGuard.wantsDeepgram("River Flows in You (Inst.)", "Yiruma", listOf("la la")))
     }
+
+    @Test
+    fun aSongCheckNeedsExactlyThreeSungLinesAtTheFloor() {
+        val english = listOf("one two three", "four five six", "seven eight nine")
+        assertFalse(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false, timed = true, sungLines = 2, title = "Loved", artist = "IU", texts = english,
+            ),
+        )
+        assertTrue(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false, timed = true, sungLines = 3, title = "Loved", artist = "IU", texts = english,
+            ),
+        )
+    }
+
+    @Test
+    fun koreanIsRecognisedFromAnyOfTitleArtistOrLyrics() {
+        assertTrue(LyricsAiGuard.isKoreanSong("Loved", "IU", listOf("사랑해 너를 영원히")))
+        assertTrue(LyricsAiGuard.isKoreanSong("사랑해", "IU", listOf("I love you")))
+        assertTrue(LyricsAiGuard.isKoreanSong("Loved", "아이유", listOf("I love you")))
+        assertFalse(LyricsAiGuard.isKoreanSong("Loved", "IU", listOf("I love you")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "IU", listOf("I love you")))
+    }
+
+    @Test
+    fun mrMustBeACapitalisedStandaloneMarker() {
+        assertTrue(LyricsAiGuard.isInstrumentalTitle("Song MR"))
+        assertTrue(LyricsAiGuard.isInstrumentalTitle("Song (MR)"))
+        assertFalse(LyricsAiGuard.isInstrumentalTitle("Song mr"))
+        assertFalse(LyricsAiGuard.isInstrumentalTitle("Song MRA"))
+    }
 }

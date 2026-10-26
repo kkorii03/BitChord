@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.sources.HqMatchPolicy
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.pow
@@ -88,6 +89,70 @@ class LyricsTimingAlignTest {
         assertEquals(1.0, line.rate)
         assertEquals(4_000L, line.offsetMs)
         assertEquals(points.size, line.inliers)
+    }
+
+    /**
+     * A downloaded file holding the music video's sound starts five seconds
+     * after the record. Its lyrics are the record's, so the whole text has to
+     * move by +5.0 s on that file — the reported case.
+     */
+    @Test
+    fun anMvSoundFileFiveSecondsBehindTheRecordIsCorrectedByFiveSeconds() {
+        val points = listOf(10_000L, 40_000L, 70_000L, 100_000L).map { it to it + 5_000L }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.0, line.rate)
+        assertEquals(5_000L, line.offsetMs)
+        assertEquals(5_000L, line.map.map(0L))
+        assertEquals(105_000L, line.map.map(100_000L))
+    }
+
+    /**
+     * A verified high-quality source can start slightly late and run a hair
+     * faster. The lyrics stay on YouTube's clock and are mapped onto the
+     * substitute's clock with the stored offset and rate.
+     */
+    @Test
+    fun aVerifiedHighQualitySourceOffsetMovesLyricsOntoItsClock() {
+        val verdict = HqMatchPolicy.verdict(matchPercent = 90, offsetMs = 1_200L, rate = 1.001)
+        assertTrue(verdict.accepted)
+        val map = assertNotNull(HqMatchPolicy.mapFor(verdict.offsetMs, verdict.rate))
+        val line = LyricLine(timeMs = 10_000L, text = "hello world")
+        val moved = listOf(line).timedBy(map).single()
+        assertEquals(11_210L, moved.timeMs)
+    }
+
+    @Test
+    fun aFitNeedsAtLeastThreeAnswers() {
+        assertNull(TimingFit.fit(emptyList()))
+        assertNull(TimingFit.fit(listOf(10_000L to 15_000L, 20_000L to 25_000L)))
+        assertNotNull(TimingFit.fit(listOf(10_000L to 15_000L, 20_000L to 25_000L, 30_000L to 35_000L)))
+    }
+
+    @Test
+    fun everyAnswerOnTheFittedLineStaysWithinTheInlierWindow() {
+        val rnd = Random(5)
+        val points = refs.map { it to it + 3_000L + rnd.nextLong(-1_000, 1_001) }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertTrue(
+            points.all { (record, video) ->
+                abs(video - line.map.map(record)) <= TimingFit.INLIER_MS + 1
+            },
+        )
+        assertEquals(1.0, line.rate)
+        assertTrue(abs(line.offsetMs - 3_000L) <= 100)
+    }
+
+    @Test
+    fun theFittedMapNeverRunsBackwards() {
+        val rnd = Random(6)
+        val points = refs.map { it to (it * 1.02).toLong() + 2_500L + rnd.nextLong(-400, 401) }
+        val line = assertNotNull(TimingFit.fit(points))
+        var previous = Long.MIN_VALUE
+        for (at in 0L..240_000L step 5_000L) {
+            val mapped = line.map.map(at)
+            assertTrue(mapped >= previous, "map went backwards at $at")
+            previous = mapped
+        }
     }
 
     // ---- The time map ------------------------------------------------------------------

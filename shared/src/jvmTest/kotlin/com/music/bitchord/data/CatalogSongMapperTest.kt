@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -124,5 +125,78 @@ class CatalogSongMapperTest {
             durationText = "3:30",
         )
         assertEquals(song, CatalogSongMapper.decodeForTest(CatalogSongMapper.encodeForTest(song)))
+    }
+
+    @Test
+    fun `a malformed cache value is not a catalogue song`() {
+        assertNull(CatalogSongMapper.decodeForTest("none"))
+        assertNull(CatalogSongMapper.decodeForTest("only\u001Ffour\u001Ffields\u001Fhere"))
+        assertNull(CatalogSongMapper.decodeForTest("\u001Ftitle\u001Fartist\u001Falbum\u001Fid"))
+    }
+
+    @Test
+    fun `the mapped row takes the catalogue identity and becomes audio`() {
+        val catalog = CatalogSongMapper.CatalogSong(
+            videoId = "catalogue-id",
+            title = "Friday",
+            artist = "IU",
+            albumTitle = "Modern Times",
+            albumId = "MPREb_album",
+            artworkUrl = "https://yt3.googleusercontent.com/cover",
+            durationText = "3:30",
+        )
+        val source = Song(
+            videoId = "video-id",
+            title = "Friday (Official Video)",
+            artist = "IU - Topic",
+            thumbnailUrl = "https://i.ytimg.com/vi/video-id/hqdefault.jpg",
+            durationText = "3:45",
+            albumName = "Upload",
+            albumId = "MPRE_upload",
+            artistId = "UC_upload",
+            setVideoId = "set",
+            isVideo = true,
+            isVideoOrigin = true,
+        )
+
+        val mapped = catalog.toSong(source)
+        assertEquals("catalogue-id", mapped.videoId)
+        assertEquals("Friday", mapped.title)
+        assertEquals("IU", mapped.artist)
+        assertEquals("https://yt3.googleusercontent.com/cover", mapped.thumbnailUrl)
+        assertEquals("3:30", mapped.durationText)
+        assertEquals("MPREb_album", mapped.albumId)
+        assertEquals("Modern Times", mapped.albumName)
+        assertNull(mapped.artistId)
+        assertTrue(mapped.artists.isEmpty())
+        assertNull(mapped.setVideoId)
+        assertFalse(mapped.isVideo)
+        assertFalse(mapped.isVideoOrigin)
+    }
+
+    @Test
+    fun `the album subtitle names the artist for an album search`() {
+        assertTrue(CatalogSongMapper.albumArtistMatches("IU", "Album • IU • 2023"))
+        assertTrue(CatalogSongMapper.albumArtistMatches("아이유", "Album • IU(아이유) • 2023"))
+        assertFalse(CatalogSongMapper.albumArtistMatches("IU", "Album • BTS • 2023"))
+        assertFalse(CatalogSongMapper.albumArtistMatches("", "Album • IU • 2023"))
+    }
+
+    @Test
+    fun `a different take does not answer a title query`() {
+        assertFalse(CatalogSongMapper.trackMatchesQuery("Friday", "Friday (Live)"))
+        assertFalse(CatalogSongMapper.trackMatchesQuery("Friday", "Friday (Remix)"))
+        assertTrue(CatalogSongMapper.trackMatchesQuery("Friday", "Friday (Official Video)"))
+    }
+
+    @Test
+    fun `only bracketed names of the song become alternate titles`() {
+        assertEquals(
+            listOf("금요일에 만나요", "Friday"),
+            CatalogSongMapper.alternateTitles("Friday(금요일에 만나요)(Friday)"),
+        )
+        assertTrue(CatalogSongMapper.alternateTitles("Friday (2024)").isEmpty())
+        assertTrue(CatalogSongMapper.alternateTitles("Friday (Official Video)").isEmpty())
+        assertTrue(CatalogSongMapper.alternateTitles("Friday (Remix)").isEmpty())
     }
 }

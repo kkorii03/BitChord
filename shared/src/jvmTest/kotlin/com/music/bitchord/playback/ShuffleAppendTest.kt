@@ -70,6 +70,33 @@ class ShuffleAppendTest {
         assertEquals(remaining, merged.drop(added.size))
     }
 
+    @Test
+    fun mergeWithoutFreshRowsReturnsTheRemainingListUntouched() {
+        val remaining = listOf("a", "b")
+        assertEquals(
+            remaining,
+            ShuffleAppend.mergeRemaining(remaining, emptyList(), key = { it }, random = Random(1)),
+        )
+    }
+
+    @Test
+    fun mergeDropsDuplicatesByKeyNotByValue() {
+        data class Row(val id: String, val label: String)
+        val remaining = listOf(Row("a", "old"))
+        val added = listOf(Row("a", "new"), Row("b", "fresh"), Row("b", "again"))
+
+        val merged = ShuffleAppend.mergeRemaining(
+            remaining = remaining,
+            added = added,
+            key = { it.id },
+            random = Random(2),
+        )
+
+        assertEquals(listOf("a", "b"), merged.map { it.id })
+        assertEquals("old", merged.first { it.id == "a" }.label)
+        assertEquals("fresh", merged.first { it.id == "b" }.label)
+    }
+
     private class ZeroRandom : Random() {
         override fun nextBits(bitCount: Int): Int = 0
     }
