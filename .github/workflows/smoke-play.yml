@@ -3,8 +3,11 @@ name: Smoke play (emulator)
 # Plays a fixed set of music videos and covers on an emulator and judges the
 # log with scripts/smokecheck.py: no official MV may play as an MV, covers stay
 # covers, no crash. Run before any test build goes to the phone.
+# Started by pushing a commit to a smoke/** branch: a workflow_dispatch needs
+# the file on the default branch, and main is not changed without approval.
 on:
-  workflow_dispatch:
+  push:
+    branches: ['smoke/**']
 
 jobs:
   smoke:
