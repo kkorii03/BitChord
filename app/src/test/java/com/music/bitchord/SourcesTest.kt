@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -47,6 +48,7 @@ class SourcesTest {
     fun resetSourceMemory() {
         SourceResolver.clearSearchAnswers()
         SourceResolver.SourceCooldown.resetForTest()
+        HqHostTracker.resetForTest()
     }
 
     private companion object {

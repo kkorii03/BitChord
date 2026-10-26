@@ -91,6 +91,17 @@ object QualityUpgrade {
     )
 
     private val pending = ConcurrentHashMap<String, Pending>()
+
+    /**
+     * The last [Pending] a second look was asked about, kept so a candidate
+     * that fails its audition can hand the same question to the next source
+     * without re-deriving what is playing.
+     */
+    private val lastPending = ConcurrentHashMap<String, Pending>()
+
+    /** Sources and hosts already refused by a failed audition for [mediaId]. */
+    private val failedSources = ConcurrentHashMap<String, MutableSet<String>>()
+    private val failedHosts = ConcurrentHashMap<String, MutableSet<String>>()
     /**
      * A second pass to make after a worthwhile lossy upgrade.  The first pass
      * intentionally takes the first source that beats Opus so playback improves
@@ -252,6 +263,41 @@ object QualityUpgrade {
     fun refuseUpgrades(mediaId: String) {
         refused += mediaId
         TrackLog.d(TAG, "$mediaId broke on its upgrade; no more swaps for it", about = mediaId)
+    }
+
+    /**
+     * A candidate that was chosen but failed its audition or verification.
+     *
+     * Its source and host are excluded from the next attempt, and the track is
+     * put back in the state a fresh second look expects — without touching
+     * [lastPending], which is what [retryNext] needs. This is the difference
+     * between "this candidate was bad" and "this track has no better copy".
+     */
+    fun failedCandidate(mediaId: String, sourceConfigId: String?, host: String?) {
+        sourceConfigId?.takeIf { it.isNotBlank() }?.let {
+            failedSources.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
+        }
+        host?.takeIf { it.isNotBlank() }?.let {
+            failedHosts.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
+        }
+        forced.remove(mediaId)
+        shelved.remove(mediaId)
+        auditioning -= mediaId
+        pending.remove(mediaId)
+        asked -= mediaId
+        HqHostTracker.endDownload(mediaId, host)
+    }
+
+    /**
+     * Re-arms the second look after [failedCandidate], so the next source in
+     * the same tier can be tried immediately. False when there is no previous
+     * question to re-ask.
+     */
+    fun retryNext(mediaId: String): Boolean {
+        val last = lastPending[mediaId] ?: return false
+        pending[mediaId] = last
+        asked -= mediaId
+        return true
     }
 
     /**
@@ -427,6 +473,9 @@ object QualityUpgrade {
 
     suspend fun lookAgain(mediaId: String, playingDurationSec: Int?): SourceStream? {
         val waiting = pending[mediaId] ?: return null
+        lastPending[mediaId] = waiting
+        val excludedSources = failedSources[mediaId].orEmpty().toSet()
+        val excludedHosts = failedHosts[mediaId].orEmpty().toSet()
         var found: SourceStream? = null
         /**
          * Whether the search got as far as an answer, as opposed to being
@@ -465,7 +514,11 @@ object QualityUpgrade {
             // which played for five seconds of silence and was then put back.
             waiting.inFlight?.let { lookup ->
                 val late = runCatching { lookup.await() }.getOrNull()
-                if (late != null &&
+                val lateHost = late?.url?.let(HqHostTracker::hostOf)
+                val allowed = late != null &&
+                    late.sourceConfigId !in excludedSources &&
+                    (lateHost == null || lateHost !in excludedHosts)
+                if (allowed && late != null &&
                     SourceResolver.worthSwapping(late.format, waiting.playing) &&
                     SourceResolver.sameRecordingAs(late.durationSec, effectiveDurationSec)
                 ) {
@@ -490,6 +543,8 @@ object QualityUpgrade {
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
                 servedBy = waiting.servedBy,
+                excludeSources = excludedSources,
+                excludeHosts = excludedHosts,
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
@@ -577,6 +632,13 @@ object QualityUpgrade {
     fun onPlaybackStarted(mediaId: String, rendition: String?) {
         if (rendition != null) return
         asked -= mediaId
+        // "No more swaps for it" is a verdict about the playback that broke,
+        // not about the song. A fresh play of the same track is a different
+        // stream and gets another try; see [refuseUpgrades].
+        refused -= mediaId
+        lastPending.remove(mediaId)
+        failedSources.remove(mediaId)
+        failedHosts.remove(mediaId)
     }
 
     /**
@@ -619,6 +681,9 @@ object QualityUpgrade {
      */
     internal fun hasAnsweredFor(mediaId: String): Boolean = mediaId in asked
 
+    /** Test seam: whether [mediaId] is held out of upgrades for this playback. */
+    internal fun hasRefusedFor(mediaId: String): Boolean = mediaId in refused
+
     /** Test seam: puts [mediaId] in the state a completed second look leaves it. */
     internal fun markAnsweredForTest(mediaId: String) {
         asked += mediaId
@@ -631,6 +696,9 @@ object QualityUpgrade {
         forced.remove(mediaId)
         shelved.remove(mediaId)
         auditioning -= mediaId
+        lastPending.remove(mediaId)
+        failedSources.remove(mediaId)
+        failedHosts.remove(mediaId)
         // A request made by hand is about the track the listener was listening
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
@@ -676,6 +744,9 @@ object QualityUpgrade {
         handAsked += mediaId
         asked -= mediaId
         refused -= mediaId
+        failedSources.remove(mediaId)
+        failedHosts.remove(mediaId)
+        lastPending.remove(mediaId)
     }
 
     /**

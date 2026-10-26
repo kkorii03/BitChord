@@ -38,6 +38,7 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1237,7 +1238,10 @@ object AudioCache {
             }
 
             private fun releaseHeld() {
-                heldKey?.let { release(playbackKeysInUse, it) }
+                heldKey?.let { key ->
+                    release(playbackKeysInUse, key)
+                    if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
+                }
                 heldVideoId?.let { release(playbackVideoIdsInUse, it) }
                 heldKey = null
                 heldVideoId = null
@@ -1253,6 +1257,17 @@ object AudioCache {
      */
     private val playbackKeysInUse = ConcurrentHashMap<String, Int>()
     private val playbackVideoIdsInUse = ConcurrentHashMap<String, Int>()
+
+    /**
+     * One deferred per cache key, completed when the player lets go of that
+     * entry. A whole-track fetch waits on this instead of polling: Media3 gives
+     * an entry to one writer, and the player holds it for as long as it is
+     * streaming the rendition.
+     */
+    private val keyIdleSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    /** Whole-rendition downloads in flight, so a queue move can stop the old one. */
+    private val wholeRenditionJobs = ConcurrentHashMap<String, Job>()
 
     /**
      * Tracks whose bytes read-ahead is writing right now. The analysis head is
@@ -1472,6 +1487,22 @@ object AudioCache {
                         // to collide with yet.
                         retain(readAheadWrites, next)
                         try {
+                            val nextHost =
+                                (warmed?.url ?: StreamChoice.of(next)?.url)?.let(HqHostTracker::hostOf)
+                            if (nextHost != null && HqHostTracker.isResting(nextHost)) {
+                                TrackLog.d(
+                                    TAG,
+                                    "read-ahead $next: $nextHost is resting; not fetching it",
+                                    about = next,
+                                )
+                                return@launch
+                            }
+                            // The current track may still be downloading from
+                            // this same host. Its bytes win: wait for that
+                            // download to finish rather than opening a second
+                            // request and tripping the server's rate limit.
+                            // Another host is unaffected and proceeds at once.
+                            HqHostTracker.awaitIdle(nextHost, exceptTrack = next)
                             fetch(next, 0, PRELOAD_BYTES)
                             fetchWhole(next)
                         } finally {
@@ -1664,6 +1695,95 @@ object AudioCache {
     suspend fun warmRange(uri: Uri, position: Long, length: Long, probeLock: Boolean = true) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         fetch(key, uri, position, length, probeLock = probeLock)
+    }
+
+    /** Waits, without polling, until the player no longer holds [key]'s cache entry. */
+    private suspend fun awaitPlaybackRelease(key: String) {
+        while (true) {
+            val signal = synchronized(keyIdleSignals) {
+                if (playerHoldsKey(key)) {
+                    keyIdleSignals.getOrPut(key) { CompletableDeferred() }
+                } else {
+                    null
+                }
+            } ?: return
+            signal.await()
+        }
+    }
+
+    /**
+     * Pulls the whole of an upgraded rendition onto disk, sequentially.
+     *
+     * The listener's own playback has priority on the entry, so this waits for
+     * the player to let go of it rather than fighting for Media3's single
+     * writer slot. When the player has closed the entry — after a buffer fill,
+     * a pause, or the track ending — the rest is fetched in one pass and stays
+     * cached, so a host that starts refusing bytes later cannot take back what
+     * has already arrived.
+     *
+     * Called after a high-quality swap. The host stays marked as downloading
+     * until this finishes, which is what keeps the next track's read-ahead off
+     * the same server until the current track is complete.
+     */
+    suspend fun cacheWholeRendition(uri: Uri, title: String?) {
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val mediaId = mediaIdIn(uri)
+        val job = coroutineContext.job
+        mediaId?.let { wholeRenditionJobs[it] = job }
+        // [uri] is the virtual `bitchord://watch?…&q=hifi` item, so its own
+        // authority is not the server. The parked stream names the real host.
+        val host = QualityUpgrade.forcedStream(uri)?.url?.let(HqHostTracker::hostOf)
+            ?: HqHostTracker.hostOf(uri.toString())
+        try {
+            var failure: String? = null
+            for (attempt in 0 until 2) {
+                awaitPlaybackRelease(key)
+                val upstream = upstreamFactory ?: return
+                val source = readAheadCacheFactory(upstream).createDataSource()
+                val spec = DataSpec.Builder().setUri(uri).build()
+                val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
+                failure = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }
+                        try {
+                            writer.cache()
+                        } finally {
+                            handle.dispose()
+                        }
+                    }
+                }.exceptionOrNull()?.let { error ->
+                    if (error is CancellationException) throw error
+                    error.message
+                }
+                if (failure == null) break
+            }
+            val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
+            val label = title?.takeIf { it.isNotBlank() } ?: mediaId ?: key
+            if (failure == null) {
+                TrackLog.d(TAG, "hq-cache: $label fully cached ${formatBytes(bytes)}", about = mediaId)
+            } else {
+                TrackLog.d(
+                    TAG,
+                    "hq-cache: $label stopped short at ${formatBytes(bytes)}: $failure",
+                    about = mediaId,
+                )
+            }
+        } finally {
+            mediaId?.let {
+                wholeRenditionJobs.remove(it, job)
+                HqHostTracker.endDownload(it, host)
+            }
+        }
+    }
+
+    /** Stops whole-rendition downloads for tracks other than [mediaId]. */
+    fun cancelWholeRenditionsExcept(mediaId: String?) {
+        wholeRenditionJobs.entries
+            .filter { it.key != mediaId }
+            .forEach { entry ->
+                entry.value.cancel()
+                wholeRenditionJobs.remove(entry.key, entry.value)
+            }
     }
 
     /**
@@ -2482,6 +2602,17 @@ object AudioCache {
             "read-ahead $label: $probes probes, ${formatBytes(bytes)} in ${elapsed}ms" +
                 (failure?.let { " (failed: ${it.substringBefore("?").take(60)})" } ?: ""),
             about = about,
+        )
+        val transferHost = mediaIdIn(uri)
+            ?.let(StreamChoice::of)
+            ?.url
+            ?.let(HqHostTracker::hostOf)
+            ?: HqHostTracker.hostOf(uri.toString())
+        HqHostTracker.noteTransfer(
+            transferHost,
+            bytes,
+            elapsed,
+            ok = failure == null,
         )
     }
 

@@ -60,6 +60,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.upstream.BandwidthMeter
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
@@ -4100,6 +4101,16 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        // A download marked against the outgoing track must not keep the next
+        // track's read-ahead waiting on a host nobody is fetching from any
+        // more. A track that ended by itself is the exception: its player has
+        // just let go of the cache entry, so the whole-rendition pass is about
+        // to run and the next track should wait for it. A skip cancels that
+        // work outright.
+        if (!previousEnded) {
+            HqHostTracker.endAllExcept(mediaItem?.mediaId)
+            AudioCache.cancelWholeRenditionsExcept(mediaItem?.mediaId)
+        }
         // The outgoing track's story ends here. Its own lines are already in
         // the log; this is the one line that ties them together for a reader
         // who was not watching while it played.
@@ -4435,8 +4446,33 @@ class PlaybackService : MediaLibraryService() {
      */
     private class PermanentAwareLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+            rateLimited(loadErrorInfo.exception)?.let { refusal ->
+                // [ChunkedDataSource] has already waited out Retry-After and
+                // the 1s/2s/4s ladder before letting this through. Asking
+                // Media3 to repeat that would turn three retries into twelve.
+                HqHostTracker.noteRateLimited(
+                    null,
+                    HqRetryPolicy.retryAfterHeader(refusal.responseHeaders),
+                    refusal.responseCode,
+                )
+                return C.TIME_UNSET
+            }
             if (isPermanent(loadErrorInfo.exception)) return C.TIME_UNSET
             return super.getRetryDelayMsFor(loadErrorInfo)
+        }
+
+        private fun rateLimited(error: Throwable?): HttpDataSource.InvalidResponseCodeException? {
+            var cause = error
+            var depth = 0
+            while (cause != null && depth++ < CAUSE_DEPTH) {
+                if (cause is HttpDataSource.InvalidResponseCodeException &&
+                    HqRetryPolicy.isRateLimited(cause.responseCode)
+                ) {
+                    return cause
+                }
+                cause = cause.cause?.takeIf { it !== cause }
+            }
+            return null
         }
 
         private fun isPermanent(error: Throwable?): Boolean {
@@ -4505,6 +4541,30 @@ class PlaybackService : MediaLibraryService() {
     private fun isHttpRefusal(error: PlaybackException): Boolean =
         error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
 
+    private class RateLimit(val code: Int, val header: String?)
+
+    /**
+     * The 429/503 buried in a playback error, when there is one. Media3 wraps
+     * the data source exception several layers deep, and only the HTTP one
+     * carries the response code and `Retry-After`.
+     */
+    private fun rateLimitOf(error: Throwable?): RateLimit? {
+        var cause = error
+        var depth = 0
+        while (cause != null && depth++ < 8) {
+            if (cause is HttpDataSource.InvalidResponseCodeException &&
+                HqRetryPolicy.isRateLimited(cause.responseCode)
+            ) {
+                return RateLimit(
+                    cause.responseCode,
+                    HqRetryPolicy.retryAfterHeader(cause.responseHeaders),
+                )
+            }
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        return null
+    }
+
     /**
      * Puts a track that died mid-read back on its feet.
      *
@@ -4564,6 +4624,15 @@ class PlaybackService : MediaLibraryService() {
             replayAsManifest(player, item, uri, position)
         ) {
             return
+        }
+        // A 429/503 from the server holding the upgraded copy is not that copy
+        // being wrong — it is the server asking for a pause. Retry-After and
+        // the host rest have already been applied by the data source and the
+        // load policy; what is left is to continue the same recording from a
+        // different verified source, or fall back to YouTube when there is
+        // none.
+        rateLimitOf(error)?.let { rate ->
+            if (resumeRateLimited(item, uri, position, rate)) return
         }
         // An addon/JioSaavn stream gets one chance. If it fails after selection,
         // retrying the ordinary item only lets the same deterministic lookup win
@@ -4736,6 +4805,148 @@ class PlaybackService : MediaLibraryService() {
                 player.prepare()
             }
         }
+    }
+
+    /**
+     * Continues an upgraded track whose host answered 429/503 from another
+     * verified source of the *same recording*, or from YouTube when there is
+     * none.
+     *
+     * The replacement is checked twice: [SourceResolver.upgradeFor] applies the
+     * usual length and original-recording bars, and [HqResumePolicy] compares
+     * the H1 verification offsets when the store has them. A different cut of
+     * the song is not an acceptable splice, however good its bitrate.
+     *
+     * @return true when this path has taken ownership of the recovery. The
+     *   replacement happens on [scope] after the usual recovery delay so the
+     *   released data source can let go of its socket.
+     */
+    private fun resumeRateLimited(
+        item: MediaItem,
+        uri: Uri?,
+        position: Long,
+        rate: RateLimit,
+    ): Boolean {
+        val playbackUri = uri ?: return false
+        // This path needs a target and a rendition marker; ordinary module
+        // streams keep their existing fallback.
+        if (QualityUpgrade.cacheTag(playbackUri)?.startsWith("hifi") != true) return false
+        val mediaId = item.mediaId
+        val target = SourceResolver.targetIn(playbackUri)
+        if (target.title.isBlank() || target.isVideo) return false
+        val failed = QualityUpgrade.forcedStream(playbackUri)
+        val failedSource = failed?.sourceConfigId ?: playbackUri.getQueryParameter("s")
+        val failedHost = HqHostTracker.hostOf(failed?.url ?: playbackUri.toString())
+        HqHostTracker.noteRateLimited(failedHost, rate.header, rate.code)
+        val failedVerified = HqVerificationStore.get(this, mediaId, failedSource, failed?.trackId)
+        val retryAfterSec =
+            (HqRetryPolicy.retryAfterMs(rate.header, System.currentTimeMillis())
+                ?: HqRetryPolicy.backoffMs(0)) / 1000L
+
+        scope.launch(TrackLog.about(mediaId)) {
+            delay(RECOVERY_DELAY_MS)
+            val sources = mutableSetOf<String>()
+            val hosts = mutableSetOf<String>()
+            failedSource?.let(sources::add)
+            failedHost?.let(hosts::add)
+            var chosen: SourceStream? = null
+            for (attempt in 0 until MAX_UPGRADE_CANDIDATES) {
+                val candidate = withContext(Dispatchers.IO) {
+                    SourceResolver.upgradeFor(
+                        target = target,
+                        playing = failed?.format,
+                        servedBy = failedSource,
+                        excludeSources = sources,
+                        excludeHosts = hosts,
+                    )
+                } ?: break
+                val verified = withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(RESUME_VERIFY_TIMEOUT_MS) {
+                        HqAudioVerify.verify(this@PlaybackService, mediaId, target, candidate)
+                    }
+                }
+                if (verified != null &&
+                    HqResumePolicy.sameRecording(
+                        failedVerified?.offsetMs,
+                        failedVerified?.rate,
+                        verified.offsetMs,
+                        verified.rate,
+                    )
+                ) {
+                    chosen = candidate
+                    break
+                }
+                candidate.sourceConfigId?.let(sources::add)
+                HqHostTracker.hostOf(candidate.url)?.let(hosts::add)
+            }
+
+            val alternate = chosen
+            if (alternate != null) {
+                withContext(Dispatchers.Main) {
+                    val live = player ?: return@withContext
+                    if (live.currentMediaItem?.mediaId != mediaId) return@withContext
+                    val upgraded = QualityUpgrade.upgradedUri(playbackUri.toString())
+                    QualityUpgrade.force(mediaId, alternate)
+                    HqHostTracker.beginDownload(mediaId, HqHostTracker.hostOf(alternate.url))
+                    swappingMediaId = mediaId
+                    live.replaceMediaItem(
+                        live.currentMediaItemIndex,
+                        item.buildUpon()
+                            .setUri(upgraded)
+                            .withResolvedStreamType(alternate.url)
+                            .build(),
+                    )
+                    live.seekTo(live.currentMediaItemIndex, position)
+                    live.prepare()
+                    StreamChoice.remember(mediaId, alternate, substituted = true)
+                    NerdStats.onSourceStream(
+                        mediaId,
+                        alternate.format,
+                        alternate.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                            ?: "Source",
+                    )
+                    scope.launch {
+                        AudioCache.cacheWholeRendition(
+                            Uri.parse(upgraded),
+                            item.mediaMetadata.title?.toString(),
+                        )
+                    }
+                }
+                val name = alternate.sourceConfigId
+                    ?.let { SourceRegistry.config(it)?.displayName }
+                    ?: "source"
+                TrackLog.w(
+                    "BitChord",
+                    "hq-stream: ${failedHost ?: "?"} ${rate.code} " +
+                        "retry-after=${retryAfterSec}s; resumed via $name at ${position}ms",
+                    about = mediaId,
+                )
+                return@launch
+            }
+
+            // Same recording nowhere: the existing last resort is YouTube.
+            // Only this playback gives up on the upgrade — see
+            // [QualityUpgrade.refuseUpgrades] and [QualityUpgrade.onPlaybackStarted].
+            QualityUpgrade.refuseUpgrades(mediaId)
+            QualityUpgrade.forget(mediaId)
+            playbackUri.getQueryParameter("v")?.let(StreamChoice::forget)
+            withContext(Dispatchers.Main) {
+                val live = player ?: return@withContext
+                if (live.currentMediaItem?.mediaId != mediaId) return@withContext
+                val fallback = item.toYouTubeFallbackMediaItem() ?: return@withContext
+                swappingMediaId = mediaId
+                live.replaceMediaItem(live.currentMediaItemIndex, fallback)
+                live.seekTo(live.currentMediaItemIndex, position)
+                live.prepare()
+            }
+            TrackLog.w(
+                "BitChord",
+                "hq-stream: ${failedHost ?: "?"} ${rate.code} " +
+                    "retry-after=${retryAfterSec}s; resumed via youtube at ${position}ms",
+                about = mediaId,
+            )
+        }
+        return true
     }
 
     /**
@@ -5478,18 +5689,52 @@ class PlaybackService : MediaLibraryService() {
                     )
                     return@launch
                 }
-                val outcome = try {
-                    swapIn(mediaId, better)
-                } finally {
-                    // The badge comes down when the upgrade is done, not when the
-                    // search that found it was — including the deliberate wait in
-                    // [swapIn] before the audio is allowed to be cut. See
-                    // [QualityUpgrade.lookAgain]. In `finally` because a queue
-                    // that moves on cancels this job, and a cancelled swap has to
-                    // put the badge out as surely as a completed one.
-                    NerdStats.onLosslessRaceEnd(mediaId)
+                var candidate = better
+                var round = 0
+                while (true) {
+                    val outcome = try {
+                        swapIn(mediaId, candidate)
+                    } finally {
+                        // The badge comes down when the upgrade is done, not when the
+                        // search that found it was — including the deliberate wait in
+                        // [swapIn] before the audio is allowed to be cut. See
+                        // [QualityUpgrade.lookAgain]. In `finally` because a queue
+                        // that moves on cancels this job, and a cancelled swap has to
+                        // put the badge out as surely as a completed one.
+                        NerdStats.onLosslessRaceEnd(mediaId)
+                    }
+                    if (outcome != SwapOutcome.NOT_PROVEN || round >= MAX_UPGRADE_CANDIDATES) {
+                        reportManualSwapOutcome(mediaId, outcome, candidate.format)
+                        return@launch
+                    }
+                    // The candidate was found, chosen and then failed to prove
+                    // itself — a 429, a timeout, a stream that was too slow to
+                    // be worth the wait. Its source and host are now excluded;
+                    // ask the same tier again immediately rather than leaving
+                    // the listener on the copy they asked to improve.
+                    round++
+                    if (!QualityUpgrade.retryNext(mediaId)) {
+                        reportManualSwapOutcome(mediaId, outcome, candidate.format)
+                        return@launch
+                    }
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade candidate for $mediaId failed; trying the next source",
+                        about = mediaId,
+                    )
+                    NerdStats.onLosslessRaceStart(mediaId)
+                    val next = withContext(Dispatchers.IO) {
+                        QualityUpgrade.lookAgain(mediaId, playingSeconds)
+                    }
+                    if (next == null) {
+                        reportManualUpgrade(
+                            mediaId,
+                            upgradeMessage(R.string.quality_upgrade_no_better, currentQualityLabel(mediaId)),
+                        )
+                        return@launch
+                    }
+                    candidate = next
                 }
-                reportManualSwapOutcome(mediaId, outcome, better.format)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failed: Exception) {
@@ -5863,7 +6108,11 @@ class PlaybackService : MediaLibraryService() {
                 "upgrade refused for $mediaId: '${target.title}' did not match the YouTube version",
                 about = mediaId,
             )
-            QualityUpgrade.forget(mediaId)
+            QualityUpgrade.failedCandidate(
+                mediaId,
+                stream.sourceConfigId,
+                HqHostTracker.hostOf(stream.url),
+            )
             return SwapOutcome.NOT_PROVEN
         }
 
@@ -5879,6 +6128,10 @@ class PlaybackService : MediaLibraryService() {
         // reaches its bytes through the same resolving data source the real one
         // does, and that is where a marked URI is turned back into a stream.
         QualityUpgrade.force(mediaId, stream)
+        // From here until the whole rendition is on disk, this host is busy
+        // with the track being listened to. The next track's read-ahead waits
+        // rather than opening a second request to it.
+        HqHostTracker.beginDownload(mediaId, HqHostTracker.hostOf(stream.url))
         val warmedThrough = auditionUpgrade(mediaId, at, upgradedUri, stream, alreadyFilled)
         if (warmedThrough == null) {
             // Nothing was cut, so there is nothing to put back: the listener
@@ -5888,7 +6141,11 @@ class PlaybackService : MediaLibraryService() {
             // returning a few seconds later. Dropping the parked stream stops
             // [QualityUpgrade.forcedStream] serving a URL that has just failed
             // to prove itself.
-            QualityUpgrade.forget(mediaId)
+            QualityUpgrade.failedCandidate(
+                mediaId,
+                stream.sourceConfigId,
+                HqHostTracker.hostOf(stream.url),
+            )
             withContext(Dispatchers.IO) { AudioCache.discardRendition(Uri.parse(upgradedUri)) }
             return SwapOutcome.NOT_PROVEN
         }
@@ -5959,7 +6216,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
-        return withContext(Dispatchers.Main) {
+        val outcome = withContext(Dispatchers.Main) {
             val now = swapPointFor(mediaId)
             if (crossfade?.isTransitioning() == true) {
                 // Caught right before the swap that would have broken it —
@@ -6087,8 +6344,22 @@ class PlaybackService : MediaLibraryService() {
                     AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
                 }
             }
+            // With the better copy now audible, pull the rest of it onto disk
+            // in one sequential pass. Playback is never held back by this: it
+            // reads whatever has already arrived, and a host that starts
+            // refusing midway cannot take back the bytes already cached.
+            scope.launch(TrackLog.about(mediaId)) {
+                AudioCache.cacheWholeRendition(
+                    Uri.parse(upgradedUri),
+                    now.item.mediaMetadata.title?.toString(),
+                )
+            }
             SwapOutcome.SWAPPED
         }
+        if (outcome != SwapOutcome.SWAPPED) {
+            HqHostTracker.endDownload(mediaId, HqHostTracker.hostOf(stream.url))
+        }
+        return outcome
     }
 
     /** Main thread. Null unless [mediaId] is still current and has another upgrade slot. */
@@ -6228,7 +6499,29 @@ class PlaybackService : MediaLibraryService() {
                             TrackLog.w("BitChord", "upgrade dropped before it was heard: ${verdict.why}")
                             return@withTimeoutOrNull null
                         }
-                        Audition.Waiting -> delay(UPGRADE_PROVE_STEP_MS)
+                        Audition.Waiting -> {
+                            // A stream that cannot deliver its first megabyte in
+                            // a few seconds will not become the upgrade the
+                            // listener asked for; hand the slot to the next
+                            // candidate now instead of spending the whole
+                            // timeout on it.
+                            val waited = SystemClock.elapsedRealtime() - startedAt
+                            val buffered = withContext(Dispatchers.Main) { audition.bufferedPosition }
+                            if (meter.bytes.get() < MIN_PROVEN_LOAD_BYTES &&
+                                buffered - at.position < 1_000L &&
+                                waited > UPGRADE_FIRST_MB_MS
+                            ) {
+                                TrackLog.d(
+                                    "BitChord",
+                                    "upgrade for $mediaId too slow: ${meter.bytes.get()}B " +
+                                        "in ${waited}ms; trying the next candidate",
+                                    about = mediaId,
+                                )
+                                HqHostTracker.noteFailure(HqHostTracker.hostOf(stream.url))
+                                return@withTimeoutOrNull null
+                            }
+                            delay(UPGRADE_PROVE_STEP_MS)
+                        }
                     }
                 }
                 @Suppress("UNREACHABLE_CODE") null
@@ -6303,6 +6596,14 @@ class PlaybackService : MediaLibraryService() {
         bytesLoaded: Long,
     ): Audition {
         audition.playerError?.let {
+            rateLimitOf(it)?.let { rate ->
+                HqHostTracker.noteRateLimited(
+                    HqHostTracker.hostOf(stream.url),
+                    rate.header,
+                    rate.code,
+                )
+                return Audition.Rejected("HTTP ${rate.code} from ${HqHostTracker.hostOf(stream.url) ?: "source"}")
+            }
             return Audition.Rejected("${it.errorCodeName} opening ${stream.format.summary}")
         }
         // The failure a mid-track swap cannot survive, and the one that never
@@ -10890,6 +11191,20 @@ class PlaybackService : MediaLibraryService() {
          * cut-then-wait order threw away.
          */
         const val UPGRADE_AUDITION_MS = 25_000L
+
+        /**
+         * How long a candidate has to deliver its first megabyte before the
+         * next one is tried. A stream that needs longer than this is the
+         * reported `auditioning … at 0 / 65536 / 1048576` crawl: spending the
+         * full audition timeout on it only delays the source that would work.
+         */
+        const val UPGRADE_FIRST_MB_MS = 3_000L
+
+        /** How many same-tier candidates a manual upgrade may try in one go. */
+        const val MAX_UPGRADE_CANDIDATES = 3
+
+        /** How long a resume candidate gets to prove itself before the next is tried. */
+        const val RESUME_VERIFY_TIMEOUT_MS = 10_000L
 
         /**
          * How far past the listener an upgrade has to be buffered before it is

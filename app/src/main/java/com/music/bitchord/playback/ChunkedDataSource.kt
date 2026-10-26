@@ -59,6 +59,11 @@ class ChunkedDataSource(
     private var chunkOpen = false
     private var rangeBytes = chunkBytes
 
+    /** The host currently being read, and what it has cost, for [HqHostTracker]. */
+    private var currentHost: String? = null
+    private var openedAtMs = 0L
+    private var bytesRead = 0L
+
     /** Set when the request can't be improved on, and is simply forwarded. */
     private var passthrough = false
 
@@ -74,6 +79,9 @@ class ChunkedDataSource(
     override fun open(dataSpec: DataSpec): Long {
         baseSpec = dataSpec
         position = dataSpec.position
+        currentHost = HqHostTracker.hostOf(dataSpec.uri.toString())
+        openedAtMs = System.currentTimeMillis()
+        bytesRead = 0L
 
         val total = dataSpec.uri.getQueryParameter("clen")?.toLongOrNull()
         if (total == null) {
@@ -86,7 +94,7 @@ class ChunkedDataSource(
             // ExoPlaybackException with not one line naming the server that
             // produced it or the status it produced.
             try {
-                return upstream.open(dataSpec)
+                return openWithRateLimitRetry(dataSpec) { upstream.open(dataSpec) }
             } catch (e: Exception) {
                 if (e !is InterruptedIOException) {
                     // `host` is null exactly when the URL was too broken to
@@ -94,6 +102,7 @@ class ChunkedDataSource(
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
+                    HqHostTracker.noteFailure(currentHost)
                     report(dataSpec, e)
                 }
                 throw e
@@ -119,7 +128,7 @@ class ChunkedDataSource(
             .setLength(length)
             .build()
         try {
-            upstream.open(spec)
+            openWithRateLimitRetry(spec) { upstream.open(spec) }
         } catch (e: Exception) {
             // Which client minted the URL is the first thing worth knowing when
             // a range is refused, and it isn't recoverable from anywhere else by
@@ -341,7 +350,7 @@ class ChunkedDataSource(
             // The failed open may have left a source holding a socket; a
             // reopen on the same factory must start from a clean one.
             runCatching { upstream.close() }
-            upstream.open(spec)
+            openWithRateLimitRetry(spec) { upstream.open(spec) }
             length
         } catch (e: Exception) {
             lastOpenFailure = e
@@ -363,7 +372,11 @@ class ChunkedDataSource(
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        if (passthrough) return upstream.read(buffer, offset, length)
+        if (passthrough) {
+            val read = upstream.read(buffer, offset, length)
+            if (read > 0) bytesRead += read
+            return read
+        }
         if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
 
         // A range that ends early is re-opened for the part that didn't
@@ -380,6 +393,7 @@ class ChunkedDataSource(
                 position += read
                 chunkRemaining -= read
                 bytesRemaining -= read
+                bytesRead += read
                 return read
             }
             chunkRemaining = 0L
@@ -400,9 +414,65 @@ class ChunkedDataSource(
 
     override fun close() {
         closeChunk()
+        if (openedAtMs != 0L) {
+            HqHostTracker.noteTransfer(
+                currentHost,
+                bytesRead,
+                System.currentTimeMillis() - openedAtMs,
+                ok = true,
+            )
+        }
         baseSpec = null
         bytesRemaining = 0L
         chunkRemaining = 0L
+        currentHost = null
+        openedAtMs = 0L
+        bytesRead = 0L
+    }
+
+    /**
+     * Opens [spec], waiting out a 429/503 according to its `Retry-After` or,
+     * when it sent none, 1s/2s/4s — at most three retries. The host is rested
+     * for the longer of that wait and [HqRetryPolicy.REST_MS] so candidate
+     * ordering and the next track's read-ahead steer around it.
+     */
+    private fun openWithRateLimitRetry(spec: DataSpec, open: () -> Long): Long {
+        var attempt = 0
+        while (true) {
+            try {
+                return open()
+            } catch (e: Exception) {
+                val refusal = rateLimitedCause(e) ?: throw e
+                if (!HqRetryPolicy.isRateLimited(refusal.responseCode)) throw e
+                val host = HqHostTracker.hostOf(spec.uri.toString()) ?: spec.uri.host
+                val header = HqRetryPolicy.retryAfterHeader(refusal.responseHeaders)
+                val decision = HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
+                HqHostTracker.noteRateLimited(host, header, refusal.responseCode)
+                TrackLog.w(
+                    TAG,
+                    "hq-stream: ${host ?: "?"} ${refusal.responseCode} " +
+                        "retry-after=${decision.waitMs / 1000}s; " +
+                        if (decision.retry) "retrying (${attempt + 1}/${HqRetryPolicy.MAX_ATTEMPTS})" else "giving up",
+                )
+                if (!decision.retry) {
+                    HqHostTracker.noteFailure(host)
+                    throw e
+                }
+                runCatching { upstream.close() }
+                runBlocking { delay(decision.waitMs) }
+                attempt++
+            }
+        }
+    }
+
+    private fun rateLimitedCause(error: Throwable?): HttpDataSource.InvalidResponseCodeException? {
+        var cause = error
+        var depth = 0
+        while (cause != null && depth++ < 8) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) return cause
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        return null
     }
 
     private companion object {
@@ -421,6 +491,7 @@ class ChunkedDataSource(
         /** Long enough for a client walk and a proxy round trip, short enough to keep the buffer. */
         const val MID_PLAY_RESOLVE_TIMEOUT_MS = 10_000L
     }
+
 
     /** Wraps [upstream]'s sources so everything opened through it is ranged. */
     class Factory(

@@ -7,6 +7,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -535,6 +536,8 @@ object SourceResolver {
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
         servedBy: String? = null,
+        excludeSources: Set<String> = emptySet(),
+        excludeHosts: Set<String> = emptySet(),
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -569,13 +572,16 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            rankedAbove(youtube.configId, active).filterNot { it.configId == servedBy },
+            rankedAbove(youtube.configId, active).filterNot {
+                it.configId == servedBy || it.configId in excludeSources
+            },
             target,
             request,
             waitForAll = true,
             strictLength = true,
             requireSharedArtist = true,
             strictOriginal = true,
+            excludeHosts = excludeHosts,
         ) { candidate, stream ->
             worthSwapping(stream.format, playing).also { worth ->
                 // Named rather than skipped silently. This is the one refusal
@@ -972,6 +978,7 @@ object SourceResolver {
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
+        excludeHosts: Set<String> = emptySet(),
         sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
@@ -1035,6 +1042,15 @@ object SourceResolver {
                 for (done in ready) {
                     val (source, stream) = done.await()
                     if (stream == null) continue
+                    val host = HqHostTracker.hostOf(stream.url)
+                    if (host != null && host in excludeHosts) continue
+                    // A host that just rate-limited us is not asked again for
+                    // this track. SourceCooldown still handles the source-level
+                    // failure; this is the narrower server-level rest.
+                    if (host != null && HqHostTracker.isResting(host)) {
+                        TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
+                        continue
+                    }
                     val current = best
                     val earlierSource = current != null &&
                         (order[source.configId] ?: Int.MAX_VALUE) <
@@ -1045,9 +1061,15 @@ object SourceResolver {
                     // beaten on rendition cost a decode *and* added it to the
                     // tail of the race, after even the slowest search had
                     // finished — see [HqQuality.couldWin].
-                    if (!HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)) {
-                        continue
-                    }
+                    val couldWin = HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)
+                    // A host with a recent 429, a poor success rate or very
+                    // slow transfers sorts behind a healthy one at the same
+                    // rendition. The format still decides first.
+                    val hostPreferred = current != null && !couldWin &&
+                        !HqQuality.isBetter(current.second.format, stream.format) &&
+                        HqHostTracker.penalty(host) <
+                        HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
+                    if (!couldWin && !hostPreferred) continue
                     if (!accept(source, stream)) continue
                     best = source to stream
                 }

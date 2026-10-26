@@ -5,6 +5,8 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.module.SharedCalls
+import com.music.bitchord.playback.HqHostTracker
+import com.music.bitchord.playback.HqRetryPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -345,6 +347,18 @@ class AddonClient(rawBaseUrl: String) {
                         return@withContext response.body?.string()?.takeIf { it.isNotBlank() }
                             ?: throw AddonException("Empty response")
                     response.code == 404 -> throw AddonNotFound()
+                    // A 429 or 503 is back-pressure, not a missing track. The
+                    // wait is the server's own Retry-After when it named one,
+                    // otherwise 1s/2s/4s, and the host is rested so the next
+                    // candidate choice avoids it.
+                    HqRetryPolicy.isRateLimited(response.code) -> {
+                        if (attempt >= HqRetryPolicy.MAX_ATTEMPTS) {
+                            throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
+                        }
+                        val header = response.header("Retry-After")
+                        HqHostTracker.noteRateLimited(HqHostTracker.hostOf(url), header, response.code)
+                        HqRetryPolicy.decide(header, attempt, System.currentTimeMillis()).waitMs
+                    }
                     // A 5xx is a server having a bad minute and will be tried
                     // again on the next track; a 4xx is this app asking for
                     // something it will never be given — a wrong URL, a token
@@ -353,9 +367,7 @@ class AddonClient(rawBaseUrl: String) {
                     // painting a transient outage as a configuration error
                     // sends people to re-paste a URL that was always correct.
                     response.code >= 500 -> throw AddonUnavailable("HTTP ${response.code}")
-                    response.code != 429 -> throw AddonException("HTTP ${response.code}")
-                    attempt >= MAX_RETRIES -> throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
-                    else -> retryAfterMs(response.header("Retry-After"), attempt)
+                    else -> throw AddonException("HTTP ${response.code}")
                 }
             }
             quietUntilMs = System.currentTimeMillis() + wait
@@ -364,12 +376,6 @@ class AddonClient(rawBaseUrl: String) {
         // Unreachable: every path out of the loop returns or throws.
         @Suppress("UNREACHABLE_CODE")
         throw AddonException("unreachable")
-    }
-
-    /** How long to wait after a 429, from the header when it sent one. */
-    private fun retryAfterMs(header: String?, attempt: Int): Long {
-        val stated = header?.trim()?.toDoubleOrNull()?.times(1000)?.toLong()
-        return (stated ?: (BACKOFF_BASE_MS shl attempt)).coerceIn(BACKOFF_BASE_MS, BACKOFF_CAP_MS)
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -491,10 +497,6 @@ class AddonClient(rawBaseUrl: String) {
          * look arriving at the same track moments later.
          */
         const val STREAM_TTL_MS = 5 * 60 * 1000L
-
-        private const val MAX_RETRIES = 2
-        private const val BACKOFF_BASE_MS = 500L
-        private const val BACKOFF_CAP_MS = 8_000L
 
         private val USER_AGENT = "BitChord/v${com.music.bitchord.BuildConfig.VERSION_NAME}"
 
