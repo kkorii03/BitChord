@@ -557,7 +557,7 @@ object QueueShuffle {
         return true
     }
 
-    internal fun MediaItem.key(): String = "${queueEntryId ?: mediaId}_${queueTier.name}"
+    internal fun MediaItem.key(): String = handoffKey()
 
     internal val originalOrder: List<String> get() = original
 
@@ -575,6 +575,9 @@ object QueueShuffle {
     private fun Player.queueItems(): List<MediaItem> =
         List(mediaItemCount) { getMediaItemAt(it) }
 }
+
+/** Stable identity of a queue row, including its section, for cross-player comparison. */
+internal fun MediaItem.handoffKey(): String = "${queueEntryId ?: mediaId}_${queueTier.name}"
 
 /** Repeat-all cycle identity for a bounded CONTEXT materialization. */
 const val EXTRA_CONTEXT_CYCLE_ID = "bitchord.contextCycleId"

@@ -280,14 +280,6 @@ class CrossfadeController(
     private var handedOff = false
 
     /**
-     * How many items the queue held when the standby was loaded with a copy of
-     * it. AutoPlay appending mid-transition is explicitly allowed, so the
-     * difference is reconciled onto the standby before the swap rather than
-     * being allowed to lose the appended tracks — see [reconcileQueue].
-     */
-    private var queuedItemCount = 0
-
-    /**
      * The outgoing player, while it is held at the end of its own track — see
      * [holdAtEnd]. Null when nothing is held.
      */
@@ -305,6 +297,20 @@ class CrossfadeController(
      * fading in — see [ranOn].
      */
     private var outgoingItemIndex = C.INDEX_UNSET
+
+    /**
+     * The queue index the incoming track occupied when the standby was loaded.
+     * Tail edits leave it alone, so it is also what locates the row when the
+     * handoff rebuilds the standby's tail.
+     */
+    private var incomingItemIndex = C.INDEX_UNSET
+
+    /**
+     * Whether the transition wraps from the last queue row to the first, as
+     * repeat-all does. The incoming row stays at index 0 even if AutoPlay
+     * appends behind the old last row during the fade.
+     */
+    private var incomingWrapsToStart = false
 
     /** Which player this class's own listener is currently attached to. */
     private var listeningTo: ExoPlayer? = null
@@ -711,6 +717,34 @@ class CrossfadeController(
                 // harmless and shouldn't cost the listener the blend.
                 Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> bail()
                 Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> bail()
+            }
+            wakeTicker()
+        }
+
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            // Editing a row behind the incoming track — removing it, moving it,
+            // shuffling the tail, stashing AutoPlay — does not move the
+            // playhead and therefore produces no item transition, so the checks
+            // above never see it. The queue is still reconciled from the
+            // outgoing player at the handoff; only an edit that removes or
+            // moves the incoming row itself invalidates the blend.
+            if (!handedOff && (phase == Phase.ARMING || phase == Phase.FADING)) {
+                val out = outgoing
+                val into = incoming
+                val incomingKey = into?.currentMediaItem?.handoffKey()
+                if (out != null && incomingKey != null) {
+                    val keys = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).handoffKey() }
+                    if (!HandoffQueuePolicy.incomingStillNext(
+                            outgoingKeys = keys,
+                            outgoingCurrentIndex = out.currentMediaItemIndex,
+                            incomingKey = incomingKey,
+                            wrapsToStart = incomingWrapsToStart,
+                        )
+                    ) {
+                        bail()
+                        return
+                    }
+                }
             }
             wakeTicker()
         }
@@ -1476,11 +1510,12 @@ class CrossfadeController(
         outgoing = out
         incoming = into
         outgoingItemIndex = out.currentMediaItemIndex
+        incomingItemIndex = nextIndex
+        incomingWrapsToStart = nextIndex == 0 && out.currentMediaItemIndex == out.mediaItemCount - 1
 
         val t0 = SystemClock.elapsedRealtimeNanos()
         val items = (0 until out.mediaItemCount).map { out.getMediaItemAt(it) }
         val copyDurationUs = (SystemClock.elapsedRealtimeNanos() - t0) / 1000L
-        queuedItemCount = items.size
         val perTrackUs = if (items.isNotEmpty()) copyDurationUs.toDouble() / items.size else 0.0
         Log.d(
             TAG,
@@ -1783,10 +1818,18 @@ class CrossfadeController(
      */
     private fun handOff(out: ExoPlayer, into: ExoPlayer) {
         if (handedOff) return
-        // AutoPlay may have appended to the queue since the standby was loaded
-        // with a copy of it — during arming or the first half of the blend,
-        // both of which the outgoing player owned — and those tracks would
-        // otherwise be lost at the swap.
+        // Repeat and shuffle can be changed while the standby is armed or
+        // blending — the outgoing player is still the session then, so the
+        // change lands there alone. Copy them again at the swap rather than
+        // trusting the values read when arming, or the handoff hands the
+        // session to a player that still has the old mode.
+        into.repeatMode = out.repeatMode
+        into.shuffleModeEnabled = out.shuffleModeEnabled
+        // The outgoing player owns the queue until this moment, so its tail is
+        // authoritative: AutoPlay may have appended, repeat-all may have
+        // stashed its rows, and the listener may have removed, moved or
+        // shuffled upcoming rows. Copy that tail across whole instead of only
+        // appending what was added since arming.
         reconcileQueue(out, into)
 
         Log.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
@@ -1825,26 +1868,37 @@ class CrossfadeController(
     }
 
     /**
-     * Copies onto the standby anything appended to the queue while it was
-     * arming.
+     * Rebuilds the standby's queue tail from the outgoing player's at the
+     * handoff.
      *
-     * AutoPlay extending the queue mid-transition is explicitly allowed — it
-     * doesn't change the playing item, so it has never been a reason to drop a
-     * blend. Under the old design that was free, because only one player ever
-     * held the queue. Now the standby is carrying a copy taken at arm time, and
-     * that copy is what survives the swap, so the difference has to be carried
-     * across or the appended tracks simply vanish when the roles change.
+     * The standby was loaded with a copy taken at arm time, and the outgoing
+     * player has owned the queue ever since. AutoPlay appending, repeat-all
+     * stashing its rows, and any removal, move or shuffle of an upcoming row
+     * all exist only on that copy until the swap. Copying just the appended
+     * tracks — as this used to — therefore lost every other edit and let the
+     * queue snap back the moment the players traded places.
      *
-     * Only a pure append is reconciled. Anything else — a queue replaced, an
-     * item removed or moved — changes what the incoming track *is*, and
-     * [listener] has already bailed the transition for it.
+     * The incoming row itself is left where it is on the standby; only what
+     * follows it is replaced. An edit that removes or moves that row is caught
+     * by [listener]'s timeline check and abandons the transition instead.
      */
     private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer) {
-        val appended = (queuedItemCount until out.mediaItemCount).map { out.getMediaItemAt(it) }
-        if (appended.isEmpty()) return
-        into.addMediaItems(appended)
-        queuedItemCount = out.mediaItemCount
-        Log.d(TAG, "reconciled ${appended.size} appended item(s) onto the incoming player")
+        val incomingKey = into.currentMediaItem?.handoffKey() ?: return
+        val outgoingKeys = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).handoffKey() }
+        val incomingIndex = HandoffQueuePolicy.incomingIndex(
+            outgoingKeys = outgoingKeys,
+            incomingKey = incomingKey,
+            incomingIndexHint = incomingItemIndex,
+            outgoingCurrentIndex = out.currentMediaItemIndex,
+        ) ?: return
+        val intoCurrentIndex = into.currentMediaItemIndex
+        if (intoCurrentIndex !in 0 until into.mediaItemCount) return
+        val desiredTail = (incomingIndex + 1 until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        val currentTailKeys = (intoCurrentIndex + 1 until into.mediaItemCount)
+            .map { into.getMediaItemAt(it).handoffKey() }
+        if (currentTailKeys == desiredTail.map { it.handoffKey() }) return
+        into.replaceMediaItems(intoCurrentIndex + 1, into.mediaItemCount, desiredTail)
+        Log.d(TAG, "reconciled ${desiredTail.size} tail item(s) onto the incoming player")
     }
 
     /**
@@ -2222,7 +2276,8 @@ class CrossfadeController(
         incoming = null
         handedOff = false
         outgoingItemIndex = C.INDEX_UNSET
-        queuedItemCount = 0
+        incomingItemIndex = C.INDEX_UNSET
+        incomingWrapsToStart = false
         incomingCueTimeMs = 0L
         incomingPlaybackRate = 1.0
         outgoingPlaybackRate = 1.0
