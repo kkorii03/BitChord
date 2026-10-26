@@ -61,6 +61,14 @@ class AppleSubtitleTest {
     }
 
     @Test
+    fun aCoverKeepsItsSingerAfterTheOriginalArtist() {
+        // vc79 home showed '야화 / 안예은' for the cover — the singer was gone.
+        assertEquals("안예은 · 오화요 커버", appleSubtitleCredit("노래 · 안예은 · 오화요 커버"))
+        assertEquals("안예은 · 오화요 커버", appleSubtitleCredit("안예은 · 오화요 커버"))
+        assertEquals("Mrs. GREEN APPLE · 오화요 커버", appleSubtitleCredit("Mrs. GREEN APPLE · 오화요 커버"))
+    }
+
+    @Test
     fun aCommaIsPartOfANameNotASeparator() {
         assertEquals("A, B", appleSubtitleCredit("Song • A, B"))
     }

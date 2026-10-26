@@ -62,7 +62,7 @@ fun appleSubtitleCredit(subtitle: String): String? {
         .map { it.trim() }
         .filter { it.isNotEmpty() }
 
-    return parts.firstOrNull { part ->
+    val credits = parts.filter { part ->
         val lower = part.lowercase()
         lower !in KIND_WORDS &&
             lower !in COUNT_WORDS &&
@@ -70,7 +70,15 @@ fun appleSubtitleCredit(subtitle: String): String? {
             !part.matches(YEAR) &&
             !part.matches(TALLY)
     }
+    val first = credits.firstOrNull() ?: return null
+    // A cover's byline names the original artist first and the singer after
+    // ("안예은 · 오화요 커버"). Keeping only the first name made a cover read
+    // as the original release; the cover credit stays with it.
+    val cover = credits.drop(1).firstOrNull { COVER_CREDIT.containsMatchIn(it) }
+    return if (cover != null) "$first · $cover" else first
 }
+
+private val COVER_CREDIT = Regex("""커버|(?i:\bcover\b)|歌ってみた""")
 
 /**
  * The second line a card draws, from its localized kind label and credit.
