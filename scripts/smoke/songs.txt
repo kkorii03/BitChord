@@ -1,0 +1,42 @@
+# BitChord smoke songs. Format: <id or search:query><TAB><kind>[<TAB><playlist>]
+# kind: mv (song version replacement required), hq (verified upgrade), cover (plays as itself), plain.
+#
+# 1) MV 확인용 5곡 (노래 버전 교체 필수, 곡마다 45초)
+-RJSbO8UZVY	mv
+QYh6mYIJG2Y	mv
+ekzHIouo8Q4	mv
+av5JD1dfj_c	mv
+CnAmeh0-E-U	mv
+#
+# 2) 고음질 확인용 3곡 (곡마다 90초)
+TuzfXgUpboA	hq
+cCfPDrRQp9k	hq
+RCtTDJgxPDA	hq
+#
+# 3) 싱크 시험 세트 (사용자 지정, 곡마다 75초)
+# BitChord sync test set (user's choice 10-26): 10 mix from each playlist + 5 plain songs
+v59g4HRNIkc	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+xK5bBgpt4XA	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+7PgA6kyqVTc	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+vRjfYdwM5L4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+5nxb792c-b4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+A19zuH7LkFw	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+fmXIU6mjoJ4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+0IFJaTEk6Tg	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+etyHAg3sADA	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+vqskFsBLeUs	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+-LqfikBILXs	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+Mecb5hrcaLA	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+4UVsEgFTw_c	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+qQNbfxDLxq0	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+Q7Q-ul7AlIk	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+Y3reGsQn52g	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+ZjZRLy3A3QA	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+2ckYLR_jtnw	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+euWjeLO-aaM	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+hp2Z9ePSvWI	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+search:Espresso Sabrina Carpenter	plain	play by MEDIA_PLAY_FROM_SEARCH (music.youtube.com is gated from Korea, ids resolved on the runner)
+search:Supernatural NewJeans	plain	play by MEDIA_PLAY_FROM_SEARCH (music.youtube.com is gated from Korea, ids resolved on the runner)
+search:Viva La Vida Coldplay	plain	play by MEDIA_PLAY_FROM_SEARCH (music.youtube.com is gated from Korea, ids resolved on the runner)
+search:Attention Charlie Puth	plain	play by MEDIA_PLAY_FROM_SEARCH (music.youtube.com is gated from Korea, ids resolved on the runner)
+search:Supernova aespa	plain	play by MEDIA_PLAY_FROM_SEARCH (music.youtube.com is gated from Korea, ids resolved on the runner)
