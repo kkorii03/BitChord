@@ -3607,69 +3607,6 @@ fun NowPlayingScreen(
                                     )
                                 }
 
-                            // Floated over the foot of the lyrics rather than placed in
-                            // the controls below them. In the controls it was a row of
-                            // layout like any other, and the bottom block is measured at
-                            // its natural height — so the button's 34dp came straight
-                            // off the panel above it and the lyrics lost a line. Drawn
-                            // here it costs the panel nothing and still reads as sitting
-                            // on top of the half player, because that is where it is.
-                            //
-                            // Arrives and leaves on the controls' own fade: the panel is
-                            // for reading, and a control parked over the words when
-                            // nobody asked for the controls is one more thing between
-                            // the reader and them.
-                            val translateShown = lyricsPanelVisible && lyricsControlsOpen
-                            val translateFade by animateFloatAsState(
-                                targetValue = if (translateShown) 1f else 0f,
-                                animationSpec = tween(if (translateShown) 220 else 160),
-                                label = "translateFade",
-                            )
-                            if (translateFade > 0.01f && !lyricPicker.picking) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomStart)
-                                        .graphicsLayer { alpha = translateFade },
-                                ) {
-                                    if (onAiLyricsTiming == null) {
-                                        RomanizationToggleButton(
-                                            state = lyricsTranslation.romanizationState,
-                                            showingRomanization = lyricsTranslation.showingRomanization,
-                                            enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                            onClick = lyricsTranslation.toggleRomanization,
-                                        )
-                                    }
-                                    // With AI timing on offer the slot stays empty — see
-                                    // the landscape pane.
-                                }
-                                Row(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .graphicsLayer { alpha = translateFade }
-                                        // A tap that misses a disc by a little lands
-                                        // here rather than on the line underneath —
-                                        // which would jump the song to it.
-                                        .then(if (translateShown) Modifier.swallowTaps() else Modifier)
-                                        .padding(start = 14.dp, top = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    if (songMeaningAvailable) {
-                                        SongMeaningButton(
-                                            enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                            onClick = { showSongMeaning = true },
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                    }
-                                    TranslationToggleButton(
-                                        state = lyricsTranslation.translationState,
-                                        showingTranslation = lyricsTranslation.showingTranslation,
-                                        // Not tappable on the way out: a disc at 20%
-                                        // opacity is on its way to gone, not a target.
-                                        enabled = translateShown && !lyrics.isNullOrEmpty(),
-                                        onClick = lyricsTranslation.toggleTranslation,
-                                    )
-                                }
-                            }
                             // The bar arrives and leaves without a transition of its own:
                             // it is an instruction over the words, and one that has to
                             // be legible the instant it is on. Anything that animated
@@ -3822,14 +3759,46 @@ fun NowPlayingScreen(
                         )
                     }
                     if (lyricsOpen) {
-                LyricsStatusWithChange(
-                    status = lyricsStatusWithTiming(lyricsTranslation.status, lyricsTiming),
-                    onStatusClick = { showLyricsProviders = true },
+                        // Beside the status line rather than floated over the
+                        // lyrics: a disc parked at the foot of the list covered
+                        // the line underneath it. This row already sits above
+                        // the scrubber, so the controls cost the list no room
+                        // and never draw over a word.
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .offset(y = 6.dp)
                                 .padding(vertical = 4.dp),
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            LyricsStatusWithChange(
+                                status = lyricsStatusWithTiming(lyricsTranslation.status, lyricsTiming),
+                                onStatusClick = { showLyricsProviders = true },
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (onAiLyricsTiming == null) {
+                                RomanizationToggleButton(
+                                    state = lyricsTranslation.romanizationState,
+                                    showingRomanization = lyricsTranslation.showingRomanization,
+                                    enabled = !lyrics.isNullOrEmpty(),
+                                    onClick = lyricsTranslation.toggleRomanization,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            if (songMeaningAvailable) {
+                                SongMeaningButton(
+                                    enabled = !lyrics.isNullOrEmpty(),
+                                    onClick = { showSongMeaning = true },
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            TranslationToggleButton(
+                                state = lyricsTranslation.translationState,
+                                showingTranslation = lyricsTranslation.showingTranslation,
+                                enabled = !lyrics.isNullOrEmpty(),
+                                onClick = lyricsTranslation.toggleTranslation,
+                            )
+                        }
                     }
                     val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
                     PlayerScrubber(
