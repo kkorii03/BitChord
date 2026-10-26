@@ -1053,8 +1053,9 @@ class CrossfadeController(
         holdAhead(player, duration)
         // Arm early: the standby has to open the incoming track and buffer to
         // its cue point, and that work has to be finished by the time the fade
-        // is due rather than started then.
-        if (!AutomixWorkPolicy.shouldArmStandby(remaining, leadMs = armLeadMs())) return
+        // is due rather than started then. The fade itself comes first: the
+        // lead counts back from where it starts, not from the track's end.
+        if (!AutomixWorkPolicy.shouldArmStandby(remaining, rampMs = fade, leadMs = armLeadMs())) return
 
         begin(fade, endMs = duration, smart = false, automixFallback = fallbackLength)
     }
