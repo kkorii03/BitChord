@@ -180,15 +180,15 @@ object HqVerificationStore {
 
     private fun save(context: Context, data: Data) {
         val verified = data.verified.entries.joinToString("\n") { (key, value) ->
-            listOf(
-                key,
-                value.offsetMs,
-                value.rate,
-                value.matchPercent,
-                value.tier.name,
-                value.sourceTitle.orEmpty().sanitized(),
-                value.sourceArtist.orEmpty().sanitized(),
-            ).joinToString("\t")
+            // The source names are appended only when known, so a verdict
+            // without them keeps the five-field line older builds wrote.
+            val names = if (value.sourceTitle == null && value.sourceArtist == null) {
+                emptyList()
+            } else {
+                listOf(value.sourceTitle.orEmpty().sanitized(), value.sourceArtist.orEmpty().sanitized())
+            }
+            (listOf(key, value.offsetMs, value.rate, value.matchPercent, value.tier.name) + names)
+                .joinToString("\t")
         }
         val rejected = data.rejected.joinToString("\n")
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
