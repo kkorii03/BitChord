@@ -24,20 +24,23 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Proves that a high-quality candidate is the same recording as the YouTube
@@ -110,7 +113,7 @@ object HqAudioVerify {
     }
 
     /** The candidate's opening as a profile, and how many bytes were fetched for it. */
-    private data class Candidate(
+    internal data class Candidate(
         val features: ChromaAlignment.Features,
         val bytes: Long,
     )
@@ -714,11 +717,16 @@ object HqAudioVerify {
     private suspend fun candidateFeatures(
         context: Context,
         stream: SourceStream,
+    ): Candidate? = candidateFeatures(File(context.cacheDir, CANDIDATE_DIR), stream)
+
+    internal suspend fun candidateFeatures(
+        directory: File,
+        stream: SourceStream,
+        client: OkHttpClient = ProxyPlayback.mediaClientFor(stream.url),
     ): Candidate? {
         val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
         if (needed <= 0L) return null
-        val directory = File(context.cacheDir, CANDIDATE_DIR)
-        if (!directory.exists() && !directory.mkdirs()) {
+        if (!ensureCandidateDirectory(directory)) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-dir")
             return null
         }
@@ -730,7 +738,7 @@ object HqAudioVerify {
         }
         return try {
             val bytes = try {
-                downloadPrefix(stream, file, needed)
+                downloadPrefix(stream, file, needed, client)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
@@ -748,7 +756,12 @@ object HqAudioVerify {
             // abort answers "stop now?", so it is the inverse of isActive. Passing
             // isActive itself stopped every decode on its first pass, which is why
             // no candidate ever reached the comparison.
-            val features = featuresOf(file) { !coroutine.isActive } ?: run {
+            val features = featuresOf(file) { !coroutine.isActive }
+            // The decoder stops on abort without throwing; confirm here that
+            // the verification itself was not abandoned while it ran, before a
+            // null is reported as a decode failure.
+            coroutine.ensureActive()
+            if (features == null) {
                 TrackLog.w(TAG, "decode: hq-verify failed at=candidate-decode bytes=$bytes")
                 return null
             }
@@ -759,54 +772,78 @@ object HqAudioVerify {
     }
 
     /**
+     * Whether [directory] is ready for a candidate head.
+     *
+     * Several candidates can start together and race to create the same cache
+     * folder. A failed `mkdirs` therefore does not fail the attempt when the
+     * other job has already made the folder.
+     */
+    internal fun ensureCandidateDirectory(directory: File): Boolean {
+        if (directory.isDirectory) return true
+        directory.mkdirs()
+        return directory.isDirectory
+    }
+
+    /**
      * Fetches the first [limit] bytes of [stream] into [file], using the same
      * client, headers and proxy route as HQ playback.
      *
      * `Range: bytes=0-` lets the server stream from the start; the copy stops
      * as soon as [limit] is reached, so a server that ignores Range cannot
-     * make this read the whole track. The call is cancelled when the calling
-     * coroutine is, including while a read is blocked.
+     * make this read the whole track. The call is cancelled as soon as the
+     * calling coroutine is, including while a read is blocked: cancelling the
+     * call closes the connection, which is what lets the blocked read return
+     * instead of waiting for the socket timeout.
      */
     private suspend fun downloadPrefix(
         stream: SourceStream,
         file: File,
         limit: Long,
+        client: OkHttpClient,
     ): Long {
         val request = Request.Builder()
             .url(stream.url)
             .apply { stream.headers.forEach { (name, value) -> header(name, value) } }
             .header("Range", "bytes=0-")
             .build()
-        val call = ProxyPlayback.mediaClientFor(stream.url).newCall(request)
-        val cancel = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-            if (cause is CancellationException) call.cancel()
-        }
-        try {
-            call.execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("HTTP ${response.code}")
-                }
-                val body = response.body ?: throw IOException("no body")
-                body.byteStream().use { input ->
-                    FileOutputStream(file).use { output ->
-                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                        var remaining = limit
-                        while (remaining > 0L) {
-                            currentCoroutineContext().ensureActive()
-                            val want = minOf(buffer.size.toLong(), remaining).toInt()
-                            val read = input.read(buffer, 0, want)
-                            if (read < 0) break
-                            output.write(buffer, 0, read)
-                            remaining -= read
+        val call = client.newCall(request)
+        val coroutine = currentCoroutineContext()
+        return suspendCancellableCoroutine { continuation ->
+            // Cancelling the call closes the connection, which is what lets a
+            // blocked execute/read return instead of waiting for the socket
+            // timeout. The copy runs on the IO dispatcher the verifier already
+            // uses, so the caller's finally deletes the file only after the
+            // stream is closed.
+            continuation.invokeOnCancellation { call.cancel() }
+            val length = try {
+                call.execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP ${response.code}")
+                    }
+                    val body = response.body ?: throw IOException("no body")
+                    body.byteStream().use { input ->
+                        FileOutputStream(file).use { output ->
+                            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                            var remaining = limit
+                            while (remaining > 0L) {
+                                coroutine.ensureActive()
+                                val want = minOf(buffer.size.toLong(), remaining).toInt()
+                                val read = input.read(buffer, 0, want)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                remaining -= read
+                            }
+                            output.flush()
                         }
-                        output.flush()
                     }
                 }
+                file.length()
+            } catch (error: Exception) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+                return@suspendCancellableCoroutine
             }
-        } finally {
-            cancel?.dispose()
+            if (continuation.isActive) continuation.resume(length)
         }
-        return file.length()
     }
 
     /**
