@@ -3,6 +3,7 @@ package com.music.bitchord.data.lyrics
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FileLyricsOriginTest {
@@ -50,5 +51,19 @@ class FileLyricsOriginTest {
         assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("", "PMivT7MJ41M"))
         assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("   ", "PMivT7MJ41M"))
         assertFalse(FileLyricsOrigin.timingIsUnverified("   ", ""))
+    }
+
+    @Test
+    fun `the at-unknown sentinel names no recording rather than a different one`() {
+        // "@unknown" is the sentinel for "no id is known". It must read the
+        // same as a blank id: never foreign, but still worth one check.
+        assertEquals("file:LRCLIB@unknown", FileLyricsOrigin.label("LRCLIB", "unknown"))
+        assertNull(FileLyricsOrigin.knownVideoId("unknown"))
+        assertNull(FileLyricsOrigin.knownVideoId("  UNKNOWN  "))
+        assertEquals("PMivT7MJ41M", FileLyricsOrigin.knownVideoId(" PMivT7MJ41M "))
+        assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("unknown", "PMivT7MJ41M"))
+        assertFalse(FileLyricsOrigin.timingBelongsToAnotherRecording("UNKNOWN", "PMivT7MJ41M"))
+        assertTrue(FileLyricsOrigin.timingIsUnverified("unknown", "PMivT7MJ41M"))
+        assertTrue(FileLyricsOrigin.timingIsUnverified("UNKNOWN", "PMivT7MJ41M"))
     }
 }

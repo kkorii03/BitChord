@@ -100,10 +100,13 @@ object LyricsOverrideFile {
         }.getOrDefault(false)
     }
 
-    fun remove(file: File, videoId: String): Boolean = synchronized(lock) {
+    fun remove(file: File, videoId: String, kind: Kind? = null): Boolean = synchronized(lock) {
         runCatching {
             val current = readFile(file)
-            if (videoId !in current.songs) return@synchronized false
+            val entry = current.songs[videoId] ?: return@synchronized false
+            // A caller cleaning up after a replaced file removes only the
+            // automatic answer; the listener's own override is theirs to keep.
+            if (kind != null && Kind.of(entry.kind) != kind) return@synchronized false
             val songs = current.songs.toMutableMap()
             songs.remove(videoId)
             val data = Data(VERSION, songs)

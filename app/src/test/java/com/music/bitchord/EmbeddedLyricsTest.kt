@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LrcLib
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricWord
+import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.toEnhancedLrc
 import com.music.bitchord.data.lyrics.toLrc
 import com.music.bitchord.download.FlacTagger
@@ -210,6 +211,22 @@ class EmbeddedLyricsTest {
         // A downloaded .flac has no sidecar and never should be given one.
         assertNull(EmbeddedLyrics.sidecar(File(packageDir("lyrics.lrc" to lrc), "song.flac").path))
         assertNull(EmbeddedLyrics.sidecar(null))
+    }
+
+    @Test
+    fun `the header never writes the at-unknown sentinel`() {
+        assertEquals(
+            "[re:BitChord LRCLIB]\n",
+            EmbeddedLyrics.sourceHeader(LyricsSource.LRCLIB, "unknown"),
+        )
+        assertEquals(
+            "[re:BitChord LRCLIB]\n",
+            EmbeddedLyrics.sourceHeader(LyricsSource.LRCLIB, " UNKNOWN "),
+        )
+        assertEquals(
+            "[re:BitChord LRCLIB @PMivT7MJ41M]\n",
+            EmbeddedLyrics.sourceHeader(LyricsSource.LRCLIB, "PMivT7MJ41M"),
+        )
     }
 
     /** A package directory holding a playlist plus whatever [files] the case needs. */

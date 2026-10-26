@@ -968,12 +968,24 @@ object LyricsTiming {
      * [baseOf] whenever both exist, so asking "is the base AI?" made a paid
      * answer invisible and the next caller bought it again.
      */
-    suspend fun hasAi(context: Context, videoId: String, lines: List<LyricLine>): Boolean =
-        store(context).get(videoId)?.let { AiTimingPolicy.isAccepted(knowledge(it), textKey(lines)) } == true
+    suspend fun hasAi(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String? = null,
+    ): Boolean =
+        store(context).get(videoId)?.let {
+            AiTimingPolicy.isAccepted(knowledge(it), textKey(lines, audioSource))
+        } == true
 
     /** Whether the automatic AI fallback already tried these [lines] for [videoId] and got nothing. */
-    suspend fun aiAlreadyFailed(context: Context, videoId: String, lines: List<LyricLine>): Boolean =
-        store(context).get(videoId)?.aiFailedKey == textKey(lines)
+    suspend fun aiAlreadyFailed(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String? = null,
+    ): Boolean =
+        store(context).get(videoId)?.aiFailedKey == textKey(lines, audioSource)
 
     /**
      * Asks Gemini where each of [lines] falls in the YouTube video [videoId]
@@ -1530,6 +1542,10 @@ object LyricsTiming {
      * keep the same path, so the record itself has to be dropped.
      */
     suspend fun resetSongCheck(context: Context, videoId: String) {
+        // The file these lyrics came from is gone or has different bytes. An
+        // automatic override still holds its old sheet and sync, so it has to
+        // go with the answer; a listener's own override is left alone.
+        LyricsOverrideStore.removeRecheck(context, videoId)
         store(context).update(videoId) {
             it.copy(
                 aiTextKey = null,
@@ -1545,8 +1561,13 @@ object LyricsTiming {
                 whisperKey = null,
                 songRetryKey = null,
                 songRetryAtMs = null,
+                // The replacement has not been checked with today's rules. A
+                // version left behind made recheckDownloaded answer NONE and
+                // the new file kept the old timing for ever.
+                syncCheckVersion = 0,
             )
         }
+        recheckTokens.remove(videoId)
         _changes.tryEmit(videoId)
     }
 
@@ -1925,10 +1946,15 @@ object LyricsTiming {
      * cache actually holds, so an accepted 100% answer could still be sent to
      * Whisper a minute later.
      */
-    suspend fun wantsAi(context: Context, videoId: String, lines: List<LyricLine>): Boolean =
+    suspend fun wantsAi(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String? = null,
+    ): Boolean =
         AiTimingPolicy.shouldAskAgain(
             knowledge(store(context).get(videoId)),
-            textKey(lines),
+            textKey(lines, audioSource),
             manual = false,
             measurementGaveUp = measurementGaveUp(context, videoId),
         )
@@ -1988,6 +2014,25 @@ object LyricsTiming {
      */
     fun audioSourceKey(videoId: String, localFile: Boolean): String =
         "$videoId|${if (localFile) "file" else "stream"}"
+
+    /**
+     * Whether the video/foreign-file timing pass may run at all.
+     *
+     * Every term is a reason not to: the lines are not adjustable, the caller
+     * did not ask for measurement, it is not the moment to measure, the AI
+     * button is taking its answer back ([cancelAi] false), or the playing
+     * stream is a substitute with a different clock. The last two were added
+     * after the pass could still spend an engine on a video whose AI answer
+     * the listener had just removed, or on a substitute the comment beside
+     * the pass says must not be checked.
+     */
+    internal fun videoTimingMayRun(
+        adjustable: Boolean,
+        measure: Boolean,
+        measureNow: Boolean,
+        cancelAi: Boolean,
+        substituted: Boolean,
+    ): Boolean = adjustable && measure && measureNow && cancelAi && !substituted
 
     /** The kept entry as the pure ask-again rule sees it; a missing entry is an empty one. */
     private fun knowledge(entry: Entry?): AiTimingKnowledge = entry?.let {

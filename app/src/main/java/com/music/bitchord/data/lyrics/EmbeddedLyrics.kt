@@ -95,9 +95,9 @@ object EmbeddedLyrics {
             val source = header?.groupValues?.get(1)?.let { name ->
                 LyricsSource.entries.firstOrNull { it.name == name }
             }
-            val videoId = header?.groupValues?.getOrNull(2)
-                ?.removePrefix("@")
-                ?.takeIf { it.isNotBlank() }
+            val videoId = FileLyricsOrigin.knownVideoId(
+                header?.groupValues?.getOrNull(2)?.removePrefix("@"),
+            )
             Embedded(lines, source, videoId)
         }
 
@@ -108,12 +108,14 @@ object EmbeddedLyrics {
      * The header line naming [source] and the recording the times belong to,
      * for a download's LRC. Older headers carry no id; the reader accepts both.
      */
-    fun sourceHeader(source: LyricsSource, videoId: String? = null): String =
-        if (videoId.isNullOrBlank()) {
+    fun sourceHeader(source: LyricsSource, videoId: String? = null): String {
+        val known = FileLyricsOrigin.knownVideoId(videoId)
+        return if (known == null) {
             "[re:BitChord ${source.name}]\n"
         } else {
-            "[re:BitChord ${source.name} @$videoId]\n"
+            "[re:BitChord ${source.name} @$known]\n"
         }
+    }
 
     /** The raw LRC text for the file, preferring this app's word-timed field. */
     private fun read(context: Context, uri: Uri): String? =

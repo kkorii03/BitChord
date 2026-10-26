@@ -19,9 +19,25 @@ object FileLyricsOrigin {
         val name = provider?.takeIf { it.isNotBlank() } ?: "unknown"
         // An older file's header names no id. Say so rather than echoing the
         // id being played, which would claim a match nobody wrote down.
-        val id = storedVideoId?.takeIf { it.isNotBlank() } ?: "unknown"
+        val id = knownVideoId(storedVideoId) ?: "unknown"
         return "file:$name@$id"
     }
+
+    /**
+     * The recording id a file header really names, or null when it names none.
+     *
+     * `@unknown` is the sentinel for "no id is known" (and what [label]
+     * prints for a missing id). Treating it as a literal id made an
+     * unverified file look like another recording, which sent it down the
+     * foreign-recording path instead of the one-check path. Blank and the
+     * sentinel mean the same thing: nothing was written down.
+     */
+    fun knownVideoId(storedVideoId: String?): String? =
+        storedVideoId
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals(UNKNOWN, ignoreCase = true) }
+
+    private const val UNKNOWN = "unknown"
 
     /**
      * Whether [storedVideoId]'s lyrics belong to another recording than
@@ -29,7 +45,7 @@ object FileLyricsOrigin {
      * file simply says nothing, and its existing treatment stands.
      */
     fun timingBelongsToAnotherRecording(storedVideoId: String?, playingVideoId: String): Boolean {
-        val stored = storedVideoId?.takeIf { it.isNotBlank() } ?: return false
+        val stored = knownVideoId(storedVideoId) ?: return false
         return playingVideoId.isNotBlank() && stored != playingVideoId
     }
 
@@ -40,7 +56,8 @@ object FileLyricsOrigin {
      * been verified at all, so it is worth one check — the song path spends at
      * most one per lyrics text and refuses shifts past the song floor.
      */
-    fun timingIsUnverified(storedVideoId: String?, playingVideoId: String): Boolean =
-        playingVideoId.isNotBlank() &&
-            (storedVideoId.isNullOrBlank() || storedVideoId != playingVideoId)
+    fun timingIsUnverified(storedVideoId: String?, playingVideoId: String): Boolean {
+        val stored = knownVideoId(storedVideoId)
+        return playingVideoId.isNotBlank() && (stored == null || stored != playingVideoId)
+    }
 }
