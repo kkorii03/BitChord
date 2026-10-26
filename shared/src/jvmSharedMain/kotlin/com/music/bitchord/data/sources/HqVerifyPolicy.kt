@@ -16,6 +16,29 @@ package com.music.bitchord.data.sources
 object HqVerifyPolicy {
 
     /**
+     * How many bytes of the candidate's opening to fetch for a comparison.
+     *
+     * A source that states its bitrate gets the arithmetic for [seconds] of
+     * that stream plus [HEADROOM_FRACTION] to absorb container overhead. A
+     * source that states nothing is assumed to be a FLAC at its worst
+     * reasonable size and capped at [UNSTATED_KBPS_MAX_BYTES]; fetching more
+     * than the comparison can use only spends data and disk.
+     */
+    fun bytesToFetch(format: StreamFormat?, seconds: Double): Long {
+        if (seconds <= 0.0 || !seconds.isFinite()) return 0L
+        val kbps = format?.kbps?.takeIf { it > 0 }
+            ?: return UNSTATED_KBPS_MAX_BYTES
+        val bytes = kbps.toDouble() * 1_000.0 / 8.0 * seconds * HEADROOM_FRACTION
+        return bytes.toLong().coerceAtLeast(1L)
+    }
+
+    /** Bytes fetched for a source that never stated a bitrate (a FLAC-sized head). */
+    const val UNSTATED_KBPS_MAX_BYTES = 40L * 1024L * 1024L
+
+    /** Extra bytes for container headers and a little slack at the tail. */
+    const val HEADROOM_FRACTION = 1.2
+
+    /**
      * How long a manual request still has to wait, or zero when it may start.
      *
      * [manual] is the whole point: an explicit request ignores the automatic
@@ -40,9 +63,17 @@ object HqVerifyPolicy {
      * opened, decoded or reached in time. That is a failure of this attempt,
      * not evidence about the candidate, so it is never persisted. Only a
      * measured mismatch is.
+     *
+     * [measured] is false when the candidate itself could not be decoded or
+     * its opening was too short to compare. An unmeasurable candidate is
+     * Unavailable, not a rejection: the same URL may work on the next play, and
+     * a stored rejection would hide it forever.
      */
-    fun shouldPersistRejection(referenceAvailable: Boolean, accepted: Boolean): Boolean =
-        referenceAvailable && !accepted
+    fun shouldPersistRejection(
+        referenceAvailable: Boolean,
+        accepted: Boolean,
+        measured: Boolean = true,
+    ): Boolean = measured && referenceAvailable && !accepted
 
     /** A remembered missing reference may only short-circuit an automatic attempt. */
     fun shouldRetryMissingReference(manual: Boolean): Boolean = manual

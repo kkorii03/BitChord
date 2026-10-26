@@ -30,6 +30,7 @@ import android.media.MediaFormat
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.DecoderMonitor
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Semaphore
@@ -161,6 +162,29 @@ object AudioDecoder {
     }
 
     /**
+     * As the [MediaDataSource] overload, but opening a local file by path.
+     *
+     * A network-backed [MediaDataSource] cannot serve a head-only file well:
+     * its size is unknown and every reopen starts another ranged request. The
+     * HQ verifier therefore writes the opening to a cache file first and lets
+     * the platform extractor read it as a file, which is also the only way a
+     * FLAC whose tail is missing can still be opened.
+     */
+    fun decodeMonoStream(
+        file: File,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean = { false },
+        label: String = "analysis",
+        onChunk: (samples: FloatArray, sampleRate: Int, atSeconds: Double) -> Unit,
+    ): Double? {
+        val decoded = decodeRaw(file, startSeconds, endSeconds, abort, label) { buffer, info, channels, rate ->
+            onChunk(toMono(buffer, info, channels), rate, info.presentationTimeUs / 1_000_000.0)
+        } ?: return null
+        return decoded.second
+    }
+
+    /**
      * As [decodeRegion], but keeping the two channels apart.
      *
      * Only the vocal front end needs this: open-unmix was trained on stereo,
@@ -209,6 +233,38 @@ object AudioDecoder {
         abort: () -> Boolean,
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRawWith(
+        openSource = { extractor -> extractor.setDataSource(source) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRaw(
+        file: File,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRawWith(
+        openSource = { extractor -> extractor.setDataSource(file.absolutePath) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRawWith(
+        openSource: (MediaExtractor) -> Unit,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) {
             fail(label, "range", "start=$startSeconds end=$endSeconds")
@@ -226,14 +282,14 @@ object AudioDecoder {
             return null
         }
         try {
-            return decodeRawLocked(source, startSeconds, endSeconds, abort, label, onBuffer)
+            return decodeRawLocked(openSource, startSeconds, endSeconds, abort, label, onBuffer)
         } finally {
             decodeGate.release()
         }
     }
 
     private fun decodeRawLocked(
-        source: MediaDataSource,
+        openSource: (MediaExtractor) -> Unit,
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
@@ -249,7 +305,7 @@ object AudioDecoder {
         var codec: MediaCodec? = null
         try {
             try {
-                extractor.setDataSource(source)
+                openSource(extractor)
             } catch (error: Exception) {
                 fail(label, "set-data-source", reason(error))
                 return null

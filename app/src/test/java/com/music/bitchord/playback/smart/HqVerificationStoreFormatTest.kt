@@ -90,9 +90,22 @@ class HqVerificationStoreFormatTest {
             HqVerificationStore.get(context, "yt1", "src1", "track1"),
         )
         assertEquals(1, HqVerificationStore.entries(context).size)
-        assertTrue(HqVerificationStore.isRejected(context, "yt1", "src1", "track1"))
-        assertTrue(HqVerificationStore.isRejected(context, "old-reject", "old-src", "old-track"))
+        // Format 1 could not tell a failed decode from a mismatch, so its
+        // rejections are dropped once rather than trusted as real verdicts.
+        assertFalse(HqVerificationStore.isRejected(context, "yt1", "src1", "track1"))
+        assertFalse(HqVerificationStore.isRejected(context, "old-reject", "old-src", "old-track"))
+        assertEquals(2, prefs.values["version"])
         assertEquals(HqTier.LOSSLESS_16, HqVerificationStore.bestTier(context, "yt1"))
+    }
+
+    @Test
+    fun `a rejection written by the current format survives a reload`() {
+        HqVerificationStore.reject(context, "yt", "src", "track")
+
+        assertEquals(2, prefs.values["version"])
+        cachedField.set(HqVerificationStore, null)
+
+        assertTrue(HqVerificationStore.isRejected(context, "yt", "src", "track"))
     }
 
     @Test
