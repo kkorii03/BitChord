@@ -200,21 +200,29 @@ object OutputNegotiator {
         val advertisesFloat = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_FLOAT)
         val advertisesPcm24 = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED)
 
-        // 1. Phone Speaker Safety Rule: Always cap at PCM16
+        // 1. Phone Speaker: the framework mixer takes float, so the speaker is
+        // not capped when the listener asked for it. If this particular device
+        // refuses the float track, PrecisionAudioSink reconfigures the same
+        // stream as PCM16.
         if (routeKind == AudioRouting.Kind.PHONE) {
-            val fallbackReason = if (requestedMode == OutputPcmMode.FLOAT_32) {
+            val wantsFloat = AudioOutputPolicy.shouldUseFloatOutput(
+                requestedMode = requestedMode,
+                routeKind = routeKind,
+                advertisesPcmFloat = advertisesFloat,
+            ) && delegateSupportsFloat
+            val fallbackReason = if (!wantsFloat && requestedMode == OutputPcmMode.FLOAT_32) {
                 FallbackReason.ROUTE_LIMITATION
             } else {
                 FallbackReason.NONE
             }
             val fallbackDetail = if (fallbackReason != FallbackReason.NONE) {
-                "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트 PCM으로 제한"
+                "기기가 Float32 AudioTrack을 거부해 16비트 PCM으로 대체"
             } else {
                 null
             }
             return OutputDescriptor(
                 transport = TransportType.AUDIO_TRACK,
-                encoding = PcmEncoding.PCM_16BIT,
+                encoding = if (wantsFloat) PcmEncoding.PCM_FLOAT else PcmEncoding.PCM_16BIT,
                 sampleRateHz = sampleRateHz,
                 channelCount = channelCount,
                 isDirect = false,
@@ -307,10 +315,29 @@ object OutputNegotiator {
         }
 
         // 4. External Route Advertised Capabilities (Normal AudioTrack with framework mixing)
-        // Check Float32 advertised:
-        val canUseFloat = AudioOutputPolicy.shouldUseFloatOutput(requestedMode, routeKind, advertisesFloat) &&
-            delegateSupportsFloat
+        // AudioFlinger's mixer takes float input on every mix path. The route's
+        // advertised encodings describe what its codec/device profile can be
+        // handed directly, not what the mixer can accept, so a Bluetooth route
+        // listing only PCM16 must not cap a float request. If the track is
+        // rejected, PrecisionAudioSink falls back to PCM16.
+        val canUseFloat = AudioOutputPolicy.shouldUseFloatOutput(
+            requestedMode = requestedMode,
+            routeKind = routeKind,
+            advertisesPcmFloat = advertisesFloat,
+        ) && delegateSupportsFloat
         if (canUseFloat) {
+            // Direct USB being unavailable is still worth naming even though
+            // the mixer now takes float: it is the difference between the DAC
+            // being driven directly and Android resampling into the same
+            // AudioTrack. The encoding itself is no longer a compromise.
+            val (reason, detail) = if (
+                routeKind == AudioRouting.Kind.USB && directUsbProbe?.isViable == false
+            ) {
+                FallbackReason.DIRECT_USB_UNAVAILABLE to
+                    (directUsbProbe.diagnosticReason ?: "USB 기기가 16비트 PCM만 지원")
+            } else {
+                FallbackReason.NONE to null
+            }
             return OutputDescriptor(
                 transport = TransportType.AUDIO_TRACK,
                 encoding = PcmEncoding.PCM_FLOAT,
@@ -318,8 +345,8 @@ object OutputNegotiator {
                 channelCount = channelCount,
                 isDirect = false,
                 systemMixerRateHz = knownSystemMixerRateHz,
-                fallbackReason = FallbackReason.NONE,
-                fallbackDetail = null,
+                fallbackReason = reason,
+                fallbackDetail = detail,
             )
         }
 

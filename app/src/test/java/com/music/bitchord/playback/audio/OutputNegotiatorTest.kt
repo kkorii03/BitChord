@@ -17,6 +17,7 @@ import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -46,11 +47,11 @@ class OutputNegotiatorTest {
         assertEquals("Float32", result.dsp.format)
         assertEquals(96000, result.dsp.sampleRateHz)
         assertEquals(2, result.dsp.channelCount)
-        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
     }
 
     @Test
-    fun phoneSpeakerStrictlyCapsOutputAt16BitWithRouteLimitation() {
+    fun phoneSpeakerUsesFloatOnTheMixerWhenRequested() {
         val result = OutputNegotiator.negotiate(
             source = flac96kHz24BitSource,
             decoderName = "c2.android.flac.decoder",
@@ -63,14 +64,13 @@ class OutputNegotiatorTest {
             requestedMode = OutputPcmMode.FLOAT_32,
         )
 
-        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
-        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
-        assertNotNull(result.output.fallbackDetail)
-        assertTrue(result.output.fallbackDetail!!.contains("Speaker output capped at 16-bit"))
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
+        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
+        assertNull(result.output.fallbackDetail)
     }
 
     @Test
-    fun bluetoothNegotiatesFloatOnlyWhenAdvertised() {
+    fun bluetoothMixerTakesFloatEvenWhenOnlyPcm16IsAdvertised() {
         val btWithFloat = OutputNegotiator.negotiate(
             source = flac96kHz24BitSource,
             decoderName = "c2.android.flac.decoder",
@@ -96,8 +96,8 @@ class OutputNegotiatorTest {
             advertisedSampleRates = listOf(44100, 48000),
             requestedMode = OutputPcmMode.FLOAT_32,
         )
-        assertEquals(PcmEncoding.PCM_16BIT, btPcm16Only.output.encoding)
-        assertEquals(FallbackReason.ROUTE_LIMITATION, btPcm16Only.output.fallbackReason)
+        assertEquals(PcmEncoding.PCM_FLOAT, btPcm16Only.output.encoding)
+        assertEquals(FallbackReason.NONE, btPcm16Only.output.fallbackReason)
     }
 
     @Test
@@ -133,7 +133,7 @@ class OutputNegotiatorTest {
         )
 
         assertEquals(TransportType.AUDIO_TRACK, result.output.transport)
-        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
         assertEquals(FallbackReason.DIRECT_USB_UNAVAILABLE, result.output.fallbackReason)
         assertEquals(portronicsProbe.diagnosticReason, result.output.fallbackDetail)
         assertFalse(result.isSampleRatePreserved)
@@ -252,8 +252,8 @@ class OutputNegotiatorTest {
         )
 
         assertEquals(TransportType.AUDIO_TRACK, result.output.transport)
-        assertEquals(PcmEncoding.PCM_24BIT_PACKED, result.output.encoding)
-        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
+        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
     }
 
     @Test

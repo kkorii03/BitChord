@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,8 +68,12 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.dsd.DsdFilter
 import com.music.bitchord.playback.dsd.DsdFormat
+import com.music.bitchord.playback.smart.HqVerificationStore
+import com.music.bitchord.data.sources.SourceTrackKeys
 import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -149,6 +154,34 @@ fun AudioPipelineDialog(
 
     val context = LocalContext.current
     val density = LocalDensity.current
+    // The stored verdict is a preferences read, so it belongs off the main
+    // thread. Keyed on the three identity fields rather than the whole
+    // snapshot: a rate or bitrate update must not re-read the store.
+    val verifiedOffsetMs by produceState<Long?>(
+        initialValue = null,
+        nerdStats?.mediaId,
+        nerdStats?.sourceConfigId,
+        nerdStats?.sourceTrackId,
+    ) {
+        val mediaId = nerdStats?.mediaId
+        val sourceId = nerdStats?.sourceConfigId
+        value = when {
+            mediaId == null -> null
+            // A source-backed row is its own reference, so there is nothing
+            // to align it against; the verification path treats it as a
+            // zero-offset match rather than decoding it against itself.
+            SourceTrackKeys.parse(mediaId) != null -> 0L
+            sourceId == null -> null
+            else -> withContext(Dispatchers.IO) {
+                HqVerificationStore.get(
+                    context,
+                    mediaId,
+                    sourceId,
+                    nerdStats?.sourceTrackId,
+                )?.offsetMs
+            }
+        }
+    }
     val isReducedMotion = remember(context) {
         try {
             val resolver = context.contentResolver
@@ -235,6 +268,16 @@ fun AudioPipelineDialog(
         ) {
             // 1. Track Info Stage
             val sourceName = nerdStats?.sourceName ?: "—"
+            val offset = verifiedOffsetMs
+            val sourceVerificationText = if (offset != null) {
+                stringResource(
+                    R.string.pipeline_source_verified,
+                    sourceName,
+                    "%+d".format(Locale.ROOT, offset),
+                )
+            } else {
+                stringResource(R.string.pipeline_source_unverified, sourceName)
+            }
             // DSD is the one source whose own rate is not the rate the
             // rest of the pipeline runs at: DsdExtractor hands the
             // renderer 176.4 kHz PCM, so every stage after this one has
@@ -277,6 +320,7 @@ fun AudioPipelineDialog(
                 onStageIconPositioned = onStageIconPositioned,
             ) {
                 PipelineRow(stringResource(R.string.pipeline_source), sourceName)
+                PipelineNote(sourceVerificationText)
                 PipelineRow(stringResource(R.string.pipeline_format), format)
                 PipelineRow(stringResource(R.string.pipeline_bit_depth), bitDepth)
                 PipelineRow(stringResource(R.string.pipeline_sample_rate), sampleRate)

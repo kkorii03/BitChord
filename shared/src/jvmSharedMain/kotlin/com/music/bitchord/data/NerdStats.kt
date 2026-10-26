@@ -52,6 +52,14 @@ object NerdStats {
         /** Authoritative source/provider that supplied this stream. */
         val sourceName: String? = null,
         /**
+         * The configured source behind this stream, and that source's own id for
+         * the track — the identity the verification store keys a verdict on.
+         * Used by the pipeline readout to look that verdict up without
+         * guessing at either id.
+         */
+        val sourceConfigId: String? = null,
+        val sourceTrackId: String? = null,
+        /**
          * The file's container where it says something the codec doesn't —
          * "DSF" or "DFF" for DSD, which reaches the decoder as plain PCM.
          */
@@ -105,6 +113,27 @@ object NerdStats {
          */
         val isLossless: Boolean
             get() = isLosslessMime(mimeType)
+
+        /**
+         * A lossless codec whose encoded bitrate is too low to be a real
+         * bit-exact copy of the track.
+         *
+         * A 16-bit/44.1kHz FLAC normally lands somewhere around 700–1000kbps;
+         * one reporting below [SUSPECT_LOSSLESS_KBPS] is almost certainly a
+         * lossy transcode wearing a lossless container's name. The badge is
+         * withheld rather than calling that lossless, because the one thing
+         * this readout must not do is repeat a source's claim back at the
+         * listener as a measurement.
+         *
+         * Only decided when a bitrate was actually measured or stated; an
+         * unknown rate is not evidence of anything.
+         */
+        val isSuspectedFakeLossless: Boolean
+            get() = isLossless && (bitrateKbps ?: Int.MAX_VALUE) < SUSPECT_LOSSLESS_KBPS
+
+        /** Whether the measured stream may wear the lossless badge. */
+        val showsLosslessBadge: Boolean
+            get() = isLossless && !isSuspectedFakeLossless
 
         /** Dolby Atmos decoded as E-AC-3 JOC; deliberately distinct from lossless. */
         val isDolbyAtmos: Boolean
@@ -207,6 +236,16 @@ object NerdStats {
      * draw.
      */
     const val HI_QUALITY_KBPS = 256
+
+    /**
+     * Below this, a stream claiming to be lossless is not shown as such.
+     *
+     * Even a 16-bit/44.1kHz FLAC cannot compress a real recording below this
+     * without throwing most of it away, so a "FLAC" reporting 128–300kbps is
+     * the signature of a lossy file in a lossless wrapper. See
+     * [Snapshot.isSuspectedFakeLossless].
+     */
+    const val SUSPECT_LOSSLESS_KBPS = 300
 
     fun codecLabel(mimeType: String?): String? {
         if (mimeType == null) return null

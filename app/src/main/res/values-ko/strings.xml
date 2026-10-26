@@ -467,6 +467,8 @@
     <string name="pipeline_dsp">DSP</string>
     <string name="pipeline_output_device">출력 기기</string>
     <string name="pipeline_source">소스</string>
+    <string name="pipeline_source_verified">출처: %1$s · 검증됨(오프셋 %2$s ms)</string>
+    <string name="pipeline_source_unverified">출처: %1$s · 검증 전</string>
     <string name="pipeline_format">포맷</string>
     <string name="pipeline_bit_depth">비트 심도</string>
     <string name="pipeline_sample_rate">샘플률</string>

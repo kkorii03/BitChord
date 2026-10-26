@@ -98,6 +98,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.ROW_ART_PX
+import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.isMatchPending
 import com.music.bitchord.data.model.isMatchMissing
@@ -625,13 +626,23 @@ private fun SongRowContent(
                 style = MaterialTheme.typography.titleMedium,
                 color = titleColor,
             )
+            // The playing row wears the decoder's own verdict, not the tier
+            // its source advertised. A row that is not playing has no measured
+            // stream to describe, so it shows nothing here.
+            if (isCurrent) {
+                CurrentSongMeasuredQualityBadge(
+                    song = song,
+                    color = subtitleColor,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
             val subtitle = buildList {
                 if (showArtist) song.artist.takeIf { it.isNotBlank() }?.let(::add)
                 song.downloadFormat?.let(::add)
             }.joinToString(" · ")
             if (subtitle.isNotEmpty() || showArtist) {
                 Spacer(Modifier.height(2.dp))
-                val quality = if (showSourceQuality) song.sourceQualityBadge() else null
+                val quality = if (showSourceQuality && !isCurrent) song.sourceQualityBadge() else null
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (quality != null) {
                         SourceQualityBadge(
@@ -697,6 +708,31 @@ private fun SongRowContent(
             RowMoreButton(onClick = onMore, tint = subtitleColor)
         }
     }
+}
+
+/**
+ * The measured lossless badge for the row that is currently playing.
+ *
+ * Kept in its own composable so only that one row subscribes to [NerdStats];
+ * the rest of a long list has nothing to observe. The snapshot's own media id
+ * is compared with the row's, because the player may already have moved on
+ * while a stale frame of the list is still being drawn.
+ */
+@Composable
+private fun CurrentSongMeasuredQualityBadge(
+    song: Song,
+    color: Color,
+    style: TextStyle,
+) {
+    val stats by NerdStats.current.collectAsStateWithLifecycle()
+    val playing = stats?.takeIf { it.mediaId == song.videoId } ?: return
+    if (playing.measuredLosslessQuality() == null) return
+    Spacer(Modifier.height(2.dp))
+    MeasuredQualityBadge(
+        stats = playing,
+        color = color,
+        style = style,
+    )
 }
 
 /**

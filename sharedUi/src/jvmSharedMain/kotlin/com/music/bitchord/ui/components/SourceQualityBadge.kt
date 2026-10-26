@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.painterResource
@@ -38,6 +39,37 @@ fun Song.sourceQualityBadge(): SourceQuality? = when (sourceQuality?.uppercase()
         if (sourceHiRes) SourceQuality.HI_RES_LOSSLESS else SourceQuality.LOSSLESS
     "HIGH", "320" -> SourceQuality.HIGH_QUALITY
     else -> null
+}
+
+/**
+ * The measured quality of the stream actually being decoded, if it earns a
+ * badge.
+ *
+ * Unlike [sourceQualityBadge], which reads what a row offered, this reads the
+ * decoder's own figures. A lossless container whose encoded bitrate is too low
+ * to be real ([NerdStats.Snapshot.isSuspectedFakeLossless]) gets nothing.
+ */
+fun NerdStats.Snapshot?.measuredLosslessQuality(): SourceQuality? {
+    val snapshot = this ?: return null
+    if (!snapshot.showsLosslessBadge) return null
+    return if (snapshot.isHiRes) SourceQuality.HI_RES_LOSSLESS else SourceQuality.LOSSLESS
+}
+
+/** [SourceQualityBadge] for the playing stream, or nothing when it has no measured badge. */
+@Composable
+fun MeasuredQualityBadge(
+    stats: NerdStats.Snapshot?,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val quality = stats.measuredLosslessQuality() ?: return
+    SourceQualityBadge(
+        quality = quality,
+        color = color,
+        style = style,
+        modifier = modifier,
+    )
 }
 
 /**

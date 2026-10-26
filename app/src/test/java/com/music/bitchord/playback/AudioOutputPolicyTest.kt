@@ -20,8 +20,8 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun floatFallsBackOnSpeakerEvenWhenRequested() {
-        assertFalse(
+    fun floatIsAllowedOffUsbWhenRequested() {
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 isPreferredUsbRoute = false,
@@ -31,8 +31,8 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun floatFallsBackWhenUsbDoesNotAdvertiseIt() {
-        assertFalse(
+    fun floatDoesNotDependOnAdvertisedEncodings() {
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 isPreferredUsbRoute = true,
@@ -53,8 +53,8 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun routeAwarePhoneIsAlwaysCappedAt16Bit() {
-        assertFalse(
+    fun routeAwarePhoneTakesFloatOnTheMixerWhenRequested() {
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.PHONE,
@@ -72,7 +72,7 @@ class AudioOutputPolicyTest {
                 advertisesPcmFloat = true,
             ),
         )
-        assertFalse(
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.USB,
@@ -90,7 +90,7 @@ class AudioOutputPolicyTest {
                 advertisesPcmFloat = true,
             ),
         )
-        assertFalse(
+        assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.BLUETOOTH,

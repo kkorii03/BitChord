@@ -391,9 +391,9 @@ class DirectAudioStreamingRegressionTest {
 
         assertFalse(result.output.isDirect)
         assertEquals(TransportType.AUDIO_TRACK, result.output.transport)
-        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
         assertEquals(48000, result.output.systemMixerRateHz)
-        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
+        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
     }
 
     // 11. PCM16 output preference must remain strictly respected across all rates
@@ -560,9 +560,9 @@ class DirectAudioStreamingRegressionTest {
 
         assertEquals(TransportType.AUDIO_TRACK, result.output.transport)
         assertFalse(result.output.isDirect)
-        assertEquals(PcmEncoding.PCM_16BIT, result.output.encoding)
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
         assertEquals(48000, result.output.systemMixerRateHz)
-        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
+        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
     }
 
     // 16. publishNegotiation propagates route directSupport and descriptors into snapshot

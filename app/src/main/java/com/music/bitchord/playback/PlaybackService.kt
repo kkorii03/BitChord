@@ -165,6 +165,7 @@ import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
@@ -7199,6 +7200,35 @@ class PlaybackService : MediaLibraryService() {
         return "Unknown"
     }
 
+    /**
+     * The source and track ids behind the stream playing [mediaId], for the
+     * verification verdict the pipeline readout looks up.
+     *
+     * Kept apart from [currentSourceName] because the display name is not a
+     * key: two catalogues can both be called "Tidal", and one catalogue can
+     * hold the record and a cover under the same title. The forced upgrade
+     * wins over the resolver's remembered choice for the same reason the
+     * playback path prefers it — it is the stream actually being read.
+     */
+    private fun currentSourceIdentity(
+        mediaId: String?,
+        mediaItem: MediaItem?,
+    ): Pair<String?, String?> {
+        val id = mediaId ?: return null to null
+        val uri = mediaItem?.localConfiguration?.uri
+        val forced = uri?.let { QualityUpgrade.forcedStream(it) }
+        val sourceTrack = SourceTrackKeys.parse(id)
+        val serving = StreamChoice.of(id)
+        val sourceId = forced?.sourceConfigId
+            ?: uri?.getQueryParameter("s")
+            ?: serving?.sourceConfigId
+            ?: sourceTrack?.first
+        val trackId = forced?.trackId
+            ?: serving?.trackId
+            ?: sourceTrack?.second
+        return sourceId to trackId
+    }
+
     private fun resolveLocalUri(mediaId: String, mediaItem: MediaItem?): Uri? {
         val directUriStr = when {
             mediaId.startsWith("content://") || mediaId.startsWith("file://") -> mediaId
@@ -7316,6 +7346,7 @@ class PlaybackService : MediaLibraryService() {
         val isLossless = dsd != null || NerdStats.isLosslessMime(format?.sampleMimeType)
         val isRawPcm = NerdStats.isRawPcm(format?.sampleMimeType)
         val pcmDataRate = measured?.pcmBitrateKbps
+        val sourceIdentity = currentSourceIdentity(mediaId, player.currentMediaItem)
 
         val (bitrate, provenance) = when {
             format?.averageBitrate != null && format.averageBitrate > 0 ->
@@ -7341,6 +7372,8 @@ class PlaybackService : MediaLibraryService() {
             bitDepth = if (dsd != null) 1 else if (isLossless) measured?.bitDepth else null,
             claimed = NerdStats.declaredFormat(mediaId),
             sourceName = currentSourceName(mediaId, player.currentMediaItem),
+            sourceConfigId = sourceIdentity.first,
+            sourceTrackId = sourceIdentity.second,
             container = when (format?.containerMimeType) {
                 "audio/x-dsf" -> "DSF"
                 "audio/x-dff" -> "DFF"
@@ -8222,10 +8255,6 @@ class PlaybackService : MediaLibraryService() {
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
 
-        if (routeKind == AudioRouting.Kind.PHONE) {
-            return PcmEncoding.PCM_16BIT
-        }
-
         val inputFormat = currentAudioInputFormat ?: format
         val measuredFormat = format.measure()
         val measuredInput by lazy(LazyThreadSafetyMode.NONE) {
@@ -8434,19 +8463,22 @@ class PlaybackService : MediaLibraryService() {
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
         val advertisesFloat = activeDevice?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true
-        val directFloatSupported = audioManager?.let { mgr ->
-            DirectAudioProbe.probeDirectSupport(mgr, 48000, 2, activeDevice).supportsFloat
-        } ?: false
         // Worth knowing which way this cuts for a hi-res stream: with float
         // off, Media3 downconverts *every* input encoding to 16-bit, because
         // float and 16-bit are the only two linear-PCM tracks its sink can
         // open. Float is what carries a 24-bit sample to the hardware intact,
         // so "32-bit float" in Output precision is the setting that preserves
         // a hi-res source, not the one that embellishes it.
+        //
+        // The route's advertised encodings are not a gate: an ordinary
+        // AudioTrack goes through AudioFlinger's mixer, which accepts float
+        // even when the Bluetooth codec profile underneath it names PCM16.
+        // A device that truly refuses the track is caught by the sink and
+        // reconfigured as PCM16.
         return AudioOutputPolicy.shouldUseFloatOutput(
             requestedMode = AppSettings.outputPcmMode.value,
             routeKind = routeKind,
-            advertisesPcmFloat = advertisesFloat || directFloatSupported,
+            advertisesPcmFloat = advertisesFloat,
         )
     }
 
