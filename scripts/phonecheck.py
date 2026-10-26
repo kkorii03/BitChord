@@ -224,8 +224,27 @@ def sync_candidates(
         # played (SEARCH_IDS); guessing from unclaimed sync-dump ids handed MV
         # replacement ids to the search rows.
         for spec in search_specs:
-            rows.append((spec.key, spec.kind, SEARCH_IDS.get(spec.key, "")))
+            vid = SEARCH_IDS.get(spec.key, "") or played_id_for_search(spec.key, text)
+            rows.append((spec.key, spec.kind, vid))
     return rows
+
+
+def played_id_for_search(key: str, text: str) -> str:
+    """For --score-only: the id the log played for a `search:<title> <artist>` row.
+
+    The live run records it right after playing; a re-score has only the log,
+    so the last `play: ->` line whose label starts with the query's first word
+    (the title) is taken.
+    """
+    query = key.split(":", 1)[-1].strip()
+    first = query.split()[0].lower() if query else ""
+    if not first:
+        return ""
+    found = ""
+    for match in re.finditer(r"play: -> (.*?) \(([\w-]{11})\) idx=", text):
+        if match.group(1).lower().startswith(first):
+            found = match.group(2)
+    return found
 
 
 # key of a search: row -> the video id it played (filled while playing)
