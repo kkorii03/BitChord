@@ -159,7 +159,7 @@ def mv_progress(text: str, songs: list[smokecheck.SongSpec]) -> tuple[int, int]:
     total = len(dict.fromkeys(spec.video_id for spec in mv_specs))
     if not total:
         return 0, 0
-    checks = smokecheck.check_log(text, songs=songs)
+    checks = smokecheck.check_log(text, songs=songs, hq_configured=True)
     check = next(check for check in checks if check.number == 1)
     failed = len(check.details) if check.status == "FAIL" else 0
     return max(0, total - failed), total
@@ -219,13 +219,16 @@ def sync_candidates(
         spec for spec in songs if spec.kind in ("cover", "plain") and spec.search
     ]
     if search_specs:
-        known = {spec.video_id for spec in songs if spec.video_id}
-        unknown = [vid for vid in sync_dump_ids(text) if vid not in known]
-        for spec, vid in zip(search_specs, unknown):
-            rows.append((spec.key, spec.kind, vid))
-        for spec in search_specs[len(unknown) :]:
-            rows.append((spec.key, spec.kind, ""))
+        # The id each search actually played, read from the log right after it
+        # played (SEARCH_IDS); guessing from unclaimed sync-dump ids handed MV
+        # replacement ids to the search rows.
+        for spec in search_specs:
+            rows.append((spec.key, spec.kind, SEARCH_IDS.get(spec.key, "")))
     return rows
+
+
+# key of a search: row -> the video id it played (filled while playing)
+SEARCH_IDS: dict[str, str] = {}
 
 
 def read_deepgram_key() -> str:
@@ -501,6 +504,13 @@ def main(argv: list[str] | None = None) -> int:
             log(f"[{index}/{len(songs)}] {spec.key} ({spec.kind})")
             play_song(spec)
             time.sleep(wait_seconds(spec.kind))
+            if spec.search:
+                played = re.findall(
+                    r"play: -> .*\(([\w-]{11})\)",
+                    log_path.read_text(encoding="utf-8", errors="replace"),
+                )
+                if played:
+                    SEARCH_IDS[spec.key] = played[-1]
     finally:
         stream.stop()
         synctest.adb("shell", "rm", "-f", f"{APP_DIR}/sync-test.flag")
@@ -511,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     wavs = pull_wavs()
     log(f"WAV {wavs}개 pull")
     text = log_path.read_text(encoding="utf-8", errors="replace")
-    smoke_checks = smokecheck.check_log(text, songs=songs)
+    smoke_checks = smokecheck.check_log(text, songs=songs, hq_configured=True)
     sync_rows = score_sync(text, songs, OUT / "synctest")
     report = build_report(text, songs, log_path, sync_rows, smoke_checks, started)
     (OUT / "report.md").write_text(report, encoding="utf-8")
