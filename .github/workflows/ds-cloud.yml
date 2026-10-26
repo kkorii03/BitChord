@@ -75,6 +75,9 @@ jobs:
           rg (ripgrep) and grep both work. Do not print whole-repository listings. Do not commit or push. Never touch .github/, keys/, *.jks or signing config.
           Battery first in app code: no periodic polling or timers, event-driven only.
           EOF
+          # The real root, so DeepSeek does not guess /home/user/... and get its
+          # edits refused as "external_directory" (seen on yz-hq2-library).
+          echo "The repository root is exactly $GITHUB_WORKSPACE . Use paths relative to it (app/src/..., shared/src/...); never invent another absolute path." >> "$RUNNER_TEMP/ds/env.txt"
 
       - name: DeepSeek
         shell: bash
@@ -82,10 +85,19 @@ jobs:
           set +e
           prompt="$(cat "$RUNNER_TEMP/ds/env.txt")"$'\n\n'"$(cat "$RUNNER_TEMP/ds/prompt.txt")"
           opencode run -m "$MODEL" "$prompt" 2>&1 | tee "$RUNNER_TEMP/ds/out1.txt" | tail -c 200000
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "::warning title=ds::no changes, retrying once"
-            opencode run -m "$MODEL" "$prompt"$'\n\n'"(Retry: the last run ended with no file changes. Do not list the repository; go straight to the files named above and finish the task.)" 2>&1 | tee "$RUNNER_TEMP/ds/out2.txt" | tail -c 200000
-          fi
+          # A refused tool call ends the whole run mid-task; so does an empty answer.
+          for round in 2 3; do
+            last="$RUNNER_TEMP/ds/out$((round-1)).txt"
+            if [ -z "$(git status --porcelain)" ]; then
+              why="the last run ended with no file changes. Do not list the repository; go straight to the files named above"
+            elif grep -q "rejected permission" "$last"; then
+              why="the last run was cut off when an edit was refused (wrong absolute path). Your earlier edits are kept (see git status / git diff). Use paths relative to $GITHUB_WORKSPACE and continue where it stopped"
+            else
+              break
+            fi
+            echo "::warning title=ds::round $round: $why"
+            opencode run -m "$MODEL" "$prompt"$'\n\n'"(Continue: $why, and finish the whole task.)" 2>&1 | tee "$RUNNER_TEMP/ds/out$round.txt" | tail -c 200000
+          done
           exit 0
 
       - name: Guard and compile gate
