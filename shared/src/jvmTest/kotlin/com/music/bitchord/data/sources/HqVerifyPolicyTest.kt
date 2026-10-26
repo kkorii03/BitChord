@@ -108,6 +108,47 @@ class HqVerifyPolicyTest {
     }
 
     @Test
+    fun `a rate limited candidate waits out retry-after and retries once`() {
+        val first = HqVerifyPolicy.retryCandidateDownload("5", attempt = 0, nowMs = 1_000L)
+        assertTrue(first.retry)
+        assertEquals(5_000L, first.waitMs)
+
+        val second = HqVerifyPolicy.retryCandidateDownload("5", attempt = 1, nowMs = 1_000L)
+        assertFalse(second.retry)
+        assertEquals(0L, second.waitMs)
+    }
+
+    @Test
+    fun `a missing retry-after uses the ordinary backoff`() {
+        assertEquals(
+            1_000L,
+            HqVerifyPolicy.retryCandidateDownload(null, attempt = 0, nowMs = 0L).waitMs,
+        )
+    }
+
+    @Test
+    fun `a rate limit wait never exceeds one minute`() {
+        assertEquals(
+            HqVerifyPolicy.MAX_CANDIDATE_RETRY_WAIT_MS,
+            HqVerifyPolicy.retryCandidateDownload("3600", attempt = 0, nowMs = 0L).waitMs,
+        )
+    }
+
+    @Test
+    fun `a second rate limit stays unmeasured and is never a rejection`() {
+        assertFalse(
+            HqVerifyPolicy.retryCandidateDownload("1", attempt = 1, nowMs = 0L).retry,
+        )
+        assertFalse(
+            HqVerifyPolicy.shouldPersistRejection(
+                referenceAvailable = true,
+                accepted = false,
+                measured = false,
+            ),
+        )
+    }
+
+    @Test
     fun `a lossless stream fetches at least its PCM rate, whatever kbps it states`() {
         // 16-bit/44.1 kHz stereo is 1411 kbps; a FLAC that states 320 must not cut the head short.
         val flac = StreamFormat(codec = "flac", kbps = 320, sampleRateHz = 44_100, bitDepth = 16)
