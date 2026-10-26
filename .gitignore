@@ -49,3 +49,4 @@ AGENTS.md
 *.aab
 
 __pycache__/
+phone-out/

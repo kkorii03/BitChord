@@ -244,6 +244,28 @@ def read_deepgram_key() -> str:
     return ""
 
 
+
+def fetch_reference_wav(video_id: str, wav: Path) -> None:
+    """First 100 s of the YouTube upload as 16 kHz mono WAV (yt-dlp + ffmpeg from tools\\bin)."""
+    tools = Path(synctest.YTDLP).parent  # Desktop\BitChord\tools\bin, outside the checkout
+    wav.parent.mkdir(parents=True, exist_ok=True)
+    raw = wav.with_suffix(".m4a")
+    try:
+        if not raw.exists():
+            subprocess.run(
+                [str(tools / "yt-dlp.exe"), "-f", "bestaudio", "-o", str(raw),
+                 f"https://www.youtube.com/watch?v={video_id}"],
+                capture_output=True, timeout=600,
+            )
+        if raw.exists():
+            subprocess.run(
+                [str(tools / "ffmpeg.exe"), "-y", "-loglevel", "error", "-i", str(raw),
+                 "-t", "100", "-ac", "1", "-ar", "16000", str(wav)],
+                capture_output=True, timeout=300,
+            )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
 def deepgram_wav(path: Path, language: str, model: str, key: str) -> list | None:
     """Send the WAV as a stream; never load the whole recording into memory."""
     if not key:
@@ -301,6 +323,11 @@ def sync_row(
         return row
 
     wav = wav_dir / f"{video_id}.wav"
+    if (not wav.exists() or wav.stat().st_size <= 1000) and kind == "cover":
+        # The app kept no WAV (no song check ran - an emulator without audio or
+        # Deepgram). A cover plays as itself, so YouTube's own copy is the same
+        # recording: judge the timing the app displayed against its opening.
+        fetch_reference_wav(video_id, wav)
     if not wav.exists() or wav.stat().st_size <= 1000:
         row["error"] = "no wav (song check skipped)"
         return row
@@ -480,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         report = build_report(text, songs, log_file, sync_rows, smoke_checks, datetime.datetime.now())
         target = Path(args.report) if args.report else log_file.parent / "score.md"
         target.write_text(report, encoding="utf-8")
-        print("\n".join(report.splitlines()[:25]))
+        sys.stdout.buffer.write(("\n".join(report.splitlines()[:25]) + "\n").encode("utf-8"))
         return 0
 
     log("약 40분 소요")
