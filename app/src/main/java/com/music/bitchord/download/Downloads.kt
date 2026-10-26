@@ -9,6 +9,7 @@ import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
@@ -153,14 +154,15 @@ object Downloads {
     private val _savedMetadata = MutableStateFlow<Map<String, SavedSongMetadata>>(emptyMap())
 
     /**
-     * Downloaded song ids whose file is longer than the catalogue track, by how
-     * much, as judged once and kept across launches.
+     * Downloaded song ids whose file is the music video's sound, by how much
+     * longer than the song it is when that is known, as judged once and kept
+     * across launches.
      *
-     * A file saved before provenance was recorded cannot be told from the song
-     * by id alone; its length can. The verdict is remembered so the same file
-     * is neither re-measured nor re-requested on every play, and so the
-     * Downloads page can offer to fetch the song version without a network
-     * request of its own.
+     * A record may already say video/unknown or name another upload as its
+     * source; a legacy record with no provenance can only be told from the song
+     * by its length. The verdict is remembered so the same file is neither
+     * re-measured nor re-requested on every play, and so the Downloads page can
+     * offer to fetch the song version without a network request of its own.
      */
     private val _mvSoundSuspects = MutableStateFlow<Map<String, Long>>(emptyMap())
     val mvSoundSuspects: StateFlow<Map<String, Long>> = _mvSoundSuspects.asStateFlow()
@@ -766,16 +768,20 @@ object Downloads {
     }
 
     /**
-     * Scans the downloads whose provenance is unknown for files longer than
-     * their song, using only lengths already written down. No network; the
-     * file's own metadata is read only for records that have a catalogue
-     * length to compare it with.
+     * Scans the downloads for files that are the music video's sound, using
+     * the recognition already on each record before measuring anything.
+     *
+     * A record that names its own stream as the song version is left alone. A
+     * record that says video/unknown, or whose bytes came from another upload,
+     * is kept even when provenance is known. Only a legacy record with no
+     * answer is measured by length. No network; the file's own metadata is read
+     * only for records that have a catalogue length to compare it with.
      */
     suspend fun scanForMvSoundSuspects(context: Context) = withContext(Dispatchers.IO) {
         open()
         val found = LinkedHashMap<String, Long>()
         _savedMetadata.value.values.groupBy { it.uri }.forEach { (_, entries) ->
-            if (entries.isEmpty() || entries.any { it.soundSourceVideoId != null }) return@forEach
+            if (entries.isEmpty()) return@forEach
             val durations = entries.mapNotNull { meta ->
                 meta.durationText?.durationMillis()
                     ?.takeIf { ms -> ms > 0L }
@@ -784,18 +790,55 @@ object Downloads {
             if (durations.isEmpty()) return@forEach
             val fileUri = entries.first().uri
             if (!DownloadStore.exists(context, fileUri.toUri())) return@forEach
+            // A file already recorded as a song version from its own stream is
+            // the answer, even when an alias row still carries the video's row
+            // type. Checking every entry, not just the shortest, keeps a
+            // song/video pair with equal lengths from being re-opened on
+            // whichever alias happens to come first.
+            if (entries.any {
+                    DownloadedMvPolicy.isRecordedSongVersion(
+                        storedIsVideo = it.isVideo,
+                        storedTypeUnknown = it.typeUnknown,
+                        soundSourceVideoId = it.soundSourceVideoId,
+                        rowVideoId = it.videoId,
+                    )
+                }
+            ) {
+                return@forEach
+            }
             val (catalogId, catalogMs) = durations.minBy { it.second }
+            // The shortest duration is the song side of a video/song pair. Its
+            // own record is the one whose verdict describes the bytes the app
+            // plays; the video alias may still carry its row's video type even
+            // when the file itself is the song version.
+            val catalog = entries.firstOrNull { it.videoId == catalogId } ?: entries.first()
             // The recorded lengths say this file might be the video's sound;
             // the file's own metadata is the one that says whether it is.
             // Read only for the candidates, never for every download.
             val fileMs = localDurationMs(context, fileUri)
                 ?: durations.maxOf { it.second }
-            val delta = SongVersionPolicy.mvSoundDeltaMs(
+            // Provenance names another upload, but only a source that is itself
+            // recorded as a video is the official MV. A song version fetched
+            // from another id (a quality replacement) must not be repaired.
+            val source = catalog.soundSourceVideoId
+                ?.takeIf { it != catalog.videoId }
+                ?.let { sourceId ->
+                    _savedMetadata.value[sourceId]
+                        ?: entries.firstOrNull { it.videoId == sourceId }
+                }
+            val sourceRecordedAsMv = source != null &&
+                (source.isVideo == true ||
+                    (source.isVideo == null && DownloadedMvPolicy.hasMvTitleMarker(source.title)))
+            val delta = DownloadedMvPolicy.mvSoundSuspectDeltaMs(
+                rowVideoId = catalog.videoId,
+                title = catalog.title,
                 fileDurationMs = fileMs,
+                storedIsVideo = catalog.isVideo,
+                storedTypeUnknown = catalog.typeUnknown,
+                soundSourceVideoId = catalog.soundSourceVideoId,
                 catalogDurationMs = catalogMs,
-                isVideo = false,
-                localFile = true,
-                soundSourceId = null,
+                artist = catalog.artist,
+                sourceRecordedAsMv = sourceRecordedAsMv,
             ) ?: return@forEach
             found[songIdForFile(catalogId)] = delta
         }
@@ -806,8 +849,13 @@ object Downloads {
                 val kept = current.filter { (id, _) ->
                     val meta = _savedMetadata.value[id] ?: return@filter false
                     val uri = _saved.value[id] ?: meta.uri
-                    meta.soundSourceVideoId == null &&
-                        DownloadStore.exists(context, uri.toUri())
+                    !meta.isCoverRecording() &&
+                        !DownloadedMvPolicy.isRecordedSongVersion(
+                            storedIsVideo = meta.isVideo,
+                            storedTypeUnknown = meta.typeUnknown,
+                            soundSourceVideoId = meta.soundSourceVideoId,
+                            rowVideoId = meta.videoId,
+                        ) && DownloadStore.exists(context, uri.toUri())
                 }
                 kept + found
             }
@@ -852,6 +900,10 @@ object Downloads {
                 durationText = targetMeta.durationText,
                 albumName = targetMeta.albumName,
                 localUri = uri,
+                // Restore the recorded upload type: a cover must still read as
+                // the cover it is, so the repair can skip it rather than
+                // replacing the listener's chosen performance.
+                isVideo = targetMeta.isVideo == true,
                 // The file was judged to be the video's sound; let the repair
                 // resolve the song version instead of downloading this id's
                 // own (video) stream again.
@@ -866,7 +918,22 @@ object Downloads {
      * so a failure is visible rather than silently forgotten.
      */
     suspend fun redownloadSuspected(context: Context): Int {
-        val songs = suspectedSongs(context)
+        val all = suspectedSongs(context)
+        // The scan already refuses covers, but a verdict persisted by an older
+        // build can still name one. Check again right before downloading: a
+        // cover is the listener's chosen performance, never replaced by the
+        // original recording.
+        val (covers, songs) = all.partition { song ->
+            DownloadedMvPolicy.isCover(song.videoId, song.title, song.artist, song.isVideo)
+        }
+        if (covers.isNotEmpty()) {
+            open()
+            clearMvSoundSuspects(
+                _mvSoundSuspects.value.keys.filter { id ->
+                    _savedMetadata.value[id]?.isCoverRecording() == true
+                },
+            )
+        }
         songs.forEach { enqueue(context, it, allowMetered = true) }
         return songs.size
     }
@@ -1266,8 +1333,11 @@ object Downloads {
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
-            meta = {
-                it + mapOf(asked.videoId to metaAsked, fetched.videoId to metaFetched)
+            meta = { current ->
+                current + mapOf(
+                    asked.videoId to metaAsked.preservingUploadTypeFrom(current[asked.videoId]),
+                    fetched.videoId to metaFetched.preservingUploadTypeFrom(current[fetched.videoId]),
+                )
             },
         )
         // A file whose recorded source is one of these ids is the recording
@@ -2372,6 +2442,30 @@ internal data class SavedSongMetadata(
 )
 
 /**
+ * Keep the type already on the record when the incoming row is only the
+ * unknown placeholder a repair uses to ask for the song version.
+ *
+ * A new definite row still replaces it: the bytes may genuinely be a video or
+ * a song version, and that is evidence the old record did not have.
+ */
+private fun SavedSongMetadata.preservingUploadTypeFrom(
+    previous: SavedSongMetadata?,
+): SavedSongMetadata {
+    if (previous == null) return this
+    return if (DownloadedMvPolicy.keepsStoredUploadType(
+            storedIsVideo = previous.isVideo,
+            storedTypeUnknown = previous.typeUnknown,
+            incomingIsVideo = isVideo,
+            incomingTypeUnknown = typeUnknown,
+        )
+    ) {
+        copy(isVideo = previous.isVideo, typeUnknown = previous.typeUnknown)
+    } else {
+        this
+    }
+}
+
+/**
  * Whether this record names a music-video row.
  *
  * New records say so directly. An older record can still be recovered from its
@@ -2380,6 +2474,10 @@ internal data class SavedSongMetadata(
  */
 private fun SavedSongMetadata.wasVideoRow(): Boolean =
     isVideo == true || (soundSourceVideoId != null && soundSourceVideoId != videoId)
+
+/** Whether this record is a cover, live clip or other chosen performance. */
+private fun SavedSongMetadata.isCoverRecording(): Boolean =
+    DownloadedMvPolicy.isCover(videoId, title, artist, isVideo)
 
 /**
  * Dates for a downloaded file-backed row.
