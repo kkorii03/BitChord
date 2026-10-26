@@ -273,9 +273,12 @@ object LyricsTiming {
         key: Int,
         base: Adjustment?,
     ): List<LyricsWordAlign.Heard> {
+        // The refine's own transcript first: an AI answer's words can be
+        // Gemini's, which are line-level and match no line's opening letters
+        // (vc80: qQNbfxDLxq0, base=ai, refine found 0 lines and stayed -0.24 s).
         val saved = when {
+            entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() -> entry.refineHeardWords
             base?.byAi == true && entry.aiTextKey == key -> entry.heardWords
-            entry.refineHeardKey == key -> entry.refineHeardWords
             entry.aiTextKey == key -> entry.heardWords
             else -> emptyList()
         }
@@ -498,7 +501,9 @@ object LyricsTiming {
         val entry = store(context).get(videoId) ?: return false
         val key = textKey(lines, audioSource)
         if (entry.refineHeardKey == key) return true
-        return entry.aiTextKey == key && entry.heardWords.isNotEmpty()
+        // Only word-level transcripts serve a refine; Gemini's are line-level.
+        val wordLevel = entry.aiEngine != null && entry.aiEngine != ENGINE_GEMINI
+        return wordLevel && entry.aiTextKey == key && entry.heardWords.isNotEmpty()
     }
 
     /**
