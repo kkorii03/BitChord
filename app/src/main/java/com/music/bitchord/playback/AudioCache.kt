@@ -522,8 +522,11 @@ object AudioCache {
                 when {
                     rendition != null -> "$videoId#$rendition"
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId#alt${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
-                    else -> completeSibling(videoId, videoId) ?: videoId
+                        completeUpgradeRendition(videoId)
+                            ?: "$videoId#alt${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
+                    else -> completeUpgradeRendition(videoId)
+                        ?: completeSibling(videoId, videoId)
+                        ?: videoId
                 }
             }
             // A source-backed track keys on the source and its track id alone.
@@ -586,6 +589,39 @@ object AudioCache {
         if (preferred != videoId) return null
         return siblings.firstOrNull { key -> isComplete(key) && isKeptOrigin(key) }
     }
+
+    /**
+     * A complete upgraded rendition of [videoId], if one is on disk.
+     *
+     * Checked before [completeSibling] because that function deliberately stops
+     * as soon as the preferred base entry holds anything: the Opus copy from an
+     * earlier play is complete and would otherwise keep winning for the rest of
+     * the track's life, even though the verified lossless copy sits fully
+     * cached under `videoId#hifi`. See [CacheRenditionChoice].
+     */
+    private fun completeUpgradeRendition(videoId: String): String? {
+        if (openedCache == null) return null
+        val candidates = renditionKeysFor(videoId).mapNotNull { key ->
+            if (key.endsWith("#watch")) return@mapNotNull null
+            val suffix = key.removePrefix("$videoId#")
+            if (suffix == key) return@mapNotNull null
+            val order = QualityUpgrade.upgradeGeneration(suffix)
+            if (order <= 0) return@mapNotNull null
+            CachedRendition(
+                key = key,
+                complete = isComplete(key),
+                lossless = isLosslessRendition(key),
+                upgradeOrder = order,
+            )
+        }
+        if (candidates.isEmpty()) return null
+        return CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
+    }
+
+    /** Whether [key] was written from a stream the quality ladder calls lossless. */
+    private fun isLosslessRendition(key: String): Boolean = runCatching {
+        cache.getContentMetadata(key).get(META_HQ_LOSSLESS, null as String?) == "1"
+    }.getOrDefault(false)
 
     /**
      * Whether [key]'s bytes came from YouTube or JioSaavn — the copies kept
@@ -1241,6 +1277,13 @@ object AudioCache {
 
     /** Set once the player has played the track from this entry. */
     private const val META_PLAYED = "bc_played"
+
+    /**
+     * Set on a rendition filled from a stream the quality ladder calls lossless.
+     * Read when a plain play request picks between several complete renditions
+     * — see [CacheRenditionChoice] — and when the lower-quality copy is dropped.
+     */
+    private const val META_HQ_LOSSLESS = "bc_hq_lossless"
     private const val MAX_NOTED_SONGS = 256
     private const val COPY_BUFFER_BYTES = 64 * 1024
 
@@ -1352,6 +1395,31 @@ object AudioCache {
 
     /** Whole-rendition downloads in flight, so a queue move can stop the old one. */
     private val wholeRenditionJobs = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Tracks whose verified lossless copy has already been asked for in the
+     * background. One attempt per track, whatever it returns: a second search
+     * for the same bytes while the first is still running would only compete
+     * with the playback it is meant to improve.
+     */
+    private val losslessPrefetchAttempted = ConcurrentHashMap.newKeySet<String>()
+
+    /** The single background lossless fetch, so two tracks never download at once. */
+    private var losslessPrefetchJob: Job? = null
+
+    /**
+     * Tracks whose lossless copy finished while they were still playing, with
+     * the rendition key that must be kept.
+     *
+     * The low-quality entry cannot be removed then: the player still owns the
+     * plain URI and may reopen its cache key for a seek, which would now resolve
+     * to the lossless sibling mid-song. The drop waits for the queue to move off
+     * the track instead, where the next play already prefers the lossless copy.
+     */
+    private val pendingLowQualityDrops = ConcurrentHashMap<String, String>()
+
+    @Volatile
+    private var currentMediaId: String? = null
 
     /**
      * Tracks whose bytes read-ahead is writing right now. The analysis head is
@@ -1860,19 +1928,31 @@ object AudioCache {
      * the same server until the current track is complete.
      */
     suspend fun cacheWholeRendition(uri: Uri, title: String?) {
+        cacheWholeRenditionDetailed(uri, title)
+    }
+
+    private class WholeRenditionResult(
+        val complete: Boolean,
+        val bytes: Long,
+        val failure: String?,
+    )
+
+    private suspend fun cacheWholeRenditionDetailed(uri: Uri, title: String?): WholeRenditionResult {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         val mediaId = mediaIdIn(uri)
         val job = coroutineContext.job
         mediaId?.let { wholeRenditionJobs[it] = job }
         // [uri] is the virtual `bitchord://watch?…&q=hifi` item, so its own
         // authority is not the server. The parked stream names the real host.
-        val host = QualityUpgrade.forcedStream(uri)?.url?.let(HqHostTracker::hostOf)
+        val stream = QualityUpgrade.forcedStream(uri)
+        val host = stream?.url?.let(HqHostTracker::hostOf)
             ?: HqHostTracker.hostOf(uri.toString())
         try {
             var failure: String? = null
             for (attempt in 0 until 2) {
                 awaitPlaybackRelease(key)
-                val upstream = upstreamFactory ?: return
+                val upstream = upstreamFactory
+                    ?: return WholeRenditionResult(false, 0L, "no upstream")
                 val source = readAheadCacheFactory(upstream).createDataSource()
                 val spec = DataSpec.Builder().setUri(uri).build()
                 val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
@@ -1892,22 +1972,150 @@ object AudioCache {
                 if (failure == null) break
             }
             val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
-            val label = title?.takeIf { it.isNotBlank() } ?: mediaId ?: key
-            if (failure == null) {
-                TrackLog.d(TAG, "hq-cache: $label fully cached ${formatBytes(bytes)}", about = mediaId)
-            } else {
-                TrackLog.d(
-                    TAG,
-                    "hq-cache: $label stopped short at ${formatBytes(bytes)}: $failure",
-                    about = mediaId,
-                )
+            val complete = failure == null && isComplete(key)
+            if (complete && stream != null && HqQuality.isLosslessTier(stream.format)) {
+                runCatching {
+                    cache.applyContentMetadataMutations(
+                        key,
+                        ContentMetadataMutations().set(META_HQ_LOSSLESS, "1"),
+                    )
+                }
             }
+            val label = title?.takeIf { it.isNotBlank() } ?: mediaId ?: key
+            if (complete) {
+                mediaId?.let(renditionKeys::remove)
+                TrackLog.d(TAG, "hq-cache: $label fully cached ${formatBytes(bytes)}", about = mediaId)
+                return WholeRenditionResult(true, bytes, null)
+            }
+            val reason = failure ?: "incomplete"
+            TrackLog.d(
+                TAG,
+                "hq-cache: $label stopped short at ${formatBytes(bytes)}: $reason",
+                about = mediaId,
+            )
+            return WholeRenditionResult(false, bytes, reason)
         } finally {
             mediaId?.let {
                 wholeRenditionJobs.remove(it, job)
                 HqHostTracker.endDownload(it, host)
             }
         }
+    }
+
+    /**
+     * Fetches a verified lossless rendition to disk in the background, so the
+     * next play of the track opens it instead of the low-quality copy that is
+     * playing now.
+     *
+     * Runs at most once per track and only one at a time. It waits on the
+     * rendition's own cache entry, never the entry playback is reading, so it
+     * cannot take Media3's single writer slot from the current track. A failure
+     * leaves every existing entry alone; only a complete copy is worth acting
+     * on, and only then is the lower-quality copy removed.
+     */
+    fun prefetchVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean {
+        val mediaId = mediaIdIn(uri) ?: return false
+        if (!HqQuality.isLosslessTier(stream.format)) return false
+        if (!losslessPrefetchAttempted.add(mediaId)) return false
+        losslessPrefetchJob?.cancel()
+        // Same park as a manual swap: the resolving data source reads the
+        // stream from here, so its origin and host are recorded on the entry
+        // exactly as they are for the copy a swap fills.
+        QualityUpgrade.force(mediaId, stream)
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val format = stream.format.summary
+        val host = HqHostTracker.hostOf(stream.url)
+        losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
+            HqHostTracker.beginDownload(mediaId, host)
+            try {
+                TrackLog.d(TAG, "hq-prefetch: $mediaId start $format", about = mediaId)
+                val result = try {
+                    cacheWholeRenditionDetailed(uri, title)
+                } catch (cancelled: CancellationException) {
+                    TrackLog.d(TAG, "hq-prefetch: $mediaId failed cancelled", about = mediaId)
+                    throw cancelled
+                } catch (failed: Exception) {
+                    WholeRenditionResult(false, 0L, failed.message ?: failed.javaClass.simpleName)
+                }
+                if (!result.complete) {
+                    TrackLog.d(
+                        TAG,
+                        "hq-prefetch: $mediaId failed ${result.failure ?: "incomplete"}",
+                        about = mediaId,
+                    )
+                    return@launch
+                }
+                TrackLog.d(TAG, "hq-prefetch: $mediaId done ${formatBytes(result.bytes)}", about = mediaId)
+                renditionKeys.remove(mediaId)
+                pendingLowQualityDrops[mediaId] = key
+                if (currentMediaId != null && currentMediaId != mediaId &&
+                    pendingLowQualityDrops.remove(mediaId, key)
+                ) {
+                    dropLowerQualityCopies(mediaId, keep = key)
+                }
+            } finally {
+                HqHostTracker.endDownload(mediaId, host)
+            }
+        }
+        return true
+    }
+
+    /**
+     * Notes which track the player is on, and lets go of lower-quality copies
+     * whose lossless replacement finished while they were still current.
+     *
+     * Called on every track change rather than from a timer: nothing has to run
+     * while a track sits still, and a track that is played again immediately
+     * keeps its old entry until the queue actually moves away from it.
+     */
+    fun onTrackBecameCurrent(mediaId: String?) {
+        currentMediaId = mediaId
+        val ready = pendingLowQualityDrops.entries
+            .filter { it.key != mediaId }
+            .map { it.key to it.value }
+        ready.forEach { (id, keep) ->
+            if (pendingLowQualityDrops.remove(id, keep)) {
+                scope.launch(TrackLog.about(id)) { dropLowerQualityCopies(id, keep) }
+            }
+        }
+    }
+
+    /**
+     * Removes the complete base/`#alt` copies of [mediaId] once [keep] holds
+     * the whole lossless recording.
+     *
+     * Waits for the player to let go of each entry rather than pulling bytes
+     * out from under the track that is still sounding. A copy that cannot be
+     * removed stays where it is; the next play already prefers [keep].
+     */
+    private suspend fun dropLowerQualityCopies(mediaId: String, keep: String) {
+        renditionKeys.remove(mediaId)
+        val keys = renditionKeysFor(mediaId).filter { key ->
+            if (key == keep || key.endsWith("#watch")) return@filter false
+            val suffix = key.removePrefix("$mediaId#")
+            suffix == key || suffix == "alt" || suffix == "alt-noatmos"
+        }
+        for (key in keys) {
+            if (!isComplete(key)) continue
+            awaitPlaybackRelease(key)
+            runCatching { cache.removeResource(key) }
+                .onSuccess {
+                    forgetPurgeCandidate(key)
+                    TrackLog.d(
+                        TAG,
+                        "hq-prefetch: $mediaId removed lower-quality copy $key",
+                        about = mediaId,
+                    )
+                }
+                .onFailure {
+                    TrackLog.d(
+                        TAG,
+                        "hq-prefetch: $mediaId kept lower-quality copy $key: ${it.message}",
+                        about = mediaId,
+                    )
+                }
+        }
+        renditionKeys.remove(mediaId)
     }
 
     /** Stops whole-rendition downloads for tracks other than [mediaId]. */

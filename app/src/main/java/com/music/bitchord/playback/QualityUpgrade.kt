@@ -870,4 +870,20 @@ object QualityUpgrade {
      * between two renditions corrupts both.
      */
     fun cacheTag(uri: Uri): String? = uri.getQueryParameter(MARKER)
+
+    /**
+     * The upgrade generation a rendition key's suffix names: `hifi` is 1,
+     * `hifi-2` is 2, and anything else is 0.
+     *
+     * Used when a plain play request picks among the renditions already on
+     * disk. A later generation replaced an earlier one only because it was
+     * better, so the newest complete upgrade is the one to open.
+     */
+    fun upgradeGeneration(tag: String?): Int {
+        if (tag == null || !tag.startsWith(UPGRADED)) return 0
+        return tag.removePrefix(UPGRADED)
+            .removePrefix("-")
+            .toIntOrNull()
+            ?: 1
+    }
 }

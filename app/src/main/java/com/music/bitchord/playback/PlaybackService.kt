@@ -4327,6 +4327,9 @@ class PlaybackService : MediaLibraryService() {
         // A missing reference belonged to the previous playback attempt, not
         // to this recording. The next play is free to measure it again.
         HqAudioVerify.onPlaybackStarted()
+        // The outgoing track's low-quality cache entry can be dropped now that
+        // its lossless replacement is complete — see [AudioCache.prefetchVerifiedRendition].
+        AudioCache.onTrackBecameCurrent(mediaItem?.mediaId)
         scheduleDownloadHealthCheck(played, exoPlayer)
         // A play beginning is what ends the last one's upgrade verdict. Here
         // rather than in [QualityUpgrade.forget] because that runs on the
@@ -5579,6 +5582,26 @@ class PlaybackService : MediaLibraryService() {
     private var audioFormatFor: String? = null
 
     /**
+     * Pulls a verified lossless stream onto disk while its low-quality copy is
+     * still playing, under the same rendition key a manual swap would use.
+     *
+     * Nothing is swapped: the listener keeps the current stream to the end. The
+     * next play of this track asks [AudioCache.cacheKeyOf] for the plain queue
+     * URI, and the completed upgrade is what it now opens.
+     */
+    private fun prefetchLosslessForNextPlay(
+        mediaId: String,
+        uri: Uri?,
+        stream: SourceStream,
+        title: String?,
+    ) {
+        if (uri == null) return
+        if (!HqQuality.isLosslessTier(stream.format)) return
+        val upgraded = QualityUpgrade.upgradedUri(uri.toString())
+        AudioCache.prefetchVerifiedRendition(Uri.parse(upgraded), title, stream)
+    }
+
+    /**
      * Starts the second look for the playing track, if it settled for less
      * than was asked for — see [QualityUpgrade].
      *
@@ -5682,14 +5705,19 @@ class PlaybackService : MediaLibraryService() {
                         // A stream found earlier is still valid, but it must not
                         // replace the audio under a track that is already
                         // playing. Keep it for the next play instead.
+                        var nextPlayTitle: String? = null
                         uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                             val currentTier = currentTierFor(mediaId)
                             if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved) != null) {
                                 logHqTier(mediaId, target.title, shelved, currentTier)
                                 SourceResolver.rememberOriginal(target, shelved)
+                                nextPlayTitle = target.title
                             }
                         }
                         QualityUpgrade.forget(mediaId)
+                        if (nextPlayTitle != null) {
+                            prefetchLosslessForNextPlay(mediaId, uri, shelved, nextPlayTitle)
+                        }
                         TrackLog.d(
                             "BitChord",
                             "upgrade for $mediaId kept for next play; no mid-song swap",
@@ -5776,14 +5804,19 @@ class PlaybackService : MediaLibraryService() {
                 // made by hand is still honoured — that is the one swap the
                 // listener explicitly asked for.
                 if (manualUpgradeFor != mediaId) {
+                    var nextPlayTitle: String? = null
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                         val currentTier = currentTierFor(mediaId)
                         if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, better) != null) {
                             logHqTier(mediaId, target.title, better, currentTier)
                             SourceResolver.rememberOriginal(target, better)
+                            nextPlayTitle = target.title
                         }
                     }
                     QualityUpgrade.forget(mediaId)
+                    if (nextPlayTitle != null) {
+                        prefetchLosslessForNextPlay(mediaId, uri, better, nextPlayTitle)
+                    }
                     TrackLog.d(
                         "BitChord",
                         "upgrade found for $mediaId kept for next play; no mid-song swap",
