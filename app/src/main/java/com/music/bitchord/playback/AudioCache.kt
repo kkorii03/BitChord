@@ -601,6 +601,10 @@ object AudioCache {
      */
     private fun completeUpgradeRendition(videoId: String): String? {
         if (openedCache == null) return null
+        // A copy prefetched during this play must not take over its key until
+        // the queue moves on: a seek reopens the plain URI, and handing it the
+        // FLAC entry at the Opus entry's byte offset breaks the extractor.
+        if (videoId in upgradeKeyDeferred) return null
         val candidates = renditionKeysFor(videoId).mapNotNull { key ->
             if (key.endsWith("#watch")) return@mapNotNull null
             val suffix = key.removePrefix("$videoId#")
@@ -1418,6 +1422,13 @@ object AudioCache {
      */
     private val pendingLowQualityDrops = ConcurrentHashMap<String, String>()
 
+    /**
+     * Tracks with a background lossless fetch started during their current
+     * play. [completeUpgradeRendition] ignores them until another track becomes
+     * current, so one play never sees its cache key change under it.
+     */
+    private val upgradeKeyDeferred = ConcurrentHashMap.newKeySet<String>()
+
     @Volatile
     private var currentMediaId: String? = null
 
@@ -2017,6 +2028,7 @@ object AudioCache {
         val mediaId = mediaIdIn(uri) ?: return false
         if (!HqQuality.isLosslessTier(stream.format)) return false
         if (!losslessPrefetchAttempted.add(mediaId)) return false
+        upgradeKeyDeferred += mediaId
         losslessPrefetchJob?.cancel()
         // Same park as a manual swap: the resolving data source reads the
         // stream from here, so its origin and host are recorded on the entry
@@ -2027,6 +2039,7 @@ object AudioCache {
         val host = HqHostTracker.hostOf(stream.url)
         losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
             HqHostTracker.beginDownload(mediaId, host)
+            var complete = false
             try {
                 TrackLog.d(TAG, "hq-prefetch: $mediaId start $format", about = mediaId)
                 val result = try {
@@ -2045,6 +2058,7 @@ object AudioCache {
                     )
                     return@launch
                 }
+                complete = true
                 TrackLog.d(TAG, "hq-prefetch: $mediaId done ${formatBytes(result.bytes)}", about = mediaId)
                 renditionKeys.remove(mediaId)
                 pendingLowQualityDrops[mediaId] = key
@@ -2054,6 +2068,10 @@ object AudioCache {
                     dropLowerQualityCopies(mediaId, keep = key)
                 }
             } finally {
+                // A fetch cut short — most often by the queue moving on before
+                // it finished — leaves the next play of the track free to try
+                // again; only a complete copy closes the question.
+                if (!complete) losslessPrefetchAttempted.remove(mediaId)
                 HqHostTracker.endDownload(mediaId, host)
             }
         }
@@ -2070,6 +2088,7 @@ object AudioCache {
      */
     fun onTrackBecameCurrent(mediaId: String?) {
         currentMediaId = mediaId
+        upgradeKeyDeferred.removeAll { it != mediaId }
         val ready = pendingLowQualityDrops.entries
             .filter { it.key != mediaId }
             .map { it.key to it.value }
