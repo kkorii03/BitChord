@@ -423,8 +423,11 @@ object SourceRegistry {
         configs.value = next
         // Search answers and verified originals describe the source list they
         // were found with. An addon that was edited, removed or switched off
-        // must not keep serving a cached answer under the same config id.
-        SourceResolver.clearSearchAnswers()
+        // must not keep serving a cached answer under the same config id. The
+        // first open publishes the stored list with [persist] false; it must
+        // not wipe the remembered originals that were just restored for this
+        // launch.
+        SourceResolver.clearSearchAnswers(clearRemembered = persist)
         // Rebuilt against the previous map so that an untouched source keeps
         // the instance it already had, rather than being replaced by an
         // identical-but-cold one every time an unrelated row is toggled.

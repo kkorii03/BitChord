@@ -39,6 +39,7 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
@@ -155,6 +156,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // (see StartupWork), and the startup thread is serial so a first launch
         // still never has two Keystore creations running at once.
         SourceRegistry.init(this)
+        // The verified originals a previous play found, so the next play after
+        // a restart can open them instead of the lossy cache entry.
+        SourceResolver.init(this)
         // Cheap here (it only records paths and starts its own warm-up job), and
         // it has to be ready before the first resolution, which can be the
         // restored queue playing the moment the service starts.

@@ -1,5 +1,7 @@
 package com.music.bitchord.data.sources
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
@@ -111,9 +113,31 @@ object SourceResolver {
 
     private val remembered = ConcurrentHashMap<String, Remembered>()
 
-    internal fun clearSearchAnswers() {
+    /**
+     * The same remembered originals, kept across a process restart.
+     *
+     * [remembered] is what lets a track that was upgraded for the next play
+     * actually open the better copy; without a disk copy of it, restarting the
+     * app puts the next play back on the lossy cache entry. Only the small
+     * facts needed to reopen the stream are stored, and only for as long as
+     * [REMEMBERED_TTL_MS] — the URLs themselves expire, so this is a memory of
+     * the last half hour rather than a permanent catalogue.
+     */
+    private var prefs: SharedPreferences? = null
+
+    fun init(context: Context) {
+        val opened = context.applicationContext
+            .getSharedPreferences(REMEMBERED_PREFS, Context.MODE_PRIVATE)
+        prefs = opened
+        loadRemembered(opened)
+    }
+
+    internal fun clearSearchAnswers(clearRemembered: Boolean = true) {
         searchAnswers.clear()
-        remembered.clear()
+        if (clearRemembered) {
+            remembered.clear()
+            prefs?.edit()?.remove(KEY_REMEMBERED)?.apply()
+        }
     }
 
     /**
@@ -134,6 +158,7 @@ object SourceResolver {
             remembered.minByOrNull { it.value.at }?.let { remembered.remove(it.key) }
         }
         remembered[targetKey(target)] = Remembered(stream, now)
+        saveRemembered()
     }
 
     /** The verified original already found for [target], if it is still fresh. */
@@ -146,6 +171,97 @@ object SourceResolver {
         }
         return entry.stream
     }
+
+    /**
+     * Drops a remembered original that just failed to play, so the fallback to
+     * the cache is not immediately undone by the next resolver asking for the
+     * same dead URL.
+     */
+    fun forgetOriginal(target: TrackMatcher.Target) {
+        if (remembered.remove(targetKey(target)) != null) saveRemembered()
+    }
+
+    private fun saveRemembered() {
+        val store = prefs ?: return
+        val now = System.currentTimeMillis()
+        val lines = remembered.entries
+            .filter { now - it.value.at <= REMEMBERED_TTL_MS }
+            .sortedBy { it.value.at }
+            .takeLast(REMEMBERED_MAX)
+            .joinToString("\n") { (key, entry) -> encodeRemembered(key, entry) }
+        store.edit().putString(KEY_REMEMBERED, lines).apply()
+    }
+
+    private fun loadRemembered(store: SharedPreferences) {
+        val now = System.currentTimeMillis()
+        store.getString(KEY_REMEMBERED, null)?.lineSequence()?.forEach { line ->
+            val parts = line.split('\t')
+            if (parts.size < REMEMBERED_FIELDS) return@forEach
+            runCatching {
+                val at = parts[1].toLong()
+                if (now - at > REMEMBERED_TTL_MS) return@forEach
+                val key = decode(parts[0])
+                val headers = decode(parts[12])
+                    .split('\u0002')
+                    .filter { it.isNotEmpty() }
+                    .associate { header ->
+                        val split = header.indexOf('\u0003')
+                        header.substring(0, split) to header.substring(split + 1)
+                    }
+                val stream = SourceStream(
+                    url = decode(parts[2]),
+                    format = StreamFormat(
+                        codec = decode(parts[3]).ifBlank { null },
+                        kbps = parts[4].toIntOrNull(),
+                        sampleRateHz = parts[5].toIntOrNull(),
+                        bitDepth = parts[6].toIntOrNull(),
+                        kbpsInferred = parts[7] == "1",
+                    ),
+                    headers = headers,
+                    belowRequest = parts[8] == "1",
+                    durationSec = parts[9].toIntOrNull(),
+                    sourceConfigId = decode(parts[10]).ifBlank { null },
+                    trackId = decode(parts[11]).ifBlank { null },
+                )
+                remembered[key] = Remembered(stream, at)
+            }
+        }
+        if (remembered.size > REMEMBERED_MAX) {
+            remembered.entries
+                .sortedBy { it.value.at }
+                .take(remembered.size - REMEMBERED_MAX)
+                .forEach { remembered.remove(it.key) }
+        }
+    }
+
+    private fun encodeRemembered(key: String, entry: Remembered): String {
+        val stream = entry.stream
+        val headers = stream.headers.entries.joinToString("\u0002") { (name, value) ->
+            "$name\u0003$value"
+        }
+        return listOf(
+            encode(key),
+            entry.at.toString(),
+            encode(stream.url),
+            encode(stream.format.codec.orEmpty()),
+            stream.format.kbps?.toString().orEmpty(),
+            stream.format.sampleRateHz?.toString().orEmpty(),
+            stream.format.bitDepth?.toString().orEmpty(),
+            if (stream.format.kbpsInferred) "1" else "0",
+            if (stream.belowRequest) "1" else "0",
+            stream.durationSec?.toString().orEmpty(),
+            encode(stream.sourceConfigId.orEmpty()),
+            encode(stream.trackId.orEmpty()),
+            encode(headers),
+        ).joinToString("\t")
+    }
+
+    private fun encode(value: String): String =
+        java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(value.toByteArray(Charsets.UTF_8))
+
+    private fun decode(value: String): String =
+        String(java.util.Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
 
     private fun targetKey(target: TrackMatcher.Target): String = listOf(
         target.title,
@@ -1506,4 +1622,7 @@ object SourceResolver {
     /** How long a verified original is kept for a later play of the same track. */
     private const val REMEMBERED_TTL_MS = 30 * 60 * 1000L
     private const val REMEMBERED_MAX = 64
+    private const val REMEMBERED_PREFS = "source_resolver_remembered"
+    private const val KEY_REMEMBERED = "remembered"
+    private const val REMEMBERED_FIELDS = 13
 }

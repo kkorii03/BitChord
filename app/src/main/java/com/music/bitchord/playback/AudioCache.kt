@@ -29,6 +29,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqReplayPolicy
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -519,8 +520,10 @@ object AudioCache {
             // still held.
             ?.let { videoId ->
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
+                val replay = spec.uri.getQueryParameter(REPLAY_PARAM)
                 when {
                     rendition != null -> "$videoId#$rendition"
+                    replay != null -> "$videoId#$REPLAY_SUFFIX-$replay"
                     SourceResolver.canSubstituteForYouTube() ->
                         "$videoId#alt${atmosKeySuffix()}".let { completeSibling(videoId, it) ?: it }
                     else -> completeSibling(videoId, videoId) ?: videoId
@@ -1258,6 +1261,8 @@ object AudioCache {
     private const val KEY_MATCHING_SCHEMA = "matching_schema"
     private const val MATCHING_SCHEMA = 2
     private const val ALT_SUFFIX = "#alt"
+    private const val REPLAY_SUFFIX = "#hqreplay"
+    private const val REPLAY_PARAM = "hq_replay"
 
     /**
      * Wraps [upstream] so everything played is written to disk on the way
@@ -1272,6 +1277,15 @@ object AudioCache {
             private var heldKey: String? = null
             private var heldVideoId: String? = null
 
+            /**
+             * The ordinary cache request, kept while a replay is being tried so
+             * a failed resolve can put the listener back on the bytes already
+             * on disk instead of surfacing an error and cutting the track.
+             */
+            private var replayFallbackSpec: DataSpec? = null
+            private var replayActive = false
+            private var replayBytesRead = 0L
+
             override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
                 cacheDs.addTransferListener(transferListener)
                 upstreamDs.addTransferListener(transferListener)
@@ -1281,35 +1295,86 @@ object AudioCache {
                 // A DataSource instance is normally closed before it is opened
                 // again, but the hold must not be counted twice if it is not.
                 releaseHeld()
+                replayFallbackSpec = null
+                replayActive = false
+                replayBytesRead = 0L
                 val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content") {
-                    upstreamDs
+                if (scheme == "file" || scheme == "content") {
+                    activeDs = upstreamDs
+                    return upstreamDs.open(dataSpec)
+                }
+                val decision = replayDecision(dataSpec)
+                if (decision != null && dataSpec.position == 0L) {
+                    TrackLog.i(
+                        TAG,
+                        "hq-replay: ${dataSpec.uri.getQueryParameter("v")} " +
+                            "cache=${decision.cacheLabel} remembered=${decision.rememberedLabel} " +
+                            "-> ${if (decision.resolve) "resolve" else "cache"}",
+                        about = dataSpec.uri.getQueryParameter("v"),
+                    )
+                }
+                val resolve = decision?.resolve == true
+                if (resolve) {
+                    // Pin the remembered stream before the resolver races
+                    // YouTube for it. The whole point of this open is to hear
+                    // that copy; letting a warmed YouTube URL win the race
+                    // would start the same lossy rendition the cache holds.
+                    decision?.remembered?.let { remembered ->
+                        videoIdOf(dataSpec.uri)?.let { videoId ->
+                            StreamChoice.remember(videoId, remembered, substituted = true)
+                        }
+                    }
+                }
+                val request = if (resolve) {
+                    dataSpec.withReplayMarker(decision?.replayToken ?: "unknown")
                 } else {
-                    cacheDs
+                    dataSpec
                 }
-                if (scheme != "file" && scheme != "content") {
-                    // Remember that the player — including the item it buffers
-                    // ahead in its playlist — owns this cache entry. Read-ahead
-                    // and the analysis head ask before touching it; Media3
-                    // gives an entry to one writer, so anything else spends the
-                    // listener's data writing nowhere.
-                    val key = cacheKeyOf(dataSpec.uri)
-                    val videoId = dataSpec.uri.getQueryParameter("v")
-                    heldKey = key
-                    heldVideoId = videoId
-                    retain(playbackKeysInUse, key)
-                    videoId?.let { retain(playbackVideoIdsInUse, it) }
-                }
+                activeDs = cacheDs
+                replayActive = resolve
+                replayFallbackSpec = if (resolve) dataSpec else null
+                hold(request)
                 return try {
-                    activeDs.open(dataSpec)
+                    activeDs.open(request)
                 } catch (failure: Throwable) {
+                    if (resolve) {
+                        val fallbackLength = runCatching { openFallback(dataSpec, 0L) }.getOrNull()
+                        if (fallbackLength != null) {
+                            TrackLog.w(
+                                TAG,
+                                "hq-replay: ${dataSpec.uri.getQueryParameter("v")} resolve failed " +
+                                    "(${failure.javaClass.simpleName}); falling back to cache",
+                                about = dataSpec.uri.getQueryParameter("v"),
+                            )
+                            return fallbackLength
+                        }
+                    }
                     releaseHeld()
                     throw failure
                 }
             }
 
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                activeDs.read(buffer, offset, length)
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                return try {
+                    val read = activeDs.read(buffer, offset, length)
+                    if (read > 0 && replayActive) replayBytesRead += read
+                    read
+                } catch (failure: Throwable) {
+                    val fallback = replayFallbackSpec
+                    if (replayActive && fallback != null &&
+                        runCatching { openFallback(fallback, replayBytesRead) }.isSuccess
+                    ) {
+                        TrackLog.w(
+                            TAG,
+                            "hq-replay: ${fallback.uri.getQueryParameter("v")} replay read failed " +
+                                "(${failure.javaClass.simpleName}); continuing from cache",
+                            about = fallback.uri.getQueryParameter("v"),
+                        )
+                        return activeDs.read(buffer, offset, length)
+                    }
+                    throw failure
+                }
+            }
 
             override fun getUri(): Uri? = activeDs.uri
 
@@ -1318,7 +1383,44 @@ object AudioCache {
                     activeDs.close()
                 } finally {
                     releaseHeld()
+                    replayFallbackSpec = null
+                    replayActive = false
+                    replayBytesRead = 0L
                 }
+            }
+
+            /** Opens the old cache entry, at [bytesRead] into it when a replay broke mid-read. */
+            private fun openFallback(original: DataSpec, bytesRead: Long): Long {
+                runCatching { activeDs.close() }
+                releaseHeld()
+                activeDs = cacheDs
+                replayActive = false
+                replayFallbackSpec = null
+                val fallback = if (bytesRead > 0L) {
+                    original.buildUpon().setPosition(original.position + bytesRead).build()
+                } else {
+                    original
+                }
+                videoIdOf(original.uri)?.let { videoId ->
+                    StreamChoice.forget(videoId)
+                    SourceResolver.forgetOriginal(SourceResolver.targetIn(original.uri))
+                }
+                hold(fallback)
+                return activeDs.open(fallback)
+            }
+
+            private fun hold(spec: DataSpec) {
+                // Remember that the player — including the item it buffers
+                // ahead in its playlist — owns this cache entry. Read-ahead
+                // and the analysis head ask before touching it; Media3
+                // gives an entry to one writer, so anything else spends the
+                // listener's data writing nowhere.
+                val key = cacheKeyOf(spec.uri)
+                val videoId = spec.uri.getQueryParameter("v")
+                heldKey = key
+                heldVideoId = videoId
+                retain(playbackKeysInUse, key)
+                videoId?.let { retain(playbackVideoIdsInUse, it) }
             }
 
             private fun releaseHeld() {
@@ -1332,6 +1434,88 @@ object AudioCache {
             }
         }
     }
+
+    /**
+     * Whether this open should skip a lossy cached rendition for the verified
+     * original already remembered for the same recording.
+     *
+     * Null when there is nothing to decide: a local file, a marked upgrade or
+     * revert, a video, an analysis read, or a track whose cache entry holds no
+     * bytes at all (the normal open resolves it anyway).
+     */
+    private fun replayDecision(dataSpec: DataSpec): ReplayDecision? {
+        val uri = dataSpec.uri
+        val videoId = uri.getQueryParameter("v") ?: return null
+        if (uri.authority == "source") return null
+        if (uri.getQueryParameter(REPLAY_PARAM) != null) return null
+        if (uri.getQueryParameter(WATCH_READ_PARAM) != null) return null
+        if (uri.getQueryParameter("m") == "1") return null
+        if (uri.getQueryParameter(DIRECT_YOUTUBE_PARAMETER) == "1") return null
+        if (QualityUpgrade.cacheTag(uri) != null) return null
+        if (uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER) != null) return null
+        val cacheKey = keyFactory.buildCacheKey(dataSpec)
+        val cachedBytes = cache.getCachedSpans(cacheKey).any { it.isCached && it.length > 0 }
+        if (!cachedBytes) return null
+        val container = containerOf(cacheKey)
+        val cacheLabel = container?.first ?: "unknown"
+        val cacheIsLossless = container?.first == "flac"
+        val remembered = SourceResolver.rememberedOriginal(SourceResolver.targetIn(uri))
+        // Only the one case that can change the answer asks the connectivity
+        // manager; a lossless cache or no remembered original is already a
+        // cache verdict.
+        val choice = if (cacheIsLossless || remembered == null) {
+            HqReplayPolicy.Choice.CACHE
+        } else {
+            HqReplayPolicy.choose(
+                cacheIsLossless = false,
+                hasRememberedOriginal = true,
+                offline = isOffline(),
+            )
+        }
+        return ReplayDecision(
+            resolve = choice == HqReplayPolicy.Choice.RESOLVE && remembered != null,
+            cacheLabel = cacheLabel,
+            rememberedLabel = remembered?.format?.summary ?: "none",
+            remembered = remembered,
+            replayToken = remembered?.let(::replayToken) ?: "unknown",
+        )
+    }
+
+    private fun videoIdOf(uri: Uri): String? = uri.getQueryParameter("v")
+
+    /**
+     * A short, stable name for the remembered stream's source and row.
+     *
+     * The replay entry must not be shared by two different streams: a partial
+     * copy from one catalogue and the rest of another is the mixed-file seam
+     * the cache's key factory exists to prevent. Source and row id are stable
+     * across resolves; the URL is not, so it is only used when those are
+     * missing.
+     */
+    private fun replayToken(stream: SourceStream): String {
+        val source = stream.sourceConfigId.orEmpty()
+        val track = stream.trackId.orEmpty()
+        val identity = if (source.isNotBlank() && track.isNotBlank()) {
+            "$source\u0001$track"
+        } else {
+            stream.url.substringBefore('?')
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+        return digest.take(8).joinToString("") { String.format(Locale.ROOT, "%02x", it) }
+    }
+
+    private class ReplayDecision(
+        val resolve: Boolean,
+        val cacheLabel: String,
+        val rememberedLabel: String,
+        val remembered: SourceStream?,
+        val replayToken: String,
+    )
+
+    private fun DataSpec.withReplayMarker(token: String): DataSpec = buildUpon()
+        .setUri(uri.buildUpon().appendQueryParameter(REPLAY_PARAM, token).build())
+        .build()
 
     /**
      * Cache entries the player (or its read-ahead inside ExoPlayer's playlist)
