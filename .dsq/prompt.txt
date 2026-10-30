@@ -1,0 +1,16 @@
+﻿BitChord 안드로이드 앱(Kotlin, Compose, Media3). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지). 기준 브랜치 task/fix-1030. 전체 앱 검토 작업(사용자 요청 10-30).
+주제: 기능 검사 — 설정. 설정 화면의 모든 항목(스위치·선택·입력)을 하나씩: 저장 키 → 그 값을 실제로 읽는 코드 → 동작에 반영되는지 추적. 찾을 것: 바꿔도 아무 효과 없는 설정, 효과가 반대인 설정, 앱 재시작 후 풀리는 설정, 화면 표시와 실제 값이 다른 설정, 설정 없이 하드코딩된 동작, 한국어 문구 누락. 결과 표에 '설정 이름 · 키 · 사용처 파일:줄 · 판정(정상/효과없음/반대/표시오류)'.
+방식: ① 이전 감사 문서(docs/audit/*.md, docs/AUDIT_*.md)를 먼저 읽고, 거기 나온 문제가 지금 코드에서 고쳐졌는지 확인해 표로(고쳐짐/남음/해당 없음). ② 새로 찾은 문제는 docs/review-1031/<이 작업 이름>.md 에 표: 심각도(HIGH/MED/LOW) · 파일:줄 · 증거(코드 근거, 추측 금지) · 사용자 영향 · 수정안. ③ HIGH·MED 중 원인이 분명하고 한두 파일 안에서 고칠 수 있는 것만 이번에 직접 수정 + 단위 테스트(최대 8건). 나머지는 문서에만. 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는 수정하지 말고 문서에만(폰 검증 필요).
+반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 업스트림 v1.8.1(7d956f21)에 있던 코드는 삭제·쪼개기 금지 — 업스트림 쪽 문제는 문서에만. 기존 코드 의도(주석)를 지우면 요약에 이유. 새 app 테스트는 이름을 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제(문서 경로 포함).
+
+중요(사용자 지적 10-31): '있지만 제대로 안 되는 기능'을 잡는 것이 핵심. 예) 다음 곡 준비(next-prep)는 있었지만 싱크를 173번 중 154번 건너뛰었고, 자동 재생은 커버 곡에서 0곡을 채워 같은 곡만 반복, 무손실 검증 통과 후에도 실제로는 Opus 재생. 각 기능마다 '실행되는 조건'을 코드로 따라가서, 흔한 상황(커버 곡, 비디오 노래, 앱 재시작 후, 화면 꺼짐, 백그라운드, 프록시 사용, 다운로드된 곡, 셔플)에서 그 조건이 거짓이 되어 조용히 건너뛰는 경로를 찾아 표에 '건너뛰는 조건 · 얼마나 흔한 상황인지 · 건너뛸 때 로그가 남는지'로 적을 것. 건너뛰는데 로그가 없으면 그 자체로 MED.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- HIGH — `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:508-518` — The automatic repair's unverified fallback still hardcodes `allowMetered = true`, so an offline/cellular playback can queue it and drain over mobile data despite Wi-Fi-only being on, contradicting the new guard and the doc's claim. Fix: pass `hqUpgradeAllowsMetered(automatic)` and re-check `downloadsAllowedNow` inside the coroutine before enqueueing.
+- MEDIUM — `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:413-419` + `download/DownloadHealth.kt:148-165` — The new early return drops the request instead of waiting, but `DownloadHealth` still marks the file checked/repair-requested afterwards, so an `UPGRADE` verdict on metered is permanently swallowed and wrong-recording repairs can be parked by the 24h cooldown. Fix: make `requestUpgrade` report whether it queued and only mark checked/requested on success, or enqueue an unmetered work item.
+- MEDIUM — `app/src/main/java/com/music/bitchord/download/MvSoundRedownload.kt:125-127,165-168` — Automatic MV repair is not scheduled while metered and the worker returns `Result.success()` instead of retrying, while no connectivity callback reschedules it, so joining Wi-Fi with the app open leaves the repair dormant until the next app start/playback. Fix: enqueue with `NetworkType.UNMETERED` or observe network changes and return `Result.retry()` when the connection is not allowed.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
