@@ -594,8 +594,13 @@ object AppSettings {
      * Prefer the catalogue audio release when the selected result is a music
      * video. The video itself is still handed to the player first so its
      * metadata appears immediately while the catalogue match is resolved.
+     *
+     * On by default: turning a music video into its song release is the app's
+     * first job, so a fresh install should not have to find the switch first.
+     * A listener who turned it off has `false` stored, and that stored choice
+     * wins — see [preferMusicOnlyDefault].
      */
-    val preferMusicOnly = MutableStateFlow(false)
+    val preferMusicOnly = MutableStateFlow(true)
 
     /**
      * Jumps over the parts of a YouTube video that are not the song — the
@@ -1269,7 +1274,13 @@ object AppSettings {
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
-        preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        preferMusicOnly.value = preferMusicOnlyDefault(
+            if (prefs.contains(KEY_PREFER_MUSIC_ONLY)) {
+                prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+            } else {
+                null
+            },
+        )
         skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
         skipSponsorParts.value = prefs.getBoolean(KEY_SKIP_SPONSOR_PARTS, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
@@ -3825,3 +3836,12 @@ internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
  * this.
  */
 internal fun hqAutomationDefault(existingInstall: Boolean): Boolean = !existingInstall
+
+/**
+ * The music-only preference when a fresh install has never stored one.
+ *
+ * The catalogue song release is what the app is for, so an absent key means
+ * on. A stored [Boolean] — including the `false` a listener chose — is kept
+ * exactly as written; only the absence is defaulted.
+ */
+internal fun preferMusicOnlyDefault(stored: Boolean?): Boolean = stored ?: true

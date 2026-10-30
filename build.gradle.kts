@@ -149,4 +149,22 @@ subprojects {
     configurations.configureEach {
         resolutionStrategy.force(*pinnedDependencies.toTypedArray())
     }
+    /*
+     * innertubex ships Java 21 bytecode (class file 65). Compiling and running
+     * the app on 17 is fine until a test actually touches StreamResolver, whose
+     * InnerTubeXResolver reference then fails with UnsupportedClassVersionError.
+     * Run every test on a 21 toolchain so the suite exercises the code instead
+     * of the harness JDK; the compiled bytecode still targets 17.
+     */
+    pluginManager.withPlugin("java-base") {
+        val toolchains =
+            extensions.getByType(org.gradle.jvm.toolchain.JavaToolchainService::class.java)
+        tasks.withType<Test>().configureEach {
+            javaLauncher.set(
+                toolchains.launcherFor {
+                    languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(21))
+                },
+            )
+        }
+    }
 }

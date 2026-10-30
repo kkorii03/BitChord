@@ -78,6 +78,13 @@ class AppSettingsDefaultsTest {
     }
 
     @Test
+    fun `music-only is on for a fresh install and keeps a stored choice`() {
+        assertTrue(preferMusicOnlyDefault(stored = null))
+        assertTrue(preferMusicOnlyDefault(stored = true))
+        assertFalse(preferMusicOnlyDefault(stored = false))
+    }
+
+    @Test
     fun `the signature url is trimmed and capped`() {
         assertEquals("", AppSettings.normalizeSignatureApiUrl(""))
         assertEquals("https://api.example", AppSettings.normalizeSignatureApiUrl("  https://api.example/  "))
