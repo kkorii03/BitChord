@@ -11,6 +11,7 @@ import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.settings.SettingsTransfer
+import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.spotify.LocalPlaylist
 import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.PlaylistImportMode
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
@@ -75,6 +77,11 @@ object Backup {
         runCatching {
             val buckets = ListeningStats.exportAll()
             val overrides = LikeState.overrides.value
+            // TasteSignals holds ratings already written to disk on an earlier
+            // run; session overrides cover one made since launch and win over
+            // an older stored value. Union them so an export after a restart
+            // still carries the listener's likes instead of only this process.
+            val ratings = TasteSignals.ratings() + overrides
             val file = BackupFile(
                 app = APP_TAG,
                 version = SCHEMA_VERSION,
@@ -89,8 +96,8 @@ object Backup {
                     }.toMap(),
                 listening = buckets,
                 localPlaylists = LocalPlaylistStore.exportAll().map { BackupPlaylist.from(it) },
-                likedVideoIds = overrides.filterValues { it == LikeStatus.LIKE }.keys.sorted(),
-                dislikedVideoIds = overrides.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
+                likedVideoIds = ratings.filterValues { it == LikeStatus.LIKE }.keys.sorted(),
+                dislikedVideoIds = ratings.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
                 searchHistory = SearchHistory.export(),
             )
             val bytes = encodeBackupBytes(file)
@@ -143,8 +150,15 @@ object Backup {
                 // Explicit rather than relying on the settings map: schema 2
                 // states the list itself, and an empty list is a real answer.
                 SearchHistory.replace(file.searchHistory)
-                file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
-                file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
+                val restoredRatings = buildMap {
+                    file.likedVideoIds.forEach { put(it, LikeStatus.LIKE) }
+                    file.dislikedVideoIds.forEach { put(it, LikeStatus.DISLIKE) }
+                }
+                restoredRatings.forEach { (videoId, status) -> LikeState.set(videoId, status) }
+                // LikeState makes the restore visible now; TasteSignals is what
+                // survives the next launch, which the session map alone did not.
+                TasteSignals.restoreRatings(restoredRatings)
+                TasteSignals.flush()
             }
             Summary(
                 months = file.listening.size,
@@ -227,6 +241,31 @@ object Backup {
 
     /** A backup carries months of listening, so it needs more room than a settings share. */
     private const val MAX_BACKUP_BYTES = 32 * 1024 * 1024
+
+    /**
+     * A backup is text this app wrote, but the file it reads is one the user
+     * picked from anywhere. Reading it whole would let a wrong pick or a
+     * hostile document exhaust the heap before the schema check can refuse it;
+     * the largest real backup — years of months plus playlists — stays far
+     * below this.
+     */
+    internal const val MAX_IMPORT_BYTES = 32 * 1024 * 1024
+
+    /** Reads at most [maxBytes] of UTF-8 text, refusing rather than growing without bound. */
+    @JvmName("readBackupTextFromStream")
+    internal fun InputStream.readBackupText(maxBytes: Int = MAX_IMPORT_BYTES): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var total = 0
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "백업 파일이 너무 큽니다" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray().decodeToString()
+    }
 
     /**
      * Bump when the shape below stops being readable by an older build. A file

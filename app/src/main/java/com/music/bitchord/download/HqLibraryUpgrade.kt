@@ -702,7 +702,16 @@ object HqLibraryUpgrade {
                 "hq-library: '${pending.song.title}' has no stored verdict any more; skipping",
                 pending.target.videoId,
             )
-            settle(context, pending.target.videoId, success = false)
+            // No download started for this target, so there is no active id to
+            // match. The ordinary settle guard would leave it at the head of
+            // the plan forever, and every pass would pick it again.
+            settle(
+                context,
+                pending.target.videoId,
+                success = false,
+                requireActive = false,
+                recordFailure = false,
+            )
             return@withContext
         }
 
@@ -892,19 +901,35 @@ object HqLibraryUpgrade {
         return false
     }
 
+    /**
+     * Whether [videoId]'s target may be settled now.
+     *
+     * A download that actually ran is settled only while it is the active
+     * target, so a late callback for an older id cannot move the plan. A target
+     * that never started — its verdict was invalidated before the enqueue — has
+     * no active id and is dropped without that guard.
+     */
+    internal fun maySettleTarget(
+        activeVideoId: String?,
+        videoId: String,
+        requireActive: Boolean,
+    ): Boolean = !requireActive || activeVideoId == videoId
+
     private fun settle(
         context: Context,
         videoId: String,
         success: Boolean,
         failure: DownloadFailure? = null,
         scheduleNext: Boolean = true,
+        requireActive: Boolean = true,
+        recordFailure: Boolean = true,
     ) {
         ensureLoaded(context)
         var rebuild = false
         var retryWaitMs: Long? = null
         var recordedFailure: Failure? = null
         val remaining = synchronized(lock) {
-            if (activeVideoId != videoId) return
+            if (!maySettleTarget(activeVideoId, videoId, requireActive)) return
             val index = plan.indexOfFirst { it.target.videoId == videoId }
             val pending = if (index >= 0) plan[index] else null
             val key = pending?.let { failureKey(it.target) }
@@ -934,7 +959,7 @@ object HqLibraryUpgrade {
                 return@synchronized plan
             }
             if (key != null) {
-                if (success) {
+                if (success || !recordFailure) {
                     failures.remove(key)
                 } else {
                     val previous = failures[key]?.attempts ?: 0
@@ -945,7 +970,7 @@ object HqLibraryUpgrade {
             val left = plan.filterNot { it.target.videoId == videoId }
             plan = left
             done += 1
-            activeVideoId = null
+            if (activeVideoId == videoId) activeVideoId = null
             if (left.isEmpty()) {
                 done = 0
                 total = 0
@@ -970,7 +995,7 @@ object HqLibraryUpgrade {
             }
             return
         }
-        if (!success) {
+        if (!success && recordFailure) {
             val failureState = recordedFailure
             if (failureState != null && failureState.attempts >= AutomaticRetryPolicy.MAX_FAILURES) {
                 TrackLog.w(
