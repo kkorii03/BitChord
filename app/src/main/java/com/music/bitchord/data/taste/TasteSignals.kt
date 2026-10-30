@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -363,17 +364,45 @@ object TasteSignals {
      * order [com.music.bitchord.data.stats.Backup.importFrom] applies them.
      * The write is debounced like every other change to this file.
      */
-    fun restoreRatings(liked: Collection<String>, disliked: Collection<String>) {
-        if (!ready()) return
-        synchronized(lock) {
-            liked.forEach { id ->
-                if (id.isNotBlank()) tracks.getOrPut(id) { StoredTrack(id = id) }.rating = RATING_LIKE
+    fun restoreRatings(liked: Collection<String>, disliked: Collection<String>): Boolean {
+        if (!ready()) return false
+        val now = System.currentTimeMillis()
+        return synchronized(lock) {
+            val likedIds = liked.filter { it.isNotBlank() }.toSet()
+            val dislikedIds = disliked.filter { it.isNotBlank() }.toSet()
+            val restored = likedIds + dislikedIds
+
+            // A restore replaces the rating set rather than merging into it:
+            // a track the file does not name was not rated by the device that
+            // wrote it, so its old local rating must not survive the restore.
+            tracks.values.forEach { track ->
+                if (track.rating != RATING_NONE && track.id !in restored) track.rating = RATING_NONE
             }
-            disliked.forEach { id ->
-                if (id.isNotBlank()) tracks.getOrPut(id) { StoredTrack(id = id) }.rating = RATING_DISLIKE
+            likedIds.forEach { id ->
+                tracks.getOrPut(id) { StoredTrack(id = id) }.apply {
+                    rating = RATING_LIKE
+                    // A restored row has no play history, and the default
+                    // timestamp of zero is exactly what the size cap prunes
+                    // first. Stamp it so a large library cannot evict a rating
+                    // the listener just restored.
+                    if (lastPlayedAt == 0L) lastPlayedAt = now
+                }
+            }
+            dislikedIds.forEach { id ->
+                tracks.getOrPut(id) { StoredTrack(id = id) }.apply {
+                    rating = RATING_DISLIKE
+                    if (lastPlayedAt == 0L) lastPlayedAt = now
+                }
             }
             markDirtyLocked()
+            true
         }
+    }
+
+    /** Writes pending changes and waits for the file, for an import that must not lie. */
+    suspend fun flushAndAwait(): Boolean {
+        if (!ready()) return false
+        return writer.async { writeSnapshot() }.await()
     }
 
     // ── Disk ────────────────────────────────────────────────────────────────
@@ -388,7 +417,7 @@ object TasteSignals {
         writer.launch { writeSnapshot() }
     }
 
-    private suspend fun writeSnapshot(): Unit = writeLock.withLock {
+    private suspend fun writeSnapshot(): Boolean = writeLock.withLock {
         // Encoded while the lock is held rather than handing the live maps to
         // the writer: counters are mutated from the playback thread and a
         // snapshot sharing them could be read half updated. This runs on the
@@ -408,7 +437,7 @@ object TasteSignals {
                     ),
                 )
             }
-        } ?: return@withLock
+        } ?: return@withLock true
         runCatching {
             file.parentFile?.mkdirs()
             // Written aside and renamed, so a kill mid-write leaves the
@@ -418,8 +447,9 @@ object TasteSignals {
             if (!temporary.renameTo(file)) {
                 if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
             }
+            true
         }.onFailure { Log.w(TAG, "Could not write taste signals", it) }
-        Unit
+            .getOrDefault(false)
     }
 
     /**
@@ -454,8 +484,12 @@ object TasteSignals {
      * per-artist caps then take the same approach with their last activity.
      */
     private fun pruneLocked() {
+        // A rating is a listener decision, not a recency signal: dropping it
+        // because a thousand newer tracks played would silently undo part of a
+        // restore (and of the listener's own library).
         tracks.values.sortedByDescending { it.lastPlayedAt }
             .drop(MAX_TRACKS)
+            .filter { it.rating == RATING_NONE }
             .forEach { tracks.remove(it.id) }
         artists.values.sortedByDescending { it.lastAt }
             .drop(MAX_ARTISTS)

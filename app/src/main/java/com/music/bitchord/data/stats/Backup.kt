@@ -162,52 +162,110 @@ object Backup {
             val text = context.contentResolver.openInputStream(source)
                 ?.use { it.readTextBounded() }
                 ?: error("파일을 열 수 없습니다")
-            val file = decode(text)
-            validate(file)
-            val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
-                file.localPlaylists.map { it.toLocalPlaylist() }
-            } else {
-                null
-            }
-            val settings = file.settings.mapValues { it.value.decoded() }
+            importText(text, playlistMode)
+        }
+    }
 
-            // Writing the listening buckets removes the ones already on disk,
-            // so it has to be the step that can refuse without leaving a
-            // restored half behind. It returns false instead of throwing, and
-            // nothing else has been written yet at this point.
-            check(ListeningStats.importAll(file.listening)) {
-                "청취 기록을 저장하지 못했습니다"
+    /**
+     * The body of [importFrom], after the document has been read.
+     *
+     * Split out so the rollback path can be exercised with the same stores an
+     * import uses, without a real document picker. It is still the only place
+     * that applies a backup.
+     */
+    internal suspend fun importText(
+        text: String,
+        playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
+    ): Summary {
+        val file = decode(text)
+        validate(file)
+        val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
+            file.localPlaylists.map { it.toLocalPlaylist() }
+        } else {
+            null
+        }
+        val settings = file.settings.mapValues { it.value.decoded() }
+        val library = file.version >= LIBRARY_SCHEMA_VERSION
+
+        // Everything below is applied in a rollback-able order. The listening
+        // folder goes last because it is the only store whose commit can still
+        // refuse after validation; if it does, the cheaper sections are put
+        // back from these snapshots instead of leaving the device holding half
+        // a restore.
+        val previousSettings = AppSettings.exportPrefs()
+        val previousPlaylists = LocalPlaylistStore.exportAll()
+        val previousSearch = SearchHistory.export()
+        val previousLiked = TasteSignals.ratedVideoIds(LikeStatus.LIKE)
+        val previousDisliked = TasteSignals.ratedVideoIds(LikeStatus.DISLIKE)
+        val previousOverrides = LikeState.overrides.value
+
+        suspend fun rollback() {
+            runCatching { AppSettings.importPrefs(previousSettings) }
+            runCatching { SearchHistory.reload() }
+            if (library) {
+                runCatching {
+                    LocalPlaylistStore.importAll(previousPlaylists, PlaylistImportMode.REPLACE)
+                }
+                runCatching { SearchHistory.replace(previousSearch) }
+                runCatching { TasteSignals.restoreRatings(previousLiked, previousDisliked) }
+                runCatching { TasteSignals.flushAndAwait() }
             }
-            AppSettings.importPrefs(settings)
+            LikeState.clear()
+            previousOverrides.forEach { (id, status) -> LikeState.set(id, status) }
+        }
+
+        try {
+            check(AppSettings.importPrefs(settings)) {
+                "설정을 저장하지 못했습니다"
+            }
             // Shares AppSettings' preference file, so it has already been
             // overwritten by the line above — it just doesn't know yet.
             SearchHistory.reload()
-            if (file.version >= LIBRARY_SCHEMA_VERSION) {
-                playlists?.let { LocalPlaylistStore.importAll(it, playlistMode) }
+            if (library) {
+                val restored = playlists?.let {
+                    LocalPlaylistStore.importAll(it, playlistMode)
+                } ?: 0
+                check(restored >= 0) { "로컬 재생목록을 저장하지 못했습니다" }
                 // Explicit rather than relying on the settings map: schema 2
                 // states the list itself, and an empty list is a real answer.
-                SearchHistory.replace(file.searchHistory)
+                check(SearchHistory.replace(file.searchHistory)) {
+                    "검색 기록을 저장하지 못했습니다"
+                }
+                // A restore is a replacement, not a merge: the session copy
+                // from before the import would otherwise keep shadowing the
+                // restored ratings in every screen that reads LikeState.
+                LikeState.clear()
                 // The persisted rating store is what survives a restart; the
                 // optimistic session copy is set as well so the player and
                 // library repaint without waiting for a reload.
                 TasteSignals.restoreRatings(file.likedVideoIds, file.dislikedVideoIds)
+                check(TasteSignals.flushAndAwait()) {
+                    "평점을 저장하지 못했습니다"
+                }
                 file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
                 file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
             }
-            Summary(
-                months = file.listening.size,
-                settings = file.settings.size,
-                from = file.versionName,
-                at = file.exportedAt,
-                playlists = playlists?.size ?: 0,
-                liked = if (file.version >= LIBRARY_SCHEMA_VERSION) file.likedVideoIds.size else 0,
-                searchHistory = if (file.version >= LIBRARY_SCHEMA_VERSION) {
-                    file.searchHistory.size
-                } else {
-                    0
-                },
-            )
+
+            // The listening folder is the last write by design. Its own import
+            // is journaled and restores the previous months if a rename fails;
+            // this check only has to roll back the sections above when it
+            // returns false.
+            check(ListeningStats.importAll(file.listening)) {
+                "청취 기록을 저장하지 못했습니다"
+            }
+        } catch (failure: Throwable) {
+            rollback()
+            throw failure
         }
+        return Summary(
+            months = file.listening.size,
+            settings = file.settings.size,
+            from = file.versionName,
+            at = file.exportedAt,
+            playlists = playlists?.size ?: 0,
+            liked = if (library) file.likedVideoIds.size else 0,
+            searchHistory = if (library) file.searchHistory.size else 0,
+        )
     }
 
     internal fun encode(file: BackupFile): String =

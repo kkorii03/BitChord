@@ -99,6 +99,17 @@ object ListeningStats {
     private val writeLock = Mutex()
 
     /**
+     * True while an import is replacing the folder.
+     *
+     * Read by [pending] and [write] so a snapshot taken before the import
+     * cannot be flushed afterwards and overwrite a restored month. The import
+     * also joins [lastWrite] before it swaps files, so a write already on its
+     * way has finished rather than being cancelled halfway through.
+     */
+    @Volatile
+    private var importing = false
+
+    /**
      * The most recently queued write.
      *
      * A throttled [flush] can take the snapshot and hand it to [writer] while
@@ -156,7 +167,16 @@ object ListeningStats {
         // ask for one is the playback sampler — on the main thread, a few
         // seconds into the first track. Done here instead, it has happened long
         // before anything is playing.
-        writer.launch { synchronized(lock) { bucketFor(YearMonth.now()) } }
+        writer.launch {
+            synchronized(lock) {
+                // An import killed between its commit point and the rename
+                // cleanup leaves a journal (roll back) or only `.bak` files
+                // (commit finished, clean up). Either way the folder has to be
+                // whole before the current month is read.
+                recoverInterruptedImport()
+                bucketFor(YearMonth.now())
+            }
+        }
     }
 
     private val ready: Boolean get() = this::directory.isInitialized
@@ -422,6 +442,10 @@ object ListeningStats {
     private fun pending(): Pair<String, StoredBucket>? {
         if (!ready) return null
         return synchronized(lock) {
+            // A snapshot taken before an import describes a month the import
+            // is replacing. Flushing it afterwards would resurrect the old
+            // history, so imports close this door while they swap the files.
+            if (importing) return null
             if (!dirty) return null
             val bucket = open ?: return null
             dirty = false
@@ -442,6 +466,10 @@ object ListeningStats {
      * month rather than a truncated one.
      */
     private suspend fun write(key: String, snapshot: StoredBucket) = writeLock.withLock {
+        // A write queued just before an import must not land on the restored
+        // folder afterwards. The import joins [lastWrite] before taking this
+        // lock; anything still queued when it runs is stale by definition.
+        if (importing) return@withLock
         runCatching {
             directory.mkdirs()
             val file = File(directory, "$key.json")
@@ -741,14 +769,18 @@ object ListeningStats {
      * onto a new device, and two copies of the same month added together would
      * silently double every number on the page with no way to tell afterwards.
      *
-     * The new months are written aside first and only then swapped in, so a
-     * serialisation failure leaves the device's own listening history intact
-     * instead of deleting it before discovering the backup could not be
-     * written. A month that cannot be parsed is refused by [prepareImport]
-     * rather than skipped, because a silent skip here is exactly the "applied"
-     * summary disagreeing with what is on disk.
+     * The new months are written aside first and only then swapped in. Existing
+     * months are renamed to `.bak`, never deleted, and the swap is journaled:
+     * a failure in this process restores the backups before returning, while a
+     * process death between the rename steps is rolled back on the next
+     * [init]. The journal is removed at the commit point, so a death after it
+     * leaves only cleanup (the new files are already in place).
+     *
+     * A month that cannot be parsed is refused by [prepareImport] rather than
+     * skipped, because a silent skip here is exactly the "applied" summary
+     * disagreeing with what is on disk.
      */
-    fun importAll(buckets: List<StoredBucket>): Boolean {
+    suspend fun importAll(buckets: List<StoredBucket>): Boolean {
         if (!ready) {
             Log.w(TAG, "Refusing to import listening buckets before the store is open")
             return false
@@ -756,48 +788,153 @@ object ListeningStats {
         val prepared = runCatching { prepareImport(buckets) }
             .onFailure { Log.w(TAG, "Refusing an unreadable listening import", it) }
             .getOrElse { return false }
-        return synchronized(lock) {
-            directory.mkdirs()
-            val staged = mutableListOf<Pair<String, File>>()
-            for ((key, text) in prepared) {
-                val temporary = File(directory, "$key.json.importing")
-                val written = runCatching { temporary.writeText(text) }
-                    .onFailure { Log.w(TAG, "Could not stage listening bucket $key", it) }
-                    .isSuccess
-                if (!written) {
-                    staged.forEach { (_, file) -> file.delete() }
-                    temporary.delete()
-                    return@synchronized false
-                }
-                staged += key to temporary
-            }
 
-            // Every new month is now on disk under its staging name. Replacing
-            // the visible files is a rename per month, not a decode or encode
-            // that can still fail halfway.
-            directory.listFiles()
-                ?.filter { it.isFile && it.name.endsWith(".json") }
-                ?.forEach { it.delete() }
-            var committed = true
-            for ((key, temporary) in staged) {
-                val target = File(directory, "$key.json")
-                if (!temporary.renameTo(target)) {
-                    if (!(target.delete() && temporary.renameTo(target))) {
-                        Log.w(TAG, "Could not commit listening bucket $key")
-                        committed = false
+        synchronized(lock) { importing = true }
+        try {
+            // A flush taken before the flag flipped may still be queued. Joining
+            // it before taking [writeLock] lets it finish instead of cancelling
+            // it halfway through, and stops it landing after the restore.
+            lastWrite?.join()
+            return writeLock.withLock {
+                synchronized(lock) {
+                    directory.mkdirs()
+                    val staged = mutableListOf<Pair<String, File>>()
+                    for ((key, text) in prepared) {
+                        val temporary = File(directory, "$key$IMPORTING_SUFFIX")
+                        val written = runCatching { temporary.writeText(text) }
+                            .onFailure { Log.w(TAG, "Could not stage listening bucket $key", it) }
+                            .isSuccess
+                        if (!written) {
+                            staged.forEach { (_, file) -> file.delete() }
+                            temporary.delete()
+                            return@synchronized false
+                        }
+                        staged += key to temporary
                     }
+
+                    // Every new month is now on disk under its staging name.
+                    val existing = directory.listFiles()
+                        ?.filter { it.isFile && it.name.endsWith(".json") }
+                        .orEmpty()
+                    val journal = File(directory, IMPORT_JOURNAL)
+                    val journalText = buildString {
+                        existing.forEach { appendLine("O ${it.name}") }
+                        prepared.forEach { (key, _) -> appendLine("N $key.json") }
+                    }
+                    val journalWritten = runCatching { journal.writeText(journalText) }.isSuccess
+                    if (!journalWritten) {
+                        Log.w(TAG, "Could not write the listening import journal")
+                        staged.forEach { (_, file) -> file.delete() }
+                        return@synchronized false
+                    }
+
+                    // Move the old months aside first. Nothing is deleted until
+                    // every new month is in place.
+                    val backups = mutableListOf<Pair<File, File>>()
+                    var backedUp = true
+                    for (file in existing) {
+                        val backup = File(directory, file.name + BACKUP_SUFFIX)
+                        if (file.renameTo(backup)) {
+                            backups += file to backup
+                        } else {
+                            Log.w(TAG, "Could not back up listening bucket ${file.name}")
+                            backedUp = false
+                            break
+                        }
+                    }
+                    if (!backedUp) {
+                        backups.forEach { (original, backup) -> backup.renameTo(original) }
+                        staged.forEach { (_, file) -> file.delete() }
+                        journal.delete()
+                        return@synchronized false
+                    }
+
+                    val applied = mutableListOf<File>()
+                    var committed = true
+                    for ((key, temporary) in staged) {
+                        val target = File(directory, "$key.json")
+                        if (temporary.renameTo(target) ||
+                            (target.delete() && temporary.renameTo(target))
+                        ) {
+                            applied += target
+                        } else {
+                            Log.w(TAG, "Could not commit listening bucket $key")
+                            committed = false
+                            break
+                        }
+                    }
+                    if (!committed) {
+                        // Put the old months back exactly as they were. The
+                        // journal is still here, so the same rollback runs if
+                        // this process dies during it.
+                        applied.forEach { it.delete() }
+                        backups.forEach { (original, backup) ->
+                            if (original.exists()) original.delete()
+                            backup.renameTo(original)
+                        }
+                        staged.forEach { (_, file) -> file.delete() }
+                        journal.delete()
+                        return@synchronized false
+                    }
+
+                    // Commit point. Once the journal is gone the new folder is
+                    // the answer; only backup cleanup is left.
+                    journal.delete()
+                    backups.forEach { (_, backup) -> backup.delete() }
+                    open = null
+                    dirty = false
+                    version++
+                    cached = null
+                    true
                 }
             }
-            if (!committed) {
-                staged.forEach { (_, file) -> file.delete() }
-                return@synchronized false
-            }
-            open = null
-            dirty = false
-            version++
-            cached = null
-            true
+        } finally {
+            synchronized(lock) { importing = false }
         }
+    }
+
+    private fun recoverInterruptedImport() {
+        val journal = File(directory, IMPORT_JOURNAL)
+        if (!journal.exists()) {
+            // A completed import may have died before deleting its staging
+            // files or `.bak` copies. Neither is a month any more.
+            directory.listFiles()?.forEach { file ->
+                if (file.isFile &&
+                    (file.name.endsWith(IMPORTING_SUFFIX) || file.name.endsWith(BACKUP_SUFFIX))
+                ) {
+                    file.delete()
+                }
+            }
+            return
+        }
+        val oldNames = mutableSetOf<String>()
+        val newNames = mutableSetOf<String>()
+        runCatching { journal.readLines() }.getOrDefault(emptyList()).forEach { line ->
+            when {
+                line.startsWith("O ") -> oldNames += line.removePrefix("O ")
+                line.startsWith("N ") -> newNames += line.removePrefix("N ")
+            }
+        }
+        // Only delete a `.json` that is a backup target or a month the file
+        // brought. An old month not yet moved aside has no `.bak` and must stay.
+        newNames.forEach { name ->
+            val target = File(directory, name)
+            val backup = File(directory, name + BACKUP_SUFFIX)
+            if (target.isFile && (name !in oldNames || backup.isFile)) target.delete()
+        }
+        oldNames.forEach { name ->
+            val backup = File(directory, name + BACKUP_SUFFIX)
+            if (backup.isFile) {
+                val target = File(directory, name)
+                if (target.exists()) target.delete()
+                backup.renameTo(target)
+            }
+        }
+        directory.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.endsWith(IMPORTING_SUFFIX)) file.delete()
+        }
+        journal.delete()
+        Log.w(TAG, "Rolled back an interrupted listening import")
     }
 
     /**
@@ -1179,6 +1316,16 @@ object ListeningStats {
     private const val RECENTS_TAG = "BitChord"
 
     private const val DIRECTORY = "listening"
+
+    /** Rows waiting to replace a month, and the old month they replace. */
+    private const val IMPORTING_SUFFIX = ".importing"
+    private const val BACKUP_SUFFIX = ".bak"
+
+    /**
+     * Written before the first old month is moved and removed at the commit
+     * point. Its presence on the next launch means the import did not finish.
+     */
+    private const val IMPORT_JOURNAL = "import.journal"
 
     /** At most one routine month write per two minutes of playback. */
     private const val MIN_WRITE_INTERVAL_MS = 2L * 60L * 1000L

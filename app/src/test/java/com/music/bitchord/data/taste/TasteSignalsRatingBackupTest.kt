@@ -3,7 +3,9 @@ package com.music.bitchord.data.taste
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.stats.Backup
 import org.junit.After
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
@@ -54,6 +56,30 @@ class TasteSignalsRatingBackupTest {
 
         assertEquals(emptyList<String>(), TasteSignals.ratedVideoIds(LikeStatus.LIKE))
         assertEquals(listOf("same"), TasteSignals.ratedVideoIds(LikeStatus.DISLIKE))
+    }
+
+
+    @Test
+    fun `a restore clears ratings the file does not name`() {
+        TasteSignals.restoreRatings(liked = listOf("stale"), disliked = emptyList())
+
+        TasteSignals.restoreRatings(liked = emptyList(), disliked = emptyList())
+
+        assertEquals(emptyList<String>(), TasteSignals.ratedVideoIds(LikeStatus.LIKE))
+    }
+
+    @Test
+    fun `a restored rating survives the size cap even in a full library`() {
+        @Suppress("UNCHECKED_CAST")
+        val tracks = tracksField.get(TasteSignals) as MutableMap<String, StoredTrack>
+        repeat(1_000) { index ->
+            tracks["old-$index"] = StoredTrack(id = "old-$index", lastPlayedAt = Long.MAX_VALUE)
+        }
+
+        TasteSignals.restoreRatings(liked = listOf("imported"), disliked = emptyList())
+        runBlocking { TasteSignals.flushAndAwait() }
+
+        assertTrue(TasteSignals.ratedVideoIds(LikeStatus.LIKE).contains("imported"))
     }
 
     @Test

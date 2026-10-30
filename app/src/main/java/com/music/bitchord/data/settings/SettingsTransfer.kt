@@ -306,25 +306,56 @@ object SettingsTransfer {
     /** Applies a preview that the listener has already seen. */
     suspend fun apply(preview: Preview): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
-            AppSettings.applyTransferablePrefs(preview.settings)
-            // Replacing an identical list would rebuild every source and throw
-            // away their warmed caches (and, since a replacement invalidates
-            // HQ verdicts, every measured pair) for a file that changed only a
-            // theme. Apply the sections the preview actually reported.
-            val sources = if (!preview.sourcesChanged) {
-                0
-            } else {
-                SourceRegistry.replaceFromTransfer(preview.sources)
+            // Applying is three writes to three stores. None of them is
+            // expected to fail after [preview] accepted its values, but the
+            // promise to the listener is all-or-nothing: if a later section
+            // does fail, the earlier ones are put back from these snapshots
+            // instead of leaving one phone's theme with another phone's proxy.
+            val previousSettings = AppSettings.transferablePrefs()
+            val previousSources = if (preview.sourcesChanged) SourceRegistry.transferSnapshot() else null
+            val previousProxy = if (preview.proxyChanged) AppSettings.currentProxyConfig() else null
+            var settingsApplied = false
+            var sourcesApplied = false
+            var proxyApplied = false
+            try {
+                AppSettings.applyTransferablePrefs(preview.settings)
+                settingsApplied = true
+                // Replacing an identical list would rebuild every source and
+                // throw away their warmed caches (and, since a replacement
+                // invalidates HQ verdicts, every measured pair) for a file that
+                // changed only a theme. Apply the sections the preview actually
+                // reported.
+                val sources = if (!preview.sourcesChanged) {
+                    0
+                } else {
+                    SourceRegistry.replaceFromTransfer(preview.sources).also {
+                        sourcesApplied = true
+                    }
+                }
+                if (preview.proxyChanged) {
+                    preview.proxy?.let(AppSettings::setProxyConfig)
+                    proxyApplied = preview.proxy != null
+                }
+                Summary(
+                    settings = preview.changedSettings.size,
+                    sources = sources,
+                    proxy = preview.proxyChanged,
+                    // The preview already counted every bad setting, source and
+                    // proxy field; apply only sees the values it accepted.
+                    skipped = preview.skipped,
+                )
+            } catch (failure: Throwable) {
+                runCatching {
+                    if (proxyApplied) previousProxy?.let(AppSettings::setProxyConfig)
+                }
+                runCatching {
+                    if (sourcesApplied) previousSources?.let(SourceRegistry::replaceFromTransfer)
+                }
+                runCatching {
+                    if (settingsApplied) AppSettings.applyTransferablePrefs(previousSettings)
+                }
+                throw failure
             }
-            if (preview.proxyChanged) preview.proxy?.let(AppSettings::setProxyConfig)
-            Summary(
-                settings = preview.changedSettings.size,
-                sources = sources,
-                proxy = preview.proxyChanged,
-                // The preview already counted every bad setting, source and
-                // proxy field; apply only sees the values it accepted.
-                skipped = preview.skipped,
-            )
         }
     }
 

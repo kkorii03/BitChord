@@ -107,3 +107,54 @@
   - `clearing forgets every accepted and rejected pair`
 - `AppSettingsImportValidationTest`
   - `the advanced sync safety switches are validated as booleans too`
+
+## 7. 2차 검증 — 외부 리뷰 지적 반영
+
+기준선은 위 1차 작업 결과다. 아래는 2차 리뷰가 지적한 5건과 이번에 고친 내용이다.
+줄 번호는 2차 작업 후 코드 기준이다.
+
+| 심각도 | 파일:줄 | 증거 | 사용자 영향 | 얼마나 흔한가 | 수정 |
+|---|---|---|---|---|---|
+| HIGH | `app/src/main/java/com/music/bitchord/data/stats/ListeningStats.kt:783`, `:896` | 1차 `importAll`은 기존 `.json`을 전부 지운 뒤 staged 파일을 rename했다. 두 번째 rename이 실패하거나 그 사이 프로세스가 죽으면 옛 달은 이미 사라지고 일부 달만 남았다. | 복원이 실패 또는 중단되면 기존 청취 기록이 유실된다. 화면에는 실패로 보이지만 되돌릴 방법이 없다. | 손상 파일·저장 공간 부족·강제 종료에서 재현. 정상 파일에서는 드묾. | 기존 달을 `.json.bak`으로 rename하고, 모든 staged rename이 끝난 뒤에만 `.bak`을 지운다. 실패하면 `.bak`을 원위치로 되돌린다. `import.journal`을 커밋 전에 쓰고 커밋 시점에 지우며, `init`에서 남은 journal을 보면 전부 rollback한다. |
+| MEDIUM | `ListeningStats.kt:468`, `:783` | 1차 가져오기는 `lock`만 잡고 디렉터리를 바꿨고, 재생 기록 writer는 `writeLock`으로 썼다. 가져오기 직전에 큐에 들어간 flush가 복원 뒤에 실행되어 옛 달을 되살릴 수 있었다. | 복원 직후 재생 중이던 곡의 옛 달 파일이 다시 나타나 방금 복원한 달을 덮어쓴다. | 복원을 재생 중에 하는 사용자. 드물지만 데이터가 조용히 섞인다. | `importAll`을 suspend로 바꾸고 `importing` 플래그를 세운 뒤 `lastWrite`를 join하고 `writeLock` 안에서만 폴더를 바꾼다. `pending`/`write`는 `importing` 동안 새 쓰기를 만들지 않는다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/data/stats/Backup.kt:156`, `:180` | 1차 `importFrom`은 청취·설정을 먼저 바꾼 뒤 재생목록/검색/평점을 적용했다. 뒤 단계가 실패하면 앞 단계가 남는 반쪽 복원이었다. | 설정은 새 기기, 재생목록은 옛 기기인 상태가 되어 사용자가 무엇이 복원됐는지 알 수 없다. | 저장 실패·프로세스 중단에서 드묾. | 설정·재생목록·검색·평점은 스냅샷을 뜬 뒤 적용하고, 청취 폴더는 마지막에 쓴다. 어느 단계든 실패하면 이전 스냅샷으로 되돌린 뒤 실패를 반환한다. `LocalPlaylistStore.importAll`과 `AppSettings.importPrefs`, `SearchHistory.replace`는 동기 commit 결과를 반환하도록 바꿔 실패를 감지한다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/data/taste/TasteSignals.kt:367`, `:486` | 1차 `restoreRatings`는 파일에 있는 행만 추가/덮어쓰고, 파일에 없는 기존 평점은 지우지 않았다. 또 새 행의 `lastPlayedAt=0`이라 `MAX_TRACKS` 정리에서 가장 먼저 잘렸다. | 복원이 합치기로 동작해 옛 기기의 평점이 남고, 큰 보관함에서는 복원한 평점이 사라진다. | 평점을 쓰던 사용자가 복원할 때. 흔함. | 파일에 없는 기존 평점은 `RATING_NONE`으로 지우고, 복원 행에는 현재 시각을 준다. `pruneLocked`는 평점이 있는 행을 크기 제한에서 제외한다. `flushAndAwait`로 복원 직후 디스크까지 확인한다. |
+| LOW | `Backup.kt:211` | 1차 가져오기는 `LikeState` 세션 override를 지우지 않고 복원 평점을 덮어썼다. | 가져오기 전에 누른 좋아요/싫어요가 복원된 평점을 UI에서 가린다. | 가져오기 직전에 평점을 누른 사용자. | `LikeState.clear()` 뒤 복원 목록을 다시 넣는다. rollback에서도 이전 override를 복원한다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/data/settings/SettingsTransfer.kt:307` | 1차 설정 공유 적용은 설정 → 소스 → 프록시 순서라 뒤 단계가 실패하면 앞 단계가 남았다. (1차 문서 4절에 미해결로 남긴 항목) | 테마만 새 기기 값이고 소스/프록시는 옛 값인 반쪽 적용. | 저장 실패 시 드묾. | 적용 전 설정·소스·프록시 스냅샷을 뜨고, 예외 시 역순으로 되돌린다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/data/spotify/LocalPlaylistStore.kt:161` | 1차 `importAll`은 `persistAsync`로 쓰고 즉시 성공을 반환했다. (1차 문서 4절에 미해결로 남긴 항목) | 복원 성공 표시가 디스크 기록보다 먼저 나고, commit 실패도 성공으로 보인다. | 저장 실패 시 드묾. | 가져오기만 동기 `commit`으로 바꾸고, 성공한 뒤에만 메모리 목록을 바꾼다. 실패는 `-1`로 반환해 `Backup`이 rollback한다. |
+
+### 가져오기 순서 변경 진리표 — `Backup.importFrom`
+
+| 단계 | 1차 순서 | 2차 순서 | 실패 시 1차 | 실패 시 2차 |
+|---|---|---|---|---|
+| 청취 폴더 | 1 | 마지막 | 옛 기록 이미 삭제, 이후 단계 미적용 | 청취 자체 rollback, 나머지 스냅샷 rollback |
+| 설정 | 2 | 1 | 앞 단계(청취)만 남음 | 스냅샷 rollback |
+| 검색 | 3 | 2 | 앞 단계 유지 | 스냅샷 rollback |
+| 재생목록 | 4 | 3 | 앞 단계 유지 | 성공한 뒤에만 메모리 반영, 실패 시 rollback |
+| 평점 | 5 | 4 | 앞 단계 유지 | 스냅샷 rollback |
+
+즉 성공 경로의 최종 상태는 1차와 같고, 실패 경로만 전부 이전 상태로 돌아간다.
+
+### 이번에 추가한 테스트
+
+- `app/src/test/java/com/music/bitchord/data/stats/ListeningStatsImportAtomicityTest.kt`
+  - `a failed commit restores the month that was already on disk`
+  - `a write queued before the import cannot overwrite the restored month`
+  - `an interrupted import is rolled back on the next open`
+- `app/src/test/java/com/music/bitchord/data/taste/TasteSignalsRatingBackupTest.kt`
+  - `a restore clears ratings the file does not name`
+  - `a restored rating survives the size cap even in a full library`
+- `app/src/test/java/com/music/bitchord/data/spotify/LocalPlaylistImportPersistenceTest.kt`
+  - `a failed commit is reported instead of being called a restore`
+- `app/src/test/java/com/music/bitchord/data/stats/BackupImportRollbackTest.kt`
+  - `a listening failure rolls the already-applied settings back`
+- `app/src/test/java/com/music/bitchord/data/settings/SettingsTransferRollbackTest.kt`
+  - `a source failure leaves the settings untouched`
+
+### 남긴 결함
+
+| 심각도 | 파일:줄 | 내용 | 이유 |
+|---|---|---|---|
+| LOW | `app/src/main/java/com/music/bitchord/data/stats/Backup.kt:141` | 내보내기는 최종 JSON 문자열과 byte 배열을 메모리에 함께 만든다. | 가져오기 OOM은 1차에서 막았다. 내보내기 스트리밍은 kotlinx.serialization 출력 경로와 `ContentResolver` 쓰기를 함께 바꾸는 별도 작업이라 이번 범위에서 제외했다. |
+| LOW | `Backup.kt:182` | schema 1 복원은 평점 섹션을 복원하지 않는다. | 옛 파일에 그 데이터가 없으므로 의도된 하위 호환이다. |
+| LOW | `ListeningStats.kt:896` | journal rollback은 프로세스가 커밋 도중 죽은 경우를 복구하지만, 파일 시스템이 rename을 부분적으로만 반영하는 극단적 손상까지 보증하지는 않는다. | 정상 POSIX/Android 파일 시스템의 rename 원자성을 전제로 한다. |
