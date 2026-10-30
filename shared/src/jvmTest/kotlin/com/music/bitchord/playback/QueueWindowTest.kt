@@ -214,4 +214,59 @@ class QueueWindowTest {
         val restored = QueueWindow.restore(window.snapshot())
         assertEquals(listOf(5, 3, 4, 2), restored.upcoming().map { it.canonicalIndex })
     }
+
+    @Test
+    fun togglingShuffleOffRestoresTheListenersDraggedOrder() {
+        val window = QueueWindow(6).startAt(1)
+        assertTrue(window.reorderUpcoming(listOf(5, 3, 4, 2)))
+
+        window.setShuffle(true, shuffleSeed = 7L)
+        val restored = QueueWindow.restore(window.snapshot())
+        restored.setShuffle(false)
+
+        assertEquals(listOf(0, 1, 5, 3, 4, 2), restored.order)
+        assertEquals(1, restored.currentCanonicalIndex)
+        assertEquals(listOf(5, 3, 4, 2), restored.upcoming().map { it.canonicalIndex })
+
+        val live = QueueWindow.restore(window.snapshot())
+        live.setShuffle(false)
+        assertEquals(listOf(0, 1, 5, 3, 4, 2), live.order)
+    }
+
+    @Test
+    fun reorderingThePlannedNextCycleKeepsThePhysicalBoundaryPrefix() {
+        val window = QueueWindow(6).startAt(0)
+        repeat(5) { assertTrue(window.advanceAutomatically() != null) }
+        val nextCycle = window.cycleId + 1L
+
+        assertTrue(window.reorderPlannedCycle(nextCycle, listOf(4, 5, 2, 3, 0, 1)))
+
+        assertEquals(
+            listOf(4, 5, 2, 3, 0, 1),
+            window.upcoming(6, repeatAll = true)
+                .filter { it.cycleId == nextCycle }
+                .map { it.canonicalIndex },
+        )
+        val restored = QueueWindow.restore(window.snapshot())
+        assertEquals(
+            listOf(4, 5, 2, 3, 0, 1),
+            restored.upcoming(6, repeatAll = true)
+                .filter { it.cycleId == nextCycle }
+                .map { it.canonicalIndex },
+        )
+    }
+
+    @Test
+    fun deletingThePlayingRowIsDeferredUntilTheCursorMoves() {
+        val window = QueueWindow(3).startAt(2)
+
+        assertTrue(window.exclude(2))
+        assertFalse(window.isExcluded(2))
+        assertEquals(2, window.currentCanonicalIndex)
+        assertEquals(2, QueueWindow.restore(window.snapshot()).currentCanonicalIndex)
+
+        assertEquals(0, window.advanceAutomatically(repeatAll = true)!!.canonicalIndex)
+        assertTrue(window.isExcluded(2))
+        assertEquals(listOf(1), window.upcoming().map { it.canonicalIndex })
+    }
 }

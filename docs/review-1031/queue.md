@@ -5,9 +5,10 @@
 
 ## 1. 결론
 
-- 이번 수정으로 재생 큐의 실제 결함 2건을 고쳤다.
+- 1차 수정으로 재생 큐의 실제 결함 2건을 고쳤다.
   - **HIGH**: 로컬 앨범/재생목록(bounded context)에서 예정된 CONTEXT 행을 삭제하거나 드래그로 순서를 바꾸면 논리 큐와 실제 큐가 어긋나, 다음 창 보충(top-up)이 영구히 멈추고 재생이 창 끝에서 끊기던 문제.
   - **MEDIUM**: 이미 큐에 있는 곡(특히 재생 중인 곡 메뉴)을 "다음에 재생/마지막에 재생"하면 새 행이 기존 행의 `queueEntryId`를 재사용해 큐 정체성이 중복되던 문제.
+- 2차 수정(이번)으로 검토 지적 MEDIUM 3건을 모두 고쳤다(8절): 셔플 토글 시 수동 드래그 순서 유실, 반복 경계에서의 드래그가 논리 창에 반영되지 않던 문제, 재생 중인 행 삭제가 반복 주기에서 되살아나는 문제.
 - 고치지 못한 HIGH/MEDIUM은 아래 4번에 이유와 필요한 작업을 적었다.
 - 기존 안전 규칙은 삭제·약화하지 않았다. 특히 `SyncSafetyPolicy`의 ko-101 동기화 킬 스위치 기본값은 그대로다.
 
@@ -56,11 +57,10 @@
 
 ## 4. 고치지 못한 결함 / 남은 작업
 
-### R1. MEDIUM — bounded 큐에서 재생 중인 행 자체를 삭제하면 미래 반복 주기에서 되살아날 수 있음
+### R1. MEDIUM — bounded 큐에서 재생 중인 행 자체를 삭제하면 미래 반복 주기에서 되살아날 수 있음 (2차에서 고침)
 
-- 파일: `QueueWindow.kt:525` (`exclude`는 current index를 거부), `PlaybackService.kt:11053`
-- 이유: 현재 행을 즉시 제외하면 `Snapshot`의 `currentCanonicalIndex` 불변식이 깨진다. 전환 콜백에서 새 current가 확정된 뒤 지연 제외하는 상태가 필요하다.
-- 필요한 작업: Media3 전환 이벤트에서 "삭제 대기 canonical index"를 확정 current와 분리해 기록하고, 다음 전환에서 제외한다. 현재는 삭제 즉시 다음 곡으로 넘어가는 동작만 보장된다.
+- 파일: `shared/.../QueueWindow.kt` (`exclude`, `pendingExcluded`), `PlaybackService.kt` (`removeMediaItem(s)`)
+- 처리: 삭제 시점에는 `pendingExcluded`에 보류하고, 전환 콜백(`moveWithinCycle`/`selectPlannedCycle`)이 새 current를 확정할 때 `excluded`로 옮긴다. 스냅샷에도 보류 목록을 저장한다. 상세는 8절 V3.
 
 ### R2. MEDIUM — 비-bounded 큐의 재시작 스냅샷은 최대 76행
 
@@ -102,8 +102,8 @@
 
 추가한 테스트:
 - `shared/src/jvmTest/.../QueueTimelinePolicyTest.kt` — `aNewQueueRowGetsAFreshIdentityEvenWhenTheSongWasAlreadyQueued`
-- `shared/src/jvmTest/.../QueueWindowTest.kt` — `anExcludedUpcomingRowIsSkippedAndStaysExcludedAfterRestore`, `reorderingUpcomingChangesOnlyTheRowsAfterTheCursor`
-- `app/src/test/.../BoundedQueuePlannerTest.kt` — `a removed upcoming context row does not stall the next top up`, `a reordered upcoming context tail still tops up in its new order`
+- `shared/src/jvmTest/.../QueueWindowTest.kt` — `anExcludedUpcomingRowIsSkippedAndStaysExcludedAfterRestore`, `reorderingUpcomingChangesOnlyTheRowsAfterTheCursor`, `togglingShuffleOffRestoresTheListenersDraggedOrder`, `reorderingThePlannedNextCycleKeepsThePhysicalBoundaryPrefix`, `deletingThePlayingRowIsDeferredUntilTheCursorMoves`
+- `app/src/test/.../BoundedQueuePlannerTest.kt` — `a removed upcoming context row does not stall the next top up`, `a reordered upcoming context tail still tops up in its new order`, `a reordered next repeat cycle still tops up at the boundary`
 
 실행 결과:
 - `./gradlew :shared:jvmTest --tests 'com.music.bitchord.playback.*' --console=plain -q` — 통과
@@ -129,3 +129,44 @@
 | `boundaryFinal` | `!shuffled \|\| canonical !in consumed` | 기존 전체 **AND** `canonical !in excluded` |
 
 `reorderUpcoming`은 순서를 바꾸는 새 기능이며, shuffle-off에서 수동 순서를 허용하기 위해 스냅샷에 `manualUpcomingOrder`를 추가했다. 기존 스냅샷은 기본값 false라 이전과 동일하게 canonical 순서만 복원된다.
+
+2차에서는 기존 항을 지우지 않고 다음 항만 추가했다.
+
+| 함수 | 기존 조건 | 새 조건 |
+|---|---|---|
+| `slice` / `upcoming` / `advance*` / `next` / `previous` / `boundaryFinal` | `canonical !in excluded` | `canonical !in excluded && canonical !in pendingExcluded` |
+| `exclude(current)` | 항상 `false` | `pendingExcluded.add(current)` (전환 시 `excluded`로 이동) |
+| `setShuffle(false)` | 항상 canonical `order` | `preShuffleOrder != null && size 일치`이면 그 순서, 아니면 canonical |
+| `reorderPlannedCycle` | 없음(경계 드래그 무시) | `cycleId == activeCycleId + 1`인 계획 순서의 접두사를 물리 순서로 교체 |
+
+## 8. 2차 수정 — 검토 지적 3건
+
+### V1. MEDIUM — 셔플 토글마다 수동 드래그 순서가 사라짐
+
+- 파일: `shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueWindow.kt` (`setShuffle`, `preShuffleOrder`)
+- 증거(수정 전): `setShuffle`이 `manualOrder = false` 후 `logicalOrder = IntArray(canonicalCount) { it }`로 되돌려, 드래그한 큐가 셔플 OFF에서 앨범 원래 순서로 복귀했다. 1차 요약의 "드래그 상태도 복원" 주장과 어긋났다.
+- 사용자 영향: 127곡 재생목록에서 순서를 정리한 뒤 셔플을 잠깐 켜고 끄면 정리한 순서가 전부 사라짐. 매우 흔함.
+- 수정: 셔플 ON 직전의 수동 순서를 `preShuffleOrder`에 보관하고, OFF에서 그 순서를 복원한다. `startAt`(새 컨텍스트)에서만 초기화한다. 스냅샷에도 `preShuffleCanonicalOrder`를 저장해 앱 재시작 뒤 OFF에서도 유지된다.
+- 테스트: `togglingShuffleOffRestoresTheListenersDraggedOrder` (복원 스냅샷 경로 포함).
+
+### V2. MEDIUM — 반복 ALL 경계 드래그가 논리 창에 반영되지 않아 top-up 정지
+
+- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt` (`noteBoundedContextRowsMoved`), `QueueWindow.kt` (`reorderPlannedCycle`)
+- 증거(수정 전): `cycle == window.cycleId` 필터가 경계에서 물리 큐에 이미 깔린 다음 주기 행(`cycleId + 1`)을 모두 버려 `order`가 비거나 일부만 남았고, `reorderUpcoming`이 조용히 건너뛰었다. 물리 큐는 드래그된 순서, 논리 계획 순서는 canonical이라 `BoundedQueuePlanner.topUpEntries`의 접두사 비교가 실패해 보충이 멈췄다.
+- 사용자 영향: 반복 ALL로 재생목록 끝에 도달한 상태에서 예정 행을 드래그하면 그 지점 이후 재생이 멈춤. 중간.
+- 수정: 활동 주기 행은 `reorderUpcoming`, 다음 계획 주기 행은 `reorderPlannedCycle`로 각각 물리 순서를 반영한다. 반영 실패 시 로그를 남겨 조용히 건너뛰지 않는다.
+- 테스트: `reorderingThePlannedNextCycleKeepsThePhysicalBoundaryPrefix`, `a reordered next repeat cycle still tops up at the boundary`.
+
+### V3. MEDIUM — 재생 중인 행을 삭제하면 반복 주기에서 되살아남
+
+- 파일: `QueueWindow.kt` (`exclude`, `pendingExcluded`, `applyPendingExclusions`), `PlaybackService.kt` (`removeMediaItem`, `removeMediaItems`), `BoundedContextPersistence.kt` (`StoredWindow`)
+- 증거(수정 전): `removeMediaItem`은 `index > currentMediaItemIndex`인 행만 수집했고 `exclude()`는 current를 거부했다. 재생 중 행 삭제는 물리 큐에서만 빠지고 논리 창에는 남아 다음 반복 ALL 주기에 다시 물리화됐다.
+- 사용자 영향: 재생 중인 곡을 큐에서 지워도 한 바퀴 돌면 다시 재생됨. 중간.
+- 수정: 현재 행 삭제는 전환 전에 `pendingExcluded`에 보류하고, `moveWithinCycle`/`selectPlannedCycle`이 새 current를 확정할 때 `excluded`로 이동한다. 조회·순회·top-up은 보류 항도 제외하므로 전환 전에도 되살아나지 않는다. 보류 상태는 스냅샷에 저장된다. 다중 삭제(`removeMediaItems`)가 현재 행을 포함하는 경우도 같은 경로를 탄다.
+- 테스트: `deletingThePlayingRowIsDeferredUntilTheCursorMoves`.
+
+### 지적 번호별 처리
+
+- V1 (manualOrder 유실): **고침**. 8절 V1, 테스트 통과.
+- V2 (반복 경계 드래그): **고침**. 8절 V2, 테스트 통과.
+- V3 (재생 중 행 삭제): **고침**. 8절 V3, 테스트 통과.

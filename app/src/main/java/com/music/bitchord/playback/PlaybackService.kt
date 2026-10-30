@@ -8374,21 +8374,40 @@ class PlaybackService : MediaLibraryService() {
         val exoPlayer = player ?: return
         val current = exoPlayer.currentMediaItemIndex
         if (current !in 0 until exoPlayer.mediaItemCount) return
-        val order = (current + 1 until exoPlayer.mediaItemCount)
+        val rows = (current + 1 until exoPlayer.mediaItemCount)
             .asSequence()
             .map { exoPlayer.getMediaItemAt(it) }
             .filter { it.queueTier == QueueTier.CONTEXT }
-            .filter { item ->
-                val cycle = item.contextCycleId
-                cycle == null || cycle == window.cycleId
+            .mapNotNull { item ->
+                val canonical = QueueShuffle.getCanonicalIndex(item) ?: return@mapNotNull null
+                QueueWindowEntry(canonical, item.contextCycleId ?: window.cycleId)
             }
-            .mapNotNull { QueueShuffle.getCanonicalIndex(it) }
             .toList()
-        if (order.isEmpty()) return
-        if (!window.reorderUpcoming(order)) return
+        if (rows.isEmpty()) return
+        var changed = false
+        // Active-cycle rows move inside the live permutation. At a repeat-all
+        // boundary the materialised rows already belong to the planned next
+        // cycle, so teaching only the active order silently dropped the drag
+        // and the next top-up stalled on a mismatched physical prefix.
+        val activeOrder = rows.filter { it.cycleId == window.cycleId }.map { it.canonicalIndex }
+        if (activeOrder.isNotEmpty() && window.reorderUpcoming(activeOrder)) changed = true
+        rows.filter { it.cycleId != window.cycleId }
+            .groupBy { it.cycleId }
+            .forEach { (cycle, entries) ->
+                val order = entries.map { it.canonicalIndex }
+                if (window.reorderPlannedCycle(cycle, order)) changed = true
+            }
+        if (!changed) {
+            TrackLog.d(
+                "BitChord",
+                "queue: bounded reorder ignored n=${rows.size} cycles=${rows.map { it.cycleId }.toSet()} " +
+                    "active=${window.cycleId}",
+            )
+            return
+        }
         TrackLog.d(
             "BitChord",
-            "queue: bounded reorder n=${order.size} size=${window.canonicalSize}",
+            "queue: bounded reorder n=${rows.size} size=${window.canonicalSize}",
         )
         saveBoundedContextSnapshot(exoPlayer)
     }
@@ -11041,14 +11060,26 @@ class PlaybackService : MediaLibraryService() {
                 "BitChord",
                 "queue: remove n=1 at=$index size=${(wrappedPlayer.mediaItemCount - 1).coerceAtLeast(0)} by=ui",
             )
-            val removed = if (index in 0 until wrappedPlayer.mediaItemCount &&
-                index > wrappedPlayer.currentMediaItemIndex
-            ) {
+            val valid = index in 0 until wrappedPlayer.mediaItemCount
+            val currentIndex = wrappedPlayer.currentMediaItemIndex
+            val removed = if (valid && index > currentIndex) {
+                listOf(wrappedPlayer.getMediaItemAt(index))
+            } else {
+                emptyList()
+            }
+            // Deleting the playing row is different: it cannot leave the
+            // logical window until the player has moved off it, and the
+            // transition that picks the successor fires inside the removal.
+            // Record the pending exclusion first so that transition can apply
+            // it and a repeat-all cycle does not bring the track back.
+            val removesCurrent = valid && index == currentIndex
+            val removedCurrent = if (removesCurrent) {
                 listOf(wrappedPlayer.getMediaItemAt(index))
             } else {
                 emptyList()
             }
             onUserIntent()
+            if (removedCurrent.isNotEmpty()) onBoundedRowsRemoved(removedCurrent)
             super.removeMediaItem(index)
             onBoundedRowsRemoved(removed)
         }
@@ -11061,18 +11092,27 @@ class PlaybackService : MediaLibraryService() {
                 "queue: remove n=$n at=$fromIndex " +
                     "size=${(wrappedPlayer.mediaItemCount - n).coerceAtLeast(0)} by=ui",
             )
-            val firstUpcoming = (wrappedPlayer.currentMediaItemIndex + 1).coerceAtLeast(0)
             val from = fromIndex.coerceIn(0, wrappedPlayer.mediaItemCount)
             val to = toIndex.coerceIn(0, wrappedPlayer.mediaItemCount)
-            val keepFrom = maxOf(from, firstUpcoming)
-            val removed = if (to > keepFrom) {
-                (keepFrom until to).map { wrappedPlayer.getMediaItemAt(it) }
+            val currentIndex = wrappedPlayer.currentMediaItemIndex
+            // Include the playing row when the range covers it: its exclusion
+            // is deferred inside QueueWindow until the successor is current.
+            val removesCurrent = currentIndex in from until to
+            val removedCurrent = if (removesCurrent) {
+                listOf(wrappedPlayer.getMediaItemAt(currentIndex))
+            } else {
+                emptyList()
+            }
+            val firstUpcoming = maxOf(from, currentIndex + 1)
+            val removedUpcoming = if (to > firstUpcoming) {
+                (firstUpcoming until to).map { wrappedPlayer.getMediaItemAt(it) }
             } else {
                 emptyList()
             }
             onUserIntent()
+            if (removedCurrent.isNotEmpty()) onBoundedRowsRemoved(removedCurrent)
             super.removeMediaItems(fromIndex, toIndex)
-            onBoundedRowsRemoved(removed)
+            if (removedUpcoming.isNotEmpty()) onBoundedRowsRemoved(removedUpcoming)
         }
 
         override fun moveMediaItem(currentIndex: Int, newIndex: Int) {

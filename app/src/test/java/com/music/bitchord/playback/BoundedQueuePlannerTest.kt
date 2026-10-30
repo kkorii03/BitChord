@@ -277,6 +277,29 @@ class BoundedQueuePlannerTest {
         assertTrue(additions.isNotEmpty())
     }
 
+    @Test
+    fun `a reordered next repeat cycle still tops up at the boundary`() {
+        val window = QueueWindow(30).startAt(27)
+        repeat(2) { assertTrue(window.advanceAutomatically() != null) }
+        val nextCycle = window.cycleId + 1L
+        val planned = window.upcoming(30, repeatAll = true)
+            .filter { it.cycleId == nextCycle }
+        val moved = planned.take(5).reversed()
+
+        assertTrue(window.reorderPlannedCycle(nextCycle, moved.map { it.canonicalIndex }))
+
+        val desired = BoundedQueuePlanner.physicalUpcoming(window, repeatAll = true)
+        assertEquals(
+            moved.map { it.canonicalIndex },
+            desired.take(moved.size).map { it.canonicalIndex },
+        )
+        val materialized = desired.take(LOW_WATER - 1)
+        val additions = BoundedQueuePlanner.topUpEntries(window, materialized, repeatAll = true)
+
+        assertEquals(desired.drop(materialized.size), additions)
+        assertTrue(additions.isNotEmpty())
+    }
+
     private fun traverse(window: QueueWindow): List<QueueWindowEntry> = buildList {
         add(requireNotNull(window.current))
         while (true) add(window.advanceAutomatically(false) ?: break)

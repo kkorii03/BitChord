@@ -50,6 +50,18 @@ data class QueueWindowSnapshot(
      */
     val excludedCanonicalIndices: List<Int> = emptyList(),
     /**
+     * Canonical rows the listener deleted while they were still current. They
+     * cannot leave the active permutation until the player moves off them, so
+     * the exclusion is held here and applied on the next cursor transition.
+     */
+    val pendingExcludedCanonicalIndices: List<Int> = emptyList(),
+    /**
+     * The hand-dragged order captured when shuffle turned on, kept so turning
+     * it off after a restart still restores the listener's queue instead of the
+     * canonical collection.
+     */
+    val preShuffleCanonicalOrder: List<Int> = emptyList(),
+    /**
      * True after the listener dragged the upcoming rows, so a shuffle-off
      * snapshot may legitimately not be in canonical order any more.
      */
@@ -93,7 +105,9 @@ class QueueWindow(
     private var activeCycleId: Long = 0L
     private val consumed = LinkedHashSet<Int>()
     private val excluded = LinkedHashSet<Int>()
+    private val pendingExcluded = LinkedHashSet<Int>()
     private var manualOrder = false
+    private var preShuffleOrder: IntArray? = null
     private var lastCycleFinal: Int? = null
     private val plannedCycles = LinkedHashMap<Long, IntArray>()
 
@@ -163,7 +177,9 @@ class QueueWindow(
         currentIndex = canonicalIndex
         consumed.clear()
         excluded.clear()
+        pendingExcluded.clear()
         manualOrder = false
+        preShuffleOrder = null
         lastCycleFinal = null
         plannedCycles.clear()
         logicalOrder = if (shuffle) {
@@ -211,6 +227,12 @@ class QueueWindow(
             restored.lastCycleFinal = snapshot.lastCycleFinalCanonicalIndex
             restored.consumed += snapshot.consumedThisCycle
             restored.excluded += snapshot.excludedCanonicalIndices
+            restored.pendingExcluded += snapshot.pendingExcludedCanonicalIndices
+            if (snapshot.preShuffleCanonicalOrder.isNotEmpty()) {
+                val savedOrder = snapshot.preShuffleCanonicalOrder.toIntArray()
+                restored.validatePermutation(savedOrder)
+                restored.preShuffleOrder = savedOrder
+            }
             restored.manualOrder = snapshot.manualUpcomingOrder
 
             require((restored.logicalCursor == -1) == (restored.currentIndex == null)) {
@@ -242,6 +264,18 @@ class QueueWindow(
             }
             require(snapshot.excludedCanonicalIndices.size == restored.excluded.size) {
                 "snapshot excluded state contains duplicate indices"
+            }
+            require(restored.pendingExcluded.all { it in 0 until snapshot.canonicalSize }) {
+                "snapshot pending-excluded state contains an invalid canonical index"
+            }
+            require(snapshot.pendingExcludedCanonicalIndices.size == restored.pendingExcluded.size) {
+                "snapshot pending-excluded state contains duplicate indices"
+            }
+            require(restored.pendingExcluded.all { it == restored.currentIndex }) {
+                "only the current item can wait for its exclusion"
+            }
+            require(restored.preShuffleOrder == null || restored.shuffled) {
+                "a saved pre-shuffle order is only valid while shuffle is enabled"
             }
             require(restored.currentIndex == null || restored.currentIndex !in restored.excluded) {
                 "the current item cannot be excluded"
@@ -307,6 +341,13 @@ class QueueWindow(
         plannedCycles.entries.forEach { planned ->
             planned.setValue(planned.value + freshOrder(firstNew, planned.key))
         }
+        preShuffleOrder?.let { saved ->
+            preShuffleOrder = if (saved.size == firstNew) {
+                saved + (firstNew until newCanonicalSize).toList()
+            } else {
+                null
+            }
+        }
         rebuildInverse()
         return this
     }
@@ -342,7 +383,7 @@ class QueueWindow(
                 continue
             }
             val canonical = orderForCycle[position]
-            if (canonical !in excluded) {
+            if (!blocked(canonical)) {
                 result += QueueWindowEntry(canonical, cycle)
             }
             position += 1
@@ -372,7 +413,7 @@ class QueueWindow(
         while (result.size < boundedCount && orderForCycle.isNotEmpty()) {
             while (position < orderForCycle.size && result.size < boundedCount) {
                 val canonical = orderForCycle[position]
-                if (canonical !in excluded &&
+                if (!blocked(canonical) &&
                     (cycle != activeCycleId || !shuffled || canonical !in consumed)
                 ) {
                     result += QueueWindowEntry(canonical, cycle)
@@ -410,13 +451,13 @@ class QueueWindow(
         if (shuffled) {
             for (position in (logicalCursor + 1) until logicalOrder.size) {
                 val candidate = logicalOrder[position]
-                if (candidate !in excluded && candidate !in consumed) {
+                if (!blocked(candidate) && candidate !in consumed) {
                     return moveWithinCycle(position)
                 }
             }
         } else {
             for (position in (logicalCursor + 1) until logicalOrder.size) {
-                if (logicalOrder[position] !in excluded) {
+                if (!blocked(logicalOrder[position])) {
                     return moveWithinCycle(position)
                 }
             }
@@ -439,7 +480,7 @@ class QueueWindow(
     fun next(repeatAll: Boolean = false): QueueWindowEntry? {
         if (currentIndex == null || logicalOrder.isEmpty()) return null
         for (position in (logicalCursor + 1) until logicalOrder.size) {
-            if (logicalOrder[position] !in excluded) return moveWithinCycle(position)
+            if (!blocked(logicalOrder[position])) return moveWithinCycle(position)
         }
         if (!repeatAll) return null
         return transitionToNextCycle()
@@ -453,7 +494,7 @@ class QueueWindow(
     fun previous(): QueueWindowEntry? {
         if (currentIndex == null || logicalCursor <= 0) return null
         for (position in (logicalCursor - 1) downTo 0) {
-            if (logicalOrder[position] !in excluded) return moveWithinCycle(position)
+            if (!blocked(logicalOrder[position])) return moveWithinCycle(position)
         }
         return null
     }
@@ -484,24 +525,33 @@ class QueueWindow(
      *
      * [shuffleSeed] replaces the root seed when shuffle turns on. Without a new seed, turning
      * shuffle off and on again rebuilds exactly the order it had before.
+     *
+     * A queue the listener dragged by hand keeps that order across a shuffle
+     * toggle: turning shuffle on remembers the dragged permutation, and turning
+     * it off restores it instead of the untouched canonical album order.
      */
     fun setShuffle(enabled: Boolean, shuffleSeed: Long = seed): QueueWindow {
         if (enabled == shuffled) return this
+        if (enabled && manualOrder) preShuffleOrder = logicalOrder.copyOf()
         shuffled = enabled
         if (enabled) seed = shuffleSeed
         plannedCycles.clear()
         val current = currentIndex ?: run {
             logicalOrder = IntArray(canonicalCount) { it }
+            manualOrder = false
+            preShuffleOrder = null
             rebuildInverse()
             return this
         }
 
-        logicalOrder = if (enabled) {
-            shuffledOrderAnchoredAt(current, activeCycleId)
-        } else {
-            IntArray(canonicalCount) { it }
+        val restoredManual = if (!enabled) preShuffleOrder else null
+        logicalOrder = when {
+            enabled -> shuffledOrderAnchoredAt(current, activeCycleId)
+            restoredManual != null && restoredManual.size == canonicalCount -> restoredManual.copyOf()
+            else -> IntArray(canonicalCount) { it }
         }
-        manualOrder = false
+        manualOrder = restoredManual != null
+        if (!enabled) preShuffleOrder = null
         rebuildInverse()
         logicalCursor = inversePositions[current]
         consumed += current
@@ -526,7 +576,13 @@ class QueueWindow(
         require(canonicalIndex in 0 until canonicalCount) {
             "canonicalIndex $canonicalIndex is outside 0 until $canonicalCount"
         }
-        if (currentIndex == canonicalIndex) return false
+        if (currentIndex == canonicalIndex) {
+            // The active row cannot leave the permutation before the player has
+            // moved off it; hold the deletion and apply it on the next cursor
+            // transition so a repeat-all cycle cannot bring it back.
+            return pendingExcluded.add(canonicalIndex)
+        }
+        pendingExcluded.remove(canonicalIndex)
         return excluded.add(canonicalIndex)
     }
 
@@ -541,7 +597,7 @@ class QueueWindow(
     fun reorderUpcoming(canonicalIndices: List<Int>): Boolean {
         if (currentIndex == null || canonicalIndices.isEmpty()) return false
         if (canonicalIndices.size != canonicalIndices.toSet().size) return false
-        if (canonicalIndices.any { it !in 0 until canonicalCount || it in excluded }) return false
+        if (canonicalIndices.any { it !in 0 until canonicalCount || blocked(it) }) return false
         val start = logicalCursor + 1
         if (start !in 0..logicalOrder.size) return false
         val head = logicalOrder.copyOfRange(0, start).toList()
@@ -555,6 +611,33 @@ class QueueWindow(
         manualOrder = true
         plannedCycles.clear()
         rebuildInverse()
+        return true
+    }
+
+    /**
+     * Reorder a planned repeat-all cycle to the physical order the listener
+     * dragged at the cycle boundary.
+     *
+     * [reorderUpcoming] only owns the active permutation, but at a repeat-all
+     * boundary the materialised rows already carry the next cycle id. Without
+     * teaching that planned permutation the same order, the physical prefix
+     * stays dragged while the logical one stays canonical, so the next top-up
+     * compares mismatched prefixes and stops refilling.
+     */
+    fun reorderPlannedCycle(cycleId: Long, canonicalIndices: List<Int>): Boolean {
+        if (cycleId == activeCycleId) return reorderUpcoming(canonicalIndices)
+        if (currentIndex == null || canonicalIndices.isEmpty()) return false
+        if (cycleId != activeCycleId + 1L) return false
+        if (canonicalIndices.size != canonicalIndices.toSet().size) return false
+        if (canonicalIndices.any { it !in 0 until canonicalCount || blocked(it) }) return false
+        val planned = plannedOrder(cycleId)
+        if (canonicalIndices.any { it !in planned }) return false
+        val requested = canonicalIndices.toSet()
+        val reordered = canonicalIndices + planned.filterNot { it in requested }
+        val next = reordered.toIntArray()
+        if (next.contentEquals(planned)) return false
+        plannedCycles[cycleId] = next
+        manualOrder = true
         return true
     }
 
@@ -597,6 +680,8 @@ class QueueWindow(
             QueueWindowCycleSnapshot(cycle, permutation.toList())
         },
         excludedCanonicalIndices = excluded.toList(),
+        pendingExcludedCanonicalIndices = pendingExcluded.toList(),
+        preShuffleCanonicalOrder = preShuffleOrder?.toList().orEmpty(),
         manualUpcomingOrder = manualOrder,
     )
 
@@ -610,6 +695,7 @@ class QueueWindow(
         }
         logicalCursor = position
         currentIndex = logicalOrder[position]
+        applyPendingExclusions()
         consumed += logicalOrder[position]
         if (boundaryFinal() != previousBoundaryFinal) plannedCycles.clear()
         return QueueWindowEntry(logicalOrder[position], activeCycleId)
@@ -618,7 +704,7 @@ class QueueWindow(
     private fun transitionToNextCycle(): QueueWindowEntry? {
         val nextCycle = followingCycleId(activeCycleId)
         val nextOrder = plannedOrder(nextCycle)
-        val position = nextOrder.indexOfFirst { it !in excluded }
+        val position = nextOrder.indexOfFirst { !blocked(it) }
         if (position < 0) return null
         selectPlannedCycle(nextCycle, nextOrder, position)
         return current!!
@@ -632,6 +718,7 @@ class QueueWindow(
         rebuildInverse()
         logicalCursor = position
         currentIndex = logicalOrder[position]
+        applyPendingExclusions()
         consumed.clear()
         for (consumedPosition in 0..position) consumed += logicalOrder[consumedPosition]
     }
@@ -650,7 +737,7 @@ class QueueWindow(
     private fun boundaryFinal(): Int? {
         for (position in logicalOrder.lastIndex downTo (logicalCursor + 1)) {
             val canonical = logicalOrder[position]
-            if (canonical in excluded) continue
+            if (blocked(canonical)) continue
             if (!shuffled || canonical !in consumed) return canonical
         }
         return currentIndex
@@ -702,6 +789,25 @@ class QueueWindow(
     private fun seedForExtension(cycle: Long, firstNew: Int): Long =
         seed xor (cycle * -3335678366873096957L) xor canonicalCount.toLong() xor
             (firstNew.toLong() shl 32)
+
+    /**
+     * Apply deletions that were waiting for the player to leave the current
+     * row. The new current is never excluded, so its own pending deletion stays
+     * parked until another transition.
+     */
+    private fun applyPendingExclusions() {
+        if (pendingExcluded.isEmpty()) return
+        val iterator = pendingExcluded.iterator()
+        while (iterator.hasNext()) {
+            val canonical = iterator.next()
+            if (canonical == currentIndex) continue
+            excluded.add(canonical)
+            iterator.remove()
+        }
+    }
+
+    private fun blocked(canonicalIndex: Int): Boolean =
+        canonicalIndex in excluded || canonicalIndex in pendingExcluded
 
     private fun rebuildInverse() {
         inversePositions = IntArray(canonicalCount) { -1 }

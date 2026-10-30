@@ -354,6 +354,8 @@ object BoundedContextPersistence {
         val lastCycleFinalCanonicalIndex: Int?,
         val plannedCycles: List<StoredCycle> = emptyList(),
         val excludedCanonicalIndices: List<Int> = emptyList(),
+        val pendingExcludedCanonicalIndices: List<Int> = emptyList(),
+        val preShuffleCanonicalOrder: List<Int> = emptyList(),
         val manualUpcomingOrder: Boolean = false,
     ) {
         fun toSnapshot(): QueueWindowSnapshot? {
@@ -373,6 +375,8 @@ object BoundedContextPersistence {
                     QueueWindowCycleSnapshot(it.cycleId, it.order)
                 },
                 excludedCanonicalIndices = excludedCanonicalIndices,
+                pendingExcludedCanonicalIndices = pendingExcludedCanonicalIndices,
+                preShuffleCanonicalOrder = preShuffleCanonicalOrder,
                 manualUpcomingOrder = manualUpcomingOrder,
             )
         }
@@ -390,6 +394,8 @@ object BoundedContextPersistence {
                 lastCycleFinalCanonicalIndex = snapshot.lastCycleFinalCanonicalIndex,
                 plannedCycles = snapshot.plannedCycles.map(StoredCycle::from),
                 excludedCanonicalIndices = snapshot.excludedCanonicalIndices,
+                pendingExcludedCanonicalIndices = snapshot.pendingExcludedCanonicalIndices,
+                preShuffleCanonicalOrder = snapshot.preShuffleCanonicalOrder,
                 manualUpcomingOrder = snapshot.manualUpcomingOrder,
             )
         }
