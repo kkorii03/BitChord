@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /**
  * The youtube.com display cleaner: label uploads, OST/MV packaging, aliases,
@@ -255,6 +256,61 @@ class YouTubeDisplayCleanerTest {
         assertEquals("Following Sophie", labelled.title)
         assertEquals("", labelled.artist)
         assertEquals("Joker OST", labelled.album)
+    }
+
+    @Test
+    fun `a bare soundtrack word inside a real title is left alone`() {
+        val our = YouTubeDisplayCleaner.clean("Our Soundtrack", "The Band")
+        assertEquals("Our Soundtrack", our.title)
+        assertEquals("The Band", our.artist)
+        assertNull(our.album)
+
+        val my = YouTubeDisplayCleaner.clean("My OST", "The Band")
+        assertEquals("My OST", my.title)
+        assertEquals("The Band", my.artist)
+        assertNull(my.album)
+
+        val labelChannel = YouTubeDisplayCleaner.clean("My OST", "Original Soundtrack")
+        assertEquals("My OST", labelChannel.title)
+        assertEquals("", labelChannel.artist)
+        assertNull(labelChannel.album)
+    }
+
+    @Test
+    fun `a dash packaged soundtrack label still enters the soundtrack path`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Following Sophie - OST", "Original Soundtrack")
+        assertEquals("Following Sophie", cleaned.title)
+        assertEquals("", cleaned.artist)
+        assertNull(cleaned.album)
+    }
+
+    @Test
+    fun `a From work keeps words that are part of its name`() {
+        val originalSin = YouTubeDisplayCleaner.clean(
+            "Song (From \"Original Sin\")",
+            "Artist",
+        )
+        assertEquals("Original Sin OST", originalSin.album)
+        assertEquals(
+            "original sin",
+            TrackMatcher.audioSwitchIdentity(
+                "Song (From \"Original Sin\")",
+                "Artist",
+            ).work,
+        )
+
+        val motionPicture = YouTubeDisplayCleaner.clean(
+            "Song (From \"The Motion Picture\")",
+            "Artist",
+        )
+        assertEquals("The Motion Picture OST", motionPicture.album)
+        assertEquals(
+            "the motion picture",
+            TrackMatcher.audioSwitchIdentity(
+                "Song (From \"The Motion Picture\")",
+                "Artist",
+            ).work,
+        )
     }
 
     @Test

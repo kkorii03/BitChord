@@ -266,6 +266,18 @@ class AudioSwitchOstTitleTest {
     }
 
     @Test
+    fun `From work names keep original and motion picture words`() {
+        assertEquals(
+            "original sin",
+            identity("Song (From \"Original Sin\")").work,
+        )
+        assertEquals(
+            "the motion picture",
+            identity("Song (From \"The Motion Picture\")").work,
+        )
+    }
+
+    @Test
     fun `a trailing soundtrack label does not eat the take or packaging after it`() {
         val versioned = TrackMatcher.parseTitle("Song - Original Soundtrack Version")
         assertEquals("song", versioned.core)

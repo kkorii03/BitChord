@@ -903,6 +903,8 @@ object TrackMatcher {
         val work: String?,
         val hasSoundtrackTail: Boolean,
         val tailRemoved: Boolean,
+        /** The label was attached with a dash/pipe, not a bare word on the title. */
+        val labelPackaged: Boolean,
     )
 
     /**
@@ -918,7 +920,7 @@ object TrackMatcher {
     internal fun audioSwitchIdentity(rawTitle: String, rawArtist: String): AudioSwitchIdentity {
         val identity = soundtrackIdentity(rawTitle, rawArtist)
         if (!identity.hasSoundtrackTail) {
-            return AudioSwitchIdentity(rawTitle, rawArtist, null, false, false)
+            return AudioSwitchIdentity(rawTitle, rawArtist, null, false, false, false)
         }
         // The audio switch searches a catalogue, so its query is folded to the
         // matching form; the display path keeps the upload's own casing.
@@ -938,7 +940,7 @@ object TrackMatcher {
     internal fun soundtrackIdentity(rawTitle: String, rawArtist: String): AudioSwitchIdentity {
         val soundtrack = stripSoundtrackTail(rawTitle)
         if (!soundtrack.present) {
-            return AudioSwitchIdentity(rawTitle, rawArtist, null, false, false)
+            return AudioSwitchIdentity(rawTitle, rawArtist, null, false, false, false)
         }
         DASH.find(soundtrack.text)?.let { dash ->
             val head = soundtrack.text.substring(0, dash.range.first).trim()
@@ -954,6 +956,7 @@ object TrackMatcher {
                         soundtrack.work,
                         hasSoundtrackTail = true,
                         tailRemoved = soundtrack.tailRemoved,
+                        labelPackaged = soundtrack.labelPackaged,
                     )
                 }
                 // A take/packaging label after the dash ("Song - Live",
@@ -966,6 +969,7 @@ object TrackMatcher {
                         soundtrack.work,
                         hasSoundtrackTail = true,
                         tailRemoved = soundtrack.tailRemoved,
+                        labelPackaged = soundtrack.labelPackaged,
                     )
                 }
             }
@@ -976,6 +980,7 @@ object TrackMatcher {
             soundtrack.work,
             hasSoundtrackTail = true,
             tailRemoved = soundtrack.tailRemoved,
+            labelPackaged = soundtrack.labelPackaged,
         )
     }
 
@@ -1007,6 +1012,7 @@ object TrackMatcher {
         val work: String?,
         val present: Boolean,
         val tailRemoved: Boolean,
+        val labelPackaged: Boolean,
     )
 
     /**
@@ -1025,6 +1031,7 @@ object TrackMatcher {
         var work: String? = null
         var present = false
         var tailRemoved = false
+        var labelPackaged = false
 
         FROM_BRACKET.find(text)?.let { match ->
             present = true
@@ -1036,6 +1043,7 @@ object TrackMatcher {
             if (SOUNDTRACK_WORD.containsMatchIn(tail)) {
                 present = true
                 tailRemoved = true
+                labelPackaged = true
                 work = work ?: cleanSoundtrackWorkPreserving(tail)
                 text = text.substring(0, match.range.first)
             }
@@ -1050,6 +1058,7 @@ object TrackMatcher {
                 suffix.isEmpty() -> {
                     present = true
                     tailRemoved = true
+                    labelPackaged = true
                     text = before
                 }
                 // A bracketed take after the label ("Song - Original
@@ -1057,16 +1066,19 @@ object TrackMatcher {
                 suffix.startsWith("(") || suffix.startsWith("[") -> {
                     present = true
                     tailRemoved = true
+                    labelPackaged = true
                     text = before + " " + after
                 }
                 isNeutralSoundtrackSuffix(suffixWords) -> {
                     present = true
                     tailRemoved = true
+                    labelPackaged = true
                     text = before
                 }
                 isPackagingOrTake(suffix) -> {
                     present = true
                     tailRemoved = true
+                    labelPackaged = true
                     // Keep a recognized take as a bracketed marker, dropping
                     // neutral packaging words ("Live Version" -> "(Live)").
                     val kept = suffixWords.filter {
@@ -1092,7 +1104,13 @@ object TrackMatcher {
             .trim()
             .trim('-', '–', '—', '|', ' ')
             .trim()
-        return SoundtrackTail(text, work?.takeIf { it.isNotBlank() }, present, tailRemoved)
+        return SoundtrackTail(
+            text,
+            work?.takeIf { it.isNotBlank() },
+            present,
+            tailRemoved,
+            labelPackaged,
+        )
     }
 
     private fun isUploaderCredit(artist: String): Boolean {
@@ -1148,21 +1166,34 @@ object TrackMatcher {
     )
 
     private fun cleanSoundtrackWork(raw: String): String? =
-        normalize(raw)
-            .replace(SOUNDTRACK_WORK_NOISE, " ")
-            .replace(NON_ALNUM, " ")
-            .replace(WHITESPACE, " ")
-            .trim()
-            .takeIf { it.isNotBlank() }
+        stripSoundtrackWorkLabel(normalize(raw))
+            ?.replace(NON_ALNUM, " ")
+            ?.replace(WHITESPACE, " ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
 
     /** [cleanSoundtrackWork] without folding case, for the strings shown to a listener. */
     private fun cleanSoundtrackWorkPreserving(raw: String): String? =
-        Normalizer.normalize(raw, Normalizer.Form.NFKC)
-            .replace(SOUNDTRACK_WORK_NOISE, " ")
-            .replace(NON_ALNUM, " ")
-            .replace(WHITESPACE, " ")
-            .trim()
-            .takeIf { it.isNotBlank() }
+        stripSoundtrackWorkLabel(Normalizer.normalize(raw, Normalizer.Form.NFKC))
+            ?.replace(NON_ALNUM, " ")
+            ?.replace(WHITESPACE, " ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+    /**
+     * Removes only the trailing "OST"/"Original Soundtrack" release label.
+     * The words inside a work name ("Original Sin", "The Motion Picture") are
+     * the work, not noise, so they stay.
+     */
+    private fun stripSoundtrackWorkLabel(raw: String): String? {
+        var text = raw
+        while (true) {
+            val next = text.replace(SOUNDTRACK_WORK_TAIL, "").trim()
+            if (next == text) break
+            text = next
+        }
+        return text.takeIf { it.isNotBlank() }
+    }
 
     /**
      * A title split into the part that is the recording's identity and the
@@ -1835,8 +1866,8 @@ object TrackMatcher {
         """\s+(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)\s*$""",
         RegexOption.IGNORE_CASE,
     )
-    private val SOUNDTRACK_WORK_NOISE = Regex(
-        """\b(?:original|motion|picture|soundtracks?|ost)\b""",
+    private val SOUNDTRACK_WORK_TAIL = Regex(
+        """(?:\s*[-–—|]\s*)?(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)\s*$""",
         RegexOption.IGNORE_CASE,
     )
     /**

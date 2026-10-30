@@ -89,6 +89,8 @@ internal object YouTubeDisplayCleaner {
         val title = cover.title.trim().ifBlank { song.title.trim() }
         val performer = cover.singer.trim()
             .ifBlank { cleanChannel(song.artist).ifBlank { song.artist.trim() } }
+            .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+            .orEmpty()
         return song.copy(
             title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
             artist = performer,
@@ -112,6 +114,8 @@ internal object YouTubeDisplayCleaner {
             .trim()
             .ifBlank { song.title.trim() }
         val performer = cleanChannel(song.artist).ifBlank { song.artist.trim() }
+            .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+            .orEmpty()
         return song.copy(
             title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
             artist = performer,
@@ -150,7 +154,10 @@ internal object YouTubeDisplayCleaner {
         // uses, so a playlist row and the audio switch agree on the song and
         // the performer instead of showing the uploader as the artist.
         val soundtrack = TrackMatcher.soundtrackIdentity(text, rawChannel)
-        if (soundtrack.hasSoundtrackTail) {
+        // A bare "Soundtrack"/"OST" word at the end may be part of a real song
+        // name ("Our Soundtrack", "My OST"). Only a named work or a
+        // dash/pipe-attached release label is packaging.
+        if (soundtrack.hasSoundtrackTail && (soundtrack.work != null || soundtrack.labelPackaged)) {
             return cleanSoundtrack(soundtrack, rawChannel, rawTitle)
         }
         // A label upload often puts the credit in the title and its own name on
@@ -166,15 +173,20 @@ internal object YouTubeDisplayCleaner {
         if (split != null && shouldSplit(split.first, rawChannel, knownArtists)) {
             val artist = collapseAliases(split.first).ifBlank { channelArtist }
             val songTitle = split.second.trim().trim(' ', '-', '_', '|', '·', '/')
-            if (artist.isNotBlank() && songTitle.isNotBlank()) {
+            if (artist.isNotBlank() &&
+                !TrackMatcher.isSoundtrackCredit(artist) &&
+                songTitle.isNotBlank()
+            ) {
                 return Cleaned(songTitle, artist)
             }
         }
+        val fallbackArtist = channelArtist.ifBlank { if (labelChannel) "" else rawChannel }
         return Cleaned(
             text.ifBlank { rawTitle },
             // A label channel is not the artist; if the title carried no credit
-            // there is nothing honest to show in its place.
-            channelArtist.ifBlank { if (labelChannel) "" else rawChannel },
+            // there is nothing honest to show in its place. A soundtrack label
+            // is a release name, never a performer.
+            if (TrackMatcher.isSoundtrackCredit(fallbackArtist)) "" else fallbackArtist,
         )
     }
 
@@ -237,8 +249,11 @@ internal object YouTubeDisplayCleaner {
         name = name.replace(TOPIC_SUFFIX, "")
         name = name.replace(VEVO_SUFFIX, "")
         // A `- Topic` or VEVO channel is named after the artist; only a real
-        // label/agency name is dropped.
-        if (!topic && !vevo && isAgencyChannel(name)) return ""
+        // label/agency name is dropped. A soundtrack release label is not a
+        // performer either.
+        if (!topic && !vevo && (isAgencyChannel(name) || TrackMatcher.isSoundtrackCredit(name))) {
+            return ""
+        }
         return collapseAliases(name)
     }
 
