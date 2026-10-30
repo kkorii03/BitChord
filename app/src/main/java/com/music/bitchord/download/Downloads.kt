@@ -225,6 +225,20 @@ object Downloads {
     private val pending = LinkedHashMap<String, Song>()
 
     /**
+     * The enqueue generation each waiting id was inserted under, and the
+     * generation a worker has since claimed.
+     *
+     * The Queued publish runs under [lock] with the insert, so a fresh claim
+     * cannot overtake it. When the two generations differ the row has been
+     * claimed for this enqueue and any Running/Failed/Done state belongs to that
+     * claim, not to an older attempt; when they match any old failure or Done
+     * row must be reset so a retry reads as Queued. Guarded by [lock].
+     */
+    private val enqueueGenerations = HashMap<String, Long>()
+    private val claimedGenerations = HashMap<String, Long>()
+    private var generationCounter = 0L
+
+    /**
      * A rung asked for by a deliberate replacement — see [enqueue] — rather
      * than the standing [AppSettings.downloadQuality]. Guarded by [lock] while
      * written, and only read by [prepare] for the track it names.
@@ -460,6 +474,7 @@ object Downloads {
         synchronized(lock) {
             if (id in pending || id in running) return
             pending[id] = song
+            enqueueGenerations[id] = ++generationCounter
             if (quality != null) qualityOverrides[id] = quality
             if (hq != null) hqOverrides[id] = hq
             if (avoidSourceConfigId != null) avoidSources[id] = avoidSourceConfigId
@@ -522,20 +537,34 @@ object Downloads {
         synchronized(lock) {
             val id = song.videoId
             if (id !in pending && id !in running) return
-            // A worker that claimed this row may already have moved it past
-            // Queued — a cache copy that finishes at once, or a fast refusal.
-            // Writing Queued afterwards would move the manager's row backwards
-            // and leave it there, since nothing is left to advance it again.
-            // The same goes for the `active` map, which the worker writes
-            // before the session row.
-            val activeState = _active.value[id]
-            val sessionState = if (publishSession) DownloadSession.progressOf(id) else null
-            val alreadyAdvanced = activeState is DownloadState.Running ||
-                activeState is DownloadState.Failed ||
-                (sessionState != null && sessionState !is DownloadProgress.Queued)
-            if (alreadyAdvanced) return
+            val enqueueGeneration = enqueueGenerations[id]
+            val claimedGeneration = claimedGenerations[id]
+            // Only a row that was not claimed after this enqueue can carry a
+            // state from an older attempt. In that case Queued must win, so a
+            // retry of a Failed or Done download does not keep showing the old
+            // row until the worker happens to start. A row already claimed for
+            // this enqueue may have advanced past Queued — a cache copy that
+            // finishes at once, or a fast refusal — and must not be moved back.
+            val freshUnclaimed = enqueueGeneration != null &&
+                claimedGeneration != enqueueGeneration
+            if (!freshUnclaimed) {
+                // A worker that claimed this row may already have moved it past
+                // Queued — a cache copy that finishes at once, or a fast
+                // refusal. Writing Queued afterwards would move the manager's
+                // row backwards and leave it there, since nothing is left to
+                // advance it again. The same goes for the `active` map, which
+                // the worker writes before the session row.
+                val activeState = _active.value[id]
+                val sessionState = if (publishSession) DownloadSession.progressOf(id) else null
+                val alreadyAdvanced = activeState is DownloadState.Running ||
+                    activeState is DownloadState.Failed ||
+                    (sessionState != null && sessionState !is DownloadProgress.Queued)
+                if (alreadyAdvanced) return
+            }
             _active.update { it + (id to DownloadState.Queued) }
             if (publishSession) DownloadSession.queued(song, from)
+            enqueueGenerations.remove(id)
+            claimedGenerations.remove(id)
         }
     }
 
@@ -575,6 +604,8 @@ object Downloads {
         minimumTiers.remove(videoId)
         automaticIds.remove(videoId)
         mvSoundRepairIds.remove(videoId)
+        enqueueGenerations.remove(videoId)
+        claimedGenerations.remove(videoId)
         wakeWorkers()
         true
     }
@@ -622,6 +653,8 @@ object Downloads {
     fun cancel(videoId: String) {
         val job = synchronized(lock) {
             pending.remove(videoId)
+            enqueueGenerations.remove(videoId)
+            claimedGenerations.remove(videoId)
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
@@ -1853,6 +1886,7 @@ object Downloads {
         val entry = pending.entries.firstOrNull() ?: return null
         pending.remove(entry.key)
         running[entry.key] = null
+        enqueueGenerations[entry.key]?.let { claimedGenerations[entry.key] = it }
         entry.value
     }
 
@@ -2709,6 +2743,8 @@ object Downloads {
             minimumTiers.remove(videoId)
             automaticIds.remove(videoId)
             mvSoundRepairIds.remove(videoId)
+            enqueueGenerations.remove(videoId)
+            claimedGenerations.remove(videoId)
         }
     }
 

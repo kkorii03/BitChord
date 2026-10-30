@@ -110,6 +110,14 @@ class HqLibraryUpgradeCancellationTest {
         assertFalse(HqLibraryUpgrade.shouldResumePlan(planIsNotEmpty = false, hasRunnableTarget = false))
     }
 
+    @Test
+    fun `a verdict arriving while buildPlan runs still requests a rebuild`() {
+        // No target is active yet, but the worker owns the plan it is building.
+        assertTrue(HqLibraryUpgrade.verdictNeedsRebuild(activeVideoId = null, workerRunning = true))
+        assertTrue(HqLibraryUpgrade.verdictNeedsRebuild(activeVideoId = "video", workerRunning = false))
+        assertFalse(HqLibraryUpgrade.verdictNeedsRebuild(activeVideoId = null, workerRunning = false))
+    }
+
     private fun newPendingTarget(videoId: String): Any {
         val target = HqLibraryTarget(
             videoId = videoId,

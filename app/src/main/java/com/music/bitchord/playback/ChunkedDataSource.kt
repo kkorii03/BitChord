@@ -132,16 +132,14 @@ class ChunkedDataSource(
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
-                    // A 429/503 has already been counted by
-                    // openWithRateLimitRetry; noting it here again would
-                    // double the penalty for one refusal.
+                    // A 429/502/503/504 was already counted by the gate; a
+                    // second note here penalised the same host twice.
                     val refusal = rateLimitedCause(e)
-                    if (refusal != null && HqRetryPolicy.isRateLimited(refusal.responseCode)) {
-                        failureNoted = true
-                    } else {
-                        HqHostTracker.noteFailure(currentHost)
-                        failureNoted = true
-                    }
+                    val countedByGate = refusal != null &&
+                        (HqRetryPolicy.isRateLimited(refusal.responseCode) ||
+                            HqRetryPolicy.isSleepingGateway(refusal.responseCode))
+                    if (!countedByGate) HqHostTracker.noteFailure(currentHost)
+                    failureNoted = true
                     report(dataSpec, e)
                 }
                 throw e
@@ -179,28 +177,33 @@ class ChunkedDataSource(
                     "range $position-${position + length - 1} refused for " +
                         "${spec.uri.getQueryParameter("c")}: ${e.message}",
                 )
+                if (e is HttpDataSource.InvalidResponseCodeException) {
+                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
+                    if (resumed != null) {
+                        // Recovered from the refusal: this open is not a host
+                        // failure. Crediting it as one made a successfully
+                        // re-resolved range close as failed and never earn the
+                        // success/throughput credit the replacement deserved.
+                        transferFailed = false
+                        chunkRemaining = resumed
+                        chunkOpen = true
+                        return
+                    }
+                }
                 // A 429/503 has already been counted (and the host rested) by
                 // openWithRateLimitRetry; adding another failure here would
                 // escalate the penalty twice for one refusal.
                 val refusal = rateLimitedCause(e)
-                val rateLimited = refusal != null &&
-                    HqRetryPolicy.isRateLimited(refusal.responseCode)
-                if (e is HttpDataSource.InvalidResponseCodeException) {
-                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
-                    if (resumed != null) {
-                        chunkRemaining = resumed
-                        chunkOpen = true
-                        // The refusal was successfully re-resolved, so this
-                        // open is not a failed transfer: it must earn the
-                        // success/throughput credit on close.
-                        return
-                    }
-                }
+                // 502/504 are sleeping-gateway refusals too: the gate already
+                // noted them when it gave up, so do not count them again.
+                val countedByGate = refusal != null &&
+                    (HqRetryPolicy.isRateLimited(refusal.responseCode) ||
+                        HqRetryPolicy.isSleepingGateway(refusal.responseCode))
                 // Only a refusal that could not be recovered is a failed
                 // transfer; marking it before the recovery attempt made a
                 // successful re-resolve close as failed and lose its credit.
                 transferFailed = true
-                if (rateLimited) {
+                if (countedByGate) {
                     // Recorded by [openWithRateLimitRetry] already.
                     failureNoted = true
                 } else {
@@ -294,6 +297,7 @@ class ChunkedDataSource(
                     rangeBytes = minOf(chunkBytes, PlayerClient.rangeBytesFor(replacement.url))
                     val opened = openReplacement()
                     if (opened != null) {
+                        adoptRecoveredHost(replacement.url)
                         StreamResolver.rememberServed(refused.videoId, replacement.url)
                         StreamChoice.remember(
                             refused.videoId,
@@ -336,6 +340,7 @@ class ChunkedDataSource(
                     runBlocking { delay(StreamRefusalRecovery.backoffMs(state.sameUrlRetries)) }
                     val opened = openReplacement()
                     if (opened != null) {
+                        adoptRecoveredHost(currentUrl)
                         StreamResolver.rememberServed(refused.videoId, currentUrl)
                         StreamChoice.remember(
                             refused.videoId,
@@ -395,6 +400,21 @@ class ChunkedDataSource(
 
     /** The last exception [openReplacement] saw, for the recovery loop above. */
     private var lastOpenFailure: Exception? = null
+
+    /**
+     * Credits the rest of this open to the host that actually served the
+     * replacement.
+     *
+     * The original URL was refused, so [close] must not hand its replacement's
+     * throughput to the dead host. The bytes already read before the refusal
+     * stay with the refused host (which earned a failure, not credit), so the
+     * replacement's accounting starts fresh.
+     */
+    private fun adoptRecoveredHost(url: String) {
+        currentHost = HqHostTracker.hostOf(url)
+        openedAtMs = System.currentTimeMillis()
+        bytesRead = 0L
+    }
 
     /** Opens the chunk currently described by [baseSpec], or null on failure. */
     private fun openReplacement(): Long? {
