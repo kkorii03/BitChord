@@ -14,6 +14,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.AutomaticRetryPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.startup.AppForeground
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -161,6 +162,12 @@ object MvSoundRedownload {
      * fixed. Cancelling by id only the ENQUEUED/BLOCKED entries stops
      * WorkManager waking the process for work that cannot start a service,
      * while a pass in flight keeps the suspects it has already read.
+     *
+     * A queued successor is left in place while any part of the chain runs:
+     * cancelling it would make it the chain's CANCELLED leaf, and the next
+     * [APPEND_OR_REPLACE] treats a cancelled leaf as a dead chain and replaces
+     * it — taking the still-running pass with it. The successor then returns
+     * at once if the app is still in the background ([MvSoundRedownloadWorker]).
      */
     fun pause(context: Context) {
         val generation = pauseGeneration.incrementAndGet()
@@ -172,8 +179,15 @@ object MvSoundRedownload {
                 // The window may have come back while this query ran; that
                 // foreground pass is wanted, not this pause's target.
                 if (generation != pauseGeneration.get()) return@launch
-                infos.filter { cancelBeforeStart(it.state) }
-                    .forEach { workManager.cancelWorkById(it.id) }
+                // Re-read immediately before deciding: a queued worker may
+                // have started since the list was read, and cancelling it then
+                // would stop a real pass mid-scan.
+                val current = infos.map { info ->
+                    info.id to runCatching {
+                        workManager.getWorkInfoById(info.id).get()?.state
+                    }.getOrNull()
+                }
+                cancelTargets(current).forEach { workManager.cancelWorkById(it) }
             }.onFailure {
                 TrackLog.w("BitChord", "could not pause MV-sound repair: ${it.message}")
             }
@@ -183,6 +197,25 @@ object MvSoundRedownload {
     /** A pass that is running is left alone; only work that cannot have started is dropped. */
     internal fun cancelBeforeStart(state: WorkInfo.State): Boolean =
         state == WorkInfo.State.ENQUEUED || state == WorkInfo.State.BLOCKED
+
+    /**
+     * Which works of the unique chain may be cancelled, using the states read
+     * just before cancellation.
+     *
+     * Nothing is cancelled while any work in the chain is RUNNING, because a
+     * CANCELLED successor would turn the chain's leaf into a cancelled one and
+     * the next [APPEND_OR_REPLACE] would replace the whole chain. A work whose
+     * state is no longer ENQUEUED/BLOCKED (or has disappeared, state null) is
+     * skipped for the same reason.
+     */
+    internal fun cancelTargets(
+        entries: List<Pair<UUID, WorkInfo.State?>>,
+    ): List<UUID> {
+        if (entries.any { it.second == WorkInfo.State.RUNNING }) return emptyList()
+        return entries
+            .filter { (_, state) -> state != null && cancelBeforeStart(state) }
+            .map { it.first }
+    }
 
     fun cancel(context: Context) {
         runCatching {

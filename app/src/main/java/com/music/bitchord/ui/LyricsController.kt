@@ -784,14 +784,31 @@ class LyricsController(
                 )
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
-                while (attempts < MAX_MEASURE_ATTEMPTS && System.currentTimeMillis() < giveUpAt &&
-                    !LyricsTiming.measured(context, request.videoId)
+                while (lyricsMeasurementAllowed(
+                        attempts = attempts,
+                        maxAttempts = MAX_MEASURE_ATTEMPTS,
+                        nowMs = System.currentTimeMillis(),
+                        giveUpAt = giveUpAt,
+                        measured = LyricsTiming.measured(context, request.videoId),
+                    )
                 ) {
                     // LyricsTiming refuses to decode with the screen off, so an
                     // 8 s check there only wakes the process for a null. Wait
                     // for the screen-on event instead of polling; the wall-clock
                     // window still bounds how long this may wait.
-                    if (!PowerState.screenOn) PowerState.screen.first { it }
+                    if (!PowerState.screenOn) {
+                        PowerState.screen.first { it }
+                        // The wait may have outlived the window; do not start a
+                        // measurement the documented cap excludes.
+                        if (!lyricsMeasurementAllowed(
+                                attempts = attempts,
+                                maxAttempts = MAX_MEASURE_ATTEMPTS,
+                                nowMs = System.currentTimeMillis(),
+                                giveUpAt = giveUpAt,
+                                measured = LyricsTiming.measured(context, request.videoId),
+                            )
+                        ) break
+                    }
                     if (LyricsTiming.worthMeasuring(context, request.videoId)) {
                         attempts++
                         LyricsTiming.measure(context, video, names, request.durationMs)
@@ -1197,3 +1214,18 @@ class LyricsController(
         }
     }
 }
+
+/**
+ * Whether the lyric re-measure loop may still run.
+ *
+ * Both bounds survive a wait on the screen-on event: the attempt count and the
+ * wall-clock window. The loop re-checks this after waking, so a screen that
+ * comes back after [giveUpAt] cannot start one more measurement.
+ */
+internal fun lyricsMeasurementAllowed(
+    attempts: Int,
+    maxAttempts: Int,
+    nowMs: Long,
+    giveUpAt: Long,
+    measured: Boolean,
+): Boolean = attempts < maxAttempts && nowMs < giveUpAt && !measured
