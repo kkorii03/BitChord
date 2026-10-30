@@ -1,5 +1,6 @@
 package com.music.bitchord.data.innertube
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -25,7 +26,7 @@ class UnplayableReasonTest {
     }
 
     @Test
-    fun `a bare unavailable answer is definitive`() {
+    fun `a resolver unavailable answer is definitive`() {
         assertTrue(UnplayableReason.isDefinitive("StreamResolveException: unavailable"))
         assertTrue(UnplayableReason.isDefinitive("Video unavailable"))
     }
@@ -33,9 +34,13 @@ class UnplayableReasonTest {
     @Test
     fun `a deleted or private upload is definitive`() {
         assertTrue(UnplayableReason.isDefinitive("Private video"))
+        assertTrue(UnplayableReason.isDefinitelyGone("Private video"))
         assertTrue(UnplayableReason.isDefinitive("This video has been removed by the uploader"))
+        assertTrue(UnplayableReason.isDefinitelyGone("This video has been removed by the uploader"))
         assertTrue(UnplayableReason.isDefinitive("비공개 트랙입니다"))
+        assertTrue(UnplayableReason.isDefinitelyGone("비공개 트랙입니다"))
         assertTrue(UnplayableReason.isDefinitive("삭제된 동영상입니다"))
+        assertTrue(UnplayableReason.isDefinitelyGone("삭제된 동영상입니다"))
     }
 
     @Test
@@ -68,6 +73,24 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `a track specific reason is not replaced by a generic failure`() {
+        val claimed = "Got error UNPLAYABLE: It was blocked due to the claimed content by SME"
+        val generic = "StreamResolveException: This track is unavailable"
+        assertEquals(claimed, UnplayableReason.keepTrackSpecific(claimed, generic))
+        assertEquals(claimed, UnplayableReason.keepTrackSpecific(claimed, null))
+        assertEquals(claimed, UnplayableReason.keepTrackSpecific(generic, claimed))
+        assertEquals(generic, UnplayableReason.keepTrackSpecific(null, generic))
+    }
+
+    @Test
+    fun `age restricted and paid tracks are track specific but not gone`() {
+        assertTrue(UnplayableReason.isTrackSpecific("This video is age-restricted"))
+        assertFalse(UnplayableReason.isDefinitelyGone("This video is age-restricted"))
+        assertTrue(UnplayableReason.isTrackSpecific("Paid content"))
+        assertFalse(UnplayableReason.isDefinitelyGone("Paid content"))
+    }
+
+    @Test
     fun `a region or premium gate is definitive but not track specific`() {
         assertTrue(UnplayableReason.isDefinitive("not available in your country"))
         assertFalse(UnplayableReason.isTrackSpecific("not available in your country"))
@@ -80,6 +103,14 @@ class UnplayableReasonTest {
         assertFalse(UnplayableReason.isDefinitive("모듈을 이용할 수 없습니다"))
         assertFalse(UnplayableReason.isDefinitive("not available"))
         assertFalse(UnplayableReason.isTrackSpecific("AddonClient: 사용할 수 없는 주소입니다"))
+    }
+
+    @Test
+    fun `a bare unavailable from unrelated modules is not a track verdict`() {
+        assertFalse(UnplayableReason.isDefinitive("unavailable"))
+        assertFalse(UnplayableReason.isDefinitive("AddonClient: unavailable"))
+        assertFalse(UnplayableReason.isDefinitive("Media3: source unavailable"))
+        assertFalse(UnplayableReason.isDefinitive("module unavailable"))
     }
 
     @Test

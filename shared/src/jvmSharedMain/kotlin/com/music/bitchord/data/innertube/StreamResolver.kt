@@ -538,13 +538,15 @@ object StreamResolver {
         var itxUnplayableReason: String? = null
 
         // A claim, a takedown or a private upload names the recording itself.
-        // A generic "unavailable" is also how a region gate answers, so it is
-        // deliberately not in this set: it still has to reach the proxy retry.
-        fun trackSpecificReason(): String? =
-            directUnplayableReason?.takeIf { UnplayableReason.isTrackSpecific(it) }
-                ?: itxUnplayableReason?.takeIf { UnplayableReason.isTrackSpecific(it) }
+        // A region/Premium gate, an age-restricted or a paid track is not gone:
+        // those still have to reach the proxy retry and extraction. Only the
+        // definitely-gone set may settle the resolve early; isTrackSpecific is
+        // still used below for bench decisions, where age/paid count too.
+        fun goneReason(): String? =
+            directUnplayableReason?.takeIf { UnplayableReason.isDefinitelyGone(it) }
+                ?: itxUnplayableReason?.takeIf { UnplayableReason.isDefinitelyGone(it) }
 
-        fun trackSpecificRefusal(): Boolean = trackSpecificReason() != null
+        fun goneRefusal(): Boolean = goneReason() != null
 
         suspend fun tryDirect(): Stream? {
             if (directTried) return null
@@ -561,7 +563,8 @@ object StreamResolver {
                     videoId,
                     onUnplayable = { reason ->
                         directUnplayable = true
-                        directUnplayableReason = reason
+                        directUnplayableReason =
+                            UnplayableReason.keepTrackSpecific(directUnplayableReason, reason)
                     },
                 ) { client ->
                     served(ResolutionOrder.DIRECT, "direct $client")
@@ -591,7 +594,9 @@ object StreamResolver {
                     videoId,
                     preferredManifest = preferredManifest,
                     onServed = { key, label -> served(key, label) },
-                    onFailure = { itxUnplayableReason = it },
+                    onFailure = {
+                        itxUnplayableReason = UnplayableReason.keepTrackSpecific(itxUnplayableReason, it)
+                    },
                 )
             }
             // A claim or a deleted upload says nothing about the learned path:
@@ -615,20 +620,20 @@ object StreamResolver {
                 preferDirect -> tryDirect()
                 else -> null
             }
-            if (first == null && trackSpecificRefusal()) {
+            if (first == null && goneRefusal()) {
                 // The recording itself is gone (claim, takedown, private or
                 // deleted). Extraction and a proxy walk answer the same on
                 // every client, so settle it once instead of spending the
                 // retry budget on an answer already in hand.
                 throw PermanentlyUnplayableException(
-                    trackSpecificReason() ?: "이 트랙은 재생할 수 없습니다",
+                    goneReason() ?: "이 트랙은 재생할 수 없습니다",
                 )
             }
             // Parenthesised so the extraction failsafe below applies to every
             // branch, the race included, not only to the last `else`.
             (if (first != null) {
                 first
-            } else if (!trackSpecificRefusal() &&
+            } else if (!goneRefusal() &&
                 (preferredItx != null || preferDirect) &&
                 ProxyPlayback.canResolveViaProxy() && !proxyAttempted
             ) {
@@ -668,7 +673,7 @@ object StreamResolver {
                 // that is the first refusal: Blue Valentine then spent 10 s on
                 // InnerTubeX before the proxy was tried (14.3 s to first
                 // sound), so the proxy starts beside InnerTubeX from here.
-                tryDirect() ?: if (trackSpecificRefusal()) {
+                tryDirect() ?: if (goneRefusal()) {
                     null
                 } else if (directUnplayable &&
                     ProxyPlayback.canResolveViaProxy() && !proxyAttempted
@@ -700,12 +705,12 @@ object StreamResolver {
                 }
             } else {
                 tryInnerTubeX(null) ?: tryDirect()
-            }) ?: if (trackSpecificRefusal()) {
+            }) ?: if (goneRefusal()) {
                 // The direct ladder may have been the one to name the claim or
                 // the deletion. Extraction reads the same watch page and would
                 // spend its attempts repeating that answer.
                 throw PermanentlyUnplayableException(
-                    trackSpecificReason() ?: "이 트랙은 재생할 수 없습니다",
+                    goneReason() ?: "이 트랙은 재생할 수 없습니다",
                 )
             } else run {
                 TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
@@ -752,7 +757,8 @@ object StreamResolver {
             // proxy's address, which is why [ProxyPlayback] remembers the URL
             // and the media fetch follows it there.
             if (!proxyAttempted &&
-                !trackSpecificRefusal() &&
+                !goneRefusal() &&
+                !UnplayableReason.isDefinitelyGone(permanentReason(e)) &&
                 ProxyPlayback.canResolveViaProxy() &&
                 ProxyPlaybackPolicy.isRegionRefusal(
                     signInConfirmNotBot = e.isSignInConfirmNotBot(),

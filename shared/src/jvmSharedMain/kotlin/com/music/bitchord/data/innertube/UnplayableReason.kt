@@ -93,9 +93,22 @@ object UnplayableReason {
     )
 
     /**
+     * The resolver's own "unavailable" answers. Deliberately phrases rather
+     * than the bare word: addon, module and Media3 failures also say
+     * "unavailable", and those are not verdicts about the recording.
+     */
+    private val unavailableVerdicts = listOf(
+        "video unavailable",
+        "video is unavailable",
+        "track unavailable",
+        "track is unavailable",
+        "streamresolveexception",
+    )
+
+    /**
      * Facts about the connection, not about the track. Checked before the
-     * loose "unavailable" marker so an HTTP 503 "Service Unavailable" is not
-     * mistaken for a takedown.
+     * resolver's "unavailable" phrases so an HTTP 503 "Service Unavailable" is
+     * not mistaken for a takedown.
      */
     private val transient = listOf(
         "429",
@@ -130,8 +143,10 @@ object UnplayableReason {
      * A strong recording marker wins over a transient word: a page that says
      * the upload was blocked for a claim is a verdict even if the same answer
      * arrived after a retryable request. Otherwise a timeout, a 429/503 or a
-     * dropped socket reads as retryable, and a bare "unavailable" reads as a
-     * verdict because that is how both resolvers phrase an exhausted catalog.
+     * dropped socket reads as retryable, and a resolver's explicit
+     * "track/video is unavailable" reads as a verdict because that is how both
+     * resolvers phrase an exhausted catalog. A bare "unavailable" is not
+     * enough: unrelated addon, module and Media3 errors use the same word.
      */
     fun fromMessage(message: String?): String? {
         val text = message?.trim().orEmpty()
@@ -142,9 +157,10 @@ object UnplayableReason {
         if (definitive.any { it in lower }) return text
         // "This track is unavailable" is the generic text both resolvers use
         // for a region gate as well as a takedown, so it is a verdict but not
-        // a track-specific one. A bare "not available" is deliberately not
-        // matched: it is also how unrelated module/addon errors read.
-        if ("unavailable" in lower) return text
+        // a track-specific one. It is matched by its phrase, not by the bare
+        // word: "not available" and an unrelated module/addon "unavailable"
+        // are deliberately not matched.
+        if (unavailableVerdicts.any { it in lower }) return text
         return null
     }
 
@@ -162,6 +178,14 @@ object UnplayableReason {
         if (lower.isEmpty()) return false
         return trackSpecific.any { it in lower }
     }
+
+    /**
+     * The reason to remember when a second callback fires: a track-specific
+     * verdict already in hand is never replaced by a generic failure, because
+     * the claim/takedown is what has to settle the track.
+     */
+    fun keepTrackSpecific(existing: String?, incoming: String?): String? =
+        if (isTrackSpecific(existing) && !isTrackSpecific(incoming)) existing else incoming
 
     /**
      * Whether [message] says the upload itself no longer exists, as opposed to
