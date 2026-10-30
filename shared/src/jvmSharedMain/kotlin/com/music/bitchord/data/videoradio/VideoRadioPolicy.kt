@@ -453,16 +453,23 @@ enum class VideoRadioFallback(val wire: String) {
  * them, so the caller asks the same mode for more material first, then the
  * ordinary AutoPlay path, and only then gives up. This is pure so the order of
  * those stages is pinned by tests rather than by whichever branch ran.
+ *
+ * [partialAvailable] covers the case where the ordinary path cannot answer at
+ * all — a failed or empty radio request on a broken connection. One or two
+ * playable video rows are still better than silence, so they are kept rather
+ * than discarded because the replacement failed.
  */
 fun videoRadioFallbackStage(
     picked: Int,
     sameModeExhausted: Boolean,
     normalAvailable: Boolean,
     minimum: Int = MIN_VIDEO_RADIO_TRACKS,
+    partialAvailable: Boolean = false,
 ): VideoRadioFallback = when {
     picked >= minimum -> VideoRadioFallback.NONE
     !sameModeExhausted -> VideoRadioFallback.SAME_MODE
     normalAvailable -> VideoRadioFallback.NORMAL
+    partialAvailable && picked > 0 -> VideoRadioFallback.PARTIAL
     else -> VideoRadioFallback.EMPTY
 }
 

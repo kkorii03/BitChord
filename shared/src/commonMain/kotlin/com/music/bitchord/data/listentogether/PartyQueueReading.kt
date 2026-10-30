@@ -33,3 +33,14 @@ fun partyUpcomingAfter(queue: PartyQueue, playback: PartyPlayback, videoId: Stri
     val at = partyQueueIndexOf(queue, playback, videoId)
     return if (at < 0) emptyList() else queue.items.subList(at + 1, queue.items.size)
 }
+
+/**
+ * Whether a top-up's first row has really been added to the party queue.
+ *
+ * The queue keeps its history, so a video id that was played earlier is already
+ * present. Waiting for "the id exists" therefore returned at once even when the
+ * server had refused the new batch — the supplier then wrote the rows off as
+ * queued and never retried. A new occurrence is what an accepted add produces.
+ */
+fun partyTopUpEchoed(before: List<PartyTrack>, videoId: String, after: List<PartyTrack>): Boolean =
+    after.count { it.videoId == videoId } > before.count { it.videoId == videoId }

@@ -31,4 +31,18 @@ class AutoplayFallbackTest {
         assertFalse(autoplayQueueNeedsRefresh(true, true, 0, 1, false))
         assertFalse(autoplayQueueNeedsRefresh(true, false, -1, 0, false))
     }
+
+    @Test
+    fun `repeat one does not refresh a queue it will not advance through`() {
+        assertFalse(
+            autoplayQueueNeedsRefresh(
+                enabled = true,
+                repeatAll = false,
+                currentIndex = 2,
+                itemCount = 3,
+                loadInProgress = false,
+                repeatOne = true,
+            ),
+        )
+    }
 }

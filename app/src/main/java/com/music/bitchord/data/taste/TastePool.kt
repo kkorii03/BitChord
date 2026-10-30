@@ -146,8 +146,14 @@ object TastePool {
         .filter { track ->
             val tasteOf = taste.tracks[track.videoId] ?: return@filter false
             val suggested = tasteOf.lastSuggestedAt
+            val last = tasteOf.lastPlayedAt
+            // One play is still "rarely played", so a song heard an hour ago
+            // would otherwise come straight back as a rediscovery. The
+            // favourite half has always had this guard; a rediscovery is the
+            // same promise not to offer what the listener just heard.
             tasteOf.rating == TasteRating.LIKE &&
                 tasteOf.plays <= REDISCOVER_PLAY_LIMIT &&
+                (last <= 0L || last <= nowMs - ONE_DAY_MS) &&
                 (suggested <= 0L || suggested <= nowMs - ONE_DAY_MS)
         }
         .sortedBy { track -> taste.tracks[track.videoId]?.plays ?: 0.0 }

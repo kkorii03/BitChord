@@ -29,6 +29,7 @@ import com.music.bitchord.data.videoradio.VideoRadioFallback
 import com.music.bitchord.data.videoradio.VideoRadioSourceRows
 import com.music.bitchord.data.videoradio.VideoRadioSources
 import com.music.bitchord.data.videoradio.VideoSource
+import com.music.bitchord.data.videoradio.videoRadioFallbackStage
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -93,8 +94,10 @@ fun autoplayQueueNeedsRefresh(
     currentIndex: Int,
     itemCount: Int,
     loadInProgress: Boolean,
+    repeatOne: Boolean = false,
 ): Boolean = enabled &&
     !repeatAll &&
+    !repeatOne &&
     !loadInProgress &&
     currentIndex >= 0 &&
     currentIndex == itemCount - 1
@@ -135,7 +138,17 @@ suspend fun loadAutoplayTracks(
     sessionSong: Song? = null,
     sessionIds: Set<String> = emptySet(),
 ): Result<List<Song>> {
-    val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
+    val seed = youtubeSeedFor(seedSong) ?: run {
+        // A module track has no YouTube id of its own and the catalogue search
+        // found no match. Say so: an empty batch here used to look exactly like
+        // a station that answered with nothing.
+        TrackLog.d(
+            "BitChord",
+            "autoplay: no youtube seed for ${seedSong.videoId}",
+            about = seedSong.videoId,
+        )
+        return Result.success(emptyList())
+    }
     val mode = videoRadioModeFor(seedSong)
     // A shared queue is one running order for everyone; a per-listener video
     // station would make that order depend on whose phone topped it up.
@@ -147,7 +160,7 @@ suspend fun loadAutoplayTracks(
     // Offline the only video songs that can play are the downloaded ones; no
     // station request is worth starting just to fail.
     if (videoWanted && offline) {
-        return loadOfflineVideoRadio(seedSong, existing, sessionSong, limit)
+        return loadOfflineVideoRadio(seedSong, existing, sessionSong, limit, sessionIds)
     }
 
     if (videoWanted) {
@@ -161,7 +174,14 @@ suspend fun loadAutoplayTracks(
         var sourceSongs = sourceRows.songs
         var sourceMap = sourceRows.sources.toMutableMap()
         var usedSameMode = false
-        var pick = pickVideoRadio(seedSong, sourceSongs, existing, sessionSong, sourceMap)
+        var pick = pickVideoRadio(
+            seedSong,
+            sourceSongs,
+            existing,
+            sessionSong,
+            sourceMap,
+            sessionIds,
+        )
         var radioResult: Result<List<Song>>? = null
 
         if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS) {
@@ -175,6 +195,7 @@ suspend fun loadAutoplayTracks(
                     existing,
                     sessionSong,
                     merged.sources,
+                    sessionIds,
                 )
                 if (more.ordered.size > pick.ordered.size) {
                     pick = more
@@ -205,6 +226,7 @@ suspend fun loadAutoplayTracks(
                     existing,
                     sessionSong,
                     merged.sources,
+                    sessionIds,
                 )
                 if (more.ordered.size > pick.ordered.size) {
                     pick = more
@@ -225,13 +247,36 @@ suspend fun loadAutoplayTracks(
         val fallbackLog = { stage: VideoRadioFallback ->
             TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
         }
-        val fallbackRadio = radioResult
-            ?.getOrElse { return Result.failure(it) }
-            ?: YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+        val fallback = radioResult ?: try {
+            YtMusicRepository.radio(seed)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            Result.failure(failure)
+        }
+        val fallbackSongs = fallback.getOrNull()
+        if (fallbackSongs.isNullOrEmpty()) {
+            // The ordinary path could not answer — a failed or empty request on
+            // a broken connection. A thin video pick is still playable, and the
+            // offline path already keeps one for the same reason: silence is
+            // worse than two songs. Only give up when there is nothing at all.
+            val stage = videoRadioFallbackStage(
+                picked = pick.ordered.size,
+                sameModeExhausted = true,
+                normalAvailable = false,
+                partialAvailable = true,
+            )
+            fallbackLog(stage)
+            if (stage == VideoRadioFallback.PARTIAL) {
+                return Result.success(videoRadioRows(pick, sourceSongs, seedSong, limit))
+            }
+            return fallback.exceptionOrNull()?.let { Result.failure(it) }
+                ?: Result.success(emptyList())
+        }
         return loadNormalAutoplayTracks(
             existing = existing,
             seedSong = seedSong,
-            radio = fallbackRadio,
+            radio = fallbackSongs,
             limit = limit,
             sessionSong = sessionSong,
             sessionIds = sessionIds,
@@ -276,12 +321,13 @@ private suspend fun loadOfflineVideoRadio(
     existing: List<Song>,
     sessionSong: Song?,
     limit: Int,
+    sessionIds: Set<String>,
 ): Result<List<Song>> {
     val (downloaded, pick) = withContext(Dispatchers.IO) {
         val rows = Downloads.savedMetadataSnapshot().keys
             .mapNotNull { Downloads.savedSongFor(it) }
             .filter { it.isVideo }
-        rows to pickVideoRadio(seedSong, rows, existing, sessionSong)
+        rows to pickVideoRadio(seedSong, rows, existing, sessionSong, sessionIds = sessionIds)
     }
     val stage = when {
         pick.ordered.isEmpty() -> VideoRadioFallback.EMPTY

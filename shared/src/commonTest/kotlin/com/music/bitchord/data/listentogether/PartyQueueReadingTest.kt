@@ -2,6 +2,8 @@ package com.music.bitchord.data.listentogether
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Where the playing track stands in a party queue that keeps its history — and so can hold that
@@ -47,5 +49,31 @@ class PartyQueueReadingTest {
         assertEquals(-1, partyQueueIndexOf(q, PartyPlayback(), "z"))
         assertEquals(emptyList(), partyUpcomingAfter(q, PartyPlayback(), "z"))
         assertEquals(-1, partyQueueIndexOf(q, PartyPlayback(), null))
+    }
+
+    @Test
+    fun anIdAlreadyInTheHistoryIsNotProofThatATopUpLanded() {
+        // The queue keeps history, so the first suggestion may have been played
+        // long before. A refused add leaves the count unchanged and must not
+        // look accepted.
+        val before = listOf(PartyTrack("played"), PartyTrack("current"))
+        val after = before + PartyTrack("other")
+
+        assertFalse(partyTopUpEchoed(before, "played", after))
+    }
+
+    @Test
+    fun aSecondOccurrenceOfTheFirstSuggestionIsTheAcceptedAdd() {
+        val before = listOf(PartyTrack("played"), PartyTrack("current"))
+        val after = before + PartyTrack("played")
+
+        assertTrue(partyTopUpEchoed(before, "played", after))
+    }
+
+    @Test
+    fun aSuggestionNeverSeenBeforeLandsWithItsFirstOccurrence() {
+        val before = listOf(PartyTrack("current"))
+
+        assertTrue(partyTopUpEchoed(before, "new", before + PartyTrack("new")))
     }
 }

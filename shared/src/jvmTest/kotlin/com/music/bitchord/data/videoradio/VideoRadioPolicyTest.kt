@@ -433,4 +433,28 @@ class VideoRadioPolicyTest {
         assertEquals("partial", VideoRadioFallback.PARTIAL.wire)
     }
 
+    @Test
+    fun `a thin video pick is kept when the normal fallback cannot answer`() {
+        // A broken or empty ordinary radio must not throw away the one or two
+        // video rows that are already playable.
+        assertEquals(
+            VideoRadioFallback.PARTIAL,
+            videoRadioFallbackStage(
+                picked = 2,
+                sameModeExhausted = true,
+                normalAvailable = false,
+                partialAvailable = true,
+            ),
+        )
+        assertEquals(
+            VideoRadioFallback.EMPTY,
+            videoRadioFallbackStage(
+                picked = 0,
+                sameModeExhausted = true,
+                normalAvailable = false,
+                partialAvailable = true,
+            ),
+        )
+    }
+
 }
