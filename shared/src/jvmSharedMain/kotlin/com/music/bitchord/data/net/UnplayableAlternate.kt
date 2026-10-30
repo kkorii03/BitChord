@@ -51,4 +51,19 @@ object UnplayableAlternate {
         if (unplayable) return null
         return candidate
     }
+
+    /**
+     * The part of [budgetMs] still available for the replacement search after
+     * [elapsedMs] has already passed since the definitive verdict.
+     *
+     * The 2.5 s replacement budget is for the listener's silence, not for one
+     * request: work before the search (reading the cache, a download record)
+     * comes out of the same allowance. A negative or already-spent result is
+     * zero, which means skip now rather than start a search that can only
+     * outlive the budget.
+     */
+    fun searchBudgetMs(elapsedMs: Long, budgetMs: Long): Long {
+        if (budgetMs <= 0L) return 0L
+        return (budgetMs - elapsedMs.coerceAtLeast(0L)).coerceIn(0L, budgetMs)
+    }
 }

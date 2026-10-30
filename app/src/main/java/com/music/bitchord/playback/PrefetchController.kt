@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -8,6 +9,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
@@ -217,6 +219,7 @@ internal class PrefetchController(
         alternatePreResolveJob?.cancel()
         alternatePreResolveFor = song.videoId
         alternatePreResolveJob = scope.launch(TrackLog.about(song.videoId)) {
+            val startedAt = SystemClock.elapsedRealtime()
             val reason = StreamResolver.unplayableReason(song.videoId) ?: withContext(Dispatchers.IO) {
                 try {
                     StreamResolver.resolve(song.videoId)
@@ -232,19 +235,36 @@ internal class PrefetchController(
             // search is still running. A found alternate replaces the row
             // with its own id, which the mark does not cover.
             StreamResolver.markUnplayable(song.videoId, reason)
-            val alternate = withContext(Dispatchers.IO) {
-                // This is the read-ahead half of the same verdict the playback
-                // path handles. It must use the definitive budget too, or the
-                // next track's row can sit here for the old 12 s while the
-                // playback path is already searching for the same alternate.
-                withTimeoutOrNull(definitiveAlternateTimeoutMs) {
-                    YtMusicRepository.findAlternateRecording(song, setOf(song.videoId))
+            // The replacement budget belongs to the listener's silence, not to
+            // one request: resolving the id above comes out of the same 2.5 s.
+            val budget = UnplayableAlternate.searchBudgetMs(
+                elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                budgetMs = definitiveAlternateTimeoutMs,
+            )
+            val alternate = if (budget <= 0L) {
+                null
+            } else {
+                withContext(Dispatchers.IO) {
+                    // This is the read-ahead half of the same verdict the
+                    // playback path handles. It must use the definitive budget
+                    // too, or the next track's row can sit here for the old 12 s
+                    // while the playback path is already searching for the same
+                    // alternate.
+                    withTimeoutOrNull(budget) {
+                        YtMusicRepository.findAlternateRecording(song, setOf(song.videoId))
+                    }
                 }
             }
             if (alternate == null) {
                 TrackLog.w(
                     "BitChord",
                     "unplayable: ${song.videoId} $reason -> skip",
+                    about = song.videoId,
+                )
+                TrackLog.i(
+                    "BitChord",
+                    "unplayable timing: ${song.videoId} next-prep skip after " +
+                        "${SystemClock.elapsedRealtime() - startedAt}ms",
                     about = song.videoId,
                 )
                 return@launch
@@ -257,6 +277,12 @@ internal class PrefetchController(
                 TrackLog.w(
                     "BitChord",
                     "unplayable: ${song.videoId} $reason -> alt ${alternate.videoId}",
+                    about = song.videoId,
+                )
+                TrackLog.i(
+                    "BitChord",
+                    "unplayable timing: ${song.videoId} next-prep alt ${alternate.videoId} " +
+                        "after ${SystemClock.elapsedRealtime() - startedAt}ms",
                     about = song.videoId,
                 )
                 live.replaceMediaItem(index, swapToAlternate(live.getMediaItemAt(index), alternate))
