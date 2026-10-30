@@ -195,6 +195,18 @@ class CrossfadeController(
      */
     private val onArmIncoming: (MediaItem, String?) -> Unit = { _, _ -> },
     /**
+     * Last chance to change the incoming queue item before the standby opens
+     * it.
+     *
+     * A track whose lossless copy was verified ahead of playback is already
+     * pinned in [StreamChoice][com.music.bitchord.playback.StreamChoice], but
+     * the queue entry still carries the plain URI. Re-pointing it here — with
+     * the upgrade marker — means the standby opens the verified copy from its
+     * first frame instead of buffering Opus and being swapped later. The item
+     * keeps its media id and queue identity; only the rendition changes.
+     */
+    private val prepareIncomingItem: (MediaItem) -> MediaItem = { it },
+    /**
      * A smooth headroom trim for both players while two tracks overlap:
      * `1 / sqrt(incomingGain + outgoingGain)`, 1 otherwise.
      *
@@ -671,6 +683,54 @@ class CrossfadeController(
      * this to clear rather than proceed anyway.
      */
     fun isTransitioning(): Boolean = phase != Phase.IDLE
+
+    /**
+     * Whether the standby is loaded for an incoming track but the blend has not
+     * started. Only in this window can the standby be reloaded without the
+     * listener hearing anything.
+     */
+    fun isArming(): Boolean = phase == Phase.ARMING && !handedOff
+
+    /**
+     * Reloads an armed standby with [replacement] in place of the incoming
+     * track. Used when a verified lossless copy lands after the transition was
+     * armed but before it starts: the standby was buffering the lossy copy and
+     * would otherwise hand that over. Nothing is audible yet, so stopping and
+     * re-preparing the standby costs only the decoder it was holding.
+     *
+     * @return whether the standby was reloaded.
+     */
+    fun rearmIncoming(replacement: MediaItem): Boolean {
+        if (!isArming()) return false
+        val out = outgoing ?: return false
+        val into = incoming ?: return false
+        val index = incomingItemIndex
+        if (index !in 0 until out.mediaItemCount) return false
+        if (out.getMediaItemAt(index).mediaId != replacement.mediaId) return false
+        if (into.currentMediaItem?.localConfiguration?.uri == replacement.localConfiguration?.uri) {
+            return false
+        }
+        val items = (0 until out.mediaItemCount).map { i ->
+            if (i == index) replacement else out.getMediaItemAt(i)
+        }
+        into.stop()
+        into.clearMediaItems()
+        into.skipSilenceEnabled = out.skipSilenceEnabled
+        into.repeatMode = out.repeatMode
+        into.shuffleModeEnabled = out.shuffleModeEnabled
+        into.applyPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
+        into.volume = 0f
+        into.setMediaItems(items, index, incomingCueTimeMs)
+        val after = into.nextMediaItemIndex
+        val afterId = if (after == C.INDEX_UNSET) null else items.getOrNull(after)?.mediaId
+        onArmIncoming(replacement, afterId)
+        into.playWhenReady = false
+        into.prepare()
+        armStartedAt = SystemClock.elapsedRealtime()
+        armDeadline = armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
+            CrossfadeArmPolicy.armTimeoutMs(rampSteps * rampStepMs)
+        return true
+    }
 
     /** Applies the listener's speed and pitch without exposing AudioTrack's parameter-change click. */
     fun applyPlaybackSpeed(speed: Float, pitchSemitones: Int = AppSettings.pitchSemitones.value) {
@@ -1525,7 +1585,10 @@ class CrossfadeController(
         incomingWrapsToStart = nextIndex == 0 && out.currentMediaItemIndex == out.mediaItemCount - 1
 
         val t0 = SystemClock.elapsedRealtimeNanos()
-        val items = (0 until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        val items = (0 until out.mediaItemCount).map { index ->
+            val item = out.getMediaItemAt(index)
+            if (index == nextIndex) prepareIncomingItem(item) else item
+        }
         val copyDurationUs = (SystemClock.elapsedRealtimeNanos() - t0) / 1000L
         val perTrackUs = if (items.isNotEmpty()) copyDurationUs.toDouble() / items.size else 0.0
         Log.d(

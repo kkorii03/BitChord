@@ -2,6 +2,7 @@ package com.music.bitchord
 
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
+import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -91,5 +92,22 @@ class StreamChoiceTest {
         StreamChoice.remember("track-5", stream("aac.saavncdn.com"), substituted = true)
         StreamChoice.forget("track-5")
         assertNull(StreamChoice.of("track-5"))
+    }
+
+    /**
+     * A revert reopens the previous URI, and the choice still names the
+     * replacement that was swapped in. Leaving it behind resolves the
+     * replacement URL under the old rendition key.
+     */
+    @Test
+    fun `reverting a replacement releases the choice that named it`() {
+        val replacement = stream("tidal.example")
+        QualityUpgrade.force("track-6", replacement)
+        StreamChoice.remember("track-6", replacement, substituted = true)
+
+        QualityUpgrade.forgetReverted("track-6")
+
+        assertNull(StreamChoice.of("track-6"))
+        assertEquals(false, StreamChoice.isSubstitute("track-6"))
     }
 }

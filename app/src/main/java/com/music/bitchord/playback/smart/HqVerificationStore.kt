@@ -44,6 +44,32 @@ object HqVerificationStore {
         val verified: Verified,
     )
 
+    /**
+     * The source a current-playing verdict has to be looked up under.
+     *
+     * The decoder's own source identity wins when it has one, because it names
+     * the stream actually being read. A snapshot without a source config id has
+     * not identified its source, so the recorded [com.music.bitchord.playback.StreamChoice] is the fallback
+     * rather than a reason to give up and call the clock unknown.
+     */
+    internal data class SourceIdentity(
+        val sourceConfigId: String,
+        val trackId: String?,
+    )
+
+    internal fun sourceIdentity(
+        snapshotSourceConfigId: String?,
+        snapshotTrackId: String?,
+        choiceSourceConfigId: String?,
+        choiceTrackId: String?,
+    ): SourceIdentity? {
+        if (snapshotSourceConfigId != null) {
+            return SourceIdentity(snapshotSourceConfigId, snapshotTrackId)
+        }
+        val choiceId = choiceSourceConfigId ?: return null
+        return SourceIdentity(choiceId, choiceTrackId)
+    }
+
     private const val PREFS = "hq_verification"
     private const val KEY_VERSION = "version"
     private const val KEY_VERIFIED = "verified"
