@@ -605,6 +605,14 @@ class CrossfadeController(
      */
     private var bailSilenceLeaving = false
 
+    /**
+     * When [driveBail] first applied [bailSilenceLeaving], so the skip ramp
+     * always starts at the real blend gain. Timing it from [bailStartedAt]
+     * instead let the first bail tick land up to [BAIL_STEP_MS] into the span,
+     * which could skip the whole ramp on a tick slower than the span.
+     */
+    private var skipSilenceStartedAt = 0L
+
     /** The session-side player during a bail, and the faded gain it starts from. */
     private var bailSurvivor: ExoPlayer? = null
     private var bailSurvivorFromGain = 1f
@@ -2320,7 +2328,14 @@ class CrossfadeController(
                 leaving === outgoing && ranOn(leaving) -> 0f
                 // Long enough to be a ramp, short enough that the same queue row
                 // the session just moved onto does not play twice underneath it.
-                bailSilenceLeaving -> CrossfadeGain.skipSilence(bailFromGain, now - bailStartedAt, SKIP_SILENCE_MS)
+                bailSilenceLeaving -> {
+                    if (skipSilenceStartedAt == 0L) skipSilenceStartedAt = now
+                    CrossfadeGain.skipSilence(
+                        bailFromGain,
+                        now - skipSilenceStartedAt,
+                        CrossfadeGain.SKIP_SILENCE_MS,
+                    )
+                }
                 else -> bailFromGain * fallGain(progress)
             }
             leaving.volume = fall
@@ -2387,6 +2402,7 @@ class CrossfadeController(
         bailSurvivorFromGain = survivor?.volume ?: 1f
         bailFromGain = leavingOnBail()?.volume ?: 0f
         bailSilenceLeaving = false
+        skipSilenceStartedAt = 0L
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
     }
@@ -3266,11 +3282,10 @@ class CrossfadeController(
         const val BAIL_MS = 120L
 
         /**
-         * Ramp for the armed incoming player when a skip before the handoff
-         * moves the session onto the same row. A few milliseconds is a ramp
-         * rather than a step, and short enough not to double-play.
+         * The armed incoming player's skip ramp lives in [CrossfadeGain] with
+         * the gain curve it drives, so its length can be tested against the
+         * real [BAIL_STEP_MS] cadence.
          */
-        const val SKIP_SILENCE_MS = 8L
 
         /**
          * The earliest, in wall-clock ms before the next item starts, that
@@ -3682,6 +3697,16 @@ class CrossfadeController(
  * new file so the production timing and gain stay in one place.
  */
 internal object CrossfadeGain {
+
+    /**
+     * Ramp for the armed incoming player when a skip before the handoff moves
+     * the session onto the same row. It has to be longer than one
+     * [CrossfadeController.BAIL_STEP_MS] bail tick (15 ms) or the first sample
+     * lands at the blend gain and the next is already past the span — the same
+     * step to `0f` the ramp exists to remove. Three ticks is still far too
+     * short to hear the same row play twice underneath.
+     */
+    const val SKIP_SILENCE_MS = 45L
 
     data class Gains(val incoming: Float, val outgoing: Float)
 

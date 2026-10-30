@@ -343,6 +343,7 @@ object AudioCache {
         analysisHeads.clear()
         analysisHeadsInFlight.clear()
         analysisHeadDeferredLogged.clear()
+        analysisHeadsHeldElsewhere.clear()
         analysisHeadWant.clear()
         stalledAnalysisHeads.clear()
         renditionKeys.clear()
@@ -469,6 +470,7 @@ object AudioCache {
                 uri.getQueryParameter("v")?.let {
                     analysisHeads.remove(it)
                     analysisHeadDeferredLogged.remove(it)
+                    analysisHeadsHeldElsewhere.remove(it)
                     stalledAnalysisHeads.remove(it)
                 }
             }
@@ -1033,6 +1035,7 @@ object AudioCache {
         analysisHeads.remove(mediaId)
         analysisHeadsInFlight.remove(mediaId)
         analysisHeadDeferredLogged.remove(mediaId)
+        analysisHeadsHeldElsewhere.remove(mediaId)
         analysisHeadWant.remove(mediaId)
         renditionKeys.remove(mediaId)
         var removed = 0
@@ -1265,6 +1268,7 @@ object AudioCache {
                         mediaId?.let { id ->
                             analysisHeads.remove(id)
                             analysisHeadDeferredLogged.remove(id)
+                            analysisHeadsHeldElsewhere.remove(id)
                             analysisHeadWant.remove(id)
                             stalledAnalysisHeads.remove(id)
                             renditionKeys.remove(id)
@@ -1404,7 +1408,12 @@ object AudioCache {
                     release(playbackKeysInUse, key)
                     if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
                 }
-                heldVideoId?.let { release(playbackVideoIdsInUse, it) }
+                heldVideoId?.let { videoId ->
+                    release(playbackVideoIdsInUse, videoId)
+                    // The held analysis claim waits for this event rather than
+                    // for the next idle tick to discover the lock is gone.
+                    retryAnalysisHeadIfReaderReleased(videoId)
+                }
                 heldKey = null
                 heldVideoId = null
             }
@@ -1488,6 +1497,24 @@ object AudioCache {
     /** Another writer — the player or read-ahead — already owns [videoId]'s entry. */
     private fun anotherWriterHas(videoId: String): Boolean =
         playerHoldsVideo(videoId) || (readAheadWrites[videoId] ?: 0) > 0
+
+    /**
+     * A reader just let go of [videoId]; if a head round was waiting on that
+     * lock, hand the claim back and ask again now.
+     *
+     * Called from the player's and read-ahead's own close paths, so the retry
+     * is driven by the release event rather than by the idle tick. If another
+     * holder remains, the claim and the marker stay where they are and the next
+     * release event tries again.
+     */
+    private fun retryAnalysisHeadIfReaderReleased(videoId: String) {
+        if (videoId !in analysisHeadsHeldElsewhere) return
+        if (anotherWriterHas(videoId)) return
+        analysisHeadsHeldElsewhere.remove(videoId)
+        analysisHeads.remove(videoId)
+        analysisHeadDeferredLogged.remove(videoId)
+        requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)))
+    }
 
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
         .setCache(cache)
@@ -1748,6 +1775,7 @@ object AudioCache {
                             fetchWhole(next)
                         } finally {
                             release(readAheadWrites, next)
+                            retryAnalysisHeadIfReaderReleased(next)
                         }
                     }
                 }
@@ -2269,6 +2297,16 @@ object AudioCache {
      */
     private val analysisHeadDeferredLogged = ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * Tracks whose head claim is kept while a live reader holds a partial
+     * entry. The claim is not dropped (dropping it made the idle tick retry
+     * every 250 ms, re-resolving the length and hitting the same cache lock for
+     * the minutes the player or read-ahead held the entry). It is released by
+     * the reader's own release event, or by the next request once
+     * [anotherWriterHas] is false — never by a timer.
+     */
+    private val analysisHeadsHeldElsewhere = ConcurrentHashMap.newKeySet<String>()
+
     /** Video ids with a head fetch in the air, so a tick cannot stack another on top. */
     private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
 
@@ -2546,11 +2584,15 @@ object AudioCache {
         // fail the write and leave this round "short" over data that went on
         // to be cached. Deferral must not consume the one-round claim: doing
         // that used to leave the track marked "already asked" forever, so once
-        // the other writer let go no later tick could start the fetch. The
-        // claim is taken only when the round may actually start.
+        // the other writer let go no later tick could start the fetch. A claim
+        // kept from a previous HeldElsewhere round is retried only after that
+        // writer releases, not on every tick: see
+        // [analysisHeadsHeldElsewhere].
         val anotherWriter = anotherWriterHas(videoId)
-        if (!analysisHeadMayClaim(
+        val heldForReader = videoId in analysisHeadsHeldElsewhere
+        if (!analysisHeadMayClaimOrRetry(
                 alreadyRequested = analysisHeads.containsKey(videoId),
+                heldForReader = heldForReader,
                 anotherWriterHas = anotherWriter,
                 inFlight = videoId in analysisHeadsInFlight,
             )
@@ -2562,8 +2604,17 @@ object AudioCache {
         }
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
-        // the wrong shape.
-        if (analysisHeads.putIfAbsent(videoId, true) != null) return
+        // the wrong shape. A held claim is already in the map, so reuse it
+        // instead of treating its presence as "already done".
+        if (heldForReader) {
+            analysisHeadsHeldElsewhere.remove(videoId)
+            // A concurrent release hook may have taken the claim just before
+            // this request; put it back defensively so the round still has its
+            // one claim behind it.
+            analysisHeads.putIfAbsent(videoId, true)
+        } else if (analysisHeads.putIfAbsent(videoId, true) != null) {
+            return
+        }
         analysisHeadDeferredLogged.remove(videoId)
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
@@ -2598,16 +2649,30 @@ object AudioCache {
                     AnalysisHeadClear.Proceed -> Unit
                     AnalysisHeadClear.AlreadyComplete -> return@launch
                     AnalysisHeadClear.HeldElsewhere -> {
-                        TrackLog.w(
-                            TAG,
-                            "analysis head round for $videoId skipped: partial is held elsewhere",
-                            videoId,
-                        )
-                        // The claim must not outlive a round that never fetched:
-                        // a partial entry held below `want` is exactly the
-                        // permanent `mix=none` dead-end. Release it so the next
-                        // tick can retry once the reader lets go.
-                        analysisHeads.remove(videoId)
+                        if (anotherWriterHas(videoId)) {
+                            // Keep the one-round claim and wait for the
+                            // reader's release event. Releasing it here made
+                            // every 250 ms idle tick launch a coroutine,
+                            // re-resolve contentLength and retry the same
+                            // locked removeResource for the minutes the
+                            // player/read-ahead held the entry.
+                            analysisHeadsHeldElsewhere.add(videoId)
+                            TrackLog.w(
+                                TAG,
+                                "analysis head round for $videoId deferred: partial is held by a reader",
+                                videoId,
+                            )
+                        } else {
+                            // The lock belongs to a writer this cache does not
+                            // track (an in-flight fetch). Release the claim so
+                            // the next request can retry; it is short-lived.
+                            analysisHeads.remove(videoId)
+                            TrackLog.w(
+                                TAG,
+                                "analysis head round for $videoId skipped: partial is held elsewhere",
+                                videoId,
+                            )
+                        }
                         return@launch
                     }
                 }

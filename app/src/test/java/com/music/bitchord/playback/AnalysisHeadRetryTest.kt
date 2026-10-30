@@ -85,4 +85,47 @@ class AnalysisHeadRetryTest {
             analysisHeadClearOutcome(held = 0, want = 1_000_000, removalSucceeded = false),
         )
     }
+
+    @Test
+    fun aClaimKeptWhileAReaderHeldThePartialIsNotRetriedUntilTheReaderLetsGo() {
+        // Dropping the claim on HeldElsewhere let the 250 ms idle tick launch
+        // a round, resolve contentLength and retry the locked removeResource
+        // for as long as the player/read-ahead held the entry.
+        assertFalse(
+            "a held claim must not start another round while the writer still has it",
+            analysisHeadMayClaimOrRetry(
+                alreadyRequested = true,
+                heldForReader = true,
+                anotherWriterHas = true,
+                inFlight = false,
+            ),
+        )
+        assertTrue(
+            "the held claim may start its one deferred round once the writer lets go",
+            analysisHeadMayClaimOrRetry(
+                alreadyRequested = true,
+                heldForReader = true,
+                anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+        assertFalse(
+            "never stack a round on one still in flight",
+            analysisHeadMayClaimOrRetry(
+                alreadyRequested = true,
+                heldForReader = true,
+                anotherWriterHas = false,
+                inFlight = true,
+            ),
+        )
+        assertFalse(
+            "a claim that was not held by a reader is still one round only",
+            analysisHeadMayClaimOrRetry(
+                alreadyRequested = true,
+                heldForReader = false,
+                anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+    }
 }

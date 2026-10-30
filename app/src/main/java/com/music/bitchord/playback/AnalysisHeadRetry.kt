@@ -44,6 +44,24 @@ internal fun analysisHeadMayClaim(
 ): Boolean = !alreadyRequested && !anotherWriterHas && !inFlight
 
 /**
+ * As [analysisHeadMayClaim], but a claim kept while the entry was held by a
+ * live reader may start its deferred round once that reader lets go.
+ *
+ * Releasing the claim on `HeldElsewhere` looked like it cured a dead end, but
+ * the idle tick asks again every 250 ms: for as long as the player or
+ * read-ahead held the entry the analyzer launched a coroutine, re-resolved the
+ * content length and retried the locked `removeResource` four times a second.
+ * Keeping the claim turns that into one event-driven retry at release time.
+ * The flag still prevents a second round for a claim that was not held.
+ */
+internal fun analysisHeadMayClaimOrRetry(
+    alreadyRequested: Boolean,
+    heldForReader: Boolean,
+    anotherWriterHas: Boolean,
+    inFlight: Boolean,
+): Boolean = !inFlight && !anotherWriterHas && (!alreadyRequested || heldForReader)
+
+/**
  * What an analysis-head round should do after inspecting the entry it is about
  * to write.
  *
