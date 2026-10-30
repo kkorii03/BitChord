@@ -1699,7 +1699,15 @@ object TrackMatcher {
     fun secondsOf(text: String?): Int? {
         val parts = text?.trim()?.split(':')?.takeIf { it.size in 2..3 } ?: return null
         val numbers = parts.map { it.trim().toIntOrNull() ?: return null }
-        return numbers.fold(0) { total, part -> total * 60 + part }.takeIf { it > 0 }
+        if (numbers.any { it < 0 }) return null
+        if (numbers.last() > 59) return null
+        if (numbers.size == 3 && numbers[1] > 59) return null
+        var total = 0L
+        for (part in numbers) {
+            total = total * 60 + part
+            if (total > Int.MAX_VALUE) return null
+        }
+        return total.toInt().takeIf { it > 0 }
     }
 
     // ── Context ─────────────────────────────────────────────────────────────
