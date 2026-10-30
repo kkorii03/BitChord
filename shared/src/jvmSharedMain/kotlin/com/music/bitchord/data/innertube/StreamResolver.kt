@@ -272,6 +272,8 @@ object StreamResolver {
      */
     suspend fun resolve(videoId: String): String {
         init
+        // The first playback request is the event that pays the cold warm-up.
+        InnerTubeXResolver.ensureWarm()
 
         val cached = recent[videoId]
         if (cached != null && MonotonicClock.nowMs() - cached.at < URL_TTL_MS) {
@@ -1379,6 +1381,9 @@ object StreamResolver {
         maxKbps: Int,
         requireM4a: Boolean = false,
     ): Stream {
+        // A download is a playback request too: it must not wait on a warm-up
+        // that was deliberately deferred until someone asked for a track.
+        InnerTubeXResolver.ensureWarm()
         val stream = downloadStream(videoId, maxKbps, requireM4a)
         val allowed = if (requireM4a) setOf("m4a") else setOf("m4a", "webm")
         check(stream.downloadExtension in allowed) {

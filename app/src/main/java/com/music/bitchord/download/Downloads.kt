@@ -28,6 +28,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.startup.AppForeground
 import com.music.bitchord.startup.StartupWork
 import com.music.bitchord.ui.FriendlyError
 import kotlinx.coroutines.CancellationException
@@ -411,33 +412,86 @@ object Downloads {
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
         }
-        _active.update { it + (id to DownloadState.Queued) }
+        publishQueuedIfPending(id)
         if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
             DownloadSession.queued(song, from)
         }
 
         val app = context.applicationContext
-        runCatching {
-            ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
-        }.onFailure {
-            // Refused only when the app has no window and no exemption, which
-            // means the queue has nothing to drain it and would sit there
-            // looking accepted forever.
-            Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) {
-                pending.remove(id)
-                qualityOverrides.remove(id)
-                hqOverrides.remove(id)
-                avoidSources.remove(id)
-                forceReplaceIds.remove(id)
-                youtubeOnlyIds.remove(id)
-                minimumTiers.remove(id)
-                automaticIds.remove(id)
-                mvSoundRepairIds.remove(id)
+        // Android refuses a foreground service started from a background
+        // process. Leave the track queued and let [onForeground] start the
+        // drain when the app next has a window; there is no timer.
+        if (AppForeground.isForeground) {
+            val startFailure = startService(app)
+            if (startFailure != null) {
+                // Refused only when the app has no window and no exemption,
+                // which means the queue has nothing to drain it and would sit
+                // there looking accepted forever.
+                Log.w(TAG, "could not start the download service: ${startFailure.message}")
+                if (abandonPending(id)) {
+                    fail(id, "지금은 다운로드를 시작할 수 없습니다")
+                }
             }
-            fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
     }
+
+    /**
+     * Publish Queued only while [videoId] is still waiting.
+     *
+     * [onForeground] can take the row back after the enqueue inserted it but
+     * before this publish; writing Queued then would overwrite the refusal
+     * while no pending row remains.
+     */
+    private fun publishQueuedIfPending(videoId: String) {
+        synchronized(lock) {
+            if (videoId !in pending) return
+            _active.update { it + (videoId to DownloadState.Queued) }
+        }
+    }
+
+    /**
+     * The app has a window again: drain anything queued while Android would
+     * not let this process start the download service.
+     */
+    fun onForeground(context: Context) {
+        if (!AppForeground.isForeground) return
+        val app = appContext ?: context.applicationContext
+        val waiting = synchronized(lock) { pending.keys.toList() }
+        if (waiting.isEmpty()) return
+        val startFailure = startService(app) ?: return
+        // The service that was to drain these never started. Leaving them
+        // Queued would look accepted forever, so take each back and show the
+        // same refusal a foreground enqueue shows. There is no timer; the next
+        // tap or foreground event can ask again.
+        Log.w(TAG, "could not start the download service: ${startFailure.message}")
+        for (id in waiting) {
+            if (abandonPending(id)) fail(id, "지금은 다운로드를 시작할 수 없습니다")
+        }
+    }
+
+    /**
+     * Take a track back out of the queue when its service could not start.
+     *
+     * Returns whether it was still waiting: a cancel that won the race must not
+     * be turned back into a failure row.
+     */
+    private fun abandonPending(videoId: String): Boolean = synchronized(lock) {
+        if (pending.remove(videoId) == null) return@synchronized false
+        qualityOverrides.remove(videoId)
+        hqOverrides.remove(videoId)
+        avoidSources.remove(videoId)
+        forceReplaceIds.remove(videoId)
+        youtubeOnlyIds.remove(videoId)
+        minimumTiers.remove(videoId)
+        automaticIds.remove(videoId)
+        mvSoundRepairIds.remove(videoId)
+        true
+    }
+
+    private fun startService(context: Context): Throwable? =
+        runCatching {
+            ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java))
+        }.exceptionOrNull()
 
     /**
      * Tracks asked for from the Cached songs folder, which are saved from the

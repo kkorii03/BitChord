@@ -1087,6 +1087,29 @@ object AudioCache {
             .maxByOrNull { it.length }
     }
 
+    /**
+     * Whether [mediaId] already has a whole lossless rendition on disk.
+     *
+     * The automatic high-quality pass leaves such a song alone: the copy
+     * answers the request, and fetching the verified pair again would only
+     * spend network and battery on bytes that are already here. A copy made
+     * for the watch is excluded, exactly as in [completeCopyOf].
+     */
+    fun hasCompleteLosslessCopy(mediaId: String): Boolean {
+        if (openedCache == null || mediaId.isBlank()) return false
+        return keysOf(mediaId)
+            .filterNot { it.endsWith("#watch") }
+            .any { key ->
+                val lossless = isLosslessRendition(key) ||
+                    containerOf(key)?.first?.let { it in LOSSLESS_CONTAINERS } == true
+                if (!lossless) return@any false
+                runCatching {
+                    val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
+                    length > 0 && cache.isCached(key, 0, length)
+                }.getOrDefault(false)
+            }
+    }
+
     /** The container of the entry [key], from the magic at its very start. */
     private fun containerOf(key: String): Pair<String, String>? {
         val head = cache.getCachedSpans(key)
@@ -1288,6 +1311,10 @@ object AudioCache {
      * — see [CacheRenditionChoice] — and when the lower-quality copy is dropped.
      */
     private const val META_HQ_LOSSLESS = "bc_hq_lossless"
+
+    /** Containers that are lossless whatever their metadata says. */
+    private val LOSSLESS_CONTAINERS = setOf("flac", "wav")
+
     private const val MAX_NOTED_SONGS = 256
     private const val COPY_BUFFER_BYTES = 64 * 1024
 

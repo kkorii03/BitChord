@@ -81,6 +81,18 @@ object HqLibraryPolicy {
     fun isBetter(current: HqTier, verified: HqTier): Boolean = verified.rank < current.rank
 
     /**
+     * Whether a copy on [currentTier] already answers a target proved on
+     * [verifiedTier].
+     *
+     * Equal answers: there is no better recording to fetch. A lower rung does
+     * not, even when it is lossless — a saved 16-bit FLAC must not stop a
+     * verified hi-res copy from being fetched. A null [currentTier] means no
+     * copy at all, so nothing is answered.
+     */
+    fun hasCopyAtLeastAsGood(currentTier: HqTier?, verifiedTier: HqTier): Boolean =
+        currentTier != null && currentTier.rank <= verifiedTier.rank
+
+    /**
      * The rung a downloaded file is actually on.
      *
      * The display badge only names the container and codec: every FLAC file

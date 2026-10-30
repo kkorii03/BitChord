@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,6 +37,27 @@ class HqLibraryPolicyTest {
             prefetchLimit = 500,
         )
         assertTrue(plan.replace.isEmpty())
+    }
+
+    @Test
+    fun `a saved lossless copy does not answer a higher verified rung`() {
+        assertFalse(
+            HqLibraryPolicy.hasCopyAtLeastAsGood(HqTier.LOSSLESS_16, HqTier.HI_RES_24_88),
+        )
+        assertFalse(
+            HqLibraryPolicy.hasCopyAtLeastAsGood(HqTier.HI_RES_24_44, HqTier.HI_RES_24_88),
+        )
+    }
+
+    @Test
+    fun `a copy at or above the verified rung answers it`() {
+        assertTrue(
+            HqLibraryPolicy.hasCopyAtLeastAsGood(HqTier.LOSSLESS_16, HqTier.LOSSLESS_16),
+        )
+        assertTrue(
+            HqLibraryPolicy.hasCopyAtLeastAsGood(HqTier.HI_RES_24_88, HqTier.LOSSLESS_16),
+        )
+        assertFalse(HqLibraryPolicy.hasCopyAtLeastAsGood(null, HqTier.LOSSLESS_16))
     }
 
     @Test
