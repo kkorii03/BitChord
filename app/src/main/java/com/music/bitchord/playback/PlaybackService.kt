@@ -305,6 +305,9 @@ private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 /** How long a song plays before the one after it has its lyrics translated. */
 private const val TRANSLATION_AHEAD_DELAY_MS = 12_000L
 
+/** A player message at 30 s is the paid-AI gate; this only covers a seek/pause race. */
+private const val TRANSLATION_AHEAD_AI_GRACE_MS = 5_000L
+
 /**
  * How long the next-song bundle waits for the incoming track's opening
  * analysis. Waiting is a suspension, not a poll; the analysis itself keeps
@@ -10130,9 +10133,54 @@ class PlaybackService : MediaLibraryService() {
                 this@PlaybackService,
                 next,
                 allowHeavy = plan == TranslationAheadPolicy.Plan.FULL,
+                paidGate = { awaitTranslationAheadAiGate() },
             )
         }
     }
+
+    /**
+     * The next row's paid timing engines wait until the current track has held
+     * the listener for [NextPrepPolicy.AI_MIN_PLAYED_MS]. This is the same gate
+     * the next-song bundle uses, on the player's own clock: a message at that
+     * position wakes the wait, never a polling loop. A track that will end
+     * before the gate opens keeps only its free measurement.
+     */
+    private suspend fun awaitTranslationAheadAiGate(): Boolean =
+        withContext(Dispatchers.Main.immediate) {
+            val exoPlayer = player ?: return@withContext false
+            val played = exoPlayer.currentPosition
+            val duration = exoPlayer.duration
+            val remaining = if (duration > 0L) {
+                NextPrepPolicy.remainingMs(duration, played)
+            } else {
+                Long.MAX_VALUE
+            }
+            // The current track's allowance ends twenty seconds before its
+            // handoff, so even an already-open gate must not start a paid
+            // request inside that window (a short or near-end track).
+            if (!NextPrepPolicy.canStartStep(remaining)) return@withContext false
+            if (NextPrepPolicy.aiGateOpen(played)) return@withContext true
+            val waitMs = NextPrepPolicy.AI_MIN_PLAYED_MS - played
+            // Waiting for the gate would only start the request at or after
+            // the handoff; keep the free measurement and skip the paid one.
+            if (remaining != Long.MAX_VALUE && remaining <= waitMs) {
+                return@withContext false
+            }
+            val reached = CompletableDeferred<Unit>()
+            val message = runCatching {
+                exoPlayer.createMessage { _, _ -> reached.complete(Unit) }
+                    .setPosition(NextPrepPolicy.AI_MIN_PLAYED_MS)
+                    .setDeleteAfterDelivery(true)
+                    .send()
+            }.getOrNull() ?: return@withContext false
+            try {
+                withTimeoutOrNull(waitMs + TRANSLATION_AHEAD_AI_GRACE_MS) {
+                    reached.await()
+                } != null
+            } finally {
+                message.cancel()
+            }
+        }
 
     /**
      * The pass for the track now playing, when the ahead look did not make it:
