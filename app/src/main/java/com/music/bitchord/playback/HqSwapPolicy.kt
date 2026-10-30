@@ -76,6 +76,22 @@ internal object HqSwapPolicy {
     }
 
     /**
+     * Whether the item a swap was started for is still the one in the player.
+     *
+     * The decision in [decide] is made before the replacement is prepared, and
+     * preparing plus blending can take seconds. A revert during that window
+     * pins the track and replaces the item, but neither changes its media id,
+     * index or player, so the old identity checks could not see it. The pin and
+     * the item's URI are read again at the last moment before the swap is
+     * adopted or reverted.
+     */
+    fun stillOwnsItem(
+        pinned: Boolean,
+        currentUri: String?,
+        expectedUri: String?,
+    ): Boolean = !pinned && currentUri == expectedUri
+
+    /**
      * The YouTube clock for a position on the copy that is playing now.
      *
      * A YouTube stream is already on that clock. A verified substitute is not:

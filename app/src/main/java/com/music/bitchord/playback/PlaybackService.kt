@@ -5750,16 +5750,23 @@ class PlaybackService : MediaLibraryService() {
         // the stream actually being read, while [StreamChoice] can still hold
         // the candidate an upgrade tried and lost. Reading the choice first
         // mapped the new lossless copy through the wrong offset in exactly
-        // that window.
-        if (snapshot != null) {
-            val sourceId = snapshot.sourceConfigId ?: return null
-            if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
-            return HqVerificationStore.get(this, mediaId, sourceId, snapshot.sourceTrackId)
-        }
-        val choice = StreamChoice.of(mediaId) ?: return null
-        val sourceId = choice.sourceConfigId ?: return null
-        if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
-        return HqVerificationStore.get(this, mediaId, sourceId, choice.trackId)
+        // that window. A snapshot without a source id has not spoken about the
+        // source, so the recorded choice is the fallback rather than a null
+        // verdict that makes the current clock look unknown.
+        val choice = if (snapshot?.sourceConfigId == null) StreamChoice.of(mediaId) else null
+        val identity = HqVerificationStore.sourceIdentity(
+            snapshotSourceConfigId = snapshot?.sourceConfigId,
+            snapshotTrackId = snapshot?.sourceTrackId,
+            choiceSourceConfigId = choice?.sourceConfigId,
+            choiceTrackId = choice?.trackId,
+        ) ?: return null
+        if (SourceRegistry.config(identity.sourceConfigId)?.kind == SourceKind.YOUTUBE) return null
+        return HqVerificationStore.get(
+            this,
+            mediaId,
+            identity.sourceConfigId,
+            identity.trackId,
+        )
     }
 
     /** Whether what is playing came from a source standing in for YouTube. */
@@ -5979,6 +5986,20 @@ class PlaybackService : MediaLibraryService() {
                 releaseStandby()
                 return@withContext false
             }
+            // The pin and the item are read again here, not only before the
+            // prepare: a revert can land during the prepare or the blend, and
+            // it leaves the media id, index and player unchanged. Without this
+            // the lossless player would still be adopted over the listener's
+            // choice.
+            if (!HqSwapPolicy.stillOwnsItem(
+                    pinned = OriginalVersion.isPinned(mediaId),
+                    currentUri = activePlayer.currentMediaItem?.localConfiguration?.uri?.toString(),
+                    expectedUri = previousUri,
+                )
+            ) {
+                releaseStandby()
+                return@withContext false
+            }
             val revertPosition = activePlayer.currentPosition.coerceAtLeast(0L)
             adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
             // The standby's decoder reported its format before the listener
@@ -6006,6 +6027,7 @@ class PlaybackService : MediaLibraryService() {
                 watchUpgrade(
                     mediaId = mediaId,
                     previousUri = previousUri,
+                    upgradedUri = upgradedUri,
                     position = revertPosition,
                     previousDuration = previousDuration,
                     previousFormat = previousFormat,
@@ -6057,6 +6079,7 @@ class PlaybackService : MediaLibraryService() {
             override fun onIsPlayingChanged(isPlaying: Boolean) = check()
             override fun onPlayerError(error: PlaybackException) = check()
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = check()
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) = check()
         }
         players.forEach { it.addListener(listener) }
         if (condition()) reached.complete(true)
@@ -7020,7 +7043,7 @@ class PlaybackService : MediaLibraryService() {
             StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
-            watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
+            watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat)
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
                 // slower lossless source is checked against its higher-quality
@@ -7431,6 +7454,7 @@ class PlaybackService : MediaLibraryService() {
     private fun watchUpgrade(
         mediaId: String,
         previousUri: String,
+        upgradedUri: String,
         position: Long,
         previousDuration: Long,
         previousFormat: StreamFormat?,
@@ -7442,30 +7466,46 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         scope.launch(TrackLog.about(mediaId)) {
-            val agreed = withTimeoutOrNull(UPGRADE_PROVE_MS) {
-                while (true) {
-                    val current = player?.takeIf { it.currentMediaItem?.mediaId == mediaId }
-                        ?: return@withTimeoutOrNull false
-                    val now = current.duration
-                    if (now > 0) return@withTimeoutOrNull abs(now - expectedDuration) <= upgradeLengthSlackMs
-                    // The failure this whole check exists for, caught when it
-                    // happens rather than at the ceiling: a replacement that
-                    // came up short does not raise an error, it reaches the
-                    // end of what it has and reports the track as over. That
-                    // is a decisive no, and waiting out the rest of the window
-                    // for it only delays the old stream coming back.
-                    if (current.playbackState == Player.STATE_ENDED) return@withTimeoutOrNull false
-                    delay(UPGRADE_PROVE_STEP_MS)
-                }
-                @Suppress("UNREACHABLE_CODE") false
-            }
-            if (agreed == true) {
-                onProven?.invoke()
-                return@launch
+            val activePlayer = player ?: return@launch
+            // Readiness is an event, not a clock. The old loop asked the player
+            // every 200ms for up to ten seconds, which is battery spent on an
+            // answer the player already broadcasts. The condition also stops on
+            // a pin or an item that is no longer the upgraded one, so a revert
+            // during the proof window ends the proof instead of being undone by
+            // it.
+            awaitPlayerCondition(UPGRADE_PROVE_MS, activePlayer) {
+                val current = player ?: return@awaitPlayerCondition true
+                val item = current.currentMediaItem
+                current !== activePlayer ||
+                    !HqSwapPolicy.stillOwnsItem(
+                        pinned = OriginalVersion.isPinned(mediaId),
+                        currentUri = item?.localConfiguration?.uri?.toString(),
+                        expectedUri = upgradedUri,
+                    ) ||
+                    current.duration > 0 ||
+                    current.playbackState == Player.STATE_ENDED
             }
             val player = player ?: return@launch
             val item = player.currentMediaItem ?: return@launch
-            if (item.mediaId != mediaId) return@launch
+            if (player !== activePlayer ||
+                item.mediaId != mediaId ||
+                !HqSwapPolicy.stillOwnsItem(
+                    pinned = OriginalVersion.isPinned(mediaId),
+                    currentUri = item.localConfiguration?.uri?.toString(),
+                    expectedUri = upgradedUri,
+                )
+            ) {
+                return@launch
+            }
+            val now = player.duration
+            // The failure this whole check exists for, caught when it happens
+            // rather than at the ceiling: a replacement that came up short does
+            // not raise an error, it reaches the end of what it has and reports
+            // the track as over. That is a decisive no.
+            if (now > 0 && abs(now - expectedDuration) <= upgradeLengthSlackMs) {
+                onProven?.invoke()
+                return@launch
+            }
             // State and buffered position alongside the length: a replacement
             // that loaded and disagreed about the track looks identical here
             // to one that never loaded at all, and only the second is a fault
@@ -7476,12 +7516,12 @@ class PlaybackService : MediaLibraryService() {
                     "${expectedDuration}ms (old=${previousDuration}ms, state=${player.playbackState}, " +
                     "buffered=${player.bufferedPosition}ms)",
             )
-            QualityUpgrade.forget(mediaId)
             // The FLAC/whatever claim recorded when the swap went out is no
             // longer what's playing — restore what was declared before it
             // (or clear it, if nothing was), so "stats for nerds" doesn't
             // keep calling the fallback lossless after the upgrade it
-            // borrowed that claim from got reverted.
+            // borrowed that claim from got reverted. Read before the choice is
+            // released below, because it names the source that was playing.
             if (previousFormat != null) {
                 val prevSource = StreamChoice.of(mediaId)?.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
                     ?: if (StreamChoice.isSubstitute(mediaId)) "Module" else "YouTube"
@@ -7489,6 +7529,11 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 NerdStats.clearDeclared(mediaId)
             }
+            // The choice still names the replacement, and the old URI is about
+            // to be reopened. Releasing it first makes that reopen resolve the
+            // previous rendition afresh instead of handing back the replacement
+            // URL under the old cache key.
+            QualityUpgrade.forgetReverted(mediaId)
             swappingMediaId = mediaId
             val abandoned = item.localConfiguration?.uri
             player.replaceMediaItem(

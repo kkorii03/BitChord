@@ -725,6 +725,22 @@ object QualityUpgrade {
     }
 
     /**
+     * Forgets a replacement that is being reverted, together with the choice
+     * that still names it.
+     *
+     * [forget] drops the forced stream, but [StreamChoice] keeps the
+     * replacement recorded when the swap went out. Reopening the previous URI
+     * with that choice in place resolves the replacement URL under the old
+     * rendition key, which can append a different file to a partial cache
+     * entry. The direct-YouTube path already releases both; this is the same
+     * hand-back for a revert onto the previous stream.
+     */
+    fun forgetReverted(mediaId: String) {
+        forget(mediaId)
+        StreamChoice.forget(mediaId)
+    }
+
+    /**
      * Tracks the listener has asked to upgrade themselves.
      *
      * The one exemption from [couldStillUpgrade]'s marker rule, and it needs to

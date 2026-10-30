@@ -137,4 +137,43 @@ class HqSwapPolicyTest {
         assertTrue(decision.allowed)
         assertEquals(41_500L, decision.targetPositionMs)
     }
+
+    /**
+     * The prepare and blend can take seconds, and a revert during that window
+     * changes neither the media id, the index nor the player. The pin is the
+     * only thing that says the listener overruled the swap.
+     */
+    @Test
+    fun `a pin made during the fade stops the replacement being adopted`() {
+        assertFalse(
+            HqSwapPolicy.stillOwnsItem(
+                pinned = true,
+                currentUri = "bitchord://watch?v=abc&q=hifi",
+                expectedUri = "bitchord://watch?v=abc&q=hifi",
+            ),
+        )
+    }
+
+    /** A revert replaces the item's URI under the same media id. */
+    @Test
+    fun `an item that changed under the swap is not adopted`() {
+        assertFalse(
+            HqSwapPolicy.stillOwnsItem(
+                pinned = false,
+                currentUri = "bitchord://watch?v=abc&direct_youtube=1&q=original",
+                expectedUri = "bitchord://watch?v=abc",
+            ),
+        )
+    }
+
+    @Test
+    fun `an unpinned item still on its original URI may finish the swap`() {
+        assertTrue(
+            HqSwapPolicy.stillOwnsItem(
+                pinned = false,
+                currentUri = "bitchord://watch?v=abc",
+                expectedUri = "bitchord://watch?v=abc",
+            ),
+        )
+    }
 }
