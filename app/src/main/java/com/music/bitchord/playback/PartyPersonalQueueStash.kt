@@ -130,6 +130,8 @@ object PartyPersonalQueueStash {
         val duration: String? = null,
         val album: String? = null,
         val explicit: Boolean? = null,
+        /** The uploader channel id from the player response, used by video radio. */
+        val channelId: String? = null,
         val video: Boolean = false,
         /** Video origin, kept when a video row was swapped to its catalogue release. */
         val videoOrigin: Boolean? = null,
@@ -151,6 +153,7 @@ object PartyPersonalQueueStash {
                 durationText = duration,
                 albumName = album,
                 isExplicit = explicit,
+                channelId = channelId,
                 isVideo = video,
                 isVideoOrigin = videoOrigin ?: video,
                 videoRadio = videoRadio,
@@ -181,6 +184,7 @@ object PartyPersonalQueueStash {
                 duration = song.durationText,
                 album = song.albumName,
                 explicit = song.isExplicit,
+                channelId = song.channelId,
                 video = song.isVideo,
                 videoOrigin = song.isVideoOrigin,
                 videoRadio = song.videoRadio,

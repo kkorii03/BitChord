@@ -269,6 +269,7 @@ internal object YouTubeWebParser {
             artist = item.subtitle,
             thumbnailUrl = item.thumbnailUrl,
             durationText = duration,
+            channelId = lockup.bylineChannelId(),
             isVideo = lockupIsVideo(lockup),
         )
     }
@@ -283,6 +284,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = item.thumbnailUrl,
             durationText = video.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
+            channelId = video.bylineChannelId(),
             isVideo = video.isVideoRow(),
         )
     }
@@ -297,6 +299,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = item.thumbnailUrl,
             durationText = video.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
+            channelId = video.bylineChannelId(),
             setVideoId = video.string("setVideoId"),
             isVideo = video.isVideoRow(),
         )
@@ -574,9 +577,61 @@ internal object YouTubeWebParser {
             thumbnailUrl = rowThumbnail(panel, videoId),
             durationText = panel.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
+            channelId = panel.bylineChannelId(),
             setVideoId = panel.string("playlistSetVideoId") ?: panel.string("setVideoId"),
             isVideo = panel.isVideoRow(),
         )
+    }
+
+    /**
+     * The uploader channel id a youtube.com row links to.
+     *
+     * The web renderers do not expose an owner id as a field; it is only the
+     * first browse endpoint on the byline. Reading it here keeps video radio
+     * from searching the uploader name and opening a same-named channel.
+     *
+     * A modern `lockupViewModel` has no byline runs at all: its credit lives in
+     * `metadata.contentMetadataViewModel.metadataRows` and is linked by
+     * `text.commandRuns`. Those rows are read second, and only a `UC…` browse
+     * id is accepted there so a linked album or playlist cannot be mistaken for
+     * the uploader.
+     */
+    private fun JsonObject.bylineChannelId(): String? {
+        val runs = findObject("longBylineText")?.findArray("runs")
+            ?: findObject("shortBylineText")?.findArray("runs")
+            ?: findObject("ownerText")?.findArray("runs")
+        val fromByline = runs?.firstNotNullOfOrNull { run ->
+            (run as? JsonObject)
+                ?.findObject("navigationEndpoint")
+                ?.findObject("browseEndpoint")
+                ?.string("browseId")
+                ?.takeIf { it.isNotBlank() }
+        }
+        return fromByline ?: lockupMetadataChannelId()
+    }
+
+    /** The channel id a modern lockup row puts on its metadata credit command. */
+    private fun JsonObject.lockupMetadataChannelId(): String? {
+        val rows = findObject("metadata")
+            ?.findObject("lockupMetadataViewModel")
+            ?.findObject("metadata")
+            ?.findObject("contentMetadataViewModel")
+            ?.findArray("metadataRows")
+            ?: return null
+        for (row in rows) {
+            val parts = (row as? JsonObject)?.findArray("metadataParts") ?: continue
+            for (part in parts) {
+                val text = (part as? JsonObject)?.findObject("text") ?: continue
+                val commands = text.findArray("commandRuns") ?: continue
+                for (command in commands) {
+                    val tap = (command as? JsonObject)?.findObject("onTap") ?: continue
+                    val browse = findFirst(tap, "browseEndpoint") ?: continue
+                    val id = browse.string("browseId")?.takeIf { it.startsWith("UC") }
+                    if (id != null) return id
+                }
+            }
+        }
+        return null
     }
 
     /**

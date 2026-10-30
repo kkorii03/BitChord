@@ -804,6 +804,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best() ?: videoThumbnailUrl(videoId),
             durationText = duration,
             artistId = credits.artistId ?: fallback.artistId,
+            channelId = credits.artistId ?: fallback.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists.ifEmpty { fallback.artists }),
             albumId = credits.albumId ?: fallback.albumId,
             albumName = credits.albumName ?: fallback.albumName,
@@ -858,6 +859,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best() ?: videoThumbnailUrl(videoId),
             durationText = duration,
             artistId = credits.artistId,
+            channelId = credits.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,
@@ -1295,6 +1297,20 @@ object InnertubeParser {
             }?.takeIf { it.videoId.isNotBlank() && it.videoId != videoId }
         }?.copy(isVideo = false, isVideoOrigin = true)
 
+    /**
+     * The uploader channel id a player response states.
+     *
+     * A `next`/search row can omit the owner id, and searching the uploader's
+     * name can open a different channel that shares it. `videoDetails.channelId`
+     * is the upload's own owner, so video radio can fetch that channel directly.
+     * The microformat's `externalChannelId` is the same fact for responses that
+     * omit `videoDetails`.
+     */
+    fun videoChannelId(player: JsonElement?): String? =
+        player?.o("videoDetails")?.s("channelId")?.takeIf { it.isNotBlank() }
+            ?: player?.o("microformat")?.o("playerMicroformatRenderer")
+                ?.s("externalChannelId")?.takeIf { it.isNotBlank() }
+
     /** Tracks of a watch queue (`next` response) — the AutoPlay radio mix. */
     fun parseWatchQueue(root: JsonElement): List<Song> {
         val out = LinkedHashMap<String, Song>()
@@ -1319,6 +1335,13 @@ object InnertubeParser {
         // Those same runs link out to the artist and album pages, which is
         // how a track started from the queue knows where it came from.
         val credits = creditsOf(bylineRuns)
+        // youtube.com bylines carry the uploader's channel endpoint without a
+        // Music page type, so read the first linked browse id directly. This is
+        // the id video radio must use instead of searching the uploader name.
+        val bylineChannelId = bylineRuns.firstNotNullOfOrNull { run ->
+            run.o("navigationEndpoint").o("browseEndpoint").s("browseId")
+                ?.takeIf { it.isNotBlank() }
+        }
         val videoType = renderer.findString("musicVideoType")
         return Song(
             videoId = videoId,
@@ -1328,6 +1351,7 @@ object InnertubeParser {
                 ?: videoThumbnailUrl(videoId),
             durationText = renderer.o("lengthText").text().takeIf { it.isNotBlank() },
             artistId = credits.artistId,
+            channelId = bylineChannelId ?: credits.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,
