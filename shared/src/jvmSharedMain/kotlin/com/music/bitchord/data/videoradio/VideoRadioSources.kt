@@ -35,7 +35,10 @@ object VideoRadioSources {
 
     /** The `next` watch queue for `list=RD<videoId>`, as youtube.com serves it. */
     suspend fun mix(seedVideoId: String): List<Song> {
-        if (seedVideoId.isBlank()) return emptyList()
+        if (seedVideoId.isBlank()) {
+            Log.w(TAG, "video-radio mix skipped: blank seed")
+            return emptyList()
+        }
         cached(mixCache, seedVideoId)?.let { return it }
         val songs = safe("video-radio mix") { mixLookup(seedVideoId) }.orEmpty()
         if (songs.isNotEmpty()) {
@@ -64,7 +67,10 @@ object VideoRadioSources {
     suspend fun channelSongs(channelName: String, channelId: String? = null): List<Song> {
         val name = channelName.trim()
         val explicitId = channelId?.trim()?.takeIf { it.isNotEmpty() }
-        if (explicitId == null && name.isEmpty()) return emptyList()
+        if (explicitId == null && name.isEmpty()) {
+            Log.w(TAG, "video-radio channel skipped: no id and no uploader name")
+            return emptyList()
+        }
         val id = explicitId ?: run {
             // A row without the owner id still has to play. Say so, because
             // this is the one path where a same-named channel can be opened.
@@ -126,11 +132,15 @@ object VideoRadioSources {
 
     /** The seed's own channel id, from the row or else from its player response. */
     private suspend fun resolveChannelId(seedVideoId: String, channelId: String?): String? {
-        channelId?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        channelId?.trim()?.takeIf { it.isNotEmpty() }?.let { explicit ->
+            if (seedVideoId.isNotBlank()) storeChannelId(seedVideoId, explicit)
+            return explicit
+        }
         if (seedVideoId.isBlank()) return null
+        cachedChannelId(seedVideoId)?.let { return it }
         return safe("video-radio channel id from player") {
             videoChannelLookup(seedVideoId)?.trim()?.takeIf { it.isNotEmpty() }
-        }
+        }?.also { storeChannelId(seedVideoId, it) }
     }
 
     private suspend fun <T> safe(label: String, block: suspend () -> T): T? =
@@ -156,7 +166,28 @@ object VideoRadioSources {
         synchronized(cache) { cache[key] = Cached(System.currentTimeMillis(), songs) }
     }
 
+    /**
+     * The channel id resolved for a seed, so a later top-up does not ask the
+     * player again just because the row was written before the id existed.
+     */
+    private fun cachedChannelId(seedVideoId: String): String? = synchronized(channelIdCache) {
+        val hit = channelIdCache[seedVideoId] ?: return@synchronized null
+        if (System.currentTimeMillis() - hit.at > CACHE_MS) {
+            channelIdCache.remove(seedVideoId)
+            return@synchronized null
+        }
+        hit.channelId
+    }
+
+    private fun storeChannelId(seedVideoId: String, channelId: String) {
+        synchronized(channelIdCache) {
+            channelIdCache[seedVideoId] = CachedChannelId(System.currentTimeMillis(), channelId)
+        }
+    }
+
     private data class Cached(val at: Long, val songs: List<Song>)
+
+    private data class CachedChannelId(val at: Long, val channelId: String)
 
     private class SongCache(private val limit: Int) :
         LinkedHashMap<String, Cached>(limit, 0.75f, true) {
@@ -164,8 +195,15 @@ object VideoRadioSources {
             size > limit
     }
 
+    private class ChannelIdCache(private val limit: Int) :
+        LinkedHashMap<String, CachedChannelId>(limit, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedChannelId>) =
+            size > limit
+    }
+
     private val mixCache = SongCache(CACHE_ENTRIES)
     private val channelCache = SongCache(CACHE_ENTRIES)
+    private val channelIdCache = ChannelIdCache(CACHE_ENTRIES)
 
     /** Replaceable so the id-before-name rule can be exercised without a network. */
     @Volatile
@@ -197,6 +235,7 @@ object VideoRadioSources {
     internal fun resetForTest() {
         synchronized(mixCache) { mixCache.clear() }
         synchronized(channelCache) { channelCache.clear() }
+        synchronized(channelIdCache) { channelIdCache.clear() }
         mixLookup = { seed -> YouTubeFallback.playlistPage("RD$seed").songs }
         videoChannelLookup = { videoId ->
             InnertubeParser.videoChannelId(Innertube.playerResponse(videoId))

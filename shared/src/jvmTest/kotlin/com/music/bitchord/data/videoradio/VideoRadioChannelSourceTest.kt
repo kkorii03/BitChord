@@ -83,4 +83,22 @@ class VideoRadioChannelSourceTest {
         assertEquals(VideoSource.CHANNEL, result.sources["channel-1"])
         assertTrue(result.sources.isNotEmpty())
     }
+
+    @Test
+    fun `the player channel lookup is cached for the seed`() = runBlocking {
+        var lookups = 0
+        VideoRadioSources.mixLookup = { emptyList() }
+        VideoRadioSources.videoChannelLookup = {
+            lookups++
+            "UCfromplayer"
+        }
+        VideoRadioSources.artistResolver = { error("name search must not run") }
+        VideoRadioSources.channelBrowse = { _, _ -> JsonObject(emptyMap()) }
+        VideoRadioSources.channelParser = { rows("player-1") }
+
+        VideoRadioSources.collect("seed", "Same Name")
+        VideoRadioSources.collect("seed", "Same Name")
+
+        assertEquals(1, lookups)
+    }
 }

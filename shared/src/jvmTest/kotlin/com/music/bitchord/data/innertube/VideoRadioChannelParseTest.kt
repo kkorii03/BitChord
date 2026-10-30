@@ -77,4 +77,72 @@ class VideoRadioChannelParseTest {
 
         assertEquals("UCmicroOwner", InnertubeParser.videoChannelId(player))
     }
+
+    @Test
+    fun `a lockup row reads the uploader channel id from metadata command runs`() {
+        val song = YouTubeWebParser.parsePlaylist(
+            json(
+                """
+                {"contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[
+                  {"itemSectionRenderer":{"contents":[
+                    {"lockupViewModel":{
+                      "contentId":"lockupChan1",
+                      "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+                      "metadata":{"lockupMetadataViewModel":{
+                        "title":{"content":"A Cover"},
+                        "metadata":{"contentMetadataViewModel":{"metadataRows":[
+                          {"metadataParts":[{"text":{
+                            "content":"Real Uploader",
+                            "commandRuns":[{"startIndex":0,"length":13,"onTap":{"innertubeCommand":{
+                              "browseEndpoint":{"browseId":"UClockupOwner","canonicalBaseUrl":"/@real-uploader"}
+                            }}}]
+                          }}]},
+                          {"metadataParts":[{"text":{"content":"1M views"}}]}
+                        ]}}
+                      }}
+                    }}
+                  ]}}
+                ]}}}}]}}}
+                """.trimIndent(),
+            ),
+        ).songs.single()
+
+        assertEquals("UClockupOwner", song.channelId)
+    }
+
+    @Test
+    fun `a playlist video row keeps the uploader channel id`() {
+        val song = YouTubeWebParser.parsePlaylist(
+            json(
+                """
+                {
+                  "contents": {
+                    "twoColumnBrowseResultsRenderer": {
+                      "secondaryContents": {
+                        "playlistVideoListRenderer": {
+                          "contents": [
+                            {"playlistVideoRenderer": {
+                              "videoId": "playlistRow1",
+                              "title": {"runs": [{"text": "A Video"}]},
+                              "shortBylineText": {"runs": [
+                                {
+                                  "text": "Real Uploader",
+                                  "navigationEndpoint": {
+                                    "browseEndpoint": {"browseId": "UCplaylistOwner"}
+                                  }
+                                }
+                              ]}
+                            }}
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+                """.trimIndent(),
+            ),
+        ).songs.single()
+
+        assertEquals("UCplaylistOwner", song.channelId)
+    }
 }

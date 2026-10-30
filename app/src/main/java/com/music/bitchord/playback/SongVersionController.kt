@@ -728,6 +728,7 @@ internal class SongVersionController(
             durationText = meta?.durationText ?: song.durationText,
             artistId = song.artistId,
             artists = song.artists,
+            channelId = song.channelId,
             albumId = song.albumId,
             albumName = meta?.albumName ?: song.albumName,
             setVideoId = song.setVideoId,
