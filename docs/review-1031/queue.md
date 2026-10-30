@@ -8,7 +8,8 @@
 - 1차 수정으로 재생 큐의 실제 결함 2건을 고쳤다.
   - **HIGH**: 로컬 앨범/재생목록(bounded context)에서 예정된 CONTEXT 행을 삭제하거나 드래그로 순서를 바꾸면 논리 큐와 실제 큐가 어긋나, 다음 창 보충(top-up)이 영구히 멈추고 재생이 창 끝에서 끊기던 문제.
   - **MEDIUM**: 이미 큐에 있는 곡(특히 재생 중인 곡 메뉴)을 "다음에 재생/마지막에 재생"하면 새 행이 기존 행의 `queueEntryId`를 재사용해 큐 정체성이 중복되던 문제.
-- 2차 수정(이번)으로 검토 지적 MEDIUM 3건을 모두 고쳤다(8절): 셔플 토글 시 수동 드래그 순서 유실, 반복 경계에서의 드래그가 논리 창에 반영되지 않던 문제, 재생 중인 행 삭제가 반복 주기에서 되살아나는 문제.
+- 2차 수정으로 검토 지적 MEDIUM 3건을 모두 고쳤다(8절): 셔플 토글 시 수동 드래그 순서 유실, 반복 경계에서의 드래그가 논리 창에 반영되지 않던 문제, 재생 중인 행 삭제가 반복 주기에서 되살아나는 문제.
+- 3차 수정(이번)으로 새 검토 지적 HIGH 1건·MEDIUM 1건을 모두 고쳤다(9절): 반복 경계에서 재생 중인 행을 삭제하면 이미 물리화된 다음 주기 사본이 계속 재생되던 문제, 다음 주기 드래그 뒤 더 먼 주기의 계획 순서가 낡은 채 남던 문제.
 - 고치지 못한 HIGH/MEDIUM은 아래 4번에 이유와 필요한 작업을 적었다.
 - 기존 안전 규칙은 삭제·약화하지 않았다. 특히 `SyncSafetyPolicy`의 ko-101 동기화 킬 스위치 기본값은 그대로다.
 
@@ -170,3 +171,74 @@
 - V1 (manualOrder 유실): **고침**. 8절 V1, 테스트 통과.
 - V2 (반복 경계 드래그): **고침**. 8절 V2, 테스트 통과.
 - V3 (재생 중 행 삭제): **고침**. 8절 V3, 테스트 통과.
+
+## 9. 3차 수정 — 검토 지적 HIGH 1건·MEDIUM 1건
+
+### H1. HIGH — 반복 ALL 경계에서 재생 중인 행을 삭제하면 다음 주기 사본이 계속 재생됨
+
+- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:8344` (`noteBoundedContextRowsRemoved`), `:8376` (`pruneExcludedBoundedRows`), `:11105` (`SessionPlayer.removeMediaItem`), `:11134` (`SessionPlayer.removeMediaItems`)
+- 보조: `shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueWindow.kt:571` (`isBlocked`), `:660` (`commit`), `app/src/main/java/com/music/bitchord/playback/BoundedQueuePlanner.kt:106` (`excludedUpcomingEntries`)
+- 증거(수정 전): 재생 중 행 `X`를 삭제하면 `exclude(X)`는 `pendingExcluded`에만 넣고, `removeMediaItem`은 삭제 전에 그 사실만 알렸다. 반복 ALL 경계에서는 다음 주기의 `X` 행이 이미 플레이어에 물리화되어 있으므로, 그 행이 나중에 current가 되면 `commit`이 `excluded`만 검사해 `X`를 그대로 수락했다. 삭제가 즉시 반영되지 않고 한 번 더 재생되며, 삭제 이후 `excluded`로 넘어간 `X`의 다른 사본이 current가 되면 `commit`이 `false`를 돌려주어 논리 current와 물리 current가 어긋난 스냅샷이 저장될 수 있었다.
+- 사용자 영향: 반복 ALL로 앨범을 듣던 중 재생 중인 곡을 큐에서 삭제해도 다음 바퀴에서 같은 곡이 다시 재생된다. 이후 재시작 복원이 `validateState`에서 거부되어 마지막 정상 창으로 후퇴할 수 있다.
+- 얼마나 흔한지: 반복 ALL + 큐 화면에서 현재 곡 삭제는 작은 앨범/재생목록에서 특히 흔하다. 높음.
+- 수정:
+  - `SessionPlayer.removeMediaItem(s)`의 bounded 통지를 `super` 뒤로 옮겨, 실제 전환이 끝난 뒤 삭제 결과를 논리 창에 적용한다.
+  - `noteBoundedContextRowsRemoved`가 `pruneExcludedBoundedRows`를 호출한다. 이 함수는 현재 위치 뒤의 CONTEXT 행 중 `isBlocked`(excluded 또는 pending)인 행을 뒤에서부터 제거하고, 현재 행 자체가 삭제한 canonical의 다음 주기 사본이면 그것도 제거해 플레이어가 다음 다른 곡으로 넘어가게 한다. 재스캔은 인덱스 이동과 연속 사본을 함께 처리한다.
+  - `QueueWindow.commit`은 `excluded`뿐 아니라 `pendingExcluded`도 거부하도록 `blocked`를 쓴다. 기존 `excluded` 항은 그대로 유지한 채 pending 항만 추가했다(아래 진리표).
+  - `syncBoundedContextCursor`는 commit이 거부되면 조용히 넘기지 않고 로그를 남긴다.
+- 테스트: `QueueWindowTest.deletingThePlayingRowRejectsItsNextCycleDuplicate`, `BoundedQueuePlannerTest.deleting the playing row also drops its materialised next-cycle copy`.
+
+### M1. MEDIUM — 다음 주기 드래그 뒤 더 먼 주기의 계획 순서가 낡은 채 남음
+
+- 파일: `shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueWindow.kt:633` (`reorderPlannedCycle`)
+- 증거(수정 전): `reorderPlannedCycle`은 `plannedCycles[cycleId]`만 교체했다. `upcoming(..., repeatAll = true)`가 이미 `cycleId + 1` 이후 주기를 메모해 두었으면 그 순서는 교체 전 주기의 마지막 곡을 기준으로 계산된 값이라, 드래그한 순서가 한 바퀴만 유지되고 다음 주기에서 원래 순서로 돌아갔다. 3곡·seed 0 실측: cycle 1을 `[2,1,0]`으로 바꾼 뒤 cycle 2가 낡은 `[0,2,1]`로 남아, 새 cycle 1의 마지막 `0`과 cycle 2의 첫 `0`이 연속 중복됐다(수정 후 cycle 2는 `[2,0,1]`).
+- 사용자 영향: 반복 ALL 경계에서 큐를 드래그해도 한 바퀴 뒤 순서가 되돌아가고, 경계에서 같은 곡이 연속 재생될 수 있다.
+- 얼마나 흔한지: 작은 앨범을 반복 ALL로 들으며 큐 순서를 바꾸는 경우. 중간.
+- 수정: `plannedCycles`에서 `cycleId`보다 큰 키를 모두 제거한 뒤 새 순서를 설치한다. 이후 look-ahead가 새 마지막 곡을 기준으로 다시 계산한다. 기존 계획을 지우는 것은 낡은 캐시만 버리는 것이며 active 순서나 소비 상태는 건드리지 않는다.
+- 테스트: `QueueWindowTest.reorderingAPlannedCycleRecomputesLaterPlannedCycles`.
+
+### 3차 진입점 → 처리 → 결과
+
+| 흔한 상황 | 진입점 | 처리 | 결과 | 판정 |
+|---|---|---|---|---|
+| 반복 ALL 경계, 재생 중 행 삭제 | `SessionPlayer.removeMediaItem` | `super` 뒤 `exclude`, `pruneExcludedBoundedRows`가 다음 주기 사본 제거 | 삭제한 곡이 다시 재생되지 않고 논리/물리 current 일치 | **수정됨(H1)** |
+| 반복 ALL 경계, 여러 행 삭제(현재 포함) | `SessionPlayer.removeMediaItems` | 현재·예정 행을 한 번에 통지, 예정 사본 prune | 삭제 범위 밖의 같은 곡 사본도 제거 | **수정됨(H1)** |
+| 반복 ALL 경계, 다음 주기 드래그 | `noteBoundedContextRowsMoved` → `reorderPlannedCycle` | 이후 계획 주기 캐시 무효화 | 한 바퀴 뒤에도 드래그 기준으로 재계산, 경계 중복 없음 | **수정됨(M1)** |
+| 삭제/드래그 후 앱 재시작 | `BoundedContextPersistence` | 잘못된 current 스냅샷이 저장되지 않음 | 정상 논리 창 + canonical로 복원 | **수정됨(H1)** |
+| 화면 꺼짐/백그라운드 | 전환 콜백 | 삭제 이벤트에서만 prune, 주기 작업 없음 | 배터리 규칙 유지 | 정상 |
+
+### 3차 조건 변경 전/후 진리표
+
+| 함수 | 기존 조건 | 새 조건 |
+|---|---|---|
+| `QueueWindow.commit` | `entry.canonicalIndex in excluded`이면 거부 | `entry.canonicalIndex in excluded \|\| entry.canonicalIndex in pendingExcluded`이면 거부 (기존 `excluded` 항 유지) |
+| `noteBoundedContextRowsRemoved` | 삭제 항목만 `exclude` | 삭제 항목 `exclude` **그리고** 물리 CONTEXT 행 중 `isBlocked`인 행 prune |
+| `reorderPlannedCycle` | `plannedCycles[cycleId]`만 교체 | `cycleId`보다 큰 `plannedCycles` 키 제거 후 교체 |
+
+### 3차 사용 성적표 연결
+
+- 다음 곡 싱크 준비 29%: `SyncSafetyPolicy`의 기존 ko-101 게이트가 원인이며 이번 큐 수정으로 약화하지 않았다.
+- 무손실 확인 후 실제 무손실 재생 4%: HQ 렌디션 검증 경로 문제로 큐와 직접 무관하다.
+- 자동 재생 보충 성공 24%: 기존 R3(빈 응답 1회 재시도, seed 고정, terminal 전이와 AutoPlay 재평가 분리)가 원인으로 남아 있다.
+- 사용자 조작 없는 백그라운드 시작 11회: Android 14+ 서비스 제한 영역이다.
+- 다운로드·고음질 보관함 실패 140회: 다운로드/검증 경로이며 큐는 URI를 그대로 쓴다.
+- 이번 H1은 위 수치를 직접 올리지는 않지만, 삭제 뒤 잘못된 bounded 스냅샷이 저장되어 재시작 복원이 거부되는 경로를 막는다.
+
+### 3차 테스트·빌드
+
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.playback.*' --console=plain -q` — 통과
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.playback.BoundedQueuePlannerTest' --tests 'com.music.bitchord.playback.BoundedContextPersistenceTest' --tests 'com.music.bitchord.QueueShuffleTest' --tests 'com.music.bitchord.playback.QueueShuffleRestoreBoundaryTest' --tests 'com.music.bitchord.QueueCoordinatorTest' --console=plain -q` — 통과
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` — 통과
+
+### 3차 변경 파일
+
+- `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt`
+- `app/src/main/java/com/music/bitchord/playback/BoundedQueuePlanner.kt`
+- `app/src/test/java/com/music/bitchord/playback/BoundedQueuePlannerTest.kt`
+- `shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueWindow.kt`
+- `shared/src/jvmTest/kotlin/com/music/bitchord/playback/QueueWindowTest.kt`
+- `docs/review-1031/queue.md`
+
+### 3차 남은 결함
+
+- 새 HIGH·MEDIUM은 없다. 이전 문서의 R2(비-bounded 재시작 76행 상한), R3(AutoPlay 보충 24%), R4(같은 크기 큐 스냅샷), R5(캐시된 가사 준비 상태)는 이번 영역·범위 밖으로 남아 있다.

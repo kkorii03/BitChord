@@ -565,6 +565,12 @@ class QueueWindow(
     fun isExcluded(canonicalIndex: Int): Boolean = canonicalIndex in excluded
 
     /**
+     * Whether a row is already removed, or is the playing row whose deletion is
+     * still parked until the player moves off it. Neither may materialise again.
+     */
+    fun isBlocked(canonicalIndex: Int): Boolean = blocked(canonicalIndex)
+
+    /**
      * Removes a canonical row from this queue's traversal without changing the
      * underlying collection. Returns false when it was already excluded.
      *
@@ -636,6 +642,11 @@ class QueueWindow(
         val reordered = canonicalIndices + planned.filterNot { it in requested }
         val next = reordered.toIntArray()
         if (next.contentEquals(planned)) return false
+        // Later cycles were memoised against the old final item of this cycle.
+        // Keeping them would restore the pre-drag order after one repeat and
+        // could duplicate the boundary track, so let them be rebuilt from the
+        // new permutation on the next look-ahead.
+        plannedCycles.keys.filter { it > cycleId }.forEach(plannedCycles::remove)
         plannedCycles[cycleId] = next
         manualOrder = true
         return true
@@ -648,7 +659,7 @@ class QueueWindow(
      */
     fun commit(entry: QueueWindowEntry): Boolean {
         if (currentIndex == null || entry.canonicalIndex !in 0 until canonicalCount) return false
-        if (entry.canonicalIndex in excluded) return false
+        if (blocked(entry.canonicalIndex)) return false
 
         if (entry.cycleId == activeCycleId) {
             val position = inversePositions[entry.canonicalIndex]

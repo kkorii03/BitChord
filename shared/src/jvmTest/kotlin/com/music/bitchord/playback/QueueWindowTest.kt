@@ -257,6 +257,35 @@ class QueueWindowTest {
     }
 
     @Test
+    fun deletingThePlayingRowRejectsItsNextCycleDuplicate() {
+        val window = QueueWindow(3).startAt(2)
+        val duplicate = window.upcoming(10, repeatAll = true)
+            .first { it.cycleId == 1L && it.canonicalIndex == 2 }
+
+        assertTrue(window.exclude(2))
+        assertFalse(window.commit(duplicate))
+        assertEquals(2, window.currentCanonicalIndex)
+        assertEquals(0L, window.cycleId)
+    }
+
+    @Test
+    fun reorderingAPlannedCycleRecomputesLaterPlannedCycles() {
+        val window = QueueWindow(3, shuffleSeed = 0L).startAt(0, shuffle = true)
+        val planned = window.upcoming(20, repeatAll = true)
+        val firstCycle = planned.filter { it.cycleId == 1L }.map { it.canonicalIndex }
+        val secondCycleBefore = planned.filter { it.cycleId == 2L }.map { it.canonicalIndex }
+
+        assertTrue(window.reorderPlannedCycle(1L, firstCycle.reversed()))
+
+        val after = window.upcoming(20, repeatAll = true)
+        val firstAfter = after.filter { it.cycleId == 1L }.map { it.canonicalIndex }
+        val secondAfter = after.filter { it.cycleId == 2L }.map { it.canonicalIndex }
+        assertEquals(firstCycle.reversed(), firstAfter)
+        assertNotEquals(secondCycleBefore, secondAfter)
+        assertNotEquals(firstAfter.last(), secondAfter.first())
+    }
+
+    @Test
     fun deletingThePlayingRowIsDeferredUntilTheCursorMoves() {
         val window = QueueWindow(3).startAt(2)
 

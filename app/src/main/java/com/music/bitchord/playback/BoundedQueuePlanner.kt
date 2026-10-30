@@ -95,6 +95,19 @@ object BoundedQueuePlanner {
         return desired.drop(materialized.size)
     }
 
+    /**
+     * Upcoming CONTEXT entries whose canonical track the listener removed.
+     *
+     * A delete at a repeat-all boundary leaves the same canonical index
+     * already materialised in the following cycle. Blocking only future
+     * top-ups would let that copy keep playing and then make the logical
+     * commit reject it, so the physical rows have to leave with the deletion.
+     */
+    fun excludedUpcomingEntries(
+        upcoming: List<QueueWindowEntry>,
+        window: QueueWindow,
+    ): List<QueueWindowEntry> = upcoming.filter { window.isBlocked(it.canonicalIndex) }
+
     fun autoplayEligible(
         window: QueueWindow,
         continuationState: ContinuationState,

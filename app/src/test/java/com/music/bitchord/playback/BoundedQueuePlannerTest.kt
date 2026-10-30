@@ -260,6 +260,21 @@ class BoundedQueuePlannerTest {
     }
 
     @Test
+    fun `deleting the playing row also drops its materialised next-cycle copy`() {
+        val window = QueueWindow(3).startAt(2)
+        val nextCycle = window.upcoming(10, repeatAll = true)
+            .filter { it.cycleId == 1L }
+        val duplicate = nextCycle.first { it.canonicalIndex == 2 }
+
+        assertTrue(window.exclude(2))
+
+        assertEquals(
+            listOf(duplicate),
+            BoundedQueuePlanner.excludedUpcomingEntries(nextCycle, window),
+        )
+    }
+
+    @Test
     fun `a reordered upcoming context tail still tops up in its new order`() {
         val window = QueueWindow(80).startAt(0)
         val desired = window.upcoming(WINDOW_AHEAD, repeatAll = false)
