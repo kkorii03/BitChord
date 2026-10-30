@@ -120,6 +120,28 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `a region or bot answer survives a later timeout for the proxy decision`() {
+        val region = "This video is not available in your country"
+        val bot = "Sign in to confirm you're not a bot"
+        val timeout = "SocketTimeoutException: Read timed out"
+
+        assertEquals(region, UnplayableReason.keepProxyWorthy(region, timeout))
+        assertEquals(bot, UnplayableReason.keepProxyWorthy(bot, timeout))
+        assertEquals(region, UnplayableReason.keepProxyWorthy(region, null))
+        assertEquals(timeout, UnplayableReason.keepProxyWorthy(null, timeout))
+        assertEquals(
+            "a later region refusal still replaces an earlier timeout",
+            region,
+            UnplayableReason.keepProxyWorthy(timeout, region),
+        )
+        assertEquals(
+            "a takedown is the stronger verdict",
+            "This video has been removed by the uploader",
+            UnplayableReason.keepProxyWorthy(region, "This video has been removed by the uploader"),
+        )
+    }
+
+    @Test
     fun `age restricted and paid tracks are track specific but not gone`() {
         assertTrue(UnplayableReason.isTrackSpecific("This video is age-restricted"))
         assertFalse(UnplayableReason.isDefinitelyGone("This video is age-restricted"))
@@ -140,6 +162,39 @@ class UnplayableReasonTest {
         assertFalse(UnplayableReason.isDefinitive("모듈을 이용할 수 없습니다"))
         assertFalse(UnplayableReason.isDefinitive("not available"))
         assertFalse(UnplayableReason.isTrackSpecific("AddonClient: 사용할 수 없는 주소입니다"))
+    }
+
+    @Test
+    fun `a bot check is a network verdict, never a track verdict`() {
+        val message = "Sign in to confirm you're not a bot"
+        assertFalse(UnplayableReason.isDefinitive(message))
+        assertFalse(UnplayableReason.isTrackSpecific(message))
+        assertFalse(UnplayableReason.isDefinitelyGone(message))
+        assertTrue(UnplayableReason.isBotChallenge(message))
+        assertTrue(
+            UnplayableReason.isBotChallenge("YouTube가 이 네트워크에서 봇 확인을 요구합니다"),
+        )
+        assertTrue(UnplayableReason.isBotChallenge("로그인하여 봇이 아님을 확인하세요."))
+        assertFalse(UnplayableReason.isBotChallenge("This track is unavailable"))
+    }
+
+    @Test
+    fun `region and premium gates are worth a proxy walk, takedowns are not`() {
+        assertTrue(UnplayableReason.isRegionGate("not available in your country"))
+        assertTrue(UnplayableReason.isRegionGate("이 국가에서는 이용할 수 없는 트랙입니다"))
+        assertTrue(UnplayableReason.isRegionGate("YouTube Music Premium이 필요한 트랙입니다"))
+        assertTrue(UnplayableReason.isRegionGate("Sign in to confirm you're not a bot"))
+        assertFalse(UnplayableReason.isRegionGate("This video has been removed by the uploader"))
+        assertFalse(UnplayableReason.isRegionGate("Private video"))
+        assertFalse(UnplayableReason.isRegionGate("Read timed out"))
+    }
+
+    @Test
+    fun `a bot challenge dressed as LOGIN_REQUIRED is still not definitive`() {
+        val message = "LOGIN_REQUIRED: Sign in to confirm you're not a bot"
+        assertNull(UnplayableReason.fromMessage(message))
+        assertFalse(UnplayableReason.isDefinitive(message))
+        assertTrue(UnplayableReason.isBotChallenge(message))
     }
 
     @Test

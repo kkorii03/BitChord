@@ -67,6 +67,28 @@ class ProxyPlaybackPolicyEdgeTest {
     }
 
     @Test
+    fun `a music-only url is not reused after switching to all youtube`() {
+        assertFalse(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                proxyGeneration = null,
+                currentGeneration = 3L,
+                canResolveViaProxy = true,
+                allScopeNow = true,
+                mintedOnAllScope = false,
+            ),
+        )
+        assertTrue(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                proxyGeneration = null,
+                currentGeneration = 3L,
+                canResolveViaProxy = true,
+                allScopeNow = false,
+                mintedOnAllScope = false,
+            ),
+        )
+    }
+
+    @Test
     fun `without a proxy every route is direct`() {
         for (remembered in listOf(true, false)) {
             for (refused in listOf(true, false)) {

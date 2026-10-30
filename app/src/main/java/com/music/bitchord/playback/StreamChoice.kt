@@ -1,11 +1,14 @@
 package com.music.bitchord.playback
 
 import android.os.SystemClock
+import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.LogUrl
 import com.music.bitchord.data.sources.SourceStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -139,6 +142,29 @@ object StreamChoice {
     }
 
     /**
+     * Releases the choice serving [url] when the caller only has the URL.
+     *
+     * A forced module upgrade carries no YouTube videoId, so the rate-limit
+     * feedback from the resolver cannot name the track; the URL it was opened
+     * with is the only key both sides share.
+     */
+    fun forgetUrl(url: String) {
+        val key = canonicalUrl(url)
+        val match = chosen.entries.firstOrNull { canonicalUrl(it.value.stream.url) == key }
+        if (match == null) {
+            // Not silent: the resolver told us this URL was rate-limited and the
+            // pin above is the only copy that would be served again. A no-match
+            // means the keys differ (encoding, redirect) and the pin survives.
+            TrackLog.w(TAG, "no stream choice to forget for rate-limited URL: ${LogUrl.of(url)}")
+            return
+        }
+        chosen.remove(match.key)
+    }
+
+    /** The same URL OkHttp opens, so `Uri` re-encoding cannot lose the match. */
+    private fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
+
+    /**
      * Tracks whose substituted stream refused to serve its bytes, and when.
      *
      * [forget] alone is not enough to recover from one. The search behind a
@@ -203,4 +229,6 @@ object StreamChoice {
     private const val REFUSAL_MS = 10 * 60 * 1000L
 
     private const val MAX_REMEMBERED = 32
+
+    private const val TAG = "BitChord"
 }

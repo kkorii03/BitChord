@@ -1882,20 +1882,25 @@ object Innertube {
                 if (proxyActive && directRetryOnProxyFailure && !isAccountWrite(endpoint) &&
                     ProxyFailure.isProxyDown(e)
                 ) {
-                    // Recorded first, because with a backup configured this is
-                    // what moves the route there. The same request is then
-                    // asked again through the backup before anything goes
-                    // direct — a lost free server should cost a retry, not the
-                    // listener's music.
-                    ProxyHealthMonitor.recordUnreachable("music $endpoint")
-                    if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
-                        try {
-                            return@withRetry attempt(routedClient, true)
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (backupFailure: Exception) {
-                            if (!ProxyFailure.isProxyDown(backupFailure)) throw backupFailure
-                            ProxyHealthMonitor.recordBackupUnreachable()
+                    // With a backup configured this is recorded first, because
+                    // it is what moves the route there. Without one, recording
+                    // it now would condemn the proxy before the direct retry
+                    // has proved the phone's own network is working — a
+                    // transient proxy timeout on a flaky connection used to
+                    // leave the proxy bypassed for five minutes even though
+                    // the direct route failed too. The mark is made below,
+                    // only after that retry succeeds.
+                    if (YouTubeProxy.config.backupUsable) {
+                        ProxyHealthMonitor.recordUnreachable("music $endpoint")
+                        if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
+                            try {
+                                return@withRetry attempt(routedClient, true)
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (backupFailure: Exception) {
+                                if (!ProxyFailure.isProxyDown(backupFailure)) throw backupFailure
+                                ProxyHealthMonitor.recordBackupUnreachable()
+                            }
                         }
                     }
                     Log.w(TAG, "music $endpoint: proxy unreachable, retrying directly")

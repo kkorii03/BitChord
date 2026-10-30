@@ -37,7 +37,17 @@ object ProxyFailure {
                 is NoRouteToHostException -> return true
             }
             val message = node.message.orEmpty()
-            if (message.contains("proxy", ignoreCase = true) ||
+            val lower = message.lowercase()
+            // Ktor reports its own request timeout as a plain IOException, not
+            // a SocketTimeoutException. On a proxy request that is still the
+            // proxy failing to answer: without this, a proxy that accepts the
+            // connection and then stalls burned the whole 30-second ceiling and
+            // the caller never tried the backup or the direct route.
+            val requestTimedOut = "request timeout" in lower ||
+                "timeout has expired" in lower ||
+                "timed out" in lower
+            if (requestTimedOut ||
+                message.contains("proxy", ignoreCase = true) ||
                 message.contains("407") ||
                 message.contains("unable to tunnel", ignoreCase = true)
             ) {
