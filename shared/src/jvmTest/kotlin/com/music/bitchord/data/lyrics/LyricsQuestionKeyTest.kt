@@ -3,6 +3,7 @@ package com.music.bitchord.data.lyrics
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * A lyrics answer is only reusable for the question it answered. A length is
@@ -47,6 +48,23 @@ class LyricsQuestionKeyTest {
         // 299 s and 300.5 s are 1.5 s apart — the ordinary catalogue/decoder
         // difference — but floor division puts them in different buckets.
         assertEquals(key(durationMs = 299_000L), key(durationMs = 300_500L))
+    }
+
+    @Test
+    fun lengthsEitherSideOfARoundedBoundaryStillLookEachOtherUp() {
+        // Rounding only moved the boundary: 294.999 s and 295.001 s are 2 ms
+        // apart but land in neighbouring canonical buckets. Reads probe the
+        // neighbours, so their lookup sets must overlap even though the
+        // canonical keys differ.
+        val earlier = LyricsRepository.durationBuckets(294_999L)
+        val later = LyricsRepository.durationBuckets(295_001L)
+        assertNotEquals(earlier[1], later[1])
+        assertTrue(earlier.any { it in later })
+    }
+
+    @Test
+    fun anUnknownLengthHasNoNeighbouringBucketsToBorrow() {
+        assertEquals(listOf("unknown"), LyricsRepository.durationBuckets(0L))
     }
 
     @Test

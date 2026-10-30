@@ -52,6 +52,23 @@ object NextPrepPolicy {
     }
 
     /**
+     * The identity of the sound a bundle is for: the row, the recording that
+     * will play, whether it is a downloaded file, and the lyrics settings the
+     * answer was chosen with.
+     *
+     * A change to any part means an old answer is not the answer for the new
+     * sound. In particular a lyrics settings change must not let the lines
+     * chosen under the old source set/order be stored or shown as the new
+     * choice, so it is part of this identity rather than a separate check.
+     */
+    fun soundKey(
+        rowId: String,
+        videoId: String,
+        localFile: Boolean,
+        lyricsSettings: String,
+    ): String = "$rowId|$videoId|$localFile|$lyricsSettings"
+
+    /**
      * Whether [nextIndex] is a row other than the one playing at
      * [currentIndex].
      *

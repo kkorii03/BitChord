@@ -9415,6 +9415,11 @@ class PlaybackService : MediaLibraryService() {
                 listOf(synced, sources, order, prio)
             }.distinctUntilChanged().collect {
                 loadLyricsForCurrentTrack()
+                // A completed next-row bundle was keyed by the old settings, so
+                // it is not the answer for the new choice. Re-schedule it under
+                // the new settings; with no change the sound identity is the
+                // same and this is a no-op.
+                player?.let { active -> if (active.isPlaying) scheduleNextPrep(active) }
             }
         }
         scope.launch {

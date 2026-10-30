@@ -186,6 +186,7 @@ object LyricsRepository {
         order: List<LyricsSource>,
         sources: Set<LyricsSource>,
         artistAliases: List<String> = emptyList(),
+        bucketOverride: String? = null,
     ): String = buildString {
         append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
         // A lookup made without a length may have settled on a different edit
@@ -193,7 +194,9 @@ object LyricsRepository {
         // length to the nearest bucket so the next-track prefetch (catalogue
         // length) and the player (decoder length, usually a second or two
         // apart) still share it instead of falling either side of a boundary.
-        append('\u0005').append(durationBucket(durationMs))
+        // Reads also probe the neighbouring buckets (see [durationBuckets]) so
+        // a pair straddling a rounded boundary still finds the same answer.
+        append('\u0005').append(bucketOverride ?: durationBucket(durationMs))
         append('\u0006').append(album.orEmpty())
         append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
         append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
@@ -209,18 +212,58 @@ object LyricsRepository {
      * Ten seconds is far wider than the difference between a catalogue row's
      * rounded length and the decoder's exact one, and far narrower than two
      * edits of the same song. The length is rounded to the nearest bucket so a
-     * pair 1–2 s apart cannot be split by a boundary. An unknown length is
+     * pair 1–2 s apart usually lands in the same one. An unknown length is
      * never folded into a known one: a match made without a length is the one
      * that can be the wrong edit.
      */
     private const val DURATION_BUCKET_MS = 10_000L
 
-    private fun durationBucket(durationMs: Long): String =
+    /**
+     * The rounded bucket and its two neighbours, in lookup order.
+     *
+     * Rounding alone still has boundaries: 294.999 s and 295.001 s are 2 ms
+     * apart but round to different buckets. Reading the neighbouring buckets
+     * as well makes any two lengths within a couple of seconds share an answer
+     * whichever side of a boundary they fall. Only the middle (canonical) entry
+     * is written, so a lookup stays one file; the neighbours are only probes.
+     */
+    internal fun durationBuckets(durationMs: Long): List<String> =
         if (durationMs <= 0L) {
-            "unknown"
+            listOf("unknown")
         } else {
-            ((durationMs + DURATION_BUCKET_MS / 2) / DURATION_BUCKET_MS).toString()
+            val bucket = (durationMs + DURATION_BUCKET_MS / 2) / DURATION_BUCKET_MS
+            listOf(bucket - 1, bucket, bucket + 1).map { it.toString() }
         }
+
+    private fun durationBucket(durationMs: Long): String {
+        val buckets = durationBuckets(durationMs)
+        return buckets[buckets.lastIndex / 2]
+    }
+
+    /**
+     * Every cache key a lookup with [durationMs] may reuse. The canonical key
+     * is [questionKey]; the rest are the neighbouring length buckets.
+     */
+    private fun questionKeys(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        isVideo: Boolean,
+        artistKnown: Boolean,
+        alternatives: List<Pair<String, String>>,
+        order: List<LyricsSource>,
+        sources: Set<LyricsSource>,
+        artistAliases: List<String>,
+    ): List<String> = durationBuckets(durationMs).map { bucket ->
+        questionKey(
+            videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo,
+            artistKnown, alternatives, order, sources, artistAliases, bucketOverride = bucket,
+        )
+    }
 
     private suspend fun lookUpAll(
         videoId: String,
@@ -249,21 +292,38 @@ object LyricsRepository {
             videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
             alternatives, order, sources, artistAliases,
         )
-        answers.get(key)?.let { kept ->
-            kept.result?.let { onSourceResult?.invoke(it.source, it, null) }
-            return kept.result
+        // A hit is preferred over a remembered miss, and either may live under
+        // a neighbouring length bucket (see [durationBuckets]). The canonical
+        // key is still the one new answers are written under.
+        val readKeys = questionKeys(
+            videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
+            alternatives, order, sources, artistAliases,
+        )
+        val remembered = readKeys.firstNotNullOfOrNull { candidate ->
+            answers.get(candidate)?.takeIf { it.result != null }?.let { candidate to it }
+        } ?: readKeys.firstNotNullOfOrNull { candidate ->
+            answers.get(candidate)?.let { candidate to it }
+        }
+        if (remembered != null) {
+            remembered.second.result?.let { onSourceResult?.invoke(it.source, it, null) }
+            return remembered.second.result
         }
         // Heard before, on any earlier day: on the device already. Shown at
         // once, and looked for again in the background only while something
         // better than what is kept could still turn up.
         if (durationMs > 0L) {
-            val kept = kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.read(key) }
+            val keptEntry = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                readKeys.firstNotNullOfOrNull { candidate ->
+                    LyricsDiskCache.read(candidate)?.let { candidate to it }
+                }
+            }
+            val kept = keptEntry?.second
             val keptResult = kept?.result
-            if (kept != null && keptResult != null) {
+            if (keptEntry != null && keptResult != null) {
                 answers.put(key, Answer(keptResult))
                 onSourceResult?.invoke(keptResult.source, keptResult, null)
                 if (LyricsDiskCache.worthCheckingAgain(kept)) {
-                    checkAgain(key, videoId, keptResult) {
+                    checkAgain(keptEntry.first, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                             null, null, null, isVideo, alternatives, artistKnown, artistAliases,
@@ -688,9 +748,9 @@ object LyricsRepository {
         // The last few answers, so the next track's lyrics looked up ahead of
         // time (see LyricsPrefetch) are the very lines the player then shows —
         // the same text is what lets the translation fetched with them be found.
-        val memoKey = buildString {
+        fun memoKey(bucket: String) = buildString {
             append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
-            append('\u0005').append(durationBucket(durationMs))
+            append('\u0005').append(bucket)
             append('\u0006').append(album.orEmpty())
             append('\u0000').append(prioritizeSyllableSync)
             append('\u0000').append(isrc.orEmpty())
@@ -698,7 +758,11 @@ object LyricsRepository {
             append('\u0001')
             sources.map { it.name }.sorted().forEach { append('\u0000').append(it) }
         }
-        synchronized(recent) { recent[memoKey] }?.let { hit ->
+        // Probe neighbouring length buckets as well: rounding alone can still
+        // split a catalogue/decoder pair that straddles a boundary.
+        val memoKeys = durationBuckets(durationMs).map(::memoKey)
+        val memoHit = synchronized(recent) { memoKeys.firstNotNullOfOrNull { recent[it] } }
+        memoHit?.let { hit ->
             onSourceResult?.invoke(hit.source, hit, null)
             return hit
         }
@@ -708,7 +772,9 @@ object LyricsRepository {
         )?.copy(searchedAs = title to artist)
         // Only an answer matched against a known length is worth reusing: one
         // made without it may be a looser match than the player would make.
-        if (found != null && durationMs > 0L) synchronized(recent) { recent[memoKey] = found }
+        if (found != null && durationMs > 0L) {
+            synchronized(recent) { recent[memoKeys[memoKeys.lastIndex / 2]] = found }
+        }
         return found
     }
 

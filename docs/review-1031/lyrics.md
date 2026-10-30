@@ -256,3 +256,44 @@
 - `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*'` → 통과.
 - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.NextPrepCacheKeyTest' --tests 'com.music.bitchord.TranslationAheadOverrideTest' --tests 'com.music.bitchord.LyricsRetryTest' --tests 'com.music.bitchord.NextPrepLogTest' --tests 'com.music.bitchord.LyricsLoadKeyTest'` → 통과.
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과.
+
+---
+
+## 8. 3차 재검증 (Verdict 3건, 2026-10-31)
+
+기준 브랜치 `task/fix-1030` 계열의 2차 결과를 현재 트리에서 다시 읽었다. 지적 3건 모두 이번에 고쳤고, 수정 전 동작(옛 키·단일 버킷)과 수정 후 동작을 구분하는 테스트를 추가했다. 1·2차에서 세운 안전 규칙·주석 의도는 지우지 않았다.
+
+| # | 심각도 | 파일:줄 | 증거 | 사용자 영향 | 빈도 | 수정 |
+|---|---|---|---|---|---|---|
+| 1 | MEDIUM | `NextTrackPreparation.kt:90-96`(`Snapshot.lyricsSettings`), `:155-165`(`snapshot`), `:196-203`(버전 콜백), `:322`(캐시 쓰기) | 수정 전에는 `lyricsSettings`를 캐시를 쓰는 순간(≈297행)에서 다시 읽었다. 그 사이 `lyricsByRow`가 이전 설정으로 만든 줄을 공급하면, 옛 설정의 줄이 새 설정 키로 저장되어 `NextPrepCache.get`의 새 가드가 무력화됐다. | 설정을 바꾼 직후 다음 곡 첫 프레임에 옛 설정(소스/순서/음절)의 가사가 새 설정 결과처럼 뜬다. | 설정 변경 직후 + `nextPrepLyrics` 사용자. | 설정 키를 `snapshot()`에서 한 번 캡처해 `Snapshot`에 넣고, 그 값을 사운드 정체성(`soundKey`)·`attempted`·`lyricsByRow`·버전 해석 후 키·캐시 쓰기 모두에 사용한다. |
+| 2 | MEDIUM | `LyricsRepository.kt:185-199`(`questionKey`의 `bucketOverride`), `:230-244`(`durationBuckets`), `:247-266`(`questionKeys`), `:296-329`(디스크/메모 조회), `:745-776`(`lyricsFor` 메모) | 수정 전 반올림은 10초 경계만 5초 옮겼을 뿐이라 294,999ms와 295,001ms(2ms 차)가 서로 다른 키(29 vs 30)가 됐다. “1~2초 쌍은 경계로 갈라지지 않는다”는 주석이 거짓이었다. | 카탈로그 길이로 선반입한 가사가 재생 시 디코더 길이 조회에서 miss되어 같은 곡을 다시 검색하고, 다음 곡 첫 프레임 가사가 사라진다. | 길이가 5초 오프셋 경계 근처인 곡의 다음 곡 준비/재생. | 쓰기는 기존 정규(canonical) 버킷 하나에만 하되, 읽기는 `bucket-1`·`bucket`·`bucket+1` 세 키를 모두 조회한다. hit을 miss보다 먼저 고르고, 찾은 키로 `checkAgain`/`touchChecked`를 갱신한다. 메모(`recent`)도 같은 세 키를 읽는다. |
+| 3 | LOW | `NextPrepPolicy.kt:55-70`(`soundKey`), `NextTrackPreparation.kt:155-165`·`:196-203`; `PlaybackService.kt:9414-9423` | 수정 전 `alreadyHandled`는 rowId+sound만 비교해, 가사 설정이 바뀌어도 완료된 다음 행을 다시 준비하지 않았다. 그러면 설정 키가 다른 캐시는 매칭되지 않아 다음 곡 첫 프레임 가사를 잃었다. | 설정 변경 후 다음 곡이 평소처럼 선반입 가사로 시작하지 못하고 일반 조회를 기다린다. | 설정 변경 직후 다음 곡. | `soundKey`에 `lyricsSettings`를 포함해 설정 변경을 새 사운드로 취급하고, `PlaybackService`의 가사 설정 관찰자가 바뀔 때 `scheduleNextPrep`을 호출한다(동일 설정이면 `alreadyHandled`가 no-op). 폴링·타이머 없음. |
+
+### 조건 변경 전/후 진리표
+
+- 다음 행 사운드 정체성(`queueKey`)
+  - 수정 전: `rowId|videoId|localFile`
+  - 수정 후: `rowId|videoId|localFile|lyricsSettings`
+  - `rowId`·`videoId`·`localFile` 세 항은 그대로 유지되고 `lyricsSettings`만 추가됐다. 따라서 수정 전 “다른 사운드”였던 모든 경우는 수정 후에도 다른 사운드이며, 같은 사운드라도 설정이 다르면 새 사운드가 된다.
+- 길이 키 조회
+  - 수정 전: 정규 버킷 1개만 읽고 씀.
+  - 수정 후: 읽기는 `{b-1, b, b+1}` 3개, 쓰기는 정규 버킷 `b` 1개. 같은 길이의 동작은 동일하고, 경계를 사이에 둔 1~2초 차이만 추가로 공유된다. 길이 없음(`unknown`)은 예전처럼 유일 키이며 이웃 버킷을 만들지 않는다.
+
+### 성적표와의 연결
+
+- **다음 곡 준비 가사 none**: 1번 수정으로 옛 설정의 `lyricsByRow`가 새 설정 키로 저장되던 경로가 사라지고, 3번 수정으로 설정 변경 후에도 다음 행이 새 설정으로 다시 준비된다. 2번 수정은 길이 경계 때문에 같은 곡을 다시 검색하던 miss를 줄인다.
+- **다음 곡 싱크 준비 29%**: 이번 3건은 싱크 판정 조건(`syncWanted`)을 건드리지 않았다. 영상·한국어·기악·저전력·Deepgram 제외라는 기존 보호 정책은 그대로다.
+- **무손실 4% / 다운로드·고음질 실패 140회**: 이번 변경은 미디어 파일을 읽거나 쓰지 않는다. 길이 키와 준비 캐시 키만 다룬다.
+
+### 추가 테스트
+
+- `NextPrepPolicyTest.changingTheLyricsSettingsMakesItANewSound`
+- `NextPrepPolicyTest.theSameSoundWithTheSameSettingsIsStillLeftAlone`
+- `LyricsQuestionKeyTest.lengthsEitherSideOfARoundedBoundaryStillLookEachOtherUp`
+- `LyricsQuestionKeyTest.anUnknownLengthHasNoNeighbouringBucketsToBorrow`
+
+### 3차 테스트 결과
+
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.LyricsQuestionKeyTest' --tests 'com.music.bitchord.playback.NextPrepPolicyTest'` → 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.NextPrepCacheKeyTest' --tests 'com.music.bitchord.NextPrepLogTest' --tests 'com.music.bitchord.LyricsLoadKeyTest' --tests 'com.music.bitchord.TranslationAheadOverrideTest'` → 통과.
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과.

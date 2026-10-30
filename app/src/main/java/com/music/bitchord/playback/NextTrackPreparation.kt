@@ -86,6 +86,12 @@ internal class NextTrackPreparation(
         val index: Int,
         val song: Song,
         val queueKey: String,
+        /**
+         * The lyrics settings sampled when the bundle was scheduled. Used for
+         * the whole run so a change mid-run cannot label lines chosen under one
+         * settings set with another, and so the next schedule sees a new sound.
+         */
+        val lyricsSettings: String,
     )
 
     /**
@@ -143,7 +149,21 @@ internal class NextTrackPreparation(
         // The row's sound is part of its identity: a download finishing (or a
         // file being replaced by its stream) must cancel a bundle prepared for
         // the other source, or its first-frame cache is for the wrong audio.
-        return Snapshot(rowId, index, song, "$rowId|${song.videoId}|${song.localUri != null}")
+        // The lyrics settings are part of it too: lines chosen under an old
+        // source set/order are not the answer for the new one, and a completed
+        // bundle must not stop the row being prepared again after a change.
+        val lyricsSettings = NextPrepCache.settingsKey(
+            sources = AppSettings.lyricsSources.value,
+            order = AppSettings.lyricsSourceOrder.value,
+            prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+        )
+        return Snapshot(
+            rowId,
+            index,
+            song,
+            NextPrepPolicy.soundKey(rowId, song.videoId, song.localUri != null, lyricsSettings),
+            lyricsSettings,
+        )
     }
 
     private fun attemptsFor(queueKey: String): MutableSet<Step> = synchronized(attempted) {
@@ -174,7 +194,12 @@ internal class NextTrackPreparation(
         if (versionWanted(song) && Step.VERSION !in steps && !versionAnswered(song)) {
             steps += Step.VERSION
             val resolved = resolveVersion(song, snapshot.rowId) { expected ->
-                expectedQueueKey = "${snapshot.rowId}|${expected.videoId}|${expected.localUri != null}"
+                expectedQueueKey = NextPrepPolicy.soundKey(
+                    snapshot.rowId,
+                    expected.videoId,
+                    expected.localUri != null,
+                    snapshot.lyricsSettings,
+                )
                 queueKey = expectedQueueKey
             }
             if (resolved != null) song = resolved
@@ -294,11 +319,7 @@ internal class NextTrackPreparation(
                     isVideo = LyricsTimingSource.isVideo(song),
                     fromFile = found.fromFile,
                     localFile = song.localUri != null,
-                    lyricsSettings = NextPrepCache.settingsKey(
-                        sources = AppSettings.lyricsSources.value,
-                        order = AppSettings.lyricsSourceOrder.value,
-                        prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
-                    ),
+                    lyricsSettings = snapshot.lyricsSettings,
                 ),
             )
         }
