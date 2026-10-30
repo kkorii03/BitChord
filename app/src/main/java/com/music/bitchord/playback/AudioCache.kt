@@ -2035,47 +2035,107 @@ object AudioCache {
         // exactly as they are for the copy a swap fills.
         QualityUpgrade.force(mediaId, stream)
         val key = keyFactory.buildCacheKey(DataSpec(uri))
-        val format = stream.format.summary
         val host = HqHostTracker.hostOf(stream.url)
         losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
-            HqHostTracker.beginDownload(mediaId, host)
-            var complete = false
-            try {
-                TrackLog.d(TAG, "hq-prefetch: $mediaId start $format", about = mediaId)
-                val result = try {
-                    cacheWholeRenditionDetailed(uri, title)
-                } catch (cancelled: CancellationException) {
-                    TrackLog.d(TAG, "hq-prefetch: $mediaId failed cancelled", about = mediaId)
-                    throw cancelled
-                } catch (failed: Exception) {
-                    WholeRenditionResult(false, 0L, failed.message ?: failed.javaClass.simpleName)
-                }
-                if (!result.complete) {
-                    TrackLog.d(
-                        TAG,
-                        "hq-prefetch: $mediaId failed ${result.failure ?: "incomplete"}",
-                        about = mediaId,
-                    )
-                    return@launch
-                }
-                complete = true
-                TrackLog.d(TAG, "hq-prefetch: $mediaId done ${formatBytes(result.bytes)}", about = mediaId)
-                renditionKeys.remove(mediaId)
-                pendingLowQualityDrops[mediaId] = key
-                if (currentMediaId != null && currentMediaId != mediaId &&
-                    pendingLowQualityDrops.remove(mediaId, key)
-                ) {
-                    dropLowerQualityCopies(mediaId, keep = key)
-                }
-            } finally {
-                // A fetch cut short — most often by the queue moving on before
-                // it finished — leaves the next play of the track free to try
-                // again; only a complete copy closes the question.
-                if (!complete) losslessPrefetchAttempted.remove(mediaId)
-                HqHostTracker.endDownload(mediaId, host)
+            val complete = fetchLosslessRendition(uri, title, stream, mediaId, host)
+            if (!complete) return@launch
+            pendingLowQualityDrops[mediaId] = key
+            if (currentMediaId != null && currentMediaId != mediaId &&
+                pendingLowQualityDrops.remove(mediaId, key)
+            ) {
+                dropLowerQualityCopies(mediaId, keep = key)
             }
         }
         return true
+    }
+
+    /**
+     * The same hq-prefetch path, awaited, for a swap that is about to happen
+     * rather than one being prepared for the next play.
+     *
+     * The current track keeps playing from its own cache entry while this
+     * fills the marked rendition, so the listener hears nothing until the
+     * replacement is complete. A background prefetch already running for the
+     * track is joined instead of opening a second writer on the same entry.
+     *
+     * @return true only when every byte of the rendition is on disk.
+     */
+    suspend fun downloadVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean {
+        val mediaId = mediaIdIn(uri) ?: return false
+        if (!HqQuality.isLosslessTier(stream.format)) return false
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        losslessPrefetchJob?.takeIf { it.isActive }?.join()
+        // Park the stream even when the bytes are already complete: the player
+        // is about to open the marked URI and the resolving data source must
+        // hand it this exact URL rather than searching for another one.
+        upgradeKeyDeferred += mediaId
+        QualityUpgrade.force(mediaId, stream)
+        if (isComplete(key)) {
+            losslessPrefetchAttempted.add(mediaId)
+            return true
+        }
+        losslessPrefetchAttempted.add(mediaId)
+        val host = HqHostTracker.hostOf(stream.url)
+        return fetchLosslessRendition(uri, title, stream, mediaId, host)
+    }
+
+    /**
+     * One fetch of a verified lossless rendition, shared by the background
+     * prefetch and the awaited mid-song swap. Logs under the `hq-prefetch`
+     * name both callers use, so a failed download is visible either way.
+     */
+    private suspend fun fetchLosslessRendition(
+        uri: Uri,
+        title: String?,
+        stream: SourceStream,
+        mediaId: String,
+        host: String?,
+    ): Boolean {
+        HqHostTracker.beginDownload(mediaId, host)
+        var complete = false
+        try {
+            TrackLog.d(TAG, "hq-prefetch: $mediaId start ${stream.format.summary}", about = mediaId)
+            val result = try {
+                cacheWholeRenditionDetailed(uri, title)
+            } catch (cancelled: CancellationException) {
+                TrackLog.d(TAG, "hq-prefetch: $mediaId failed cancelled", about = mediaId)
+                throw cancelled
+            } catch (failed: Exception) {
+                WholeRenditionResult(false, 0L, failed.message ?: failed.javaClass.simpleName)
+            }
+            if (!result.complete) {
+                TrackLog.d(
+                    TAG,
+                    "hq-prefetch: $mediaId failed ${result.failure ?: "incomplete"}",
+                    about = mediaId,
+                )
+                return false
+            }
+            complete = true
+            TrackLog.d(TAG, "hq-prefetch: $mediaId done ${formatBytes(result.bytes)}", about = mediaId)
+            renditionKeys.remove(mediaId)
+            return true
+        } finally {
+            // A fetch cut short — most often by the queue moving on before
+            // it finished — leaves the next play of the track free to try
+            // again; only a complete copy closes the question.
+            if (!complete) losslessPrefetchAttempted.remove(mediaId)
+            HqHostTracker.endDownload(mediaId, host)
+        }
+    }
+
+    /**
+     * Drops the copies a completed mid-song swap has left behind.
+     *
+     * Called after the session player has been handed the marked rendition,
+     * so the base entry is no longer being read. [dropLowerQualityCopies]
+     * still waits for any straggling reader to let go before removing it.
+     */
+    fun dropLowerQualityAfterLosslessSwap(mediaId: String, keepKey: String) {
+        pendingLowQualityDrops.remove(mediaId)
+        scope.launch(TrackLog.about(mediaId)) {
+            dropLowerQualityCopies(mediaId, keepKey)
+        }
     }
 
     /**

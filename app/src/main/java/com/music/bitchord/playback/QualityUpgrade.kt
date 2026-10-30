@@ -5,6 +5,8 @@ import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -670,6 +672,21 @@ object QualityUpgrade {
      */
     fun isKnownToBePlayingYouTubesOwn(mediaId: String, rendition: String?): Boolean {
         if (rendition != null) return false
+        // The decoder's own source identity wins when it has spoken. It is the
+        // only record of what is actually being read, and the menu used to
+        // disagree with the badge when a stored verdict or a stale
+        // [StreamChoice] still named YouTube over a module stream.
+        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId }
+        if (snapshot != null) {
+            val kind = snapshot.sourceConfigId
+                ?.let { SourceRegistry.config(it)?.kind }
+            when {
+                kind == SourceKind.YOUTUBE -> return true
+                kind != null -> return false
+                snapshot.sourceName == "YouTube" -> return true
+                snapshot.sourceName != null -> return false
+            }
+        }
         return StreamChoice.of(mediaId) != null && !StreamChoice.isSubstitute(mediaId)
     }
 

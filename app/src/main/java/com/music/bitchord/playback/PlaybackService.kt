@@ -123,7 +123,6 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.QueueTier
-import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.DownloadHealth
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
@@ -165,6 +164,9 @@ import com.music.bitchord.data.settings.PrivateListening
 import com.music.bitchord.data.sources.QualityUpgradeAdvice
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.PlayingAudioFormat
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
@@ -2231,6 +2233,14 @@ class PlaybackService : MediaLibraryService() {
         crossfade = controller
         QueueShuffle.isCrossfadeTransitioning = { crossfade?.isTransitioning() == true }
         controller.start()
+        // A verified lossless copy can land after the next transition was
+        // armed but before its blend starts. The standby is then still holding
+        // the lossy copy; re-arm it on the event rather than polling for one.
+        scope.launch {
+            StreamChoice.revisions.drop(1).collect {
+                refreshArmedIncomingLossless()
+            }
+        }
 
         mediaSession = MediaLibrarySession.Builder(
             this,
@@ -2350,6 +2360,12 @@ class PlaybackService : MediaLibraryService() {
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
             onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
+            // A next track whose lossless copy was verified ahead is opened as
+            // that copy from the first frame, rather than buffering Opus and
+            // handing it over before the upgrade lands.
+            prepareIncomingItem = { item ->
+                losslessAheadItem(item)?.also { logHqAhead(item.mediaId) } ?: item
+            },
             // Both sinks, not a role: the trim is about what the pair sums to.
             onBlendHeadroom = { trim ->
                 loudnessA.setBlendTrim(trim)
@@ -2362,7 +2378,9 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             },
-            versionSwapActive = { versionSwapJob?.isActive == true },
+            versionSwapActive = {
+                versionSwapJob?.isActive == true || hqSwapOwnsStandby
+            },
             screenOn = { PowerState.screenOn },
         )
 
@@ -4159,6 +4177,10 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        // A lossless swap hands the same song to the other player. It must not
+        // close the outgoing play, start a second one, or count the listen
+        // twice; only the audio source changed.
+        val sameTrackSwap = mediaItem?.mediaId != null && mediaItem.mediaId == hqSwappingMediaId
         // A download marked against the outgoing track must not keep the next
         // track's read-ahead waiting on a host nobody is fetching from any
         // more. A track that ended by itself is the exception: its player has
@@ -4172,7 +4194,7 @@ class PlaybackService : MediaLibraryService() {
         // The outgoing track's story ends here. Its own lines are already in
         // the log; this is the one line that ties them together for a reader
         // who was not watching while it played.
-        logTrackSummary(previousEnded)
+        if (!sameTrackSwap) logTrackSummary(previousEnded)
         syncBoundedContextCursor(exoPlayer, mediaItem)
         if (boundedContextWindow != null && !ListenTogether.state.value.inParty) {
             saveBoundedContextSnapshot(exoPlayer)
@@ -4279,6 +4301,9 @@ class PlaybackService : MediaLibraryService() {
         // black player with an empty title is told apart from a cover that
         // simply failed to load.
         val played = mediaItem?.toSong()
+        // Refreshing the same track's summary is safe: it does not write the
+        // outgoing line, it only updates which source the still-playing track
+        // will report when it actually ends.
         startTrackSummary(played, alreadyAudible)
         TrackLog.i(
             "BitChord",
@@ -4326,7 +4351,7 @@ class PlaybackService : MediaLibraryService() {
         com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
         // A missing reference belonged to the previous playback attempt, not
         // to this recording. The next play is free to measure it again.
-        HqAudioVerify.onPlaybackStarted()
+        if (!sameTrackSwap) HqAudioVerify.onPlaybackStarted()
         // The outgoing track's low-quality cache entry can be dropped now that
         // its lossless replacement is complete — see [AudioCache.prefetchVerifiedRendition].
         AudioCache.onTrackBecameCurrent(mediaItem?.mediaId)
@@ -4347,52 +4372,54 @@ class PlaybackService : MediaLibraryService() {
             about = mediaItem?.mediaId,
         )
 
+        val ended = previousEnded
         // The tracker closes the outgoing track out on the time it actually
         // heard, which it accumulates from the sampler, so nothing about the
         // new item's position can leak into the old play's watchtime.
-        PlaybackTracker.onTrackChanged()
-        lastPositionSeconds = 0
+        if (!sameTrackSwap) {
+            PlaybackTracker.onTrackChanged()
+            lastPositionSeconds = 0
 
-        // Scrobbling: stop old song, start new song
-        scrobbleManager?.onSongStop()
-        // And the local record, which needs the transition even when the track
-        // id doesn't change: repeat-one plays the same song again, and without
-        // this the second play through is a continuation of the first and is
-        // never counted. On the sampler's own thread, after the ticks it has
-        // already queued for the outgoing track.
-        postProgressWork { ListeningRecorder.onStopped() }
-        val newSong = mediaItem?.toSong()
-        val durationMs = exoPlayer.duration.takeIf { it > 0 }
-        if (exoPlayer.isPlaying) {
-            scrobbleManager?.onSongStart(newSong, durationMs)
-        }
+            // Scrobbling: stop old song, start new song
+            scrobbleManager?.onSongStop()
+            // And the local record, which needs the transition even when the
+            // track id doesn't change: repeat-one plays the same song again,
+            // and without this the second play through is a continuation of
+            // the first and is never counted. On the sampler's own thread,
+            // after the ticks it has already queued for the outgoing track.
+            postProgressWork { ListeningRecorder.onStopped() }
+            val newSong = mediaItem?.toSong()
+            val durationMs = exoPlayer.duration.takeIf { it > 0 }
+            if (exoPlayer.isPlaying) {
+                scrobbleManager?.onSongStart(newSong, durationMs)
+            }
 
-        // ListenBrainz: submit finished for old song, playing_now for new song.
-        // The finished listen only counts when the track actually ended —
-        // an auto-advance, a repeat, or a crossfade at the very end. A
-        // manual skip (SEEK) means the song wasn't listened to, so it must
-        // not be scrobbled.
-        val ended = previousEnded
-        val scrobblingAllowed =
-            PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)
-        val prevSong = listenBrainzSong
-        val prevStart = listenBrainzStartMs
-        if (scrobblingAllowed && prevSong != null && ended && prevStart > 0L) {
-            submitListenBrainzFinished(prevSong, prevStart, listenBrainzDurationMs)
-        }
-        // AutoPlay's session seed: only a track that ran to its end counts.
-        // Private listening keeps it out too — the session is recommendation
-        // learning just as much as the stored counters are.
-        if (scrobblingAllowed && prevSong != null && ended) lastCompletedSong = prevSong
-        listenBrainzSong = if (scrobblingAllowed) newSong else null
-        listenBrainzStartMs = if (scrobblingAllowed && exoPlayer.isPlaying) {
-            System.currentTimeMillis()
-        } else {
-            0L
-        }
-        listenBrainzDurationMs = durationMs
-        if (scrobblingAllowed && newSong != null && exoPlayer.isPlaying) {
-            submitListenBrainzPlayingNow(newSong, 0L, durationMs)
+            // ListenBrainz: submit finished for old song, playing_now for new
+            // song. The finished listen only counts when the track actually
+            // ended — an auto-advance, a repeat, or a crossfade at the very
+            // end. A manual skip (SEEK) means the song wasn't listened to, so
+            // it must not be scrobbled.
+            val scrobblingAllowed =
+                PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)
+            val prevSong = listenBrainzSong
+            val prevStart = listenBrainzStartMs
+            if (scrobblingAllowed && prevSong != null && ended && prevStart > 0L) {
+                submitListenBrainzFinished(prevSong, prevStart, listenBrainzDurationMs)
+            }
+            // AutoPlay's session seed: only a track that ran to its end counts.
+            // Private listening keeps it out too — the session is
+            // recommendation learning just as much as the stored counters are.
+            if (scrobblingAllowed && prevSong != null && ended) lastCompletedSong = prevSong
+            listenBrainzSong = if (scrobblingAllowed) newSong else null
+            listenBrainzStartMs = if (scrobblingAllowed && exoPlayer.isPlaying) {
+                System.currentTimeMillis()
+            } else {
+                0L
+            }
+            listenBrainzDurationMs = durationMs
+            if (scrobblingAllowed && newSong != null && exoPlayer.isPlaying) {
+                submitListenBrainzPlayingNow(newSong, 0L, durationMs)
+            }
         }
 
         // The renderer is still configured for the track that just ended at
@@ -4414,7 +4441,7 @@ class PlaybackService : MediaLibraryService() {
             exoPlayer.pause()
             SleepTimer.cancel()
         }
-        if (exoPlayer.isPlaying) registerCurrentPlay()
+        if (exoPlayer.isPlaying && !sameTrackSwap) registerCurrentPlay()
         savePlaybackState(exoPlayer)
         // Not before this row has made a sound: read-ahead and its alternate
         // pre-resolve would compete with the resolve that starts it. A cold
@@ -4445,6 +4472,23 @@ class PlaybackService : MediaLibraryService() {
 
     /** Which track [upgradeJob] is hunting for — see [lookForBetterCopy]. */
     private var upgradeFor: String? = null
+
+    /**
+     * The track whose lossless copy is being handed to the spare player right
+     * now. [cancelStaleUpgradeJob] must not cancel the very coroutine making
+     * that swap: the handoff reports the same media id as a track change, and
+     * cancelling here would skip the `hq-swap: … done` line and the cleanup
+     * that follows it.
+     */
+    private var hqSwappingMediaId: String? = null
+
+    /**
+     * True from the moment a lossless swap starts preparing the spare player
+     * until it either lands or gives up. [CrossfadeController] must not arm a
+     * transition onto that same player while it is being prepared for the
+     * swap.
+     */
+    private var hqSwapOwnsStandby = false
 
     /**
      * The track whose quality the listener asked for by hand while that request
@@ -4482,6 +4526,10 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun cancelStaleUpgradeJob() {
         if (QualityUpgrade.isAuditioning(upgradeFor)) return
+        // The handoff inside a lossless swap looks like a track change with the
+        // same id; cancelling here would abort the swap's own job after the
+        // player has already moved.
+        if (hqSwappingMediaId != null && hqSwappingMediaId == upgradeFor) return
         upgradeJob?.cancel()
     }
 
@@ -5585,9 +5633,9 @@ class PlaybackService : MediaLibraryService() {
      * Pulls a verified lossless stream onto disk while its low-quality copy is
      * still playing, under the same rendition key a manual swap would use.
      *
-     * Nothing is swapped: the listener keeps the current stream to the end. The
-     * next play of this track asks [AudioCache.cacheKeyOf] for the plain queue
-     * URI, and the completed upgrade is what it now opens.
+     * This is the fallback for a swap that cannot happen now — too little of
+     * the track left, a crossfade in flight, or a download that failed. The
+     * completed copy is what the next play of this track opens.
      */
     private fun prefetchLosslessForNextPlay(
         mediaId: String,
@@ -5599,6 +5647,347 @@ class PlaybackService : MediaLibraryService() {
         if (!HqQuality.isLosslessTier(stream.format)) return
         val upgraded = QualityUpgrade.upgradedUri(uri.toString())
         AudioCache.prefetchVerifiedRendition(Uri.parse(upgraded), title, stream)
+    }
+
+    /**
+     * The lossless copy of the track that is already playing replaces it as
+     * soon as the whole file is on disk, through the spare player and a short
+     * equal-power blend.
+     *
+     * @return true when the session was handed to the replacement.
+     */
+    private suspend fun swapLosslessMidSong(
+        mediaId: String,
+        uri: Uri,
+        stream: SourceStream,
+        title: String?,
+        verified: HqVerificationStore.Verified,
+    ): Boolean {
+        val beforeDownload = hqSwapDecision(mediaId, verified)
+        if (!beforeDownload.allowed) {
+            TrackLog.d(
+                "BitChord",
+                "hq-swap: $mediaId skipped ${beforeDownload.reason}",
+                about = mediaId,
+            )
+            return false
+        }
+        // The candidate's offset is measured against the YouTube clock. When a
+        // substitute is already playing, its own verified offset is what maps
+        // the playhead back; without that answer a seek would land on the wrong
+        // audio, so the copy waits for the next play instead.
+        if (currentIsSubstitute(mediaId) && currentPlayingVerification(mediaId) == null) {
+            TrackLog.d("BitChord", "hq-swap: $mediaId skipped current-clock-unknown", about = mediaId)
+            return false
+        }
+        val upgradedUri = Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
+        val downloaded = AudioCache.downloadVerifiedRendition(upgradedUri, title, stream)
+        if (!downloaded) {
+            TrackLog.d("BitChord", "hq-swap: $mediaId skipped download-failed", about = mediaId)
+            return false
+        }
+        val live = hqSwapDecision(mediaId, verified)
+        if (!live.allowed) {
+            TrackLog.d("BitChord", "hq-swap: $mediaId skipped ${live.reason}", about = mediaId)
+            return false
+        }
+        TrackLog.d(
+            "BitChord",
+            "hq-swap: $mediaId start at=${live.targetPositionMs} offset=${verified.offsetMs}",
+            about = mediaId,
+        )
+        val currentVerified = currentPlayingVerification(mediaId)
+        hqSwapOwnsStandby = true
+        val swapped = try {
+            smoothSwapToLossless(
+                mediaId,
+                stream,
+                verified,
+                upgradedUri.toString(),
+                currentVerified?.offsetMs ?: 0L,
+                currentVerified?.rate ?: 1.0,
+            )
+        } finally {
+            hqSwapOwnsStandby = false
+        }
+        if (!swapped) {
+            TrackLog.d("BitChord", "hq-swap: $mediaId skipped swap-failed", about = mediaId)
+            return false
+        }
+        TrackLog.d("BitChord", "hq-swap: $mediaId done", about = mediaId)
+        AudioCache.dropLowerQualityAfterLosslessSwap(
+            mediaId,
+            AudioCache.cacheKeyOf(upgradedUri),
+        )
+        return true
+    }
+
+    private fun hqSwapDecision(
+        mediaId: String,
+        verified: HqVerificationStore.Verified,
+    ): HqSwapPolicy.Decision {
+        val exoPlayer = player
+        val item = exoPlayer?.currentMediaItem
+        val current = currentPlayingVerification(mediaId)
+        // The same grace the manual swap uses: cutting in the instant a blend
+        // lands is heard as the transition having broken, not as a quiet
+        // improvement. Only a real transition leaves a timestamp here.
+        val justAfterTransition = crossfade?.msSinceTransition()
+            ?.let { it < UPGRADE_AFTER_CROSSFADE_MS } == true
+        return HqSwapPolicy.decide(
+            positionMs = exoPlayer?.currentPosition ?: 0L,
+            durationMs = exoPlayer?.duration ?: 0L,
+            crossfadeActive = crossfade?.isTransitioning() == true || justAfterTransition,
+            sameTrack = item?.mediaId == mediaId,
+            offsetMs = verified.offsetMs,
+            rate = verified.rate,
+            currentOffsetMs = current?.offsetMs ?: 0L,
+            currentRate = current?.rate ?: 1.0,
+        )
+    }
+
+    /** The verified clock of the substitute playing [mediaId], or null for YouTube's own copy. */
+    private fun currentPlayingVerification(mediaId: String): HqVerificationStore.Verified? {
+        val choice = StreamChoice.of(mediaId)
+        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId }
+        val sourceId = choice?.sourceConfigId ?: snapshot?.sourceConfigId ?: return null
+        if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
+        val trackId = choice?.trackId ?: snapshot?.sourceTrackId
+        return HqVerificationStore.get(this, mediaId, sourceId, trackId)
+    }
+
+    /** Whether what is playing came from a source standing in for YouTube. */
+    private fun currentIsSubstitute(mediaId: String): Boolean {
+        if (StreamChoice.isSubstitute(mediaId)) return true
+        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId } ?: return false
+        val sourceId = snapshot.sourceConfigId ?: return false
+        return SourceRegistry.config(sourceId)?.kind != SourceKind.YOUTUBE
+    }
+
+    /**
+     * Opens the verified lossless copy on the spare player at the position the
+     * current copy is at, then blends the session across in [HqSwapPolicy.FADE_MS].
+     *
+     * The replacement is a fresh player opening a fresh rendition — never the
+     * old stream continued at the same byte offset, which would splice two
+     * containers together. The item keeps the same media id and queue identity,
+     * so lyrics, scrobbling and the Automix analysis stay attached to the same
+     * recording; only the audio source changes.
+     */
+    private suspend fun smoothSwapToLossless(
+        mediaId: String,
+        stream: SourceStream,
+        verified: HqVerificationStore.Verified,
+        upgradedUri: String,
+        currentOffsetMs: Long,
+        currentRate: Double,
+    ): Boolean = withContext(Dispatchers.Main) {
+        val activePlayer = player ?: return@withContext false
+        val index = activePlayer.currentMediaItemIndex
+        if (index !in 0 until activePlayer.mediaItemCount) return@withContext false
+        val currentItem = activePlayer.currentMediaItem ?: return@withContext false
+        if (currentItem.mediaId != mediaId) return@withContext false
+        if (crossfade?.isTransitioning() == true) return@withContext false
+        val standbyPlayer = spare ?: return@withContext false
+
+        fun releaseStandby() {
+            standbyPlayer.stop()
+            standbyPlayer.clearMediaItems()
+            standbyPlayer.volume = 1f
+            activePlayer.volume = 1f
+            if (swappingMediaId == mediaId) swappingMediaId = null
+        }
+
+        val sourceName = stream.sourceConfigId
+            ?.let { SourceRegistry.config(it)?.displayName }
+            ?: "Upgrade"
+        val upgradedMetadata = currentItem.mediaMetadata.buildUpon()
+            .setExtras(Bundle(currentItem.mediaMetadata.extras ?: Bundle()).apply {
+                putBoolean(EXTRA_QUALITY_UPGRADED, true)
+            })
+            .build()
+        val upgradedItem = currentItem.buildUpon()
+            .setUri(upgradedUri)
+            .setMediaMetadata(upgradedMetadata)
+            .withResolvedStreamType(stream.url)
+            .build()
+        val newItems = (0 until activePlayer.mediaItemCount).map { i ->
+            if (i == index) upgradedItem else activePlayer.getMediaItemAt(i)
+        }
+        val wasPlaying = activePlayer.playWhenReady
+        val startAt = HqSwapPolicy.targetPositionMs(
+            HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
+            verified.offsetMs,
+            verified.rate,
+        )
+
+        standbyPlayer.stop()
+        standbyPlayer.clearMediaItems()
+        standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
+        standbyPlayer.repeatMode = activePlayer.repeatMode
+        standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
+        standbyPlayer.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
+        standbyPlayer.volume = 0f
+        standbyPlayer.setMediaItems(newItems, index, startAt)
+        spareLoudness().track(mediaId, nextMediaIdOf(standbyPlayer))
+        standbyPlayer.playWhenReady = false
+        standbyPlayer.prepare()
+
+        val prepareDeadline = SystemClock.elapsedRealtime() + HqSwapPolicy.PREPARE_TIMEOUT_MS
+        var ready = false
+        while (isActive && SystemClock.elapsedRealtime() < prepareDeadline) {
+            if (player !== activePlayer ||
+                activePlayer.currentMediaItemIndex != index ||
+                activePlayer.currentMediaItem?.mediaId != mediaId
+            ) {
+                releaseStandby()
+                return@withContext false
+            }
+            if (standbyPlayer.playbackState == Player.STATE_READY) {
+                ready = true
+                break
+            }
+            if (standbyPlayer.playbackState == Player.STATE_IDLE &&
+                standbyPlayer.playerError != null
+            ) {
+                break
+            }
+            delay(HqSwapPolicy.PREPARE_STEP_MS)
+        }
+        if (!ready) {
+            releaseStandby()
+            return@withContext false
+        }
+
+        if (wasPlaying) {
+            standbyPlayer.seekTo(
+                index,
+                HqSwapPolicy.targetPositionMs(
+                    HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
+                    verified.offsetMs,
+                    verified.rate,
+                ),
+            )
+            standbyPlayer.play()
+            val startDeadline = SystemClock.elapsedRealtime() + HqSwapPolicy.START_TIMEOUT_MS
+            while (isActive && !standbyPlayer.isPlaying &&
+                SystemClock.elapsedRealtime() < startDeadline
+            ) {
+                delay(HqSwapPolicy.START_STEP_MS)
+            }
+            if (standbyPlayer.isPlaying) {
+                standbyPlayer.seekTo(
+                    index,
+                    HqSwapPolicy.targetPositionMs(
+                        HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
+                        verified.offsetMs,
+                        verified.rate,
+                    ),
+                )
+            } else {
+                releaseStandby()
+                return@withContext false
+            }
+        } else {
+            val seekDeadline = SystemClock.elapsedRealtime() + HqSwapPolicy.START_TIMEOUT_MS
+            while (isActive && standbyPlayer.playbackState != Player.STATE_READY &&
+                SystemClock.elapsedRealtime() < seekDeadline
+            ) {
+                delay(HqSwapPolicy.START_STEP_MS)
+            }
+        }
+
+        swappingMediaId = mediaId
+        swapCutAt = SystemClock.elapsedRealtime()
+        NerdStats.onSourceStream(mediaId, stream.format, sourceName)
+        NerdStats.recordSource(mediaId, sourceName)
+        StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
+        QualityUpgrade.unshelve(mediaId)
+
+        val fadeStart = SystemClock.elapsedRealtime()
+        hqSwappingMediaId = mediaId
+        try {
+            while (isActive) {
+                if (player !== activePlayer ||
+                    activePlayer.currentMediaItemIndex != index ||
+                    activePlayer.currentMediaItem?.mediaId != mediaId
+                ) {
+                    releaseStandby()
+                    return@withContext false
+                }
+                if (standbyPlayer.playWhenReady != activePlayer.playWhenReady) {
+                    standbyPlayer.playWhenReady = activePlayer.playWhenReady
+                }
+                val progress = ((SystemClock.elapsedRealtime() - fadeStart).toFloat() /
+                    HqSwapPolicy.FADE_MS).coerceIn(0f, 1f)
+                val inGain = sin(progress * (PI / 2.0)).toFloat()
+                val outGain = cos(progress * (PI / 2.0)).toFloat()
+                standbyPlayer.volume = inGain
+                activePlayer.volume = outGain
+                val trim = 1f / sqrt((inGain + outGain).coerceAtLeast(1f))
+                loudnessA.setBlendTrim(trim)
+                loudnessB.setBlendTrim(trim)
+                if (progress >= 1f) break
+                delay(HqSwapPolicy.FADE_STEP_MS)
+            }
+            if (!isActive) {
+                releaseStandby()
+                return@withContext false
+            }
+            adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
+            // The standby's decoder reported its format before the listener
+            // was attached, so [onTrackBecameCurrent] clearing the old
+            // snapshot would otherwise leave the badge blank until the next
+            // format event. Publish the new player's measured format now, so
+            // the badge and the manual-upgrade verdict change with the audio.
+            publishNerdStats()
+        } finally {
+            hqSwappingMediaId = null
+            loudnessA.setBlendTrim(1f)
+            loudnessB.setBlendTrim(1f)
+        }
+        true
+    }
+
+    /**
+     * The queue item for [item]'s verified lossless copy, or null when there is
+     * nothing better to prepare. Called when the standby arms and again when a
+     * verification lands during ARMING.
+     */
+    private fun losslessAheadItem(item: MediaItem): MediaItem? {
+        val id = item.mediaId
+        val choice = StreamChoice.of(id) ?: return null
+        val sourceId = choice.sourceConfigId ?: return null
+        if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
+        if (!HqQuality.isLosslessTier(choice.format)) return null
+        val uri = item.localConfiguration?.uri ?: return null
+        if (uri.getQueryParameter(QualityUpgrade.MARKER) != null) return null
+        QualityUpgrade.force(id, choice)
+        return item.buildUpon()
+            .setUri(QualityUpgrade.upgradedUri(uri.toString()))
+            .withResolvedStreamType(choice.url)
+            .build()
+    }
+
+    private fun logHqAhead(mediaId: String) {
+        TrackLog.d("BitChord", "hq-ahead: $mediaId re-prepared next player as FLAC", about = mediaId)
+    }
+
+    /**
+     * A verification landing while the next transition is already armed means
+     * the standby was buffering the lossy copy. Reload it onto the verified
+     * lossless rendition before the blend starts; after that point the listener
+     * is hearing it and the swap is no longer free.
+     */
+    private fun refreshArmedIncomingLossless() {
+        val exoPlayer = player ?: return
+        val nextIndex = exoPlayer.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET || nextIndex !in 0 until exoPlayer.mediaItemCount) return
+        val controller = crossfade ?: return
+        if (!controller.isArming()) return
+        val next = exoPlayer.getMediaItemAt(nextIndex)
+        val prepared = losslessAheadItem(next) ?: return
+        if (controller.rearmIncoming(prepared)) logHqAhead(next.mediaId)
     }
 
     /**
@@ -5702,21 +6091,34 @@ class PlaybackService : MediaLibraryService() {
                 // seconds of catalogue searching it would otherwise repeat.
                 if (shelved != null) {
                     if (manualUpgradeFor != mediaId) {
-                        // A stream found earlier is still valid, but it must not
-                        // replace the audio under a track that is already
-                        // playing. Keep it for the next play instead.
-                        var nextPlayTitle: String? = null
+                        // A stream found earlier is still valid. A verified
+                        // lossless copy replaces the song that is already
+                        // sounding, exactly as a fresh find does; a lossy one
+                        // is kept for the next play instead.
+                        var targetTitle: String? = null
+                        var verified: HqVerificationStore.Verified? = null
                         uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                             val currentTier = currentTierFor(mediaId)
-                            if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved) != null) {
+                            val answer = HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved)
+                            if (answer != null) {
                                 logHqTier(mediaId, target.title, shelved, currentTier)
                                 SourceResolver.rememberOriginal(target, shelved)
-                                nextPlayTitle = target.title
+                                targetTitle = target.title
+                                verified = answer
                             }
                         }
                         QualityUpgrade.forget(mediaId)
-                        if (nextPlayTitle != null) {
-                            prefetchLosslessForNextPlay(mediaId, uri, shelved, nextPlayTitle)
+                        if (verified != null && targetTitle != null && uri != null &&
+                            HqQuality.isLosslessTier(shelved.format)
+                        ) {
+                            if (swapLosslessMidSong(mediaId, uri, shelved, targetTitle, verified)) {
+                                return@launch
+                            }
+                            prefetchLosslessForNextPlay(mediaId, uri, shelved, targetTitle)
+                            return@launch
+                        }
+                        if (targetTitle != null) {
+                            prefetchLosslessForNextPlay(mediaId, uri, shelved, targetTitle)
                         }
                         TrackLog.d(
                             "BitChord",
@@ -5796,26 +6198,37 @@ class PlaybackService : MediaLibraryService() {
                     reportManualUpgrade(mediaId, message)
                     return@launch
                 }
-                // The automatic second look never replaces the audio of a
-                // track that is already sounding. The answer is remembered and
-                // used from the next play of this track, or by the ahead-of-
-                // playback pass for the next queue row; the listener's song is
-                // never cut in half by a better copy arriving late. A request
-                // made by hand is still honoured — that is the one swap the
-                // listener explicitly asked for.
+                // A request made by hand is still honoured below. The
+                // automatic pass now swaps the lossless copy into the track
+                // that is already sounding — the user's decision on 10-30 —
+                // after the whole file is on disk and through the spare
+                // player, so the current song no longer plays Opus to its end
+                // because a FLAC was proved ten seconds in.
                 if (manualUpgradeFor != mediaId) {
-                    var nextPlayTitle: String? = null
+                    var targetTitle: String? = null
+                    var verified: HqVerificationStore.Verified? = null
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                         val currentTier = currentTierFor(mediaId)
-                        if (HqAudioVerify.verify(this@PlaybackService, mediaId, target, better) != null) {
+                        val answer = HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
+                        if (answer != null) {
                             logHqTier(mediaId, target.title, better, currentTier)
                             SourceResolver.rememberOriginal(target, better)
-                            nextPlayTitle = target.title
+                            targetTitle = target.title
+                            verified = answer
                         }
                     }
                     QualityUpgrade.forget(mediaId)
-                    if (nextPlayTitle != null) {
-                        prefetchLosslessForNextPlay(mediaId, uri, better, nextPlayTitle)
+                    if (verified != null && targetTitle != null && uri != null &&
+                        HqQuality.isLosslessTier(better.format)
+                    ) {
+                        if (swapLosslessMidSong(mediaId, uri, better, targetTitle, verified)) {
+                            return@launch
+                        }
+                        prefetchLosslessForNextPlay(mediaId, uri, better, targetTitle)
+                        return@launch
+                    }
+                    if (targetTitle != null) {
+                        prefetchLosslessForNextPlay(mediaId, uri, better, targetTitle)
                     }
                     TrackLog.d(
                         "BitChord",
@@ -6002,31 +6415,25 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    /** What the decoder says is playing, or what the source claimed when it has not spoken yet. */
+    /**
+     * What the decoder says is playing. No source claim and no stored verdict
+     * is allowed to answer this: an Opus stream under a FLAC that was verified
+     * in an earlier session must still read as Opus, or the manual upgrade is
+     * refused as unnecessary over the copy that is actually playing.
+     */
     private fun currentIsLossless(mediaId: String): Boolean =
-        NerdStats.current.value?.takeIf { it.mediaId == mediaId }?.isLossless == true ||
-            NerdStats.declaredFormat(mediaId)?.let { HqQuality.isLosslessTier(it) } == true
+        PlayingAudioFormat.showsLosslessBadge(mediaId, NerdStats.current.value)
 
     private fun currentIsAtmos(mediaId: String): Boolean =
-        NerdStats.current.value?.takeIf { it.mediaId == mediaId }?.isDolbyAtmos == true ||
-            NerdStats.declaredFormat(mediaId)?.isDolbyAtmos == true
+        PlayingAudioFormat.isDolbyAtmos(mediaId, NerdStats.current.value)
 
     /**
-     * The playing stream as a short label, preferring the decoder's measurement
-     * and falling back to what the source declared. Null fields are dropped by
-     * [QualityUpgradeAdvice.label], so an early request still reads "Opus"
-     * rather than inventing a bitrate.
+     * The playing stream as a short label, read from the decoder's measurement
+     * alone. Null fields are dropped by [QualityUpgradeAdvice.label]; an
+     * unmeasured track gets no label rather than a stale one.
      */
-    private fun currentFormatForNotice(mediaId: String): StreamFormat? {
-        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId }
-        if (snapshot != null) {
-            val codec = NerdStats.codecLabel(snapshot.mimeType)?.lowercase(Locale.ROOT)
-            if (codec != null || snapshot.bitrateKbps != null) {
-                return StreamFormat(codec = codec, kbps = snapshot.bitrateKbps)
-            }
-        }
-        return NerdStats.declaredFormat(mediaId)
-    }
+    private fun currentFormatForNotice(mediaId: String): StreamFormat? =
+        PlayingAudioFormat.streamFormat(mediaId, NerdStats.current.value)
 
     private fun currentQualityLabel(mediaId: String): String =
         QualityUpgradeAdvice.label(currentFormatForNotice(mediaId))

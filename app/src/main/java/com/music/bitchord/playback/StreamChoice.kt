@@ -2,6 +2,10 @@ package com.music.bitchord.playback
 
 import android.os.SystemClock
 import com.music.bitchord.data.sources.SourceStream
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -54,6 +58,16 @@ object StreamChoice {
     private val chosen = ConcurrentHashMap<String, Choice>()
 
     /**
+     * Bumped whenever a choice is recorded, so a player that is already
+     * preparing the next track can be re-armed on the event rather than by a
+     * timer. The value is a revision, not the stream itself: collectors read
+     * [of] for the track they care about, which is the same promise every
+     * other reader is held to.
+     */
+    private val _revisions = MutableStateFlow(0L)
+    val revisions: StateFlow<Long> = _revisions.asStateFlow()
+
+    /**
      * The stream already serving [videoId], or null if this is the first read
      * for it — or the last one was long enough ago that its URL is no longer
      * worth trusting.
@@ -98,6 +112,7 @@ object StreamChoice {
             }
         }
         chosen[videoId] = Choice(stream, SystemClock.elapsedRealtime(), substituted)
+        _revisions.update { it + 1L }
     }
 
     /**
