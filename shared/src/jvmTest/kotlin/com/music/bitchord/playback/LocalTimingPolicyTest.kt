@@ -43,4 +43,31 @@ class LocalTimingPolicyTest {
         assertTrue(LocalTimingPolicy.measureNow(file, isVideo = false, timingForeign = true))
         assertFalse(LocalTimingPolicy.measureNow(file, isVideo = false, timingForeign = false))
     }
+
+    @Test
+    fun aRecheckOverrideOnADownloadedSongIsApplied() {
+        assertTrue(
+            LocalTimingPolicy.baseAllowed(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                overrideRecheck = true,
+            ),
+        )
+        assertFalse(
+            LocalTimingPolicy.baseAllowed(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                overrideRecheck = false,
+            ),
+        )
+    }
+
+    @Test
+    fun aVideosFileAndAStreamAreAlwaysAdjustable() {
+        assertTrue(LocalTimingPolicy.baseAllowed(true, fromFile = true, isVideo = true, overrideRecheck = false))
+        assertTrue(LocalTimingPolicy.baseAllowed(true, fromFile = false, isVideo = false, overrideRecheck = false))
+        assertFalse(LocalTimingPolicy.baseAllowed(false, fromFile = false, isVideo = false, overrideRecheck = false))
+    }
 }

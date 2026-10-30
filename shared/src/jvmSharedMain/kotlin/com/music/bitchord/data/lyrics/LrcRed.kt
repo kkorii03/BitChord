@@ -125,9 +125,15 @@ object LrcRed {
 
     /** The version words in the parts [coreOf] throws away. */
     private fun versionOf(title: String): Set<String> {
-        val extras = BRACKETED.findAll(title).joinToString(" ") { it.value } +
-            " " + title.substringAfter(" - ", "")
-        return normalized(extras).split(' ').filter { it in VERSION_WORDS }.toSet()
+        val extras = BRACKETED.findAll(title).map { it.value }.toList() +
+            title.substringAfter(" - ", "")
+        return extras.flatMap { extra ->
+            val words = normalized(extra).split(' ').filter { it.isNotEmpty() }
+            // "Album Version" and "Radio Edit" read like a take and are the
+            // ordinary release. Treating them as versions made the plain
+            // listing of the same recording fail every test below.
+            if (words.joinToString("") in NEUTRAL) emptyList() else words.filter { it in VERSION_WORDS }
+        }.toSet()
     }
 
     private fun artistsOf(artist: String): Set<String> =
@@ -149,6 +155,14 @@ object LrcRed {
     private val ARTIST_SEPARATORS = Regex(
         """\s*(?:,|&|;|/|\s+and\s+|\s+x\s+|\s+with\s+|\s+feat\.?\s+|\s+ft\.?\s+)\s*""",
         RegexOption.IGNORE_CASE,
+    )
+
+    /** Asides that read like a take but name the ordinary release. */
+    private val NEUTRAL = setOf(
+        "albumversion", "originalversion", "originalmix", "singleversion",
+        "radioversion", "radioedit", "stereoversion", "monoversion",
+        "studioversion", "fullversion", "standardversion", "explicitversion",
+        "deluxeversion", "originaltrack",
     )
 
     /** Bracket words that make it a different recording, not a different label. */

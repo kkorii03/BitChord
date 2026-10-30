@@ -36,7 +36,14 @@ object LrcLib {
             val cleanArtist = artist.clean()
             val seconds = (durationMs / 1000).toInt()
 
-            val exact = runCatching { exactMatch(cleanTitle, cleanArtist, seconds) }.getOrNull()
+            // The exact endpoint needs a length to identify the recording; a
+            // download row without one used to send "0" and match whatever the
+            // server did with it.
+            val exact = if (seconds > 0) {
+                runCatching { exactMatch(cleanTitle, cleanArtist, seconds) }.getOrNull()
+            } else {
+                null
+            }
             val synced = exact ?: runCatching { bestSearchHit(cleanTitle, cleanArtist, seconds) }
                 .getOrNull()
             synced?.let(::parseLrc)?.takeIf { it.isNotEmpty() }
@@ -64,14 +71,30 @@ object LrcLib {
             .build()
         val body = get(url.toString()) ?: return null
         val hits = json.parseToJsonElement(body) as? JsonArray ?: return null
-        return hits.mapNotNull { it as? JsonObject }
+        val candidates = hits.mapNotNull { it as? JsonObject }
             .filter { it["syncedLyrics"]?.jsonPrimitive?.contentOrNull?.isNotBlank() == true }
-            .minByOrNull {
-                val d = it["duration"]?.jsonPrimitive?.doubleOrNull ?: 0.0
-                abs(d - seconds)
+            .map {
+                (it["duration"]?.jsonPrimitive?.doubleOrNull) to
+                    it["syncedLyrics"]!!.jsonPrimitive.contentOrNull.orEmpty()
             }
-            ?.get("syncedLyrics")?.jsonPrimitive?.contentOrNull
+        return pickByDuration(candidates, seconds)
     }
+
+    /**
+     * The hit closest in length to what is playing, or the API's own order
+     * when there is no length to compare against.
+     *
+     * The old code subtracted an unknown length (0) from every hit's length,
+     * which is the same as sorting shortest-first — the interlude or the
+     * thirty-second radio edit wins. With no length, relevance order is the
+     * only signal the provider gave us.
+     */
+    internal fun <T> pickByDuration(candidates: List<Pair<Double?, T>>, seconds: Int): T? =
+        if (seconds <= 0) {
+            candidates.firstOrNull()?.second
+        } else {
+            candidates.minByOrNull { abs((it.first ?: 0.0) - seconds) }?.second
+        }
 
     private fun get(url: String): String? {
         val request = Request.Builder().url(url).header("User-Agent", AGENT).build()

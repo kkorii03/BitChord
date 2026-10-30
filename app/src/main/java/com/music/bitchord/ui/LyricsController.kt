@@ -154,7 +154,7 @@ class LyricsController(
      * from its downloaded file to the song stream, and the check of the old
      * recording must not stand for the new one.
      */
-    private var lyricsFor: Triple<String, String?, Set<LyricsSource>>? = null
+    private var lyricsFor: LyricsLoadKey? = null
 
     init {
         // Kept lyrics a background check has since bettered (word timing where
@@ -200,10 +200,13 @@ class LyricsController(
         } else {
             emptySet()
         }
-        val key = Triple(
-            videoId,
-            if (isVideo) null else LyricsTiming.audioSourceKey(videoId, localUri != null),
-            sources,
+        val key = LyricsLoadKey.of(
+            videoId = videoId,
+            isVideo = isVideo,
+            localUri = localUri,
+            sources = sources,
+            order = AppSettings.lyricsSourceOrder.value,
+            prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
         if (lyricsFor == key) return
         // The duration lands a beat after the track, and a database match needs
@@ -267,7 +270,7 @@ class LyricsController(
         // answer rather than making a request. Off by default: the bundle's
         // lyrics path is a post-ko-101 addition and must not reach this frame.
         if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(videoId)?.let { prepared ->
+            NextPrepCache.get(videoId, localFile = localUri != null, isVideo = isVideo)?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -411,6 +414,11 @@ class LyricsController(
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)
             _lyricsChecked.value = true
+            // A miss is not a final answer: a source may have been down or the
+            // phone offline. Forget the claim so a later look at the same
+            // track (a settings change, reopening the panel) asks again,
+            // instead of being dropped as a duplicate for the whole session.
+            if (selected == null) lyricsFor = null
         }
     }
 

@@ -127,9 +127,22 @@ object KuGou {
             // whatever it has of that length — "동거" came back as a Chinese
             // song. The row has to carry the title asked for.
             .filter { titlesOverlap(title, it.songname.ifBlank { it.filename }) }
-            .sortedBy { abs(it.duration - seconds) }
-            .map { it.hash }
+            .let { hits -> closestFirst(hits.map { it.duration to it.hash }, seconds) }
     }
+
+    /**
+     * Hits closest in length first, or the API's own order when the track's
+     * length is unknown.
+     *
+     * Sorting by `abs(duration - 0)` made an unknown length mean "shortest
+     * first", which is how a thirty-second interlude could win over the song.
+     */
+    internal fun <T> closestFirst(candidates: List<Pair<Int, T>>, seconds: Int): List<T> =
+        if (seconds <= 0) {
+            candidates.map { it.second }
+        } else {
+            candidates.sortedBy { abs(it.first - seconds) }.map { it.second }
+        }
 
     private fun searchLyrics(hash: String? = null, keyword: Keyword? = null, seconds: Int = -1): List<Candidate>? {
         val builder = "https://lyrics.kugou.com/search".toHttpUrl().newBuilder()

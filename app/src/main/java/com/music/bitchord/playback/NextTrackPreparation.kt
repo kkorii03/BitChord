@@ -6,7 +6,6 @@ import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
-import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
@@ -134,7 +133,10 @@ internal class NextTrackPreparation(
         val song = runCatching { item.toSong() }.getOrNull() ?: return null
         val rowId = item.queueEntryId ?: item.mediaId
         if (rowId.isBlank()) return null
-        return Snapshot(rowId, index, song, "$rowId|${song.videoId}")
+        // The row's sound is part of its identity: a download finishing (or a
+        // file being replaced by its stream) must cancel a bundle prepared for
+        // the other source, or its first-frame cache is for the wrong audio.
+        return Snapshot(rowId, index, song, "$rowId|${song.videoId}|${song.localUri != null}")
     }
 
     private fun attemptsFor(rowId: String): MutableSet<Step> = synchronized(attempted) {
@@ -161,7 +163,7 @@ internal class NextTrackPreparation(
         if (versionWanted(song) && Step.VERSION !in steps && !versionAnswered(song)) {
             steps += Step.VERSION
             val resolved = resolveVersion(song, snapshot.rowId) { expected ->
-                expectedQueueKey = "${snapshot.rowId}|${expected.videoId}"
+                expectedQueueKey = "${snapshot.rowId}|${expected.videoId}|${expected.localUri != null}"
                 queueKey = expectedQueueKey
             }
             if (resolved != null) song = resolved
@@ -190,7 +192,7 @@ internal class NextTrackPreparation(
             },
             switches,
         )
-        val prepared = preparedSteps(song, lyrics = null)
+        val prepared = preparedSteps(song, lyrics = lyrics)
         val plan = NextPrepPolicy.plan(
             NextPrepPolicy.Request(
                 rowId = snapshot.rowId,
@@ -222,7 +224,12 @@ internal class NextTrackPreparation(
                     Step.SYNC -> {
                         val found = lyrics
                         val lines = found?.lines
-                        if (lines != null && lines.any { it.timeMs > 0 } && !song.isVideo) {
+                        // A cover row can arrive without its video flag; the
+                        // lyrics query still knows it is a video, and a song
+                        // check must not run against a video's clock.
+                        if (lines != null && lines.any { it.timeMs > 0 } &&
+                            !LyricsTimingSource.isVideo(song)
+                        ) {
                             if (!LyricsTiming.songVerified(context, song, lines)) {
                                 LyricsTiming.verifySong(context, song, lines)
                             }
@@ -272,8 +279,9 @@ internal class NextTrackPreparation(
                     shown = shown,
                     source = found.source,
                     searchedAs = found.searchedAs,
-                    isVideo = song.isVideo,
+                    isVideo = LyricsTimingSource.isVideo(song),
                     fromFile = found.fromFile,
+                    localFile = song.localUri != null,
                 ),
             )
         }
@@ -307,9 +315,9 @@ internal class NextTrackPreparation(
         TrackLog.i(
             "BitChord",
             "next-prep: ${song.title} version=${song.videoId} " +
-                "lyrics=${found?.source?.name?.lowercase(Locale.ROOT) ?: "none"} " +
+                "lyrics=${NextPrepLog.lyrics(found?.source, attempted = Step.LYRICS in steps)} " +
                 "hq=${hq?.name?.lowercase(Locale.ROOT) ?: "none"} " +
-                "sync=${if (timing != null) "applied" else "skipped"} " +
+                "sync=${NextPrepLog.sync(timing != null, attempted = Step.SYNC in steps)} " +
                 "mix=${if (mix) "ready" else "none"} in ${tookMs}ms",
             about = song.videoId,
         )
@@ -458,7 +466,7 @@ internal class NextTrackPreparation(
     // ---- (d) song sync -------------------------------------------------------
 
     private fun syncWanted(song: Song): Boolean {
-        if (song.isVideo) return false
+        if (LyricsTimingSource.isVideo(song)) return false
         if (!AppSettings.heavyWorkAllowed) return false
         if (!AppSettings.aiTimingAhead.value) return false
         return Deepgram.usable
@@ -469,8 +477,7 @@ internal class NextTrackPreparation(
         found: TranslationAhead.AheadLyrics,
         song: Song,
     ): LyricsTiming.Timing? {
-        val query = CoverTitles.lyricsQuery(song)
-        val timeable = !found.fromFile || query.isVideo
+        val timeable = !found.fromFile || LyricsTimingSource.isVideo(song)
         val recordTimed = timeable && (!found.fromFile || found.source != null) &&
             !LyricsTiming.timedToVideo(found.source)
         return LyricsTiming.timing(
@@ -479,8 +486,8 @@ internal class NextTrackPreparation(
             lines = lines,
             baseAllowed = timeable,
             measuredAllowed = recordTimed,
-            isVideo = song.isVideo,
-            audioSource = if (song.isVideo) {
+            isVideo = LyricsTimingSource.isVideo(song),
+            audioSource = if (LyricsTimingSource.isVideo(song)) {
                 null
             } else {
                 LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
@@ -525,6 +532,8 @@ internal object NextPrepCache {
         val searchedAs: Pair<String, String>?,
         val isVideo: Boolean,
         val fromFile: Boolean,
+        /** Whether the row played a downloaded file rather than a stream. */
+        val localFile: Boolean,
     )
 
     @Volatile
@@ -534,7 +543,10 @@ internal object NextPrepCache {
         ready = value
     }
 
-    fun get(videoId: String): Ready? = ready?.takeIf { it.videoId == videoId }
+    fun get(videoId: String, localFile: Boolean, isVideo: Boolean): Ready? =
+        ready?.takeIf {
+            it.videoId == videoId && it.localFile == localFile && it.isVideo == isVideo
+        }
 
     fun clear() {
         ready = null

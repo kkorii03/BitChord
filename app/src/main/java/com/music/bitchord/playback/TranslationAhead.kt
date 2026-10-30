@@ -132,6 +132,20 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
     ): AheadLyrics {
+        // A re-check writes its fresh sheet to the override store instead of
+        // rewriting the audio file. The player already reads that first; the
+        // next-song bundle must too, or it prepares the file's older tags and
+        // then overwrites the sync saved for the fresh words.
+        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
+            if (override.lines.any { it.text.isNotBlank() }) {
+                return AheadLyrics(
+                    lines = override.lines,
+                    source = override.source,
+                    searchedAs = null,
+                    fromFile = true,
+                )
+            }
+        }
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.withSource(app, uri)
             if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {
