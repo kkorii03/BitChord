@@ -517,11 +517,10 @@ object AppSettings {
     /**
      * Developer-only kill switches for the post-ko-101 lyrics-sync paths.
      *
-     * All three default off so a fresh install behaves like ko-101: the
-     * next-song bundle still resolves the version, waits for HQ and requests
-     * the mix, but it does not fetch/verify lyrics or publish them on the
-     * first frame; downloaded files are not re-checked and stored overrides
-     * are ignored; a saved HQ offset/rate is not re-applied to lyrics.
+     * The next-prep switch is on by default since 10-31, because with it off
+     * next-track preparation never measured lyrics sync. The other two stay
+     * off: downloaded files are not re-checked and stored overrides are
+     * ignored, and a saved HQ offset/rate is not re-applied to lyrics.
      */
     // On by default since 10-31: with it off, next-track preparation never
     // measured lyrics sync (sync=skipped 154 of 173 in the user's log), which

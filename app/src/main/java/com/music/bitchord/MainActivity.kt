@@ -53,7 +53,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
@@ -1267,6 +1266,10 @@ private fun BitChordApp(
     }
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    // The before-audio version swap also depends on this switch, so toggling it
+    // while a video row is playing has to re-run the effect, not wait for the
+    // next track.
+    val videoRadio by AppSettings.videoRadio.collectAsStateWithLifecycle()
     // A conversion is deliberately scoped to the current listening session.
     // Keeping the complete original row here lets Revert restore the exact
     // video upload, including its title and playlist identity, rather than
@@ -1825,7 +1828,7 @@ private fun BitChordApp(
     // version swap would change the recording under them, so only the manual
     // menu may do that. Tried marks only a definitive answer, so a cancelled
     // or superseded lookup can be retried.
-    LaunchedEffect(player.song?.videoId, preferMusicOnly) {
+    LaunchedEffect(autoMusicOnlyEffectKey(player.song?.videoId, preferMusicOnly, videoRadio)) {
         val song = player.song ?: return@LaunchedEffect
         val c = controller ?: return@LaunchedEffect
         if (preferMusicOnly && !partyState.inParty && !videoRadioEnabledFor(song) &&

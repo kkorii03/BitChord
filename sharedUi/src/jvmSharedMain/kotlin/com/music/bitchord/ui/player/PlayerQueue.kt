@@ -84,7 +84,6 @@ import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.autoplaySectionStart
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**

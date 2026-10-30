@@ -5,12 +5,14 @@ import com.music.bitchord.playback.NextPrepPolicy.Step
 /**
  * Which of the post-ko-101 lyrics-sync paths are allowed to run.
  *
- * Every switch defaults off. The paths they guard were added after ko-101,
- * whose sync the listener asked to keep, and each one can move or replace a
- * song's lyrics: the next-song bundle's lyrics/sync steps and first-frame
- * cache, the downloaded-file re-check and its override file, and the saved
- * HQ offset/rate applied on top of a song's timing. Turning a switch back on
- * runs the existing code; nothing here deletes it.
+ * The pure switches default off. AppSettings turns the next-prep lyrics switch
+ * on by default so its sync work runs before the next song starts; the other
+ * two stay off. The paths they guard were added after ko-101, whose sync the
+ * listener asked to keep, and each one can move or replace a song's lyrics:
+ * the next-song bundle's lyrics/sync steps and first-frame cache, the
+ * downloaded-file re-check and its override file, and the saved HQ offset/rate
+ * applied on top of a song's timing. Turning a switch back on runs the existing
+ * code; nothing here deletes it.
  */
 object SyncSafetyPolicy {
 

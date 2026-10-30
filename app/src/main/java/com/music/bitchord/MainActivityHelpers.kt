@@ -71,3 +71,16 @@ internal fun shouldSkipAfterDislike(
     targetVideoId: String,
     currentVideoId: String?,
 ): Boolean = previousStatus != LikeStatus.DISLIKE && targetVideoId == currentVideoId
+
+/**
+ * The keys that decide whether the before-audio music-only swap runs.
+ *
+ * [videoRadio] is part of the decision (see `videoRadioEnabledFor`), so it has
+ * to be part of the effect key too: changing the switch while a video row is
+ * playing must re-evaluate the swap instead of waiting for the next track.
+ */
+internal fun autoMusicOnlyEffectKey(
+    songId: String?,
+    preferMusicOnly: Boolean,
+    videoRadio: Boolean,
+): List<Any?> = listOf(songId, preferMusicOnly, videoRadio)
