@@ -158,15 +158,25 @@ object SearchHistory {
      * queued write. Duplicate ids are collapsed and the list is capped the
      * same way [record] caps it.
      */
-    fun replace(entries: List<SearchHistoryEntity>) {
+    fun replace(entries: List<SearchHistoryEntity>): Boolean {
         open()
         val seen = HashSet<String>(entries.size)
         val trimmed = entries
             .filter { seen.add(it.id.lowercase()) }
             .take(MAX_ENTRIES)
-        _recent.value = trimmed
-        if (!this::prefs.isInitialized) return
-        prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, trimmed)).apply()
+        if (!this::prefs.isInitialized) return false
+        // Same writer as [save]: a record queued just before the import must be
+        // written before this one, not after it. Waiting for the task is what
+        // keeps the restored list from being replaced by that older save.
+        val saved = runCatching {
+            writer.submit<Boolean> {
+                prefs.edit()
+                    .putString(KEY_HISTORY, json.encodeToString(serializer, trimmed))
+                    .commit()
+            }.get()
+        }.getOrDefault(false)
+        if (saved) _recent.value = trimmed
+        return saved
     }
 
     private fun load() {

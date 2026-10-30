@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -93,6 +94,10 @@ object TasteSignals {
     private var loaded = false
 
     private var dirty = false
+
+    /** Whether the last non-empty snapshot reached the file. */
+    @Volatile
+    private var lastWriteOk = true
 
     private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
@@ -401,6 +406,69 @@ object TasteSignals {
         }
     }
 
+    /**
+     * The ids this store currently holds as [status], for a backup export.
+     *
+     * The session-only [LikeState] only knows what was tapped since launch.
+     * This is the copy that survives a restart, so a backup taken after one
+     * still carries the listener's ratings instead of an empty list.
+     */
+    fun ratedVideoIds(status: LikeStatus): List<String> =
+        synchronized(lock) {
+            if (!ready()) return emptyList()
+            val wanted = ratingOf(status)
+            if (wanted == RATING_NONE) return emptyList()
+            tracks.values.filter { it.rating == wanted }.map { it.id }
+        }
+
+    /**
+     * Re-applies the ratings a backup carried, without inventing play counts.
+     *
+     * Last value wins when a file names the same id on both lists, matching the
+     * order [com.music.bitchord.data.stats.Backup.importFrom] applies them.
+     * The write is debounced like every other change to this file.
+     */
+    fun restoreRatings(liked: Collection<String>, disliked: Collection<String>): Boolean {
+        if (!ready()) return false
+        val now = System.currentTimeMillis()
+        return synchronized(lock) {
+            val likedIds = liked.filter { it.isNotBlank() }.toSet()
+            val dislikedIds = disliked.filter { it.isNotBlank() }.toSet()
+            val restored = likedIds + dislikedIds
+
+            // A restore replaces the rating set rather than merging into it:
+            // a track the file does not name was not rated by the device that
+            // wrote it, so its old local rating must not survive the restore.
+            tracks.values.forEach { track ->
+                if (track.rating != RATING_NONE && track.id !in restored) track.rating = RATING_NONE
+            }
+            likedIds.forEach { id ->
+                tracks.getOrPut(id) { StoredTrack(id = id) }.apply {
+                    rating = RATING_LIKE
+                    // A restored row has no play history, and the default
+                    // timestamp of zero is exactly what the size cap prunes
+                    // first. Stamp it so a large library cannot evict a rating
+                    // the listener just restored.
+                    if (lastPlayedAt == 0L) lastPlayedAt = now
+                }
+            }
+            dislikedIds.forEach { id ->
+                tracks.getOrPut(id) { StoredTrack(id = id) }.apply {
+                    rating = RATING_DISLIKE
+                    if (lastPlayedAt == 0L) lastPlayedAt = now
+                }
+            }
+            markDirtyLocked()
+            true
+        }
+    }
+
+    /** Writes pending changes and waits for the file, for an import that must not lie. */
+    suspend fun flushAndAwait(): Boolean {
+        if (!ready()) return false
+        return writer.async { writeSnapshot() }.await()
+    }
+
     // ── Disk ────────────────────────────────────────────────────────────────
 
     /**
@@ -413,28 +481,26 @@ object TasteSignals {
         writer.launch { writeSnapshot() }
     }
 
-    private suspend fun writeSnapshot(): Unit = writeLock.withLock {
+    private suspend fun writeSnapshot(): Boolean = writeLock.withLock {
         // Encoded while the lock is held rather than handing the live maps to
         // the writer: counters are mutated from the playback thread and a
         // snapshot sharing them could be read half updated. This runs on the
         // writer coroutine, which is an IO thread.
         val encoded = synchronized(lock) {
-            if (!dirty || !loaded) {
-                null
-            } else {
-                dirty = false
-                pruneLocked()
-                json.encodeToString(
-                    StoredSignals.serializer(),
-                    StoredSignals(
-                        tracks = tracks.values.toList(),
-                        artists = artists.values.toList(),
-                        coverSingers = coverSingers.values.toList(),
-                    ),
-                )
-            }
-        } ?: return@withLock
-        runCatching {
+            if (!loaded) return@withLock true
+            if (!dirty) return@withLock lastWriteOk
+            dirty = false
+            pruneLocked()
+            json.encodeToString(
+                StoredSignals.serializer(),
+                StoredSignals(
+                    tracks = tracks.values.toList(),
+                    artists = artists.values.toList(),
+                    coverSingers = coverSingers.values.toList(),
+                ),
+            )
+        }
+        val ok = runCatching {
             file.parentFile?.mkdirs()
             // Written aside and renamed, so a kill mid-write leaves the
             // previous file rather than a truncated one.
@@ -443,8 +509,17 @@ object TasteSignals {
             if (!temporary.renameTo(file)) {
                 if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
             }
+            true
         }.onFailure { Log.w(TAG, "Could not write taste signals", it) }
-        Unit
+            .getOrDefault(false)
+        lastWriteOk = ok
+        if (!ok) {
+            // A concurrent flush can have taken the snapshot that failed. Put
+            // the changes back so the next caller retries them instead of
+            // finding nothing dirty and reporting a write that never happened.
+            synchronized(lock) { dirty = true }
+        }
+        ok
     }
 
     /**
@@ -479,8 +554,12 @@ object TasteSignals {
      * per-artist caps then take the same approach with their last activity.
      */
     private fun pruneLocked() {
+        // A rating is a listener decision, not a recency signal: dropping it
+        // because a thousand newer tracks played would silently undo part of a
+        // restore (and of the listener's own library).
         tracks.values.sortedByDescending { it.lastPlayedAt }
             .drop(MAX_TRACKS)
+            .filter { it.rating == RATING_NONE }
             .forEach { tracks.remove(it.id) }
         artists.values.sortedByDescending { it.lastAt }
             .drop(MAX_ARTISTS)

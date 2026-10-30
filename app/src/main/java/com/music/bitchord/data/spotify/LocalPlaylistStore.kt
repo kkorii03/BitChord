@@ -9,6 +9,7 @@ import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -172,20 +173,31 @@ object LocalPlaylistStore {
 
     /**
      * Applies restored [incoming] rows with [mode], returning how many rows the
-     * store holds afterwards.
+     * store holds afterwards, or -1 when the write did not reach the preference
+     * file.
+     *
+     * Unlike the editing methods above, an import writes synchronously: the
+     * backup screen is about to tell the listener the restore succeeded, and
+     * that line must not run ahead of the write it describes. The in-memory list
+     * only changes after the commit, so a failed import leaves the previous
+     * library in place instead of a value the next launch will replace.
      *
      * Matching is by [LocalPlaylist.id], which survives an export/import round
      * trip. That is what makes importing the same file twice a no-op in MERGE
      * mode: every row already present is recognised instead of appended again.
      */
-    fun importAll(incoming: List<LocalPlaylist>, mode: PlaylistImportMode): Int {
+    suspend fun importAll(incoming: List<LocalPlaylist>, mode: PlaylistImportMode): Int {
         ensureLoaded()
         val next = when (mode) {
             PlaylistImportMode.REPLACE -> replacePlaylists(incoming)
             PlaylistImportMode.MERGE -> mergePlaylists(_playlists.value, incoming)
         }
+        // Go through the same single-thread writer as every edit: a save that
+        // was queued before this import must land first, not after it. Awaiting
+        // the write is what makes the success line match the preference file.
+        val saved = runCatching { writer.async { persist(next) }.await() }.getOrDefault(false)
+        if (!saved) return -1
         _playlists.value = next
-        persistAsync(next)
         return next.size
     }
 
@@ -193,9 +205,9 @@ object LocalPlaylistStore {
         writer.launch { persist(list) }
     }
 
-    private fun persist(list: List<LocalPlaylist>) {
-        if (!this::prefs.isInitialized) return
-        runCatching {
+    private fun persist(list: List<LocalPlaylist>): Boolean {
+        if (!this::prefs.isInitialized) return false
+        return runCatching {
             val jsonArray = JSONArray()
             for (playlist in list) {
                 val pObj = JSONObject()
@@ -227,9 +239,10 @@ object LocalPlaylistStore {
             }
             val saved = prefs.edit().putString(KEY_PLAYLISTS, jsonArray.toString()).commit()
             if (!saved) Log.w(TAG, "saving local playlists failed")
+            saved
         }.onFailure {
             Log.w(TAG, "saving local playlists threw: ${it.message}")
-        }
+        }.getOrDefault(false)
     }
 }
 

@@ -15,6 +15,7 @@ import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.spotify.LocalPlaylist
 import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.PlaylistImportMode
+import com.music.bitchord.data.taste.TasteSignals
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -22,6 +23,7 @@ import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.time.Instant
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -59,11 +61,42 @@ object Backup {
         prettyPrint = true
     }
 
+    /**
+     * The largest backup this build will read into memory.
+     *
+     * A backup is text the user hands us through a document picker, so its size
+     * is not ours to trust. Listening buckets and local playlists make a real
+     * one larger than a settings transfer, but a year of listening plus a few
+     * thousand playlist rows is still a few megabytes; 32 MiB leaves room for
+     * that while refusing a file that would exhaust the process before the
+     * schema check can run.
+     */
+    internal const val MAX_IMPORT_BYTES = 32 * 1024 * 1024
+
+    /**
+     * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
+     * rather than growing the buffer without bound.
+     */
+    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var total = 0
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "백업 파일이 너무 큽니다" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray().decodeToString()
+    }
+
     /** A suggested filename, dated so successive exports don't collide. */
     fun suggestedName(): String =
         "bitchord-backup-${DateTimeFormatter.ofPattern("yyyy-MM-dd").format(
             Instant.now().atZone(ZoneId.systemDefault()),
         )}.json"
+
 
     /**
      * Writes a backup to [target], a document the user picked.
@@ -76,12 +109,15 @@ object Backup {
     suspend fun exportTo(context: Context, target: Uri): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val buckets = ListeningStats.exportAll()
-            val overrides = LikeState.overrides.value
             // TasteSignals holds ratings already written to disk on an earlier
             // run; session overrides cover one made since launch and win over
             // an older stored value. Union them so an export after a restart
             // still carries the listener's likes instead of only this process.
-            val ratings = TasteSignals.ratings() + overrides
+            val ratings = mergeRatedIds(
+                session = LikeState.overrides.value,
+                persistedLiked = TasteSignals.ratedVideoIds(LikeStatus.LIKE),
+                persistedDisliked = TasteSignals.ratedVideoIds(LikeStatus.DISLIKE),
+            )
             val file = BackupFile(
                 app = APP_TAG,
                 version = SCHEMA_VERSION,
@@ -96,8 +132,8 @@ object Backup {
                     }.toMap(),
                 listening = buckets,
                 localPlaylists = LocalPlaylistStore.exportAll().map { BackupPlaylist.from(it) },
-                likedVideoIds = ratings.filterValues { it == LikeStatus.LIKE }.keys.sorted(),
-                dislikedVideoIds = ratings.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
+                likedVideoIds = ratings.first,
+                dislikedVideoIds = ratings.second,
                 searchHistory = SearchHistory.export(),
             )
             val bytes = encodeBackupBytes(file)
@@ -130,50 +166,112 @@ object Backup {
     ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
-                ?.use { readBackupText(it) }
+                ?.use { it.readTextBounded() }
                 ?: error("파일을 열 수 없습니다")
-            val file = decode(text)
-            validate(file)
-            val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
-                file.localPlaylists.map { it.toLocalPlaylist() }
-            } else {
-                null
-            }
+            importText(text, playlistMode)
+        }
+    }
 
-            ListeningStats.importAll(file.listening)
-            AppSettings.importPrefs(file.settings.mapValues { it.value.decoded() })
+    /**
+     * The body of [importFrom], after the document has been read.
+     *
+     * Split out so the rollback path can be exercised with the same stores an
+     * import uses, without a real document picker. It is still the only place
+     * that applies a backup.
+     */
+    internal suspend fun importText(
+        text: String,
+        playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
+    ): Summary {
+        val file = decode(text)
+        validate(file)
+        val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
+            file.localPlaylists.map { it.toLocalPlaylist() }
+        } else {
+            null
+        }
+        val settings = file.settings.mapValues { it.value.decoded() }
+        val library = file.version >= LIBRARY_SCHEMA_VERSION
+
+        // Everything below is applied in a rollback-able order. The listening
+        // folder goes last because it is the only store whose commit can still
+        // refuse after validation; if it does, the cheaper sections are put
+        // back from these snapshots instead of leaving the device holding half
+        // a restore.
+        val previousSettings = AppSettings.exportPrefs()
+        val previousPlaylists = LocalPlaylistStore.exportAll()
+        val previousSearch = SearchHistory.export()
+        val previousLiked = TasteSignals.ratedVideoIds(LikeStatus.LIKE)
+        val previousDisliked = TasteSignals.ratedVideoIds(LikeStatus.DISLIKE)
+        val previousOverrides = LikeState.overrides.value
+
+        suspend fun rollback() {
+            runCatching { AppSettings.importPrefs(previousSettings) }
+            runCatching { SearchHistory.reload() }
+            if (library) {
+                runCatching {
+                    LocalPlaylistStore.importAll(previousPlaylists, PlaylistImportMode.REPLACE)
+                }
+                runCatching { SearchHistory.replace(previousSearch) }
+                runCatching { TasteSignals.restoreRatings(previousLiked, previousDisliked) }
+                runCatching { TasteSignals.flushAndAwait() }
+            }
+            LikeState.clear()
+            previousOverrides.forEach { (id, status) -> LikeState.set(id, status) }
+        }
+
+        try {
+            check(AppSettings.importPrefs(settings)) {
+                "설정을 저장하지 못했습니다"
+            }
             // Shares AppSettings' preference file, so it has already been
             // overwritten by the line above — it just doesn't know yet.
             SearchHistory.reload()
-            if (file.version >= LIBRARY_SCHEMA_VERSION) {
-                playlists?.let { LocalPlaylistStore.importAll(it, playlistMode) }
+            if (library) {
+                val restored = playlists?.let {
+                    LocalPlaylistStore.importAll(it, playlistMode)
+                } ?: 0
+                check(restored >= 0) { "로컬 재생목록을 저장하지 못했습니다" }
                 // Explicit rather than relying on the settings map: schema 2
                 // states the list itself, and an empty list is a real answer.
-                SearchHistory.replace(file.searchHistory)
-                val restoredRatings = buildMap {
-                    file.likedVideoIds.forEach { put(it, LikeStatus.LIKE) }
-                    file.dislikedVideoIds.forEach { put(it, LikeStatus.DISLIKE) }
+                check(SearchHistory.replace(file.searchHistory)) {
+                    "검색 기록을 저장하지 못했습니다"
                 }
-                restoredRatings.forEach { (videoId, status) -> LikeState.set(videoId, status) }
-                // LikeState makes the restore visible now; TasteSignals is what
-                // survives the next launch, which the session map alone did not.
-                TasteSignals.restoreRatings(restoredRatings)
-                TasteSignals.flush()
+                // A restore is a replacement, not a merge: the session copy
+                // from before the import would otherwise keep shadowing the
+                // restored ratings in every screen that reads LikeState.
+                LikeState.clear()
+                // The persisted rating store is what survives a restart; the
+                // optimistic session copy is set as well so the player and
+                // library repaint without waiting for a reload.
+                TasteSignals.restoreRatings(file.likedVideoIds, file.dislikedVideoIds)
+                check(TasteSignals.flushAndAwait()) {
+                    "평점을 저장하지 못했습니다"
+                }
+                file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
+                file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
             }
-            Summary(
-                months = file.listening.size,
-                settings = file.settings.size,
-                from = file.versionName,
-                at = file.exportedAt,
-                playlists = playlists?.size ?: 0,
-                liked = if (file.version >= LIBRARY_SCHEMA_VERSION) file.likedVideoIds.size else 0,
-                searchHistory = if (file.version >= LIBRARY_SCHEMA_VERSION) {
-                    file.searchHistory.size
-                } else {
-                    0
-                },
-            )
+
+            // The listening folder is the last write by design. Its own import
+            // is journaled and restores the previous months if a rename fails;
+            // this check only has to roll back the sections above when it
+            // returns false.
+            check(ListeningStats.importAll(file.listening)) {
+                "청취 기록을 저장하지 못했습니다"
+            }
+        } catch (failure: Throwable) {
+            rollback()
+            throw failure
         }
+        return Summary(
+            months = file.listening.size,
+            settings = file.settings.size,
+            from = file.versionName,
+            at = file.exportedAt,
+            playlists = playlists?.size ?: 0,
+            liked = if (library) file.likedVideoIds.size else 0,
+            searchHistory = if (library) file.searchHistory.size else 0,
+        )
     }
 
     internal fun encode(file: BackupFile): String =
@@ -210,11 +308,60 @@ object Backup {
             input.readTextBounded(maxBytes, tooLargeMessage = "백업 파일이 너무 큽니다")
         }
 
+    /**
+     * Combines the ratings kept on disk with the optimistic ones made since
+     * this process started.
+     *
+     * Both lists are sorted and an id appears on exactly one side. A session
+     * tap is the newer answer, so it moves an id between lists; the persisted
+     * lists alone are already disjoint because a track stores one rating.
+     */
+    internal fun mergeRatedIds(
+        session: Map<String, LikeStatus>,
+        persistedLiked: Collection<String>,
+        persistedDisliked: Collection<String>,
+    ): Pair<List<String>, List<String>> {
+        val liked = persistedLiked.toMutableSet()
+        val disliked = persistedDisliked.toMutableSet()
+        session.forEach { (id, status) ->
+            if (id.isBlank()) return@forEach
+            when (status) {
+                LikeStatus.LIKE -> {
+                    disliked.remove(id)
+                    liked.add(id)
+                }
+                LikeStatus.DISLIKE -> {
+                    liked.remove(id)
+                    disliked.add(id)
+                }
+                else -> Unit
+            }
+        }
+        return liked.sorted() to disliked.sorted()
+    }
+
     /** Everything that can be checked before the first write. */
     internal fun validate(file: BackupFile) {
         require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
+        // A file with no version is the oldest shipped shape (see
+        // [BackupFile.version]); an explicit 0 or negative one never shipped
+        // and is not something this build can claim to understand.
+        require(file.version >= MIN_SCHEMA_VERSION) {
+            "이 백업 파일의 버전을 읽을 수 없습니다"
+        }
         require(file.version <= SCHEMA_VERSION) {
             "더 최신 버전의 BitChord에서 만든 백업입니다"
+        }
+        // The month is the file's identity on disk. [ListeningStats.importAll]
+        // deletes the old buckets before writing the new ones, so one bad month
+        // has to be refused here rather than silently skipped after that
+        // deletion. Two buckets for one month would likewise overwrite each
+        // other and lose half the restored history.
+        val months = HashSet<String>(file.listening.size)
+        file.listening.forEach { bucket ->
+            val month = runCatching { YearMonth.parse(bucket.month).toString() }.getOrNull()
+            require(month != null) { "백업의 청취 기록에 잘못된 달이 있습니다" }
+            require(months.add(month)) { "백업의 청취 기록에 같은 달이 두 번 있습니다" }
         }
         if (file.version >= LIBRARY_SCHEMA_VERSION) {
             file.localPlaylists.forEach { playlist ->
@@ -241,15 +388,6 @@ object Backup {
 
     /** A backup carries months of listening, so it needs more room than a settings share. */
     private const val MAX_BACKUP_BYTES = 32 * 1024 * 1024
-
-    /**
-     * A backup is text this app wrote, but the file it reads is one the user
-     * picked from anywhere. Reading it whole would let a wrong pick or a
-     * hostile document exhaust the heap before the schema check can refuse it;
-     * the largest real backup — years of months plus playlists — stays far
-     * below this.
-     */
-    internal const val MAX_IMPORT_BYTES = 32 * 1024 * 1024
 
     /** Reads at most [maxBytes] of UTF-8 text, refusing rather than growing without bound. */
     @JvmName("readBackupTextFromStream")
@@ -278,6 +416,9 @@ object Backup {
      * alone for it.
      */
     private const val SCHEMA_VERSION = 2
+
+    /** The oldest shape that ever shipped; 0 and below are not ours. */
+    private const val MIN_SCHEMA_VERSION = 1
 
     /** The first schema that carries the library sections. */
     private const val LIBRARY_SCHEMA_VERSION = 2
