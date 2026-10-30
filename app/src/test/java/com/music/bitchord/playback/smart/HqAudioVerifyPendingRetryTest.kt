@@ -80,4 +80,42 @@ class HqAudioVerifyPendingRetryTest {
     fun `an unexpected failure consumes the pending retry`() {
         assertTrue(with(HqAudioVerify) { (null as Outcome?).settlesPendingRetry() })
     }
+
+    @Test
+    fun `transient failures are bounded so a permanent reference failure eventually settles`() {
+        val max = HqAudioVerify.MAX_PENDING_TRANSIENT_ATTEMPTS
+        assertFalse(
+            with(HqAudioVerify) {
+                Outcome.Unavailable(transient = true).settlesPendingRetry(max - 1)
+            },
+        )
+        assertTrue(
+            with(HqAudioVerify) {
+                Outcome.Unavailable(transient = true).settlesPendingRetry(max)
+            },
+        )
+        assertFalse(
+            with(HqAudioVerify) {
+                Outcome.NoReference(NoReferenceReason.DECODE_FAILED)
+                    .settlesPendingRetry(max - 1)
+            },
+        )
+        assertTrue(
+            with(HqAudioVerify) {
+                Outcome.NoReference(NoReferenceReason.DECODE_FAILED)
+                    .settlesPendingRetry(max)
+            },
+        )
+    }
+
+    @Test
+    fun `abandoned and deferred attempts never spend the transient budget`() {
+        val max = HqAudioVerify.MAX_PENDING_TRANSIENT_ATTEMPTS
+        assertFalse(
+            with(HqAudioVerify) { Outcome.Abandoned.settlesPendingRetry(max) },
+        )
+        assertFalse(
+            with(HqAudioVerify) { Outcome.Deferred.settlesPendingRetry(max) },
+        )
+    }
 }

@@ -280,3 +280,127 @@
 - `app/src/test/java/com/music/bitchord/playback/HqSwapPolicyTest.kt`
 - `app/src/test/java/com/music/bitchord/download/HqLibraryUpgradeBackgroundPruneTest.kt`
 - `app/src/test/java/com/music/bitchord/download/DownloadsQueuedPublishRaceTest.kt`
+
+---
+
+## 7. 2차 재심 (2026-10-30, 기준 = 1차 결과)
+
+1차에서 고친 세 경로를 다시 따라가며, 그 수정이 만든 새 경합/누락을 코드로 확인했다.
+이번 재심에서 확정한 HIGH는 없다. 아래 MEDIUM 3건은 모두 수정했고, 각각 수정 전에
+실패하는 테스트를 먼저 추가했다.
+
+### 7.1 MEDIUM — 서비스가 행을 가져간 뒤 Queued 게시가 사라지던 문제 (수정)
+
+- 파일: `app/src/main/java/com/music/bitchord/download/Downloads.kt:456`
+- 증거(수정 전): `publishQueuedIfPending` 이 `song.videoId !in pending` 이면 반환했다.
+  `enqueue` 가 `pending` 을 넣은 뒤 lock 을 놓친 사이 `DownloadService` 가
+  `takeNext()`(`:1767`)로 행을 `pending` → `running` 으로 옮기면, 이 게시는 아무것도
+  하지 않았다. 뒤이은 `DownloadSession.running/done`(`DownloadSession.kt:220`)은
+  행이 없어 갱신할 대상이 없고, 다운로드 관리자에서 그 곡이 조용히 사라졌다.
+- 사용자 영향: 다운로드가 실제로 진행/완료돼도 관리자에 행이 없어 진행률·완료를
+  볼 수 없다.
+- 흔한 정도: 백그라운드 enqueue 직후 서비스가 이미 떠 있거나, 연속 다운로드에서
+  다음 행을 즉시 집는 경우.
+- 수정: 같은 lock 안에서 `pending` **또는** `running` 인 동안 게시한다. `onForeground`
+  의 거부는 `pending` 만 제거하므로 `running` 이면 거부가 이긴 상태가 아니고,
+  서비스가 가져간 행은 반드시 세션 행을 만들어야 한다.
+
+조건 진리표(수정 전 → 수정 후):
+
+| pending | running | 수정 전 게시 | 수정 후 게시 |
+|---|---|---|---|
+| true | false | true | true |
+| false | true (takeNext 승) | **false(행 유실)** | true |
+| false | false (거부 승) | false | false |
+
+### 7.2 MEDIUM — 재시작 후 24시간 쿨다운 대상이 즉시 재실행되던 문제 (수정)
+
+- 파일: `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:608`,
+  `:713`, `:733`
+- 증거(수정 전): `prunePlanLocked` 는 의도적으로 `attempts=1` 이고 24시간 쿨다운 중인
+  대상을 plan 에 남긴다. 그런데 `runOne` 은 `plan.firstOrNull()` 로 그 대상을 골랐고,
+  `notBeforeMs` 만 확인했으므로 `AutomaticRetryPolicy.mayRetry` 의 쿨다운을 보지 않고
+  즉시 서버를 다시 두드렸다.
+- 사용자 영향: 429/일시 실패 뒤 앱을 다시 열거나 재생을 시작할 때마다 같은 서버를
+  재차 호출해 429를 늘리고, “24시간 쉰다”는 보관함 정책이 지켜지지 않는다.
+- 흔한 정도: 애드온 429, 느린 망, 앱 재시작/포그라운드 복귀 직후.
+- 수정: `nextRunnableTargetLocked` 가 `buildPlan` 과 동일한
+  `automaticTargetEligible`(포그라운드·이미 목표 음질·시도 횟수·쿨다운)을 적용해
+  실제로 실행 가능한 첫 대상만 고른다. 모두 쿨다운 중이면 `nextParkedWaitLocked` 가
+  가장 이른 해제 시각을 계산해 WorkManager 에 그 지연으로 맡긴다(폴링·sleep 없음).
+
+조건 진리표(수정 전 → 수정 후):
+
+| attempts | 쿨다운 중 | 수정 전 선택 | 수정 후 선택 |
+|---|---|---|---|
+| 0 | – | 선택 | 선택 |
+| 1 | 예 | **선택(즉시 재실행)** | 건너뜀, 쿨다운 만료 시 재예약 |
+| 1 | 아니오 | 선택 | 선택 |
+| MAX | – | (prune 후 plan 에 없음) | (동일) |
+
+### 7.3 MEDIUM — 영구 참조 실패가 429 재시도를 영원히 소모하지 않던 문제 (수정)
+
+- 파일: `app/src/main/java/com/music/bitchord/playback/smart/HqAudioVerify.kt:108`,
+  `:119`, `:563`, `:666`
+- 증거(수정 전): `NO_SOURCE` 는 유일한 비일시 `NoReference` 사유인데 실제 live 경로에서
+  만들어지지 않았다. WAV 공급(`VideoAudio.songWav`)은 화면 꺼짐·head timeout·디코드
+  실패·소스 없음을 모두 `null` 로 돌려주고, `HqAudioVerify` 는 이를 전부
+  `DECODE_FAILED`/`Unavailable(transient=true)` 로 기록했다. 그래서 진짜 소스가 없는
+  곡도 429 pending 항목이 매 재생 이벤트마다 후보 다운로드·디코드를 반복했다.
+- 사용자 영향: 재생할 때마다 후보를 내려받고 디코드해 배터리·데이터·시간을 낭비하고,
+  로그에도 같은 실패가 계속 쌓인다.
+- 흔한 정도: 소스가 사라졌거나 지역 제한인 곡, 화면을 오래 끈 채 다음 곡 준비.
+- 수정: `PendingRateLimit.transientAttempts` 를 두고, 일시 실패는
+  `MAX_PENDING_TRANSIENT_ATTEMPTS=3` 까지만 유지한다. `Abandoned`/`Deferred` 는 예산을
+  쓰지 않고, 3번째 일시 실패 뒤에는 항목을 정리하며 로그를 한 번 남긴다. 주기 타이머는
+  없고 기존 재생 이벤트 기반 루프에서만 센다.
+
+조건 진리표(수정 전 → 수정 후):
+
+| outcome | transientAttempts | 수정 전 소모 | 수정 후 소모 |
+|---|---|---|---|
+| Verified / Mismatch | – | true | true |
+| Abandoned / Deferred | 임의 | false | false |
+| NoReference(HEAD_TIMEOUT/DECODE_FAILED/CANCELLED) | < 3 | false(무한 유지) | false(유지, +1) |
+| NoReference(HEAD_TIMEOUT/DECODE_FAILED/CANCELLED) | ≥ 3 | false(무한 유지) | **true(정리)** |
+| Unavailable(transient=true) | < 3 | false(무한 유지) | false(유지, +1) |
+| Unavailable(transient=true) | ≥ 3 | false(무한 유지) | **true(정리)** |
+| NoReference(NO_SOURCE) / Unavailable(transient=false) | – | true | true |
+| null(예상 밖 예외) | – | true | true |
+
+### 7.4 남은 HIGH·MEDIUM
+
+이번 재심에서 코드로 확정한 새 HIGH/MEDIUM 은 위 3건이며 모두 수정했다. 1차 문서
+4절의 미수정 MEDIUM(`NextTrackPreparation` 단계 영구 포기, autoplay seed 유지,
+`losslessAheadItem` 무로그 null, crossfade delay 폴링)은 이번 범위에서도 그대로
+남아 있다. 각 항목의 이유와 필요한 작업은 4절에 적혀 있으며, 이번 변경으로 새로
+생긴 것은 없다.
+
+### 7.5 2차 테스트
+
+새 테스트(수정 전 실패 확인):
+- `app/src/test/java/com/music/bitchord/download/DownloadsQueuedPublishRaceTest.kt`
+  - `a queued publish still reaches the manager after the service claimed the row`
+- `app/src/test/java/com/music/bitchord/download/HqLibraryUpgradeSelectionTest.kt`
+  - `a target resting inside the retry cooldown is not selected`
+  - `a target past its retry cooldown is selected`
+  - `a fully parked plan waits until the cooldown ends`
+- `app/src/test/java/com/music/bitchord/playback/smart/HqAudioVerifyPendingRetryTest.kt`
+  - `transient failures are bounded so a permanent reference failure eventually settles`
+  - `abandoned and deferred attempts never spend the transient budget`
+
+실행 결과:
+- `:app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` → 성공
+- 위 3개 클래스 + 1차 테스트 3개 클래스(`HqSwapPolicyTest`,
+  `HqVerificationSourceIdentityTest`, `HqLibraryUpgradeBackgroundPruneTest`) → 성공
+- `:shared:jvmTest --tests AutomaticRetryPolicyTest --tests HqLibraryAutoRetryPolicyTest`
+  → 성공
+
+### 7.6 2차 변경 파일
+
+- `app/src/main/java/com/music/bitchord/download/Downloads.kt`
+- `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt`
+- `app/src/main/java/com/music/bitchord/playback/smart/HqAudioVerify.kt`
+- `app/src/test/java/com/music/bitchord/download/DownloadsQueuedPublishRaceTest.kt`
+- `app/src/test/java/com/music/bitchord/download/HqLibraryUpgradeSelectionTest.kt`
+- `app/src/test/java/com/music/bitchord/playback/smart/HqAudioVerifyPendingRetryTest.kt`

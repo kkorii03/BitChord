@@ -91,16 +91,32 @@ object HqAudioVerify {
      * Nothing here polls: an entry is read only when one of those events
      * happens.
      */
-    private class PendingRateLimit(
+    private data class PendingRateLimit(
         val context: Context,
         val youtubeId: String,
         val target: TrackMatcher.Target,
         val stream: SourceStream,
         val host: String?,
         val manual: Boolean,
+        /**
+         * How many retries this entry has already spent on a transient
+         * reference/decode failure. A genuinely permanent reference failure
+         * arrives here as [NoReferenceReason.DECODE_FAILED] (the WAV path
+         * cannot tell "no source" apart), so without a bound the entry would
+         * download and decode the candidate on every playback event forever.
+         */
+        val transientAttempts: Int = 0,
     )
 
     private val pendingRateLimits = ConcurrentHashMap<String, PendingRateLimit>()
+
+    /**
+     * Transient reference/decode failures tolerated for one pending 429 entry.
+     * Only playback events drive these attempts, never a timer; three is
+     * enough for a screen-off or busy-decoder spell without turning a truly
+     * missing source into a download on every later event.
+     */
+    internal const val MAX_PENDING_TRANSIENT_ATTEMPTS = 3
 
     /** One queue's worth is enough; an old refusal is not worth unbounded memory. */
     private const val MAX_PENDING_RATE_LIMITS = 64
@@ -537,13 +553,28 @@ object HqAudioVerify {
      * all leave the entry for the next event — otherwise a screen-off head
      * timeout or a busy decoder would silently cancel the one retry without the
      * candidate ever being measured.
+     *
+     * [transientAttempts] is the number of transient attempts spent including
+     * this one. A permanent reference failure can look transient forever (the
+     * WAV path reports every null as [NoReferenceReason.DECODE_FAILED]), so
+     * after [MAX_PENDING_TRANSIENT_ATTEMPTS] the entry is settled rather than
+     * downloading and decoding the same candidate on every playback event.
      */
-    internal fun Outcome?.settlesPendingRetry(): Boolean = when (this) {
+    internal fun Outcome?.settlesPendingRetry(transientAttempts: Int = 0): Boolean = when (this) {
         null -> true
         is Outcome.Abandoned, is Outcome.Deferred -> false
-        is Outcome.NoReference -> !reason.transient
-        is Outcome.Unavailable -> !transient
+        is Outcome.NoReference ->
+            !reason.transient || transientAttempts >= MAX_PENDING_TRANSIENT_ATTEMPTS
+        is Outcome.Unavailable ->
+            !transient || transientAttempts >= MAX_PENDING_TRANSIENT_ATTEMPTS
         else -> true
+    }
+
+    /** Whether this outcome spends one of the bounded transient retries. */
+    internal fun Outcome?.countsTowardsTransientRetryBudget(): Boolean = when (this) {
+        is Outcome.NoReference -> reason.transient
+        is Outcome.Unavailable -> transient
+        else -> false
     }
 
     /** Remembers a 429-unmeasured song so a later event can ask once more. */
@@ -630,8 +661,26 @@ object HqAudioVerify {
                     // actually got the one retry. A second 429, a measured
                     // answer or a permanent refusal settles it and must not be
                     // downloaded and decoded again on every later event.
-                    if (outcome.settlesPendingRetry()) {
+                    // Transient failures are bounded, because a permanent
+                    // missing reference also arrives as DECODE_FAILED.
+                    val transientAttempts = pending.transientAttempts +
+                        if (outcome.countsTowardsTransientRetryBudget()) 1 else 0
+                    if (outcome.settlesPendingRetry(transientAttempts)) {
+                        if (!outcome.settlesPendingRetry()) {
+                            TrackLog.d(
+                                TAG,
+                                "decode: hq-verify giving up on '${pending.target.title}' " +
+                                    "after $transientAttempts transient attempts",
+                                pending.youtubeId,
+                            )
+                        }
                         pendingRateLimits.remove(pending.youtubeId, pending)
+                    } else if (transientAttempts != pending.transientAttempts) {
+                        pendingRateLimits.replace(
+                            pending.youtubeId,
+                            pending,
+                            pending.copy(transientAttempts = transientAttempts),
+                        )
                     }
                 }
             } finally {

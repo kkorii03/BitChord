@@ -43,6 +43,7 @@ class DownloadsQueuedPublishRaceTest {
 
     @After
     fun tearDown() {
+        Downloads.onStopped()
         pending.clear()
         active.value = emptyMap()
         DownloadSession.clear()
@@ -70,6 +71,27 @@ class DownloadsQueuedPublishRaceTest {
         publishQueued(song)
         assertEquals(DownloadState.Failed("refused"), active.value[videoId])
         assertTrue(progressOf(videoId) is DownloadProgress.Failed)
+    }
+
+    @Test
+    fun `a queued publish still reaches the manager after the service claimed the row`() {
+        val videoId = "video-2"
+        val song = Song(
+            videoId = videoId,
+            title = "Title",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        pending[videoId] = song
+
+        // The service can wake between enqueue inserting the row and the
+        // Queued publish. It moves the id from pending to running, so a
+        // pending-only guard would silently skip the manager row and every
+        // later running/done update would find nothing to update.
+        assertEquals(song, Downloads.takeNext())
+
+        publishQueued(song)
+        assertEquals(DownloadProgress.Queued, progressOf(videoId))
     }
 
     private fun progressOf(videoId: String): DownloadProgress? =

@@ -605,11 +605,29 @@ object HqLibraryUpgrade {
         }
 
         prunePlan(context)
-        var target = synchronized(lock) { plan.firstOrNull() }
+        val selectionNow = System.currentTimeMillis()
+        val downloaded = Downloads.savedMetadataSnapshot()
+        var target = synchronized(lock) {
+            nextRunnableTargetLocked(selectionNow, downloaded)
+        }
         if (target == null) {
+            val parked = synchronized(lock) { plan.isNotEmpty() }
             val built = buildPlan(context)
             if (built.isEmpty()) {
-                finishRun()
+                // A parked plan is kept on disk until its cooldown ends. The
+                // next playback/foreground event checks it again; this worker
+                // must not clear it just because nothing is runnable right now.
+                if (!parked) {
+                    finishRun()
+                } else {
+                    val waitMs = synchronized(lock) {
+                        nextParkedWaitLocked(selectionNow)
+                    }
+                    if (waitMs != null && waitMs > 0L) {
+                        // WorkManager owns the wait; there is no timer here.
+                        enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, waitMs)
+                    }
+                }
                 return@withContext
             }
             synchronized(lock) {
@@ -683,6 +701,48 @@ object HqLibraryUpgrade {
             else -> Unit
         }
     }
+
+    /**
+     * The first plan entry the automatic pass may actually ask for now.
+     *
+     * [prunePlanLocked] deliberately keeps a target that is only resting
+     * inside [AutomaticRetryPolicy]'s cooldown, so choosing `plan.first()` here
+     * would immediately re-download it after a restart and defeat the cooldown.
+     * All the same eligibility facts are applied as in [buildPlan].
+     */
+    private fun nextRunnableTargetLocked(
+        nowMs: Long,
+        downloaded: Map<String, SavedSongMetadata>,
+    ): PendingTarget? = plan.firstOrNull { pending ->
+        automaticTargetEligible(
+            pending.target.videoId,
+            pending.target.verifiedTier,
+            failures[failureKey(pending.target)],
+            nowMs,
+            downloaded,
+        )
+    }
+
+    /**
+     * The shortest wait until one kept target becomes runnable again.
+     *
+     * Only called when every remaining plan entry is parked. The failure
+     * cooldown is a wall-clock deadline, so the worker schedules itself with
+     * WorkManager instead of sleeping or polling here.
+     */
+    private fun nextParkedWaitLocked(nowMs: Long): Long? =
+        plan.mapNotNull { pending ->
+            val failure = failures[failureKey(pending.target)]
+            val cooldownUntil = if (failure != null &&
+                failure.attempts in 1 until AutomaticRetryPolicy.MAX_FAILURES
+            ) {
+                failure.lastFailureMs + AutomaticRetryPolicy.COOLDOWN_MS
+            } else {
+                0L
+            }
+            val until = maxOf(pending.notBeforeMs, cooldownUntil)
+            until.takeIf { it > nowMs }?.minus(nowMs)
+        }.minOrNull()
 
     /**
      * Drops plan entries that can no longer run automatically: a complete
