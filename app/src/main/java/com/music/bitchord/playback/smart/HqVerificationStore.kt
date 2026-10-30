@@ -192,6 +192,41 @@ object HqVerificationStore {
         }
     }
 
+    /**
+     * Forgets every verdict measured against [sourceConfigId].
+     *
+     * A verdict names the source config and its track id, not the server URL.
+     * Editing an addon's address or replacing the whole source list can keep
+     * the same id while pointing somewhere else, and reusing the old track id
+     * would ask the new catalogue for a recording it never had.
+     */
+    fun invalidate(context: Context, sourceConfigId: String) {
+        if (sourceConfigId.isBlank()) return
+        synchronized(lock) {
+            val data = data(context)
+            val suffix = "\u0001$sourceConfigId\u0001"
+            val verified = data.verified.keys.filter { it.contains(suffix) }
+            val rejected = data.rejected.filter { it.contains(suffix) }
+            if (verified.isEmpty() && rejected.isEmpty()) return
+            verified.forEach { data.verified.remove(it) }
+            rejected.forEach { data.rejected.remove(it) }
+            save(context, data)
+        }
+    }
+
+    /** Forgets every pair, for a source list that was replaced wholesale. */
+    fun clear(context: Context) {
+        synchronized(lock) {
+            cached = Data()
+            context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_VERSION, STORE_VERSION)
+                .remove(KEY_VERIFIED)
+                .remove(KEY_REJECTED)
+                .apply()
+        }
+    }
+
     private fun keyOf(youtubeId: String, sourceConfigId: String?, trackId: String?): String =
         listOf(youtubeId, sourceConfigId.orEmpty(), trackId.orEmpty())
             .joinToString("\u0001")

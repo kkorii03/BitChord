@@ -341,6 +341,41 @@ object TasteSignals {
         }
     }
 
+    /**
+     * The ids this store currently holds as [status], for a backup export.
+     *
+     * The session-only [LikeState] only knows what was tapped since launch.
+     * This is the copy that survives a restart, so a backup taken after one
+     * still carries the listener's ratings instead of an empty list.
+     */
+    fun ratedVideoIds(status: LikeStatus): List<String> =
+        synchronized(lock) {
+            if (!ready()) return emptyList()
+            val wanted = ratingOf(status)
+            if (wanted == RATING_NONE) return emptyList()
+            tracks.values.filter { it.rating == wanted }.map { it.id }
+        }
+
+    /**
+     * Re-applies the ratings a backup carried, without inventing play counts.
+     *
+     * Last value wins when a file names the same id on both lists, matching the
+     * order [com.music.bitchord.data.stats.Backup.importFrom] applies them.
+     * The write is debounced like every other change to this file.
+     */
+    fun restoreRatings(liked: Collection<String>, disliked: Collection<String>) {
+        if (!ready()) return
+        synchronized(lock) {
+            liked.forEach { id ->
+                if (id.isNotBlank()) tracks.getOrPut(id) { StoredTrack(id = id) }.rating = RATING_LIKE
+            }
+            disliked.forEach { id ->
+                if (id.isNotBlank()) tracks.getOrPut(id) { StoredTrack(id = id) }.rating = RATING_DISLIKE
+            }
+            markDirtyLocked()
+        }
+    }
+
     // ── Disk ────────────────────────────────────────────────────────────────
 
     /**

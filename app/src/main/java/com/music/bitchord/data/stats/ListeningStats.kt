@@ -734,29 +734,88 @@ object ListeningStats {
     }
 
     /**
-     * Replaces everything held with [buckets].
+     * Replaces everything held with [buckets], returning whether the restored
+     * files reached disk.
      *
      * A replace rather than a merge, and deliberately so: an import is a restore
      * onto a new device, and two copies of the same month added together would
      * silently double every number on the page with no way to tell afterwards.
+     *
+     * The new months are written aside first and only then swapped in, so a
+     * serialisation failure leaves the device's own listening history intact
+     * instead of deleting it before discovering the backup could not be
+     * written. A month that cannot be parsed is refused by [prepareImport]
+     * rather than skipped, because a silent skip here is exactly the "applied"
+     * summary disagreeing with what is on disk.
      */
-    fun importAll(buckets: List<StoredBucket>) {
-        if (!ready) return
-        synchronized(lock) {
+    fun importAll(buckets: List<StoredBucket>): Boolean {
+        if (!ready) {
+            Log.w(TAG, "Refusing to import listening buckets before the store is open")
+            return false
+        }
+        val prepared = runCatching { prepareImport(buckets) }
+            .onFailure { Log.w(TAG, "Refusing an unreadable listening import", it) }
+            .getOrElse { return false }
+        return synchronized(lock) {
+            directory.mkdirs()
+            val staged = mutableListOf<Pair<String, File>>()
+            for ((key, text) in prepared) {
+                val temporary = File(directory, "$key.json.importing")
+                val written = runCatching { temporary.writeText(text) }
+                    .onFailure { Log.w(TAG, "Could not stage listening bucket $key", it) }
+                    .isSuccess
+                if (!written) {
+                    staged.forEach { (_, file) -> file.delete() }
+                    temporary.delete()
+                    return@synchronized false
+                }
+                staged += key to temporary
+            }
+
+            // Every new month is now on disk under its staging name. Replacing
+            // the visible files is a rename per month, not a decode or encode
+            // that can still fail halfway.
+            directory.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".json") }
+                ?.forEach { it.delete() }
+            var committed = true
+            for ((key, temporary) in staged) {
+                val target = File(directory, "$key.json")
+                if (!temporary.renameTo(target)) {
+                    if (!(target.delete() && temporary.renameTo(target))) {
+                        Log.w(TAG, "Could not commit listening bucket $key")
+                        committed = false
+                    }
+                }
+            }
+            if (!committed) {
+                staged.forEach { (_, file) -> file.delete() }
+                return@synchronized false
+            }
             open = null
             dirty = false
-            directory.listFiles()?.forEach { it.delete() }
-            directory.mkdirs()
             version++
             cached = null
-            buckets.forEach { bucket ->
-                val key = runCatching { YearMonth.parse(bucket.month).toString() }.getOrNull()
-                    ?: return@forEach
-                runCatching {
-                    File(directory, "$key.json")
-                        .writeText(json.encodeToString(StoredBucket.serializer(), bucket))
-                }.onFailure { Log.w(TAG, "Could not import bucket $key", it) }
-            }
+            true
+        }
+    }
+
+    /**
+     * Serialises a whole import before [importAll] touches the directory.
+     *
+     * Kept separate and pure so the refusal path — a month this build cannot
+     * parse, or two rows for one month that would overwrite each other — can be
+     * tested without an Android context or a writable files directory.
+     */
+    internal fun prepareImport(buckets: List<StoredBucket>): List<Pair<String, String>> {
+        val seen = HashSet<String>(buckets.size)
+        return buckets.map { bucket ->
+            val key = runCatching { YearMonth.parse(bucket.month).toString() }
+                .getOrElse { throw IllegalArgumentException("잘못된 청취 달: ${bucket.month}", it) }
+            require(seen.add(key)) { "같은 청취 달이 두 번 있습니다: $key" }
+            val text = runCatching { json.encodeToString(StoredBucket.serializer(), bucket) }
+                .getOrElse { throw IllegalArgumentException("청취 기록을 저장할 수 없습니다: $key", it) }
+            key to text
         }
     }
 

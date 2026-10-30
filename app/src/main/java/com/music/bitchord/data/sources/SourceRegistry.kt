@@ -14,6 +14,7 @@ import com.music.bitchord.data.sources.addon.DetectedFormat
 import com.music.bitchord.data.sources.addon.SourceFormats
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.audio.LosslessOutput
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -316,6 +317,13 @@ object SourceRegistry {
     fun update(config: SourceConfig) {
         open()
         val tidied = config.tidied()
+        val previous = configs.value.firstOrNull { it.id == tidied.id }
+        // A verdict names a config id and a catalogue row, not the address it
+        // was measured against. Pointing the same id at another server has to
+        // forget the old measurement before the automatic pass can reuse it.
+        if (previous != null && (previous.kind != tidied.kind || previous.baseUrl != tidied.baseUrl)) {
+            invalidateHqVerification(tidied.id)
+        }
         publish(configs.value.map { if (it.id == tidied.id) tidied else it })
     }
 
@@ -337,6 +345,7 @@ object SourceRegistry {
         open()
         val target = config(configId) ?: return
         if (target.kind in BUILT_IN_KINDS) return
+        invalidateHqVerification(configId)
         publish(configs.value.filterNot { it.id == configId })
     }
 
@@ -412,11 +421,19 @@ object SourceRegistry {
             ).tidied()
         }.distinctBy { if (it.kind.isUserAdded) it.id else it.kind }
         val next = sourcesForInit(cleaned, forceJioSaavnOff = false)
+        // The whole list arrives from another device. Even an id that survives
+        // may now point at a different URL, so no stored measurement can be
+        // assumed to describe the source this phone will actually ask.
+        appContext?.let(HqVerificationStore::clear)
         publish(next)
         if (::prefs.isInitialized) {
             prefs.edit().putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true).apply()
         }
         return next.size
+    }
+
+    private fun invalidateHqVerification(sourceConfigId: String) {
+        appContext?.let { HqVerificationStore.invalidate(it, sourceConfigId) }
     }
 
     private fun publish(next: List<SourceConfig>, persist: Boolean = true) {

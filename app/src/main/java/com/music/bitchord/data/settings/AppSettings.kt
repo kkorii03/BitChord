@@ -3000,6 +3000,9 @@ object AppSettings {
             KEY_DISCORD_BUTTON_1_VISIBLE,
             KEY_DISCORD_BUTTON_2_VISIBLE,
             KEY_DISCORD_INFO_DISMISSED,
+            KEY_SYNC_SAFETY_NEXT_PREP,
+            KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
+            KEY_SYNC_SAFETY_HQ_SYNC,
         )
         ints(
             KEY_UPGRADE_LENGTH_SLACK_SECONDS,

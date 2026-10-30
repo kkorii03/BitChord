@@ -306,16 +306,20 @@ object SettingsTransfer {
     /** Applies a preview that the listener has already seen. */
     suspend fun apply(preview: Preview): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
-            val settings = AppSettings.applyTransferablePrefs(preview.settings)
-            val sources = if (preview.sources.isEmpty()) {
+            AppSettings.applyTransferablePrefs(preview.settings)
+            // Replacing an identical list would rebuild every source and throw
+            // away their warmed caches (and, since a replacement invalidates
+            // HQ verdicts, every measured pair) for a file that changed only a
+            // theme. Apply the sections the preview actually reported.
+            val sources = if (!preview.sourcesChanged) {
                 0
             } else {
                 SourceRegistry.replaceFromTransfer(preview.sources)
             }
-            preview.proxy?.let(AppSettings::setProxyConfig)
+            if (preview.proxyChanged) preview.proxy?.let(AppSettings::setProxyConfig)
             Summary(
                 settings = preview.changedSettings.size,
-                sources = if (preview.sourcesChanged) sources else 0,
+                sources = sources,
                 proxy = preview.proxyChanged,
                 // The preview already counted every bad setting, source and
                 // proxy field; apply only sees the values it accepted.
