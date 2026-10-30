@@ -209,7 +209,7 @@ import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueCoordinator
-import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
+import com.music.bitchord.playback.QueueCoordinator.asNewQueueEntry
 import com.music.bitchord.playback.QueueEdit
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
@@ -2090,7 +2090,7 @@ private fun BitChordApp(
                     playbackSource = current?.playbackSource ?: queueLabel,
                     playbackSourceType = current?.playbackSourceType ?: PlaybackSourceType.QUEUE,
                     playbackSourceId = current?.playbackSourceId,
-                ).asQueueEntry(QueueTier.USER_QUEUE)
+                ).asNewQueueEntry(QueueTier.USER_QUEUE)
                 it.addMediaItem(at, queued.toMediaItem())
                 showQueueNotice(context.getString(R.string.song_added_to_queue))
             }
@@ -2120,7 +2120,7 @@ private fun BitChordApp(
                     playbackSource = current?.playbackSource ?: queueLabel,
                     playbackSourceType = current?.playbackSourceType ?: PlaybackSourceType.QUEUE,
                     playbackSourceId = current?.playbackSourceId,
-                ).asQueueEntry(QueueTier.USER_QUEUE)
+                ).asNewQueueEntry(QueueTier.USER_QUEUE)
                 it.addMediaItem(at, queued.toMediaItem())
                 showQueueNotice(context.getString(R.string.song_will_play_next))
             }
@@ -2260,7 +2260,7 @@ private fun BitChordApp(
                                 playbackSourceType = current?.playbackSourceType
                                     ?: PlaybackSourceType.QUEUE,
                                 playbackSourceId = current?.playbackSourceId,
-                            ).asQueueEntry(QueueTier.USER_QUEUE).toMediaItem()
+                            ).asNewQueueEntry(QueueTier.USER_QUEUE).toMediaItem()
                         },
                     )
                     val message = context.resources.getQuantityString(

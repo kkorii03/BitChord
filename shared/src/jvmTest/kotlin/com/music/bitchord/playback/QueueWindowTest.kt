@@ -185,4 +185,33 @@ class QueueWindowTest {
             assertTrue(window.upcoming(10_000).all { it.cycleId == 0L })
         }
     }
+
+    @Test
+    fun anExcludedUpcomingRowIsSkippedAndStaysExcludedAfterRestore() {
+        val window = QueueWindow(6).startAt(1)
+
+        assertTrue(window.exclude(2))
+        assertFalse(window.exclude(2))
+        assertEquals(listOf(3, 4, 5), window.upcoming().map { it.canonicalIndex })
+        assertEquals(listOf(3, 4, 5), window.slice(window.cursor + 1, 5).map { it.canonicalIndex })
+        assertEquals(3, window.advanceAutomatically()!!.canonicalIndex)
+
+        val restored = QueueWindow.restore(window.snapshot())
+        assertEquals(listOf(4, 5), restored.upcoming().map { it.canonicalIndex })
+        assertFalse(restored.exclude(2))
+    }
+
+    @Test
+    fun reorderingUpcomingChangesOnlyTheRowsAfterTheCursor() {
+        val window = QueueWindow(6).startAt(1)
+
+        assertTrue(window.reorderUpcoming(listOf(5, 3, 4, 2)))
+        assertEquals(listOf(0, 1, 5, 3, 4, 2), window.order)
+        assertEquals(1, window.cursor)
+        assertEquals(1, window.currentCanonicalIndex)
+        assertEquals(listOf(5, 3, 4, 2), window.upcoming().map { it.canonicalIndex })
+
+        val restored = QueueWindow.restore(window.snapshot())
+        assertEquals(listOf(5, 3, 4, 2), restored.upcoming().map { it.canonicalIndex })
+    }
 }

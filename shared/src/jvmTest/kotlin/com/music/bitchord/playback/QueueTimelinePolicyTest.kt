@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.QueueTimeline.asNewQueueEntry
 import com.music.bitchord.playback.QueueTimeline.asQueueEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -502,5 +503,17 @@ class QueueTimelinePolicyTest {
         val kept = first.asQueueEntry(QueueTier.CONTEXT)
         assertEquals(first.queueEntryId, kept.queueEntryId)
         assertEquals(QueueTier.CONTEXT, kept.queueTier)
+    }
+
+    @Test
+    fun aNewQueueRowGetsAFreshIdentityEvenWhenTheSongWasAlreadyQueued() {
+        val alreadyQueued = song("a", tier = QueueTier.USER_QUEUE, entryId = "old-entry")
+
+        val added = alreadyQueued.asNewQueueEntry(QueueTier.USER_QUEUE)
+
+        assertNotNull(added.queueEntryId)
+        assertFalse(added.queueEntryId == "old-entry")
+        assertEquals(alreadyQueued.videoId, added.videoId)
+        assertEquals(QueueTier.USER_QUEUE, added.queueTier)
     }
 }

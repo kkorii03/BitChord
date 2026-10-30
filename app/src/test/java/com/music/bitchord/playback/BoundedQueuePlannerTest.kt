@@ -239,6 +239,44 @@ class BoundedQueuePlannerTest {
         }
     }
 
+    @Test
+    fun `a removed upcoming context row does not stall the next top up`() {
+        val window = QueueWindow(80).startAt(0)
+        val desired = window.upcoming(WINDOW_AHEAD, repeatAll = false)
+        val removed = desired[4]
+
+        assertTrue(window.exclude(removed.canonicalIndex))
+        val materialized = desired
+            .filterNot { it.canonicalIndex == removed.canonicalIndex }
+            .take(LOW_WATER - 1)
+
+        val additions = BoundedQueuePlanner.topUpEntries(window, materialized, repeatAll = false)
+
+        assertEquals(
+            window.upcoming(WINDOW_AHEAD, repeatAll = false).drop(materialized.size),
+            additions,
+        )
+        assertFalse(additions.any { it.canonicalIndex == removed.canonicalIndex })
+    }
+
+    @Test
+    fun `a reordered upcoming context tail still tops up in its new order`() {
+        val window = QueueWindow(80).startAt(0)
+        val desired = window.upcoming(WINDOW_AHEAD, repeatAll = false)
+        val moved = desired.take(5).reversed()
+
+        assertTrue(window.reorderUpcoming(moved.map { it.canonicalIndex }))
+        val materialized = moved + desired.drop(5).take(LOW_WATER - 1 - moved.size)
+
+        val additions = BoundedQueuePlanner.topUpEntries(window, materialized, repeatAll = false)
+
+        assertEquals(
+            window.upcoming(WINDOW_AHEAD, repeatAll = false).drop(materialized.size),
+            additions,
+        )
+        assertTrue(additions.isNotEmpty())
+    }
+
     private fun traverse(window: QueueWindow): List<QueueWindowEntry> = buildList {
         add(requireNotNull(window.current))
         while (true) add(window.advanceAutomatically(false) ?: break)

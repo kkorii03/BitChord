@@ -2270,6 +2270,8 @@ class PlaybackService : MediaLibraryService() {
         cast = speakers,
         getSubtitle = { lastPublishedSubtitle },
         onUserAdvance = ::noteTasteSkip,
+        onBoundedRowsRemoved = ::noteBoundedContextRowsRemoved,
+        onBoundedRowsMoved = ::noteBoundedContextRowsMoved,
     )
 
     /**
@@ -8328,6 +8330,69 @@ class PlaybackService : MediaLibraryService() {
         if (immediately) BoundedContextPersistence.saveImmediately(state) else BoundedContextPersistence.save(state)
     }
 
+    /**
+     * Removes rows from the logical bounded window when the listener deletes
+     * upcoming context entries.
+     *
+     * Without this the physical queue lost the row but the window kept it, so
+     * the next top-up compared a physical prefix against a logical one that
+     * still contained it and refused to refill — playback stopped after the
+     * materialised window even though the playlist had hundreds of tracks
+     * left. Excluding them also keeps a restart or a shuffle toggle from
+     * bringing the deleted rows back.
+     */
+    private fun noteBoundedContextRowsRemoved(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        if (ListenTogether.state.value.inParty) return
+        val window = boundedContextWindow ?: return
+        var changed = false
+        for (item in items) {
+            if (item.queueTier != QueueTier.CONTEXT) continue
+            val canonicalIndex = QueueShuffle.getCanonicalIndex(item) ?: continue
+            if (window.exclude(canonicalIndex)) changed = true
+        }
+        if (!changed) return
+        TrackLog.d(
+            "BitChord",
+            "queue: bounded exclude n=${items.size} size=${window.canonicalSize}",
+        )
+        player?.let(::saveBoundedContextSnapshot)
+    }
+
+    /**
+     * Teaches the logical window the order the listener dragged the materialised
+     * context rows into.
+     *
+     * A bounded top-up only appends when the physical prefix still matches the
+     * logical window; a drag used to leave those two orders different, so the
+     * window never refilled again. The window follows the player here rather
+     * than the other way around, because the drag is the listener's decision.
+     */
+    private fun noteBoundedContextRowsMoved() {
+        if (ListenTogether.state.value.inParty) return
+        val window = boundedContextWindow ?: return
+        val exoPlayer = player ?: return
+        val current = exoPlayer.currentMediaItemIndex
+        if (current !in 0 until exoPlayer.mediaItemCount) return
+        val order = (current + 1 until exoPlayer.mediaItemCount)
+            .asSequence()
+            .map { exoPlayer.getMediaItemAt(it) }
+            .filter { it.queueTier == QueueTier.CONTEXT }
+            .filter { item ->
+                val cycle = item.contextCycleId
+                cycle == null || cycle == window.cycleId
+            }
+            .mapNotNull { QueueShuffle.getCanonicalIndex(it) }
+            .toList()
+        if (order.isEmpty()) return
+        if (!window.reorderUpcoming(order)) return
+        TrackLog.d(
+            "BitChord",
+            "queue: bounded reorder n=${order.size} size=${window.canonicalSize}",
+        )
+        saveBoundedContextSnapshot(exoPlayer)
+    }
+
     /** Drop every service-side reference that could resurrect the former queue. */
     private fun beginRadioQueue() {
         crossfade?.onSkipRequested()
@@ -10586,6 +10651,10 @@ class PlaybackService : MediaLibraryService() {
         private val getSubtitle: () -> String?,
         /** The listener moved off the current track through this surface — see [noteTasteSkip]. */
         private val onUserAdvance: (Player) -> Unit,
+        /** Upcoming rows the listener removed, so a bounded context forgets them too. */
+        private val onBoundedRowsRemoved: (List<MediaItem>) -> Unit,
+        /** The listener changed the upcoming order, so a bounded context follows it. */
+        private val onBoundedRowsMoved: () -> Unit,
     ) : ForwardingPlayer(player), CastSink {
 
         // The listeners registered through this wrapper, kept so the receiver's
@@ -10972,8 +11041,16 @@ class PlaybackService : MediaLibraryService() {
                 "BitChord",
                 "queue: remove n=1 at=$index size=${(wrappedPlayer.mediaItemCount - 1).coerceAtLeast(0)} by=ui",
             )
+            val removed = if (index in 0 until wrappedPlayer.mediaItemCount &&
+                index > wrappedPlayer.currentMediaItemIndex
+            ) {
+                listOf(wrappedPlayer.getMediaItemAt(index))
+            } else {
+                emptyList()
+            }
             onUserIntent()
             super.removeMediaItem(index)
+            onBoundedRowsRemoved(removed)
         }
 
         override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
@@ -10984,8 +11061,18 @@ class PlaybackService : MediaLibraryService() {
                 "queue: remove n=$n at=$fromIndex " +
                     "size=${(wrappedPlayer.mediaItemCount - n).coerceAtLeast(0)} by=ui",
             )
+            val firstUpcoming = (wrappedPlayer.currentMediaItemIndex + 1).coerceAtLeast(0)
+            val from = fromIndex.coerceIn(0, wrappedPlayer.mediaItemCount)
+            val to = toIndex.coerceIn(0, wrappedPlayer.mediaItemCount)
+            val keepFrom = maxOf(from, firstUpcoming)
+            val removed = if (to > keepFrom) {
+                (keepFrom until to).map { wrappedPlayer.getMediaItemAt(it) }
+            } else {
+                emptyList()
+            }
             onUserIntent()
             super.removeMediaItems(fromIndex, toIndex)
+            onBoundedRowsRemoved(removed)
         }
 
         override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
@@ -10996,6 +11083,7 @@ class PlaybackService : MediaLibraryService() {
             )
             onUserIntent()
             super.moveMediaItem(currentIndex, newIndex)
+            onBoundedRowsMoved()
         }
 
         override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
@@ -11007,6 +11095,7 @@ class PlaybackService : MediaLibraryService() {
             )
             onUserIntent()
             super.moveMediaItems(fromIndex, toIndex, newIndex)
+            onBoundedRowsMoved()
         }
 
         override fun replaceMediaItems(
