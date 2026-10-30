@@ -300,7 +300,14 @@ object HqLibraryUpgrade {
                     downloaded,
                 )
             }
-            if (planHasWork) return true
+            // A parked plan still needs a worker: that worker is the one that
+            // re-arms WorkManager for the cooldown deadline (see
+            // [nextParkedWaitLocked]). Returning false here made the
+            // background transition's cancel permanent, because the next
+            // foreground event could not schedule the wake it had cancelled.
+            if (shouldResumePlan(planIsNotEmpty = plan.isNotEmpty(), hasRunnableTarget = planHasWork)) {
+                return true
+            }
             // A persisted plan can be entirely parked while a verdict outside
             // it is still actionable. runOne rebuilds from the store after the
             // stale entries are pruned, so considering the store here gets that
@@ -318,6 +325,17 @@ object HqLibraryUpgrade {
             }
         }
     }
+
+    /**
+     * Whether the pass needs a worker with the plan it already holds.
+     *
+     * A runnable target is work now. A plan whose targets are all waiting out a
+     * retry cooldown is not work now, but the worker is still what schedules
+     * the delayed wake for them; skipping it after [onBackground] cancelled the
+     * old schedule left the plan parked until some unrelated later event.
+     */
+    internal fun shouldResumePlan(planIsNotEmpty: Boolean, hasRunnableTarget: Boolean): Boolean =
+        hasRunnableTarget || planIsNotEmpty
 
     /** Playback paused or its buffer went idle: this is the event the pass waits for. */
     fun onPlaybackStopped(context: Context) {
@@ -571,14 +589,26 @@ object HqLibraryUpgrade {
      * returns. [success] is the download's own answer, not "a file exists":
      * a failed replacement leaves the old file in place and must not be
      * mistaken for a completed one.
+     *
+     * [cancelled] is the download being stopped rather than failing — the
+     * listener cancelled the queue or the service that owned it went away.
+     * That is not the server refusing the pair, so the target stays in the
+     * plan and its retry budget is not spent. Counting it as a failure used to
+     * drop the song from the automatic plan and start its 24-hour cooldown
+     * after one "cancel all".
      */
     internal fun onDownloadSettled(
         context: Context,
         videoId: String,
         success: Boolean,
         failure: DownloadFailure? = null,
+        cancelled: Boolean = false,
     ) {
         if (!ready) return
+        if (cancelled) {
+            clearActiveTarget(videoId)
+            return
+        }
         val target = synchronized(lock) {
             if (activeVideoId != videoId) return
             plan.firstOrNull { it.target.videoId == videoId }?.target
@@ -609,6 +639,23 @@ object HqLibraryUpgrade {
             applied,
             failure = failure ?: if (success && !applied) DownloadFailure(transient = true) else null,
         )
+    }
+
+    /**
+     * The download for [videoId] stopped before it could answer.
+     *
+     * Keeps its plan entry and failure record untouched: a cancellation is a
+     * decision to stop now, not evidence that the verified pair is unusable.
+     * The next foreground/playback event resumes the plan.
+     */
+    internal fun clearActiveTarget(videoId: String): Boolean = synchronized(lock) {
+        if (activeVideoId != videoId) return@synchronized false
+        activeVideoId = null
+        if (ready) {
+            persistLocked()
+            publishLocked()
+        }
+        true
     }
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {

@@ -2009,7 +2009,7 @@ object Downloads {
             // one has landed or failed, so the pass cannot fan out into the
             // four-worker download queue. Cheap for ordinary downloads — the
             // id is not the pass's active target and the call returns.
-            HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure)
+            HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure, cancelled)
         }
     }
 
