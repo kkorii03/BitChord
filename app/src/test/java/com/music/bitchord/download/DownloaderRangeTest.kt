@@ -10,7 +10,9 @@ import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -28,6 +30,34 @@ import java.io.ByteArrayOutputStream
 class DownloaderRangeTest {
 
     private lateinit var server: MockWebServer
+
+    @Test
+    fun `a re-resolve that changes container or length is rejected`() {
+        assertTrue(
+            downloadStreamChanged(
+                originalExtension = "m4a",
+                replacementExtension = "webm",
+                originalLength = 100,
+                replacementLength = 100,
+            ),
+        )
+        assertTrue(
+            downloadStreamChanged(
+                originalExtension = "m4a",
+                replacementExtension = "m4a",
+                originalLength = 100,
+                replacementLength = 101,
+            ),
+        )
+        assertFalse(
+            downloadStreamChanged(
+                originalExtension = "m4a",
+                replacementExtension = "m4a",
+                originalLength = 100,
+                replacementLength = 100,
+            ),
+        )
+    }
 
     @Before
     fun setUp() {

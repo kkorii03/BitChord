@@ -28,6 +28,22 @@ internal class DownloadHttpException(
 ) : IOException(message)
 
 /**
+ * Whether a re-resolve handed back a different rendition from the one already
+ * partly written.
+ *
+ * The container the bytes are in and the total length both have to agree. A
+ * client walk can return the other format for the same videoId, and appending
+ * one container to the other produces a file of the right length that no
+ * player can open.
+ */
+internal fun downloadStreamChanged(
+    originalExtension: String,
+    replacementExtension: String,
+    originalLength: Long?,
+    replacementLength: Long?,
+): Boolean = replacementExtension != originalExtension || replacementLength != originalLength
+
+/**
  * Pulls a resolved stream onto disk.
  *
  * Two things here are not obvious and both are load-bearing:
@@ -83,6 +99,11 @@ object Downloader {
         onProgress: (written: Long, total: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         var url = stream.url
+        // The container these bytes are in. A re-resolve may switch clients and
+        // answer with the other container; resuming one stream into the middle
+        // of another would corrupt the file even when the length happens to
+        // match.
+        val extension = stream.downloadExtension
         val total = contentLength(url) ?: error("트랙 사용 불가: 길이 정보 없음")
 
         var position = 0L
@@ -112,13 +133,23 @@ object Downloader {
                 if (reresolved) error("Download refused after ${position}B (HTTP ${response.code})")
                 reresolved = true
                 Log.w(TAG, "re-resolving $videoId after HTTP ${response.code} at $position")
-                url = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a).url
+                val replacement = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a)
+                url = replacement.url
                 // Resolving again re-runs the whole client walk, and a
                 // different client can answer with a different format. Resuming
                 // one stream into the middle of another produces a file that is
-                // the right length and unplayable, so a length that has moved
-                // is a failure rather than something to work around.
-                if (contentLength(url) != total) error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
+                // the right length and unplayable, so a length or container
+                // that has moved is a failure rather than something to work
+                // around.
+                if (downloadStreamChanged(
+                        originalExtension = extension,
+                        replacementExtension = replacement.downloadExtension,
+                        originalLength = total,
+                        replacementLength = contentLength(url),
+                    )
+                ) {
+                    error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
+                }
                 continue
             }
 
