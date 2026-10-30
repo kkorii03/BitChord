@@ -827,6 +827,10 @@ object StreamResolver {
         allowBackupRetry: Boolean = true,
     ): Stream {
         val start = MonotonicClock.nowMs()
+        // The route this request is actually sent on. The answer is stamped
+        // with it below even if a health switch has moved the current route
+        // by the time the bytes URL comes back.
+        val requestGeneration = ProxyPlayback.currentRouteGeneration
         val found = try {
             timed("$videoId proxy InnerTubeX") {
                 innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
@@ -858,7 +862,7 @@ object StreamResolver {
             throw IOException("stream resolution found no stream for $videoId")
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
-        val first = ProxyPlayback.markResolved(videoId, found.url)
+        val first = ProxyPlayback.markResolved(videoId, found.url, requestGeneration)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
@@ -1212,6 +1216,15 @@ object StreamResolver {
      * videoId instead of being left with only a dead URL.
      */
     fun refuseMidPlay(url: String, responseCode: Int): RefusedStream? {
+        // A 429/503 is back-pressure from the host, not a verdict about the
+        // client that minted the URL. Forget the URL so the next resolve
+        // cannot hand the same rate-limited one back for the rest of its TTL,
+        // but do not bench a client or record a refusal for it: the server is
+        // asking for time, and another client would be refused just the same.
+        if (responseCode in RATE_LIMIT_CODES) {
+            recent.entries.firstOrNull { it.value.url == url }?.key?.let(recent::remove)
+            return null
+        }
         if (responseCode !in REFUSAL_CODES) return null
         // Only googlevideo's URLs say anything about the client that minted
         // them. A module's stream URL answering 404 is that server's business,
@@ -1487,6 +1500,7 @@ object StreamResolver {
         allowBackupRetry: Boolean = true,
     ): Stream? {
         val start = MonotonicClock.nowMs()
+        val requestGeneration = ProxyPlayback.currentRouteGeneration
         val found = try {
             innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
         } catch (e: CancellationException) {
@@ -1515,7 +1529,7 @@ object StreamResolver {
             return null
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
-        val first = ProxyPlayback.markResolved(videoId, found.url)
+        val first = ProxyPlayback.markResolved(videoId, found.url, requestGeneration)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
@@ -1674,6 +1688,9 @@ object StreamResolver {
     }
 
     private val REFUSAL_CODES = setOf(403, 404, 410)
+
+    /** Back-pressure, not a refusal: forget the URL but keep the client. */
+    private val RATE_LIMIT_CODES = setOf(429, 503)
 
     /** A stream URL reduced to what describes it and nothing that could be replayed. */
     private fun describeMediaUrl(url: String): String {

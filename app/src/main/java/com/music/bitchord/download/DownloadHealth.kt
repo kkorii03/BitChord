@@ -263,6 +263,11 @@ object DownloadHealth {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val network = manager.activeNetwork ?: return false
         val capabilities = manager.getNetworkCapabilities(network) ?: return false
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        // A captive portal has INTERNET but only answers with its sign-in
+        // page; probing sources through it is a guaranteed timeout. A
+        // proxy-only network may be unvalidated without being a portal, so
+        // VALIDATED is deliberately not required.
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
     }.getOrDefault(false)
 }

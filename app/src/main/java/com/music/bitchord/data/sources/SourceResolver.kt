@@ -7,6 +7,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
@@ -1051,7 +1052,12 @@ object SourceResolver {
                         )
                     }
                     if (answer == null) {
-                        SourceCooldown.failed(source.configId)
+                        // A timeout while the device is offline (or behind a
+                        // captive portal) is the connection, not the source.
+                        // Counting it here parked every source for 30 minutes
+                        // after a dorm Wi-Fi drop, long after the link was
+                        // back.
+                        if (!AudioCache.isOffline()) SourceCooldown.failed(source.configId)
                         TrackLog.d(
                             TAG,
                             "${source.displayName} timed out after ${sourceTimeoutMs}ms; " +
@@ -1420,10 +1426,61 @@ object SourceResolver {
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        if (source.kind != SourceKind.YOUTUBE) SourceCooldown.failed(source.configId)
+        // A transport fault says nothing about the catalogue's health. A DNS
+        // failure, a refused connection or a dead proxy during a handover must
+        // not put the source on a 30-minute rest once the network returns.
+        if (source.kind != SourceKind.YOUTUBE && !e.isNetworkFailure()) {
+            SourceCooldown.failed(source.configId)
+        }
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")
         null
     }
+
+    /**
+     * Whether [this] is the connection rather than the source's answer.
+     *
+     * The types are checked through the cause chain because HTTP clients wrap
+     * the real `UnknownHostException`/`ConnectException`; the text markers are
+     * the fallback for the same faults surfacing as a plain [Exception] from a
+     * module. A server's own 4xx/5xx is not in here: that is the source
+     * answering, and it stays a source failure.
+     */
+    private fun Throwable.isNetworkFailure(): Boolean {
+        var cause: Throwable? = this
+        var depth = 0
+        while (cause != null && depth++ < 8) {
+            if (cause is java.net.UnknownHostException ||
+                cause is java.net.ConnectException ||
+                cause is java.net.NoRouteToHostException ||
+                cause is java.net.SocketTimeoutException ||
+                cause is java.io.InterruptedIOException ||
+                cause is java.util.concurrent.TimeoutException ||
+                cause is javax.net.ssl.SSLException
+            ) {
+                return true
+            }
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        val text = message?.lowercase() ?: return false
+        return NETWORK_FAILURE_MARKERS.any(text::contains)
+    }
+
+    private val NETWORK_FAILURE_MARKERS = listOf(
+        "unable to resolve host",
+        "no address associated with hostname",
+        "failed to connect",
+        "connection refused",
+        "network is unreachable",
+        "no route to host",
+        "connection reset",
+        "reset by peer",
+        "broken pipe",
+        "timed out",
+        "timeout",
+        "econnrefused",
+        "ehostunreach",
+        "enetunreach",
+    )
 
     /**
      * How many answers per query are worth weighing.

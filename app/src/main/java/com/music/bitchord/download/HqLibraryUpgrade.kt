@@ -579,8 +579,36 @@ object HqLibraryUpgrade {
         failure: DownloadFailure? = null,
     ) {
         if (!ready) return
-        if (synchronized(lock) { activeVideoId } != videoId) return
-        settle(context, videoId, success, failure = failure)
+        val target = synchronized(lock) {
+            if (activeVideoId != videoId) return
+            plan.firstOrNull { it.target.videoId == videoId }?.target
+        }
+        if (target == null) {
+            // The plan was rebuilt (a new verdict arrived) while this download
+            // was in flight. There is no pinned pair left to compare against,
+            // so take the download's own answer and clear the active target.
+            settle(context, videoId, success, failure = failure)
+            return
+        }
+        // "A file exists" is not this target's answer. The target asked for a
+        // specific verified pair, and an ordinary download (or an adopted old
+        // file) for the same id can finish first. Only the provenance written
+        // by that pair may settle it as done; otherwise keep the target and
+        // let the pass try again.
+        val applied = success && Downloads.hqApplied(
+            videoId,
+            HqDownloadSource(
+                sourceConfigId = target.sourceConfigId,
+                trackId = target.trackId,
+                tier = target.verifiedTier,
+            ),
+        )
+        settle(
+            context,
+            videoId,
+            applied,
+            failure = failure ?: if (success && !applied) DownloadFailure(transient = true) else null,
+        )
     }
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {

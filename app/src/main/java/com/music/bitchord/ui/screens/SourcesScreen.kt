@@ -905,7 +905,8 @@ private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
         stringResource(R.string.source_downloads_off).takeIf { !allowDownloads },
     ).joinToString(" · ")
     health is SourceHealth.Rejected -> health.reason
-    health is SourceHealth.Unreachable -> stringResource(R.string.source_unreachable, health.reason)
+    health is SourceHealth.Unreachable ->
+        stringResource(R.string.source_unreachable, FriendlyError.message(LocalContext.current, health.reason))
     kind.needsServer -> stringResource(R.string.checking)
     else -> kind.labels.take(3).joinToString(" · ")
 }
@@ -995,7 +996,7 @@ internal fun SourceEditorAlert(
                     health.detail,
                 ).joinToString(" · ")
                 is SourceHealth.Rejected -> health.reason
-                is SourceHealth.Unreachable -> health.reason
+                is SourceHealth.Unreachable -> FriendlyError.message(context, health.reason)
             }
             busy = false
 

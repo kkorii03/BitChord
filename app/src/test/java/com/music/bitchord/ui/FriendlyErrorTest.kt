@@ -49,6 +49,13 @@ class FriendlyErrorTest {
         assertEquals(message, FriendlyError.message(context, SSLException(message)))
     }
 
+
+    @Test
+    fun theStringOverloadKeepsKoreanReasonsUnchanged() {
+        val message = "소스에 연결할 수 없습니다."
+        assertEquals(message, FriendlyError.message(context, message))
+    }
+
     @Test
     fun statusRegexOnlyFinds4xxAnd5xxCodes() {
         assertEquals(429, statusOf("HTTP 429"))

@@ -1920,7 +1920,12 @@ object Downloads {
                 DownloadSession.forget(id)
                 clear(id)
             } else {
-                fail(id, e.friendly())
+                // A connection failure is not a verdict about the verified
+                // pair. Keep it so Retry resumes the upgrade instead of
+                // falling back to an ordinary download that adopts the old
+                // lower-rung file and reports Done. A permanent failure (the
+                // source or track is gone) still drops it below.
+                fail(id, e.friendly(), keepVerifiedPair = e.automaticFailure().transient)
             }
         } finally {
             if (host != null) HqHostTracker.endDownload(id, host)
@@ -2627,6 +2632,26 @@ object Downloads {
     }
 
     private fun fail(videoId: String, reason: String) {
+        fail(videoId, reason, keepVerifiedPair = false)
+    }
+
+    /**
+     * A failed replacement leaves the old file in place, and a permanent
+     * failure must free the next tap to try an ordinary download. Keeping the
+     * pinned source/track pair then made every retry re-read the same dead
+     * pair, even when the caller passed `hq = null`; the row failed again
+     * before it could fall back to YouTube.
+     *
+     * [keepVerifiedPair] is for a transient network failure. The pair is still
+     * the answer once the connection returns, and dropping it made the retry
+     * go through `routeFor` instead — where it could adopt the existing
+     * lower-rung file (see the `already in Music` paths in [prepare] and
+     * [transfer]) and report Done without the upgrade the listener asked for.
+     */
+    private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
+        if (!keepVerifiedPair) {
+            synchronized(lock) { hqOverrides.remove(videoId) }
+        }
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)
     }
