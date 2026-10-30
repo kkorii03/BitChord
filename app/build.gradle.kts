@@ -554,3 +554,19 @@ if (providers.gradleProperty("bitchord.bundleWear").orNull != "false" && findPro
         variant.sources.assets?.addGeneratedSourceDirectory(bundle, BundleWearApk::outputDir)
     }
 }
+
+/*
+ * InnerTubeX's Android artifact is built for Java 21 (class file 65) while the
+ * app compiles to Java 17. Compiling against it is fine, but a unit test that
+ * touches InnerTubeX fails to load the class on a 17 JVM with
+ * "UnsupportedClassVersionError ... class file version 65.0". Run the test
+ * workers on a 21 JVM; the bytecode target stays at 17.
+ */
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    javaLauncher.set(
+        project.extensions.getByType(org.gradle.jvm.toolchain.JavaToolchainService::class.java)
+            .launcherFor {
+                languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(21))
+            },
+    )
+}
