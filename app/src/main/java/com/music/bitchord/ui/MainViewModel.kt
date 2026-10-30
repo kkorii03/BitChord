@@ -132,6 +132,17 @@ internal fun startupDeferredWork(signedIn: Boolean): List<StartupDeferredWork> =
     add(StartupDeferredWork.UPDATE_CHECK)
 }
 
+/**
+ * Whether [retrySearch] has a request to repair.
+ *
+ * Library search is the one source that answers a blank query: it lists the
+ * device folder rather than searching text. Its empty state and permission
+ * error therefore carry a retry button with no query, and refusing that retry
+ * left the button visible but inert.
+ */
+internal fun retrySearchAllowed(source: SearchSource, query: String): Boolean =
+    query.isNotBlank() || source == SearchSource.LIBRARY
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val authStore = AuthStore(app)
@@ -2330,7 +2341,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun retrySearch() {
         val q = _query.value.trim()
-        if (q.isEmpty()) return
+        if (!retrySearchAllowed(_searchSource.value, q)) return
         when (_searchSource.value) {
             SearchSource.LIBRARY -> loadLibrarySongs()
             SearchSource.ADDONS -> runAddonSearch(q, record = false)

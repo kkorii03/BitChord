@@ -269,8 +269,9 @@ class LyricsController(
         // The next-song bundle already looked these up. Put them on screen
         // before the lookup below even starts, with the stored correction
         // applied by startTiming; the lookup then confirms the same memoised
-        // answer rather than making a request. Off by default: the bundle's
-        // lyrics path is a post-ko-101 addition and must not reach this frame.
+        // answer rather than making a request. On by default since 10-31: the
+        // bundle's lyrics path is a post-ko-101 addition, and the listener
+        // asked for its sync work to run before the next song starts.
         if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
             val preparedAudioSource = if (isVideo) {
                 null
