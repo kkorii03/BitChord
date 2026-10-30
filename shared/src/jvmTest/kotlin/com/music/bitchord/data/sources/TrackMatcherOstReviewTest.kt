@@ -74,4 +74,53 @@ class TrackMatcherOstReviewTest {
             TrackMatcher.queries(TrackMatcher.Target(raw, "ArtistVEVO")),
         )
     }
+
+    @Test
+    fun `a take after a mid-title OST label is kept as a take`() {
+        val live = TrackMatcher.parseTitle("Song - OST Live at Wembley")
+        assertEquals("song", live.core)
+        assertEquals(setOf("live"), live.versions)
+
+        val remix = TrackMatcher.parseTitle("Song - OST Remix by X")
+        assertEquals("song", remix.core)
+        assertEquals(setOf("remix"), remix.versions)
+
+        val target = TrackMatcher.Target("Song - OST Live at Wembley", "Artist")
+        val studio = Song(
+            videoId = "studio-song",
+            title = "Song",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        assertEquals(false, TrackMatcher.sameRecording(studio, target))
+    }
+
+    @Test
+    fun `a language word used as context is not a language version`() {
+        val drama = TrackMatcher.parseTitle("Song (Korean Drama OST)")
+        assertEquals("song", drama.core)
+        assertEquals(emptySet<String>(), drama.versions)
+
+        val translation = TrackMatcher.parseTitle("Song (English Translation)")
+        assertEquals("song", translation.core)
+        assertEquals(emptySet<String>(), translation.versions)
+    }
+
+    @Test
+    fun `a Hangul title with a language version tail is a language take not a translation`() {
+        val parts = TrackMatcher.parseTitle("여수밤바다 - Japanese Version")
+        assertEquals("여수밤바다", parts.core)
+        assertEquals(setOf("japanese"), parts.versions)
+        assertEquals(emptyList<String>(), parts.altCores)
+    }
+
+    @Test
+    fun `a CJK title drops trailing packaging from its core`() {
+        val bracketed = TrackMatcher.parseTitle("紅蓮華 (Live) Version")
+        assertEquals("紅蓮華", bracketed.core)
+        assertEquals(setOf("live"), bracketed.versions)
+
+        val bare = TrackMatcher.parseTitle("紅蓮華 Version")
+        assertEquals("紅蓮華", bare.core)
+    }
 }

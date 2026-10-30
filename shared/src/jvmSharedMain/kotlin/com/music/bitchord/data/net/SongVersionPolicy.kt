@@ -177,6 +177,19 @@ object SongVersionPolicy {
     ): Boolean = found || (searchSucceeded && answered)
 
     /**
+     * Whether an audio-switch pass is complete enough to cache "no catalogue
+     * release" for the rest of the run.
+     *
+     * The pass runs several queries. One that succeeded does not make the
+     * verdict final when a later query failed: the failed query may have been
+     * the one that would have found the song. Caching the original row then
+     * would turn a transient network error into a permanent kept(none) for
+     * this launch. Only a pass where every query answered may be cached.
+     */
+    fun audioSwitchSearchIsConclusive(queriesRun: Int, failedQueries: Int): Boolean =
+        queriesRun > 0 && failedQueries == 0
+
+    /**
      * How much longer than the catalogue track a downloaded song's file may be
      * before it is taken to be the music video's sound.
      *

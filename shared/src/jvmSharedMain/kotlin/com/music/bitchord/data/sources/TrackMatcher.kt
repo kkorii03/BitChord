@@ -1061,11 +1061,16 @@ object TrackMatcher {
                 // The label sits in the middle of the title. What follows it is
                 // the work's packaging, not the song's name, so the label and
                 // its tail are removed rather than left to become the core
-                // ("Song - OST Something" is still "song").
+                // ("Song - OST Something" is still "song"). A take inside that
+                // tail ("Live at Wembley", "Remix by X") is still the take and
+                // must survive, or the studio recording stands in for it.
                 else -> {
                     present = true
                     tailRemoved = true
-                    text = before
+                    val kept = suffixWords.filter {
+                        it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS
+                    }
+                    text = if (kept.isEmpty()) before else before + " (" + kept.joinToString(" ") + ")"
                 }
             }
         }
@@ -1252,18 +1257,21 @@ object TrackMatcher {
                     classify(head, versions, context)
                     tail
                 }
+                isLanguageVersion(tail) -> {
+                    // "Song - Korean Version" is a language take of "Song",
+                    // not a song called "Korean Version". Tested before the
+                    // translation pair so a Hangul title with a Latin language
+                    // tail ("여수밤바다 - Japanese Version") stays one take of
+                    // the Hangul title instead of gaining a phantom alt core.
+                    classify(tail, versions, context)
+                    head
+                }
                 isTranslationPair(head, tail, artist) -> {
                     val hangulHead = hasHangul(head)
                     val keep = if (hangulHead) head else tail
                     val other = if (hangulHead) tail else head
                     altTexts += other
                     keep
-                }
-                isLanguageVersion(tail) -> {
-                    // "Song - Korean Version" is a language take of "Song",
-                    // not a song called "Korean Version".
-                    classify(tail, versions, context)
-                    head
                 }
                 !hasFilingLatin(head) && hasFilingLatin(tail) && !isArtistName(tail, artist) -> {
                     // "紅蓮華 - LiSA" is the title and its artist, not a
@@ -1299,6 +1307,7 @@ object TrackMatcher {
         var words = text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
+        var droppedTail = 0
         // "Paniyon Sa Full Song", "Tum Hi Ho Audio" — an upload's trailing
         // label, printed without brackets to hang it on. The unambiguous take
         // markers get the same treatment ("Kizuna No Kiseki Instrumental"):
@@ -1313,15 +1322,28 @@ object TrackMatcher {
             // "Version"/"Edition" after a bracketed take is packaging, not a
             // take: "Song (Live) Version" is the live recording of "Song", and
             // leaving the word in the core made the exact-title gates refuse it.
-            if (last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) words = words.dropLast(1)
-            else if (last in TRAILING_TAKES) {
+            if (last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) {
+                words = words.dropLast(1)
+                droppedTail++
+            } else if (last in TRAILING_TAKES) {
                 versions += last
                 words = words.dropLast(1)
+                droppedTail++
             } else break
         }
 
+        // CJK cores are built from the raw text rather than [words], so the
+        // same trailing packaging has to come off that text too. Otherwise
+        // "紅蓮華 (Live) Version" keeps `version` in its core and the
+        // exact-title gates refuse the live take and the plain row alike.
+        var coreText = text
+        repeat(droppedTail) {
+            val match = TRAILING_SPLIT_TOKEN.find(coreText) ?: return@repeat
+            coreText = coreText.substring(0, match.range.first)
+        }
+
         val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -1430,10 +1452,13 @@ object TrackMatcher {
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
         val languages = words.mapNotNull { VERSION_LANGUAGES[it] }.distinct()
-        if (languages.isNotEmpty()) {
+        if (languages.isNotEmpty() && isLanguageVersion(segment)) {
             // A language version is a different recording. "Version"/"ver" is
             // its packaging, so the language is the marker that has to agree;
-            // any other take word ("Korean Remix") still counts.
+            // any other take word ("Korean Remix") still counts. A language
+            // word that is merely context ("Korean Drama OST", "English
+            // Translation") names the work or the listing, not a take, so it
+            // stays out of versions and cannot reject the plain catalogue row.
             versions += languages
             versions += words.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
             return
@@ -1881,6 +1906,8 @@ object TrackMatcher {
     private val WORD_SPLIT = Regex("""[\s.·~〜]+""")
     /** The last word of a text, for stripping trailing edition packaging. */
     private val TRAILING_WORD = Regex("""\s+(\S+)\s*$""")
+    /** The last word after any [WORD_SPLIT] boundary, for stripping a CJK core's packaging. */
+    private val TRAILING_SPLIT_TOKEN = Regex("""[.\s·~〜]+[^.\s·~〜]+\s*$""")
     /**
      * What survives into identity: any language's letters and digits.
      * ASCII-only (`[^a-z0-9]`) is what emptied every CJK/Devanagari title to

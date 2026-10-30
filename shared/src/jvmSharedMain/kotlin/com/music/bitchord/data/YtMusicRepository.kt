@@ -764,13 +764,15 @@ object YtMusicRepository {
         // that drift is how the song version was written off.
         val target = TrackMatcher.audioSwitchTargetOf(song)
             .copy(isVideo = song.isVideo || song.typeUnknown)
-        var searched = false
+        var queriesRun = 0
+        var failedQueries = 0
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
         for (query in TrackMatcher.audioSwitchQueries(song)) {
+            queriesRun++
             Log.d(TAG, "audio switch: query=$query")
             val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
-            if (page.isSuccess) searched = true
+            if (page.isFailure) failedQueries++
             val rows = page.getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
@@ -830,7 +832,11 @@ object YtMusicRepository {
         )
         // A search that failed outright is no verdict: leave it retryable
         // instead of remembering the video as having no catalogue release.
-        if (searched) audioVersionCache[song.videoId] = song
+        // The same applies when only some of the queries answered — a later
+        // failure may have hidden the release an earlier query missed.
+        if (SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun, failedQueries)) {
+            audioVersionCache[song.videoId] = song
+        }
         return song
     }
 

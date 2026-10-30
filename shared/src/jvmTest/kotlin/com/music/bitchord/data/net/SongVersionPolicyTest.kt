@@ -574,4 +574,17 @@ class SongVersionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `a partially failed audio switch search is not a definitive miss`() {
+        assertFalse(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 2, failedQueries = 1),
+        )
+        assertTrue(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 2, failedQueries = 0),
+        )
+        assertFalse(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 0, failedQueries = 0),
+        )
+    }
 }
