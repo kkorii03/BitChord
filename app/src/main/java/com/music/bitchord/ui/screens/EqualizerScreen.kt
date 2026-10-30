@@ -887,7 +887,7 @@ private fun EqualizerMode.localizedLabel(): String = stringResource(
 )
 
 @Composable
-private fun EqualizerPreset.localizedLabel(): String = stringResource(
+internal fun EqualizerPreset.localizedLabel(): String = stringResource(
     when (this) {
         EqualizerPreset.FLAT -> R.string.eq_preset_flat
         EqualizerPreset.ACOUSTIC -> R.string.eq_preset_acoustic

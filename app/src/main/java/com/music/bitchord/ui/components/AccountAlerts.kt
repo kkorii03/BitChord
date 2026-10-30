@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.ui.theme.AppType
 
 import com.music.bitchord.R
@@ -494,7 +495,7 @@ fun ServerEditorHost(
                     onFailure = {
                         status = context.getString(
                             testFailedRes,
-                            it.message ?: context.getString(R.string.failed),
+                            FriendlyError.message(context, it),
                         )
                         statusIsGood = false
                     },

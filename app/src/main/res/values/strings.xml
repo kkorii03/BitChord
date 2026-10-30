@@ -550,7 +550,21 @@
     <string name="pipeline_bit_depth">Bit Depth</string>
     <string name="pipeline_sample_rate">Sample Rate</string>
     <string name="pipeline_bitrate">Bitrate</string>
-    <string name="pipeline_pcm_data_rate" translatable="false">PCM Data Rate</string>
+    <string name="pipeline_pcm_data_rate">PCM Data Rate</string>
+    <string name="pipeline_route">Route</string>
+    <string name="pipeline_bit_exact_yes">Yes</string>
+    <string name="pipeline_bit_exact_dsd">No — DSD converted to PCM</string>
+    <string name="pipeline_bit_exact_loudness">No — loudness correction</string>
+    <string name="pipeline_bit_exact_eq">No — EQ</string>
+    <string name="pipeline_bit_exact_spatial">No — spatial audio</string>
+    <string name="pipeline_bit_exact_downstream">No — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">converted downstream</string>
+    <string name="route_phone">Phone speaker</string>
+    <string name="route_wired">Wired headphones</string>
+    <string name="route_usb">USB audio</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Other output</string>
     <string name="pipeline_channels">Channels</string>
     <string name="pipeline_decoder_name">Decoder Name</string>
     <string name="pipeline_io_rate">I/O Rate</string>
@@ -1277,8 +1291,8 @@
     <string name="spotify_import_loose">%1$d songs were matched approximately</string>
     <string name="local_playlist_subtitle">%1$d songs · On this device</string>
     <string name="spotify_import_empty_playlist">No songs in this playlist</string>
-    <string name="spotify_import_language_preference" translatable="false">Language preference</string>
-    <string name="spotify_import_language_hint" translatable="false">e.g. Punjabi, Marathi, Korean…</string>
+    <string name="spotify_import_language_preference">Language preference</string>
+    <string name="spotify_import_language_hint">e.g. Punjabi, Marathi, Korean…</string>
     <string name="spotify_library_subtitle">Your Spotify playlists</string>
     <string name="onboarding_title">Millions of songs, stream on BitChord</string>
     <string name="onboarding_name_prompt">What should we call you?</string>

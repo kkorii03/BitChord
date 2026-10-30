@@ -92,6 +92,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
+import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyActivity
@@ -232,7 +233,7 @@ fun ListenTogetherScreen(
         scope.launch {
             ListenTogether.previewParty(previewCode, previewServer)
                 .onSuccess { sheet = PartySheet.Confirm(it, previewServer) }
-                .onFailure { failure = it.message }
+                .onFailure { failure = FriendlyError.message(context, it) }
             busy = false
         }
     }
@@ -384,7 +385,8 @@ fun ListenTogetherScreen(
                         failure = null
                         scope.launch {
                             failure = ListenTogether.createParty(nickname, maxMembers)
-                                .exceptionOrNull()?.message
+                                .exceptionOrNull()
+                                ?.let { FriendlyError.message(context, it) }
                             busy = false
                             if (failure == null) showInviteAfterCreate()
                         }
@@ -450,7 +452,8 @@ fun ListenTogetherScreen(
                                 }
                             } else {
                                 ListenTogether.joinParty(open.preview.code, nickname)
-                                    .exceptionOrNull()?.message
+                                    .exceptionOrNull()
+                                    ?.let { FriendlyError.message(context, it) }
                             }
                             failure = problem
                             busy = false

@@ -57,6 +57,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -1858,6 +1859,12 @@ internal fun LyricsPanel(
     onScrollingChange: (Boolean) -> Unit = {},
     /** Whether this platform can turn picked lines into a card at all. */
     canPick: Boolean = false,
+    /**
+     * Opens the provider chooser from the "no lyrics" state. Without it the
+     * panel is a dead end: the only way to try another source was to back out
+     * to the player menu.
+     */
+    onChooseProvider: (() -> Unit)? = null,
     /** Whether the reader is choosing lines to put on a share card. */
     picking: Boolean = false,
     /** Which lines are chosen, as indices into [lines]. */
@@ -2146,11 +2153,22 @@ internal fun LyricsPanel(
             }
         } else {
             Box(empty, contentAlignment = Alignment.Center) {
-                Text(
-                    text = stringResource(Res.string.no_lyrics_for_track),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.6f),
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = stringResource(Res.string.no_lyrics_for_track),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = 0.6f),
+                    )
+                    if (onChooseProvider != null) {
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = onChooseProvider) {
+                            Text(
+                                text = stringResource(Res.string.choose_lyrics_provider),
+                                color = Color.White.copy(alpha = 0.85f),
+                            )
+                        }
+                    }
+                }
             }
         }
         return

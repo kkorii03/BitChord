@@ -2254,6 +2254,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Re-runs the search that is on screen after it failed.
+     *
+     * The retry has to follow the source that answered: a YouTube retry must
+     * not silently switch an Addons or Library search over to YouTube, and a
+     * Library retry has to re-read the folder rather than re-filter the list it
+     * already had. It deliberately does not record the query again — the
+     * listener is repairing a request, not making a new one.
+     */
+    fun retrySearch() {
+        val q = _query.value.trim()
+        if (q.isEmpty()) return
+        when (_searchSource.value) {
+            SearchSource.LIBRARY -> loadLibrarySongs()
+            SearchSource.ADDONS -> runAddonSearch(q)
+            SearchSource.YOUTUBE -> {
+                searchSubmitted = true
+                _suggestions.value = emptyList()
+                _typeaheadResults.value = emptyList()
+                runSearch(anonymous = false)
+            }
+        }
+    }
+
+    /**
      * Asks every enabled addon for [q] in parallel. A slow or failing addon
      * only costs its own rows; the list is the rest of them, round-robin so
      * no single catalogue buries the others.

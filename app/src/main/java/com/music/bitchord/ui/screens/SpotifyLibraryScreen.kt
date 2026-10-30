@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,19 +67,26 @@ fun SpotifyLibraryScreen(
     var playlists by remember { mutableStateOf<List<SpotifyPlaylist>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Bumped by the retry button so the one loader runs again without
+    // duplicating the request logic outside the effect.
+    var reload by remember { mutableIntStateOf(0) }
+    var loaded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(cookie) {
+    LaunchedEffect(cookie, reload) {
         if (cookie.isBlank()) {
             playlists = emptyList()
             error = null
+            loaded = false
             return@LaunchedEffect
         }
         loading = true
+        loaded = false
         error = null
         runCatching { SpotifyLibrary.playlists() }
             .onSuccess { playlists = it }
             .onFailure { error = FriendlyError.message(context, it) }
         loading = false
+        loaded = true
     }
 
     LazyColumn(
@@ -132,9 +140,26 @@ fun SpotifyLibraryScreen(
             }
             error?.let { message ->
                 item {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = { reload++ }) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
+                }
+            }
+            // A connected account with no playlists is an answer, not a
+            // loading state; leaving it blank reads as a request still in
+            // flight.
+            if (loaded && !loading && error == null && playlists.isEmpty()) {
+                item(key = "spotify:empty") {
                     Text(
-                        text = message,
-                        color = MaterialTheme.colorScheme.error,
+                        text = stringResource(R.string.no_results),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                     )
                 }
