@@ -630,10 +630,16 @@ object HqLibraryUpgrade {
                 }
                 return@withContext
             }
+            // buildPlan returns only targets that are runnable now, so setting
+            // the plan to it would silently drop entries that are merely
+            // resting inside the retry cooldown. Keep those: [nextRunnableTargetLocked]
+            // still skips them until they are eligible, and the parked wait
+            // below then owns their wake-up. A rebuilt target for the same song
+            // wins over the kept one.
             synchronized(lock) {
-                plan = built
+                plan = mergeParkedPlan(built, plan)
                 done = 0
-                total = built.size
+                total = plan.size
                 activeVideoId = null
                 persistLocked()
                 publishLocked()
@@ -700,6 +706,23 @@ object HqLibraryUpgrade {
             }
             else -> Unit
         }
+    }
+
+    /**
+     * Keep plan entries that [buildPlan] did not return.
+     *
+     * [buildPlan] filters on the same eligibility rules as
+     * [nextRunnableTargetLocked], so a resume whose old plan is entirely parked
+     * still yields the newly eligible targets. Dropping the parked ones there
+     * would lose their cooldown deadline; the rebuilt target for a song wins
+     * when both name it.
+     */
+    private fun mergeParkedPlan(
+        built: List<PendingTarget>,
+        kept: List<PendingTarget>,
+    ): List<PendingTarget> {
+        val runnableIds = built.mapTo(HashSet()) { it.target.videoId }
+        return built + kept.filterNot { it.target.videoId in runnableIds }
     }
 
     /**

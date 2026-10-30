@@ -96,6 +96,19 @@ class HqLibraryUpgradeSelectionTest {
         )
     }
 
+    @Test
+    fun `a rebuilt plan keeps parked entries so their cooldown wake survives`() {
+        val built = listOf(newPendingTarget("video-new"))
+        val kept = listOf(newPendingTarget("video-parked"), newPendingTarget("video-new"))
+
+        val merged = mergePlan(built, kept)
+
+        // The newly eligible target is first (it is the one the worker runs),
+        // the parked one is kept so its cooldown deadline is not lost, and the
+        // rebuilt entry replaces the stale copy for the same song.
+        assertEquals(listOf("video-new", "video-parked"), merged.map(::videoIdOf))
+    }
+
     private fun nextRunnable(nowMs: Long): Any? {
         val method = HqLibraryUpgrade::class.java.getDeclaredMethod(
             "nextRunnableTargetLocked",
@@ -111,6 +124,16 @@ class HqLibraryUpgradeSelectionTest {
             Long::class.javaPrimitiveType,
         ).apply { isAccessible = true }
         return method.invoke(HqLibraryUpgrade, nowMs) as Long?
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun mergePlan(built: List<Any>, kept: List<Any>): List<Any> {
+        val method = HqLibraryUpgrade::class.java.getDeclaredMethod(
+            "mergeParkedPlan",
+            List::class.java,
+            List::class.java,
+        ).apply { isAccessible = true }
+        return method.invoke(HqLibraryUpgrade, built, kept) as List<Any>
     }
 
     private fun videoIdOf(pending: Any?): String? {

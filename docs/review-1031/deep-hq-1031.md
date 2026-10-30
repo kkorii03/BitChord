@@ -404,3 +404,115 @@
 - `app/src/test/java/com/music/bitchord/download/DownloadsQueuedPublishRaceTest.kt`
 - `app/src/test/java/com/music/bitchord/download/HqLibraryUpgradeSelectionTest.kt`
 - `app/src/test/java/com/music/bitchord/playback/smart/HqAudioVerifyPendingRetryTest.kt`
+
+---
+
+## 8. 3차 재심 (2026-10-30, 기준 = 2차 결과)
+
+2차 수정이 만든 새 경합과 플랜 유실을 다시 코드로 확인했다. 이번 차수에서 새로 확정한
+HIGH는 없다. 아래 MEDIUM 1건과 LOW 1건을 모두 수정했고, 각각 수정 전에 실패하는
+테스트를 먼저 고정했다.
+
+### 8.1 MEDIUM — 서비스가 이미 지나간 행을 Queued로 되돌리던 문제 (수정)
+
+- 파일: `app/src/main/java/com/music/bitchord/download/Downloads.kt:405-427`, `:460-479`
+- 증거(수정 전): 2차에서 `publishQueuedIfPending`의 `pending`/`running` 확인과 두 게시를
+  같은 lock에 넣었지만, 그 lock은 `enqueue`가 행을 넣은 lock과 *다른 구간*이었다.
+  `enqueue`가 pending을 넣고 lock을 놓친 뒤 서비스가 `takeNext()`로 행을 가져가
+  `Running`→`Done`/`Failed`까지 진행하면, 늦게 들어온 게시가
+  `id in running`만 보고 `_active`와 `DownloadSession`을 Queued로 덮었다. 성공 경로는
+  `clear()`가 `_active`를 지우므로 Done 행이, 실패 경로는 Failed 행이 Queued로
+  되돌아가 아무도 다시 진행시키지 않아 영원히 Queued로 남았다.
+- 사용자 영향: 캐시에서 즉시 끝나는 곡이나 빠르게 실패한 곡이 다운로드 관리자에서
+  “대기 중”으로 멈춘 것처럼 보인다. 진행률·완료·실패를 볼 수 없다.
+- 흔한 정도: 캐시 사본 다운로드, 연속 다운로드에서 다음 행을 즉시 집는 경우,
+  백그라운드 enqueue 직후 포그라운드 전환.
+- 수정 두 가지:
+  1. `enqueue`의 pending 삽입과 Queued 게시를 **같은 `synchronized(lock)` 안**으로
+     옮겼다. `takeNext()`도 같은 lock을 쓰므로, 게시가 끝나기 전에 서비스가 행을
+     가져갈 수 없다.
+  2. 그래도 늦게 호출되는 경우를 위해 게시 직전에 `_active`가 `Running`/`Failed`이거나
+     세션 행이 Queued가 아니면 쓰지 않는다(`DownloadSession.progressOf` 추가).
+- 조건 진리표(수정 전 → 수정 후):
+
+| 서비스 상태(게시 시점) | _active | 세션 행 | 수정 전 | 수정 후 |
+|---|---|---|---|---|
+| 아직 pending | – | – | Queued | Queued |
+| takeNext만 함 | null | null | Queued | Queued |
+| Running | Running | Queued/Running | Queued(덮음) | 유지 |
+| Failed | Failed | Failed | **Queued(덮음)** | 유지 |
+| Done(성공, clear 후) | null | Done | **Queued(덮음)** | 유지 |
+
+### 8.2 LOW — 재계획이 쿨다운 중인 plan 항목을 지우던 문제 (수정)
+
+- 파일: `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:633-648`,
+  `:713-729`
+- 증거(수정 전): `runOne`은 실행 가능한 항목이 없고 `buildPlan`이 새 항목을 내면
+  `plan = built`로 통째로 교체했다. `buildPlan`은 `automaticTargetEligible`로 거르므로
+  기존 plan의 “쿨다운 중” 항목은 결과에 없고, 그 항목의 `notBeforeMs`/쿨다운 마감이
+  plan에서 사라졌다. `nextParkedWaitLocked`는 `built`가 비었을 때만 호출되므로 그
+  항목의 지연 기상은 예약되지 않았다.
+- 사용자 영향: 429로 쉬던 곡이 새 검증 결과가 하나 들어오는 순간 plan에서 유실되어,
+  쿨다운이 끝나도 다음 임의 이벤트(재생/포그라운드) 전까지, 또는 영원히 재시도되지
+  않는다.
+- 흔한 정도: 애드온 429 뒤 다른 곡의 검증이 새로 수락될 때, 앱 재시작/포그라운드 복귀.
+- 수정: `mergeParkedPlan(built, kept)`로 `buildPlan`이 돌려주지 않은 기존 항목을
+  유지한다(같은 `videoId`는 새 항목이 우선). 실행 대상은 여전히 `built.first()`이며,
+  쉬는 항목은 `nextRunnableTargetLocked`가 계속 건너뛰고 `nextParkedWaitLocked`가
+  쿨다운 만료를 WorkManager에 맡긴다.
+- 조건 진리표(수정 전 → 수정 후):
+
+| 기존 plan | buildPlan 결과 | 수정 전 plan | 수정 후 plan |
+|---|---|---|---|
+| 비어 있음 | [A] | [A] | [A] |
+| [P(쿨다운 중)] | [A] | **[A] (P 유실)** | [A, P] |
+| [P, A] | [A] | [A] (P 유실) | [A] |
+| [P] | [] | [P] (기존 유지) | [P] (기존 유지) |
+
+### 8.3 지적 번호별 처리
+
+1. MEDIUM `Downloads.kt:463-465` — **고침**. 게시를 pending 삽입과 같은 lock 안으로
+   옮겨 서비스가 먼저 가져갈 수 없게 했고, 추가로 `_active`/세션 행이 Queued가
+   아니면 게시하지 않는다. 근거: 8.1 진리표와 `DownloadsQueuedPublishRaceTest`의
+   `a claimed row advanced past queued is not published back to queued`,
+   `a claimed row that already failed is not republished as queued`.
+2. LOW `HqLibraryUpgrade.kt:634` — **고침**. `mergeParkedPlan`으로 쿨다운 중 항목을
+   새 계획에 병합해 마감을 보존한다. 근거: 8.2 진리표와
+   `HqLibraryUpgradeSelectionTest`의
+   `a rebuilt plan keeps parked entries so their cooldown wake survives`.
+
+### 8.4 이번 차수의 상황 추적표
+
+| 상황 | 진입점 → 처리 | 실제 결과 / 근거 |
+|---|---|---|
+| 캐시 사본이 즉시 완료 | `enqueue` lock 안 Queued 게시 → `takeNext` → `run` `Running`/`clear`+`done` | 늦은 게시가 없어 Done 유지(8.1) |
+| 빠른 실패 | `run` `fail` → `_active`/세션 Failed | 늦은 게시가 Failed를 덮지 않음(8.1) |
+| 백그라운드 enqueue→포그라운드 거부 | `enqueue` lock 게시 → `onForeground` `join` 후 `abandonPending`+`fail` | 게시와 거부가 같은 lock으로 직렬화 |
+| 429로 쉬는 plan + 새 검증 | `runOne` → `buildPlan` → `mergeParkedPlan` | 쉬는 항목 보존, 쿨다운 만료 시 WorkManager 기상(8.2) |
+| 전부 쉬는 plan | `runOne` → `nextParkedWaitLocked` → `enqueue(delay)` | 기존 동작 유지, 폴링 없음 |
+| 앱 재시작 후 | `ensureLoaded` → `prunePlan`(영구성만) → `nextRunnableTargetLocked` | 쿨다운 항목은 plan에 남고 선택만 미룸 |
+
+### 8.5 3차 테스트
+
+수정 전 실패를 확인한 새 테스트:
+- `app/src/test/java/com/music/bitchord/download/DownloadsQueuedPublishRaceTest.kt`
+  - `a claimed row advanced past queued is not published back to queued`
+  - `a claimed row that already failed is not republished as queued`
+- `app/src/test/java/com/music/bitchord/download/HqLibraryUpgradeSelectionTest.kt`
+  - `a rebuilt plan keeps parked entries so their cooldown wake survives`
+
+실행 결과:
+- `:app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` → 성공
+- `:app:testProdReleaseUnitTest` (위 2개 클래스) → 8 tests, 0 failures
+- 1·2차 회귀: `HqLibraryUpgradeBackgroundPruneTest`, `HqSwapPolicyTest`,
+  `HqVerificationSourceIdentityTest`, `HqAudioVerifyPendingRetryTest` → 성공
+- `:shared:jvmTest --tests AutomaticRetryPolicyTest --tests HqLibraryAutoRetryPolicyTest`
+  → 성공
+
+### 8.6 3차 변경 파일
+
+- `app/src/main/java/com/music/bitchord/download/Downloads.kt`
+- `app/src/main/java/com/music/bitchord/download/DownloadSession.kt`
+- `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt`
+- `app/src/test/java/com/music/bitchord/download/DownloadsQueuedPublishRaceTest.kt`
+- `app/src/test/java/com/music/bitchord/download/HqLibraryUpgradeSelectionTest.kt`

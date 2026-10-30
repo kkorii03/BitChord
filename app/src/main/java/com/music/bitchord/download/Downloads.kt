@@ -412,12 +412,16 @@ object Downloads {
             if (minimumTier != null) minimumTiers[id] = minimumTier
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
+            // Publish while the row is still ours: a worker can only claim it
+            // through [takeNext], which needs this same lock. Publishing after
+            // the lock is what let a claimed row finish first and then be
+            // overwritten back to Queued.
+            publishQueuedIfPending(
+                song = song,
+                from = from,
+                publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
+            )
         }
-        publishQueuedIfPending(
-            song = song,
-            from = from,
-            publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
-        )
 
         val app = context.applicationContext
         // Android refuses a foreground service started from a background
@@ -461,6 +465,18 @@ object Downloads {
         synchronized(lock) {
             val id = song.videoId
             if (id !in pending && id !in running) return
+            // A worker that claimed this row may already have moved it past
+            // Queued — a cache copy that finishes at once, or a fast refusal.
+            // Writing Queued afterwards would move the manager's row backwards
+            // and leave it there, since nothing is left to advance it again.
+            // The same goes for the `active` map, which the worker writes
+            // before the session row.
+            val activeState = _active.value[id]
+            val sessionState = if (publishSession) DownloadSession.progressOf(id) else null
+            val alreadyAdvanced = activeState is DownloadState.Running ||
+                activeState is DownloadState.Failed ||
+                (sessionState != null && sessionState !is DownloadProgress.Queued)
+            if (alreadyAdvanced) return
             _active.update { it + (id to DownloadState.Queued) }
             if (publishSession) DownloadSession.queued(song, from)
         }

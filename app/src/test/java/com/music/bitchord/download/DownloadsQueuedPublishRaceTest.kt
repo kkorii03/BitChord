@@ -94,6 +94,53 @@ class DownloadsQueuedPublishRaceTest {
         assertEquals(DownloadProgress.Queued, progressOf(videoId))
     }
 
+    @Test
+    fun `a claimed row advanced past queued is not published back to queued`() {
+        val videoId = "video-3"
+        val song = Song(
+            videoId = videoId,
+            title = "Title",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        pending[videoId] = song
+
+        // The Queue publish happens under the same lock as the insert, so a
+        // claimed row always has a manager row to advance. A cache-backed
+        // download can then finish before any late publish; writing Queued now
+        // would move it backwards with nothing left to advance it again.
+        DownloadSession.queued(song)
+        assertEquals(song, Downloads.takeNext())
+        DownloadSession.running(videoId, 0f)
+        active.value = emptyMap()
+        DownloadSession.done(videoId)
+
+        publishQueued(song)
+        assertEquals(null, active.value[videoId])
+        assertEquals(DownloadProgress.Done, progressOf(videoId))
+    }
+
+    @Test
+    fun `a claimed row that already failed is not republished as queued`() {
+        val videoId = "video-4"
+        val song = Song(
+            videoId = videoId,
+            title = "Title",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        pending[videoId] = song
+
+        DownloadSession.queued(song)
+        assertEquals(song, Downloads.takeNext())
+        active.value = mapOf(videoId to DownloadState.Failed("no such track"))
+        DownloadSession.failed(videoId, "no such track")
+
+        publishQueued(song)
+        assertEquals(DownloadState.Failed("no such track"), active.value[videoId])
+        assertTrue(progressOf(videoId) is DownloadProgress.Failed)
+    }
+
     private fun progressOf(videoId: String): DownloadProgress? =
         DownloadSession.state.value.items.firstOrNull { it.videoId == videoId }?.progress
 
