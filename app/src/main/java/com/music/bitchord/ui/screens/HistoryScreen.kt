@@ -11,6 +11,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -53,7 +57,16 @@ fun HistoryScreen(
     isPlaying: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "history")
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val loadingTimedOut = rememberLoadingTimedOut(
+        loading = state is UiState.Loading,
+        tag = "history",
+        requestKey = loadAttempt,
+    )
+    val retry = {
+        loadAttempt += 1
+        onRetry()
+    }
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
@@ -86,7 +99,7 @@ fun HistoryScreen(
         }
         when (state) {
             is UiState.Loading -> if (loadingTimedOut) {
-                item(key = "history:timeout") { LoadingTimeoutState(onRetry = onRetry) }
+                item(key = "history:timeout") { LoadingTimeoutState(onRetry = retry) }
             } else {
                 songListSkeleton(count = 10, keyPrefix = "skeleton:history")
             }
@@ -95,7 +108,7 @@ fun HistoryScreen(
                 MessageState(
                     message = state.message,
                     actionLabel = stringResource(R.string.try_again),
-                    onAction = onRetry,
+                    onAction = retry,
                 )
             }
 

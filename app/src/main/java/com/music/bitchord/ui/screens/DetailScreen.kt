@@ -386,11 +386,19 @@ fun DetailScreen(
     /** Re-runs the page's first load in place after its error state. */
     onRetryLoading: (() -> Unit)? = null,
 ) {
+    var loadAttempt by remember { mutableIntStateOf(0) }
     val loadingTimedOut = rememberLoadingTimedOut(
-        page.songs is UiState.Loading,
-        "detail",
-        BROWSE_LOADING_TIMEOUT_MS,
+        loading = page.songs is UiState.Loading,
+        tag = "detail",
+        timeoutMs = BROWSE_LOADING_TIMEOUT_MS,
+        requestKey = "${page.browseId}:$loadAttempt",
     )
+    val retryLoading: (() -> Unit)? = onRetryLoading?.let { action ->
+        {
+            loadAttempt += 1
+            action()
+        }
+    }
     val visibleSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // Liked Music keeps the account's non-music videos aside by default;
     // the row below the header reveals them. Everywhere else this is empty.
@@ -422,7 +430,12 @@ fun DetailScreen(
     // A smart playlist with nothing to show is an empty shelf, not a release
     // with a missing sleeve: the tall artwork header would push the title into
     // the middle of the screen and leave the explanation stranded below it.
-    val smartEmpty = SmartPlaylist.of(page.browseId) != null && page.songs is UiState.Error
+    // YouTube's Liked Music page is not one of the local SmartPlaylist ids but
+    // is the same account-only shelf; a guest opening it needs the sign-in
+    // route too rather than a plain retry-less message.
+    val likedMusicPage = page.browseId == YtMusicRepository.LIKED_MUSIC
+    val smartEmpty = (SmartPlaylist.of(page.browseId) != null || likedMusicPage) &&
+        page.songs is UiState.Error
     // A device folder with nothing in it is an empty shelf too: the tall sleeve
     // header would show a placeholder square over an explanation, so the whole
     // page becomes one centred empty state instead.
@@ -430,7 +443,7 @@ fun DetailScreen(
     // Liked songs are the one smart list that lives on the account; a guest
     // opening it gets the way to sign in rather than only a retry-less message.
     val smartNeedsSignIn = smartEmpty && !signedIn &&
-        SmartPlaylist.of(page.browseId) == SmartPlaylist.LIKED_UNPLAYED
+        (SmartPlaylist.of(page.browseId) == SmartPlaylist.LIKED_UNPLAYED || likedMusicPage)
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
     val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
@@ -805,8 +818,8 @@ fun DetailScreen(
             if (!isArtist) aboutItem()
 
             when (val state = page.songs) {
-                is UiState.Loading -> if (loadingTimedOut && onRetryLoading != null) {
-                    item(key = "detail:timeout") { LoadingTimeoutState(onRetry = onRetryLoading) }
+                is UiState.Loading -> if (loadingTimedOut && retryLoading != null) {
+                    item(key = "detail:timeout") { LoadingTimeoutState(onRetry = retryLoading) }
                 } else {
                     detailSkeleton(isArtist)
                 }
@@ -831,11 +844,11 @@ fun DetailScreen(
                                 .padding(top = topBarContentPadding()),
                         )
                     }
-                    onRetryLoading != null -> item {
+                    retryLoading != null -> item {
                         MessageState(
                             state.message,
                             actionLabel = stringResource(R.string.try_again),
-                            onAction = onRetryLoading,
+                            onAction = retryLoading,
                         )
                     }
                     else -> item { MessageState(state.message) }

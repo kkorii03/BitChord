@@ -219,7 +219,7 @@
     <string name="tv_unfavorite">즐겨찾기 해제</string>
     <string name="tv_unlove">좋아요 취소</string>
     <string name="tv_unsubscribe">구독 취소</string>
-    <string name="tv_up_next">다음 재생</string>
+    <string name="tv_up_next">다음 항목</string>
     <string name="tv_update_available">BitChord %1$s 업데이트가 있습니다</string>
     <string name="tv_usb_dac">USB DAC</string>
     <string name="tv_usb_dac_blurb">연결된 USB DAC가 있으면 오디오를 변형 없이 바로 보냅니다.</string>

@@ -41,6 +41,8 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -126,7 +128,16 @@ fun LibraryScreen(
 ) {
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
     val onDevice = stringResource(Res.string.on_device)
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "library")
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val loadingTimedOut = rememberLoadingTimedOut(
+        loading = state is UiState.Loading,
+        tag = "library",
+        requestKey = loadAttempt,
+    )
+    val retry = {
+        loadAttempt += 1
+        onRetry()
+    }
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -188,12 +199,12 @@ fun LibraryScreen(
             }
             when (state) {
                 is UiState.Loading -> if (loadingTimedOut) {
-                    item { LoadingTimeoutState(onRetry = onRetry) }
+                    item { LoadingTimeoutState(onRetry = retry) }
                 } else {
                     librarySkeleton()
                 }
                 is UiState.Error -> item {
-                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = retry)
                 }
                 is UiState.Success -> {
                     // A fresh account has no Playlists shelf at all, and that

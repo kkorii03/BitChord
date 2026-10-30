@@ -1073,15 +1073,21 @@ const val BROWSE_LOADING_TIMEOUT_MS = 4_000L
  *
  * Event-driven: one delay per load, cancelled as soon as the state settles or
  * the page leaves composition. No polling.
+ *
+ * [requestKey] identifies the request being waited on. A retry can start a new
+ * load while the state is still `Loading`, so keying only on that boolean let
+ * the old timer stand and show the timeout instantly (or before the new
+ * request had its own fifteen seconds). Changing the key restarts the delay.
  */
 @Composable
 fun rememberLoadingTimedOut(
     loading: Boolean,
     tag: String,
     timeoutMs: Long = PAGE_LOADING_TIMEOUT_MS,
+    requestKey: Any? = null,
 ): Boolean {
     var timedOut by remember { mutableStateOf(false) }
-    LaunchedEffect(loading, tag, timeoutMs) {
+    LaunchedEffect(loading, tag, timeoutMs, requestKey) {
         if (!loading) {
             timedOut = false
             return@LaunchedEffect

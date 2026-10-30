@@ -42,6 +42,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -201,7 +203,16 @@ fun HomeScreen(
     onDisablePrivateListening: (() -> Unit)? = null,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "home")
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val loadingTimedOut = rememberLoadingTimedOut(
+        loading = state is UiState.Loading,
+        tag = "home",
+        requestKey = loadAttempt,
+    )
+    val retry = {
+        loadAttempt += 1
+        onRetry()
+    }
 
     PullToRefresh(
         refreshing = refreshing,
@@ -234,7 +245,7 @@ fun HomeScreen(
             when (state) {
                 is UiState.Loading -> {
                     if (loadingTimedOut) {
-                        item { LoadingTimeoutState(onRetry = onRetry) }
+                        item { LoadingTimeoutState(onRetry = retry) }
                     } else if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
                         // Recents owns the leading layout while its request is
@@ -246,7 +257,7 @@ fun HomeScreen(
                     }
                 }
                 is UiState.Error -> item {
-                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = retry)
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
