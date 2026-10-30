@@ -138,7 +138,8 @@ object YtMusicRepository {
                         // Signed even if the current verdict would read Music
                         // signed out: this re-check exists to learn the
                         // account's verdict.
-                        MusicHome(Innertube.browse("FEmusic_home", forceSigned = true))
+                        val root = Innertube.browse("FEmusic_home", forceSigned = true)
+                        MusicHome(root, InnertubeParser.parseHome(root))
                     } catch (failure: Exception) {
                         // A working proxy is the listener's way out of the
                         // gate. If the request fails on the wire, surface that
@@ -166,16 +167,31 @@ object YtMusicRepository {
                     }
                 }
             },
-            keepChart = { it is MusicHome && !MusicGateFallback.isActive(key) },
+            keepChart = {
+                shouldRenderMusicHome(MusicGateFallback.isActive(key)) &&
+                    it is MusicHome &&
+                    it.shelves.any { shelf -> TRENDING_TITLE.matches(shelf.title) }
+            },
         )
         when (val loaded = attempt.first) {
             is MusicHome -> {
+                // A browse that returns while the verdict still reads GATED is
+                // the Premium upsell, not the listener's feed. The old path
+                // fell through to the youtube.com fallback here; keep that
+                // routing even though the chart now runs beside the browse.
+                if (!shouldRenderMusicHome(MusicGateFallback.isActive(key))) {
+                    Log.d(
+                        TAG,
+                        "home: youtube.com fallback (gate ${MusicGateFallback.state(key)})",
+                    )
+                    return@call YouTubeFallback.home(force)
+                }
                 Log.d(TAG, "home: music.youtube.com (gate ${MusicGateFallback.state(key)})")
                 val chart = attempt.second ?: Innertube.contentCountry()
                     ?.takeIf { it.isNotBlank() }
                     ?.let(::cachedContentCountryChart)
                 HomeFeed(
-                    withContentCountryChart(InnertubeParser.parseHome(loaded.root), chart),
+                    withContentCountryChart(loaded.shelves, chart),
                     InnertubeParser.continuationToken(loaded.root),
                 )
             }
@@ -190,13 +206,25 @@ object YtMusicRepository {
     }
 
     private sealed interface HomeAttempt
-    private class MusicHome(val root: JsonObject) : HomeAttempt
+    private class MusicHome(val root: JsonObject, val shelves: List<HomeShelf>) : HomeAttempt
     private class FallbackHome(val feed: HomeFeed) : HomeAttempt
+
+    /**
+     * After a Music browse, a verdict that is still GATED means the answer was
+     * the Premium upsell; it must be routed to the youtube.com fallback exactly
+     * as if the browse had been refused. Otherwise the listener is shown an
+     * empty feed whenever a re-check leaves the verdict unchanged.
+     */
+    internal fun shouldRenderMusicHome(gateActive: Boolean): Boolean = !gateActive
 
     /**
      * Starts [startChart] before [load], then keeps the chart only when the
      * loaded answer can use it. A failed load cancels a chart nobody will
      * await, so a fallback/error does not leave a request running.
+     *
+     * A lookup this call joined belongs to another caller: cancelling it would
+     * fail that caller's await with a CancellationException, so only a lookup
+     * this call started itself is cancelled.
      *
      * Extracted so the overlap rule is testable without a network: the old
      * Home path awaited its browse first and only then began the chart lookup.
@@ -210,14 +238,18 @@ object YtMusicRepository {
         val loaded = try {
             load()
         } catch (failure: Throwable) {
-            chart?.result?.cancel()
+            chart?.cancelIfNotShared()
             throw failure
         }
         if (!keepChart(loaded)) {
-            chart?.result?.cancel()
+            chart?.cancelIfNotShared()
             return loaded to null
         }
         return loaded to chart?.result?.await()
+    }
+
+    private fun SharedLookups.Lookup<HomeShelf?>.cancelIfNotShared() {
+        if (!joined) result.cancel()
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */

@@ -80,4 +80,55 @@ class HomeChartOverlapTest {
         }
         assertFalse(lookups.isRunning("KR"), "the unused chart lookup was cancelled")
     }
+
+    @Test
+    fun `a fallback does not cancel a chart another caller started`() = runBlocking {
+        val lookups = SharedLookups<HomeShelf?>(CoroutineScope(Dispatchers.IO))
+        val release = CompletableDeferred<Unit>()
+        val chart = shelf("인기곡")
+        val owner = lookups.lookup("KR") {
+            release.await()
+            chart
+        }
+        val joined = lookups.lookup("KR") { error("a joined lookup must not start a second chart") }
+        assertTrue(joined.joined)
+
+        val loaded = YtMusicRepository.loadWithChartBefore(
+            startChart = { joined },
+            load = { "fallback" },
+            keepChart = { false },
+        )
+
+        assertEquals("fallback", loaded.first)
+        assertNull(loaded.second)
+        assertTrue(lookups.isRunning("KR"), "the owning caller's chart keeps running")
+        release.complete(Unit)
+        assertEquals(chart, owner.result.await())
+    }
+
+    @Test
+    fun `a failed load does not cancel a chart another caller started`() = runBlocking {
+        val lookups = SharedLookups<HomeShelf?>(CoroutineScope(Dispatchers.IO))
+        val release = CompletableDeferred<Unit>()
+        val chart = shelf("인기곡")
+        val owner = lookups.lookup("KR") {
+            release.await()
+            chart
+        }
+        val joined = lookups.lookup("KR") { error("a joined lookup must not start a second chart") }
+        assertTrue(joined.joined)
+
+        try {
+            YtMusicRepository.loadWithChartBefore(
+                startChart = { joined },
+                load = { throw IllegalStateException("browse failed") },
+            )
+        } catch (expected: IllegalStateException) {
+            assertEquals("browse failed", expected.message)
+        }
+
+        assertTrue(lookups.isRunning("KR"), "the owning caller's chart keeps running")
+        release.complete(Unit)
+        assertEquals(chart, owner.result.await())
+    }
 }
