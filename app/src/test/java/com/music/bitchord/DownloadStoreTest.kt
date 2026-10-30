@@ -92,6 +92,29 @@ class DownloadStoreTest {
         }
     }
 
+    @Test
+    fun `a part file started by this process survives the abandoned sweep`() {
+        val dir = Files.createTempDirectory("bitchord-downloads").toFile()
+        try {
+            val cutoff = 1_000_000L
+            val abandoned = File(dir, "old.flac.part").apply {
+                writeText("half")
+                setLastModified(cutoff - 1_000L)
+            }
+            val active = File(dir, "new.flac.part").apply {
+                writeText("half")
+                setLastModified(cutoff + 1_000L)
+            }
+
+            assertEquals(1, DownloadStore.deleteAbandonedParts(dir, cutoff))
+
+            assertFalse(abandoned.exists())
+            assertTrue(active.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     // ---- What Android will store -------------------------------------------
 
     @Test
