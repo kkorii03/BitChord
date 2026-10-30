@@ -79,9 +79,16 @@ class AppSettingsDefaultsTest {
 
     @Test
     fun `music-only is on for a fresh install and keeps a stored choice`() {
-        assertTrue(preferMusicOnlyDefault(stored = null))
-        assertTrue(preferMusicOnlyDefault(stored = true))
-        assertFalse(preferMusicOnlyDefault(stored = false))
+        assertTrue(preferMusicOnlyDefault(stored = null, existingInstall = false))
+        assertTrue(preferMusicOnlyDefault(stored = true, existingInstall = false))
+        assertFalse(preferMusicOnlyDefault(stored = false, existingInstall = false))
+    }
+
+    @Test
+    fun `music-only stays off for an existing install that never stored it`() {
+        assertFalse(preferMusicOnlyDefault(stored = null, existingInstall = true))
+        assertTrue(preferMusicOnlyDefault(stored = true, existingInstall = true))
+        assertFalse(preferMusicOnlyDefault(stored = false, existingInstall = true))
     }
 
     @Test
