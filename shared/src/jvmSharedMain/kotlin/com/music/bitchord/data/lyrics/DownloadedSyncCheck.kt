@@ -110,11 +110,15 @@ object DownloadedSyncCheck {
         freshMatchPercent: Int?,
         freshKey: Int,
     ): Replacement {
+        // A check that heard nothing (no audio, a refusal, no fit) has not
+        // verified the file with these rules. Recording the version would make
+        // the next play answer NONE and keep an old wrong sync for ever.
+        val answered = ownMatchPercent != null || freshMatchPercent != null
         val freshWins = freshMatchPercent != null &&
             freshMatchPercent > (ownMatchPercent ?: 0)
         val bestMatch = if (freshWins) freshMatchPercent else ownMatchPercent
         if (!shouldReplace(storedVersion, existingMatchPercent, bestMatch)) {
-            return Replacement(replace = false, winner = null, key = null, recordVersion = true)
+            return Replacement(replace = false, winner = null, key = null, recordVersion = answered)
         }
         return if (freshWins) {
             Replacement(replace = true, winner = Winner.FRESH, key = freshKey, recordVersion = true)

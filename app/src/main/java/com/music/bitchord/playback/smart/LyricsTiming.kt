@@ -564,8 +564,19 @@ object LyricsTiming {
         // refineHeardKnown below answers true. Answers saved before words were
         // kept have none (10-27: qQNbfxDLxq0, base=ai, stayed -0.24 s with no
         // refine at all), so they are heard once like a measured song.
-        if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return false
-        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) {
+            TrackLog.d(
+                TAG,
+                "refine-heard skipped heavy=${AppSettings.heavyWorkAllowed} " +
+                    "ahead=${AppSettings.aiTimingAhead.value}",
+                videoId,
+            )
+            return false
+        }
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) {
+            TrackLog.d(TAG, "refine-heard skipped: Deepgram not usable", videoId)
+            return false
+        }
         if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return false
         val key = textKey(lines, audioSource)
         val lock = refining.getOrPut(videoId) { Mutex() }
@@ -1323,7 +1334,10 @@ object LyricsTiming {
         audioSource: String? = null,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
-        if (sung.size < MIN_AI_LINES) return null
+        if (sung.size < MIN_AI_LINES) {
+            TrackLog.d(TAG, "AI timing skipped: only ${sung.size} sung lines", videoId)
+            return null
+        }
         val key = textKey(lines, audioSource)
         // One decision for every automatic caller, made from what is kept —
         // the screen, the next-song preparation and the calibration sample
@@ -1883,6 +1897,31 @@ object LyricsTiming {
                 // version left behind made recheckDownloaded answer NONE and
                 // the new file kept the old timing for ever.
                 syncCheckVersion = 0,
+                // The chroma measurement was made from the old bytes too. Its
+                // answer must not move the new recording's lyrics.
+                autoChecked = false,
+                autoShiftMs = null,
+                autoVersion = 0,
+                auto = null,
+                autoComplete = false,
+                autoNoChange = false,
+                autoRecordPartial = false,
+                autoVideoBytes = 0L,
+                autoVideoSeconds = 0.0,
+                autoNote = null,
+                searchVersion = 0,
+                biasSampled = false,
+                // The refine transcript was heard from the old recording. Its
+                // text key names only the file, so without this the new file
+                // would reuse the old words and the old line correction.
+                refineMs = null,
+                refineSlopePerMin = 0.0,
+                refineLines = 0,
+                refineMad = null,
+                refineHeardKey = null,
+                refineHeardWords = emptyList(),
+                refineHeardSeconds = 0.0,
+                refineHeardExtended = false,
             )
         }
         recheckTokens.remove(videoId)

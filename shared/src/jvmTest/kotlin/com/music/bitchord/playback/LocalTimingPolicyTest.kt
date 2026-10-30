@@ -43,4 +43,61 @@ class LocalTimingPolicyTest {
         assertTrue(LocalTimingPolicy.measureNow(file, isVideo = false, timingForeign = true))
         assertFalse(LocalTimingPolicy.measureNow(file, isVideo = false, timingForeign = false))
     }
+
+    @Test
+    fun `a rechecked download is timeable on every surface`() {
+        assertTrue(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                recheckOverride = true,
+                sourceTimedToVideo = false,
+            ),
+        )
+        assertFalse(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                recheckOverride = false,
+                sourceTimedToVideo = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a videos own captions are never moved by a record-based answer`() {
+        assertFalse(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                recheckOverride = true,
+                sourceTimedToVideo = true,
+            ),
+        )
+        assertTrue(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = true,
+                recheckOverride = false,
+                sourceTimedToVideo = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `untimed lines are never timeable`() {
+        assertFalse(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = false,
+                fromFile = false,
+                isVideo = true,
+                recheckOverride = true,
+                sourceTimedToVideo = false,
+            ),
+        )
+    }
 }

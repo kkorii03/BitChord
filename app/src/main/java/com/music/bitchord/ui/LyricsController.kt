@@ -267,7 +267,12 @@ class LyricsController(
         // answer rather than making a request. Off by default: the bundle's
         // lyrics path is a post-ko-101 addition and must not reach this frame.
         if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(videoId)?.let { prepared ->
+            val preparedAudioSource = if (isVideo) {
+                null
+            } else {
+                LyricsTiming.audioSourceKey(videoId, localUri != null)
+            }
+            NextPrepCache.get(videoId, preparedAudioSource, isVideo)?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -678,7 +683,15 @@ class LyricsController(
                 // Event-driven only: the check runs because this file started
                 // playing, once per playback and one file at a time. A version
                 // already recorded makes it a cheap no-op.
-                if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
+            if (!adjustable || videoOwn || !cancelAi || substituted) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song pass skipped adjustable=$adjustable videoOwn=$videoOwn " +
+                        "cancelAi=$cancelAi substituted=$substituted",
+                    request.videoId,
+                )
+                return@launch
+            }
                 if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches) ||
                     !AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
                     !com.music.bitchord.data.lyrics.Deepgram.usable
@@ -734,6 +747,12 @@ class LyricsController(
             }
             if (request.isVideo || request.fileTimingForeign) {
                 if (!LyricsTiming.videoTimingMayRun(adjustable, measure, measureNow, cancelAi, substituted)) {
+                    TrackLog.d(
+                        "BitChord",
+                        "lyrics-timing: video pass skipped adjustable=$adjustable measure=$measure " +
+                            "measureNow=$measureNow cancelAi=$cancelAi substituted=$substituted",
+                        request.videoId,
+                    )
                     return@launch
                 }
                 // AI after the free measurement, not alongside it: each request
@@ -820,10 +839,26 @@ class LyricsController(
                     artist = request.artist,
                     texts = sung.map { it.value.text },
                 )
-            ) return@launch
+            ) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song check skipped by its guard " +
+                        "video=${request.isVideo} timed=$timed sung=${sung.size}",
+                    request.videoId,
+                )
+                return@launch
+            }
             if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
                 !com.music.bitchord.data.lyrics.Deepgram.usable
-            ) return@launch
+            ) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song check skipped heavy=${AppSettings.heavyWorkAllowed} " +
+                        "ahead=${AppSettings.aiTimingAhead.value} deepgram=${com.music.bitchord.data.lyrics.Deepgram.usable}",
+                    request.videoId,
+                )
+                return@launch
+            }
             // Missing audio is not kept on disk (the next playback may have
             // it), so this session keeps it to one try per audio source rather
             // than one per lyrics delivery. A file-to-stream swap is a new

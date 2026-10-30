@@ -116,6 +116,8 @@ internal object TranslationAhead {
         val source: LyricsSource?,
         val searchedAs: Pair<String, String>?,
         val fromFile: Boolean,
+        /** The sheet came from a downloaded-file re-check, whose sync belongs to that file. */
+        val recheckOverride: Boolean = false,
     )
 
     /**
@@ -132,6 +134,18 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
     ): AheadLyrics {
+        // The same order the player uses: a per-song override outranks the
+        // file's own tags and every provider. Without this the bundle kept
+        // looking up the old sheet and timed it under the old key.
+        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
+            return AheadLyrics(
+                lines = override.lines,
+                source = override.source,
+                searchedAs = null,
+                fromFile = song.localUri != null,
+                recheckOverride = override.kind == com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.RECHECK,
+            )
+        }
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.withSource(app, uri)
             if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {

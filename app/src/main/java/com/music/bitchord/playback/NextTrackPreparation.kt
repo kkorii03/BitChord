@@ -137,8 +137,8 @@ internal class NextTrackPreparation(
         return Snapshot(rowId, index, song, "$rowId|${song.videoId}")
     }
 
-    private fun attemptsFor(rowId: String): MutableSet<Step> = synchronized(attempted) {
-        attempted.getOrPut(rowId) { mutableSetOf() }
+    private fun attemptsFor(stateKey: String): MutableSet<Step> = synchronized(attempted) {
+        attempted.getOrPut(stateKey) { mutableSetOf() }
     }
 
     private suspend fun run(snapshot: Snapshot) {
@@ -146,7 +146,11 @@ internal class NextTrackPreparation(
         val switches = AppSettings.syncSafetySwitches
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
-        val steps = attemptsFor(snapshot.rowId)
+        // Attempts and lyrics belong to the recording that will play, not just
+        // to the queue row: a video resolved to its song version must not
+        // inherit the video's failed steps or its lyrics.
+        var stateKey = NextPrepPolicy.stateKey(snapshot.rowId, song.videoId)
+        var steps = attemptsFor(stateKey)
 
         fun stillCurrent(): Boolean {
             val player = currentPlayer() ?: return false
@@ -161,10 +165,18 @@ internal class NextTrackPreparation(
         if (versionWanted(song) && Step.VERSION !in steps && !versionAnswered(song)) {
             steps += Step.VERSION
             val resolved = resolveVersion(song, snapshot.rowId) { expected ->
-                expectedQueueKey = "${snapshot.rowId}|${expected.videoId}"
+                expectedQueueKey = NextPrepPolicy.stateKey(snapshot.rowId, expected.videoId)
                 queueKey = expectedQueueKey
             }
-            if (resolved != null) song = resolved
+            if (resolved != null) {
+                song = resolved
+                val resolvedKey = NextPrepPolicy.stateKey(snapshot.rowId, resolved.videoId)
+                if (resolvedKey != stateKey) {
+                    stateKey = resolvedKey
+                    steps = attemptsFor(stateKey)
+                    NextPrepCache.clear()
+                }
+            }
         }
         if (!stillCurrent()) return
 
@@ -172,7 +184,7 @@ internal class NextTrackPreparation(
         // The lyrics switch is off by default: the cache may hold lines from
         // an earlier run, so it is not even read while the switch is off.
         var lyrics: TranslationAhead.AheadLyrics? = if (switches.nextPrepLyrics) {
-            synchronized(lyricsByRow) { lyricsByRow[snapshot.rowId] }
+            synchronized(lyricsByRow) { lyricsByRow[stateKey] }
         } else {
             null
         }
@@ -190,7 +202,7 @@ internal class NextTrackPreparation(
             },
             switches,
         )
-        val prepared = preparedSteps(song, lyrics = null)
+        val prepared = preparedSteps(song, lyrics = lyrics)
         val plan = NextPrepPolicy.plan(
             NextPrepPolicy.Request(
                 rowId = snapshot.rowId,
@@ -215,14 +227,18 @@ internal class NextTrackPreparation(
                             allowHeavy = AppSettings.heavyWorkAllowed,
                         )
                         synchronized(lyricsByRow) {
-                            lyrics?.let { lyricsByRow[snapshot.rowId] = it }
+                            lyrics?.let { lyricsByRow[stateKey] = it }
                         }
                     }
                     Step.HQ -> hq = prepareHq(song) ?: hq
                     Step.SYNC -> {
                         val found = lyrics
                         val lines = found?.lines
-                        if (lines != null && lines.any { it.timeMs > 0 } && !song.isVideo) {
+                        val query = CoverTitles.lyricsQuery(song)
+                        val substituted = StreamChoice.isSubstitute(song.videoId)
+                        if (lines != null && lines.any { it.timeMs > 0 } &&
+                            NextPrepPolicy.syncMayRun(query.isVideo, substituted)
+                        ) {
                             if (!LyricsTiming.songVerified(context, song, lines)) {
                                 LyricsTiming.verifySong(context, song, lines)
                             }
@@ -265,6 +281,7 @@ internal class NextTrackPreparation(
             lines
         }
         if (lines != null && shown != null && SyncSafetyPolicy.firstFrameCacheAllowed(switches)) {
+            val query = CoverTitles.lyricsQuery(song)
             NextPrepCache.put(
                 NextPrepCache.Ready(
                     videoId = song.videoId,
@@ -272,8 +289,13 @@ internal class NextTrackPreparation(
                     shown = shown,
                     source = found.source,
                     searchedAs = found.searchedAs,
-                    isVideo = song.isVideo,
+                    isVideo = query.isVideo,
                     fromFile = found.fromFile,
+                    audioSource = if (query.isVideo) {
+                        null
+                    } else {
+                        LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
+                    },
                 ),
             )
         }
@@ -458,7 +480,11 @@ internal class NextTrackPreparation(
     // ---- (d) song sync -------------------------------------------------------
 
     private fun syncWanted(song: Song): Boolean {
-        if (song.isVideo) return false
+        if (!NextPrepPolicy.syncMayRun(
+                isVideo = CoverTitles.lyricsQuery(song).isVideo,
+                substituted = StreamChoice.isSubstitute(song.videoId),
+            )
+        ) return false
         if (!AppSettings.heavyWorkAllowed) return false
         if (!AppSettings.aiTimingAhead.value) return false
         return Deepgram.usable
@@ -470,17 +496,24 @@ internal class NextTrackPreparation(
         song: Song,
     ): LyricsTiming.Timing? {
         val query = CoverTitles.lyricsQuery(song)
-        val timeable = !found.fromFile || query.isVideo
-        val recordTimed = timeable && (!found.fromFile || found.source != null) &&
-            !LyricsTiming.timedToVideo(found.source)
+        val sourceTimedToVideo = LyricsTiming.timedToVideo(found.source)
+        val timeable = LocalTimingPolicy.downloadedTimingTimeable(
+            timed = true,
+            fromFile = found.fromFile,
+            isVideo = query.isVideo,
+            recheckOverride = found.recheckOverride,
+            sourceTimedToVideo = sourceTimedToVideo,
+        )
+        val substituted = StreamChoice.isSubstitute(song.videoId)
+        val recordTimed = timeable && (!found.fromFile || found.source != null) && !sourceTimedToVideo
         return LyricsTiming.timing(
             context = context,
             videoId = song.videoId,
             lines = lines,
-            baseAllowed = timeable,
-            measuredAllowed = recordTimed,
-            isVideo = song.isVideo,
-            audioSource = if (song.isVideo) {
+            baseAllowed = timeable && !substituted,
+            measuredAllowed = recordTimed && !substituted,
+            isVideo = query.isVideo,
+            audioSource = if (query.isVideo) {
                 null
             } else {
                 LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
@@ -525,6 +558,8 @@ internal object NextPrepCache {
         val searchedAs: Pair<String, String>?,
         val isVideo: Boolean,
         val fromFile: Boolean,
+        /** The file/stream clock these lines were timed for; null for a video's own upload. */
+        val audioSource: String?,
     )
 
     @Volatile
@@ -534,7 +569,10 @@ internal object NextPrepCache {
         ready = value
     }
 
-    fun get(videoId: String): Ready? = ready?.takeIf { it.videoId == videoId }
+    fun get(videoId: String, audioSource: String?, isVideo: Boolean): Ready? =
+        ready?.takeIf {
+            it.videoId == videoId && it.audioSource == audioSource && it.isVideo == isVideo
+        }
 
     fun clear() {
         ready = null

@@ -39,4 +39,22 @@ object LocalTimingPolicy {
         isVideo: Boolean,
         timingForeign: Boolean,
     ): Boolean = localUri.isNullOrBlank() || isVideo || timingForeign
+
+    /**
+     * Whether timed lines from a downloaded file may be moved onto the clock of
+     * the sound that is playing. A file's own embedded timing is left alone, but
+     * a video's file and a re-checked override are timed for the file's audio,
+     * so their stored answer is valid here just as it is on the lyrics screen.
+     *
+     * [recheckOverride] is the per-song sheet written by a downloaded-file
+     * re-check; [sourceTimedToVideo] keeps a video's own captions from being
+     * moved by a record-based answer.
+     */
+    fun downloadedTimingTimeable(
+        timed: Boolean,
+        fromFile: Boolean,
+        isVideo: Boolean,
+        recheckOverride: Boolean,
+        sourceTimedToVideo: Boolean,
+    ): Boolean = timed && (!fromFile || isVideo || (recheckOverride && !sourceTimedToVideo))
 }

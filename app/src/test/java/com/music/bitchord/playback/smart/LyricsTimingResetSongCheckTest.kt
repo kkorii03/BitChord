@@ -14,6 +14,7 @@ import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -54,6 +55,26 @@ class LyricsTimingResetSongCheckTest {
     private fun writeCheckedEntry(videoId: String) {
         File(directory, "lyrics_timing_v1.json").writeText(
             """{"entries":{"$videoId":{"syncCheckVersion":1}}}""",
+        )
+    }
+
+    private fun writeMeasuredAndRefinedEntry(videoId: String) {
+        val key = lines.joinToString("\n") { it.text }.hashCode()
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """
+            {"entries":{"$videoId":{
+              "autoVersion":4,
+              "autoComplete":true,
+              "auto":{"knots":[0,4200],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":90},
+              "syncCheckVersion":1,
+              "refineMs":250,
+              "refineLines":9,
+              "refineHeardKey":$key,
+              "refineHeardWords":[{"t":"one","s":1250,"e":1500}],
+              "refineHeardSeconds":90.0,
+              "refineHeardExtended":true
+            }}}
+            """.trimIndent(),
         )
     }
 
@@ -98,6 +119,41 @@ class LyricsTimingResetSongCheckTest {
         assertEquals(
             LyricsOverrideFile.Kind.USER,
             LyricsOverrideStore.read(context, "video")?.kind,
+        )
+    }
+
+    @Test
+    fun `a replaced file does not reuse the old measurement or refine transcript`() = runBlocking {
+        writeMeasuredAndRefinedEntry("video")
+
+        // The old file's answer is what applies before the replacement.
+        val before = LyricsTiming.timing(
+            context,
+            "video",
+            lines,
+            baseAllowed = true,
+            measuredAllowed = true,
+        )
+        assertEquals(4200L, LyricsTiming.shownShiftMs(lines, before!!.base!!))
+
+        LyricsTiming.resetSongCheck(context, "video")
+
+        val after = LyricsTiming.timing(
+            context,
+            "video",
+            lines,
+            baseAllowed = true,
+            measuredAllowed = true,
+        )
+        assertNull(after?.base)
+        assertFalse(LyricsTiming.measured(context, "video"))
+        assertFalse(
+            LyricsTiming.refineHeardKnown(
+                context,
+                "video",
+                lines,
+                LyricsTiming.Timing(base = null, manualMs = 0L),
+            ),
         )
     }
 }

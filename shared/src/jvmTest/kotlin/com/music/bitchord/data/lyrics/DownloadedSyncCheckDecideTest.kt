@@ -243,6 +243,36 @@ class DownloadedSyncCheckDecideTest {
         assertFalse(decision.replace)
         assertNull(decision.winner)
         assertNull(decision.key)
+        assertFalse(decision.recordVersion)
+    }
+
+    @Test
+    fun aCheckThatHeardNothingIsNotRecordedAsDone() {
+        // The next play must be able to try again: a refusal or no fit is not
+        // a verification with today's rules.
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+        )
+        assertFalse(decision.replace)
+        assertFalse(decision.recordVersion)
+    }
+
+    @Test
+    fun aFreshAnswerStillRecordsTheVersionWhenItLosesToTheStoredOne() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = DownloadedSyncCheck.SYNC_CHECK_VERSION,
+            existingMatchPercent = 95,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = 80,
+            freshKey = 20,
+        )
+        assertFalse(decision.replace)
         assertTrue(decision.recordVersion)
     }
 }
