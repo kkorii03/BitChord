@@ -1,6 +1,9 @@
 package com.music.bitchord.widget
 
 import android.content.Context
+import com.music.bitchord.data.cover.videoThumbnailUrl
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 
 /**
  * Everything a home-screen widget needs to know about playback.
@@ -59,6 +62,55 @@ internal data class MediaWidgetSnapshot(
             hasPrevious = false,
             hasNext = false,
         )
+
+        /**
+         * The snapshot the service publishes for what is current now.
+         *
+         * A [song] of null means the queue no longer has a track. That has to
+         * produce [EMPTY] rather than be skipped by the caller: widgets are
+         * persisted, so leaving the last snapshot in place leaves the last
+         * track's cover and title on the home screen after the queue was
+         * cleared.
+         */
+        fun fromPlayback(
+            song: Song?,
+            isPlaying: Boolean,
+            hasPrevious: Boolean,
+            hasNext: Boolean,
+            isLiked: Boolean,
+            canLike: Boolean,
+            shuffleEnabled: Boolean,
+        ): MediaWidgetSnapshot {
+            if (song == null) return EMPTY
+            return MediaWidgetSnapshot(
+                mediaId = song.videoId,
+                title = song.title,
+                artist = song.artist,
+                artworkUrl = artworkUrlFor(song),
+                isPlaying = isPlaying,
+                hasPrevious = hasPrevious,
+                hasNext = hasNext,
+                isLiked = isLiked,
+                canLike = canLike,
+                shuffleEnabled = shuffleEnabled,
+            )
+        }
+
+        /**
+         * The cover URL a widget should draw.
+         *
+         * [Song.thumbnailUrl] is the row's own picture, but a restored queue or
+         * a playlist row can arrive without one even though its video id still
+         * has a YouTube still. The notification already falls back that way
+         * through `artworkSelection`; the widget used the raw field and drew the
+         * placeholder instead.
+         */
+        fun artworkUrlFor(song: Song): String? {
+            val recorded = song.thumbnailUrl?.takeIf { it.isNotBlank() }
+            if (recorded != null) return recorded
+            if (SongOrigins.isLocalFile(song)) return null
+            return videoThumbnailUrl(song.videoId)
+        }
 
         fun save(context: Context, snapshot: MediaWidgetSnapshot) {
             prefs(context).edit()

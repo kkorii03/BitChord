@@ -2395,13 +2395,29 @@ class PlaybackService : MediaLibraryService() {
     private fun canLike(item: MediaItem?): Boolean =
         item != null && SignedIn.state(this).value && !SongOrigins.isLocalFile(item.toSong())
 
+    /**
+     * The rating the notification star should draw, with the same persisted
+     * fallback the widget uses. Reading the snapshot only when this process has
+     * no override keeps a normal tap from touching preferences at all.
+     */
+    private fun sessionFavoriteStatus(videoId: String?): LikeStatus {
+        val override = videoId?.let { LikeState.overrides.value[it] }
+        val persisted = if (videoId != null && override == null) {
+            MediaWidgetSnapshot.load(this)
+        } else {
+            null
+        }
+        return SessionFavoriteState.status(videoId, override, persisted)
+    }
+
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
-        val liked = LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE
+        val current = player?.currentMediaItem
+        val liked = sessionFavoriteStatus(current?.mediaId) == LikeStatus.LIKE
         // The icon constant tells controllers like Android Auto what the button
         // means; the custom drawable swaps Material's sharp star for the
         // player's rounded one on the notification itself.
-        val favorite = if (!canLike(player?.currentMediaItem)) null else CommandButton.Builder(
+        val favorite = if (!canLike(current)) null else CommandButton.Builder(
             if (liked) CommandButton.ICON_STAR_FILLED else CommandButton.ICON_STAR_UNFILLED,
         )
             .setCustomIconResId(if (liked) R.drawable.ic_notification_star_filled else R.drawable.ic_notification_star)
@@ -3848,7 +3864,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun toggleFavoriteFromNotification(videoId: String) {
         favoriteActionJob?.cancel()
-        val previous = LikeState.overrides.value[videoId] ?: LikeStatus.INDIFFERENT
+        val previous = sessionFavoriteStatus(videoId)
         val target = if (previous == LikeStatus.LIKE) {
             LikeStatus.INDIFFERENT
         } else {
@@ -8491,27 +8507,25 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun publishWidgetState(playing: Boolean? = null) {
         val exoPlayer = player ?: return
-        val song = exoPlayer.currentMediaItem?.toSong() ?: return
-        // LikeState only knows ratings this process has seen: a fresh service
-        // started from the widget or a restart has none until something seeds
-        // it. Unknown is not "not liked", so keep what was last published for
-        // this same track rather than emptying a heart that was right.
-        val liked = LikeState.overrides.value[song.videoId]?.let { it == LikeStatus.LIKE }
-            ?: MediaWidgetSnapshot.load(this).takeIf { it.mediaId == song.videoId }?.isLiked
-            ?: false
+        val song = exoPlayer.currentMediaItem?.toSong()
         val reported: Player = mediaSession?.player ?: exoPlayer
-        val snapshot = MediaWidgetSnapshot(
-            mediaId = song.videoId,
-            title = song.title,
-            artist = song.artist,
-            artworkUrl = song.thumbnailUrl,
+        val snapshot = MediaWidgetSnapshot.fromPlayback(
+            // Null is an answer, not a reason to return: a queue that has been
+            // cleared has to clear the widget too (see fromPlayback).
+            song = song,
+            // LikeState only knows ratings this process has seen: a fresh
+            // service started from the widget or a restart has none until
+            // something seeds it. sessionFavoriteStatus keeps the persisted
+            // rating for this same track rather than emptying a heart that was
+            // right.
+            isLiked = song != null &&
+                sessionFavoriteStatus(song.videoId) == LikeStatus.LIKE,
             // playWhenReady, not isPlaying — see MediaWidgetSnapshot.isPlaying.
             // Through the session player, which answers for Cast or the watch
             // while one of them is the speaker.
             isPlaying = playing ?: reported.playWhenReady,
-            hasPrevious = exoPlayer.hasPreviousMediaItem(),
-            hasNext = exoPlayer.hasNextMediaItem(),
-            isLiked = liked,
+            hasPrevious = song != null && exoPlayer.hasPreviousMediaItem(),
+            hasNext = song != null && exoPlayer.hasNextMediaItem(),
             canLike = canLike(exoPlayer.currentMediaItem),
             shuffleEnabled = QueueShuffle.enabled.value,
         )
