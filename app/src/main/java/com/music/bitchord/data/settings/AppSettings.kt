@@ -95,12 +95,12 @@ enum class DownloadQuality(
     /** Whether a source's bit-exact file is worth keeping, or a transcode will do. */
     val keepsLossless: Boolean,
 ) {
-    STANDARD(128, "고효율", "~128kbps Opus · 더 많은 노래 저장 가능", "~4 MB", false),
-    HIGH(Int.MAX_VALUE, "고품질", "제공되는 최상의 오디오, 원본 품질 우선", "~8 MB", false),
+    STANDARD(128, "고효율", "용량을 가장 아끼는 음질", "~4 MB", false),
+    HIGH(Int.MAX_VALUE, "고품질", "제공되는 최상의 음질", "~8 MB", false),
     LOSSLESS(
         Int.MAX_VALUE,
         "무손실",
-        "소스에서 제공하면 비트 퍼펙트, 아니면 최상의 Opus",
+        "가능하면 원본 그대로, 아니면 최상의 음질",
         "~35 MB",
         true,
     ),

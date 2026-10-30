@@ -1,3 +1,7 @@
+import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
+
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 buildscript {
     repositories {
@@ -148,5 +152,18 @@ val pinnedDependencies = listOf(
 subprojects {
     configurations.configureEach {
         resolutionStrategy.force(*pinnedDependencies.toTypedArray())
+    }
+    /*
+     * InnerTubeX now ships class file version 65 (Java 21). Compiling against
+     * it is fine at 17, but a unit-test JVM running the Gradle launcher (still
+     * 17 in CI) cannot load it: the first media-header lookup dies with
+     * UnsupportedClassVersionError. Run every Test task on a 21 launcher so the
+     * dependency and the tests share one runtime; the project's own bytecode
+     * target stays 17.
+     */
+    tasks.withType<Test>().configureEach {
+        javaLauncher.set(project.extensions.getByType<JavaToolchainService>().launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(21))
+        })
     }
 }

@@ -709,7 +709,21 @@ fun SettingsScreen(
         // does this minute cost"; these answer "what am I keeping, and when may
         // it be fetched" — and those two questions only make sense read
         // together, which is what puts them side by side here.
-        SearchableSettingsGroup(search, header = stringResource(R.string.downloads)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.downloads),
+            footer = buildString {
+                append(stringResource(R.string.auto_redownload_mv_sound_subtitle))
+                append(' ')
+                append(stringResource(R.string.auto_replace_hq_downloads_subtitle))
+                append(' ')
+                append(stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit))
+                append(' ')
+                append(stringResource(R.string.auto_download_liked_subtitle))
+                append(' ')
+                append(stringResource(R.string.download_health_recheck_subtitle))
+            },
+        ) {
             val downloadQualityTitle = stringResource(R.string.download_quality)
             row(downloadQualityTitle, "offline", "lossless") {
                 SettingsRow(
@@ -745,7 +759,6 @@ fun SettingsScreen(
                             MvSoundRedownload.cancel(context)
                         }
                     },
-                    subtitle = stringResource(R.string.auto_redownload_mv_sound_subtitle),
                 )
             }
             val autoReplaceHqTitle = stringResource(R.string.auto_replace_hq_downloads)
@@ -757,7 +770,6 @@ fun SettingsScreen(
                         AppSettings.setAutoReplaceHqDownloads(checked)
                         HqLibraryUpgrade.onSettingsChanged(context)
                     },
-                    subtitle = stringResource(R.string.auto_replace_hq_downloads_subtitle),
                 )
             }
             val autoPrefetchHqTitle = stringResource(R.string.auto_prefetch_hq)
@@ -769,7 +781,6 @@ fun SettingsScreen(
                         AppSettings.setAutoPrefetchHq(checked)
                         HqLibraryUpgrade.onSettingsChanged(context)
                     },
-                    subtitle = stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit),
                 )
             }
             val recheckDownloadsTitle = stringResource(R.string.download_health_recheck)
@@ -777,7 +788,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Cached,
                     title = recheckDownloadsTitle,
-                    subtitle = stringResource(R.string.download_health_recheck_subtitle),
                     trailing = { Chevron() },
                     onClick = { DownloadHealth.resetChecks(context) },
                 )
@@ -797,18 +807,36 @@ fun SettingsScreen(
                     title = autoDownloadLikedTitle,
                     checked = autoDownloadLiked,
                     onCheckedChange = AppSettings::setAutoDownloadLiked,
-                    subtitle = stringResource(R.string.auto_download_liked_subtitle),
                 )
             }
         }
 
-        SearchableSettingsGroup(search, header = stringResource(R.string.playback)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.playback),
+            footer = buildString {
+                append(stringResource(R.string.resume_on_headphones_subtitle))
+                append(' ')
+                append(stringResource(R.string.personalised_autoplay_subtitle))
+                append(' ')
+                append(stringResource(R.string.video_radio_continue_subtitle))
+                append(' ')
+                append(
+                    stringResource(
+                        if (smartFade) {
+                            R.string.automix_enabled_subtitle
+                        } else {
+                            R.string.automix_disabled_subtitle
+                        },
+                    ),
+                )
+            },
+        ) {
             val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
             row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
                 SettingsRow(
                     icon = Icons.Rounded.Headphones,
                     title = resumeOnHeadphonesTitle,
-                    subtitle = stringResource(R.string.resume_on_headphones_subtitle),
                     trailing = {
                         Switch(
                             checked = resumeOnHeadphones,
@@ -824,7 +852,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.AutoAwesome,
                     title = personalisedAutoplayTitle,
-                    subtitle = stringResource(R.string.personalised_autoplay_subtitle),
                     trailing = {
                         Switch(
                             checked = personalisedAutoplay,
@@ -840,7 +867,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.SmartDisplay,
                     title = videoRadioTitle,
-                    subtitle = stringResource(R.string.video_radio_continue_subtitle),
                     trailing = {
                         Switch(
                             checked = videoRadio,
@@ -905,12 +931,17 @@ fun SettingsScreen(
                         append(outputStatus.deviceName)
                         (outputStatus.actualSampleRateHz ?: outputStatus.sampleRatesHz.firstOrNull())
                             ?.let { append(" · ${it / 1000.0} kHz") }
-                        append(" · ")
-                        append(AudioOutputStatus.encodingLabel(outputStatus))
                     },
                 )
                 SettingsSegmentedControl(
-                    options = OutputPcmMode.entries.map(OutputPcmMode::label),
+                    options = OutputPcmMode.entries.map {
+                        stringResource(
+                            when (it) {
+                                OutputPcmMode.PCM_16 -> R.string.standard
+                                OutputPcmMode.FLOAT_32 -> R.string.high
+                            },
+                        )
+                    },
                     selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
                     onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
                     modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
@@ -972,11 +1003,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.AutoAwesome,
                     title = automixTitle,
-                    subtitle = if (smartFade) {
-                        stringResource(R.string.automix_enabled_subtitle)
-                    } else {
-                        stringResource(R.string.automix_disabled_subtitle)
-                    },
                     trailing = {
                         Switch(
                             checked = smartFade,
@@ -1702,13 +1728,16 @@ fun SettingsScreen(
         val cacheLimitMb = if (cacheUnlimited) CACHE_UNLIMITED_STOP_MB else (cacheLimitBytes / (1024 * 1024)).toInt()
         val unlimitedLabel = stringResource(R.string.song_cache_unlimited)
         val cacheLimitLabel = if (cacheUnlimited) unlimitedLabel else formatCacheSize(cacheLimitMb)
-        SearchableSettingsGroup(search, header = stringResource(R.string.storage)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.storage),
+            footer = stringResource(R.string.show_cache_folder_subtitle),
+        ) {
             val showCacheFolderTitle = stringResource(R.string.show_cache_folder)
             row(showCacheFolderTitle, "cache", "cached songs", "library", "folder") {
                 SettingsRow(
                     icon = Icons.Rounded.Cached,
                     title = showCacheFolderTitle,
-                    subtitle = stringResource(R.string.show_cache_folder_subtitle),
                     trailing = {
                         Switch(
                             checked = showCacheFolder,
@@ -1998,7 +2027,17 @@ fun SettingsScreen(
             }
         }
 
-        SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.advanced_options),
+            footer = buildString {
+                append(stringResource(R.string.sync_safety_next_prep_subtitle))
+                append(' ')
+                append(stringResource(R.string.sync_safety_download_recheck_subtitle))
+                append(' ')
+                append(stringResource(R.string.sync_safety_hq_sync_subtitle))
+            },
+        ) {
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
             row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
                 SettingsRow(
@@ -2020,7 +2059,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Timer,
                     title = syncSafetyNextPrepTitle,
-                    subtitle = stringResource(R.string.sync_safety_next_prep_subtitle),
                     trailing = {
                         Switch(
                             checked = syncSafetyNextPrep,
@@ -2036,7 +2074,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Cached,
                     title = syncSafetyDownloadRecheckTitle,
-                    subtitle = stringResource(R.string.sync_safety_download_recheck_subtitle),
                     trailing = {
                         Switch(
                             checked = syncSafetyDownloadRecheck,
@@ -2052,7 +2089,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.GraphicEq,
                     title = syncSafetyHqSyncTitle,
-                    subtitle = stringResource(R.string.sync_safety_hq_sync_subtitle),
                     trailing = {
                         Switch(
                             checked = syncSafetyHqSync,
