@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -20,7 +22,9 @@ import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.toMediaItem
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class DebugScenarioReceiver : BroadcastReceiver() {
 
@@ -55,28 +59,34 @@ class DebugScenarioReceiver : BroadcastReceiver() {
             when (command) {
                 COMMAND_REPEAT -> {
                     val mode = intent.getIntExtra(EXTRA_MODE, Player.REPEAT_MODE_OFF)
-                    controller.setRepeatMode(mode)
-                    TrackLog.i(TAG, "debug-scenario: repeat=$mode")
+                    onMain {
+                        controller.setRepeatMode(mode)
+                        TrackLog.i(TAG, "debug-scenario: repeat=$mode")
+                    }
                 }
                 COMMAND_SHUFFLE -> {
                     val enabled = intent.getBooleanExtra(EXTRA_ENABLED, false)
-                    if (QueueShuffle.enabled.value != enabled) {
-                        send(controller, ACTION_TOGGLE_SHUFFLE)
+                    onMain {
+                        if (QueueShuffle.enabled.value != enabled) {
+                            send(controller, ACTION_TOGGLE_SHUFFLE)
+                        }
+                        TrackLog.i(
+                            TAG,
+                            "debug-scenario: shuffle=$enabled was=${QueueShuffle.enabled.value}",
+                        )
                     }
-                    TrackLog.i(
-                        TAG,
-                        "debug-scenario: shuffle=$enabled was=${QueueShuffle.enabled.value}",
-                    )
                 }
                 COMMAND_AUTOPLAY -> {
                     val enabled = intent.getBooleanExtra(EXTRA_ENABLED, false)
-                    if (AppSettings.autoplay.value != enabled) {
-                        send(controller, ACTION_TOGGLE_AUTOPLAY)
+                    onMain {
+                        if (AppSettings.autoplay.value != enabled) {
+                            send(controller, ACTION_TOGGLE_AUTOPLAY)
+                        }
+                        TrackLog.i(
+                            TAG,
+                            "debug-scenario: autoplay=$enabled was=${AppSettings.autoplay.value}",
+                        )
                     }
-                    TrackLog.i(
-                        TAG,
-                        "debug-scenario: autoplay=$enabled was=${AppSettings.autoplay.value}",
-                    )
                 }
                 COMMAND_CROSSFADE -> {
                     val seconds = intent.getIntExtra(EXTRA_SECONDS, 8)
@@ -87,8 +97,36 @@ class DebugScenarioReceiver : BroadcastReceiver() {
                 else -> TrackLog.w(TAG, "debug-scenario: unknown command=$command")
             }
         } finally {
-            runCatching { controller.release() }
+            runCatching { onMain { controller.release() } }
         }
+    }
+
+    /**
+     * MediaController is created on the main looper and rejects every call
+     * from another thread. The receiver runs on a worker so MediaStore and
+     * file IO do not block the UI, but only those stay there; every player
+     * command hops back here.
+     */
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+            return
+        }
+        val latch = CountDownLatch(1)
+        val failure = AtomicReference<Throwable>()
+        Handler(Looper.getMainLooper()).post {
+            try {
+                block()
+            } catch (error: Throwable) {
+                failure.set(error)
+            } finally {
+                latch.countDown()
+            }
+        }
+        check(latch.await(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            "main looper timeout"
+        }
+        failure.get()?.let { throw it }
     }
 
     private fun send(controller: MediaController, action: String) {
@@ -99,41 +137,56 @@ class DebugScenarioReceiver : BroadcastReceiver() {
     }
 
     private fun playLocal(context: Context, intent: Intent, controller: MediaController) {
+        val paths = pathsOf(intent.getStringExtra(EXTRA_PATHS))
         val library = runBlocking { LocalMediaRepository.getLocalMusic(context) }
-        val songs = library.ifEmpty { songsFromPaths(intent.getStringExtra(EXTRA_PATHS)) }
+        // MediaStore rows carry the content:// URI the app is allowed to read;
+        // matching the pushed files against them keeps the queue deterministic
+        // without handing ExoPlayer a file:// path it cannot open.
+        val songs = if (paths.isEmpty()) {
+            library
+        } else {
+            val byName = library.associateBy { it.localPath?.let(::File)?.name }
+            paths.mapNotNull { path ->
+                byName[File(path).name] ?: songFromPath(path)
+            }.ifEmpty { library }
+        }
         if (songs.isEmpty()) {
             TrackLog.w(TAG, "debug-scenario: play-local empty")
             return
         }
-        if (QueueShuffle.enabled.value) send(controller, ACTION_TOGGLE_SHUFFLE)
-        controller.setRepeatMode(Player.REPEAT_MODE_OFF)
-        controller.setMediaItems(songs.map { it.toMediaItem() }, 0, 0L)
-        controller.prepare()
-        controller.play()
-        TrackLog.i(
-            TAG,
-            "debug-scenario: play-local n=${songs.size} first=${songs.first().title}",
-        )
+        onMain {
+            if (QueueShuffle.enabled.value) send(controller, ACTION_TOGGLE_SHUFFLE)
+            controller.setRepeatMode(Player.REPEAT_MODE_OFF)
+            controller.setMediaItems(songs.map { it.toMediaItem() }, 0, 0L)
+            controller.prepare()
+            controller.play()
+            TrackLog.i(
+                TAG,
+                "debug-scenario: play-local n=${songs.size} first=${songs.first().title} " +
+                    "id=${songs.first().videoId}",
+            )
+        }
     }
 
-    private fun songsFromPaths(paths: String?): List<Song> =
+    private fun pathsOf(paths: String?): List<String> =
         paths.orEmpty()
             .split(':')
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .mapNotNull { path ->
-                val file = File(path)
-                if (!file.isFile) return@mapNotNull null
-                val uri = Uri.fromFile(file).toString()
-                Song(
-                    videoId = uri,
-                    title = file.nameWithoutExtension,
-                    artist = "Smoke",
-                    thumbnailUrl = null,
-                    localUri = uri,
-                    localPath = path,
-                )
-            }
+
+    private fun songFromPath(path: String): Song? {
+        val file = File(path)
+        if (!file.isFile) return null
+        val uri = Uri.fromFile(file).toString()
+        return Song(
+            videoId = uri,
+            title = file.nameWithoutExtension,
+            artist = "Smoke",
+            thumbnailUrl = null,
+            localUri = uri,
+            localPath = path,
+        )
+    }
 
     companion object {
         const val ACTION_SCENARIO = "com.music.bitchord.debug.SCENARIO"

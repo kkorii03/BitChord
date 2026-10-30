@@ -264,6 +264,24 @@ scenario_wait_for() {
   return 1
 }
 
+# Like scenario_wait_for, but ignores everything before the last occurrence of
+# $1. A9 uses it so a crossfade line left by an earlier scenario cannot make
+# the run think this local playback already started blending.
+scenario_wait_for_after() {
+  local marker=$1 pattern=$2 timeout=${3:-30} i
+  for ((i = 0; i < timeout; i++)); do
+    if awk -v m="$marker" '
+      index($0, m) { buf = ""; seen = 1; next }
+      seen { buf = buf $0 "\n" }
+      END { printf "%s", buf }
+    ' "$OUT/smoke-logcat.txt" 2>/dev/null | grep -qE "$pattern"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 scenario_cmd() {
   adb shell am broadcast -a com.music.bitchord.debug.SCENARIO \
     -n "$PKG/com.music.bitchord.debug.DebugScenarioReceiver" "$@" \
@@ -301,8 +319,13 @@ run_scenario_a4() {
 }
 
 run_scenario_a9() {
-  local dir="$OUT/scenario/audio" first="$OUT/scenario/audio/440.flac" second="$OUT/scenario/audio/660.flac"
-  local device_first=/sdcard/Music/bitchord-smoke-440.flac device_second=/sdcard/Music/bitchord-smoke-660.flac
+  local run_id="$$-$(date +%s)"
+  local dir="$OUT/scenario/audio"
+  local first="$dir/bitchord-smoke-$run_id-440.flac"
+  local second="$dir/bitchord-smoke-$run_id-660.flac"
+  local device_dir="/sdcard/Music/bitchord-smoke-$run_id"
+  local device_first="$device_dir/bitchord-smoke-$run_id-440.flac"
+  local device_second="$device_dir/bitchord-smoke-$run_id-660.flac"
   local paths before
   scenario_begin A9
   if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -325,12 +348,17 @@ run_scenario_a9() {
     scenario_end A9
     return
   fi
-  if ! adb push "$first" "$device_first" >/dev/null 2>&1 ||
+  # A per-run directory and file names: a fixed /sdcard/Music name would
+  # overwrite (and the cleanup would delete) a file the user already had.
+  if ! adb shell mkdir -p "$device_dir" >/dev/null 2>&1 ||
+    ! adb push "$first" "$device_first" >/dev/null 2>&1 ||
     ! adb push "$second" "$device_second" >/dev/null 2>&1; then
     scenario_mark "A9 skip: push failed"
+    adb shell rm -rf "$device_dir" >/dev/null 2>&1 || true
     scenario_end A9
     return
   fi
+  scenario_mark "A9 files=bitchord-smoke-$run_id-440,bitchord-smoke-$run_id-660"
   adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
     -d "file://$device_first" >/dev/null 2>&1 || true
   adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
@@ -342,10 +370,11 @@ run_scenario_a9() {
   paths="$device_first:$device_second"
   scenario_cmd --es command play-local --es paths "$paths"
   wait_for_new_play "$before" 20 || true
-  if scenario_wait_for 'crossfade: start' 90; then
+  if scenario_wait_for_after 'debug-scenario: play-local' 'crossfade: start' 90; then
     sleep 12
   fi
   scenario_end A9
+  adb shell rm -rf "$device_dir" >/dev/null 2>&1 || true
 }
 
 run_scenario_b3() {
@@ -399,7 +428,10 @@ run_scenario_c5() {
 }
 
 run_scenario_c6() {
+  local pids
   scenario_begin C6
+  pids=$(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' | tr '\n' ' ')
+  scenario_mark "C6 package=$PKG pids=$pids"
   adb shell svc wifi disable >/dev/null 2>&1 || true
   adb shell svc data disable >/dev/null 2>&1 || true
   sleep 30
@@ -421,7 +453,6 @@ run_review_scenarios() {
   play_song "search:Tones and I Dance Monkey" plain 10
   run_scenario_c5
   run_scenario_c6
-  adb shell rm -f /sdcard/Music/bitchord-smoke-440.flac /sdcard/Music/bitchord-smoke-660.flac >/dev/null 2>&1 || true
   python3 scripts/smoke/scenario.py \
     --dir "$OUT/scenario" --report "$OUT/scenario-report.md"
 }
