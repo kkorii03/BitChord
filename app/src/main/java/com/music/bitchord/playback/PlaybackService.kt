@@ -980,7 +980,7 @@ class PlaybackService : MediaLibraryService() {
                 if (next.immediate) {
                     LastPlayed.saveQueueImmediately(songs, next.index, next.positionMs)
                 } else {
-                    LastPlayed.saveQueue(songs, next.index)
+                    LastPlayed.saveQueue(songs, next.index, next.positionMs)
                 }
             }
         }
@@ -8610,10 +8610,15 @@ class PlaybackService : MediaLibraryService() {
             )
         }
         // The player is read here, on its own thread; the prefs write itself is
-        // queued on the sampler thread like the rest of the periodic work.
+        // queued on the sampler thread like the rest of the periodic work. The
+        // queue generation is captured now so a write queued for the queue
+        // before an edit cannot land on top of the edit's snapshot.
         val index = player.currentMediaItemIndex - persistedQueueStart
         val positionMs = player.currentPosition
-        postProgressWork { LastPlayed.savePlaybackState(index = index, positionMs = positionMs) }
+        val generation = LastPlayed.currentQueueGeneration()
+        postProgressWork {
+            LastPlayed.savePlaybackState(index = index, positionMs = positionMs, generation = generation)
+        }
     }
 
     /** Restore the bounded queue without preparing or resolving a stream. */

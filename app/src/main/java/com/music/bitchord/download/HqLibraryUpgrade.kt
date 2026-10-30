@@ -615,12 +615,19 @@ object HqLibraryUpgrade {
         ensureLoaded(context)
         // A worker woken with no window must not try to start the download
         // service. The foreground event schedules the pass again.
-        if (!AppForeground.isForeground) return@withContext
+        if (!AppForeground.isForeground) {
+            TrackLog.d(TAG, "hq-library: worker skipped; app has no window")
+            return@withContext
+        }
         if (!runAllowed()) {
+            TrackLog.d(TAG, "hq-library: worker skipped; both automatic switches are off")
             finishRun()
             return@withContext
         }
-        if (PlaybackActivity.active) return@withContext
+        if (PlaybackActivity.active) {
+            TrackLog.d(TAG, "hq-library: worker skipped; playback is using the same servers")
+            return@withContext
+        }
         if (recoverActive(context)) return@withContext
         if (!runAllowed()) {
             finishRun()
@@ -1249,7 +1256,10 @@ class HqLibraryUpgradeWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        if (!HqLibraryUpgrade.runAllowed()) return Result.success()
+        if (!HqLibraryUpgrade.runAllowed()) {
+            TrackLog.d("BitChord", "hq-library: worker skipped; pass is off")
+            return Result.success()
+        }
         HqLibraryUpgrade.workerStarted()
         try {
             HqLibraryUpgrade.runOne(applicationContext)

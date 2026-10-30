@@ -238,9 +238,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // A delayed retry must not wake the process with no window to show
             // for it; the plan stays on disk and the next foreground resumes it.
             com.music.bitchord.download.HqLibraryUpgrade.onBackground(this)
-            // The same for the song-version repair: its worker cannot start the
-            // download service without a window, so leaving it queued only lets
-            // WorkManager start this process in the background to do nothing.
+            // The same for the song-version repair: a network-constrained worker
+            // left queued would start the process later only to return, and its
+            // worker cannot start the download service without a window.
             // A pass already running is left to finish; only queued work is
             // dropped, so leaving the app does not restart the scan.
             com.music.bitchord.download.MvSoundRedownload.pause(this)
