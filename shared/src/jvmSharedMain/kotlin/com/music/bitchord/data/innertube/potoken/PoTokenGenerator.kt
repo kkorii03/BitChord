@@ -45,12 +45,16 @@ interface PoTokenMinter {
  *
  * @param createMinter loads a new BotGuard page; the platform's browser.
  * @param available whether this platform can host a page at all.
+ * @param cacheStore where a freshly minted pair is kept across process death.
  */
 class PoTokenGenerator(
     private val createMinter: suspend () -> PoTokenMinter,
     private val available: () -> Boolean = { true },
+    cacheStore: PoTokenStore? = null,
 ) {
     private val TAG = "PoTokenGenerator"
+
+    private val tokenCache = PoTokenResultCache(cacheStore)
 
     private var webViewBadImpl = false // whether the platform's browser turned out to be unusable
 
@@ -60,15 +64,29 @@ class PoTokenGenerator(
     private var webPoTokenGenerator: PoTokenMinter? = null
 
     suspend fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult? {
+        // A mint already bound to this visitor and video stays valid for as
+        // long as its integrity token does. A process reclaimed while the app
+        // was in the background used to come back and mint the same pair from
+        // a new WebView; reuse the answer while it is still fresh. Prewarm
+        // deliberately bypasses this: its job is to have a page standing by,
+        // not merely a token for its own fixed video.
+        if (videoId != PREWARM_VIDEO_ID) {
+            tokenCache.get(sessionId, videoId)?.let {
+                TrackLog.d(TAG, "potoken: reusing cached result")
+                return it
+            }
+        }
         val supported = available()
         if (!supported || webViewBadImpl) {
             TrackLog.d(TAG, "WebView not available: supported=$supported, badImpl=$webViewBadImpl")
             return null
         }
         return try {
-            withTimeout(POTOKEN_TIMEOUT_MS) {
+            val token = withTimeout(POTOKEN_TIMEOUT_MS) {
                 getWebClientPoToken(videoId, sessionId, forceRecreate = false)
             }
+            tokenCache.put(sessionId, videoId, token)
+            token
         } catch (e: TimeoutCancellationException) {
             TrackLog.w(TAG, "poToken generation timed out after ${POTOKEN_TIMEOUT_MS}ms; proceeding without PoToken")
             clearGenerator()
@@ -243,6 +261,109 @@ class PoTokenGenerator(
         override suspend fun close() {
             this@PoTokenGenerator.close()
         }
+    }
+}
+
+/**
+ * Where a minted PoToken pair is kept between process starts.
+ *
+ * Only a result cache: the BotGuard page itself cannot leave its WebView, but
+ * the tokens it produced can be reused for their visitor and video until they
+ * expire.
+ */
+interface PoTokenStore {
+    /**
+     * The whole record in one value. Reading and writing it as one record is
+     * what keeps a process kill between the previous session/video and the new
+     * tokens from pairing one video's token with another's.
+     */
+    fun read(): String?
+    fun write(record: String)
+}
+
+/**
+ * The most recent player/streaming token pair, keyed by visitor and video.
+ *
+ * Single-slot on purpose: the expensive case is the same track being resolved
+ * again by the player, its prefetch and a download, or after the process was
+ * reclaimed while that track was playing. The TTL is well inside the BotGuard
+ * integrity token's lifetime, so a hit never hands out a token the page would
+ * already have considered expired.
+ */
+internal class PoTokenResultCache(
+    private val store: PoTokenStore?,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) {
+    // Player, prefetch and download can mint at the same time. The store is a
+    // single record, and this lock keeps the read-update-write sequence whole
+    // so an older mint cannot overwrite a newer one between its own steps.
+    private val lock = Any()
+
+    fun get(sessionId: String, videoId: String): PoTokenResult? = synchronized(lock) {
+        val s = store ?: return@synchronized null
+        val record = decode(s.read()) ?: return@synchronized null
+        if (record.sessionId != sessionId) return@synchronized null
+        if (record.videoId != videoId) return@synchronized null
+        val age = nowMs() - record.mintedAt
+        if (age !in 0 until TTL_MS) return@synchronized null
+        PoTokenResult(
+            playerRequestPoToken = record.requestPoToken,
+            streamingDataPoToken = record.streamingPoToken,
+        )
+    }
+
+    fun put(sessionId: String, videoId: String, token: PoTokenResult) {
+        synchronized(lock) {
+            val s = store ?: return@synchronized
+            s.write(
+                encode(
+                    Record(
+                        sessionId = sessionId,
+                        videoId = videoId,
+                        requestPoToken = token.playerRequestPoToken,
+                        streamingPoToken = token.streamingDataPoToken,
+                        mintedAt = nowMs(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    private class Record(
+        val sessionId: String,
+        val videoId: String,
+        val requestPoToken: String,
+        val streamingPoToken: String,
+        val mintedAt: Long,
+    )
+
+    private fun encode(record: Record): String = listOf(
+        VERSION,
+        record.sessionId,
+        record.videoId,
+        record.requestPoToken,
+        record.streamingPoToken,
+        record.mintedAt.toString(),
+    ).joinToString(SEPARATOR)
+
+    private fun decode(raw: String?): Record? {
+        val parts = raw?.split(SEPARATOR) ?: return null
+        if (parts.size != 6 || parts[0] != VERSION) return null
+        val mintedAt = parts[5].toLongOrNull() ?: return null
+        return Record(
+            sessionId = parts[1],
+            videoId = parts[2],
+            requestPoToken = parts[3],
+            streamingPoToken = parts[4],
+            mintedAt = mintedAt,
+        )
+    }
+
+    companion object {
+        const val TTL_MS = 30 * 60 * 1000L
+        private const val VERSION = "v1"
+        // Tokens and visitor ids are URL-safe base64: they never contain a newline.
+        private const val SEPARATOR = "\n"
     }
 }
 

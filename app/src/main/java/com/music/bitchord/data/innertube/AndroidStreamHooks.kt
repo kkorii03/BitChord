@@ -9,6 +9,7 @@ import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.TrackLog
 import android.webkit.CookieManager
 import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
+import com.music.bitchord.data.innertube.potoken.PoTokenStore
 import com.music.bitchord.data.innertube.potoken.PoTokenWebView
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceResolver
@@ -61,6 +62,9 @@ object AndroidStreamHooks {
     )
     private const val RELEASE_LINE_CHARS = 1_000
 
+    /** The whole minted PoToken record, read and written atomically. */
+    private const val KEY_POTOKEN_RECORD = "potoken_record"
+
     /** What `InnerTubeXResolver.init(context)` did when it lived in the app. */
     fun initInnerTubeX(context: Context) {
         val app = context.applicationContext
@@ -76,7 +80,19 @@ object AndroidStreamHooks {
         val poTokens = PoTokenGenerator(
             createMinter = { PoTokenWebView.getNewPoTokenGenerator(app) },
             available = { webViewSupported },
+            cacheStore = object : PoTokenStore {
+                // One key and one editor call: a process kill can leave the old
+                // record or the new one, never a session/video from one mint
+                // paired with tokens from another.
+                override fun read(): String? = prefs.getString(KEY_POTOKEN_RECORD, null)
+                override fun write(record: String) =
+                    prefs.edit().putString(KEY_POTOKEN_RECORD, record).apply()
+            },
         )
+        Innertube.initVisitorStore(object : Innertube.VisitorStore {
+            override fun getString(key: String): String? = prefs.getString(key, null)
+            override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+        })
         InnerTubeXResolver.init(
             filesDir = app.filesDir,
             store = object : InnerTubeXResolver.ConfigStore {

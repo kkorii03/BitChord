@@ -225,6 +225,36 @@ object Innertube {
     private val anonymousVisitorLock = Mutex()
 
     /**
+     * Where a visitor id is kept between process starts.
+     *
+     * Minting one is a network round trip to the web player's service worker,
+     * and the value is bound to the cookie that asked for it rather than to a
+     * single request. Losing it when Android reclaims a backgrounded process
+     * made the next launch pay that round trip again before it could resolve
+     * anything.
+     */
+    interface VisitorStore {
+        fun getString(key: String): String?
+        fun putString(key: String, value: String)
+    }
+
+    @Volatile
+    private var visitorStore: VisitorStore? = null
+
+    @Volatile
+    private var persistedVisitorKey: String? = null
+
+    @Volatile
+    private var persistedVisitorValue: String? = null
+
+    /** Installs (or clears) the between-process home for [visitorData]. */
+    fun initVisitorStore(store: VisitorStore?) {
+        visitorStore = store
+        persistedVisitorKey = null
+        persistedVisitorValue = null
+    }
+
+    /**
      * A visitor id for this session, minting one if there isn't one yet.
      *
      * @param refresh discard the current id and take a fresh one — worth doing
@@ -232,7 +262,14 @@ object Innertube {
      *   since an id can be burned while the session around it is fine.
      */
     suspend fun ensureVisitorData(refresh: Boolean = false): String? {
-        if (!refresh && visitorData != null) return visitorData
+        if (!refresh && visitorData != null) {
+            persistVisitor()
+            return visitorData
+        }
+        if (!refresh) {
+            restorePersistedVisitor()
+            if (visitorData != null) return visitorData
+        }
         runCatching { fetchVisitorData() }
             .onFailure { Log.w(TAG, "could not mint a visitor id: ${it.message}") }
             .getOrNull()
@@ -242,7 +279,36 @@ object Innertube {
                     visitorDataIsSessionBound = false
                 }
             }
+        persistVisitor()
         return visitorData
+    }
+
+    /**
+     * Reads back the id left by the previous process when it was minted under
+     * this exact cookie. A visitor id (and the PoTokens derived from it) is
+     * bound to the cookie that asked for it, so a rotated cookie for the same
+     * account gets a different slot and cannot inherit the old id.
+     */
+    private fun restorePersistedVisitor() {
+        val store = visitorStore ?: return
+        val key = visitorPersistenceKey(cookie)
+        val value = store.getString(key)?.takeIf { VISITOR_DATA.matches(it) } ?: return
+        visitorData = value
+        visitorDataIsSessionBound = store.getString(visitorBoundStorageKey(key)) == "1"
+        persistedVisitorKey = key
+        persistedVisitorValue = value
+    }
+
+    /** Writes the id only when the cookie or the value actually changed. */
+    private fun persistVisitor() {
+        val store = visitorStore ?: return
+        val value = visitorData ?: return
+        val key = visitorPersistenceKey(cookie)
+        if (key == persistedVisitorKey && value == persistedVisitorValue) return
+        store.putString(key, value)
+        store.putString(visitorBoundStorageKey(key), if (visitorDataIsSessionBound) "1" else "0")
+        persistedVisitorKey = key
+        persistedVisitorValue = value
     }
 
     /**
@@ -455,10 +521,7 @@ object Innertube {
             ?: scope?.pageId?.takeIf { it.isNotBlank() }
         if (id != null) return "u:$id"
         val current = cookie ?: return "anonymous"
-        return "c:" + MessageDigest.getInstance("SHA-256")
-            .digest(current.toByteArray())
-            .joinToString("") { "%02x".format(Locale.ROOT, it) }
-            .take(16)
+        return visitorCookieKey(current)
     }
 
     /** The brand channel to send, chosen one first. */
@@ -2177,3 +2240,28 @@ object Innertube {
         return "$label ${timestamp}_$digest"
     }
 }
+
+/** Keep a minted visitor id out of another cookie's slot. */
+internal fun visitorStorageKey(sessionKey: String): String = "innertube_visitor:$sessionKey"
+
+/** Hash of the cookie that minted a visitor id; anonymous has one shared slot. */
+internal fun visitorCookieKey(cookie: String?): String {
+    if (cookie == null) return "anonymous"
+    return "c:" + MessageDigest.getInstance("SHA-256")
+        .digest(cookie.toByteArray())
+        .joinToString("") { "%02x".format(Locale.ROOT, it) }
+        .take(16)
+}
+
+/**
+ * The store slot for a visitor id.
+ *
+ * Keyed by the cookie, not [Innertube.sessionKey]: the same account can rotate
+ * its cookie, and a visitor id (and the PoTokens minted from it) stays bound to
+ * the cookie that asked for it.
+ */
+internal fun visitorPersistenceKey(cookie: String?): String =
+    visitorStorageKey(visitorCookieKey(cookie))
+
+/** Whether the stored id came from the signed-in shell rather than an anonymous mint. */
+private fun visitorBoundStorageKey(key: String): String = "$key:bound"
