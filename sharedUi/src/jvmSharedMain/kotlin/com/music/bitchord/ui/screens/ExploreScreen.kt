@@ -53,6 +53,7 @@ import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.ui.components.BROWSE_LOADING_TIMEOUT_MS
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
@@ -86,7 +87,11 @@ fun ExploreScreen(
     showTitle: Boolean = true,
 ) {
     var pendingHide by remember { mutableStateOf<MoodGenre?>(null) }
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "explore")
+    val loadingTimedOut = rememberLoadingTimedOut(
+        state is UiState.Loading,
+        "explore",
+        BROWSE_LOADING_TIMEOUT_MS,
+    )
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -376,7 +381,11 @@ fun MoodGenrePlaylistsScreen(
     /** Drawn under the title, above the shelves — the charts' country picker. */
     header: @Composable () -> Unit = {},
 ) {
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "mood-genre")
+    val loadingTimedOut = rememberLoadingTimedOut(
+        state is UiState.Loading,
+        "mood-genre",
+        BROWSE_LOADING_TIMEOUT_MS,
+    )
     LazyColumn(
         state = listState,
         contentPadding = contentPadding,

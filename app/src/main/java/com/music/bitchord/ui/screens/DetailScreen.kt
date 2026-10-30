@@ -163,6 +163,7 @@ import com.music.bitchord.data.model.parseAlbumSubtitle
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.BROWSE_LOADING_TIMEOUT_MS
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.EmptyState
 import com.music.bitchord.ui.components.HqLibraryProgressLine
@@ -385,7 +386,11 @@ fun DetailScreen(
     /** Re-runs the page's first load in place after its error state. */
     onRetryLoading: (() -> Unit)? = null,
 ) {
-    val loadingTimedOut = rememberLoadingTimedOut(page.songs is UiState.Loading, "detail")
+    val loadingTimedOut = rememberLoadingTimedOut(
+        page.songs is UiState.Loading,
+        "detail",
+        BROWSE_LOADING_TIMEOUT_MS,
+    )
     val visibleSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // Liked Music keeps the account's non-music videos aside by default;
     // the row below the header reveals them. Everywhere else this is empty.

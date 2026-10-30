@@ -686,9 +686,18 @@ internal object YouTubeFallback {
             cachedCategory(browseId)?.let { return@withLock it }
             val catalogBudget = CatalogSongMapper.newBudget()
             val term = YouTubeCategoryRules.searchTerm(category)
+            // A category page is allowed to come back empty when the searches
+            // answered with no rows, but a search that failed must not be
+            // folded into the same empty page: that made the caller show
+            // "nothing to explore" instead of the connection/retry state.
+            var firstFailure: Throwable? = null
+            fun rememberFailure(failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                if (firstFailure == null) firstFailure = failure
+            }
             val official = runCatching { Innertube.searchFeaturedPlaylists(term) }
                 .onFailure {
-                    if (it is CancellationException) throw it
+                    rememberFailure(it)
                     Log.w(TAG, "Music featured-playlist search failed: ${it.message}")
                 }
                 .getOrNull()
@@ -699,14 +708,14 @@ internal object YouTubeFallback {
             val songs = official.firstOrNull()?.browseId?.let { id ->
                 runCatching { officialPlaylistSongs(id, CATEGORY_SONG_LIMIT, catalogBudget) }
                     .onFailure {
-                        if (it is CancellationException) throw it
+                        rememberFailure(it)
                         Log.w(TAG, "Official playlist $id failed: ${it.message}")
                     }
                     .getOrDefault(emptyList())
             }.orEmpty()
             val community = runCatching { Innertube.searchCommunityPlaylists(term) }
                 .onFailure {
-                    if (it is CancellationException) throw it
+                    rememberFailure(it)
                     Log.w(TAG, "Music community-playlist search failed: ${it.message}")
                 }
                 .getOrNull()
@@ -720,6 +729,9 @@ internal object YouTubeFallback {
                 limitPerShelf = CATEGORY_LIMIT,
                 songLimit = CATEGORY_SONG_LIMIT,
             )
+            if (shelves.isEmpty()) {
+                firstFailure?.let { throw it }
+            }
             if (shelves.isNotEmpty()) {
                 categoryCache[browseId] = System.currentTimeMillis() to shelves
             }
