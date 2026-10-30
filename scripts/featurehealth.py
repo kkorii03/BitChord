@@ -74,7 +74,13 @@ HQ_VERIFY_RE = re.compile(
 UPGRADE_AHEAD_RE = re.compile(
     r"^upgrade ahead:\s+'(?P<title>.*)'\s+ready at\s+(?P<format>.*?)(?:\s+from\s+.*)?$"
 )
-HQ_SWAP_DONE_RE = re.compile(r"^hq-swap:\s+(?P<id>\S+)\s+done$")
+HQ_SWAP_RE = re.compile(
+    r"^hq-swap:\s+(?P<id>\S+)\s+(?P<state>start|done|skipped)"
+    r"(?:\s+(?P<reason>.*))?$"
+)
+HQ_AHEAD_RE = re.compile(
+    r"^hq-ahead:\s+(?P<id>\S+)\s+re-prepared next player as FLAC\b"
+)
 ALREADY_PLAYING_RE = re.compile(
     r"'(?P<title>.*)'\s+is already playing\s+(?P<mime>audio/\S+)\s+from cache"
 )
@@ -96,6 +102,13 @@ VIDEO_RADIO_RE = re.compile(
     r"^video-radio:\s+seed=(?P<seed>\S+)\s+mode=(?P<mode>\S+)\s+"
     r"picked=(?P<picked>\d+)\s+from=(?P<from>\S+)\s+dropped=.*\s+fallback=(?P<fallback>\S+)"
 )
+AUTOPLAY_APPEND_RE = re.compile(
+    r"^queue:\s+autoplay-append\s+n=(?P<n>\d+)"
+)
+UNPLAYABLE_RE = re.compile(
+    r"^unplayable:\s+(?P<id>\S+)\s+(?P<reason>.+?)\s+->\s+"
+    r"(?P<action>alt\s+(?P<alt>\S+)|skip)\s*$"
+)
 
 SONG_VERSION_SWAP_RE = re.compile(
     r"^song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+via\s+(?P<via>\S+)"
@@ -106,13 +119,18 @@ SONG_VERSION_KEPT_RE = re.compile(
 
 CROSSFADE_START_RE = re.compile(
     r"^crossfade:\s+start\s+out=(?P<out>\S+)\s+in=(?P<in>\S+)"
+    r"(?:\s+fade=(?P<fade>-?\d+)ms)?"
 )
 CROSSFADE_SKIP_RE = re.compile(
     r"^crossfade:\s+skipped\s+\S+->\S+\s+reason=(?P<reason>\S+)"
 )
 CROSSFADE_END_RE = re.compile(
-    r"^crossfade:\s+end\s+out=(?P<out>\S+)\s+in=(?P<in>\S+).*?"
+    r"^crossfade:\s+end\s+out=(?P<out>\S+)\s+in=(?P<in>\S+)"
+    r"(?:\s+fade=(?P<fade>-?\d+)ms)?.*?"
     r"overlap=(?P<overlap>-?\d+)ms"
+)
+CROSSFADE_GAIN_RE = re.compile(
+    r"\b(?P<quarter>25|50|75)%=(?P<in>-?\d+(?:\.\d+)?)/(?P<out>-?\d+(?:\.\d+)?)"
 )
 CROSSFADE_ABORT_RE = re.compile(r"^crossfade:\s+abort\b")
 
@@ -285,6 +303,13 @@ def _norm_title(title: str) -> str:
     return " ".join(title.split()).casefold()
 
 
+def _sync_skip_reason(sync: str) -> str:
+    match = re.match(r"^skipped(?:\((?P<reason>[^)]*)\))?$", sync)
+    if match is None:
+        return sync
+    return match.group("reason") or "skipped"
+
+
 def _is_flac(value: str) -> bool:
     return "flac" in value.casefold()
 
@@ -370,10 +395,12 @@ def analyze(log: Log) -> Report:
     hq_verifies: list[dict[str, Any]] = []
     upgrade_aheads: list[dict[str, Any]] = []
     hq_swaps: list[dict[str, Any]] = []
+    hq_aheads: list[dict[str, Any]] = []
     decodes: list[dict[str, Any]] = []
     already_playing: list[dict[str, Any]] = []
     autoplay_radios: list[dict[str, Any]] = []
     autoplay_drops: list[dict[str, Any]] = []
+    autoplay_appends: list[dict[str, Any]] = []
     repeat_modes: list[dict[str, Any]] = []
     video_radios: list[dict[str, Any]] = []
     song_swaps: list[dict[str, Any]] = []
@@ -383,6 +410,7 @@ def analyze(log: Log) -> Report:
     crossfade_skips: list[dict[str, Any]] = []
     crossfade_aborts: list[dict[str, Any]] = []
     failed_starts: list[dict[str, Any]] = []
+    unplayables: list[dict[str, Any]] = []
     download_failures: list[dict[str, Any]] = []
     hq_library_missing: list[dict[str, Any]] = []
     service_failures: list[LogLine] = []
@@ -479,9 +507,21 @@ def analyze(log: Log) -> Report:
             )
             continue
 
-        match = HQ_SWAP_DONE_RE.match(text)
+        match = HQ_SWAP_RE.match(text)
         if match:
-            hq_swaps.append({"at": at, "id": match.group("id")})
+            hq_swaps.append(
+                {
+                    "at": at,
+                    "id": match.group("id"),
+                    "state": match.group("state"),
+                    "reason": (match.group("reason") or "").strip(),
+                }
+            )
+            continue
+
+        match = HQ_AHEAD_RE.match(text)
+        if match:
+            hq_aheads.append({"at": at, "id": match.group("id")})
             continue
 
         match = ALREADY_PLAYING_RE.match(text)
@@ -525,6 +565,11 @@ def analyze(log: Log) -> Report:
         match = AUTOPLAY_DROP_RE.match(text)
         if match:
             autoplay_drops.append({"at": at, "count": int(match.group("count"))})
+            continue
+
+        match = AUTOPLAY_APPEND_RE.match(text)
+        if match:
+            autoplay_appends.append({"at": at, "n": int(match.group("n"))})
             continue
 
         match = MODE_REPEAT_RE.match(text)
@@ -572,7 +617,16 @@ def analyze(log: Log) -> Report:
         match = CROSSFADE_START_RE.match(text)
         if match:
             crossfade_starts.append(
-                {"at": at, "out": match.group("out"), "in": match.group("in")}
+                {
+                    "at": at,
+                    "out": match.group("out"),
+                    "in": match.group("in"),
+                    "fade": (
+                        int(match.group("fade"))
+                        if match.group("fade") is not None
+                        else None
+                    ),
+                }
             )
             for tag in FORMAT_TAG_RE.finditer(text):
                 bracket_formats.append(
@@ -593,12 +647,25 @@ def analyze(log: Log) -> Report:
 
         match = CROSSFADE_END_RE.match(text)
         if match:
+            gains = {
+                gain.group("quarter"): {
+                    "in": float(gain.group("in")),
+                    "out": float(gain.group("out")),
+                }
+                for gain in CROSSFADE_GAIN_RE.finditer(text)
+            }
             crossfade_ends.append(
                 {
                     "at": at,
                     "out": match.group("out"),
                     "in": match.group("in"),
                     "overlap": int(match.group("overlap")),
+                    "fade": (
+                        int(match.group("fade"))
+                        if match.group("fade") is not None
+                        else None
+                    ),
+                    "gains": gains,
                 }
             )
             for tag in FORMAT_TAG_RE.finditer(text):
@@ -615,6 +682,20 @@ def analyze(log: Log) -> Report:
 
         if CROSSFADE_ABORT_RE.match(text):
             crossfade_aborts.append({"at": at})
+            continue
+
+        match = UNPLAYABLE_RE.match(text)
+        if match:
+            action = match.group("action")
+            unplayables.append(
+                {
+                    "at": at,
+                    "id": match.group("id"),
+                    "reason": match.group("reason").strip(),
+                    "action": "alt" if action.startswith("alt") else "skip",
+                    "alt": match.group("alt"),
+                }
+            )
             continue
 
         if FAILED_START_RE.search(text):
@@ -664,10 +745,13 @@ def analyze(log: Log) -> Report:
     d1_mix = sum(1 for row in next_preps if row["mix"] == "ready")
     d1_with_lyrics = [row for row in next_preps if row["lyrics"] != "none"]
     d1_sync = sum(1 for row in d1_with_lyrics if row["sync"].startswith("applied"))
+    d1_sync_skips = [
+        row for row in d1_with_lyrics if not row["sync"].startswith("applied")
+    ]
+    d1_sync_skip_reasons = Counter(_sync_skip_reason(row["sync"]) for row in d1_sync_skips)
     d1_sync_failures = [
         _failure(row["at"], row["title"], f"sync={row['sync']}")
-        for row in d1_with_lyrics
-        if not row["sync"].startswith("applied")
+        for row in d1_sync_skips
     ]
     d1_ms = [row["ms"] for row in next_preps]
     d1_avg = round(statistics.mean(d1_ms)) if d1_ms else None
@@ -703,9 +787,32 @@ def analyze(log: Log) -> Report:
                     f" (skipped {d1_skipped_ratio:.0%})"
                     if d1_skipped_ratio is not None
                     else ""
+                )
+                + (
+                    " · 사유 "
+                    + ", ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(d1_sync_skip_reasons.items())
+                    )
+                    if d1_sync_skip_reasons
+                    else ""
                 ),
                 PASS_D1_SYNC,
                 d1_sync_failures,
+            ),
+            _info_metric(
+                "D1-sync-skip",
+                "D1 다음 곡 준비 · 싱크 건너뜀 사유",
+                len(d1_sync_skips),
+                "skipped 사유 분포 "
+                + (
+                    ", ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(d1_sync_skip_reasons.items())
+                    )
+                    or "없음"
+                ),
+                failures=d1_sync_failures,
             ),
             _info_metric(
                 "D1-mix",
@@ -728,6 +835,8 @@ def analyze(log: Log) -> Report:
         "lyrics": d1_lyrics,
         "hq": d1_hq,
         "sync": d1_sync,
+        "sync_skipped": len(d1_sync_skips),
+        "sync_skip_reasons": dict(d1_sync_skip_reasons),
         "with_lyrics": len(d1_with_lyrics),
         "mix": d1_mix,
         "avg_ms": d1_avg,
@@ -751,6 +860,16 @@ def analyze(log: Log) -> Report:
                 }
             )
     for row in hq_swaps:
+        if row["state"] != "done":
+            continue
+        flac_evidence.append(
+            {
+                "at": row["at"],
+                "id": row["id"],
+                "title": title_by_id.get(row["id"], ""),
+            }
+        )
+    for row in hq_aheads:
         flac_evidence.append(
             {
                 "at": row["at"],
@@ -809,6 +928,10 @@ def analyze(log: Log) -> Report:
     manual_unnecessary = sum(
         1 for line in lines if "manual upgrade unnecessary" in line.text
     )
+    swap_started = sum(1 for row in hq_swaps if row["state"] == "start")
+    swap_done = sum(1 for row in hq_swaps if row["state"] == "done")
+    swap_skipped = [row for row in hq_swaps if row["state"] == "skipped"]
+    swap_skip_reasons = Counter(row["reason"] or "unknown" for row in swap_skipped)
     metrics.extend(
         [
             _rate_metric(
@@ -832,6 +955,28 @@ def analyze(log: Log) -> Report:
                 manual_unnecessary,
                 "manual upgrade unnecessary",
             ),
+            _info_metric(
+                "D2-swap",
+                "D2 무손실 · 재생 중 교체",
+                swap_started + len(swap_skipped),
+                f"start {swap_started} · done {swap_done} · "
+                f"skipped {len(swap_skipped)}"
+                + (
+                    " (사유 "
+                    + ", ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(swap_skip_reasons.items())
+                    )
+                    + ")"
+                    if swap_skip_reasons
+                    else ""
+                ),
+                successes=swap_done,
+                failures=[
+                    _failure(row["at"], row["id"], row["reason"] or "unknown")
+                    for row in swap_skipped
+                ],
+            ),
         ]
     )
     stats["lossless"] = {
@@ -839,6 +984,11 @@ def analyze(log: Log) -> Report:
         "played": d2_success,
         "kept_for_next": kept_for_next,
         "manual_unnecessary": manual_unnecessary,
+        "swap_started": swap_started,
+        "swap_done": swap_done,
+        "swap_skipped": len(swap_skipped),
+        "swap_skip_reasons": dict(swap_skip_reasons),
+        "hq_ahead": len(hq_aheads),
     }
 
     # ---- D3: autoplay refill and unwanted repeat -------------------------
@@ -851,8 +1001,19 @@ def analyze(log: Log) -> Report:
         if not refilled:
             zero_refills.append(drop)
 
-    d3_attempts = len(autoplay_radios) + len(zero_refills)
-    d3_success = sum(1 for row in autoplay_radios if row["total"] > 0)
+    d3_append_success = sum(1 for row in autoplay_appends if row["n"] > 0)
+    d3_video_success = sum(1 for row in video_radios if row["picked"] > 0)
+    d3_attempts = (
+        len(autoplay_radios)
+        + len(zero_refills)
+        + len(autoplay_appends)
+        + len(video_radios)
+    )
+    d3_success = (
+        sum(1 for row in autoplay_radios if row["total"] > 0)
+        + d3_append_success
+        + d3_video_success
+    )
     d3_failures = [
         _failure(row["at"], "autoplay", f"{row['count']} rows dropped, no +radio")
         for row in zero_refills
@@ -861,6 +1022,16 @@ def analyze(log: Log) -> Report:
         _failure(row["at"], "autoplay", "+radio 0 +similar 0 +fav 0")
         for row in autoplay_radios
         if row["total"] <= 0
+    ]
+    d3_failures += [
+        _failure(row["at"], "autoplay", "queue: autoplay-append n=0")
+        for row in autoplay_appends
+        if row["n"] <= 0
+    ]
+    d3_failures += [
+        _failure(row["at"], row["seed"], f"video-radio picked=0 mode={row['mode']}")
+        for row in video_radios
+        if row["picked"] <= 0
     ]
     d3_pass = None if d3_attempts == 0 else d3_success == d3_attempts
 
@@ -885,7 +1056,7 @@ def analyze(log: Log) -> Report:
                 label="D3 자동 재생 · 보충",
                 attempts=d3_attempts,
                 successes=d3_success,
-                criterion="보충 합>0 · 0곡 보충 0건",
+                criterion="보충 합>0 · append n>0 · video-radio picked>0 · 0곡 보충 0건",
                 passed=d3_pass,
                 failures=d3_failures,
             ),
@@ -907,6 +1078,9 @@ def analyze(log: Log) -> Report:
         "zero_refill": len(zero_refills),
         "radio_lines": len(autoplay_radios),
         "radio_sums": [row["total"] for row in autoplay_radios],
+        "append": len(autoplay_appends),
+        "append_n": [row["n"] for row in autoplay_appends],
+        "video_lines": len(video_radios),
         "repeat": len(repeat_plays),
         "unwanted_repeat": len(unwanted_repeats),
     }
@@ -915,25 +1089,60 @@ def analyze(log: Log) -> Report:
     video_mode = [row for row in video_radios if row["mode"] == "video"]
     from_counts = Counter(row["from"] for row in video_mode)
     d4_success = sum(1 for row in video_mode if row["picked"] > 0)
-    metrics.append(
-        _info_metric(
-            "D4-video",
-            "D4 비디오 라디오",
-            len(video_mode),
-            "picked/from 분포 "
-            + (", ".join(f"{name}={count}" for name, count in sorted(from_counts.items())) or "없음"),
-            successes=d4_success,
-            failures=[
-                _failure(row["at"], row["seed"], f"picked=0 from={row['from']}")
-                for row in video_mode
-                if row["picked"] <= 0
-            ],
+    mode_details: dict[str, dict[str, Any]] = {}
+    for mode in sorted({row["mode"] for row in video_radios}):
+        rows = [row for row in video_radios if row["mode"] == mode]
+        mode_details[mode] = {
+            "lines": len(rows),
+            "picked": [row["picked"] for row in rows],
+            "from": dict(Counter(row["from"] for row in rows)),
+        }
+    mode_criterion = "모드별 picked/from " + (
+        " · ".join(
+            f"{mode}: picked={sum(detail['picked'])} "
+            f"from="
+            + ",".join(
+                f"{name}={count}"
+                for name, count in sorted(detail["from"].items())
+            )
+            for mode, detail in mode_details.items()
         )
+        or "없음"
+    )
+    metrics.extend(
+        [
+            _info_metric(
+                "D4-video",
+                "D4 비디오 라디오",
+                len(video_mode),
+                "picked/from 분포 "
+                + (", ".join(f"{name}={count}" for name, count in sorted(from_counts.items())) or "없음"),
+                successes=d4_success,
+                failures=[
+                    _failure(row["at"], row["seed"], f"picked=0 from={row['from']}")
+                    for row in video_mode
+                    if row["picked"] <= 0
+                ],
+            ),
+            _info_metric(
+                "D4-modes",
+                "D4 비디오 라디오 · 모드별",
+                len(video_radios),
+                mode_criterion,
+                successes=sum(1 for row in video_radios if row["picked"] > 0),
+                failures=[
+                    _failure(row["at"], row["seed"], f"mode={row['mode']} picked=0")
+                    for row in video_radios
+                    if row["picked"] <= 0
+                ],
+            ),
+        ]
     )
     stats["video_radio"] = {
         "video_lines": len(video_mode),
         "from": dict(from_counts),
         "picked": [row["picked"] for row in video_mode],
+        "modes": mode_details,
     }
 
     # ---- D5: song versions ---------------------------------------------
@@ -1025,6 +1234,40 @@ def analyze(log: Log) -> Report:
     # ---- D7: crossfade --------------------------------------------------
     skip_reasons = Counter(row["reason"] for row in crossfade_skips)
     overlaps = [row["overlap"] for row in crossfade_ends]
+    remaining_ends = Counter((row["out"], row["in"]) for row in crossfade_ends)
+    completed_fades = 0
+    for row in crossfade_starts:
+        key = (row["out"], row["in"])
+        if remaining_ends[key] > 0:
+            completed_fades += 1
+            remaining_ends[key] -= 1
+    completion_rate = (
+        completed_fades / len(crossfade_starts) if crossfade_starts else None
+    )
+    planned_by_pair: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for row in crossfade_starts:
+        if row["fade"] is not None:
+            planned_by_pair[(row["out"], row["in"])].append(row["fade"])
+    overlap_pairs: list[tuple[int, int]] = []
+    for row in crossfade_ends:
+        key = (row["out"], row["in"])
+        planned = None
+        if planned_by_pair.get(key):
+            planned = planned_by_pair[key].pop(0)
+        elif row["fade"] is not None:
+            planned = row["fade"]
+        if planned is not None and planned > 0:
+            overlap_pairs.append((row["overlap"], planned))
+    planned_fades = [planned for _, planned in overlap_pairs]
+    overlap_ratios = [overlap / planned for overlap, planned in overlap_pairs]
+    overlap_avg = round(statistics.mean(overlaps)) if overlaps else None
+    planned_avg = (
+        round(statistics.mean(planned_fades)) if planned_fades else None
+    )
+    ratio_avg = round(statistics.mean(overlap_ratios) * 100) if overlap_ratios else None
+    gain_quarters = Counter(
+        quarter for row in crossfade_ends for quarter in row["gains"]
+    )
     metrics.extend(
         [
             _info_metric(
@@ -1032,8 +1275,41 @@ def analyze(log: Log) -> Report:
                 "D7 자동 믹스 · 시작/완료",
                 len(crossfade_starts),
                 f"start {len(crossfade_starts)} · end {len(crossfade_ends)} · "
-                f"overlap 평균 {round(statistics.mean(overlaps)) if overlaps else '—'}ms",
-                successes=min(len(crossfade_starts), len(crossfade_ends)),
+                f"overlap 평균 {overlap_avg if overlap_avg is not None else '—'}ms",
+                successes=completed_fades,
+            ),
+            _info_metric(
+                "D7-complete",
+                "D7 자동 믹스 · 완료율",
+                len(crossfade_starts),
+                f"완료 {completed_fades}/{len(crossfade_starts)}"
+                + (
+                    f" ({completion_rate:.0%})"
+                    if completion_rate is not None
+                    else ""
+                ),
+                successes=completed_fades,
+            ),
+            _info_metric(
+                "D7-overlap",
+                "D7 자동 믹스 · 실제 겹침",
+                len(crossfade_ends),
+                f"overlap 평균 {overlap_avg if overlap_avg is not None else '—'}ms · "
+                f"계획 fade 평균 {planned_avg if planned_avg is not None else '—'}ms · "
+                f"계획 대비 {ratio_avg if ratio_avg is not None else '—'}%",
+            ),
+            _info_metric(
+                "D7-gains",
+                "D7 자동 믹스 · 25/50/75 gain",
+                sum(gain_quarters.values()),
+                "gain 분포 "
+                + (
+                    ", ".join(
+                        f"{quarter}%={gain_quarters[quarter]}"
+                        for quarter in ("25", "50", "75")
+                    )
+                    or "없음"
+                ),
             ),
             _info_metric(
                 "D7-skipped",
@@ -1056,10 +1332,15 @@ def analyze(log: Log) -> Report:
     stats["crossfade"] = {
         "start": len(crossfade_starts),
         "end": len(crossfade_ends),
+        "complete": completed_fades,
+        "completion_rate": completion_rate,
         "skipped": len(crossfade_skips),
         "skip_reasons": dict(skip_reasons),
         "abort": len(crossfade_aborts),
         "overlaps": overlaps,
+        "planned_fades": planned_fades,
+        "overlap_ratios": overlap_ratios,
+        "gain_quarters": dict(gain_quarters),
     }
 
     # ---- D8: playback start --------------------------------------------
@@ -1095,6 +1376,29 @@ def analyze(log: Log) -> Report:
             }
         )
     gaps = [row["gap"] for row in failed_start_rows if row["gap"] is not None]
+    unplayable_rows: list[dict[str, Any]] = []
+    for row in unplayables:
+        following = next((play for play in plays if play["at"] >= row["at"]), None)
+        unplayable_rows.append(
+            {
+                "at": row["at"],
+                "id": row["id"],
+                "reason": row["reason"],
+                "action": row["action"],
+                "alt": row["alt"],
+                "title": title_by_id.get(row["id"], row["id"]),
+                "gap": (
+                    (following["at"] - row["at"]).total_seconds()
+                    if following is not None
+                    else None
+                ),
+            }
+        )
+    unplayable_alt = [row for row in unplayable_rows if row["action"] == "alt"]
+    unplayable_skip = [row for row in unplayable_rows if row["action"] == "skip"]
+    unplayable_gaps = [
+        row["gap"] for row in unplayable_rows if row["gap"] is not None
+    ]
     metrics.extend(
         [
             _info_metric(
@@ -1137,6 +1441,31 @@ def analyze(log: Log) -> Report:
                     else ""
                 ),
             ),
+            _info_metric(
+                "D8-unplayable",
+                "D8 재생 시작 · 재생 불가 대체",
+                len(unplayable_rows),
+                f"대체 성공 {len(unplayable_alt)} · 건너뜀 {len(unplayable_skip)}"
+                + (
+                    f" · 판정→다음 동작 평균 {statistics.mean(unplayable_gaps):.1f}s"
+                    if unplayable_gaps
+                    else ""
+                ),
+                successes=len(unplayable_alt),
+                failures=[
+                    _failure(
+                        row["at"],
+                        row["title"],
+                        f"{row['reason']} -> skip"
+                        + (
+                            f" · 다음 play까지 {row['gap']:.1f}s"
+                            if row["gap"] is not None
+                            else ""
+                        ),
+                    )
+                    for row in unplayable_skip
+                ],
+            ),
         ]
     )
     stats["first_audio"] = {
@@ -1146,6 +1475,10 @@ def analyze(log: Log) -> Report:
         "errors": d8_errors,
         "failed_start": len(failed_start_rows),
         "gaps": gaps,
+        "unplayable": len(unplayable_rows),
+        "unplayable_alt": len(unplayable_alt),
+        "unplayable_skip": len(unplayable_skip),
+        "unplayable_gaps": unplayable_gaps,
     }
 
     # ---- D9: downloads --------------------------------------------------
