@@ -51,6 +51,87 @@ object NextPrepPolicy {
         return Plan(request.rowId, request.queueKey, steps)
     }
 
+
+    /**
+     * A paid AI call (Gemini or Deepgram) is only worth making after the song
+     * actually playing has held the listener for this long. A skip inside the
+     * first half minute is common, and the next row's sync would be bought for
+     * a track nobody heard.
+     */
+    const val AI_MIN_PLAYED_MS = 30_000L
+
+    /**
+     * The bundle must be out of the way before the current track's last twenty
+     * seconds: that is when the player starts preparing the handoff, and the
+     * next row's work must not compete with it.
+     */
+    const val END_MARGIN_MS = 20_000L
+
+    /** How much time is left for preparation before the current track's handoff. */
+    fun remainingMs(durationMs: Long, positionMs: Long): Long =
+        durationMs - positionMs - END_MARGIN_MS
+
+    /** Whether a step may still start with [remainingMs] left. */
+    fun canStartStep(remainingMs: Long): Boolean = remainingMs > 0L
+
+    /** Whether the paid engines may be asked after [playedMs] of the current track. */
+    fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS
+
+    /**
+     * What the next row's sync can say about itself. [hasTiming] is the answer
+     * after the existing measurement/AI/refine path has run; everything else
+     * describes why that path could not produce one.
+     */
+    data class SyncFacts(
+        /** The developer switch for the bundle's lyrics/sync path is off. */
+        val lyricsOff: Boolean = false,
+        /** The listener's synced-lyrics setting is off, so the step was never wanted. */
+        val syncedLyrics: Boolean = true,
+        val hasLyrics: Boolean = false,
+        /** The lyrics came from a file whose own clock is not the video's. */
+        val fileTimed: Boolean = false,
+        /** Whether the lyrics' clock may be measured against the audio at all. */
+        val recordTimed: Boolean = true,
+        /** The provider's times are already the video's own, so nothing may move them. */
+        val timedToVideo: Boolean = false,
+        val heavyWorkAllowed: Boolean = true,
+        val aiTimingAhead: Boolean = true,
+        val aiUsable: Boolean = true,
+        val currentPlayedMs: Long = 0L,
+        val remainingMs: Long = 1L,
+        val hasTiming: Boolean = false,
+    )
+
+    /**
+     * The token for `sync=skipped(<reason>)`, or null when a timing exists and
+     * the line says `sync=applied`. Ordered so the reason names the first thing
+     * that actually stopped the path: the switches and settings that meant the
+     * step was never wanted, no lyrics at all, a clock that must not be
+     * measured (the video's own times, or a file's foreign clock), the
+     * end-of-track deadline, then the AI gates.
+     */
+    fun syncSkipReason(facts: SyncFacts): String? = when {
+        facts.hasTiming -> null
+        facts.lyricsOff -> "lyrics-off"
+        !facts.syncedLyrics -> "synced-off"
+        !facts.hasLyrics -> "no-lyrics"
+        facts.timedToVideo -> "timed-to-video"
+        !facts.recordTimed || facts.fileTimed -> "file-timed"
+        !facts.heavyWorkAllowed -> "heavy-off"
+        facts.remainingMs <= 0L -> "deadline"
+        !facts.aiTimingAhead -> "ai-ahead-off"
+        !facts.aiUsable -> "ai-unavailable"
+        !aiGateOpen(facts.currentPlayedMs) -> "ai-too-early"
+        else -> "no-answer"
+    }
+
+    /** The exact `sync=` value for the next-prep line. */
+    fun syncStatus(facts: SyncFacts): String =
+        if (facts.hasTiming) "applied" else "skipped(${syncSkipReason(facts) ?: "no-answer"})"
+
+    /** A value for a step that has no answer, with the reason that stopped it. */
+    fun noneWithReason(reason: String?): String = "none(${reason ?: "none"})"
+
     /**
      * Whether [nextIndex] is a row other than the one playing at
      * [currentIndex].

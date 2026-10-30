@@ -17,8 +17,10 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
+import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
@@ -1451,6 +1453,10 @@ object AudioCache {
     /** The single background lossless fetch, so two tracks never download at once. */
     private var losslessPrefetchJob: Job? = null
 
+    /** The track [losslessPrefetchJob] belongs to, so a queue change can stop only that one. */
+    @Volatile
+    private var losslessPrefetchFor: String? = null
+
     /**
      * Tracks whose lossless copy finished while they were still playing, with
      * the rendition key that must be kept.
@@ -2099,6 +2105,7 @@ object AudioCache {
         QualityUpgrade.force(mediaId, stream)
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         val host = HqHostTracker.hostOf(stream.url)
+        losslessPrefetchFor = mediaId
         losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
             val complete = fetchLosslessRendition(uri, title, stream, mediaId, host)
             if (!complete) return@launch
@@ -2110,6 +2117,20 @@ object AudioCache {
             }
         }
         return true
+    }
+
+    /**
+     * Stops the background lossless fetch if it belongs to [mediaId] — the row
+     * that was just replaced as the next track. A fetch for any other track
+     * (the one currently playing, most importantly) is left alone.
+     */
+    fun cancelLosslessPrefetchFor(mediaId: String?) {
+        if (mediaId == null || losslessPrefetchFor != mediaId) return
+        val active = losslessPrefetchJob?.isActive == true
+        if (active) losslessPrefetchJob?.cancel()
+        losslessPrefetchJob = null
+        losslessPrefetchFor = null
+        if (active) losslessPrefetchAttempted.remove(mediaId)
     }
 
     /**
@@ -2524,6 +2545,62 @@ object AudioCache {
             delay(100)
         }
         return true
+    }
+
+    /**
+     * Waits until [videoId]'s opening is at least [minBytes] on disk, waking on
+     * the cache's own span-added event for the keys that rendition may use.
+     *
+     * This is for a row that is not playing yet: nothing is guaranteed to be
+     * writing it on a clock, so a poll would wake the CPU for a track nobody is
+     * listening to. The listener is registered for the key family read-ahead
+     * writes under (the plain id, its `#alt` siblings, and any rendition keys
+     * already on disk) and removed when the wait ends. Returns false on the
+     * timeout, exactly like the poll it replaces.
+     */
+    suspend fun awaitRenditionPrefix(videoId: String, minBytes: Long, timeoutMs: Long): Boolean {
+        if (openedCache == null) return false
+        if (alignmentPrefixBytes(videoId) >= minBytes) {
+            refreshRenditionKeys(videoId)
+            return true
+        }
+        val keys = LinkedHashSet<String>().apply {
+            add(videoId)
+            add("$videoId#alt")
+            add("$videoId#alt-noatmos")
+            addAll(renditionKeysFor(videoId))
+        }
+        val reached = CompletableDeferred<Unit>()
+        val listener = object : Cache.Listener {
+            override fun onSpanAdded(cache: Cache, span: CacheSpan) {
+                if (alignmentPrefixBytes(videoId) >= minBytes) reached.complete(Unit)
+            }
+
+            override fun onSpanRemoved(cache: Cache, span: CacheSpan) = Unit
+
+            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
+        }
+        keys.forEach { key -> runCatching { cache.addListener(key, listener) } }
+        return try {
+            val ready = if (alignmentPrefixBytes(videoId) >= minBytes) {
+                true
+            } else {
+                withTimeoutOrNull(timeoutMs) { reached.await() } != null
+            }
+            // The wait can see the bytes through the direct cache-key reads
+            // while [renditionKeysFor]'s five-second memo still lacks the key
+            // they landed under. The caller re-checks through that memo, so
+            // without dropping it here the loop spins until the memo expires.
+            if (ready) refreshRenditionKeys(videoId)
+            ready
+        } finally {
+            keys.forEach { key -> runCatching { cache.removeListener(key, listener) } }
+        }
+    }
+
+    /** Drops the rendition-key memo so the next read sees a newly written key. */
+    private fun refreshRenditionKeys(videoId: String) {
+        renditionKeys.remove(videoId)
     }
 
     /**
