@@ -165,6 +165,34 @@ class NextPrepTests(unittest.TestCase):
         )
         self.assertEqual(2, metric(report, "D1-sync-skip").attempts)
 
+    def test_sync_skip_distribution_includes_no_lyrics_rows(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "next-prep: A version=a lyrics=lrc hq=none "
+                "sync=skipped(no-match) mix=none in 100ms",
+            ),
+            line(
+                "19:00:01.000",
+                "next-prep: B version=b lyrics=none hq=none "
+                "sync=skipped(no-lyrics) mix=none in 100ms",
+            ),
+            line(
+                "19:00:02.000",
+                "next-prep: C version=c lyrics=lrc hq=none "
+                "sync=applied mix=none in 100ms",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(2, sync.attempts)
+        self.assertEqual(1, sync.successes)
+        self.assertEqual(
+            {"no-match": 1, "no-lyrics": 1},
+            report.stats["next_prep"]["sync_skip_reasons"],
+        )
+        self.assertEqual(2, metric(report, "D1-sync-skip").attempts)
+
 
 class LosslessTests(unittest.TestCase):
     def test_accepted_verify_needs_actual_flac_playback(self) -> None:
@@ -283,6 +311,35 @@ class AutoplayTests(unittest.TestCase):
         self.assertEqual(1, video.successes)
         self.assertEqual({"radio": 1, "empty": 1}, report.stats["video_radio"]["from"])
 
+    def test_video_radio_refill_uses_fallback_stage(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "video-radio: seed=e mode=video picked=4 from=radio dropped=0 fallback=empty",
+            ),
+            line(
+                "19:00:01.000",
+                "video-radio: seed=n mode=video picked=0 from=radio dropped=0 fallback=normal",
+            ),
+            line("19:00:01.500", "autoplay: +radio 2 +similar 1 +fav 0 (A | B | C)"),
+            line("19:00:02.000", "queue: autoplay-append n=3 at=5 size=8 by=autoplay"),
+            line(
+                "19:00:03.000",
+                "video-radio: seed=p mode=video picked=2 from=radio dropped=0 fallback=partial",
+            ),
+        )
+        report = analyze(text)
+        refill = metric(report, "D3-refill")
+        self.assertEqual(4, refill.attempts)
+        self.assertEqual(3, refill.successes)
+        self.assertFalse(refill.passed)
+        self.assertEqual(1, report.stats["autoplay"]["video_deferred"])
+        self.assertEqual(2, report.stats["autoplay"]["video_refills"])
+        self.assertEqual(
+            {"empty": 1, "normal": 1, "partial": 1},
+            report.stats["autoplay"]["video_fallback"],
+        )
+
     def test_video_radio_append_refill_and_mode_distribution(self) -> None:
         text = log_text(
             line("19:00:00.000", "video-radio: seed=s1 mode=video picked=3 from=radio dropped=0 fallback=none"),
@@ -351,6 +408,30 @@ class CrossfadeAndStartTests(unittest.TestCase):
         self.assertEqual({"no-gap": 1}, report.stats["crossfade"]["skip_reasons"])
         self.assertEqual(1, report.stats["crossfade"]["abort"])
         self.assertEqual([1200], report.stats["crossfade"]["overlaps"])
+
+    def test_aborted_start_is_not_used_as_planned_fade(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "crossfade: start out=a in=b fade=500ms cue=0ms smart=true",
+            ),
+            line(
+                "19:00:00.500",
+                "crossfade: abort out=a in=b phase=FADING handedOff=false",
+            ),
+            line(
+                "19:00:01.000",
+                "crossfade: start out=a in=b fade=1000ms cue=0ms smart=true",
+            ),
+            line(
+                "19:00:02.000",
+                "crossfade: end out=a in=b fade=1000ms overlap=1100ms tail=0ms",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual([1000], report.stats["crossfade"]["planned_fades"])
+        self.assertEqual([1.1], report.stats["crossfade"]["overlap_ratios"])
+        self.assertEqual(1, report.stats["crossfade"]["abort"])
 
     def test_first_audio_error_and_failed_start_gap(self) -> None:
         text = log_text(

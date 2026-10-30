@@ -132,7 +132,10 @@ CROSSFADE_END_RE = re.compile(
 CROSSFADE_GAIN_RE = re.compile(
     r"\b(?P<quarter>25|50|75)%=(?P<in>-?\d+(?:\.\d+)?)/(?P<out>-?\d+(?:\.\d+)?)"
 )
-CROSSFADE_ABORT_RE = re.compile(r"^crossfade:\s+abort\b")
+CROSSFADE_ABORT_RE = re.compile(
+    r"^crossfade:\s+abort\b"
+    r"(?:\s+out=(?P<out>\S+)\s+in=(?P<in>\S+))?"
+)
 
 FAILED_START_RE = re.compile(r"failed to start after\s+(?P<attempts>\d+)\s+attempts")
 DOWNLOAD_FAILED_RE = re.compile(r"download failed for\s+(?P<id>\S+?)(?::|\s|$)")
@@ -680,8 +683,15 @@ def analyze(log: Log) -> Report:
                 )
             continue
 
-        if CROSSFADE_ABORT_RE.match(text):
-            crossfade_aborts.append({"at": at})
+        match = CROSSFADE_ABORT_RE.match(text)
+        if match:
+            crossfade_aborts.append(
+                {
+                    "at": at,
+                    "out": match.group("out"),
+                    "in": match.group("in"),
+                }
+            )
             continue
 
         match = UNPLAYABLE_RE.match(text)
@@ -746,7 +756,7 @@ def analyze(log: Log) -> Report:
     d1_with_lyrics = [row for row in next_preps if row["lyrics"] != "none"]
     d1_sync = sum(1 for row in d1_with_lyrics if row["sync"].startswith("applied"))
     d1_sync_skips = [
-        row for row in d1_with_lyrics if not row["sync"].startswith("applied")
+        row for row in next_preps if not row["sync"].startswith("applied")
     ]
     d1_sync_skip_reasons = Counter(_sync_skip_reason(row["sync"]) for row in d1_sync_skips)
     d1_sync_failures = [
@@ -1002,12 +1012,27 @@ def analyze(log: Log) -> Report:
             zero_refills.append(drop)
 
     d3_append_success = sum(1 for row in autoplay_appends if row["n"] > 0)
-    d3_video_success = sum(1 for row in video_radios if row["picked"] > 0)
+    # A video-radio pass that falls back to the ordinary path logs the same
+    # refill twice: the video line (fallback=normal) and the +radio/append that
+    # actually filled the queue. Defer to the latter, and judge the rest by the
+    # fallback stage: empty queued nothing, while none/same-mode/partial are
+    # real video batches.
+    d3_video_success_rows = [
+        row for row in video_radios if row["fallback"] not in ("empty", "normal")
+    ]
+    d3_video_failure_rows = [
+        row for row in video_radios if row["fallback"] == "empty"
+    ]
+    d3_video_deferred = [
+        row for row in video_radios if row["fallback"] == "normal"
+    ]
+    d3_video_success = len(d3_video_success_rows)
     d3_attempts = (
         len(autoplay_radios)
         + len(zero_refills)
         + len(autoplay_appends)
-        + len(video_radios)
+        + d3_video_success
+        + len(d3_video_failure_rows)
     )
     d3_success = (
         sum(1 for row in autoplay_radios if row["total"] > 0)
@@ -1029,9 +1054,12 @@ def analyze(log: Log) -> Report:
         if row["n"] <= 0
     ]
     d3_failures += [
-        _failure(row["at"], row["seed"], f"video-radio picked=0 mode={row['mode']}")
-        for row in video_radios
-        if row["picked"] <= 0
+        _failure(
+            row["at"],
+            row["seed"],
+            f"video-radio picked={row['picked']} from={row['from']} fallback=empty",
+        )
+        for row in d3_video_failure_rows
     ]
     d3_pass = None if d3_attempts == 0 else d3_success == d3_attempts
 
@@ -1056,7 +1084,7 @@ def analyze(log: Log) -> Report:
                 label="D3 자동 재생 · 보충",
                 attempts=d3_attempts,
                 successes=d3_success,
-                criterion="보충 합>0 · append n>0 · video-radio picked>0 · 0곡 보충 0건",
+                criterion="보충 합>0 · append n>0 · video-radio fallback=empty 0건 · 0곡 보충 0건",
                 passed=d3_pass,
                 failures=d3_failures,
             ),
@@ -1081,6 +1109,9 @@ def analyze(log: Log) -> Report:
         "append": len(autoplay_appends),
         "append_n": [row["n"] for row in autoplay_appends],
         "video_lines": len(video_radios),
+        "video_refills": d3_video_success + len(d3_video_failure_rows),
+        "video_deferred": len(d3_video_deferred),
+        "video_fallback": dict(Counter(row["fallback"] for row in video_radios)),
         "repeat": len(repeat_plays),
         "unwanted_repeat": len(unwanted_repeats),
     }
@@ -1244,20 +1275,39 @@ def analyze(log: Log) -> Report:
     completion_rate = (
         completed_fades / len(crossfade_starts) if crossfade_starts else None
     )
-    planned_by_pair: dict[tuple[str, str], list[int]] = defaultdict(list)
-    for row in crossfade_starts:
-        if row["fade"] is not None:
-            planned_by_pair[(row["out"], row["in"])].append(row["fade"])
+    # Pair each end with the preceding unmatched start for the same pair so a
+    # finished a->b fade is never compared with an earlier aborted a->b fade.
+    # An abort discards the most recent unmatched start it interrupted.
+    planned_by_pair: dict[tuple[str, str], list[int | None]] = defaultdict(list)
+    fade_events: list[tuple[datetime, int, dict[str, Any]]] = []
+    fade_events.extend(
+        (row["at"], 0, row) for row in crossfade_starts
+    )
+    fade_events.extend(
+        (row["at"], 1, row) for row in crossfade_aborts
+    )
+    fade_events.extend(
+        (row["at"], 2, row) for row in crossfade_ends
+    )
+    fade_events.sort(key=lambda event: (event[0], event[1]))
     overlap_pairs: list[tuple[int, int]] = []
-    for row in crossfade_ends:
+    for _, kind, row in fade_events:
         key = (row["out"], row["in"])
-        planned = None
-        if planned_by_pair.get(key):
-            planned = planned_by_pair[key].pop(0)
-        elif row["fade"] is not None:
-            planned = row["fade"]
-        if planned is not None and planned > 0:
-            overlap_pairs.append((row["overlap"], planned))
+        if kind == 0:
+            planned_by_pair[key].append(row["fade"])
+        elif kind == 1:
+            pending = planned_by_pair.get(key)
+            if pending:
+                pending.pop()
+        else:
+            planned = None
+            pending = planned_by_pair.get(key)
+            if pending:
+                planned = pending.pop(0)
+            if planned is None:
+                planned = row["fade"]
+            if planned is not None and planned > 0:
+                overlap_pairs.append((row["overlap"], planned))
     planned_fades = [planned for _, planned in overlap_pairs]
     overlap_ratios = [overlap / planned for overlap, planned in overlap_pairs]
     overlap_avg = round(statistics.mean(overlaps)) if overlaps else None
