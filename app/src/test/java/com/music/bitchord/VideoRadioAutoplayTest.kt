@@ -131,4 +131,23 @@ class VideoRadioAutoplayTest {
         assertEquals(3, pick.ordered.size)
         assertEquals("channel", pick.from)
     }
+
+    @Test
+    fun `a song already played this session is not offered by video radio again`() {
+        // The queue window only holds the last fifty rows; once history is
+        // trimmed, the id is gone from it. Without the session set a video
+        // station could queue the same song a second time.
+        val seed = song("seed", "Dance Monkey (Cover)", "오화요")
+        val radio = listOf(
+            song("played", "Old Song (Cover)", "A", originalArtist = "A"),
+            song("fresh", "New Song (Cover)", "B", originalArtist = "B"),
+        )
+        val pick = pickVideoRadio(
+            seed,
+            radio,
+            existing = listOf(seed),
+            sessionIds = setOf("played"),
+        )
+        assertEquals(listOf("fresh"), pick.ordered.map { it.videoId })
+    }
 }

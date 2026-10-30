@@ -130,8 +130,10 @@ private fun AutoplayMode.wire(): String = when (this) {
  * Filters and orders the radio rows for a video station.
  *
  * The recent window is the last fifty rows the queue already holds, including
- * the seed. [previousSong] is the song that just finished, so another cover of
- * it is not placed immediately after.
+ * the seed. [sessionIds] are the ids this session has already played or queued:
+ * the queue window alone forgets them once history is trimmed, which let a
+ * video station offer a song it had already played. [previousSong] is the song
+ * that just finished, so another cover of it is not placed immediately after.
  */
 fun pickVideoRadio(
     seedSong: Song,
@@ -139,11 +141,12 @@ fun pickVideoRadio(
     existing: List<Song>,
     previousSong: Song? = null,
     sources: Map<String, VideoSource> = emptyMap(),
+    sessionIds: Set<String> = emptySet(),
 ): VideoRadioPick {
     val seed = videoRadioSeedInfo(seedSong)
     val recent = existing.takeLast(RECENT_VIDEO_WINDOW)
     val options = VideoFilterOptions(
-        recentVideoIds = (recent.map { it.videoId } + seedSong.videoId).toSet(),
+        recentVideoIds = (recent.map { it.videoId } + seedSong.videoId + sessionIds).toSet(),
         recentSongKeys = recent.mapTo(HashSet(), ::videoRadioSongKey),
         previousSongKey = previousSong?.let(::videoRadioSongKey)
             ?: videoRadioSongKey(seedSong),

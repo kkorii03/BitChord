@@ -102,6 +102,8 @@ import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
+import com.music.bitchord.data.listentogether.partyTopUpEchoed
+import com.music.bitchord.data.listentogether.partyTopUpLanded
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.UnplayableAlternate
@@ -109,6 +111,7 @@ import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.AUTOPLAY_MIN_QUEUED_AHEAD
 import com.music.bitchord.data.net.autoplayTopUpNeeded
+import com.music.bitchord.data.net.autoplayTopUpSelection
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.Innertube
@@ -1597,6 +1600,14 @@ class PlaybackService : MediaLibraryService() {
             }
             // Turning repeat-all back off can leave the current item at the end
             // of the queue, which is the same trigger as a normal transition.
+            // Leaving repeat-one has to release the seed first: it is still
+            // latched to the track that was looping, and the reload below would
+            // otherwise be skipped as same-seed, leaving the queue empty.
+            if (repeatOneSeedShouldClear(previous, repeatMode)) {
+                autoplayLoadJob?.cancel()
+                autoplayLoadJob = null
+                autoplaySeed = null
+            }
             loadAutoplayForCurrentTrack()
         }
 
@@ -3647,9 +3658,17 @@ class PlaybackService : MediaLibraryService() {
      * everything arriving in one burst at the end of the queue.
      */
     private fun loadAutoplayForCurrentTrack() {
-        val exoPlayer = player ?: return
+        val exoPlayer = player
+        if (exoPlayer == null) {
+            TrackLog.d("BitChord", "autoplay: skip reason=no-player")
+            return
+        }
         val party = ListenTogether.state.value
-        val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        val current = exoPlayer.currentMediaItem?.toSong()
+        if (current == null) {
+            TrackLog.d("BitChord", "autoplay: skip reason=no-current-song")
+            return
+        }
         // Every track after the current one, not just AutoPlay's own tail.
         // Counting only suggestions meant ten were topped back up to ten on
         // every change, so a station was fetched for nearly every track played
@@ -3665,9 +3684,14 @@ class PlaybackService : MediaLibraryService() {
         } else {
             (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount).count()
         }
+        val enabled = autoplayEnabled(party)
+        val repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL
+        val repeatOne = exoPlayer.repeatMode == Player.REPEAT_MODE_ONE
+        val supplier = if (party.inParty) autoplaySupplierId(party) else null
         if (!autoplayTopUpNeeded(
-                enabled = autoplayEnabled(party),
-                repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+                enabled = enabled,
+                repeatAll = repeatAll,
+                repeatOne = repeatOne,
                 queuedAhead = queuedAhead,
                 minAhead = if (!party.inParty && videoRadioEnabledFor(current)) {
                     VIDEO_RADIO_MIN_QUEUED_AHEAD
@@ -3675,11 +3699,27 @@ class PlaybackService : MediaLibraryService() {
                     AUTOPLAY_MIN_QUEUED_AHEAD
                 },
             ) ||
-            (party.inParty && autoplaySupplierId(party) != party.you?.memberId)
+            (party.inParty && supplier != party.you?.memberId)
         ) {
+            // Named rather than silent: the measured "top-ups that added
+            // nothing" were mostly this gate, and an unlogged skip is
+            // indistinguishable from a station that failed to answer.
+            TrackLog.d(
+                "BitChord",
+                "autoplay: skip seed=${current.videoId} enabled=$enabled " +
+                    "repeat=${if (repeatAll) "all" else if (repeatOne) "one" else "off"} " +
+                    "ahead=$queuedAhead supplier=${supplier ?: "-"} " +
+                    "you=${party.you?.memberId ?: "-"}",
+                about = current.videoId,
+            )
             return
         }
         if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) {
+            TrackLog.d(
+                "BitChord",
+                "autoplay: skip seed=${current.videoId} reason=bounded-context",
+                about = current.videoId,
+            )
             return
         }
         autoplaySessionIds += current.videoId
@@ -3692,8 +3732,22 @@ class PlaybackService : MediaLibraryService() {
             ?: (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
                 .count { exoPlayer.getMediaItemAt(it).fromAutoplay }
         val needed = MAX_QUEUED_AUTOPLAY - queuedAutoplay
-        if (needed <= 0) return
-        if (autoplaySeed == current.videoId) return
+        if (needed <= 0) {
+            TrackLog.d(
+                "BitChord",
+                "autoplay: skip seed=${current.videoId} reason=tail-full queued=$queuedAutoplay",
+                about = current.videoId,
+            )
+            return
+        }
+        if (autoplaySeed == current.videoId) {
+            TrackLog.d(
+                "BitChord",
+                "autoplay: skip seed=${current.videoId} reason=same-seed",
+                about = current.videoId,
+            )
+            return
+        }
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
             val generation = ++autoplayRefillGeneration
@@ -3706,6 +3760,7 @@ class PlaybackService : MediaLibraryService() {
                 val activeParty = ListenTogether.state.value
                 if (!autoplayEnabled(activeParty) ||
                     activePlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+                    activePlayer.repeatMode == Player.REPEAT_MODE_ONE ||
                     activePlayer.currentMediaItem?.mediaId != current.videoId ||
                     (activeParty.inParty && autoplaySupplierId(activeParty) != activeParty.you?.memberId)
                 ) {
@@ -3738,6 +3793,7 @@ class PlaybackService : MediaLibraryService() {
                 val latestParty = ListenTogether.state.value
                 if (!autoplayEnabled(latestParty) ||
                     latestPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+                    latestPlayer.repeatMode == Player.REPEAT_MODE_ONE ||
                     latestPlayer.currentMediaItem?.mediaId != current.videoId ||
                     (latestParty.inParty && autoplaySupplierId(latestParty) != latestParty.you?.memberId)
                 ) {
@@ -3750,7 +3806,7 @@ class PlaybackService : MediaLibraryService() {
                         // including this one, and keeps the AutoPlay section
                         // identical for all listeners.
                         val landed = topUpPartyAutoplay(current.videoId, resolved)
-                        if (!landed) {
+                        if (landed == null) {
                             TrackLog.w(
                                 "BitChord",
                                 "party did not take AutoPlay's tracks; releasing the seed to retry",
@@ -3761,7 +3817,11 @@ class PlaybackService : MediaLibraryService() {
                             autoplaySeed = null
                             return@launch
                         }
-                        autoplaySessionIds += resolved.map { it.videoId }
+                        // Only the rows the server actually accepted count as
+                        // suggested. The rest are still unheard and may be
+                        // offered again on the next top-up.
+                        autoplaySessionIds += landed.map { it.videoId }
+                        rememberSessionSongs(landed)
                         // The server echo names what is now queued; advance only
                         // onto the item it actually put next.
                         val armed = pendingAutoplayAdvanceFor == current.videoId
@@ -3794,15 +3854,22 @@ class PlaybackService : MediaLibraryService() {
                             latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
                             appended = true
                             autoplaySessionIds += fresh.map { it.videoId }
+                            rememberSessionSongs(fresh)
                             TrackLog.i(
                                 "BitChord",
                                 "queue: autoplay-append n=${fresh.size} at=${latestPlayer.mediaItemCount - fresh.size} " +
                                     "size=${latestPlayer.mediaItemCount} by=autoplay",
                             )
                             scheduleUpcomingSongVersions(latestPlayer)
+                        } else {
+                            TrackLog.d(
+                                "BitChord",
+                                "autoplay: nothing new seed=${current.videoId} " +
+                                    "resolved=${resolved.size} room=$room",
+                                about = current.videoId,
+                            )
                         }
                     }
-                    rememberSessionSongs(resolved)
                     return@launch
                 }
 
@@ -3813,8 +3880,23 @@ class PlaybackService : MediaLibraryService() {
                 // request. Keep it bounded: a radio with no usable unique songs
                 // must not turn into a permanent background polling loop.
                 val at = latestPlayer.currentMediaItemIndex
-                if (at < 0 || at != latestPlayer.mediaItemCount - 1) return@launch
-                if (emptyRefreshesRemaining-- <= 0) return@launch
+                if (at < 0 || at != latestPlayer.mediaItemCount - 1) {
+                    TrackLog.d(
+                        "BitChord",
+                        "autoplay: empty seed=${current.videoId} at=$at " +
+                            "size=${latestPlayer.mediaItemCount} retry=later",
+                        about = current.videoId,
+                    )
+                    return@launch
+                }
+                if (emptyRefreshesRemaining-- <= 0) {
+                    TrackLog.d(
+                        "BitChord",
+                        "autoplay: empty seed=${current.videoId} retry=exhausted",
+                        about = current.videoId,
+                    )
+                    return@launch
+                }
                 delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
                 remaining = MAX_QUEUED_AUTOPLAY
             }
@@ -3862,26 +3944,56 @@ class PlaybackService : MediaLibraryService() {
      * send the same station again — every suggestion twice, on every device.
      * Holding the lock until the echo means the next top-up reads a queue that
      * already has these in it, and filters against it.
+     *
+     * Returns the rows the server actually accepted, or null when the echo
+     * never came. The party queue keeps its history, so an id that was played
+     * earlier is already present: the confirmation has to be a *new*
+     * occurrence, or a refused add looked accepted and its rows were written
+     * off as suggested forever.
      */
-    private suspend fun topUpPartyAutoplay(currentId: String, suggestions: List<Song>): Boolean =
-        partyAutoplayLock.withLock {
-            withContext(NonCancellable) {
-                val party = ListenTogether.state.value
-                val waiting = partyUpcomingAfter(party.queue, party.playback, currentId)
-                val waitingIds = waiting.mapTo(HashSet()) { it.videoId }
-                val room = MAX_QUEUED_AUTOPLAY - waiting.count { it.fromAutoplay }
-                val fresh = suggestions.filterNot { it.videoId in waitingIds }.take(room.coerceAtLeast(0))
-                if (fresh.isEmpty()) return@withContext true
-                // Not sent (no live socket) is not a request waiting on an
-                // echo: report failure at once rather than spending the whole
-                // echo timeout on a control that never left this device.
-                if (!ListenTogether.queueAdd(fresh.map { it.toPartyTrack(0L) })) return@withContext false
-                val added = fresh.first().videoId
-                withTimeoutOrNull(PARTY_QUEUE_ECHO_TIMEOUT_MS) {
-                    ListenTogether.state.first { state -> state.queue.items.any { it.videoId == added } }
-                } != null
+    private suspend fun topUpPartyAutoplay(
+        currentId: String,
+        suggestions: List<Song>,
+    ): List<Song>? = partyAutoplayLock.withLock {
+        withContext(NonCancellable) {
+            val party = ListenTogether.state.value
+            val waiting = partyUpcomingAfter(party.queue, party.playback, currentId)
+            val waitingIds = waiting.mapTo(HashSet()) { it.videoId }
+            val fresh = autoplayTopUpSelection(
+                suggestions = suggestions,
+                waitingIds = waitingIds,
+                waitingAutoplay = waiting.count { it.fromAutoplay },
+                maxAutoplay = MAX_QUEUED_AUTOPLAY,
+            )
+            if (fresh.isEmpty()) return@withContext emptyList<Song>()
+            val before = party.queue.items
+            // Not sent (no live socket) is not a request waiting on an
+            // echo: report failure at once rather than spending the whole
+            // echo timeout on a control that never left this device.
+            if (!ListenTogether.queueAdd(fresh.map { it.toPartyTrack(0L) })) {
+                return@withContext null
             }
+            val added = fresh.first().videoId
+            val echoed = withTimeoutOrNull(PARTY_QUEUE_ECHO_TIMEOUT_MS) {
+                ListenTogether.state.first { state ->
+                    partyTopUpEchoed(before, added, state.queue.items)
+                }
+            }
+            if (echoed == null) return@withContext null
+            // The server truncates the batch to the party's remaining slots, so
+            // only the rows whose occurrences actually appear are queued. Report
+            // that subset: the caller writes off exactly these as suggested and
+            // may retry the rows the server refused.
+            val landedIds = partyTopUpLanded(
+                before = before,
+                suggestions = fresh.map { it.videoId },
+                after = echoed.queue.items,
+            )
+            val pools = fresh.groupByTo(HashMap()) { it.videoId }
+                .mapValuesTo(HashMap()) { it.value.toMutableList() }
+            landedIds.mapNotNull { id -> pools[id]?.removeFirstOrNull() }
         }
+    }
 
     /** Re-arms AutoPlay when an external queue edit exposes an empty tail. */
     private fun refreshAutoplayIfQueueEmpty() {
@@ -3889,6 +4001,7 @@ class PlaybackService : MediaLibraryService() {
         if (!autoplayQueueNeedsRefresh(
                 enabled = autoplayEnabled(ListenTogether.state.value),
                 repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+                repeatOne = exoPlayer.repeatMode == Player.REPEAT_MODE_ONE,
                 currentIndex = exoPlayer.currentMediaItemIndex,
                 itemCount = exoPlayer.mediaItemCount,
                 loadInProgress = autoplayLoadJob?.isActive == true,

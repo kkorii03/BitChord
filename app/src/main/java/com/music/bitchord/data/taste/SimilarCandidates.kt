@@ -164,8 +164,9 @@ object SimilarCandidates {
      * otherwise asks ListenBrainz and then the anonymous YouTube Music search.
      * Any failure is an empty answer: a station can run on its radio alone, and
      * a failure must never stop the top-up. A failed ListenBrainz call is not
-     * cached, so the next top-up retries; a successful seed's answer — even an
-     * empty one — is.
+     * cached, so the next top-up retries. A successful seed's answer is cached
+     * even when empty, unless a YouTube search failed while resolving it: that
+     * is a transient fault, not the seed having no similar songs.
      */
     suspend fun candidatesFor(song: Song, nowMs: Long = System.currentTimeMillis()): List<Song> {
         // Battery first: nothing here runs in low power or without a network.
@@ -207,7 +208,8 @@ object SimilarCandidates {
             .toList()
         val head = ranked.take(MAX_SEARCHES_PER_FETCH)
         val tail = ranked.drop(MAX_SEARCHES_PER_FETCH)
-        val resolved = resolveOnYouTube(head, seed)
+        val resolution = resolveOnYouTube(head, seed)
+        val resolved = resolution.songs
 
         synchronized(lock) {
             lastFetchAtMs = nowMs
@@ -218,9 +220,14 @@ object SimilarCandidates {
         }
 
         // The seed resolved and ListenBrainz answered, so this outcome is the
-        // seed's for a week even when nothing on YouTube matched. A failed
-        // ListenBrainz call is not cached, so it is retried next top-up.
-        store(SimilarCacheEntry(key, nowMs, resolved.map { it.asCached() }))
+        // seed's for a week even when nothing on YouTube matched. An empty
+        // answer produced while a YouTube search failed is not the seed's: a
+        // transient network fault must not empty this source for seven days. A
+        // failed ListenBrainz call is likewise not cached and retried next
+        // top-up.
+        if (shouldCacheSimilarAnswer(resolved.size, resolution.failedSearches)) {
+            store(SimilarCacheEntry(key, nowMs, resolved.map { it.asCached() }))
+        }
         return resolved
     }
 
@@ -247,6 +254,17 @@ object SimilarCandidates {
     }
 
     /**
+     * Whether a similar answer may be remembered for a week.
+     *
+     * A seed ListenBrainz does not know is worth remembering, and so is an
+     * answer that resolved rows. An empty answer produced while a YouTube
+     * search failed is not: a transient network fault must not empty this
+     * seed's similar source until the cache expires.
+     */
+    internal fun shouldCacheSimilarAnswer(found: Int, failedSearches: Int): Boolean =
+        found > 0 || failedSearches == 0
+
+    /**
      * The last fetch's answer for a seed inside the throttle window.
      *
      * Nothing is fetched from ListenBrainz. When the first batch resolved fewer
@@ -269,7 +287,7 @@ object SimilarCandidates {
         if (resolved.size < MIN_LAZY_SURVIVORS && tail.isNotEmpty()) {
             val batch = tail.take(MAX_SEARCHES_PER_FETCH)
             val rest = tail.drop(MAX_SEARCHES_PER_FETCH)
-            val extra = resolveOnYouTube(batch, seed)
+            val extra = resolveOnYouTube(batch, seed).songs
             resolved = (resolved + extra).distinctBy { it.videoId }
             synchronized(lock) {
                 lastResolved = resolved
@@ -502,13 +520,27 @@ object SimilarCandidates {
         }
     }
 
+    /** What one batch of YouTube lookups produced, and how many could not answer. */
+    private data class YouTubeResolution(
+        val songs: List<Song>,
+        val failedSearches: Int,
+    )
+
+    /** What one YouTube search produced; a failure is not the same as no match. */
+    private sealed interface SearchOutcome {
+        data class Found(val song: Song) : SearchOutcome
+        data object NoMatch : SearchOutcome
+        data object Failed : SearchOutcome
+    }
+
     private suspend fun resolveOnYouTube(
         recordings: List<SimilarRecording>,
         seed: Seed,
-    ): List<Song> {
+    ): YouTubeResolution {
         val deadline = System.currentTimeMillis() + TOTAL_BUDGET_MS
         val out = ArrayList<Song>(recordings.size)
         val seen = HashSet<String>()
+        var failed = 0
         for (recording in recordings) {
             if (titleMatches(recording.title, seed.title) &&
                 artistMatches(recording.artist, seed.artist)
@@ -517,19 +549,24 @@ object SimilarCandidates {
             }
             val remaining = deadline - System.currentTimeMillis()
             if (remaining <= 0L) break
-            val song = resolveOne(recording, min(CALL_TIMEOUT_MS, remaining)) ?: continue
-            if (seen.add(song.videoId)) out += song
+            when (val outcome = resolveOne(recording, min(CALL_TIMEOUT_MS, remaining))) {
+                is SearchOutcome.Found -> if (seen.add(outcome.song.videoId)) out += outcome.song
+                SearchOutcome.NoMatch -> Unit
+                SearchOutcome.Failed -> failed++
+            }
         }
-        return out
+        return YouTubeResolution(out, failed)
     }
 
-    private suspend fun resolveOne(recording: SimilarRecording, timeoutMs: Long): Song? {
+    private suspend fun resolveOne(recording: SimilarRecording, timeoutMs: Long): SearchOutcome {
         val query = listOf(recording.title, recording.artist)
             .filter { it.isNotBlank() }
             .joinToString(" ")
-        val rows = withTimeoutOrNull(timeoutMs) {
-            YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
-        } ?: return null
+        val result = withTimeoutOrNull(timeoutMs) {
+            YtMusicRepository.search(query, SearchFilter.SONGS)
+        } ?: return SearchOutcome.Failed
+        if (result.isFailure) return SearchOutcome.Failed
+        val rows = result.getOrElse { return SearchOutcome.Failed }
         val songs = rows.mapNotNull { row ->
             when (row) {
                 is SearchResult.Track -> row.song
@@ -537,7 +574,7 @@ object SimilarCandidates {
                 is SearchResult.Browse -> null
             }
         }
-        return pickYtSong(songs, recording)
+        return pickYtSong(songs, recording)?.let { SearchOutcome.Found(it) } ?: SearchOutcome.NoMatch
     }
 
     // ── Cache ───────────────────────────────────────────────────────────────

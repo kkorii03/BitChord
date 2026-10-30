@@ -138,6 +138,29 @@ class TastePoolTest {
     }
 
     @Test
+    fun `a liked track played today is not offered again as rediscover`() {
+        // One play still counts as "rarely played", so without the same
+        // one-day guard the favourite rows have, the song that just finished
+        // came straight back as a rediscovery.
+        val library = listOf(local("just-played"))
+        val taste = view(
+            mapOf(
+                "just-played" to TrackTaste(
+                    plays = 1.0,
+                    completes = 1.0,
+                    rating = TasteRating.LIKE,
+                    lastPlayedAt = now - 60 * 60 * 1000,
+                ),
+            ),
+        )
+
+        val pool = TastePool.build(PoolSources(local = library), taste, now)
+
+        assertEquals(0, pool.counts[CandidateSource.REDISCOVER])
+        assertFalse("just-played" in ids(pool))
+    }
+
+    @Test
     fun `a duplicate keeps the stronger source`() {
         val duplicate = local("dup")
         val taste = view(mapOf("dup" to TrackTaste(plays = 0.0, rating = TasteRating.LIKE)))
