@@ -64,7 +64,7 @@ object SmbClient {
                             val name = child.path.substringAfterLast('\\').substringAfterLast('/')
                             when {
                                 SmbConfig.isAudioFile(name) ->
-                                    audio.add(Entry(childPath, false, child.size))
+                                    if (audio.size < maxFiles) audio.add(Entry(childPath, false, child.size))
                                 SmbConfig.isImageFile(name) ->
                                     images.add(Entry(childPath, false, child.size))
                             }

@@ -95,7 +95,8 @@ object WebDavClient {
                     } else {
                         val name = entry.displayName.ifBlank { entry.url }
                         when {
-                            WebDavConfig.isAudioFile(name) -> foundAudio.putIfAbsent(entry.url, entry)
+                            WebDavConfig.isAudioFile(name, entry.contentType) ->
+                                if (foundAudio.size < maxFiles) foundAudio.putIfAbsent(entry.url, entry)
                             isImageFile(name) -> foundImages.putIfAbsent(entry.url, entry)
                         }
                     }
@@ -227,10 +228,25 @@ object WebDavClient {
      */
     fun parseMultistatus(xml: String, dirUrl: String): List<Entry> {
         if (xml.isBlank()) return emptyList()
-        val doc = runCatching {
-            val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val doc = try {
+            val factory = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = true
+                isExpandEntityReferences = false
+                isXIncludeAware = false
+                runCatching {
+                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                }
+                runCatching {
+                    setFeature("http://xml.org/sax/features/external-general-entities", false)
+                }
+                runCatching {
+                    setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                }
+            }
             factory.newDocumentBuilder().parse(xml.byteInputStream(Charsets.UTF_8))
-        }.getOrNull() ?: return emptyList()
+        } catch (failure: Exception) {
+            throw WebDavException("Could not parse listing: ${failure.message}")
+        }
         val responses = doc.getElementsByTagNameNS("*", "response")
         val out = ArrayList<Entry>(responses.length)
         for (i in 0 until responses.length) {

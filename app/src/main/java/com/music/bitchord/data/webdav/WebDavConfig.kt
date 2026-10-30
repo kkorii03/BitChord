@@ -15,8 +15,20 @@ object WebDavConfig {
     const val BROWSE_ID = "local:webdav"
 
     val audioExtensions = setOf(
-        "mp3", "m4a", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff", "webm",
+        "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff",
+        "webm", "3gp", "3gpp", "dsf", "dff",
     )
+
+    /** Named as audio, but Media3 1.11 has no WMA/ASF or AIFF extractor. */
+    private val unplayableContainers = setOf("wma", "aif", "aiff")
+
+    /**
+     * Containers that can hold video too. A WebDAV listing knows its
+     * `getcontenttype`, so an audio-only `.mp4`/`.webm` is kept by that
+     * answer whereas a file the server calls video is not. Without a content
+     * type the extension is treated the conservative way, as it must be for SMB.
+     */
+    private val videoContainers = setOf("mp4", "webm", "3gp", "3gpp")
 
     fun normalizeUrl(raw: String): String {
         val trimmed = raw.trim().trimEnd('/')
@@ -54,9 +66,12 @@ object WebDavConfig {
         java.net.URI(normalizeUrl(url)).host?.lowercase(Locale.ROOT)
     }.getOrNull()?.takeIf { it.isNotBlank() }
 
-    fun isAudioFile(name: String): Boolean {
+    fun isAudioFile(name: String, contentType: String? = null): Boolean {
         val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return ext in audioExtensions
+        if (ext !in audioExtensions || ext in unplayableContainers) return false
+        if (contentType?.startsWith("video/", ignoreCase = true) == true) return false
+        if (ext !in videoContainers) return true
+        return contentType?.startsWith("audio/", ignoreCase = true) == true
     }
 
     /**

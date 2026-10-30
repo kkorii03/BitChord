@@ -29,6 +29,8 @@ class SmbTest {
         assertEquals("h" to 1445, SmbConfig.splitHostPort("smb://h:1445/x"))
         assertEquals("::1" to 1445, SmbConfig.splitHostPort("[::1]:1445"))
         assertEquals("::1" to 445, SmbConfig.splitHostPort("[::1]"))
+        assertEquals("fe80::1" to 445, SmbConfig.splitHostPort("fe80::1"))
+        assertEquals("fe80::1" to 445, SmbConfig.splitHostPort("smb://FE80::1/Share"))
         assertEquals("nas" to 445, SmbConfig.splitHostPort("nas:99999"))
         assertEquals("nas" to 445, SmbConfig.splitHostPort("nas:abc"))
     }
@@ -45,7 +47,20 @@ class SmbTest {
     fun detectsMediaFiles() {
         assertTrue(SmbConfig.isAudioFile("song.flac"))
         assertTrue(SmbConfig.isAudioFile("Song.MP3"))
+        assertTrue(SmbConfig.isAudioFile("take.WAV"))
+        assertTrue(SmbConfig.isAudioFile("master.dsf"))
+        assertTrue(SmbConfig.isAudioFile("master.dff"))
         assertFalse(SmbConfig.isAudioFile("cover.jpg"))
+        // A share has no Audio/Video split: these are films/music videos far
+        // more often than audio-only files.
+        assertFalse(SmbConfig.isAudioFile("clip.3gp"))
+        assertFalse(SmbConfig.isAudioFile("clip.3gpp"))
+        assertFalse(SmbConfig.isAudioFile("movie.mp4"))
+        assertFalse(SmbConfig.isAudioFile("clip.webm"))
+        // Media3 has no extractor for these either.
+        assertFalse(SmbConfig.isAudioFile("old.wma"))
+        assertFalse(SmbConfig.isAudioFile("mix.aif"))
+        assertFalse(SmbConfig.isAudioFile("master.aiff"))
         assertTrue(SmbConfig.isImageFile("cover.jpg"))
         assertTrue(SmbConfig.isImageFile("folder.PNG"))
         assertFalse(SmbConfig.isImageFile("song.mp3"))
@@ -92,6 +107,10 @@ class SmbTest {
         assertNull(SmbConfig.relativePath("smb://nas/Other/song.mp3", "Music"))
         assertNull(SmbConfig.relativePath("smb://nas/Music", "Music"))
         assertNull(SmbConfig.relativePath("not a url", "Music"))
+        assertEquals(
+            "Album/Track #2?.flac",
+            SmbConfig.relativePath("smb://nas/Music/Album/Track #2?.flac", "Music"),
+        )
     }
 
     @Test

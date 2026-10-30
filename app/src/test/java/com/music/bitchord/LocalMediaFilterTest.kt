@@ -75,6 +75,60 @@ class LocalMediaFilterTest {
     }
 
     @Test
+    fun `containers media3 has no extractor for stay out`() {
+        // Media3 1.11 ships no WMA/ASF or AIFF extractor, so these used to
+        // appear in Local Music and then fail on the first play.
+        for (name in listOf("song.wma", "mix.aif", "master.aiff")) {
+            assertFalse(name, LocalMediaRepository.hasLocalMusicExtension(name, "/storage/emulated/0/Music/$name"))
+            assertFalse(
+                name,
+                LocalMediaRepository.isEligibleLocalMusic(
+                    durationMs = 180_000,
+                    displayName = name,
+                    path = "/storage/emulated/0/Music/$name",
+                ),
+            )
+            assertFalse(name, LocalMediaRepository.isAudioFileName(name))
+        }
+    }
+
+    @Test
+    fun `filter off shows wave and 3gp the music gate hides`() {
+        for (name in listOf("Song.wav", "Clip.3gp", "Clip.3gpp")) {
+            assertTrue(
+                name,
+                LocalMediaRepository.hasLocalMusicExtension(
+                    displayName = name,
+                    path = "/storage/emulated/0/Download/$name",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `filter on hides wave and 3gp even under the music folder`() {
+        for (name in listOf("Song.wav", "Clip.3gp", "Clip.3gpp")) {
+            assertFalse(
+                name,
+                LocalMediaRepository.isEligibleLocalMusic(
+                    durationMs = 180_000,
+                    displayName = name,
+                    path = "/storage/emulated/0/Music/$name",
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `download folder extras use every playable local container`() {
+        for (name in listOf("Song.wav", "Clip.3gp", "Song.mp4", "Song.dsf", "Song.dff")) {
+            assertTrue(name, LocalMediaRepository.isAudioFileName(name))
+        }
+        assertFalse(LocalMediaRepository.isAudioFileName("notes.txt"))
+        assertFalse(LocalMediaRepository.isAudioFileName("clip.mkv"))
+    }
+
+    @Test
     fun `filter off keeps recordings the music gate would drop`() {
         // "Show non-music audio" off means the folder/duration heuristics are
         // skipped; only the container has to be playable. This is the half of

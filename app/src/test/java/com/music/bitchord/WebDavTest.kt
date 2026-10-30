@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.webdav.update
 import coil3.network.NetworkHeaders
 import com.music.bitchord.data.webdav.WebDavAuth
@@ -50,8 +51,31 @@ class WebDavTest {
         assertTrue(WebDavConfig.isAudioFile("song.mp3"))
         assertTrue(WebDavConfig.isAudioFile("Song.FLAC"))
         assertTrue(WebDavConfig.isAudioFile("take.opus"))
+        assertTrue(WebDavConfig.isAudioFile("take.WAV"))
+        assertTrue(WebDavConfig.isAudioFile("master.dsf"))
+        assertTrue(WebDavConfig.isAudioFile("master.dff"))
+        // A bare listing has no content type, so a container that can hold
+        // video is not assumed to be an audio track.
+        assertFalse(WebDavConfig.isAudioFile("clip.3gp"))
+        assertFalse(WebDavConfig.isAudioFile("clip.3gpp"))
+        assertFalse(WebDavConfig.isAudioFile("movie.mp4"))
+        assertFalse(WebDavConfig.isAudioFile("clip.webm"))
+        // Media3 has no extractor for these.
+        assertFalse(WebDavConfig.isAudioFile("old.wma"))
+        assertFalse(WebDavConfig.isAudioFile("mix.aif"))
+        assertFalse(WebDavConfig.isAudioFile("master.aiff"))
         assertFalse(WebDavConfig.isAudioFile("cover.jpg"))
         assertFalse(WebDavConfig.isAudioFile("notes.txt"))
+    }
+
+    @Test
+    fun `content type decides ambiguous containers`() {
+        assertTrue(WebDavConfig.isAudioFile("album.mp4", "audio/mp4"))
+        assertFalse(WebDavConfig.isAudioFile("movie.mp4", "video/mp4"))
+        assertTrue(WebDavConfig.isAudioFile("take.webm", "audio/webm"))
+        assertFalse(WebDavConfig.isAudioFile("concert.webm", "video/webm"))
+        // A server that calls a normal audio file video is believed.
+        assertFalse(WebDavConfig.isAudioFile("song.mp3", "video/mp4"))
     }
 
     @Test
@@ -347,6 +371,57 @@ class WebDavTest {
         }
     }
 
+    @Test
+    fun `listLibrary enforces maxFiles inside one large directory`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(
+                MockResponse().setResponseCode(207).setBody(
+                    multistatus(
+                        file("Music/a.mp3", "audio/mpeg"),
+                        file("Music/b.mp3", "audio/mpeg"),
+                        file("Music/cover.jpg", "image/jpeg"),
+                        file("Music/c.mp3", "audio/mpeg"),
+                    ),
+                ),
+            )
+            val listing = WebDavClient.listLibrary(
+                server.url("/Music").toString(),
+                "",
+                "",
+                maxFiles = 2,
+            ).getOrThrow()
+            assertEquals(2, listing.audio.size)
+            // Reaching the audio cap must not skip the cover filed beside the
+            // tracks that were collected.
+            assertEquals("cover.jpg", listing.images.single().displayName)
+        }
+    }
+
+    @Test
+    fun `listLibrary leaves video files out of the audio rows`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(
+                MockResponse().setResponseCode(207).setBody(
+                    multistatus(
+                        file("Music/song.flac", "audio/flac"),
+                        file("Music/movie.mp4", "video/mp4"),
+                        file("Music/clip.3gp", "video/3gpp"),
+                        file("Music/audio-only.mp4", "audio/mp4"),
+                        file("Music/cover.jpg", "image/jpeg"),
+                    ),
+                ),
+            )
+            val listing = WebDavClient.listLibrary(server.url("/Music").toString(), "", "").getOrThrow()
+            assertEquals(
+                listOf("song.flac", "audio-only.mp4"),
+                listing.audio.map { it.displayName },
+            )
+            assertEquals("cover.jpg", listing.images.single().displayName)
+        }
+    }
+
     private fun multistatus(vararg rows: String): String = """<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:">
 ${rows.joinToString("\n")}
@@ -380,6 +455,50 @@ ${rows.joinToString("\n")}
             server.enqueue(MockResponse().setResponseCode(405))
             WebDavClient.ensureCollection(dir, "", "").getOrThrow()
             assertEquals("MKCOL", server.takeRequest().method)
+        }
+    }
+
+    @Test
+    fun `malformed multistatus is a failure, not an empty library`() {
+        val failure = runCatching {
+            WebDavClient.parseMultistatus("<d:multistatus><broken", "https://cloud.example.com/Music")
+        }
+        assertTrue(failure.isFailure)
+    }
+
+    @Test
+    fun `multistatus refuses doctype and external entities`() {
+        val xml = """<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE d:multistatus [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/Music/secret.mp3</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>&xxe;</d:displayname>
+      <d:resourcetype/>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>
+"""
+        val failure = runCatching {
+            WebDavClient.parseMultistatus(xml, "https://cloud.example.com/Music")
+        }
+        assertTrue(failure.isFailure)
+    }
+
+    @Test
+    fun `repository surfaces a listing failure instead of an empty library`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(500))
+            val previous = AppSettings.webdavUrl.value
+            AppSettings.webdavUrl.value = server.url("/Music").toString().trimEnd('/')
+            try {
+                val result = runCatching { WebDavRepository.getSongs() }
+                assertTrue(result.isFailure)
+            } finally {
+                AppSettings.webdavUrl.value = previous
+            }
         }
     }
 }

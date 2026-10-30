@@ -29,10 +29,16 @@ object LocalMediaRepository {
     // `mp4` only ever reaches this list as an audio row — MediaStore files a
     // video .mp4 under Video, not Audio — so it is the audio-only MP4s Dolby
     // and Apple music downloads come as (AC-4, E-AC-3, ALAC). `dsf`/`dff` are
-    // DSD, which DsdExtractor plays.
+    // DSD, which DsdExtractor plays. WMA/ASF and AIFF are deliberately absent:
+    // Media3 1.11's extractor set (Mp4, Matroska, MP3, ADTS, Ogg, AMR, FLAC,
+    // WAV, AC-3/AC-4, AVI) has neither, so listing them only produced rows
+    // that failed to open.
     private val localMusicExtensions = setOf(
         "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "webm", "dsf", "dff",
+        "wav", "3gp", "3gpp",
     )
+
+    private val nonMusicExtensions = setOf("wav", "3gp", "3gpp")
 
     private val nonMusicPathSegments = listOf(
         "/alarms/",
@@ -202,6 +208,7 @@ object LocalMediaRepository {
      */
     suspend fun getLocalMusic(context: Context): List<Song> = withContext(Dispatchers.IO) {
         if (!hasStoragePermission(context)) {
+            Log.w(TAG, "Local music read skipped: audio storage permission not granted")
             return@withContext extraLocalMusic?.invoke(context, emptyList()) ?: emptyList()
         }
 
@@ -232,6 +239,10 @@ object LocalMediaRepository {
         )
 
         val filterNonMusic = AppSettings.filterNonMusicAudio.value
+        val folderUri = AppSettings.localMusicFolderUri.value
+        if (folderUri.isNotBlank() && selectedFolder(folderUri) == null) {
+            Log.w(TAG, "Local music folder URI could not be read; the library will read as empty")
+        }
         val selection = if (filterNonMusic) {
             buildString {
                 append("${MediaStore.Audio.Media.IS_MUSIC} != 0")
@@ -304,7 +315,7 @@ object LocalMediaRepository {
                     } else if (!hasLocalMusicExtension(displayName, path)) {
                         continue
                     }
-                    if (!isInSelectedFolder(path, AppSettings.localMusicFolderUri.value)) continue
+                    if (!isInSelectedFolder(path, folderUri)) continue
 
                     val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
                     val title = rawTitle.cleanTag()?.removeAudioExtension()
@@ -385,6 +396,7 @@ object LocalMediaRepository {
     internal fun isEligibleLocalMusic(durationMs: Long, displayName: String, path: String?): Boolean {
         if (durationMs in 1 until MIN_LOCAL_MUSIC_DURATION_MS) return false
         if (!hasLocalMusicExtension(displayName, path)) return false
+        if (localExtensionOf(displayName, path) in nonMusicExtensions) return false
 
         val normalizedPath = path
             ?.replace('\\', '/')
@@ -401,11 +413,13 @@ object LocalMediaRepository {
      * heuristics are what that setting turns off, not the ability to read the
      * file.
      */
-    internal fun hasLocalMusicExtension(displayName: String, path: String?): Boolean {
+    internal fun hasLocalMusicExtension(displayName: String, path: String?): Boolean =
+        localExtensionOf(displayName, path) in localMusicExtensions
+
+    private fun localExtensionOf(displayName: String, path: String?): String {
         val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
             ?: displayName
-        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return extension in localMusicExtensions
+        return fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
     }
 
     private fun String.removeAudioExtension(): String {
@@ -417,14 +431,7 @@ object LocalMediaRepository {
         }
     }
 
-    private fun isAudioFileName(name: String): Boolean {
-        val lower = name.lowercase(Locale.ROOT)
-        return lower.endsWith(".mp3") || lower.endsWith(".m4a") ||
-            lower.endsWith(".flac") || lower.endsWith(".wav") ||
-            lower.endsWith(".ogg") || lower.endsWith(".opus") ||
-            lower.endsWith(".aac") || lower.endsWith(".webm") ||
-            lower.endsWith(".3gp")
-    }
+    internal fun isAudioFileName(name: String): Boolean = hasLocalMusicExtension(name, null)
 
     /**
      * A song built from a file in the downloads folder the app has no record of
