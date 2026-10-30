@@ -201,15 +201,20 @@ class PartySync(
                 .map(::partyReconcileKey)
                 .distinctUntilChanged()
                 .collect { key ->
-                    if (key.code != lastPartyCode) {
-                        val wasInParty = lastPartyCode != null
-                        val nowInParty = key.code != null
-                        lastPartyCode = key.code
-                        if (!wasInParty && nowInParty) {
+                    when (partyMembershipTransition(lastPartyCode, key.code)) {
+                        PartyMembershipTransition.ENTERED -> {
+                            lastPartyCode = key.code
                             onEnteredParty()
-                        } else if (wasInParty && !nowInParty) {
+                        }
+                        PartyMembershipTransition.LEFT -> {
+                            lastPartyCode = key.code
                             onLeftParty()
                         }
+                        PartyMembershipTransition.SWITCHED -> {
+                            lastPartyCode = key.code
+                            onSwitchedParty()
+                        }
+                        PartyMembershipTransition.NONE -> Unit
                     }
                     // Every control this device sent has come back around, so
                     // the party now describes the world the user made — or
@@ -970,6 +975,24 @@ class PartySync(
         PartyPersonalQueueStash.stashFromPlayer(exo)
     }
 
+    /**
+     * This device moved from one invite to another without ever being outside
+     * a party.
+     *
+     * [onLeftParty] never runs on this path — there is no moment at which the
+     * code is null — so without this the deferred-play and queue-drag flags set
+     * against the old party would survive into the new one: a pending resume
+     * can start the player on its own, and a drag that never saw its release
+     * parks every later publish. The personal queue is deliberately *not*
+     * re-stashed here: the stash still holds the listener's own queue from
+     * before the first party, while the player currently holds the old party's
+     * queue.
+     */
+    private fun onSwitchedParty() {
+        Log.i(TAG, "switched parties, dropping state tied to the old one")
+        resetTransientState()
+    }
+
     private fun onLeftParty() {
         Log.i(TAG, "left party, restoring personal queue if stashed")
         resetTransientState()
@@ -1211,6 +1234,31 @@ internal data class PartyReconcileKey(
     val clockSynced: Boolean,
     val connection: ListenTogether.Connection,
 )
+
+/**
+ * How this device's party membership changed between two states.
+ *
+ * [SWITCHED] is its own case rather than a pair of "left and entered": a
+ * party-to-party switch never passes through a null code, so treating only the
+ * null transitions as membership changes left everything reset by [onLeftParty]
+ * alive across the switch. See [PartySync.onSwitchedParty].
+ */
+internal enum class PartyMembershipTransition {
+    NONE,
+    ENTERED,
+    LEFT,
+    SWITCHED,
+}
+
+internal fun partyMembershipTransition(
+    previousCode: String?,
+    newCode: String?,
+): PartyMembershipTransition = when {
+    previousCode == newCode -> PartyMembershipTransition.NONE
+    previousCode == null -> PartyMembershipTransition.ENTERED
+    newCode == null -> PartyMembershipTransition.LEFT
+    else -> PartyMembershipTransition.SWITCHED
+}
 
 internal fun partyReconcileKey(state: ListenTogether.State): PartyReconcileKey =
     PartyReconcileKey(

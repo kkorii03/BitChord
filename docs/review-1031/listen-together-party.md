@@ -18,6 +18,7 @@
 - `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt`
 - `app/src/main/java/com/music/bitchord/ui/screens/ListenTogetherScreen.kt`
 - 새 테스트 3개: `PartyReconcileKeyTest`, `PartyServerPreferenceTest`, `PartyDeferredPlayTest`
+- 2차 추가: `PartyMembershipTransitionTest` (파티 간 전환 회귀)
 
 ---
 
@@ -126,6 +127,37 @@
   기존 “예”였던 (true,true)는 유지되고, 파티 밖 (false,true)만 막는다.
 - 테스트: `PartyDeferredPlayTest` (3개).
 
+### M4b (수정, 2차) 파티에서 파티로 갈아타면 이전 파티의 재생 예약·드래그 상태가 살아남는다
+
+- 위치: `app/src/main/java/com/music/bitchord/playback/PartySync.kt:204`(전환 분기),
+  `:991`(`onSwitchedParty`), `:1253`(`partyMembershipTransition`), `switchPartyWithRecovery`
+  (`ListenTogether.kt:1120`이 code를 old → new로 한 번에 커밋)
+- 증거:
+  - 기존 분기는 `wasInParty = lastPartyCode != null`, `nowInParty = key.code != null`만 봤다.
+    파티 간 전환은 두 값이 모두 true라 어느 분기에도 걸리지 않았고, `resetTransientState()`는
+    `onLeftParty()`에서만 호출됐다.
+  - 그 결과 `deferredPlayPending`(1.8초 뒤 `play()`를 호출하는 예약), `queueDragActive`,
+    `queueDragDirty`, `focusLost`, `alignedSeq`, await seq가 새 파티로 그대로 넘어갔다.
+    `resetTransientState`의 주석은 "leave, switch, teardown"에서 지운다고 이미 약속하고 있었다.
+  - `queueDragActive`가 남으면 새 파티의 모든 `onLocalIntent`가 `queueDragDirty`만 세우고
+    `publish()`를 하지 않는다. 즉 새 파티에서 이 기기의 큐/트랙/재생 변경이 전혀 전달되지 않는다.
+  - 대기 중이던 deferred play가 남으면 새 파티의 트랙을 로드하기 전에 플레이어를 임의로 시작할 수 있다.
+- 사용자 영향: 초대 링크로 다른 파티로 갈아탄 뒤 조작이 상대에게 반영되지 않거나, 누르지 않은 재생이 시작됨.
+- 빈도: 파티 중 다른 초대를 여는 모든 전환. 드래그 중 전환은 드물지만 deferred play 중 전환은 흔하다.
+- 수정 전/후 전환 판정:
+
+  | 이전 code | 새 code | 기존 분기 | 새 분기 | 상태 초기화 |
+  |---|---|---|---|---|
+  | null | A | enter | ENTERED | 스태시만 |
+  | A | null | leave | LEFT | 예(`onLeftParty`) |
+  | A | A | 없음 | NONE | 아니오(정상) |
+  | A | B | **없음(결함)** | **SWITCHED** | **예(`onSwitchedParty`)** |
+
+  기존에 enter/leave였던 두 경우는 그대로 유지되고, A→B만 새로 초기화된다. 같은 code의
+  상태 프레임은 여전히 아무것도 지우지 않는다. 개인 큐 스태시는 전환 시 **다시 저장하지 않는다**:
+  플레이어에는 이전 파티의 큐가 들어 있고, 스태시에는 첫 파티 이전의 개인 큐가 남아 있어야 한다.
+- 테스트: `PartyMembershipTransitionTest` (5개) — 전환/입장/이탈/동일 code 및 A→B가 NONE이 아님을 고정.
+
 ---
 
 ## 2. 남긴 결함 (이번에 고치지 못한 HIGH/MEDIUM)
@@ -201,6 +233,7 @@
 | 사용자 지정 서버 다운 | preview는 유휴 폴백 서버, confirm은 `resolveSwitchTarget`이 구성된 custom 선택 | preview와 join 대상이 달라질 수 있음(기존 테스트 invariant 11이 custom 우선을 고정) | LOW로 문서화만 |
 | 파티 생성 직후(이미 재생 중) | `welcome`→connection LIVE → reconcile → `seedEmptyParty` | 이제 즉시 시드됨 | H1 수정 |
 | 파티 떠남 | `leaveParty` → `onLeftParty` → stash 복원 | deferred/drag 상태를 먼저 지워 개인 큐 오재생 방지 | M4 수정 |
+| 파티→파티 전환 | `switchPartyWithRecovery` → code A→B → `PartyMembershipTransition.SWITCHED` → `onSwitchedParty` | 이전 파티의 deferred/drag/정렬 상태를 지우고 새 파티를 reconcile. 개인 큐 스태시는 덮어쓰지 않음 | M4b 수정 |
 
 ## 4. 사용 성적표 숫자와 이 영역의 관계
 
@@ -240,7 +273,19 @@
   → BUILD SUCCESSFUL.
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q`
   → BUILD SUCCESSFUL (아래 최종 확인).
+- 2차 회귀 검증 (이번 차수):
+  - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.playback.PartyMembershipTransitionTest' --console=plain -q`
+    → BUILD SUCCESSFUL (5개).
+  - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.playback.Party*' --console=plain -q`
+    → BUILD SUCCESSFUL (기존 파티 테스트 회귀 없음).
+  - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q`
+    → BUILD SUCCESSFUL.
 - 새 테스트 이름:
+  - `PartyMembershipTransitionTest.switching from one party to another is not nothing`
+  - `PartyMembershipTransitionTest.joining from outside is entering even when the code reuses a letter`
+  - `PartyMembershipTransitionTest.leaving to nothing is leaving`
+  - `PartyMembershipTransitionTest.the same code on both sides is no membership change`
+  - `PartyMembershipTransitionTest.every non-null to non-null code change resets the old party's state`
   - `PartyReconcileKeyTest.socket becoming live raises a reconcile for an otherwise unchanged party`
   - `PartyReconcileKeyTest.an identical state still produces an identical key`
   - `PartyReconcileKeyTest.the connection is carried alongside the sequences`
@@ -263,3 +308,54 @@
 - L3: `resolveSwitchTarget`은 사용자 지정 서버가 설정돼 있으면 idle 폴백이 기본 서버여도 custom을 고른다
   (기존 테스트 invariant 11이 이 동작을 고정). 사용자 지정 서버가 죽어 있고 preview가 기본 서버로 폴백한
   경우 confirm이 죽은 custom으로 가 실패할 수 있다. 정책 변경이라 손대지 않았다.
+
+---
+
+## 8. 2차 엄격 검토 (파티 전환 회귀)
+
+이번 차수는 지적된 M4 회귀(A→B 전환에서 이전 파티 상태 잔존)를 코드로 재확인하고 고쳤다.
+같은 영역의 진입점을 다시 따라가며 새 HIGH/MEDIUM이 있는지 확인했고, 추가로 발견한 것은
+기존 M5/M6/M7/H2(아래 2절)뿐이었다. 이번에 새로 남긴 HIGH/MEDIUM은 없다.
+
+### 8.1 상황별 재확인
+
+| 상황 | 진입점 → 처리 | 결과 | 판정 |
+|---|---|---|---|
+| 커버 영상·비디오 노래 | `publish` → `PartyTrack` → 수신 `toSong` | 같은 id를 오디오로 재생, 영상 표시 소실 | M5(남김) |
+| 셔플 | `toggleShuffleFromSession` → 로컬 토글 | 다음 reconcile이 서버 순서로 되돌림 | M6(남김) |
+| 앱 재시작(프로세스 사망) | `ListenTogether.init` | code/token 삭제, stale slot 반납, 파티 종료 | H2(남김) |
+| 화면 꺼짐 | 재생 중 700ms ticker + ping 15s/report 10s | 동기화 지속, 새 폴링 없음 | 정상 |
+| 백그라운드 | `setScreenActive(false)`는 health poll만 중지 | 재생 중 파티 유지 | 정상 |
+| 프록시 켬 | `PartyTrack`은 videoId만 공유 | 로컬 resolver/프록시가 스트림 담당 | 정상 |
+| 다운로드된 곡 | `publish`는 videoId만, 로컬 URI 제외 | 참가자는 같은 id 스트리밍 | 정상 |
+| 느린/끊긴 망 | `runSocketLoop` 백오프, welcome 재적용 | 재연결, 끊긴 동안 컨트롤은 실패로 기록 | M3로 개선 |
+| Android 14+ | 포그라운드 재생 서비스에 얹힘 | 재생 중 유지, 재생 없으면 H2 위험 | H2와 동일 |
+| **파티 A → 파티 B** | `switchPartyWithRecovery` → code A→B → `SWITCHED` → `onSwitchedParty` → `resetTransientState` | **이전 deferred/drag/정렬/focus 상태 제거 후 새 파티 reconcile** | **M4b 수정** |
+| 파티 A → 파티 B (같은 code) | code 변화 없음 → `NONE` | 상태 유지(의도) | 정상 |
+| 파티 떠남 | `leaveParty` → code null → `LEFT` → `onLeftParty` | 상태 초기화 + 개인 큐 복원 | 정상 |
+
+### 8.2 재검토했지만 고치지 않은 것
+
+- H2: 프로세스 사망 시 멤버십 복구는 여전히 설계상 미지원. 토큰 유지 + `onTaskRemoved` 구분 +
+  서버 grace 정책이 함께 필요해 범위 밖. 이번 변경은 그 경로를 건드리지 않는다.
+- M5: `PartyTrack` wire 타입에 영상/영상라디오 필드가 없어 수신 측이 정보를 잃는다. 서버 계약 변경 필요.
+- M6: 파티 중 셔플은 서버에 액션이 없어 다음 reconcile이 되돌린다. 사용자-visible 정책 결정 필요.
+- M7: `load()` 코루틴 예외 시 `loadingVideoId`가 고정되어 같은 트랙을 재시도하지 않는다.
+  `Player` 주입이 필요한 실패 재현 테스트를 먼저 만들어야 해서 이번에도 남겼다.
+  (`PartySync.kt:721` 진입, `:748` 해제, 이후 예외 경로)
+
+### 8.3 성적표 숫자와 이번 수정의 관계
+
+- **다음 곡 싱크 준비 29% / 자동 재생 보충 성공 24%**: 전환 직후 이전 파티의 `queueDragActive`가
+  남아 있으면 새 파티에서 `publish`가 아예 호출되지 않아 큐/자동재생 보충이 서버에 도달하지 못한다.
+  M4b는 이 침묵 경로를 제거한다. 다만 큐 프레임 유실 자체는 여전히 heartbeat `syncQueue`에 의존한다(M3).
+- **사용자 조작 없는 백그라운드 시작 11회**: 전환 시 남은 deferred play가 새 파티에서 의도치 않은
+  재생을 만들 수 있었다. 이제 전환에서 취소된다. 프로세스 사망 후 시작은 H2로 여전히 불가능하다.
+- **무손실 4% / 다운로드·고음질 실패 140회**: 파티 wire는 품질을 나르지 않고(설계), 파티 중
+  보관함 스냅샷 저장을 건너뛰므로 이번 수정과 직접 인과가 없다. HQ/다운로드 영역에서 다뤄야 한다.
+
+### 8.4 배터리
+
+- 새 주기 작업/타이머/delay 루프를 추가하지 않았다. `partyMembershipTransition`은 상태 프레임마다
+  도는 순수 문자열 비교이고, `SWITCHED`일 때만 기존 `resetTransientState()`를 호출한다.
+- 기존 700ms ticker, ping 15s, report 10s, health poll 조건은 그대로다.
