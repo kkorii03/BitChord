@@ -34,6 +34,16 @@ data class Song(
     /** Browse ids lifted from the row, used by the long-press actions. */
     val artistId: String? = null,
     /**
+     * The uploader's own channel id, as the playback/watch response states it.
+     *
+     * A youtube.com row does not carry the owner id, so video radio used to
+     * search the uploader *name* to find more of the same channel — which can
+     * open a different person who happens to share that name. The player's
+     * `videoDetails.channelId` is the upload's real owner, so it is kept on the
+     * row and used directly for channel top-ups.
+     */
+    val channelId: String? = null,
+    /**
      * Every credited artist, each with their own channel, where the row said so.
      *
      * [artistId] is the lead's and nothing else, which is why a collaboration

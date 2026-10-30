@@ -4,11 +4,13 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.YouTubeArtistResolver
 import com.music.bitchord.data.YouTubeFallback
 import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.YouTubeWebParser
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.JsonObject
 
 /** Rows from one video-radio fetch, each tagged with the source that offered it. */
 data class VideoRadioSourceRows(
@@ -35,60 +37,101 @@ object VideoRadioSources {
     suspend fun mix(seedVideoId: String): List<Song> {
         if (seedVideoId.isBlank()) return emptyList()
         cached(mixCache, seedVideoId)?.let { return it }
-        val songs = safe("video-radio mix") {
-            YouTubeFallback.playlistPage("RD$seedVideoId").songs
-        }.orEmpty()
-        if (songs.isNotEmpty()) store(mixCache, seedVideoId, songs)
+        val songs = safe("video-radio mix") { mixLookup(seedVideoId) }.orEmpty()
+        if (songs.isNotEmpty()) {
+            store(mixCache, seedVideoId, songs)
+        } else {
+            // Not fatal: the channel below is the other leg of the same
+            // top-up, and this line is what makes a silent RD failure visible.
+            Log.w(TAG, "video-radio mix empty: RD$seedVideoId")
+        }
         return songs
     }
 
     /**
      * The uploader channel's videos.
      *
-     * The channel id is resolved from its name because a youtube.com row does
-     * not carry the owner id. The videos tab is asked first; a channel whose
-     * page ignores that params still answers its home rows, so that is the
-     * single fallback. One page is enough for a queue top-up.
+     * [channelId] is the `UC…` id the playback/watch response stated. When it
+     * is present the uploader name is never searched, because a name is not an
+     * identity and another channel with the same name would answer. The name
+     * remains only as the last resort for an older row that never recorded the
+     * id; that fallback is logged so the missing id is not silent.
+     *
+     * The videos tab is asked first; a channel whose page ignores that params
+     * still answers its home rows, so that is the single fallback. One page is
+     * enough for a queue top-up.
      */
-    suspend fun channelSongs(channelName: String): List<Song> {
+    suspend fun channelSongs(channelName: String, channelId: String? = null): List<Song> {
         val name = channelName.trim()
-        if (name.isEmpty()) return emptyList()
-        cached(channelCache, name)?.let { return it }
-        val channelId = safe("video-radio channel id") {
-            YouTubeArtistResolver.resolve(name)?.browseId
-        } ?: return emptyList()
-        val songs = safe("video-radio channel") {
-            val videosTab = Innertube.browseYouTube(channelId, params = CHANNEL_VIDEOS_PARAMS)
-            YouTubeWebParser.parsePlaylist(videosTab).songs.ifEmpty {
-                YouTubeWebParser.parsePlaylist(Innertube.browseYouTube(channelId)).songs
+        val explicitId = channelId?.trim()?.takeIf { it.isNotEmpty() }
+        if (explicitId == null && name.isEmpty()) return emptyList()
+        val id = explicitId ?: run {
+            // A row without the owner id still has to play. Say so, because
+            // this is the one path where a same-named channel can be opened.
+            Log.w(TAG, "video-radio channel id absent; searching uploader name=$name")
+            safe("video-radio channel id") {
+                artistResolver(name)?.browseId?.takeIf { it.isNotBlank() }
             }
+        }
+        if (id == null) {
+            Log.w(TAG, "video-radio channel id missing: name=${name.ifEmpty { "-" }}")
+            return emptyList()
+        }
+        val key = "id:$id"
+        cached(channelCache, key)?.let { return it }
+        val songs = safe("video-radio channel") {
+            val videosTab = channelBrowse(id, CHANNEL_VIDEOS_PARAMS)
+            val fromVideosTab = channelParser(videosTab)
+            fromVideosTab.ifEmpty { channelParser(channelBrowse(id, null)) }
         }.orEmpty()
-        if (songs.isNotEmpty()) store(channelCache, name, songs)
+        if (songs.isNotEmpty()) {
+            store(channelCache, key, songs)
+        } else {
+            Log.w(TAG, "video-radio channel empty: id=$id name=$name")
+        }
         return songs
     }
 
     /**
      * Both sources for one top-up, fetched together so the two requests do not
      * add their latencies, then de-duplicated in source order (mix first).
+     *
+     * The channel id rides on the seed [Song] from the player response; when it
+     * is missing, this one lookup asks the player before falling back to the
+     * uploader name inside [channelSongs].
      */
-    suspend fun collect(seedVideoId: String, channelName: String): VideoRadioSourceRows =
-        coroutineScope {
-            val mixRows = async { mix(seedVideoId) }
-            val channelRows = async { channelSongs(channelName) }
-            val songs = LinkedHashMap<String, Song>()
-            val sources = HashMap<String, VideoSource>()
-            mixRows.await().forEach { song ->
-                if (song.videoId.isNotBlank() && songs.putIfAbsent(song.videoId, song) == null) {
-                    sources[song.videoId] = VideoSource.MIX
-                }
-            }
-            channelRows.await().forEach { song ->
-                if (song.videoId.isNotBlank() && songs.putIfAbsent(song.videoId, song) == null) {
-                    sources[song.videoId] = VideoSource.CHANNEL
-                }
-            }
-            VideoRadioSourceRows(songs.values.toList(), sources)
+    suspend fun collect(
+        seedVideoId: String,
+        channelName: String,
+        channelId: String? = null,
+    ): VideoRadioSourceRows = coroutineScope {
+        val mixRows = async { mix(seedVideoId) }
+        val channelRows = async {
+            channelSongs(channelName, resolveChannelId(seedVideoId, channelId))
         }
+        val songs = LinkedHashMap<String, Song>()
+        val sources = HashMap<String, VideoSource>()
+        mixRows.await().forEach { song ->
+            if (song.videoId.isNotBlank() && songs.putIfAbsent(song.videoId, song) == null) {
+                sources[song.videoId] = VideoSource.MIX
+            }
+        }
+        channelRows.await().forEach { song ->
+            if (song.videoId.isNotBlank() && songs.putIfAbsent(song.videoId, song) == null) {
+                sources[song.videoId] = VideoSource.CHANNEL
+            }
+        }
+        VideoRadioSourceRows(songs.values.toList(), sources)
+    }
+
+    /** The seed's own channel id, from the row or else from its player response. */
+    private suspend fun resolveChannelId(seedVideoId: String, channelId: String?): String? {
+        channelId?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        if (seedVideoId.isBlank()) return null
+        return safe("video-radio channel id from player") {
+            videoChannelLookup(seedVideoId)?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
 
     private suspend fun <T> safe(label: String, block: suspend () -> T): T? =
         try {
@@ -123,6 +166,45 @@ object VideoRadioSources {
 
     private val mixCache = SongCache(CACHE_ENTRIES)
     private val channelCache = SongCache(CACHE_ENTRIES)
+
+    /** Replaceable so the id-before-name rule can be exercised without a network. */
+    @Volatile
+    internal var mixLookup: suspend (String) -> List<Song> = { seed ->
+        YouTubeFallback.playlistPage("RD$seed").songs
+    }
+
+    @Volatile
+    internal var videoChannelLookup: suspend (String) -> String? = { videoId ->
+        InnertubeParser.videoChannelId(Innertube.playerResponse(videoId))
+    }
+
+    @Volatile
+    internal var artistResolver: suspend (String) -> YouTubeArtistResolver.Hit? = {
+        YouTubeArtistResolver.resolve(it)
+    }
+
+    @Volatile
+    internal var channelBrowse: suspend (String, String?) -> JsonObject = { id, params ->
+        Innertube.browseYouTube(id, params)
+    }
+
+    @Volatile
+    internal var channelParser: (JsonObject) -> List<Song> = { root ->
+        YouTubeWebParser.parsePlaylist(root).songs
+    }
+
+    @Synchronized
+    internal fun resetForTest() {
+        synchronized(mixCache) { mixCache.clear() }
+        synchronized(channelCache) { channelCache.clear() }
+        mixLookup = { seed -> YouTubeFallback.playlistPage("RD$seed").songs }
+        videoChannelLookup = { videoId ->
+            InnertubeParser.videoChannelId(Innertube.playerResponse(videoId))
+        }
+        artistResolver = { YouTubeArtistResolver.resolve(it) }
+        channelBrowse = { id, params -> Innertube.browseYouTube(id, params) }
+        channelParser = { root -> YouTubeWebParser.parsePlaylist(root).songs }
+    }
 
     /** Channel videos tab; ignored by pages that only answer their home rows. */
     private const val CHANNEL_VIDEOS_PARAMS = "EgZ2aWRlb3PyBgQKAjoA"

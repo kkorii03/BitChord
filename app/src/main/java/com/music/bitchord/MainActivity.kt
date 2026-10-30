@@ -2797,6 +2797,7 @@ private fun BitChordApp(
         val extra = links?.takeIf { it.videoId == current.videoId } ?: return@let current
         current.copy(
             artistId = current.artistId ?: extra.artistId,
+            channelId = current.channelId ?: extra.channelId,
             albumId = current.albumId ?: extra.albumId,
             albumName = current.albumName ?: extra.albumName,
         )
@@ -4834,6 +4835,7 @@ private fun BitChordApp(
             val song = menuLinks?.takeIf { needsLinks && it.videoId == heldSong.videoId }?.let { extra ->
                 heldSong.copy(
                     artistId = heldSong.artistId ?: extra.artistId,
+                    channelId = heldSong.channelId ?: extra.channelId,
                     albumId = heldSong.albumId ?: extra.albumId,
                     albumName = heldSong.albumName ?: extra.albumName,
                 )

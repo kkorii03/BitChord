@@ -269,6 +269,7 @@ internal object YouTubeWebParser {
             artist = item.subtitle,
             thumbnailUrl = item.thumbnailUrl,
             durationText = duration,
+            channelId = lockup.bylineChannelId(),
             isVideo = lockupIsVideo(lockup),
         )
     }
@@ -283,6 +284,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = item.thumbnailUrl,
             durationText = video.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
+            channelId = video.bylineChannelId(),
             isVideo = video.isVideoRow(),
         )
     }
@@ -574,9 +576,31 @@ internal object YouTubeWebParser {
             thumbnailUrl = rowThumbnail(panel, videoId),
             durationText = panel.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
+            channelId = panel.bylineChannelId(),
             setVideoId = panel.string("playlistSetVideoId") ?: panel.string("setVideoId"),
             isVideo = panel.isVideoRow(),
         )
+    }
+
+    /**
+     * The uploader channel id a youtube.com row links to.
+     *
+     * The web renderers do not expose an owner id as a field; it is only the
+     * first browse endpoint on the byline. Reading it here keeps video radio
+     * from searching the uploader name and opening a same-named channel.
+     */
+    private fun JsonObject.bylineChannelId(): String? {
+        val runs = findObject("longBylineText")?.findArray("runs")
+            ?: findObject("shortBylineText")?.findArray("runs")
+            ?: findObject("ownerText")?.findArray("runs")
+            ?: return null
+        return runs.firstNotNullOfOrNull { run ->
+            (run as? JsonObject)
+                ?.findObject("navigationEndpoint")
+                ?.findObject("browseEndpoint")
+                ?.string("browseId")
+                ?.takeIf { it.isNotBlank() }
+        }
     }
 
     /**

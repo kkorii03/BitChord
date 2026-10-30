@@ -157,6 +157,12 @@ suspend fun loadAutoplayTracks(
             seedVideoId = seed,
             channelName = seedSong.originalArtist?.takeIf { it.isNotBlank() }
                 ?: seedSong.artist,
+            // The uploader's real channel, recorded from the player response.
+            // Without it the fallback below searches the name and can open a
+            // different channel that happens to share it. A source-backed row
+            // is seeded by a *different* YouTube id, so its channel id cannot
+            // describe this upload.
+            channelId = seedSong.channelId.takeIf { seedSong.videoId == seed },
         )
         var sourceSongs = sourceRows.songs
         var sourceMap = sourceRows.sources.toMutableMap()

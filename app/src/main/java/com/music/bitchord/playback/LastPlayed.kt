@@ -183,6 +183,8 @@ object LastPlayed {
         val sourceId: String? = null,
         // A cover shown as its song (see CoverTitles), kept whole across a restart.
         val channelId: String? = null,
+        /** The uploader channel id from the player response, used by video radio. */
+        val uploaderChannelId: String? = null,
         val originalTitle: String? = null,
         val originalArtist: String? = null,
         val coverSinger: String? = null,
@@ -217,6 +219,7 @@ object LastPlayed {
                 localUri = local,
                 localPath = path,
                 artistId = channelId,
+                channelId = uploaderChannelId,
                 originalTitle = originalTitle,
                 originalArtist = originalArtist,
                 coverSinger = coverSinger,
@@ -246,6 +249,7 @@ object LastPlayed {
                 sourceType = song.playbackSourceType?.name,
                 sourceId = song.playbackSourceId,
                 channelId = song.artistId,
+                uploaderChannelId = song.channelId,
                 originalTitle = song.originalTitle,
                 originalArtist = song.originalArtist,
                 coverSinger = song.coverSinger,
