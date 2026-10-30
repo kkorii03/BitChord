@@ -18,6 +18,43 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `a korean ownership claim is a definitive verdict`() {
+        val message = "SME님이 소유권 주장을 제기한 콘텐츠로 인해 차단되었습니다"
+        assertTrue(UnplayableReason.isDefinitive(message))
+        assertTrue(UnplayableReason.isDefinitelyGone(message))
+        assertTrue(UnplayableReason.isTrackSpecific(message))
+    }
+
+    @Test
+    fun `an english copyright grounds block is a definitive verdict`() {
+        val message = "This video contains content from SME, who has blocked it on copyright grounds"
+        assertTrue(UnplayableReason.isDefinitive(message))
+        assertTrue(UnplayableReason.isDefinitelyGone(message))
+        assertTrue(UnplayableReason.isTrackSpecific(message))
+    }
+
+    @Test
+    fun `a copyright block scoped to a country is not a gone recording`() {
+        val english =
+            "This video contains content from SME, who has blocked it in your country on copyright grounds"
+        val korean = "이 국가에서는 저작권 문제로 차단되었습니다"
+        assertTrue(UnplayableReason.isDefinitive(english))
+        assertFalse(UnplayableReason.isDefinitelyGone(english))
+        assertTrue(UnplayableReason.isDefinitive(korean))
+        assertFalse(UnplayableReason.isDefinitelyGone(korean))
+    }
+
+    @Test
+    fun `a bot check or a region block is not a gone recording`() {
+        val bot = "Sign in to confirm you are not a bot"
+        val region = "이 국가에서는 이용할 수 없는 트랙입니다"
+        assertFalse(UnplayableReason.isDefinitelyGone(bot))
+        assertFalse(UnplayableReason.isDefinitelyGone(region))
+        assertFalse(UnplayableReason.isTrackSpecific(bot))
+        assertFalse(UnplayableReason.isTrackSpecific(region))
+    }
+
+    @Test
     fun `the generic unavailable answer waits for the proxy retry`() {
         val message = "StreamResolveException: This track is unavailable"
         assertTrue(UnplayableReason.isDefinitive(message))

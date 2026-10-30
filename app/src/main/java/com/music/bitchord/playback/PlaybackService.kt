@@ -104,6 +104,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.AUTOPLAY_MIN_QUEUED_AHEAD
@@ -1084,6 +1085,23 @@ class PlaybackService : MediaLibraryService() {
     private var autoplayLoadJob: Job? = null
     private var autoplaySeed: String? = null
 
+    /**
+     * The unplayable end-of-queue track AutoPlay is refilling behind. When the
+     * refill appends, the timeline callback moves to it; no timer is used.
+     */
+    private var pendingAutoplayAdvanceFor: String? = null
+
+    /**
+     * The item this refill actually appended. The timeline callback only
+     * advances when this exact id becomes the next item, so an unrelated
+     * queue edit (or a refill that appends nothing) cannot silently skip the
+     * failed track.
+     */
+    private var pendingAutoplayAdvanceTarget: String? = null
+
+    /** Identifies the newest refill so a cancelled load cannot clear its marker. */
+    private var autoplayRefillGeneration = 0
+
     /** Index in the live queue represented by entry zero of the persisted window. */
     private var persistedQueueStart = 0
 
@@ -1587,6 +1605,41 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            pendingAutoplayAdvanceFor?.let { pending ->
+                if (exoPlayer.currentMediaItem?.mediaId != pending) {
+                    pendingAutoplayAdvanceFor = null
+                    pendingAutoplayAdvanceTarget = null
+                } else {
+                    val nextId = if (exoPlayer.hasNextMediaItem()) {
+                        exoPlayer.getMediaItemAt(exoPlayer.currentMediaItemIndex + 1).mediaId
+                    } else {
+                        null
+                    }
+                    val target = pendingAutoplayAdvanceTarget
+                    when {
+                        // Only the item this refill appended may move the
+                        // queue off the failed track.
+                        target != null && nextId == target -> {
+                            pendingAutoplayAdvanceFor = null
+                            pendingAutoplayAdvanceTarget = null
+                            TrackLog.w(
+                                "BitChord",
+                                "autoplay: refilled after $pending could not play; continuing",
+                                about = pending,
+                            )
+                            exoPlayer.seekToNextMediaItem()
+                            exoPlayer.prepare()
+                        }
+                        // A queue edit put something else next. That is the
+                        // listener's item, not the refill, so disarm rather
+                        // than skip over it.
+                        target != null && nextId != null -> {
+                            pendingAutoplayAdvanceFor = null
+                            pendingAutoplayAdvanceTarget = null
+                        }
+                    }
+                }
+            }
             DiagnosticsState.queueSize = exoPlayer.mediaItemCount
             DiagnosticsState.queueIndex = exoPlayer.currentMediaItemIndex
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
@@ -3623,6 +3676,9 @@ class PlaybackService : MediaLibraryService() {
         if (autoplaySeed == current.videoId) return
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
+            val generation = ++autoplayRefillGeneration
+            var appended = false
+            try {
             var remaining = needed
             var emptyRefreshesRemaining = MAX_AUTOPLAY_EMPTY_REFRESHES
             while (isActive) {
@@ -3686,6 +3742,18 @@ class PlaybackService : MediaLibraryService() {
                             return@launch
                         }
                         autoplaySessionIds += resolved.map { it.videoId }
+                        // The server echo names what is now queued; advance only
+                        // onto the item it actually put next.
+                        val armed = pendingAutoplayAdvanceFor == current.videoId
+                        val partyNext = if (armed) {
+                            val now = ListenTogether.state.value
+                            partyUpcomingAfter(now.queue, now.playback, current.videoId)
+                                .firstOrNull()?.videoId
+                        } else {
+                            null
+                        }
+                        if (armed) pendingAutoplayAdvanceTarget = partyNext
+                        appended = !armed || partyNext != null
                     } else {
                         // The queue may have changed while the radio request
                         // was out — a station landing behind it is the usual
@@ -3700,7 +3768,11 @@ class PlaybackService : MediaLibraryService() {
                             .filterNot { song -> queuedNow.any { QueueBuilder.isSameRecording(it, song) } }
                             .take(room.coerceAtLeast(0))
                         if (fresh.isNotEmpty()) {
+                            if (pendingAutoplayAdvanceFor == current.videoId) {
+                                pendingAutoplayAdvanceTarget = fresh.first().videoId
+                            }
                             latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
+                            appended = true
                             autoplaySessionIds += fresh.map { it.videoId }
                             TrackLog.i(
                                 "BitChord",
@@ -3725,6 +3797,19 @@ class PlaybackService : MediaLibraryService() {
                 if (emptyRefreshesRemaining-- <= 0) return@launch
                 delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
                 remaining = MAX_QUEUED_AUTOPLAY
+            }
+            } finally {
+                // A refill that appended nothing must not leave the failed
+                // track armed: any later queue edit would then look like the
+                // promised next item. Only the newest load may disarm it, so
+                // a cancelled one cannot clear a fresh refill's marker.
+                if (!appended &&
+                    generation == autoplayRefillGeneration &&
+                    pendingAutoplayAdvanceFor == current.videoId
+                ) {
+                    pendingAutoplayAdvanceFor = null
+                    pendingAutoplayAdvanceTarget = null
+                }
             }
         }
     }
@@ -4214,6 +4299,12 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        // Any transition settles the pending refill: the queue either moved
+        // on, or the same id is current again and must not stay armed. Left
+        // set, a later replay of the failed track with something queued after
+        // it was silently auto-skipped by the timeline callback.
+        pendingAutoplayAdvanceFor = null
+        pendingAutoplayAdvanceTarget = null
         // A lossless swap hands the same song to the other player. It must not
         // close the outgoing play, start a second one, or count the listen
         // twice; only the audio source changed.
@@ -4916,7 +5007,14 @@ class PlaybackService : MediaLibraryService() {
                 uri = uri,
                 reason = verdict ?: "이 트랙은 재생할 수 없습니다",
                 networkFault = networkFault,
-                trySameVideoFirst = isHttpRefusal(error) && uri?.getQueryParameter("v") != null,
+                // A verdict is not a retry: even an HTTP-status failure must
+                // not send the known-dead id back through reResolveTrack,
+                // whose 10s budget used to run before the cached alternate or
+                // the skip. Only a non-definitive id may be re-asked.
+                trySameVideoFirst = verdict == null &&
+                    !StreamResolver.isUnplayable(mediaId) &&
+                    isHttpRefusal(error) &&
+                    uri?.getQueryParameter("v") != null,
                 // Another upload of the same song is a different recording. It
                 // is a fair rescue for a track that never made a sound, and a
                 // mid-song swap for one that did — which this must not do.
@@ -5390,6 +5488,19 @@ class PlaybackService : MediaLibraryService() {
         val exoPlayer = player ?: return
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
         if (!exoPlayer.hasNextMediaItem()) {
+            // Nothing is queued after it, but AutoPlay may still be able to
+            // supply a next track. Ask before giving up; the timeline
+            // callback moves on when the refill lands, so this stays
+            // event-driven rather than waiting on a timer.
+            if (tryAutoplayRefillBeforeStopping(exoPlayer, mediaId)) {
+                TrackLog.w(
+                    "BitChord",
+                    "$reason — nothing after it; AutoPlay refill requested",
+                    about = mediaId,
+                )
+                reportPlaybackFailure(mediaId, R.string.playback_error)
+                return
+            }
             TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
             reportPlaybackFailure(mediaId, R.string.playback_error)
             return
@@ -5406,19 +5517,42 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * A definitive refusal: re-ask the same videoId, then — only for a track
-     * that never made a sound — find another upload of the same song, swap it
-     * into this queue position and play it from the start. Skip when none of
-     * that is available.
+     * Re-arms AutoPlay for a queue whose last item could not play. The append
+     * is asynchronous; [pendingAutoplayAdvanceFor] lets the existing timeline
+     * callback move to the new item when it arrives, without polling.
+     *
+     * @return true when a refill was requested or is already in flight, so the
+     *   caller does not report the end of the queue yet.
+     */
+    private fun tryAutoplayRefillBeforeStopping(exoPlayer: ExoPlayer, mediaId: String): Boolean {
+        val party = ListenTogether.state.value
+        if (!autoplayEnabled(party)) return false
+        if (exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) return false
+        if (party.inParty && autoplaySupplierId(party) != party.you?.memberId) return false
+        if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) return false
+        pendingAutoplayAdvanceFor = mediaId
+        pendingAutoplayAdvanceTarget = null
+        if (autoplayLoadJob?.isActive != true) {
+            autoplaySeed = null
+            loadAutoplayForCurrentTrack()
+        }
+        return true
+    }
+
+    /**
+     * A definitive refusal: use an already-found or newly searched song
+     * version — only for a track that never made a sound — swap it into this
+     * queue position and play it from the start. Skip when none is available.
      *
      * The failed id is already in [StreamResolver]'s unplayable cache, so it
-     * is never offered back by the search. Nothing here retries it: the only
-     * network work is the same-id re-resolve and the alternate lookup itself.
+     * is never offered back by the search. A definitive verdict never re-asks
+     * the same id: the call site gates [trySameVideoFirst] with the verdict so
+     * an HTTP status error cannot spend the retry budget on it.
      *
      * @param allowAlternateRecording false for a mid-song failure. Another
      *   upload is a different recording, and swapping it in under a listener
      *   who is already hearing the first one is the change this path must not
-     *   make; the same-id re-resolve is the only rescue it may attempt.
+     *   make; for that failure the next queue item is the replacement.
      */
     private fun switchToAlternateOrSkip(
         mediaId: String,
@@ -5505,22 +5639,39 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val alternate = if (allowAlternateRecording) {
                     withContext(Dispatchers.IO) {
-                        // A definitive verdict has already cost the listener
-                        // the whole resolver walk. The replacement search gets
-                        // one bounded attempt so a track with no other upload
-                        // moves on within the three-second target instead of
-                        // waiting out the read-ahead-sized budget.
-                        withTimeoutOrNull(DEFINITIVE_ALTERNATE_TIMEOUT_MS) {
-                            YtMusicRepository.findAlternateRecording(song, setOf(mediaId))
+                        // The resolver has already ruled the id out, so the
+                        // cheapest rescue is a song version this run already
+                        // found — including one that landed after the
+                        // pre-audio lookup timed out. Only when there is none
+                        // is a search spent, and that search is one bounded
+                        // song-version lookup rather than the old multi-query
+                        // alternate walk.
+                        val downloaded = song.localUri != null || Downloads.isDownloaded(song.videoId)
+                        val cached = YtMusicRepository.cachedSongVersionFor(song)
+                        val fromCache = UnplayableAlternate.cachedSongVersion(
+                            row = song,
+                            cached = cached,
+                            downloaded = downloaded,
+                            unplayable = cached?.let { StreamResolver.isUnplayable(it.videoId) } == true,
+                        )
+                        fromCache ?: if (!UnplayableAlternate.allowsSongVersion(song, downloaded)) {
+                            null
+                        } else {
+                            withTimeoutOrNull(DEFINITIVE_ALTERNATE_TIMEOUT_MS) {
+                                YtMusicRepository.songVersion(song, beforeAudio = true)?.let { found ->
+                                    UnplayableAlternate.cachedSongVersion(
+                                        row = song,
+                                        cached = found,
+                                        downloaded = downloaded,
+                                        unplayable = StreamResolver.isUnplayable(found.videoId),
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
                     null
                 }
-                // The old source is let go asynchronously; the discard still
-                // wants the same moment of quiet the retry path asks for.
-                delay(RECOVERY_DELAY_MS)
-                uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it, keepComplete = networkFault) } }
                 withContext(Dispatchers.Main) {
                     val live = this@PlaybackService.player ?: return@withContext
                     val currentItem = live.currentMediaItem ?: return@withContext
@@ -5547,6 +5698,17 @@ class PlaybackService : MediaLibraryService() {
                     live.seekTo(live.currentMediaItemIndex, 0L)
                     if (wasPlaying) live.play()
                     live.prepare()
+                }
+                // The swap or skip above already happened, so this wait costs
+                // the listener nothing. Media3 lets go of a cache entry as the
+                // source is released, not as prepare() returns; discarding
+                // immediately left the bad bytes in place for the next
+                // attempt, and AudioCache logged the key as still in use.
+                uri?.let { stale ->
+                    withContext(Dispatchers.IO) {
+                        delay(RECOVERY_DELAY_MS)
+                        AudioCache.discard(stale, keepComplete = networkFault)
+                    }
                 }
             } finally {
                 alternateLookups.remove(mediaId)

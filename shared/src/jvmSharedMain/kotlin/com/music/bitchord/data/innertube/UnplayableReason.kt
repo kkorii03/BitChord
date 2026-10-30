@@ -29,6 +29,7 @@ object UnplayableReason {
         "claimed content",
         "blocked due to the claimed",
         "copyright claim",
+        "copyright",
         "copyrighted",
         "private video",
         "private content",
@@ -43,6 +44,8 @@ object UnplayableReason {
         "삭제",
         "해지되었",
         "채널이 해지",
+        "소유권 주장",
+        "저작권",
         "연령 제한",
         "유료 콘텐츠",
     )
@@ -59,6 +62,7 @@ object UnplayableReason {
         "claimed content",
         "blocked due to the claimed",
         "copyright claim",
+        "copyright",
         "copyrighted",
         "private video",
         "private content",
@@ -71,6 +75,41 @@ object UnplayableReason {
         "삭제",
         "해지되었",
         "채널이 해지",
+        "소유권 주장",
+        "저작권",
+    )
+
+    /**
+     * The copyright words on their own. They are in [definitelyGone] because a
+     * claim message often carries nothing stronger, but the same words appear
+     * in a country-scoped block ("blocked it in your country on copyright
+     * grounds"). That refusal is about where the listener is, and the proxy
+     * may still serve it, so [regionScoped] cancels these alone.
+     */
+    private val copyrightOnly = listOf(
+        "copyright",
+        "copyrighted",
+        "저작권",
+    )
+
+    /**
+     * Wording that scopes a refusal to the listener's country. A claim or a
+     * takedown is still a fact about the recording wherever it is read; a
+     * copyright notice carrying one of these is a region gate first.
+     */
+    private val regionScoped = listOf(
+        "in your country",
+        "in this country",
+        "your country",
+        "this country",
+        "in your region",
+        "in this region",
+        "your region",
+        "이 국가",
+        "국가에서는",
+        "국가에서",
+        "지역에서는",
+        "지역에서",
     )
 
     /**
@@ -194,6 +233,11 @@ object UnplayableReason {
     fun isDefinitelyGone(message: String?): Boolean {
         val lower = message?.trim()?.lowercase().orEmpty()
         if (lower.isEmpty()) return false
-        return definitelyGone.any { it in lower }
+        // A claim, takedown or deletion settles the recording even if the
+        // message also names a country. Only the bare copyright words defer
+        // to a region qualifier.
+        if (definitelyGone.any { it in lower && it !in copyrightOnly }) return true
+        if (regionScoped.any { it in lower }) return false
+        return copyrightOnly.any { it in lower }
     }
 }
