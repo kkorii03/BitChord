@@ -264,6 +264,20 @@ internal class NextTrackPreparation(
         } else {
             lines
         }
+        val syncSkipReason = if (timing != null) {
+            null
+        } else {
+            SyncSafetyPolicy.nextPrepSyncSkipReason(
+                switches = switches,
+                syncedLyrics = AppSettings.syncedLyrics.value,
+                isVideo = song.isVideo,
+                heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+                aiTimingAhead = AppSettings.aiTimingAhead.value,
+                deepgramUsable = Deepgram.usable,
+                hasLyrics = lines != null,
+                hasTimedLines = lines?.any { it.timeMs > 0 } == true,
+            )
+        }
         if (lines != null && shown != null && SyncSafetyPolicy.firstFrameCacheAllowed(switches)) {
             NextPrepCache.put(
                 NextPrepCache.Ready(
@@ -309,7 +323,7 @@ internal class NextTrackPreparation(
             "next-prep: ${song.title} version=${song.videoId} " +
                 "lyrics=${found?.source?.name?.lowercase(Locale.ROOT) ?: "none"} " +
                 "hq=${hq?.name?.lowercase(Locale.ROOT) ?: "none"} " +
-                "sync=${if (timing != null) "applied" else "skipped"} " +
+                "sync=${if (timing != null) "applied" else "skipped:${syncSkipReason ?: "not-applied"}"} " +
                 "mix=${if (mix) "ready" else "none"} in ${tookMs}ms",
             about = song.videoId,
         )
