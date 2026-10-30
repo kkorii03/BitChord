@@ -403,11 +403,12 @@ object HqLibraryUpgrade {
      * pair does nothing; a repair may fall back to a re-fetch only when the
      * served rendition is at least the rung of the file it replaces.
      *
-     * @return false when the Wi-Fi-only rule blocked the request before any
-     *   search started. The caller must not record the request as handled in
-     *   that case: the file stays unchecked and the next allowed playback asks
-     *   again. True means the request was accepted (a verified pair was queued
-     *   at once, or the one search for this track is running).
+     * @return true only when a verified pair was queued at once. False means the
+     *   Wi-Fi-only rule blocked the request before any search started, or the
+     *   one search for this track is still running. The caller must not record
+     *   the request as handled in either case: the search can still end on a
+     *   connection that no longer allows the download, so the file stays
+     *   unchecked (or pending) and the next allowed playback asks again.
      */
     fun requestUpgrade(
         context: Context,
@@ -543,7 +544,10 @@ object HqLibraryUpgrade {
                 automatic = automatic,
             )
         }
-        return true
+        // The search is asynchronous: it may finish on a connection that no
+        // longer allows the download. Reporting "queued" here would make the
+        // caller record a verdict the download never accepted.
+        return false
     }
 
     private fun enqueueVerified(

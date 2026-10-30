@@ -75,4 +75,26 @@ class RepairMeteredPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `an upgrade that was only searched stays pending instead of checked`() {
+        assertTrue(
+            downloadHealthKeepsPendingUpgrade(
+                needsUpgrade = true,
+                upgradeQueued = false,
+            ),
+        )
+        assertFalse(
+            downloadHealthKeepsPendingUpgrade(
+                needsUpgrade = true,
+                upgradeQueued = true,
+            ),
+        )
+        assertFalse(
+            downloadHealthKeepsPendingUpgrade(
+                needsUpgrade = false,
+                upgradeQueued = false,
+            ),
+        )
+    }
 }

@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -121,7 +123,7 @@ object Backup {
     ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
-                ?.use { it.readBytes().decodeToString() }
+                ?.use { it.readTextBounded() }
                 ?: error("파일을 열 수 없습니다")
             val file = decode(text)
             validate(file)
@@ -167,6 +169,26 @@ object Backup {
         runCatching { json.decodeFromString(BackupFile.serializer(), text) }
             .getOrElse { error("BitChord 백업 파일이 아닙니다") }
 
+    /**
+     * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
+     * rather than growing the buffer without bound. Shares the limit used by
+     * settings import: a backup is preferences and a listening history, not a
+     * media file, so anything larger is not one of ours.
+     */
+    private fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var total = 0
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "백업 파일이 너무 큽니다" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray().decodeToString()
+    }
+
     /** Everything that can be checked before the first write. */
     internal fun validate(file: BackupFile) {
         require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
@@ -195,6 +217,9 @@ object Backup {
     )
 
     private const val APP_TAG = "bitchord"
+
+    /** Upper bound on an imported backup, matching settings import. */
+    private const val MAX_IMPORT_BYTES = 1_000_000
 
     /**
      * Bump when the shape below stops being readable by an older build. A file

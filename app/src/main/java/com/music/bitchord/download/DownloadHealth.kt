@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.playback.smart.HqAudioVerify
@@ -45,6 +46,20 @@ internal fun downloadHealthRecordsCheck(
     upgradeAccepted: Boolean,
 ): Boolean = heard && (!needsUpgrade || upgradeAccepted)
 
+/**
+ * Whether an UPGRADE verdict must stay pending instead of being recorded as
+ * checked.
+ *
+ * A request that was only searched is not a queued download yet: the search
+ * can still end on a connection the Wi-Fi-only rule refuses. Keeping the
+ * marker lets the next allowed playback retry the request without decoding
+ * the file again.
+ */
+internal fun downloadHealthKeepsPendingUpgrade(
+    needsUpgrade: Boolean,
+    upgradeQueued: Boolean,
+): Boolean = needsUpgrade && !upgradeQueued
+
 object DownloadHealth {
 
     private const val TAG = "BitChord"
@@ -52,6 +67,7 @@ object DownloadHealth {
     private const val KEY_CHECKED = "checked"
     private const val KEY_VERSION = "version"
     private const val KEY_REPAIR_REQUESTED = "repair_requested"
+    private const val KEY_PENDING_UPGRADE = "pending_upgrade"
 
     /**
      * Bump when the rules change enough that every file should be looked at
@@ -128,6 +144,26 @@ object DownloadHealth {
             val version = Downloads.fileVersion(context, meta.uri)
             val signature = signature(meta, version)
             if (isChecked(context, id, signature)) return@withContext null
+            // A previous play already decided this file needs a better copy but
+            // the queue could not take it (a search was still running, or the
+            // Wi-Fi-only rule refused it). Asking again is cheap; decoding the
+            // same file on every metered playback is not. A matching marker
+            // skips the decode while the request is still pending.
+            if (pendingUpgradeMatches(context, id, signature)) {
+                if (!AppSettings.downloadsAllowedNow) {
+                    TrackLog.i(
+                        TAG,
+                        "download-check: waiting for an unmetered connection",
+                        id,
+                    )
+                    return@withContext null
+                }
+                if (HqLibraryUpgrade.requestUpgrade(context, song, automatic = true)) {
+                    markChecked(context, id, signature)
+                    clearPendingUpgrade(context, id)
+                }
+                return@withContext null
+            }
 
             val sound = HqAudioVerify.verifyDownloaded(
                 context = context,
@@ -195,6 +231,18 @@ object DownloadHealth {
                 }
                 DownloadHealthPolicy.Action.NONE -> Unit
             }
+            // A queued pair is a completed verdict; a request that is only
+            // searching, or that the connection rule refused, stays pending so
+            // the next allowed play retries it without another decode.
+            if (downloadHealthKeepsPendingUpgrade(
+                    needsUpgrade = decision.action == DownloadHealthPolicy.Action.UPGRADE,
+                    upgradeQueued = upgradeQueued,
+                )
+            ) {
+                markPendingUpgrade(context, id, signature)
+            } else if (decision.action != DownloadHealthPolicy.Action.UPGRADE) {
+                clearPendingUpgrade(context, id)
+            }
             // An upgrade the Wi-Fi-only rule refused is not a completed check:
             // leaving the file unchecked is what makes the next allowed
             // playback ask again instead of swallowing the verdict. The check
@@ -206,6 +254,9 @@ object DownloadHealth {
                 )
             ) {
                 markChecked(context, id, signature)
+                if (decision.action == DownloadHealthPolicy.Action.UPGRADE) {
+                    clearPendingUpgrade(context, id)
+                }
             }
             outcome
         } finally {
@@ -224,6 +275,7 @@ object DownloadHealth {
         prefs.edit()
             .remove(KEY_CHECKED)
             .remove(KEY_REPAIR_REQUESTED)
+            .remove(KEY_PENDING_UPGRADE)
             .putInt(KEY_VERSION, CHECK_VERSION)
             .apply()
         TrackLog.i(TAG, "download-check: versions cleared")
@@ -296,6 +348,38 @@ object DownloadHealth {
                 if (tab <= 0) null else line.substring(0, tab) to line.substring(tab + 1)
             }
             .toMap()
+
+    private fun pendingUpgradeMatches(context: Context, id: String, signature: String): Boolean =
+        readPendingUpgrades(prefs(context))[id] == signature
+
+    private fun markPendingUpgrade(context: Context, id: String, signature: String) {
+        val prefs = prefs(context)
+        val next = readPendingUpgrades(prefs) + (id to signature)
+        prefs.edit()
+            .putString(KEY_PENDING_UPGRADE, encodePairs(next))
+            .apply()
+    }
+
+    private fun clearPendingUpgrade(context: Context, id: String) {
+        val prefs = prefs(context)
+        val pending = readPendingUpgrades(prefs)
+        if (id !in pending) return
+        prefs.edit()
+            .putString(KEY_PENDING_UPGRADE, encodePairs(pending - id))
+            .apply()
+    }
+
+    private fun readPendingUpgrades(prefs: android.content.SharedPreferences): Map<String, String> =
+        prefs.getString(KEY_PENDING_UPGRADE, null).orEmpty()
+            .lineSequence()
+            .mapNotNull { line ->
+                val tab = line.indexOf('\t')
+                if (tab <= 0) null else line.substring(0, tab) to line.substring(tab + 1)
+            }
+            .toMap()
+
+    private fun encodePairs(pairs: Map<String, String>): String =
+        pairs.entries.joinToString("\n") { (key, value) -> "$key\t$value" }
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

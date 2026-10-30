@@ -128,11 +128,14 @@ object MvSoundRedownload {
      * library with several suspects could therefore never finish the queue it
      * had already started. Appending is what HqLibraryUpgrade does for the
      * same reason; if the chain has already finished or been cancelled,
-     * APPEND_OR_REPLACE starts a fresh one.
+     * APPEND_OR_REPLACE starts a fresh one. The allowed-connection transition
+     * is the one place that replaces the chain instead (see [scheduleIfEnabled]):
+     * it may have a worker parked in retry backoff that would otherwise delay
+     * the repair it just woke.
      */
     internal val WORK_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 
-    fun scheduleIfEnabled(context: Context) {
+    fun scheduleIfEnabled(context: Context, replace: Boolean = false) {
         if (!AppSettings.autoRedownloadMvSound.value) return
         if (!AppSettings.downloadsAllowedNow) {
             TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
@@ -145,16 +148,27 @@ object MvSoundRedownload {
         // for it would run the same scan on every app start and playback
         // without ever changing anything.
         if (!Downloads.hasRepairableMvSuspects(context, System.currentTimeMillis())) return
+        // With Wi-Fi-only on, let WorkManager hold the work until an unmetered
+        // network exists instead of waking on cellular just to retry.
+        val network = if (AppSettings.wifiOnlyDownloads.value) {
+            NetworkType.UNMETERED
+        } else {
+            NetworkType.CONNECTED
+        }
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiredNetworkType(network)
                     .build(),
             )
             .build()
+        // A connection that just became allowed must not wait behind a worker
+        // parked in retry backoff; REPLACE clears that stale request. Ordinary
+        // app-start and playback schedules still append.
+        val policy = if (replace) ExistingWorkPolicy.REPLACE else WORK_POLICY
         runCatching {
             WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(WORK_NAME, WORK_POLICY, request)
+                .enqueueUniqueWork(WORK_NAME, policy, request)
         }.onFailure {
             TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
         }
@@ -174,17 +188,19 @@ class MvSoundRedownloadWorker(
 
     override suspend fun doWork(): Result {
         if (!AppSettings.autoRedownloadMvSound.value) return Result.success()
-        if (!mvRepairAllowsMetered(manual = false, AppSettings.downloadsAllowedNow)) {
-            // The connection changed after the request was scheduled. Retrying
-            // is how WorkManager waits for the rule to allow it again; returning
-            // success here would drop the repair with no one to reschedule it.
-            TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
-            return Result.retry()
-        }
         // WorkManager can run a network-constrained request after the app has
         // gone away. Queueing downloads then would only leave rows waiting for
-        // a service Android will not let this process start.
+        // a service Android will not let this process start. The foreground
+        // event schedules the repair again, so finishing here does not drop it.
         if (!AppForeground.isForeground) return Result.success()
+        if (!mvRepairAllowsMetered(manual = false, AppSettings.downloadsAllowedNow)) {
+            // The connection changed after the request was scheduled. Retrying
+            // here would keep waking this worker on a connection it can never
+            // use. The allowed-connection and foreground events both schedule
+            // the repair again, so finishing is safe.
+            TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
+            return Result.success()
+        }
         val queued = Downloads.redownloadSuspected(applicationContext)
         if (queued > 0) {
             TrackLog.i("BitChord", "song version: repairing $queued downloaded file(s) in the background")

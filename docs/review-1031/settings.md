@@ -19,9 +19,10 @@
 |---|---:|---|
 | 이번에 고침 | 3 | 자동 HQ/다운로드 건강 검사와 MV 사운드 자동 복구가 Wi-Fi 전용 다운로드를 우회하던 문제, 비음악 필터를 꺼도 WAV/3GP가 계속 숨겨지던 문제 |
 | 2차(10-31 지적) 고침 | 3 | HQ 미검증 폴백의 metered 우회, 연결 거부 시 checked/쿨다운 기록, MV 자동 복구의 Wi-Fi 복귀 시 휴면 — 8절 |
-| 이번에는 문서만 | 7 | AI 가사/타이밍 키 없음, Replay 장르 키 없음, Last.fm 지금 재생 무반응, Backup 무제한 읽기, sync safety 백업 타입 검증 누락, 대기열 한국어 용어 불일치, 설정 화면의 업스트림 링크 |
+| 3차(10-31 지적) 고침 | 5+3 | 비동기 HQ 교체가 checked/쿨다운을 먼저 기록, MV 복구의 retry 백오프/포그라운드 순서, metered 설정 변경 미감지, 반복 디코드, Replay 장르 키 소스, Last.fm 지금 재생 표시, Backup 무제한 읽기 — 9절 |
+| 이번에는 문서만 | 4 | AI 가사/타이밍 키 없음, sync safety 백업 타입 검증 누락, 대기열 한국어 용어 불일치, 설정 화면의 업스트림 링크 |
 | 이전 감사에서 고쳐짐 | 8 | HQ 설정 전송, HQ 자동 패스 metered, 설정 파일 크기 제한, 영어 예외 노출, 곡 메뉴 속도 초기화, 취침 타이머 용어, 비음악 필터 IS_MUSIC, 수동 가사 제공처 필터 |
-| 이전 감사에서 남음 | 5 | Backup 무제한 읽기, 대기열 용어, sync safety KNOWN_PREFS, AI 가사/타이밍 키 게이팅, Replay 장르 키 게이팅 |
+| 이전 감사에서 남음 | 3 | 대기열 용어, sync safety KNOWN_PREFS, AI 가사/타이밍 키 게이팅 |
 
 ## 1. 이전 감사 문서 재확인
 
@@ -54,9 +55,9 @@
 | MED | `data/LocalMediaRepository.kt:33-35,313` | 필터를 끄면 `hasLocalMusicExtension()`을 쓰는데, 이 목록에는 `wav`/`3gp`가 없어 `MediaStore.Audio`의 WAV/3GP 행이 계속 제외된다. 설정 문구는 WAV를 필터가 숨기는 대상으로 명시한다(`values-ko/strings.xml:383-384`). | "음악이 아닌 오디오 제외"를 꺼도 WAV 녹음/음원이 로컬 음악에 나타나지 않는다. | **고침**. 필터 off 전용 `hasPlayableAudioExtension()`과 `localPlayableAudioExtensions`를 추가해 WAV/3GP를 포함했다(`LocalMediaRepository.kt:44,313,417-421`). 필터 on은 기존 목록을 유지한다. |
 | MED | `playback/smart/AiLyrics.kt:49` | `!AppSettings.aiLyrics.value || !LyricsTranslation.geminiKeyUsable`이면 로그 없이 `null`을 반환한다. `aiLyrics` 기본값은 켬(`AppSettings.kt:775,1310`)이고 UI도 키 없이 켤 수 있다. | 신규 설치에서 가사가 없는 곡은 AI 받아쓰기가 켜져 있어도 아무 로그 없이 건너뛴다. | 문서만. 키 없음/스위치 끔을 구분해 `TrackLog`를 남기거나 Gemini 키 행처럼 스위치를 게이트해야 한다. **폰 검증 필요(가사 싱크 경로).** |
 | MED | `playback/smart/LyricsTiming.kt:567-568`, `ui/LyricsController.kt:1086-1091` | `heavyWorkAllowed`/`aiTimingAhead`/`Deepgram.usable`이 false면 로그 없이 반환한다. `autoLyricsTiming`은 기본 꺼짐이지만 `aiTimingAhead`는 기본 켬(`AppSettings.kt:782,1311`)이다. | Deepgram/Gemini 키가 없는 기본 상태에서 "AI 싱크 미리 맞추기"가 켜져 보이지만 아무 일도 하지 않고 로그도 없다. | 문서만. 키 없음과 저전력/스위치 끔을 구분해 로그를 남기고, 키가 없으면 설정 행을 비활성화해야 한다. **폰 검증 필요(가사 싱크 경로).** |
-| MED | `data/stats/ArtistFacts.kt:132-133` | `genresAvailable = AppSettings.replayGenres.value && BuildConfig.LASTFM_API_KEY.isNotBlank()`. 설정 스위치는 키 유무와 무관하게 켜진다(`SettingsSheet.kt:1786-1804`). | Last.fm 키가 없는 빌드에서 "Replay 장르"를 켜도 장르 차트가 조용히 비어 있다. | 문서만. 키가 없으면 행을 비활성화하고 사유를 기존 문구로 표시하거나, 켤 때 키 필요 안내를 보여야 한다. |
-| MED | `ui/screens/AccountAndScrobblingScreen.kt:333-340`, `data/settings/AppSettings.kt:2402-2406` | "지금 재생" 스위치는 `lastfmScrobbleEnabled`와 무관하게 노출되지만, setter가 `!lastfmScrobbleEnabled && value`이면 즉시 반환한다. | Last.fm 스크로블을 끈 상태에서 "지금 재생"을 눌러도 스위치가 움직이지 않고 설명도 없다. | 문서만. 행을 `lastfmScrobbleEnabled`일 때만 노출하거나 스위치를 비활성화해야 한다. |
-| MED | `data/stats/Backup.kt:124` | 백업 가져오기가 `openInputStream(...).readBytes()`로 파일 전체를 읽는다. 설정 공유는 이미 1 MB 상한이 있다(`SettingsTransfer.kt:127,292`). | 다른 앱이 큰 JSON을 BitChord로 공유하면 가져오기에서 OOM으로 프로세스가 죽을 수 있다. | 문서만(이전 감사에서도 문서만). `SettingsTransfer.readTextBounded()`와 같은 상한을 재사용해야 한다. |
+| MED | `data/stats/ArtistFacts.kt:132-133` | `genresAvailable = AppSettings.replayGenres.value && BuildConfig.LASTFM_API_KEY.isNotBlank()`. 설정 스위치는 키 유무와 무관하게 켜진다(`SettingsSheet.kt:1786-1804`). | Last.fm 키가 없는 빌드에서 "Replay 장르"를 켜도 장르 차트가 조용히 비어 있다. | **고침(3차)**. `genresAvailable`과 요청 URL이 같은 `AppSettings.lastfmApiKey.value`를 읽고, 키가 없으면 설정 행을 비활성화하며 `replay_genres_missing_key_subtitle`로 이유를 표시한다. |
+| MED | `ui/screens/AccountAndScrobblingScreen.kt:333-340`, `data/settings/AppSettings.kt:2402-2406` | "지금 재생" 스위치는 `lastfmScrobbleEnabled`와 무관하게 노출되지만, setter가 `!lastfmScrobbleEnabled && value`이면 즉시 반환한다. | Last.fm 스크로블을 끈 상태에서 "지금 재생"을 눌러도 스위치가 움직이지 않고 설명도 없다. | **고침(3차)**. `lastfmScrobbleEnabled`일 때만 행과 구분선을 그린다(`AccountAndScrobblingScreen.kt:330-348`). |
+| MED | `data/stats/Backup.kt:124` | 백업 가져오기가 `openInputStream(...).readBytes()`로 파일 전체를 읽는다. 설정 공유는 이미 1 MB 상한이 있다(`SettingsTransfer.kt:127,292`). | 다른 앱이 큰 JSON을 BitChord로 공유하면 가져오기에서 OOM으로 프로세스가 죽을 수 있다. | **고침(3차)**. `readTextBounded()`와 같은 1 MB 상한을 `Backup`에 두고 초과 시 `백업 파일이 너무 큽니다`로 거부한다(`Backup.kt:172-190`). |
 | LOW | `data/settings/AppSettings.kt:3672-3674` | `ko_sync_safety_next_prep`·`..._download_recheck`·`..._hq_sync`가 `readAll()`에서는 `getBoolean`으로 읽지만 `KNOWN_PREFS`에는 없다. `importPrefs`는 모르는 키를 타입 검증 없이 쓴다(`:2930-2945`). | 손상된 백업에서 이 키가 문자열이면 다음 `reload()`의 `getBoolean`에서 예외가 난다. 정상 백업은 Boolean이라 문제없다. | 문서만. 세 키를 `KNOWN_PREFS`의 `bools(...)`에 추가해야 한다. |
 | LOW | `sharedUi/src/commonMain/composeResources/values-ko/strings.xml:106-107,132` | 앱은 "다음 항목 재생", 플레이어 대기열은 "다음 재생"을 쓴다. | 같은 동작을 두 이름으로 부른다. | 문서만(이전 감사와 동일). Apple Music 용어로 통일할 때 `next_from`/`next_in_queue`/`up_next`를 함께 정리해야 한다. |
 | LOW | `ui/screens/SettingsSheet.kt:2137-2153` | 설정 화면 하단 링크가 업스트림 `kushagrasinghx` GitHub/Discord/웹사이트를 가리킨다. | 사용자가 포크가 아닌 업스트림으로 이동한다. | 문서만. 포크 저장소/지원 링크로 바꿔야 한다. |
@@ -329,3 +330,66 @@
   전까지 그 UPGRADE 판정이 재시도되지 않는다. 흔한 경로(호출 시점에 이미 metered)는
   동기 게이트가 먼저 막으므로 해당하지 않는다.
 - 재생 핵심 경로는 이번에도 수정하지 않았다. 기기 검증이 필요하다.
+
+## 9. 3차 작업 — 10-31 지적 5건 + 이전 문서 MED 3건
+
+이번 라운드는 8절에서 남긴 비동기 교체 한계와 MV 복구의 연결 변경 처리를 코드로
+닫고, 이전 문서에서 `문서만`으로 남아 있던 MED 3건(Replay 장르 키, Last.fm 지금
+재생, Backup 무제한 읽기)을 함께 고쳤다. 재생 핵심 경로(곡 해석·노래 버전·가사
+싱크 계산·크로스페이드)는 건드리지 않았다.
+
+### 9.1 지적 5건 처리
+
+| # | 심각도 | 지적 | 판정 | 근거 / 수정 |
+|---|---|---|---|---|
+| 1 | MED | `requestUpgrade`가 비동기 검색/enqueue 전에 true를 돌려줘 호출부가 checked/쿨다운을 먼저 기록 | **고침** | 반환값을 "동기적으로 검증된 쌍을 큐에 넣었을 때만 true"로 바꿨다(`HqLibraryUpgrade.kt:406-411,546-550`). 비동기 검색은 false다. `DownloadHealth`는 true일 때만 checked/repair-requested를 기록하고, false면 `pending_upgrade` 마커를 남겨 다음 허용 재생에서 다시 요청한다(`DownloadHealth.kt:148-165,233-247`). |
+| 2 | MED | `APPEND_OR_REPLACE`가 `Result.retry()` 백오프 중인 워커 뒤에 붙어 즉시 복구가 지연 | **고침** | Wi-Fi 전용이면 워커 제약을 `UNMETERED`로 걸어 metered 실행 자체를 막고(`MvSoundRedownload.kt:151-157`), 허용으로 바뀌는 전이에서는 `REPLACE`로 예약한다(`MvSoundRedownload.kt:166-169`, `BitChordApplication.kt:269-274`). 재시작·재생의 일반 예약은 기존 `APPEND_OR_REPLACE`를 유지한다. |
+| 3 | MED | `meteredConnection`만 관찰해 `wifiOnlyDownloads`를 셀룰러에서 끄면 MV 복구가 깨어나지 않음 | **고침** | `meteredConnection`과 `wifiOnlyDownloads`를 `combine`해 `downloadsAllowedNow`의 false→true 전이를 감지한다(`BitChordApplication.kt:253-276`). 폴링·타이머 없이 기존 상태 흐름만 읽는다. |
+| 4 | MED | metered 검사가 포그라운드 검사보다 먼저라 배경 워커가 셀룰러에서 계속 재시도 | **고침** | `AppForeground.isForeground`를 먼저 확인하고 배경이면 성공 종료한다(`MvSoundRedownload.kt:190-195`). 사용할 수 없는 연결이면 `retry()` 대신 로그 후 성공 종료하며, 포그라운드/허용 전이 이벤트가 다시 예약한다(`:196-203`). |
+| 5 | MED | 교체를 거부하면 파일이 unchecked로 남아 metered 재생마다 건강 검사가 다시 디코드 | **고침** | UPGRADE 판정이 큐에 들어가지 않으면 `pending_upgrade` 마커를 저장한다(`DownloadHealth.kt:237-247`). 다음 재생은 마커가 같은 파일 버전을 가리키면 디코드 전에 반환하고, 허용 연결이 아니면 `download-check: waiting for an unmetered connection` 로그만 남긴다(`:148-165`). 허용 연결에서는 디코드 없이 요청을 다시 시도한다. |
+
+### 9.2 진리표 (3차 이전 → 이후)
+
+| 경로 | 3차 이전 | 3차 이후 |
+|---|---|---|
+| HQ 교체, 검증된 쌍 즉시 큐 | true → checked 기록 | true → checked 기록 |
+| HQ 교체, 검색 필요(자동) | true → checked 기록, 검색이 metered에서 막히면 삼켜짐 | false → pending 마커, checked 없음 |
+| pending 파일, metered 재생 | 다시 디코드 | 디코드 없이 로그 후 대기 |
+| pending 파일, 허용 재생 | (해당 없음) | 디코드 없이 교체 요청, 큐에 들어가면 checked |
+| MV 워커, Wi-Fi 전용 + 셀룰러 | 예약 가능, 워커가 `retry()` | 예약 시 `UNMETERED` 제약, 실행되면 로그 후 성공 종료 |
+| MV 복구, 셀룰러에서 Wi-Fi 전용 끔 | 이벤트 없음(휴면) | false→true 전이 감지 → `REPLACE` 예약 |
+| MV 복구, Wi-Fi 복귀 | 전이 감지 | 전이 감지 + `REPLACE`로 retry 백오프 우회 |
+
+### 9.3 설정 재점검 — 이번에 바뀐 행
+
+| 설정 이름 | 키 | 사용처 파일:줄 | 판정 |
+|---|---|---|---|
+| 다운로드 건강 검사 / HQ 자동 교체 | `auto_replace_hq_downloads`, `pending_upgrade` | `download/DownloadHealth.kt:148-165,233-247`, `download/HqLibraryUpgrade.kt:406-411` | 정상(3차) |
+| MV 사운드 자동 재다운로드 | `auto_redownload_mv_sound` | `download/MvSoundRedownload.kt:138-169,190-208`, `BitChordApplication.kt:253-276` | 정상(3차) |
+| Replay 장르 | `replay_genres` | `data/stats/ArtistFacts.kt:132-133,242`, `ui/screens/SettingsSheet.kt:1789-1808` | 정상(3차) — 키 없으면 행 비활성화 + 사유 표시 |
+| Last.fm 지금 재생 | `lastfm_now_playing` | `ui/screens/AccountAndScrobblingScreen.kt:325-347` | 정상(3차) — 스크로블 끄면 행 숨김 |
+| 데이터 가져오기 | (동작 버튼) | `data/stats/Backup.kt:126,173-190,222` | 정상(3차) — 1 MB 상한 |
+
+### 9.4 건너뛰는 조건 (3차 추가분)
+
+| 기능 | 건너뛰는 조건 | 얼마나 흔한가 | 건너뛸 때 로그 |
+|---|---|---|---|
+| HQ 자동 교체 | 검색 중 연결이 metered로 바뀜(`HqLibraryUpgrade.kt:492`) | Wi-Fi 경계에서 흔함 | 있음: `download-check: waiting for an unmetered connection` |
+| HQ 자동 교체 | 이전 판정이 pending이고 지금 metered(`DownloadHealth.kt:152-159`) | Wi-Fi 전용 사용자가 셀룰러에서 재생할 때 | 있음: 같은 로그, 디코드 없음 |
+| MV 자동 복구 | Wi-Fi 전용 + 셀룰러, 또는 백그라운드(`MvSoundRedownload.kt:190-203`) | Wi-Fi 전용 사용자에게 흔함 | 있음: `mv-sound: waiting for an unmetered connection` |
+| Replay 장르 | Last.fm API 키 없음(`ArtistFacts.kt:132-133`) | 키 없는 빌드/가져오기 | 로그 대신 행 비활성화 + 사유 문구 |
+| Last.fm 지금 재생 | 스크로블 꺼짐(`AccountAndScrobblingScreen.kt:325`) | 스크로블을 끈 사용자 | 해당 없음(선택 불가) |
+
+### 9.5 남은 문서-only
+
+- AI 가사/타이밍 키 없음: 가사 싱크 경로라 이번에도 수정하지 않았다. **폰 검증 필요.**
+- sync safety 3키 `KNOWN_PREFS` 누락(LOW), 대기열 용어 불일치(LOW), 설정 화면 업스트림 링크(LOW): 문서만.
+- 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드): 이번에도 수정하지 않았다. **폰 검증 필요.**
+
+### 9.6 3차 테스트
+
+- `com.music.bitchord.download.RepairMeteredPolicyTest`에 추가:
+  - `an upgrade that was only searched stays pending instead of checked`
+- 실행 결과:
+  - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과
+  - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.download.RepairMeteredPolicyTest' --tests 'com.music.bitchord.download.HqLibraryMeteredPolicyTest' --tests 'com.music.bitchord.download.MvSoundRedownloadPolicyTest' --tests 'com.music.bitchord.download.HqLibraryUpgradeBackgroundPruneTest' --console=plain -q` → 통과
