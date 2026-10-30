@@ -34,6 +34,17 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `a copyright block scoped to a country is not a gone recording`() {
+        val english =
+            "This video contains content from SME, who has blocked it in your country on copyright grounds"
+        val korean = "이 국가에서는 저작권 문제로 차단되었습니다"
+        assertTrue(UnplayableReason.isDefinitive(english))
+        assertFalse(UnplayableReason.isDefinitelyGone(english))
+        assertTrue(UnplayableReason.isDefinitive(korean))
+        assertFalse(UnplayableReason.isDefinitelyGone(korean))
+    }
+
+    @Test
     fun `a bot check or a region block is not a gone recording`() {
         val bot = "Sign in to confirm you are not a bot"
         val region = "이 국가에서는 이용할 수 없는 트랙입니다"

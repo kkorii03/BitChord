@@ -4205,9 +4205,11 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
-        if (pendingAutoplayAdvanceFor != null && mediaItem?.mediaId != pendingAutoplayAdvanceFor) {
-            pendingAutoplayAdvanceFor = null
-        }
+        // Any transition settles the pending refill: the queue either moved
+        // on, or the same id is current again and must not stay armed. Left
+        // set, a later replay of the failed track with something queued after
+        // it was silently auto-skipped by the timeline callback.
+        pendingAutoplayAdvanceFor = null
         // A lossless swap hands the same song to the other player. It must not
         // close the outgoing play, start a second one, or count the listen
         // twice; only the audio source changed.
@@ -4910,7 +4912,14 @@ class PlaybackService : MediaLibraryService() {
                 uri = uri,
                 reason = verdict ?: "이 트랙은 재생할 수 없습니다",
                 networkFault = networkFault,
-                trySameVideoFirst = isHttpRefusal(error) && uri?.getQueryParameter("v") != null,
+                // A verdict is not a retry: even an HTTP-status failure must
+                // not send the known-dead id back through reResolveTrack,
+                // whose 10s budget used to run before the cached alternate or
+                // the skip. Only a non-definitive id may be re-asked.
+                trySameVideoFirst = verdict == null &&
+                    !StreamResolver.isUnplayable(mediaId) &&
+                    isHttpRefusal(error) &&
+                    uri?.getQueryParameter("v") != null,
                 // Another upload of the same song is a different recording. It
                 // is a fair rescue for a track that never made a sound, and a
                 // mid-song swap for one that did — which this must not do.
@@ -5435,19 +5444,19 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * A definitive refusal: re-ask the same videoId, then — only for a track
-     * that never made a sound — find another upload of the same song, swap it
-     * into this queue position and play it from the start. Skip when none of
-     * that is available.
+     * A definitive refusal: use an already-found or newly searched song
+     * version — only for a track that never made a sound — swap it into this
+     * queue position and play it from the start. Skip when none is available.
      *
      * The failed id is already in [StreamResolver]'s unplayable cache, so it
-     * is never offered back by the search. Nothing here retries it: the only
-     * network work is the same-id re-resolve and the alternate lookup itself.
+     * is never offered back by the search. A definitive verdict never re-asks
+     * the same id: the call site gates [trySameVideoFirst] with the verdict so
+     * an HTTP status error cannot spend the retry budget on it.
      *
      * @param allowAlternateRecording false for a mid-song failure. Another
      *   upload is a different recording, and swapping it in under a listener
      *   who is already hearing the first one is the change this path must not
-     *   make; the same-id re-resolve is the only rescue it may attempt.
+     *   make; for that failure the next queue item is the replacement.
      */
     private fun switchToAlternateOrSkip(
         mediaId: String,
@@ -5594,12 +5603,16 @@ class PlaybackService : MediaLibraryService() {
                     if (wasPlaying) live.play()
                     live.prepare()
                 }
-                // The old source is let go asynchronously. The discard no
-                // longer gates the swap or the skip: waiting for Media3 to
-                // release the entry was a fixed pause on top of the verdict,
-                // and the player has already moved off that source by here.
+                // The swap or skip above already happened, so this wait costs
+                // the listener nothing. Media3 lets go of a cache entry as the
+                // source is released, not as prepare() returns; discarding
+                // immediately left the bad bytes in place for the next
+                // attempt, and AudioCache logged the key as still in use.
                 uri?.let { stale ->
-                    withContext(Dispatchers.IO) { AudioCache.discard(stale, keepComplete = networkFault) }
+                    withContext(Dispatchers.IO) {
+                        delay(RECOVERY_DELAY_MS)
+                        AudioCache.discard(stale, keepComplete = networkFault)
+                    }
                 }
             } finally {
                 alternateLookups.remove(mediaId)
