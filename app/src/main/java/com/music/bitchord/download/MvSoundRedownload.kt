@@ -125,15 +125,27 @@ object MvSoundRedownload {
      */
     private val pauseGeneration = AtomicInteger(0)
 
+    /**
+     * Whether a repair pass should be queued now.
+     *
+     * [hasSuspects] is a lambda rather than a Boolean so the scan is skipped
+     * entirely when there is no window to run the repair in.
+     */
+    internal fun shouldSchedule(
+        enabled: Boolean,
+        foreground: Boolean,
+        hasSuspects: () -> Boolean,
+    ): Boolean = enabled && foreground && hasSuspects()
+
     fun scheduleIfEnabled(context: Context) {
-        if (!AppSettings.autoRedownloadMvSound.value) return
-        // The repair goes through the download service, which cannot be started
-        // without a window. The foreground event schedules it again.
-        if (!AppForeground.isForeground) return
-        // Every suspect still cooling down is not work. Scheduling a worker
-        // for it would run the same scan on every app start and playback
-        // without ever changing anything.
-        if (!Downloads.hasRepairableMvSuspects(context, System.currentTimeMillis())) return
+        if (!shouldSchedule(
+                enabled = AppSettings.autoRedownloadMvSound.value,
+                foreground = AppForeground.isForeground,
+                hasSuspects = {
+                    Downloads.hasRepairableMvSuspects(context, System.currentTimeMillis())
+                },
+            )
+        ) return
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
             .setConstraints(
                 Constraints.Builder()
@@ -150,6 +162,18 @@ object MvSoundRedownload {
         }.onFailure {
             TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
         }
+    }
+
+    /**
+     * The app no longer has a window.
+     *
+     * A network-constrained worker left queued would wake the process later
+     * with no window to run the repair in — a background start that can only
+     * return without doing anything. [pause] cancels it; [scheduleIfEnabled]
+     * queues it again from the next foreground event.
+     */
+    fun onBackground(context: Context) {
+        pause(context)
     }
 
     /**
@@ -230,14 +254,22 @@ class MvSoundRedownloadWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        if (!AppSettings.autoRedownloadMvSound.value) return Result.success()
+        if (!AppSettings.autoRedownloadMvSound.value) {
+            TrackLog.d("BitChord", "mv-sound repair: skipped; switch is off")
+            return Result.success()
+        }
         // WorkManager can run a network-constrained request after the app has
         // gone away. Queueing downloads then would only leave rows waiting for
         // a service Android will not let this process start.
-        if (!AppForeground.isForeground) return Result.success()
+        if (!AppForeground.isForeground) {
+            TrackLog.d("BitChord", "mv-sound repair: skipped; app has no window")
+            return Result.success()
+        }
         val queued = Downloads.redownloadSuspected(applicationContext)
         if (queued > 0) {
             TrackLog.i("BitChord", "song version: repairing $queued downloaded file(s) in the background")
+        } else {
+            TrackLog.d("BitChord", "mv-sound repair: no repairable suspect left")
         }
         return Result.success()
     }
