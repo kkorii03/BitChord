@@ -14,7 +14,7 @@
     <string name="autoplay_off">자동 재생: 끔</string>
     <string name="autoplay_on">자동 재생: 켬</string>
     <string name="video_radio_continue">비디오 노래 이어 듣기</string>
-    <string name="autoplay_queue_description">다음에 재생하도록 선택된 비슷한 음악</string>
+    <string name="autoplay_queue_description">다음 항목으로 재생할 비슷한 음악</string>
     <string name="bit_depth">%1$d비트</string>
     <string name="cancel">취소</string>
     <string name="cast">전송</string>
@@ -54,13 +54,13 @@
     <string name="lyrics_already_romanized">이미 라틴 문자로 된 가사입니다.</string>
     <string name="lyrics_by">가사 제공: %1$s</string>
     <string-array name="lyrics_intro_lines">
-        <item>비트가 시작돼요</item>
-        <item>노래가 시작돼요</item>
+        <item>비트 시작</item>
+        <item>노래 시작</item>
         <item>준비 중</item>
         <item>분위기를 만드는 중</item>
         <item>베이스 먼저, 가사는 잠시 후</item>
-        <item>잠시만요</item>
-        <item>점점 고조돼요</item>
+        <item>잠시 후</item>
+        <item>점점 고조되는 중</item>
         <item>지금은 그루브만</item>
         <item>곧 훅이 나옵니다</item>
         <item>잠시 숨 고르기</item>
@@ -103,8 +103,8 @@
     <string name="medium_quality">중간 품질</string>
     <string name="mono">모노</string>
     <string name="more">더 보기</string>
-    <string name="next_from">다음 재생: %1$s</string>
-    <string name="next_in_queue">다음 재생</string>
+    <string name="next_from">다음 항목: %1$s</string>
+    <string name="next_in_queue">다음 항목</string>
     <string name="no_lyrics_for_track">이 노래에는 가사가 없습니다.</string>
     <string name="no_lyrics_found">가사를 찾을 수 없습니다.</string>
     <string name="now_playing">지금 재생 중</string>
@@ -129,7 +129,7 @@
     <string name="stereo">스테레오</string>
     <string name="translate_lyrics">가사 번역</string>
     <string name="translating_lyrics_to">%1$s 번역 중…</string>
-    <string name="up_next">다음 재생</string>
+    <string name="up_next">다음 항목</string>
     <string name="upgrading_quality">품질 업그레이드 중</string>
     <string name="waiting">대기 중</string>
     <string name="volume">음량</string>
@@ -158,7 +158,7 @@
     <string name="on_device">이 기기</string>
     <string name="personalized_recommendations">나를 위한 맞춤 추천 받기</string>
     <string name="pinned">고정됨</string>
-    <string name="play_next">다음에 재생</string>
+    <string name="play_next">다음 항목 재생</string>
     <string name="playlist">플레이리스트</string>
     <string name="playlist_action">플레이리스트</string>
     <string name="playlists">플레이리스트</string>
