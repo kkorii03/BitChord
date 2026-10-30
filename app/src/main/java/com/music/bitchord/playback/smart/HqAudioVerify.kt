@@ -150,6 +150,9 @@ object HqAudioVerify {
         /** A real measurement that did not match the YouTube recording. */
         data object Mismatch : Outcome
 
+        /** The play changed before this attempt could measure anything. */
+        data object Abandoned : Outcome
+
         /** The YouTube reference itself could not be opened, decoded or reached. */
         data class NoReference(val reason: NoReferenceReason) : Outcome
 
@@ -203,6 +206,7 @@ object HqAudioVerify {
     private sealed interface CandidateFetch {
         data class Ready(val value: Candidate) : CandidateFetch
         data class RateLimited(val host: String?, val restMs: Long) : CandidateFetch
+        data object Abandoned : CandidateFetch
         data object Failed : CandidateFetch
     }
 
@@ -285,7 +289,6 @@ object HqAudioVerify {
         stream: SourceStream,
         manual: Boolean,
         recordRateLimit: Boolean,
-        onRateLimited: (() -> Unit)? = null,
     ): Outcome = withContext(Dispatchers.IO) {
         val epoch = playbackEpoch.get()
         if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable
@@ -387,7 +390,6 @@ object HqAudioVerify {
                     val candidate = when (val fetched = candidateDeferred.await()) {
                         is CandidateFetch.Ready -> fetched.value
                         is CandidateFetch.RateLimited -> {
-                            onRateLimited?.invoke()
                             if (recordRateLimit) {
                                 notePendingRateLimit(
                                     context,
@@ -400,6 +402,9 @@ object HqAudioVerify {
                             }
                             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
                             return@coroutineScope Outcome.Unavailable
+                        }
+                        CandidateFetch.Abandoned -> {
+                            return@coroutineScope Outcome.Abandoned
                         }
                         CandidateFetch.Failed -> {
                             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
@@ -501,6 +506,17 @@ object HqAudioVerify {
     private fun Outcome.verifiedOrNull(): HqVerificationStore.Verified? =
         (this as? Outcome.Verified)?.value
 
+    /**
+     * Whether this attempt has used the one retry a pending entry grants.
+     *
+     * Only [Outcome.Abandoned] leaves the entry for the next event: the play
+     * changed before anything was measured, so the attempt was not really a
+     * retry. Every other answer — including [Outcome.Unavailable],
+     * [Outcome.NoReference] and a null outcome from an unexpected exception —
+     * is definitive and must not be repeated on every later playback event.
+     */
+    internal fun Outcome?.settlesPendingRetry(): Boolean = this !is Outcome.Abandoned
+
     /** Remembers a 429-unmeasured song so a later event can ask once more. */
     private fun notePendingRateLimit(
         context: Context,
@@ -533,11 +549,11 @@ object HqAudioVerify {
      * Re-asks every pending song whose host has finished resting.
      *
      * Called only from playback events and verification requests, never from a
-     * timer. The entry is kept until an attempt is definitive: a verified
-     * answer, a measured mismatch or a second 429 ends the retry, while an
-     * abandoned read or another non-measurement leaves it for the next event.
-     * The host's rest is re-checked before every attempt because the previous
-     * song in this loop may have just been refused and rested it.
+     * timer. The entry is kept only when the attempt was abandoned because the
+     * play changed: a verified answer, a measured mismatch, a missing
+     * reference, an unmeasurable candidate or a second 429 all consume the one
+     * retry. The host's rest is re-checked before every attempt because the
+     * previous song in this loop may have just been refused and rested it.
      */
     private fun retryPendingRateLimits(exceptYoutubeId: String? = null) {
         val due = pendingRateLimits.values.filter {
@@ -560,7 +576,6 @@ object HqAudioVerify {
                         "decode: hq-verify retrying '${pending.target.title}' after host rest",
                         pending.youtubeId,
                     )
-                    var rateLimited = false
                     val outcome = try {
                         verifyOutcome(
                             pending.context,
@@ -569,7 +584,6 @@ object HqAudioVerify {
                             pending.stream,
                             pending.manual,
                             recordRateLimit = false,
-                            onRateLimited = { rateLimited = true },
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -581,13 +595,12 @@ object HqAudioVerify {
                         )
                         null
                     }
-                    // Only a definitive attempt consumes the one retry. An
-                    // abandoned read (the track changed) or any other
-                    // non-measurement must still get its chance after the rest.
-                    if (rateLimited ||
-                        outcome is Outcome.Verified ||
-                        outcome is Outcome.Mismatch
-                    ) {
+                    // Only an attempt abandoned because the play changed keeps
+                    // the entry: it did not really get its one retry. A second
+                    // 429, a measured answer, a missing reference or any other
+                    // unmeasurable candidate is definitive and must not be
+                    // downloaded and decoded again on every later event.
+                    if (outcome.settlesPendingRetry()) {
                         pendingRateLimits.remove(pending.youtubeId, pending)
                     }
                 }
@@ -1001,7 +1014,7 @@ object HqAudioVerify {
                 is DownloadFetch.Bytes -> download.value
                 is DownloadFetch.RateLimited ->
                     return CandidateFetch.RateLimited(download.host, download.restMs)
-                DownloadFetch.Abandoned -> return CandidateFetch.Failed
+                DownloadFetch.Abandoned -> return CandidateFetch.Abandoned
             }
             if (bytes <= 0L) {
                 TrackLog.w(TAG, "decode: hq-verify failed at=download bytes=0")

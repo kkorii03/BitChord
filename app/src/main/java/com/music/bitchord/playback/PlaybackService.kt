@@ -6292,7 +6292,8 @@ class PlaybackService : MediaLibraryService() {
                 )
                 return SwapOutcome.NO_REFERENCE
             }
-            is HqAudioVerify.Outcome.Unavailable -> {
+            is HqAudioVerify.Outcome.Unavailable,
+            is HqAudioVerify.Outcome.Abandoned -> {
                 TrackLog.d(
                     "BitChord",
                     "upgrade refused for $mediaId: the candidate could not be measured",
