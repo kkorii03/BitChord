@@ -152,18 +152,23 @@ object Downloader {
                         if (read == -1) error("Download ended while skipping to ${position}B")
                         skip -= read
                     }
-                    var readAny = false
-                    while (true) {
+                    // Never copy past the length that was measured. A
+                    // proxy is free to answer with more than the track (or a
+                    // chunked response that never ends), and writing all of
+                    // it would fill storage before the final length check
+                    // noticed. Stop at `total` and reject a stray byte.
+                    var remaining = total - position
+                    while (remaining > 0L) {
                         coroutineContext.ensureActive()
-                        val read = source.read(buffer)
-                        if (read == -1) break
+                        val wanted = minOf(buffer.size.toLong(), remaining).toInt()
+                        val read = source.read(buffer, 0, wanted)
+                        if (read == -1) error("Download ended at ${position}B of ${total}B")
                         sink.write(buffer, 0, read)
                         position += read
-                        readAny = true
+                        remaining -= read
                         onProgress(position, total)
                     }
-                    if (!readAny) error("Download failed: empty response")
-                    if (position != total) error("Download ended at ${position}B of ${total}B")
+                    if (source.read() != -1) error("Download server sent more than ${total}B")
                 } else {
                     it.header("Content-Range")
                         ?.substringAfter("bytes ", "")
@@ -297,23 +302,61 @@ object Downloader {
 
         return runCatching {
             open(url, 0, 1).use { response ->
+                val ranged = response.header("Content-Range")
+                    ?.substringAfter('/', "")
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                if (ranged != null) return@use ranged
+                if (response.code != 200) return@use null
+                val declared = response.header("Content-Length")
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                // A server or proxy that ignores Range answers 200 with the
+                // whole file, and its Content-Length is the total. But one
+                // that echoes just the one byte asked for also answers 200
+                // with Content-Length 1, and trusting that would measure the
+                // track as one byte and commit a truncated file. A length no
+                // larger than the probe is ambiguous, so ask again without a
+                // Range and read only the headers.
+                if (declared != null && declared > PROBE_BYTES) return@use declared
+                measureWhole(url)
+            }
+        }.onFailure { Log.w(TAG, "could not measure the track: ${it.message}") }.getOrNull()
+    }
+
+    /**
+     * The whole track's length, measured without a Range.
+     *
+     * Only used when the one-byte probe came back as a 200 whose length could
+     * be the probe itself rather than the file. The body is never read; the
+     * response is closed after its headers, so this costs a request and not a
+     * second copy of the track.
+     */
+    private fun measureWhole(url: String): Long? = runCatching {
+        ProxyPlayback.mediaClientFor(url)
+            .newCall(
+                Request.Builder()
+                    .url(url)
+                    .apply {
+                        StreamResolver.mediaHeadersFor(url)
+                            .forEach { (name, value) -> header(name, value) }
+                    }
+                    .build(),
+            )
+            .execute()
+            .use { response ->
+                if (response.code !in 200..299) return@use null
                 response.header("Content-Range")
                     ?.substringAfter('/', "")
                     ?.toLongOrNull()
                     ?.takeIf { it > 0 }
-                    // A server or proxy that ignores Range answers 200 with the
-                    // whole file. It has no Content-Range to read, but its
-                    // Content-Length is the same total, and refusing it here
-                    // made every such download fail before the first byte. A
-                    // 206 without a usable Content-Range is left null: its
-                    // Content-Length is the slice, not the track.
-                    ?: response.takeIf { it.code == 200 }
-                        ?.header("Content-Length")
+                    ?: response.header("Content-Length")
                         ?.toLongOrNull()
                         ?.takeIf { it > 0 }
             }
-        }.onFailure { Log.w(TAG, "could not measure the track: ${it.message}") }.getOrNull()
-    }
+    }.onFailure { Log.w(TAG, "could not measure the whole track: ${it.message}") }.getOrNull()
+
+    private const val PROBE_BYTES = 1L
 
     private val REFUSAL_CODES = setOf(403, 404, 410)
 }

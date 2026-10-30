@@ -27,4 +27,26 @@ class HqReplacementLandedTest {
         assertFalse(hqReplacementLanded(downloadSucceeded = false, applied = true))
         assertFalse(hqReplacementLanded(downloadSucceeded = false, applied = false))
     }
+
+    @Test
+    fun `a successful download already at least as good as the target landed`() {
+        assertTrue(
+            hqReplacementLanded(
+                downloadSucceeded = true,
+                applied = false,
+                atLeastAsGood = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a successful download below the target and without its pair did not land`() {
+        assertFalse(
+            hqReplacementLanded(
+                downloadSucceeded = true,
+                applied = false,
+                atLeastAsGood = false,
+            ),
+        )
+    }
 }

@@ -10,6 +10,7 @@ import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -97,6 +98,68 @@ class DownloaderRangeTest {
         )
 
         assertEquals(total.toLong(), written)
+        assertArrayEquals(body, out.toByteArray())
+    }
+
+    @Test
+    fun `a chunked 200 body longer than the measured total is not written past the end`() {
+        val total = 64
+        val body = ByteArray(total + 32) { index -> (index * 17).toByte() }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(200).setChunkedBody(Buffer().write(body), 16)
+        }
+
+        val out = ByteArrayOutputStream()
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                Downloader.fetch(
+                    videoId = "video",
+                    stream = stream(server.url("/audio?clen=$total").toString()),
+                    maxKbps = 128,
+                    requireM4a = false,
+                    sink = out,
+                    onProgress = { _, _ -> },
+                )
+            }
+        }
+        assertEquals(total, out.size())
+    }
+
+    @Test
+    fun `a one byte 200 range probe is not mistaken for the whole track`() = runBlocking {
+        val body = ByteArray(4096) { index -> (index * 13).toByte() }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val range = request.getHeader("Range")
+                return if (range == "bytes=0-0") {
+                    // A proxy that answers the one-byte probe with 200 and only
+                    // the probe byte, instead of the whole file it was not asked
+                    // to slice.
+                    MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Length", "1")
+                        .setBody(Buffer().write(body, 0, 1))
+                } else {
+                    MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Length", body.size.toString())
+                        .setBody(Buffer().write(body))
+                }
+            }
+        }
+
+        val out = ByteArrayOutputStream()
+        val written = Downloader.fetch(
+            videoId = "video",
+            stream = stream(server.url("/audio").toString()),
+            maxKbps = 128,
+            requireM4a = false,
+            sink = out,
+            onProgress = { _, _ -> },
+        )
+
+        assertEquals(body.size.toLong(), written)
         assertArrayEquals(body, out.toByteArray())
     }
 }

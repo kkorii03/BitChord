@@ -49,6 +49,9 @@ class DownloadService : Service() {
     /** Distinguishes this drain from one a late start request just began. */
     private var drainGeneration = 0L
 
+    /** The id of the latest start request, so stopping cannot discard a newer one. */
+    private val startIds = StartIdLedger()
+
     /** What the notification is currently about. */
     @Volatile
     private var current: Song? = null
@@ -66,6 +69,7 @@ class DownloadService : Service() {
         // with startForegroundService and never promoted takes the app down
         // with it.
         promote()
+        val latestStartId = startIds.record(startId)
 
         if (intent?.action == ACTION_CANCEL_ALL) {
             Downloads.active.value.keys.toList().forEach(Downloads::cancel)
@@ -73,7 +77,7 @@ class DownloadService : Service() {
             return START_NOT_STICKY
         }
 
-        ensureDrain()
+        ensureDrain(latestStartId)
         // Not sticky: a queue is a list of things asked for in a session, and
         // reviving the service without one would put up a notification about
         // nothing.
@@ -122,9 +126,10 @@ class DownloadService : Service() {
      * Android and then silently ignored — the track sat in the queue with no
      * worker and no later event guaranteed to wake it.
      */
-    private fun ensureDrain() {
+    private fun ensureDrain(startId: Int = startIds.latest()) {
         if (!drainGate.begin()) return
         val generation = ++drainGeneration
+        val drainStartId = startId
         if (notifier?.isActive != true) {
             notifier = scope.launch { reflectProgress() }
         }
@@ -137,9 +142,20 @@ class DownloadService : Service() {
             if (drainGate.finish(queueBusy = Downloads.busy())) {
                 ensureDrain()
             } else {
-                // Not shutdown(stopWork = true): this is the drain coroutine,
-                // and cancelling its own job here would be cancelling itself.
-                shutdown(stopWork = false)
+                // A start request that arrived while this drain was running
+                // found the gate closed and therefore did not begin a drain.
+                // Hand it one now; stopping with an older id would let Android
+                // stop the service and strand whatever it queued.
+                val stopId = startIds.stopIdAfter(drainStartId)
+                if (stopId == null) {
+                    ensureDrain()
+                } else {
+                    // Not shutdown(stopWork = true): this is the drain
+                    // coroutine, and cancelling its own job here would be
+                    // cancelling itself. stopSelf(id) also refuses to stop
+                    // when a newer start request has already been delivered.
+                    shutdown(stopWork = false, stopId = stopId)
+                }
             }
         }
     }
@@ -195,7 +211,7 @@ class DownloadService : Service() {
         }
     }
 
-    private fun shutdown(stopWork: Boolean) {
+    private fun shutdown(stopWork: Boolean, stopId: Int? = null) {
         if (stopWork) {
             drain?.cancel()
             drainGate.reset()
@@ -204,7 +220,7 @@ class DownloadService : Service() {
         drain = null
         notifier = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        if (stopWork || stopId == null) stopSelf() else stopSelf(stopId)
     }
 
     override fun onDestroy() {
@@ -375,4 +391,35 @@ internal class DrainGate {
     fun reset() {
         active = false
     }
+}
+
+/**
+ * The latest start id the service has been handed.
+ *
+ * `stopSelf()` stops the service regardless of newer start requests that have
+ * already arrived; `stopSelf(id)` only stops when [id] is still the latest.
+ * This remembers that id and tells the finishing drain whether a later request
+ * arrived while it ran.
+ */
+internal class StartIdLedger {
+
+    private var latest = 0
+
+    /** Record a start request and return the latest id, which monotonic ids make the max. */
+    @Synchronized
+    fun record(startId: Int): Int {
+        if (startId > latest) latest = startId
+        return latest
+    }
+
+    @Synchronized
+    fun latest(): Int = latest
+
+    /**
+     * The id to pass to `stopSelf` after a drain that started at
+     * [drainStartId], or null when a newer request has arrived.
+     */
+    @Synchronized
+    fun stopIdAfter(drainStartId: Int): Int? =
+        if (latest > drainStartId) null else latest
 }
