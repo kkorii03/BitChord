@@ -1253,6 +1253,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Renames a playlist that lives only on this device, the counterpart to
+     * [renamePlaylist] for one made without an account (a Spotify import, or
+     * one saved while signed out). The store owns the change; the open page,
+     * if any, is restated here.
+     */
+    fun renameLocalPlaylist(browseId: String, title: String) {
+        val name = title.trim()
+        if (name.isBlank()) return
+        com.music.bitchord.data.spotify.LocalPlaylistStore.renamePlaylist(browseId, name)
+        _detailStack.value = _detailStack.value.map { page ->
+            if (page.browseId == browseId) page.copy(title = name) else page
+        }
+    }
+
+    /** Deletes a device-only playlist, closing its page when it is the one open. */
+    fun deleteLocalPlaylist(browseId: String) {
+        com.music.bitchord.data.spotify.LocalPlaylistStore.deletePlaylist(browseId)
+        val before = _detailStack.value.size
+        _detailStack.value = _detailStack.value.filterNot { it.browseId == browseId }
+        if (_detailStack.value.size != before) navigator.onDetailStackShrunk(_detailStack.value.size)
+    }
+
     fun deletePlaylist(
         playlist: UserPlaylist,
         /** Told when YouTube refused the write, so the surface can say so. */

@@ -5412,9 +5412,24 @@ private fun BitChordApp(
             // Compose. Both are read from collected state so this sheet actually
             // recomposes when the answer arrives.
             val ownedPlaylists by viewModel.playlistOwned.collectAsStateWithLifecycle()
-            val playlist = target.browseId
+            // A playlist saved only on this device has no account owner to ask
+            // about, but it is still the listener's to rename and delete. Its
+            // row is built here so it reaches the same sheet the account's own
+            // playlists do; see [renameLocalPlaylist] and [deleteLocalPlaylist].
+            val localPlaylist = target.browseId?.let { id ->
+                localPlaylists.firstOrNull { it.browseId == id }
+            }
+            val remotePlaylist = target.browseId
                 ?.takeIf { signedIn && ownedPlaylists[it] == true }
                 ?.let { id -> playlists.firstOrNull { it.browseId == id } }
+            val playlist = remotePlaylist ?: localPlaylist?.let { local ->
+                UserPlaylist(
+                    playlistId = local.browseId,
+                    title = local.title,
+                    subtitle = context.getString(R.string.local_playlist_subtitle, local.songs.size),
+                    thumbnailUrl = local.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+                )
+            }
             val remote = target.browseId?.startsWith("local:") == false
             // Spotify playlists saved on this device ("local:playlist:sp_local_…")
             // carry real YouTube video ids, so they download like a remote
@@ -5524,12 +5539,16 @@ private fun BitChordApp(
                 onRename = playlist?.let { p ->
                     { name: String ->
                         browseActions = null
-                        viewModel.renamePlaylist(p, name) {
-                            showQueueNotice(context.getString(R.string.playlist_action_failed))
+                        if (localPlaylist != null && remotePlaylist == null) {
+                            viewModel.renameLocalPlaylist(localPlaylist.browseId, name)
+                        } else {
+                            viewModel.renamePlaylist(p, name) {
+                                showQueueNotice(context.getString(R.string.playlist_action_failed))
+                            }
                         }
                     }
                 },
-                onReorder = playlist?.let { p ->
+                onReorder = remotePlaylist?.let { p ->
                     {
                         browseActions = null
                         // Rearranged on the playlist's own page: open it first
@@ -5559,8 +5578,12 @@ private fun BitChordApp(
                 onDelete = playlist?.let { p ->
                     {
                         browseActions = null
-                        viewModel.deletePlaylist(p) {
-                            showQueueNotice(context.getString(R.string.playlist_action_failed))
+                        if (localPlaylist != null && remotePlaylist == null) {
+                            viewModel.deleteLocalPlaylist(localPlaylist.browseId)
+                        } else {
+                            viewModel.deletePlaylist(p) {
+                                showQueueNotice(context.getString(R.string.playlist_action_failed))
+                            }
                         }
                     }
                 },

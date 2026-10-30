@@ -110,7 +110,14 @@ object LocalPlaylistStore {
     }
 
     fun savePlaylist(title: String, songs: List<Song>): LocalPlaylist {
-        val id = "sp_local_" + System.currentTimeMillis()
+        // The timestamp keeps ids readable, but two saves inside the same
+        // millisecond used to share one: the second replaced the first in
+        // [updated] and was the only one left on disk. Step forward until the
+        // id is one this device has never used.
+        val id = newLocalPlaylistId(
+            nowMs = System.currentTimeMillis(),
+            existing = _playlists.value.mapTo(HashSet()) { it.id },
+        )
         val playlist = LocalPlaylist(id = id, title = title, songs = songs)
         val updated = listOf(playlist) + _playlists.value.filterNot { it.id == id }
         _playlists.value = updated
@@ -119,18 +126,13 @@ object LocalPlaylistStore {
     }
 
     fun deletePlaylist(id: String) {
-        val updated = _playlists.value.filterNot { it.id == id || it.browseId == id || it.id == id.removePrefix("local:playlist:") }
+        val updated = withoutPlaylist(_playlists.value, id)
         _playlists.value = updated
         persistAsync(updated)
     }
 
     fun renamePlaylist(id: String, newTitle: String) {
-        val cleanId = id.removePrefix("local:playlist:").removePrefix("VL")
-        val updated = _playlists.value.map {
-            if (it.id == cleanId || it.id == id || it.browseId == id) {
-                it.copy(title = newTitle)
-            } else it
-        }
+        val updated = renamedPlaylists(_playlists.value, id, newTitle)
         _playlists.value = updated
         persistAsync(updated)
     }
@@ -202,6 +204,35 @@ object LocalPlaylistStore {
         }.onFailure {
             Log.w(TAG, "saving local playlists threw: ${it.message}")
         }
+    }
+}
+
+/** One id no row already uses; consecutive saves in the same millisecond step forward. */
+internal fun newLocalPlaylistId(nowMs: Long, existing: Set<String>): String {
+    var candidate = nowMs
+    while ("sp_local_$candidate" in existing) candidate += 1
+    return "sp_local_$candidate"
+}
+
+/** [id] as the store writes it, accepting a browse id or a `VL`-prefixed page id. */
+internal fun localPlaylistId(id: String): String =
+    id.removePrefix("local:playlist:").removePrefix("VL")
+
+/** The list with the row [id] names taken out — by id or by browse id. */
+internal fun withoutPlaylist(current: List<LocalPlaylist>, id: String): List<LocalPlaylist> {
+    val cleanId = localPlaylistId(id)
+    return current.filterNot { it.id == id || it.browseId == id || it.id == cleanId }
+}
+
+/** The list with the row [id] names carrying [newTitle], in the same position. */
+internal fun renamedPlaylists(
+    current: List<LocalPlaylist>,
+    id: String,
+    newTitle: String,
+): List<LocalPlaylist> {
+    val cleanId = localPlaylistId(id)
+    return current.map {
+        if (it.id == cleanId || it.id == id || it.browseId == id) it.copy(title = newTitle) else it
     }
 }
 
