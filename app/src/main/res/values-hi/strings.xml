@@ -1411,4 +1411,8 @@
     <string name="route_other">अन्य आउटपुट</string>
     <string name="spotify_import_language_preference">भाषा प्राथमिकता</string>
     <string name="spotify_import_language_hint">जैसे पंजाबी, मराठी, कोरियाई…</string>
+
+    <string name="settings_footer_downloads">Sets download quality and automatic downloads. Changes apply from the next download.</string>
+    <string name="settings_footer_playback">Sets playback, autoplay and Automix behaviour.</string>
+    <string name="settings_footer_advanced">Developer options and experiments. Leave these at their defaults unless asked to change them.</string>
 </resources>

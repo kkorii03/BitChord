@@ -740,6 +740,7 @@ fun SettingsScreen(
                 SettingsSubRow(
                     title = autoRedownloadMvSoundTitle,
                     checked = autoRedownloadMvSound,
+                    subtitle = stringResource(R.string.auto_redownload_mv_sound_subtitle),
                     onCheckedChange = { checked ->
                         AppSettings.setAutoRedownloadMvSound(checked)
                         if (checked) {
@@ -766,6 +767,10 @@ fun SettingsScreen(
                 SettingsSubRow(
                     title = autoPrefetchHqTitle,
                     checked = autoPrefetchHq,
+                    subtitle = stringResource(
+                        R.string.auto_prefetch_hq_subtitle,
+                        AppSettings.hqPrefetchLimit.value,
+                    ),
                     onCheckedChange = { checked ->
                         AppSettings.setAutoPrefetchHq(checked)
                         HqLibraryUpgrade.onSettingsChanged(context)
@@ -777,6 +782,7 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Cached,
                     title = recheckDownloadsTitle,
+                    subtitle = stringResource(R.string.download_health_recheck_subtitle),
                     trailing = { Chevron() },
                     onClick = { DownloadHealth.resetChecks(context) },
                 )

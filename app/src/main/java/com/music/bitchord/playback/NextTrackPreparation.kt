@@ -170,6 +170,8 @@ internal class NextTrackPreparation(
             sources = AppSettings.lyricsSources.value,
             order = AppSettings.lyricsSourceOrder.value,
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+            syncedLyrics = AppSettings.syncedLyrics.value,
+            nextPrepEnabled = AppSettings.syncSafetyNextPrep.value,
         )
         return Snapshot(
             rowId,
@@ -940,10 +942,17 @@ internal object NextPrepCache {
         sources: Set<LyricsSource>,
         order: List<LyricsSource>,
         prioritizeSyllableSync: Boolean,
+        syncedLyrics: Boolean,
+        nextPrepEnabled: Boolean,
     ): String = buildString {
         sources.map { it.name }.sorted().forEach { append(it).append('\u0000') }
         order.forEach { append(it.name).append('\u0001') }
         append(prioritizeSyllableSync)
+        // PlaybackService reads this switch when it opens a track, and the
+        // next-prep safety switch decides whether the bundle does lyrics work
+        // at all. A completed bundle prepared while either was off must not
+        // answer for a row after it is turned on.
+        append('\u0002').append(syncedLyrics).append('\u0003').append(nextPrepEnabled)
     }
 
     fun clear() {

@@ -2869,6 +2869,14 @@ object LyricsTiming {
         @Volatile private var dirty = false
         private val saving = java.util.concurrent.atomic.AtomicBoolean(false)
 
+        /** Drops the in-memory copy after an import replaced its file. */
+        suspend fun reset() {
+            mutex.withLock {
+                entries = null
+                dirty = false
+            }
+        }
+
         /**
          * Written a moment later, off the main thread, once for however many
          * changes came in meanwhile: the file holds every video's maps and
@@ -2900,6 +2908,37 @@ object LyricsTiming {
             }
         }
     }
+
+    /** The whole timing memory as text, for a device-migration backup. */
+    internal suspend fun exportBackupText(context: Context): String? = withContext(Dispatchers.IO) {
+        val file = File(context.applicationContext.filesDir, "lyrics_timing_v1.json")
+        runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull()
+    }
+
+    /** Replaces the timing memory with a backup's copy; null removes it. */
+    internal suspend fun restoreBackupText(context: Context, text: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            val file = File(context.applicationContext.filesDir, "lyrics_timing_v1.json")
+            runCatching {
+                if (text == null) {
+                    file.delete()
+                } else {
+                    // Read before replacing so a malformed section cannot cost
+                    // the device the timing memory it already had.
+                    json.decodeFromString(Saved.serializer(), text)
+                    file.parentFile?.mkdirs()
+                    val temporary = File(file.parentFile, "${file.name}.tmp")
+                    temporary.writeText(text)
+                    if (!temporary.renameTo(file)) {
+                        temporary.copyTo(file, overwrite = true)
+                        temporary.delete()
+                    }
+                }
+                true
+            }.getOrDefault(false).also { ok ->
+                if (ok) store(context).reset()
+            }
+        }
 
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private const val SAVE_DELAY_MS = 800L

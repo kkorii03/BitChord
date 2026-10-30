@@ -381,7 +381,10 @@ internal fun SleeveNerdStats(
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
-    if (!revealed) return
+    // The Settings switch is the listener's answer to "show me the
+    // codec/bitrate line", so a reveal tap must not draw it while off.
+    val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
+    if (!revealed || !showNerdStats) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     // The measured stream for this track only; see [PlaybackQualityLabel].
     val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)

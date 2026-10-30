@@ -857,8 +857,30 @@ object HqLibraryUpgrade {
             nextRunnableTargetLocked(selectionNow, downloaded)
         }
         if (target == null) {
-            val parked = synchronized(lock) { plan.isNotEmpty() }
             val built = buildPlan(context)
+            // The same policy selection with the retry cooldown ignored. Only
+            // entries that survive this may be kept from the old plan: a
+            // target omitted because the listener turned a switch off, lowered
+            // the prefetch cap or lost its source must drop exactly as it did
+            // before, or nextRunnableTargetLocked would later run it without
+            // ever re-applying that policy.
+            val policyEligible = if (synchronized(lock) { plan.isNotEmpty() }) {
+                buildPlan(context, ignoreRetryCooldown = true)
+                    .mapTo(HashSet()) { it.target.videoId }
+            } else {
+                emptySet()
+            }
+            val parked = synchronized(lock) {
+                if (plan.isNotEmpty()) {
+                    val kept = plan.filter { it.target.videoId in policyEligible }
+                    if (kept.size != plan.size) {
+                        plan = kept
+                        persistLocked()
+                        publishLocked()
+                    }
+                }
+                plan.isNotEmpty()
+            }
             if (built.isEmpty()) {
                 // A parked plan is kept on disk until its cooldown ends. The
                 // next playback/foreground event checks it again; this worker
@@ -883,7 +905,7 @@ object HqLibraryUpgrade {
             // below then owns their wake-up. A rebuilt target for the same song
             // wins over the kept one.
             synchronized(lock) {
-                plan = mergeParkedPlan(built, plan)
+                plan = mergeParkedPlan(built, plan, policyEligible)
                 done = 0
                 total = plan.size
                 activeVideoId = null
@@ -975,9 +997,12 @@ object HqLibraryUpgrade {
     private fun mergeParkedPlan(
         built: List<PendingTarget>,
         kept: List<PendingTarget>,
+        policyEligible: Set<String>,
     ): List<PendingTarget> {
         val runnableIds = built.mapTo(HashSet()) { it.target.videoId }
-        return built + kept.filterNot { it.target.videoId in runnableIds }
+        return built + kept.filterNot {
+            it.target.videoId in runnableIds || it.target.videoId !in policyEligible
+        }
     }
 
     /**
@@ -1242,7 +1267,10 @@ object HqLibraryUpgrade {
         }
     }
 
-    private suspend fun buildPlan(context: Context): List<PendingTarget> {
+    private suspend fun buildPlan(
+        context: Context,
+        ignoreRetryCooldown: Boolean = false,
+    ): List<PendingTarget> {
         val verified = HqVerificationStore.entries(context)
         if (verified.isEmpty()) return emptyList()
         val downloaded = Downloads.savedMetadataSnapshot()
@@ -1257,7 +1285,11 @@ object HqLibraryUpgrade {
         // song: a higher-tier piano cover must not hide a lower-tier verified
         // entry before [HqLibraryPolicy] has had the chance to drop the cover
         // and group the rest by song.
-        val now = System.currentTimeMillis()
+        // Long.MAX_VALUE makes AutomaticRetryPolicy accept a target resting in
+        // its cooldown while still refusing one whose automatic attempts are
+        // exhausted. Used only to ask whether the policy still selects a kept
+        // entry, never to run it early.
+        val now = if (ignoreRetryCooldown) Long.MAX_VALUE else System.currentTimeMillis()
         val entries = verified
             .filter { entry ->
                 synchronized(lock) {

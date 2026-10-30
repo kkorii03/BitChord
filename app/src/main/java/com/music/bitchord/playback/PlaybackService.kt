@@ -10844,6 +10844,8 @@ class PlaybackService : MediaLibraryService() {
                     sources = AppSettings.lyricsSources.value,
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    syncedLyrics = AppSettings.syncedLyrics.value,
+                    nextPrepEnabled = AppSettings.syncSafetyNextPrep.value,
                 ),
                 audioSource = preparedAudioSource,
                 substituted = !coverQuery.isVideo && StreamChoice.isSubstitute(currentSong.videoId),

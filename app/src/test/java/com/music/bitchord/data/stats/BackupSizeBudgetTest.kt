@@ -17,7 +17,10 @@ class BackupSizeBudgetTest {
     fun `a full-size history fits the shared export and import limit`() {
         val first = YearMonth.of(2023, 1)
         val buckets = (0 until 36).map { index ->
-            bucket(first.plusMonths(index.toLong()), withDays = index == 0)
+            // Every bucket carries its full per-day map: a real 36-month
+            // history fills all of them, and only the first bucket was tested
+            // before, understating the largest legitimate export.
+            bucket(first.plusMonths(index.toLong()), withDays = true)
         }
         val file = Backup.BackupFile(app = "bitchord", version = 2, listening = buckets)
 
@@ -48,6 +51,15 @@ class BackupSizeBudgetTest {
         } else {
             emptyMap()
         }
+        // Every row in the bucket names the same day map: the serialized shape
+        // is identical to giving each row its own copy, without spending the
+        // test JVM's heap on fifty thousand duplicated maps.
+        val days = dayMap.toMutableMap()
+        val bucketDays = if (withDays) {
+            dayMap.mapValues { DayStats(ms = 1_000L, plays = 1) }
+        } else {
+            null
+        }
         return StoredBucket(
             month = month.toString(),
             tracks = (0 until 600).map { index ->
@@ -63,7 +75,7 @@ class BackupSizeBudgetTest {
                     ms = 225_000L + index,
                     plays = 2,
                     last = 1_700_000_000_000L + index,
-                    days = dayMap.toMutableMap(),
+                    days = days,
                 )
             },
             artists = (0 until 400).map { index ->
@@ -75,7 +87,7 @@ class BackupSizeBudgetTest {
                     ms = 225_000L + index,
                     plays = 2,
                     key = "artist$index",
-                    days = dayMap.toMutableMap(),
+                    days = days,
                 )
             },
             albums = (0 until 400).map { index ->
@@ -87,12 +99,12 @@ class BackupSizeBudgetTest {
                     ms = 225_000L + index,
                     plays = 2,
                     key = "album$index",
-                    days = dayMap.toMutableMap(),
+                    days = days,
                 )
             },
-            trackDays = if (withDays) dayMap.mapValues { DayStats(ms = 1_000L, plays = 1) } else null,
-            artistDays = if (withDays) dayMap.mapValues { DayStats(ms = 1_000L, plays = 1) } else null,
-            albumDays = if (withDays) dayMap.mapValues { DayStats(ms = 1_000L, plays = 1) } else null,
+            trackDays = bucketDays,
+            artistDays = bucketDays,
+            albumDays = bucketDays,
         )
     }
 }

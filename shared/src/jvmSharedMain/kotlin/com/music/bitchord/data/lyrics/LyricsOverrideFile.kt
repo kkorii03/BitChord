@@ -120,6 +120,12 @@ object LyricsOverrideFile {
         }.getOrDefault(false)
     }
 
+    /** Whether [text] is a readable override file, without touching any file. */
+    fun readText(text: String): Boolean = runCatching {
+        json.decodeFromString(Data.serializer(), text)
+        true
+    }.getOrDefault(false)
+
     private fun readFile(file: File): Data = runCatching {
         if (!file.isFile) return Data()
         val data = json.decodeFromString(Data.serializer(), file.readText())

@@ -123,6 +123,22 @@ class TasteSignalsRatingBackupTest {
         )
     }
 
+
+    @Test
+    fun `a rating cleared this session is removed from both exported lists`() {
+        val (liked, disliked) = Backup.mergeRatedIds(
+            session = mapOf(
+                "cleared-like" to LikeStatus.INDIFFERENT,
+                "cleared-dislike" to LikeStatus.INDIFFERENT,
+            ),
+            persistedLiked = listOf("cleared-like", "still-liked"),
+            persistedDisliked = listOf("cleared-dislike", "still-disliked"),
+        )
+
+        assertEquals(listOf("still-liked"), liked)
+        assertEquals(listOf("still-disliked"), disliked)
+    }
+
     private fun field(name: String) =
         TasteSignals::class.java.getDeclaredField(name).apply { isAccessible = true }
 }

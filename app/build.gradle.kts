@@ -241,6 +241,12 @@ android {
             // so a test of that layer fails on the logging rather than on the
             // logic it was written to check.
             isReturnDefaultValues = true
+            all {
+                // The backup ceiling test round-trips a full 36-month history
+                // with every per-day row present; its fixture and encoded JSON
+                // together need more than the default unit-test heap.
+                it.maxHeapSize = "3g"
+            }
         }
     }
 }

@@ -814,6 +814,12 @@ object ListeningStats {
             lastWrite?.join()
             return writeLock.withLock {
                 synchronized(lock) {
+                    // A previous import may have died after writing its
+                    // journal. Roll that one back before this import writes a
+                    // new journal over the only record of what it left in
+                    // `.bak`; otherwise the next no-journal open would purge
+                    // those months as leftovers.
+                    recoverInterruptedImport()
                     directory.mkdirs()
                     val staged = mutableListOf<Pair<String, File>>()
                     for ((key, text) in prepared) {
@@ -930,8 +936,14 @@ object ListeningStats {
         backups: List<Pair<File, File>>,
         applied: List<File> = emptyList(),
     ): Boolean {
-        applied.forEach { it.delete() }
         var restored = true
+        // A month committed by this import has to be gone before its old copy
+        // can take that name. A failed delete is as much a rollback failure as
+        // a failed rename: leaving it out of [restored] would let the caller
+        // delete the journal and strand the only remaining copy in `.bak`.
+        applied.forEach { file ->
+            if (file.exists() && !file.delete()) restored = false
+        }
         for ((original, backup) in backups) {
             if (!backup.isFile) continue
             if (original.exists() && !original.delete()) {
