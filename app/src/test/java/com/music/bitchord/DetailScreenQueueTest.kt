@@ -7,6 +7,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.QueueCoordinator
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import com.music.bitchord.playback.QueueSource
+import com.music.bitchord.ui.screens.artistTopSongs
 import com.music.bitchord.ui.screens.matching
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -222,4 +223,24 @@ class DetailScreenQueueTest {
         assertEquals(QueueTier.CONTEXT, timeline[0].queueTier)
         assertEquals("Search", timeline[0].playbackSource)
     }
+
+    @Test
+    fun `artist top songs follow the open filter and keep the page cap`() {
+        val songs = List(25) { i ->
+            testSong(
+                id = "s-$i",
+                title = if (i == 24) "Needle in the Hay" else "Song $i",
+                artist = "Artist $i",
+            )
+        }
+
+        // A match at the end of the list is still a match; the old strip took
+        // the first twenty rows before looking at the query.
+        assertEquals(listOf("s-24"), songs.artistTopSongs("needle", 20).map { it.videoId })
+
+        // With no filter the cap is unchanged.
+        assertEquals(20, songs.artistTopSongs("", 20).size)
+        assertEquals("s-0", songs.artistTopSongs("", 20).first().videoId)
+    }
+
 }

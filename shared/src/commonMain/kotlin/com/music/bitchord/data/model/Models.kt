@@ -471,6 +471,12 @@ data class ShelfItem(
      * including when its picture had to fall back to an album cover.
      */
     val isArtist: Boolean = false,
+    /**
+     * A music-video upload rather than a catalogue track, when the card is a
+     * track card at all. Read off its widescreen still; a release or artist
+     * card is never one.
+     */
+    val isVideo: Boolean = false,
 )
 
 /** The signed-in Google account, as YouTube Music reports it. */

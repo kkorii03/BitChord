@@ -151,6 +151,8 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.detailBrowseType
+import com.music.bitchord.data.model.isTrackCard
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.isUnresolvedSpotify
@@ -2392,6 +2394,8 @@ private fun BitChordApp(
                 title = item.title,
                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
+                isVideoOrigin = item.isVideo,
             )
         }
     }
@@ -3727,17 +3731,37 @@ private fun BitChordApp(
                                 onShuffle = { songs -> shuffleDetailSongs(songs) },
                                 shuffleLoading = shuffleStarting,
                                 onSectionItemClick = { item ->
-                                    item.browseId?.let { id ->
-                                        viewModel.openDetail(
-                                            browseId = id,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                            type = BrowseType.ALBUM,
+                                    val song = shelfSong(item)
+                                    if (song != null && item.isTrackCard) {
+                                        // A shelf on this page can hold a track
+                                        // card (a video, most often) with no
+                                        // page behind it; tapping it starts the
+                                        // track instead of doing nothing.
+                                        playRadio(
+                                            song,
+                                            QueueSource(
+                                                page.title,
+                                                PlaybackSourceType.BROWSE,
+                                                page.browseId,
+                                            ),
                                         )
+                                    } else {
+                                        item.browseId?.let { id ->
+                                            viewModel.openDetail(
+                                                browseId = id,
+                                                title = item.title,
+                                                subtitle = item.subtitle,
+                                                thumbnailUrl = item.thumbnailUrl,
+                                                // An artist shelf can carry an
+                                                // artist card whose id is not
+                                                // `UC…`; the card says what it
+                                                // is, so it still opens as one.
+                                                type = item.detailBrowseType(),
+                                            )
+                                        }
                                     }
                                 },
-                                onSectionItemLongPress = onBrowseLongPress,
+                                onSectionItemLongPress = onShelfLongPress,
                                 // Only the page on its way in answers to the bar's
                                 // search button; one fading out keeps its list whole.
                                 searching = detailSearching && page.browseId == detail?.browseId,
