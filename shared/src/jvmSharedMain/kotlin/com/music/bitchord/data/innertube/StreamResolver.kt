@@ -308,22 +308,20 @@ object StreamResolver {
         // See [rememberUnplayable] for why this is the fix for "stuck loading".
         unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
 
-        // Stamped from the state at the *start* of the walk. An ALL_YOUTUBE
-        // route or scope change during a slow resolve used to make the finished
-        // URL look as though it had been minted on the new route, and the next
-        // open was then sent through a server that never issued it (403).
-        val mintedGeneration = YouTubeProxy.routeGeneration
-        val mintedOnAllScope = YouTubeProxy.config.usable &&
-            YouTubeProxy.config.scope == com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE &&
-            !ProxyHealthMonitor.shouldBypassProxy()
-
-        val stream = coalescedResolve(videoId)
+        // The walk owns the route stamp. It is computed once inside the shared
+        // walk rather than here: a caller that joined an in-flight walk used to
+        // capture the route *after* the URL had already been minted, and a
+        // route/scope change during that walk then labelled the old URL with
+        // the new route, which the next open fetched through the wrong server
+        // (403). See [coalescedResolve].
+        val walked = coalescedResolve(videoId)
+        val stream = walked.stream
 
         // The container carries no bitrate field, so this is the only place the
         // real figure is ever known.
         NerdStats.onStreamPicked(videoId, stream.kbps)
         stream.loudnessDb?.let { loudness[videoId] = it }
-        remember(videoId, stream.url, mintedGeneration, mintedOnAllScope)
+        remember(videoId, stream.url, walked.generation, walked.onAllScope)
         return stream.url
     }
 
@@ -523,13 +521,34 @@ object StreamResolver {
      * single largest producer of lines in the log, and every one of them was
      * previously filed against whatever happened to be playing while the walk
      * ran, which for read-ahead is the track before this one.
-     */    private suspend fun coalescedResolve(videoId: String): Stream {
+     */    private suspend fun coalescedResolve(videoId: String): ResolvedWalk {
         inFlight[videoId]?.let { return it.await() }
         // Started lazily so that losing the race below costs nothing: the walk
         // that gets discarded has not run a line, so cancelling it fires no
         // requests and leaves no half-finished deferred behind.
         val walk = resolverScope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
-            resolveUncached(videoId)
+            // Captured once, at the walk's start, so every caller that joins
+            // this walk shares the same stamp. A joiner capturing its own after
+            // `await` would label a URL minted under the old route with the new
+            // one and the next open would fetch it through a server that never
+            // issued it (403).
+            val mintedGeneration = YouTubeProxy.routeGeneration
+            val allScopeAtStart = allScopeInForce()
+            val stream = resolveUncached(videoId)
+            // Whether ALL was still in force when the URL was actually
+            // obtained. A proxy outage that begins mid-walk sends the failsafe
+            // down the direct route; stamping that URL as proxy-minted made it
+            // get fetched through the proxy once the bypass expired (403). Both
+            // ends are required for the same reason as the reverse switch: a URL
+            // minted before ALL came on was minted directly.
+            ResolvedWalk(
+                stream = stream,
+                generation = mintedGeneration,
+                onAllScope = ProxyPlaybackPolicy.mintedOnAllScopeAfterWalk(
+                    allScopeAtStart = allScopeAtStart,
+                    allScopeAtEnd = allScopeInForce(),
+                ),
+            )
         }
         val running = inFlight.putIfAbsent(videoId, walk)
         if (running != null) {
@@ -555,7 +574,28 @@ object StreamResolver {
         return walk.await()
     }
 
-    private val inFlight = ConcurrentHashMap<String, Deferred<Stream>>()
+    private val inFlight = ConcurrentHashMap<String, Deferred<ResolvedWalk>>()
+
+    /**
+     * A finished walk and the route stamp every caller of it must share.
+     *
+     * The stamp travels with the walk because it describes the state when the
+     * URL was obtained, not the state each caller happens to observe after
+     * waiting for it.
+     */
+    private class ResolvedWalk(
+        val stream: Stream,
+        val generation: Long,
+        val onAllScope: Boolean,
+    )
+
+    /** Whether ALL_YOUTUBE is actually in force now — not merely selected. */
+    private fun allScopeInForce(): Boolean = ProxyPlaybackPolicy.allScopeNow(
+        configUsable = com.music.bitchord.data.net.YouTubeProxy.config.usable,
+        allScope = com.music.bitchord.data.net.YouTubeProxy.config.scope ==
+            com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
+        bypassing = ProxyHealthMonitor.shouldBypassProxy(),
+    )
 
     private val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -1459,6 +1499,17 @@ object StreamResolver {
     }
 
     /**
+     * Test seam: the route stamp currently stored for [videoId].
+     *
+     * Lets the cache tests state what a later open would actually follow,
+     * without a proxy or a network walk.
+     */
+    internal fun cachedProxyStampForTest(videoId: String): ProxyPlaybackPolicy.ResolvedUrlStamp? =
+        recent[videoId]?.let {
+            ProxyPlaybackPolicy.ResolvedUrlStamp(it.proxyGeneration, it.mintedOnAllScope)
+        }
+
+    /**
      * As [resolve], but for a file being kept rather than a stream being heard:
      * the best format the *download* setting allows, and no connection has a
      * say. Opus-in-WebM is preferred for app-private downloads; exported files
@@ -2307,10 +2358,12 @@ object StreamResolver {
         }
         // A Music-only proxy URL is registered by [ProxyPlayback.markResolved]
         // and that stamp is authoritative. An ALL_YOUTUBE URL is not registered
-        // there, so it uses whatever the caller captured before the walk; when
-        // the caller captured nothing (a retry handing the same URL back), the
-        // live route is the only available answer.
-        val registered = if (ProxyPlayback.isProxiedUrl(url)) ProxyPlayback.generationFor(url) else null
+        // there, so [ProxyPlayback.generationFor]'s ALL branch supplies the
+        // live route; guarding this on [ProxyPlayback.isProxiedUrl] was the bug:
+        // every retried ALL URL (rememberServed passes no capture) lost its
+        // stamp and was later fetched directly, which googlevideo answers with
+        // 403 because the URL is bound to the proxy's address.
+        val registered = ProxyPlayback.generationFor(url)
         val stamp = ProxyPlaybackPolicy.stampFor(
             capturedGeneration = capturedGeneration,
             capturedOnAllScope = capturedOnAllScope,

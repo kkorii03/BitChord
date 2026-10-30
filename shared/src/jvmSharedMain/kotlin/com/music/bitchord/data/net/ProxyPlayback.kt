@@ -134,6 +134,20 @@ object ProxyPlaybackPolicy {
             mintedOnAllScope = registeredGeneration != null && currentAllScope,
         )
     }
+
+    /**
+     * Whether a URL obtained by a walk counts as minted on the ALL_YOUTUBE
+     * route.
+     *
+     * Both boundaries must show ALL in force. A walk that starts on ALL but
+     * ends during the proxy's unreachable bypass obtained its URL directly, so
+     * stamping it proxy-minted makes the next open follow the proxy once the
+     * bypass expires — a 403 from googlevideo. A walk that starts outside ALL
+     * and only switches in mid-way is the same mistake in reverse: its URL was
+     * minted directly before the switch.
+     */
+    fun mintedOnAllScopeAfterWalk(allScopeAtStart: Boolean, allScopeAtEnd: Boolean): Boolean =
+        allScopeAtStart && allScopeAtEnd
 }
 
 /**

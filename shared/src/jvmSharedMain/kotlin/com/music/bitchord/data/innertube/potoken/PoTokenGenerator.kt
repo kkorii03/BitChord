@@ -137,18 +137,21 @@ class PoTokenGenerator(
 
     internal companion object {
         /**
-         * Longer than the page's own worst case, not equal to it.
+         * Longer than the page's own worst case — twice over, not once.
          *
          * The desktop and phone browsers each allow forty-five seconds to
          * create the page (BotGuard Create/GenerateIT plus JavaScript), and a
-         * live page is then allowed fifteen seconds for its first mint. An
-         * outer limit of forty-five seconds sat exactly on the init budget, so
-         * a page that took its full allowance — or had to be recreated — was
-         * cancelled from outside before a PoToken could ever be minted. The
-         * outer limit is only a backstop for a page that ignores its own
-         * timeouts; it must not decide the ordinary cold-start race.
+         * live page is then allowed fifteen seconds for its first mint. One
+         * attempt is therefore up to sixty seconds. A reused page whose mint
+         * fails is rebuilt from scratch (forty-five + fifteen again), so the
+         * full budget for the retry path the catch clause actually performs is
+         * a hundred and twenty seconds. An outer limit of seventy-five seconds
+         * cancelled the second attempt from outside on exactly the slow page it
+         * was meant to rescue. The outer limit is only a backstop for a page
+         * that ignores its own timeouts; it must not decide the ordinary
+         * cold-start race.
          */
-        const val POTOKEN_TIMEOUT_MS = 75_000L
+        const val POTOKEN_TIMEOUT_MS = 135_000L
         const val PREWARM_VIDEO_ID = "dQw4w9WgXcQ"
     }
 
