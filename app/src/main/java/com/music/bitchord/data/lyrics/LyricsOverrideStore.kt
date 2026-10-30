@@ -58,4 +58,20 @@ object LyricsOverrideStore {
     suspend fun removeRecheck(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         LyricsOverrideFile.remove(file(context), videoId, LyricsOverrideFile.Kind.RECHECK)
     }
+
+    /** The whole override file as text, for a device-migration backup. */
+    internal suspend fun exportBackupText(context: Context): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            file(context).takeIf { it.isFile }?.readText()
+        }.getOrNull()
+    }
+
+    /** Replaces the override file with a backup's copy; null removes it. */
+    internal suspend fun restoreBackupText(context: Context, text: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            // Through the file's own lock: a re-check write running at the same
+            // time uses the same `.tmp` name, and a rename from either side
+            // would otherwise decide the final file.
+            LyricsOverrideFile.restore(file(context), text)
+        }
 }

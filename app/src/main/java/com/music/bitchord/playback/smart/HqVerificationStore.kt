@@ -321,6 +321,29 @@ object HqVerificationStore {
         return data
     }
 
+    /** The raw verified/rejected rows, for a device-migration backup. */
+    internal fun exportBackupRows(context: Context): Pair<String?, String?> = synchronized(lock) {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.getString(KEY_VERIFIED, null) to prefs.getString(KEY_REJECTED, null)
+    }
+
+    /** Replaces the verdict rows with a backup's copy; a null side is cleared. */
+    internal fun restoreBackupRows(
+        context: Context,
+        verified: String?,
+        rejected: String?,
+    ): Boolean = synchronized(lock) {
+        val editor = context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_VERSION, STORE_VERSION)
+        if (verified == null) editor.remove(KEY_VERIFIED) else editor.putString(KEY_VERIFIED, verified)
+        if (rejected == null) editor.remove(KEY_REJECTED) else editor.putString(KEY_REJECTED, rejected)
+        val ok = editor.commit()
+        if (ok) cached = null
+        ok
+    }
+
     private fun save(context: Context, data: Data) {
         val verified = data.verified.entries.joinToString("\n") { (key, value) ->
             // The source names are appended only when known, so a verdict

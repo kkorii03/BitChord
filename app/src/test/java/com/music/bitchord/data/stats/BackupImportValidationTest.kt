@@ -32,10 +32,12 @@ class BackupImportValidationTest {
 
     @Test
     fun `a backup exactly at the cap is still read`() {
-        val text = "x".repeat(Backup.MAX_IMPORT_BYTES)
+        // A small explicit ceiling keeps this a test of the reader's boundary
+        // rather than a 256 MiB allocation that only passes in an oversized JVM.
+        val text = "x".repeat(16)
         val input = ByteArrayInputStream(text.toByteArray())
 
-        assertEquals(text, with(Backup) { input.readTextBounded() })
+        assertEquals(text, with(Backup) { input.readTextBounded(maxBytes = 16) })
     }
 
     @Test(expected = IllegalArgumentException::class)

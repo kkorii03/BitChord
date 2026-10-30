@@ -241,6 +241,14 @@ android {
             // so a test of that layer fails on the logging rather than on the
             // logic it was written to check.
             isReturnDefaultValues = true
+            all {
+                // The backup ceiling test streams a full 36-month history
+                // through a temp file, but its decoded object graph is still
+                // large. 1g is the size of an Android large-heap process, so
+                // this fails if the import ever needs more than a phone has
+                // instead of hiding an out-of-memory behind a 3g test JVM.
+                it.maxHeapSize = "1g"
+            }
         }
     }
 }

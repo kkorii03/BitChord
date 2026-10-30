@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
+import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.Song
@@ -12,15 +14,20 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.settings.SettingsTransfer
 import com.music.bitchord.data.taste.TasteSignals
+import com.music.bitchord.playback.smart.HqVerificationStore
+import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.data.spotify.LocalPlaylist
 import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.PlaylistImportMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.io.ByteArrayOutputStream
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
@@ -38,9 +45,11 @@ import java.time.format.DateTimeFormatter
  *
  * Every preference except credentials (see [AppSettings.exportPrefs]), every
  * month of listening, the local playlists this device made, the liked and
- * disliked rows it knows, and its search history. Not the audio cache, the
- * downloads or the artwork: those are megabytes that re-fetch themselves, and a
- * backup that is mostly cache is one nobody keeps.
+ * disliked rows it knows, its search history, and — since schema 3 — the
+ * lyric overrides, measured sync memory and high-quality verification it has
+ * already paid for. Not the audio cache, the downloads or the artwork: those
+ * are megabytes that re-fetch themselves, and a backup that is mostly cache is
+ * one nobody keeps.
  *
  * ## Typed values rather than a JSON object
  *
@@ -61,34 +70,32 @@ object Backup {
     }
 
     /**
-     * The largest backup this build will read into memory.
+     * Upper bound on a backup, shared by export and import.
      *
-     * A backup is text the user hands us through a document picker, so its size
-     * is not ours to trust. Listening buckets and local playlists make a real
-     * one larger than a settings transfer, and the history alone can reach
-     * several megabytes; the shared 64 MiB cap leaves room for that while
-     * refusing a file that would exhaust the process before the schema check
-     * can run.
+     * Derived from the store's retention maximum rather than picked to fit the
+     * usual file: [ListeningStats] keeps 36 months, each with up to 600 tracks
+     * and 400 artists/albums, and every row can carry a per-day map for all 31
+     * days. Pretty-printed, that worst case is well above the old 64 MiB
+     * ceiling, so a long-time listener could still export a file the app then
+     * refused to restore. 256 MiB leaves headroom for local playlists and
+     * search history on top of the listening history.
      */
-    internal const val MAX_IMPORT_BYTES = 64 * 1024 * 1024
+    internal const val MAX_BACKUP_BYTES = 256 * 1024 * 1024
 
     /**
-     * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
-     * rather than growing the buffer without bound.
+     * The largest backup this build will read into memory.
+     *
+     * Kept as an alias so import and export cannot drift: [MAX_BACKUP_BYTES] is
+     * the single ceiling below.
      */
-    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(8_192)
-        var total = 0
-        while (true) {
-            val read = read(buffer)
-            if (read < 0) break
-            total += read
-            require(total <= maxBytes) { "백업 파일이 너무 큽니다" }
-            output.write(buffer, 0, read)
-        }
-        return output.toByteArray().decodeToString()
-    }
+    internal const val MAX_IMPORT_BYTES = MAX_BACKUP_BYTES
+
+    /**
+     * Reads at most [maxBytes] of UTF-8 text through the shared reader, refusing
+     * the document rather than growing the buffer without bound.
+     */
+    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String =
+        readBackupText(this, maxBytes)
 
     /** A suggested filename, dated so successive exports don't collide. */
     fun suggestedName(): String =
@@ -134,11 +141,14 @@ object Backup {
                 likedVideoIds = ratings.first,
                 dislikedVideoIds = ratings.second,
                 searchHistory = SearchHistory.export(),
+                lyricsOverrides = LyricsOverrideStore.exportBackupText(context),
+                lyricsTiming = LyricsTiming.exportBackupText(context),
+                hqVerified = HqVerificationStore.exportBackupRows(context).first,
+                hqRejected = HqVerificationStore.exportBackupRows(context).second,
             )
-            val bytes = encodeBackupBytes(file)
-            context.contentResolver.openOutputStream(target, "wt")
-                ?.use { it.write(bytes) }
+            val output = context.contentResolver.openOutputStream(target, "wt")
                 ?: error("Couldn't open that file for writing")
+            output.use { encodeBackupToStream(file, it) }
             buckets.size
         }
     }
@@ -164,10 +174,9 @@ object Backup {
         playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
     ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
-            val text = context.contentResolver.openInputStream(source)
-                ?.use { it.readTextBounded() }
+            val file = context.contentResolver.openInputStream(source)?.use { decodeBackupStream(it) }
                 ?: error("파일을 열 수 없습니다")
-            importText(text, playlistMode)
+            apply(file, playlistMode, context)
         }
     }
 
@@ -181,8 +190,22 @@ object Backup {
     internal suspend fun importText(
         text: String,
         playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
+        context: Context? = null,
     ): Summary {
         val file = decode(text)
+        return apply(file, playlistMode, context)
+    }
+
+    /**
+     * Applies an already decoded backup. Validation runs here so both the text
+     * and streaming entry points refuse a malformed file before the first
+     * write.
+     */
+    private suspend fun apply(
+        file: BackupFile,
+        playlistMode: PlaylistImportMode,
+        context: Context?,
+    ): Summary {
         validate(file)
         val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
             file.localPlaylists.map { it.toLocalPlaylist() }
@@ -191,6 +214,9 @@ object Backup {
         }
         val settings = file.settings.mapValues { it.value.decoded() }
         val library = file.version >= LIBRARY_SCHEMA_VERSION
+        // The timing/HQ memory joined the file in schema 3. Older files leave
+        // these stores alone, exactly as schema 1 left the library alone.
+        val stores = file.version >= STORES_SCHEMA_VERSION && context != null
 
         // Everything below is applied in a rollback-able order. The listening
         // folder goes last because it is the only store whose commit can still
@@ -203,6 +229,17 @@ object Backup {
         val previousLiked = TasteSignals.ratedVideoIds(LikeStatus.LIKE)
         val previousDisliked = TasteSignals.ratedVideoIds(LikeStatus.DISLIKE)
         val previousOverrides = LikeState.overrides.value
+        val previousLyricsOverrides = if (stores) {
+            LyricsOverrideStore.exportBackupText(context!!)
+        } else {
+            null
+        }
+        val previousLyricsTiming = if (stores) LyricsTiming.exportBackupText(context!!) else null
+        val previousHq = if (stores) {
+            HqVerificationStore.exportBackupRows(context!!)
+        } else {
+            null to null
+        }
 
         suspend fun rollback() {
             runCatching { AppSettings.importPrefs(previousSettings) }
@@ -214,6 +251,21 @@ object Backup {
                 runCatching { SearchHistory.replace(previousSearch) }
                 runCatching { TasteSignals.restoreRatings(previousLiked, previousDisliked) }
                 runCatching { TasteSignals.flushAndAwait() }
+            }
+            if (stores) {
+                runCatching {
+                    LyricsOverrideStore.restoreBackupText(context!!, previousLyricsOverrides)
+                }
+                runCatching {
+                    LyricsTiming.restoreBackupText(context!!, previousLyricsTiming)
+                }
+                runCatching {
+                    HqVerificationStore.restoreBackupRows(
+                        context!!,
+                        previousHq.first,
+                        previousHq.second,
+                    )
+                }
             }
             LikeState.clear()
             previousOverrides.forEach { (id, status) -> LikeState.set(id, status) }
@@ -249,6 +301,23 @@ object Backup {
                 }
                 file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
                 file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
+            }
+            if (stores) {
+                check(LyricsOverrideStore.restoreBackupText(context!!, file.lyricsOverrides)) {
+                    "가사 선택을 저장하지 못했습니다"
+                }
+                check(LyricsTiming.restoreBackupText(context!!, file.lyricsTiming)) {
+                    "가사 싱크를 저장하지 못했습니다"
+                }
+                check(
+                    HqVerificationStore.restoreBackupRows(
+                        context!!,
+                        file.hqVerified,
+                        file.hqRejected,
+                    ),
+                ) {
+                    "고음질 검증 기록을 저장하지 못했습니다"
+                }
             }
 
             // The listening folder is the last write by design. Its own import
@@ -296,6 +365,105 @@ object Backup {
             .getOrElse { error("BitChord 백업 파일이 아닙니다") }
 
     /**
+     * Reads a backup straight from [input] without first holding its whole text
+     * in memory.
+     *
+     * A full 36-month history is hundreds of megabytes of JSON; buffering that
+     * as a `String` before decoding needs roughly twice the file's size again
+     * on top of the decoded object graph, which is what turned a legitimate
+     * import into an out-of-memory kill on a phone. The reader runs against the
+     * same [MAX_BACKUP_BYTES] ceiling as export and refuses anything larger.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    internal fun decodeBackupStream(input: InputStream, maxBytes: Int = MAX_BACKUP_BYTES): BackupFile =
+        runCatching {
+            val bounded = BoundedInputStream(input, maxBytes)
+            json.decodeFromStream(BackupFile.serializer(), bounded)
+        }.getOrElse { failure ->
+            if (failure is BackupTooLargeException) {
+                throw IllegalArgumentException("백업 파일이 너무 큽니다", failure)
+            }
+            error("BitChord 백업 파일이 아닙니다")
+        }
+
+    /**
+     * Writes a backup straight to [output] through the same ceiling, so export
+     * no longer materialises the encoded document as a `String` and a second
+     * `ByteArray` before writing it.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    internal fun encodeBackupToStream(
+        file: BackupFile,
+        output: OutputStream,
+        maxBytes: Int = MAX_BACKUP_BYTES,
+    ) {
+        val bounded = BoundedOutputStream(output, maxBytes)
+        try {
+            json.encodeToStream(BackupFile.serializer(), file, bounded)
+        } catch (failure: BackupTooLargeException) {
+            throw IllegalArgumentException("백업 파일이 너무 큽니다", failure)
+        }
+    }
+
+    /** Counts bytes read and refuses the document once it passes [maxBytes]. */
+    private class BoundedInputStream(
+        private val delegate: InputStream,
+        private val maxBytes: Int,
+    ) : InputStream() {
+        private var total = 0
+
+        private fun count(read: Int) {
+            if (read <= 0) return
+            total += read
+            if (total > maxBytes) throw BackupTooLargeException()
+        }
+
+        override fun read(): Int {
+            val value = delegate.read()
+            if (value >= 0) count(1)
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = delegate.read(buffer, offset, length)
+            count(read)
+            return read
+        }
+
+        override fun close() = delegate.close()
+    }
+
+    /** Counts bytes written and stops before an export can exceed [maxBytes]. */
+    private class BoundedOutputStream(
+        private val delegate: OutputStream,
+        private val maxBytes: Int,
+    ) : OutputStream() {
+        private var total = 0
+
+        private fun count(written: Int) {
+            if (written <= 0) return
+            total += written
+            if (total > maxBytes) throw BackupTooLargeException()
+        }
+
+        override fun write(value: Int) {
+            count(1)
+            delegate.write(value)
+        }
+
+        override fun write(buffer: ByteArray, offset: Int, length: Int) {
+            count(length)
+            delegate.write(buffer, offset, length)
+        }
+
+        override fun flush() = delegate.flush()
+
+        override fun close() = delegate.close()
+    }
+
+    private class BackupTooLargeException : RuntimeException()
+
+    /**
      * Reads an imported document up to [maxBytes], refusing it rather than
      * growing the buffer without bound. A backup is much larger than a settings
      * share — months of listening and every local playlist ride in it — so the
@@ -333,7 +501,13 @@ object Backup {
                     liked.remove(id)
                     disliked.add(id)
                 }
-                else -> Unit
+                LikeStatus.INDIFFERENT -> {
+                    // A rating cleared in this session is a newer answer than
+                    // the one on disk; leaving the id in either set would
+                    // export a like/dislike the listener just removed.
+                    liked.remove(id)
+                    disliked.remove(id)
+                }
             }
         }
         return liked.sorted() to disliked.sorted()
@@ -370,6 +544,18 @@ object Backup {
                 }
             }
         }
+        if (file.version >= STORES_SCHEMA_VERSION) {
+            file.lyricsOverrides?.let {
+                require(LyricsOverrideFile.readText(it)) {
+                    "백업의 가사 선택을 읽을 수 없습니다"
+                }
+            }
+            file.lyricsTiming?.let {
+                require(runCatching { json.parseToJsonElement(it) }.isSuccess) {
+                    "백업의 가사 싱크를 읽을 수 없습니다"
+                }
+            }
+        }
     }
 
     /** What an import turned out to contain, for the line shown afterwards. */
@@ -394,15 +580,6 @@ object Backup {
     internal fun InputStream.readBackupText(maxBytes: Int = MAX_IMPORT_BYTES): String =
         readBackupText(this, maxBytes)
 
-    /**
-     * Upper bound on a backup, shared by export and import.
-     *
-     * A backup is preferences and listening history, not media, but the
-     * history alone can reach several megabytes: 36 months of up to 600 tracks
-     * and 400 artists/albums each, with a per-day row per entry, and the JSON
-     * is pretty-printed. A settings-sized limit rejected the app's own exports.
-     */
-    internal const val MAX_BACKUP_BYTES = 64 * 1024 * 1024
 
     /**
      * Bump when the shape below stops being readable by an older build. A file
@@ -412,15 +589,19 @@ object Backup {
      * 2 added local playlists, liked/disliked rows and an explicit search
      * history list. A 1 file has none of those keys, so they arrive as empty
      * lists and [importFrom] deliberately leaves the device's own library
-     * alone for it.
+     * alone for it. 3 added the lyric-override, lyric-timing and HQ-verdict
+     * stores; a 1/2 file leaves those stores alone the same way.
      */
-    private const val SCHEMA_VERSION = 2
+    private const val SCHEMA_VERSION = 3
 
     /** The oldest shape that ever shipped; 0 and below are not ours. */
     private const val MIN_SCHEMA_VERSION = 1
 
     /** The first schema that carries the library sections. */
     private const val LIBRARY_SCHEMA_VERSION = 2
+
+    /** The first schema that carries lyric overrides, sync memory and HQ verdicts. */
+    private const val STORES_SCHEMA_VERSION = 3
 
     @Serializable
     data class BackupFile(
@@ -448,6 +629,14 @@ object Backup {
         val dislikedVideoIds: List<String> = emptyList(),
         /** Newest first, the same order the search screen shows. */
         val searchHistory: List<SearchHistoryEntity> = emptyList(),
+        /** Schema 3: the rechecked/user lyric sheets, as their own file's JSON. */
+        val lyricsOverrides: String? = null,
+        /** Schema 3: measured lyric timing memory, as its own file's JSON. */
+        val lyricsTiming: String? = null,
+        /** Schema 3: accepted HQ verification rows, one per line. */
+        val hqVerified: String? = null,
+        /** Schema 3: rejected HQ candidate rows, one per line. */
+        val hqRejected: String? = null,
     )
 
     /** One local playlist, serializable independently of the on-disk format. */

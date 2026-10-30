@@ -13,6 +13,8 @@ class NextPrepCacheKeyTest {
         sources = setOf(LyricsSource.LRCLIB),
         order = listOf(LyricsSource.LRCLIB),
         prioritizeSyllableSync = false,
+        syncedLyrics = false,
+        nextPrepEnabled = true,
     )
 
     private fun ready(
@@ -68,7 +70,60 @@ class NextPrepCacheKeyTest {
             sources = setOf(LyricsSource.LRCLIB),
             order = listOf(LyricsSource.KUGOU, LyricsSource.LRCLIB),
             prioritizeSyllableSync = false,
+            syncedLyrics = false,
+            nextPrepEnabled = true,
         )
         assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = changedOrder, audioSource = null, substituted = false))
+    }
+
+    @Test
+    fun turningSyncedLyricsOnDoesNotReuseTheNoLyricsBundle() {
+        NextPrepCache.put(ready())
+        val synced = NextPrepCache.settingsKey(
+            sources = setOf(LyricsSource.LRCLIB),
+            order = listOf(LyricsSource.LRCLIB),
+            prioritizeSyllableSync = false,
+            syncedLyrics = true,
+            nextPrepEnabled = true,
+        )
+        assertNull(
+            NextPrepCache.get(
+                "video",
+                localFile = true,
+                isVideo = false,
+                lyricsSettings = synced,
+                audioSource = null,
+                substituted = false,
+            ),
+        )
+    }
+
+    @Test
+    fun turningNextPrepBackOnDoesNotReuseTheCompletedBundle() {
+        val disabled = NextPrepCache.settingsKey(
+            sources = setOf(LyricsSource.LRCLIB),
+            order = listOf(LyricsSource.LRCLIB),
+            prioritizeSyllableSync = false,
+            syncedLyrics = false,
+            nextPrepEnabled = false,
+        )
+        NextPrepCache.put(ready(lyricsSettings = disabled))
+        val enabled = NextPrepCache.settingsKey(
+            sources = setOf(LyricsSource.LRCLIB),
+            order = listOf(LyricsSource.LRCLIB),
+            prioritizeSyllableSync = false,
+            syncedLyrics = false,
+            nextPrepEnabled = true,
+        )
+        assertNull(
+            NextPrepCache.get(
+                "video",
+                localFile = true,
+                isVideo = false,
+                lyricsSettings = enabled,
+                audioSource = null,
+                substituted = false,
+            ),
+        )
     }
 }

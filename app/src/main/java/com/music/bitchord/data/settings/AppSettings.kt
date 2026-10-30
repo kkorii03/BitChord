@@ -1275,14 +1275,22 @@ object AppSettings {
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
+        val storedPreferMusicOnly = if (prefs.contains(KEY_PREFER_MUSIC_ONLY)) {
+            prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        } else {
+            null
+        }
         preferMusicOnly.value = preferMusicOnlyDefault(
-            if (prefs.contains(KEY_PREFER_MUSIC_ONLY)) {
-                prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
-            } else {
-                null
-            },
+            storedPreferMusicOnly,
             existingInstall = hadSettingsBeforeMigrations,
         )
+        // A fresh install's true default has to be written, not just computed:
+        // onboarding writes its flag in the same launch, so on the next start
+        // the file is no longer empty and an absent key would otherwise be read
+        // as an existing install and silently turn the feature back off.
+        if (storedPreferMusicOnly == null && !hadSettingsBeforeMigrations) {
+            prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, preferMusicOnly.value).apply()
+        }
         skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
         skipSponsorParts.value = prefs.getBoolean(KEY_SKIP_SPONSOR_PARTS, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)

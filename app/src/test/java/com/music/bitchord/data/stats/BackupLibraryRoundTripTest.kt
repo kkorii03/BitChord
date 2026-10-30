@@ -88,7 +88,30 @@ class BackupLibraryRoundTripTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `a schema from a newer build is refused`() {
-        Backup.validate(Backup.BackupFile(app = "bitchord", version = 3))
+        Backup.validate(Backup.BackupFile(app = "bitchord", version = 4))
+    }
+
+
+    @Test
+    fun `schema 3 round trips lyric sheets, sync memory and HQ verdicts`() {
+        val overrides = """{"version":1,"songs":{}}"""
+        val timing = """{"entries":{"v1":{"syncCheckVersion":1}}}"""
+        val file = Backup.BackupFile(
+            app = "bitchord",
+            version = 3,
+            lyricsOverrides = overrides,
+            lyricsTiming = timing,
+            hqVerified = "v1\u0001source\u0001track\t0\t1.0\t100\tLOSSLESS_16",
+            hqRejected = "v2\u0001source\u0001track",
+        )
+
+        val decoded = Backup.decode(Backup.encode(file))
+        Backup.validate(decoded)
+
+        assertEquals(overrides, decoded.lyricsOverrides)
+        assertEquals(timing, decoded.lyricsTiming)
+        assertEquals(file.hqVerified, decoded.hqVerified)
+        assertEquals(file.hqRejected, decoded.hqRejected)
     }
 
     @Test(expected = IllegalArgumentException::class)
