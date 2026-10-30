@@ -9,9 +9,11 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.BatteryPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -114,19 +116,33 @@ class DownloadService : Service() {
     }
 
     private suspend fun work() {
-        var idleFor = 0L
+        var idleSince = 0L
         while (true) {
+            // Read the revision before looking at the queue: an enqueue that
+            // lands between the two is seen as a change and not lost.
+            val seen = Downloads.workRevision()
             val song = Downloads.takeNext()
             if (song == null) {
                 // Nothing to take, but something may still be arriving — or
                 // another worker may fail a track back into view. Only a queue
                 // that stays empty, with nothing else in flight, is finished.
-                if (idleFor >= IDLE_GRACE_MS && !Downloads.busy()) return
-                delay(IDLE_POLL_MS)
-                idleFor += IDLE_POLL_MS
+                val now = SystemClock.elapsedRealtime()
+                if (idleSince == 0L) idleSince = now
+                val idleFor = now - idleSince
+                if (BatteryPolicy.downloadWorkerShouldStop(idleFor, IDLE_GRACE_MS, Downloads.busy())) {
+                    return
+                }
+                // During the start-of-queue grace the timeout re-checks the
+                // deadline; after it, only a running track keeps a worker here
+                // and that track's completion is the event that wakes it.
+                if (idleFor < IDLE_GRACE_MS) {
+                    Downloads.awaitWorkChange(seen, IDLE_GRACE_MS - idleFor)
+                } else {
+                    Downloads.awaitWorkChange(seen)
+                }
                 continue
             }
-            idleFor = 0L
+            idleSince = 0L
             current = song
             postNotification()
 
@@ -287,7 +303,5 @@ class DownloadService : Service() {
          * a finished one would leave the whole batch to whoever won the race.
          */
         const val IDLE_GRACE_MS = 2_000L
-
-        const val IDLE_POLL_MS = 100L
     }
 }
