@@ -199,7 +199,9 @@ class CrossfadeTest(unittest.TestCase):
     def base(self, **kwargs) -> list[scenario.LogLine]:
         auto = kwargs.get("auto", True)
         after = kwargs.get("after", True)
-        delta = kwargs.get("delta", 8)
+        # The queue hands over mid-blend; the overlap ends at the finish line.
+        delta = kwargs.get("delta", 4)
+        finish = kwargs.get("finish", 8)
         pushed = kwargs.get("pushed", True)
         prior = kwargs.get("prior", True)
         rows: list[scenario.LogLine] = []
@@ -243,6 +245,13 @@ class CrossfadeTest(unittest.TestCase):
                     "10-26 12:00:30.000",
                 )
             )
+            if finish is not None:
+                rows.append(
+                    line(
+                        "finish levels inVol=1.0 outVol=0.0 handedOff=true",
+                        f"10-26 12:00:{30 + finish:02d}.000",
+                    )
+                )
         if auto:
             second = 30 + delta
             rows.append(
@@ -279,7 +288,7 @@ class CrossfadeTest(unittest.TestCase):
         self.assertEqual("FAIL", result.status)
 
     def test_auto_play_outside_tolerance_fails(self):
-        result = scenario.judge_a9(self.base(delta=11))
+        result = scenario.judge_a9(self.base(finish=11))
         self.assertEqual("FAIL", result.status)
 
     def test_unpushed_track_fails(self):

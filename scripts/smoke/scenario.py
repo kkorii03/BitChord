@@ -364,9 +364,13 @@ def judge_a9(lines: list[LogLine]) -> Result:
         return Result("A9", "SKIP", actual)
     if chosen is None:
         return Result("A9", "FAIL", actual)
+    # The queue hands over to the next track mid-blend by design (10-31 run:
+    # play at 4.3 s of an 8 s fade); the overlap is start -> finish, so that
+    # is what must match the planned fade. The AUTO play only has to exist.
     play_ok = (
         play_delta is not None
-        and abs(play_delta - fade / 1000.0) <= 1.0
+        and finish_delta is not None
+        and abs(finish_delta - fade / 1000.0) <= 1.0
     )
     return Result("A9", "PASS" if play_ok and pushed_ok else "FAIL", actual)
 
@@ -452,6 +456,28 @@ def judge_c5(lines: list[LogLine]) -> Result:
         None,
     )
     if nxt is None or nxt.ts is None:
+        # Recovering to the same song's playable copy is the intended outcome
+        # (10-31: swapped to its song version); on runners that copy cannot
+        # sound either, so judge the swap's timing, not a later play.
+        swap_at = next(
+            (
+                line.ts
+                for line in lines
+                if line.ts is not None
+                and line.ts > start.ts
+                and (
+                    (VERSION_SWAP_RE.search(line.msg) and "7QihqRWMrz8" in line.msg)
+                    or ("unplayable: 7QihqRWMrz8" in line.msg and "-> alt" in line.msg)
+                )
+            ),
+            None,
+        )
+        if swap_at is not None:
+            delta = (swap_at - start.ts).total_seconds()
+            status = "PASS" if delta <= 5.0 and extraction == 0 else "FAIL"
+            return Result(
+                "C5", status, f"swap {sorted(swapped)} {delta:.1f}s extraction2={extraction}"
+            )
         return Result(
             "C5", "FAIL", f"다음 곡 없음 extraction2={extraction} swapped={sorted(swapped)}"
         )
