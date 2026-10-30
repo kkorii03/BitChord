@@ -1,0 +1,11 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(에뮬레이터 검사 C5 로그로 증명, ship\FIXLIST.md 79번 미완): 저작권 차단 영상 7QihqRWMrz8 재생 시
+15:24:38.93 play -> 7QihqRWMrz8
+15:24:40.79 'TIMING direct: 1813ms' — DirectClient 'direct IOS UNPLAYABLE ... SME님이 소유권 주장을 제기한 콘텐츠로 인해 차단되었습니다' / 'direct ANDROID UNPLAYABLE ...' (여기서 이미 곡 고유 확정 사유)
+15:24:41.15 'song version: 7QihqRWMrz8 kept (timeout)'
+15:24:45.02 'song version: 7QihqRWMrz8 -> DUQUqfL_4sg via search shared' (같은 곡의 정상 사본을 찾았음)
+15:24:53.53 'TIMING InnerTubeX: 12735ms' → 15:24:54.34 'resolve failed ... after 15358ms' (직접 경로가 1.8초에 확정했는데 InnerTubeX·추출을 계속 돔)
+15:24:54.55 'cannot be played' → 15:24:59.46 'unplayable: 7QihqRWMrz8 ... -> skip' (5초 더 지연) → 'and nothing after it in the queue' (찾아 둔 DUQUqfL_4sg 를 쓰지 않고 멈춤).
+수정: ① DirectClient 가 곡 고유 확정 사유(소유권 주장/claimed content/copyright/삭제/비공개 — 기존 UnplayableReason.isDefinitelyGone 기준 재사용)를 반환하면 InnerTubeX·NewPipe·프록시를 건너뛰고 즉시 PermanentlyUnplayable 로 판정(한국 지역 차단·봇 확인·일반 UNPLAYABLE 은 지금 경로 그대로). ② 곡이 재생 불가로 판정되면, 이미 찾은 노래 버전(SongVersion 결과·캐시, 'kept (timeout)' 뒤 늦게 찾은 것 포함)이 있으면 그 사본으로 현재 항목을 바꿔 재생, 없으면 노래 버전 검색 1회(2.5초 제한) 후 다음 곡. 'unplayable: <id> <이유> -> alt <id>' 로그. ③ 판정부터 다음 동작까지 지연 없이(지금 5초 지연의 원인 줄을 찾아 요약에). 목표: 재생 시작부터 대체 사본 재생 또는 다음 곡까지 3초 이내. ④ 큐에 다음 곡이 없고 대체도 없을 때는 지금처럼 멈추되 자동 재생 켜져 있으면 자동 재생 보충을 먼저 시도.
+테스트: 확정 사유 판정(소유권 주장 한국어·영어 문구 = 확정, '봇 확인'·'이 국가에서는' = 비확정), 대체 사본 선택(늦게 찾은 노래 버전 사용) 순수 함수 단위 테스트.
+반드시: 배터리 우선(폴링·delay 루프 금지). 바꾼 함수의 모든 호출부·타입 확인. 비디오 노래 자동 재생 곡(videoRadio)·커버·다운로드 곡은 노래 버전으로 바꾸지 말 것(대체는 다음 곡으로). 기존 주석 의도를 지우면 요약에 이유. 새 테스트 이름 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 5초 지연 원인 / 테스트 결과 / 미해결 문제.
