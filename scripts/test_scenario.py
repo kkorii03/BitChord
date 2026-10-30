@@ -114,6 +114,22 @@ class CoverVideoTest(unittest.TestCase):
         )
         self.assertEqual("FAIL", result.status)
 
+    def test_a1_counts_video_radio_append_without_title_list(self):
+        # 10-31 emulator: video radio appended 10 rows but logs no +radio list.
+        result = scenario.judge_a1(
+            [
+                radio("k4b7dnA8z0I", "video", picked=11),
+                line("queue: autoplay-append n=10 at=1 size=11 by=autoplay"),
+                line(
+                    "play: -> 僕のこと - 아카네 리제 커버 (1XYcm7Tsz3o) "
+                    "idx=1/11 reason=SEEK meta=ok"
+                ),
+            ]
+        )
+        self.assertEqual("PASS", result.status)
+        self.assertIn("autoplay-append", result.actual)
+        self.assertIn("아카네 리제 커버", result.actual)
+
     def test_a2_uses_first_video_radio(self):
         result = scenario.judge_a2(
             [radio("found-by-search", "video"), autoplay(titles(5))]
@@ -162,6 +178,21 @@ class RepeatTest(unittest.TestCase):
             ]
         )
         self.assertEqual("FAIL", result.status)
+
+
+class ModeButtonsTest(unittest.TestCase):
+    def modes(self, repeat: list[str]) -> list[scenario.LogLine]:
+        rows = [line(f"mode: repeat={value} (was x)") for value in repeat]
+        rows += [line("mode: shuffle=on from ui"), line("mode: shuffle=off from ui")]
+        rows += [line("setting: autoplay = false"), line("setting: autoplay = true")]
+        return rows
+
+    def test_b3_follows_the_commands_run_sh_sends(self):
+        # run.sh sends REPEAT_MODE 0,1,2,0 = off, one, all, off.
+        self.assertEqual("PASS", scenario.judge_b3(self.modes(["one", "all", "off"])).status)
+
+    def test_b3_wrong_order_fails(self):
+        self.assertEqual("FAIL", scenario.judge_b3(self.modes(["all", "one"])).status)
 
 
 class CrossfadeTest(unittest.TestCase):

@@ -296,7 +296,9 @@ run_scenario_a1() {
 
 run_scenario_a2() {
   scenario_begin A2
-  play_song "search:오화요 Dance Monkey cover" scenario 60
+  # A search here picked another singer's audio track (mode=music, 10-31);
+  # a known 오화요 cover upload keeps A2 about video songs.
+  play_song "WANYQ3JC298" scenario 60
   scenario_end A2
 }
 
@@ -328,6 +330,11 @@ run_scenario_a9() {
   local device_second="$device_dir/bitchord-smoke-$run_id-660.flac"
   local paths before
   scenario_begin A9
+  # The emulator runner image ships without ffmpeg (10-31 run skipped A9 for
+  # that alone); install it once rather than leave the crossfade unchecked.
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1 || true
+  fi
   if ! command -v ffmpeg >/dev/null 2>&1; then
     scenario_mark "A9 skip: no ffmpeg"
     scenario_end A9

@@ -189,6 +189,21 @@ def attached(lines: list[LogLine]) -> tuple[list[str], str]:
     titles = autoplay_titles(lines)
     if titles:
         return titles, "autoplay"
+    # The video-radio path appends without an `autoplay: +radio` title list;
+    # its queue line carries the count and the tracks then played carry the
+    # titles (10-31: A1 appended 10 and was still judged "0").
+    appended = sum(
+        int(match.group(1))
+        for line in lines
+        if (match := re.search(r"queue: autoplay-append n=(\d+)", line.msg))
+    )
+    if appended:
+        played = [
+            match.group(1)
+            for line in lines
+            if (match := re.search(r"play: -> (.+?) \([\w-]{11}\) idx=(?!0/)", line.msg))
+        ]
+        return (played + ["?"] * appended)[:max(appended, len(played))], "autoplay-append"
     return [], "로그 없음"
 
 
@@ -385,7 +400,9 @@ def judge_b3(lines: list[LogLine]) -> Result:
                 index += 1
         return index == len(expected)
 
-    repeat_ok = ordered(repeat, ["all", "one", "off"])
+    # run.sh sends repeat modes 0,1,2,0 (Player.REPEAT_MODE_OFF/ONE/ALL/OFF),
+    # so the app must report one, all, off in that order.
+    repeat_ok = ordered(repeat, ["one", "all", "off"])
     shuffle_ok = "on" in shuffle and "off" in shuffle
     autoplay_ok = "true" in autoplay and "false" in autoplay
     status = "PASS" if repeat_ok and shuffle_ok and autoplay_ok else "FAIL"
@@ -534,6 +551,10 @@ def exit_code(results: list[Result]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Also run on the Windows PC (cp949 console) to re-judge downloaded logs.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", default="shots/scenario")
     parser.add_argument("--report", default="shots/scenario-report.md")
