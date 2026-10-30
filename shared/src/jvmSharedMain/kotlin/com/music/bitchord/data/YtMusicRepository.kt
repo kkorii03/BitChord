@@ -1134,8 +1134,15 @@ object YtMusicRepository {
         val found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
         val via = if (found != null) "search" else "none"
         // A completed search is the verdict, found or not. A failed request
-        // is not "no version" and must be retried later.
-        val definitive = found != null || search.isSuccess
+        // is not "no version" and must be retried later. resolveAudio returns
+        // the original row for both shapes, so its cache is what tells the
+        // definitive "no catalogue row" apart from a search that never ran.
+        val answered = audioVersionCache.containsKey(song.videoId)
+        val definitive = SongVersionPolicy.songVersionVerdictIsDefinitive(
+            searchSucceeded = search.isSuccess,
+            answered = answered,
+            found = found != null,
+        )
         if (definitive) {
             if (found == null) songVersionMissing.add(song.videoId)
             else songVersionCache[song.videoId] = found

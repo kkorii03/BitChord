@@ -542,4 +542,36 @@ class SongVersionPolicyTest {
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", "video"))
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", null))
     }
+
+    @Test
+    fun `a failed search is not a definitive no-version verdict`() {
+        assertFalse(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = false,
+                answered = false,
+                found = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = false,
+                found = false,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = true,
+                found = false,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = false,
+                answered = false,
+                found = true,
+            ),
+        )
+    }
 }

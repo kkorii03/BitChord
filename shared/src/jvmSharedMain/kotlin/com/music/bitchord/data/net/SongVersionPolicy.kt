@@ -160,6 +160,23 @@ object SongVersionPolicy {
         !CatalogSongMapper.isCover(row)
 
     /**
+     * Whether a song-version lookup has reached a verdict that may be cached
+     * for the rest of the run.
+     *
+     * A found recording is always definitive. "No catalogue release" is only
+     * definitive when the search actually answered and recorded that answer;
+     * a request that failed outright must stay retryable. The audio switch
+     * returns the original row for both shapes, so the caller cannot tell them
+     * apart from the return value alone — [answered] is the cache marker that
+     * separates "searched and found nothing" from "could not search".
+     */
+    fun songVersionVerdictIsDefinitive(
+        searchSucceeded: Boolean,
+        answered: Boolean,
+        found: Boolean,
+    ): Boolean = found || (searchSucceeded && answered)
+
+    /**
      * How much longer than the catalogue track a downloaded song's file may be
      * before it is taken to be the music video's sound.
      *
