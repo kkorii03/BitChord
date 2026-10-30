@@ -428,18 +428,9 @@ object Downloads {
                 // which means the queue has nothing to drain it and would sit
                 // there looking accepted forever.
                 Log.w(TAG, "could not start the download service: ${startFailure.message}")
-                synchronized(lock) {
-                    pending.remove(id)
-                    qualityOverrides.remove(id)
-                    hqOverrides.remove(id)
-                    avoidSources.remove(id)
-                    forceReplaceIds.remove(id)
-                    youtubeOnlyIds.remove(id)
-                    minimumTiers.remove(id)
-                    automaticIds.remove(id)
-                    mvSoundRepairIds.remove(id)
+                if (abandonPending(id)) {
+                    fail(id, "지금은 다운로드를 시작할 수 없습니다")
                 }
-                fail(id, "지금은 다운로드를 시작할 수 없습니다")
             }
         }
     }
@@ -451,11 +442,36 @@ object Downloads {
     fun onForeground(context: Context) {
         if (!AppForeground.isForeground) return
         val app = appContext ?: context.applicationContext
-        val waiting = synchronized(lock) { pending.isNotEmpty() }
-        if (!waiting) return
-        startService(app)?.let {
-            Log.w(TAG, "could not start the download service: ${it.message}")
+        val waiting = synchronized(lock) { pending.keys.toList() }
+        if (waiting.isEmpty()) return
+        val startFailure = startService(app) ?: return
+        // The service that was to drain these never started. Leaving them
+        // Queued would look accepted forever, so take each back and show the
+        // same refusal a foreground enqueue shows. There is no timer; the next
+        // tap or foreground event can ask again.
+        Log.w(TAG, "could not start the download service: ${startFailure.message}")
+        for (id in waiting) {
+            if (abandonPending(id)) fail(id, "지금은 다운로드를 시작할 수 없습니다")
         }
+    }
+
+    /**
+     * Take a track back out of the queue when its service could not start.
+     *
+     * Returns whether it was still waiting: a cancel that won the race must not
+     * be turned back into a failure row.
+     */
+    private fun abandonPending(videoId: String): Boolean = synchronized(lock) {
+        val wasPending = pending.remove(videoId) != null
+        qualityOverrides.remove(videoId)
+        hqOverrides.remove(videoId)
+        avoidSources.remove(videoId)
+        forceReplaceIds.remove(videoId)
+        youtubeOnlyIds.remove(videoId)
+        minimumTiers.remove(videoId)
+        automaticIds.remove(videoId)
+        mvSoundRepairIds.remove(videoId)
+        wasPending
     }
 
     private fun startService(context: Context): Throwable? =

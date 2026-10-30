@@ -141,33 +141,46 @@ object HqLibraryUpgrade {
      *
      * The rules live in [HqLibraryAutoRetryPolicy]; this supplies the two
      * device facts it cannot know: whether the app has a window, and whether a
-     * complete lossless copy is already on disk.
+     * copy at least as good as the target's verified rung is already on disk.
      */
     private fun automaticTargetEligible(
         videoId: String,
+        verifiedTier: HqTier,
         failure: Failure?,
         nowMs: Long,
         downloaded: Map<String, SavedSongMetadata>,
     ): Boolean = HqLibraryAutoRetryPolicy.shouldAttempt(
         manual = manualPass,
         foreground = AppForeground.isForeground,
-        hasCompleteLosslessCopy = hasCompleteLosslessCopy(videoId, downloaded[videoId]),
+        alreadyAtTargetTier = hasCopyAtLeastAsGood(videoId, downloaded[videoId], verifiedTier),
         attempts = failure?.attempts ?: 0,
         lastFailureMs = failure?.lastFailureMs ?: 0L,
         nowMs = nowMs,
     )
 
     /**
-     * A complete lossless copy already answers the request: either the file
-     * this app saved, or a whole rendition the song cache holds.
+     * A copy already on disk answers the target only when it is at least as
+     * good as the verified rung. A saved LOSSLESS_16 does not answer a verified
+     * hi-res or Atmos pair: [HqLibraryPolicy] must still be allowed to replace
+     * it with the higher recording.
+     *
+     * The song cache records that a lossless copy is whole but not its depth or
+     * rate, so the lowest lossless rung is all it can prove. A cached copy
+     * therefore answers lossless-or-lower targets, never a hi-res one.
      */
-    private fun hasCompleteLosslessCopy(
+    private fun hasCopyAtLeastAsGood(
         videoId: String,
         meta: SavedSongMetadata?,
+        verifiedTier: HqTier,
     ): Boolean {
         val savedTier = meta?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
-        if (savedTier != null && savedTier.rank <= HqTier.LOSSLESS_16.rank) return true
-        return AudioCache.hasCompleteLosslessCopy(videoId)
+        if (HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, verifiedTier)) return true
+        val cachedTier = if (AudioCache.hasCompleteLosslessCopy(videoId)) {
+            HqTier.LOSSLESS_16
+        } else {
+            null
+        }
+        return HqLibraryPolicy.hasCopyAtLeastAsGood(cachedTier, verifiedTier)
     }
 
     private val lock = Any()
@@ -179,6 +192,13 @@ object HqLibraryUpgrade {
     private var done: Int = 0
     private var total: Int = 0
     private var activeVideoId: String? = null
+
+    /**
+     * A worker is inside [runOne], so its target may already be selected even
+     * before [activeVideoId] is set. Guarded by [lock]; [hasRetryableWork]
+     * must not prune the plan under a worker that is about to use it.
+     */
+    private var workerRunning: Boolean = false
 
     /**
      * A pass the listener asked for with "모두 고음질로 다시 받기".
@@ -266,23 +286,34 @@ object HqLibraryUpgrade {
         val downloaded = Downloads.savedMetadataSnapshot()
         synchronized(lock) {
             if (activeVideoId != null) return true
-            if (plan.isNotEmpty()) {
-                return plan.any { pending ->
-                    automaticTargetEligible(
-                        pending.target.videoId,
-                        failures[failureKey(pending.target)],
-                        nowMs,
-                        downloaded,
-                    )
-                }
-            }
-            return entries.any { entry ->
+            // A plan whose targets all aged out would otherwise answer for the
+            // library forever. A worker that is already running has claimed
+            // its target, so leave the plan to it.
+            if (!workerRunning) prunePlanLocked(downloaded, nowMs)
+            val planHasWork = plan.any { pending ->
                 automaticTargetEligible(
-                    entry.youtubeId,
-                    failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
+                    pending.target.videoId,
+                    pending.target.verifiedTier,
+                    failures[failureKey(pending.target)],
                     nowMs,
                     downloaded,
                 )
+            }
+            if (planHasWork) return true
+            // A persisted plan can be entirely parked while a verdict outside
+            // it is still actionable. runOne rebuilds from the store after the
+            // stale entries are pruned, so considering the store here gets that
+            // worker started.
+            val planned = plan.mapTo(HashSet()) { failureKey(it.target) }
+            return entries.any { entry ->
+                failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId) !in planned &&
+                    automaticTargetEligible(
+                        entry.youtubeId,
+                        entry.verified.tier,
+                        failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
+                        nowMs,
+                        downloaded,
+                    )
             }
         }
     }
@@ -666,24 +697,34 @@ object HqLibraryUpgrade {
         val now = System.currentTimeMillis()
         synchronized(lock) {
             if (activeVideoId != null) return
-            val kept = plan.filter { pending ->
-                automaticTargetEligible(
-                    pending.target.videoId,
-                    failures[failureKey(pending.target)],
-                    now,
-                    downloaded,
-                )
-            }
-            if (kept.size == plan.size) return
-            plan = kept
-            if (plan.isEmpty()) {
-                done = 0
-                total = 0
-                rebuildRequested = false
-            }
-            persistLocked()
-            publishLocked()
+            prunePlanLocked(downloaded, now)
         }
+    }
+
+    /** [prunePlan] with [lock] already held and the device facts read. */
+    private fun prunePlanLocked(
+        downloaded: Map<String, SavedSongMetadata>,
+        nowMs: Long,
+    ) {
+        if (manualPass) return
+        val kept = plan.filter { pending ->
+            automaticTargetEligible(
+                pending.target.videoId,
+                pending.target.verifiedTier,
+                failures[failureKey(pending.target)],
+                nowMs,
+                downloaded,
+            )
+        }
+        if (kept.size == plan.size) return
+        plan = kept
+        if (plan.isEmpty()) {
+            done = 0
+            total = 0
+            rebuildRequested = false
+        }
+        persistLocked()
+        publishLocked()
     }
 
     /**
@@ -856,6 +897,7 @@ object HqLibraryUpgrade {
                 synchronized(lock) {
                     automaticTargetEligible(
                         entry.youtubeId,
+                        entry.verified.tier,
                         failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
                         now,
                         downloaded,
@@ -948,6 +990,15 @@ object HqLibraryUpgrade {
         }.onFailure {
             TrackLog.w(TAG, "could not schedule the high-quality pass: ${it.message}")
         }
+    }
+
+    /** Marks a worker as using the plan; see [workerRunning]. */
+    internal fun workerStarted() {
+        synchronized(lock) { workerRunning = true }
+    }
+
+    internal fun workerStopped() {
+        synchronized(lock) { workerRunning = false }
     }
 
     private fun ensureLoaded(context: Context) {
@@ -1076,7 +1127,12 @@ class HqLibraryUpgradeWorker(
 
     override suspend fun doWork(): Result {
         if (!HqLibraryUpgrade.runAllowed()) return Result.success()
-        HqLibraryUpgrade.runOne(applicationContext)
+        HqLibraryUpgrade.workerStarted()
+        try {
+            HqLibraryUpgrade.runOne(applicationContext)
+        } finally {
+            HqLibraryUpgrade.workerStopped()
+        }
         return Result.success()
     }
 }

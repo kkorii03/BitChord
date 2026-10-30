@@ -7,9 +7,9 @@ import org.junit.Test
 
 /**
  * The automatic high-quality pass must not restart work that cannot finish:
- * a background process has no window for the download service, a complete
- * lossless copy has nothing left to fetch, and an exhausted target belongs to
- * the manual pass only.
+ * a background process has no window for the download service, a copy already
+ * at the target rung has nothing left to fetch, and an exhausted target belongs
+ * to the manual pass only.
  */
 class HqLibraryAutoRetryPolicyTest {
 
@@ -18,13 +18,13 @@ class HqLibraryAutoRetryPolicyTest {
     private fun shouldAttempt(
         manual: Boolean = false,
         foreground: Boolean = true,
-        hasCompleteLosslessCopy: Boolean = false,
+        alreadyAtTargetTier: Boolean = false,
         attempts: Int = 0,
         lastFailureMs: Long = 0L,
     ) = HqLibraryAutoRetryPolicy.shouldAttempt(
         manual = manual,
         foreground = foreground,
-        hasCompleteLosslessCopy = hasCompleteLosslessCopy,
+        alreadyAtTargetTier = alreadyAtTargetTier,
         attempts = attempts,
         lastFailureMs = lastFailureMs,
         nowMs = now,
@@ -42,13 +42,13 @@ class HqLibraryAutoRetryPolicyTest {
     }
 
     @Test
-    fun `a complete lossless copy is not fetched again`() {
-        assertFalse(shouldAttempt(hasCompleteLosslessCopy = true))
+    fun `a copy already at the target tier is not fetched again`() {
+        assertFalse(shouldAttempt(alreadyAtTargetTier = true))
     }
 
     @Test
-    fun `a manual pass may still replace a lossless copy`() {
-        assertTrue(shouldAttempt(manual = true, hasCompleteLosslessCopy = true))
+    fun `a manual pass may still replace a copy at the target tier`() {
+        assertTrue(shouldAttempt(manual = true, alreadyAtTargetTier = true))
     }
 
     @Test

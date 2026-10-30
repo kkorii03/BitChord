@@ -9,8 +9,8 @@ import com.music.bitchord.data.net.AutomaticRetryPolicy
  *
  *  - the app has no window, so Android would refuse the download service that
  *    the pass needs to fetch anything;
- *  - a complete lossless copy is already on disk, so there is nothing worth
- *    fetching for it;
+ *  - a copy already on disk is at least as good as the target's verified rung,
+ *    so there is nothing worth fetching for it;
  *  - its automatic retries are exhausted, and only a pass the listener started
  *    may try again.
  *
@@ -22,14 +22,14 @@ object HqLibraryAutoRetryPolicy {
     fun shouldAttempt(
         manual: Boolean,
         foreground: Boolean,
-        hasCompleteLosslessCopy: Boolean,
+        alreadyAtTargetTier: Boolean,
         attempts: Int,
         lastFailureMs: Long,
         nowMs: Long,
     ): Boolean {
         if (!foreground) return false
         if (manual) return true
-        if (hasCompleteLosslessCopy) return false
+        if (alreadyAtTargetTier) return false
         return AutomaticRetryPolicy.mayRetry(
             attempts = attempts,
             lastFailureMs = lastFailureMs,
