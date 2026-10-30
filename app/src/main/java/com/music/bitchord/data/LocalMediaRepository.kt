@@ -34,6 +34,15 @@ object LocalMediaRepository {
         "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "webm", "dsf", "dff",
     )
 
+    /**
+     * Audio containers that still count when the non-music filter is off.
+     *
+     * WAV and 3GP are playable audio but the music filter hides them as
+     * recordings/clips; turning the filter off has to bring them back or the
+     * switch keeps hiding a whole format the subtitle says it hides.
+     */
+    private val localPlayableAudioExtensions = localMusicExtensions + setOf("wav", "3gp")
+
     private val nonMusicPathSegments = listOf(
         "/alarms/",
         "/notifications/",
@@ -301,7 +310,7 @@ object LocalMediaRepository {
 
                     if (filterNonMusic) {
                         if (!isEligibleLocalMusic(durationMs, displayName, path)) continue
-                    } else if (!hasLocalMusicExtension(displayName, path)) {
+                    } else if (!hasPlayableAudioExtension(displayName, path)) {
                         continue
                     }
                     if (!isInSelectedFolder(path, AppSettings.localMusicFolderUri.value)) continue
@@ -401,11 +410,17 @@ object LocalMediaRepository {
      * heuristics are what that setting turns off, not the ability to read the
      * file.
      */
-    internal fun hasLocalMusicExtension(displayName: String, path: String?): Boolean {
+    internal fun hasLocalMusicExtension(displayName: String, path: String?): Boolean =
+        extensionOf(displayName, path) in localMusicExtensions
+
+    /** The wider container gate used when the non-music filter is off. */
+    internal fun hasPlayableAudioExtension(displayName: String, path: String?): Boolean =
+        extensionOf(displayName, path) in localPlayableAudioExtensions
+
+    private fun extensionOf(displayName: String, path: String?): String {
         val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
             ?: displayName
-        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return extension in localMusicExtensions
+        return fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
     }
 
     private fun String.removeAudioExtension(): String {

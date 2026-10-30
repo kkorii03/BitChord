@@ -15,17 +15,27 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.startup.AppForeground
 
 /**
+ * Whether a music-video-sound repair may use the connection in hand.
+ *
+ * The banner tap is the listener asking for the repair now, so it may spend
+ * mobile data. The worker is background work and obeys the Wi-Fi-only download
+ * setting like every other automatic download.
+ */
+internal fun mvRepairAllowsMetered(manual: Boolean, downloadsAllowedNow: Boolean): Boolean =
+    manual || downloadsAllowedNow
+
+/**
  * Fetches the song versions of downloads that turned out to hold a music
  * video's sound, when the listener has left the repair to the app.
  *
  * One one-shot piece of work, not a poll: it is scheduled when a verdict is
  * first remembered, on app start and on playback. It runs as soon as a network
- * is available, whatever the charger is doing. Wi-Fi is deliberately not a
- * constraint — the setting exists because data and storage are not the scarce
- * thing here. The download itself goes through the ordinary [Downloads] queue
- * and [DownloadService], so it is the same work a tap would have started: one
- * file at a time, and the next app start or playback picks up whatever is still
- * remembered after an interruption.
+ * is available, whatever the charger is doing. The Wi-Fi-only download setting
+ * still applies to this automatic pass; a banner tap is the listener asking and
+ * may use the connection in hand. The download itself goes through the ordinary
+ * [Downloads] queue and [DownloadService], so it is the same work a tap would
+ * have started: one file at a time, and the next app start or playback picks up
+ * whatever is still remembered after an interruption.
  */
 object MvSoundRedownload {
 
@@ -112,6 +122,10 @@ object MvSoundRedownload {
 
     fun scheduleIfEnabled(context: Context) {
         if (!AppSettings.autoRedownloadMvSound.value) return
+        if (!AppSettings.downloadsAllowedNow) {
+            TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
+            return
+        }
         // The repair goes through the download service, which cannot be started
         // without a window. The foreground event schedules it again.
         if (!AppForeground.isForeground) return
@@ -148,6 +162,10 @@ class MvSoundRedownloadWorker(
 
     override suspend fun doWork(): Result {
         if (!AppSettings.autoRedownloadMvSound.value) return Result.success()
+        if (!mvRepairAllowsMetered(manual = false, AppSettings.downloadsAllowedNow)) {
+            TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
+            return Result.success()
+        }
         // WorkManager can run a network-constrained request after the app has
         // gone away. Queueing downloads then would only leave rows waiting for
         // a service Android will not let this process start.

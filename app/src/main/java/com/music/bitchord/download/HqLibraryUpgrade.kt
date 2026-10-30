@@ -54,6 +54,21 @@ import java.util.concurrent.TimeUnit
 internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
 
 /**
+ * Whether an upgrade requested through [HqLibraryUpgrade.requestUpgrade] may
+ * use the connection in hand.
+ *
+ * A listener tapping "re-download at a better quality" is asking for that
+ * download now, so the Wi-Fi-only rule does not stand in the way. The download
+ * health check is background work like the automatic pass, so it must wait for
+ * an unmetered connection instead of spending mobile data.
+ */
+internal fun hqUpgradeAllowsMetered(automatic: Boolean): Boolean = !automatic
+
+/** Whether an upgrade may start at all on the connection in hand. */
+internal fun hqUpgradeAllowedNow(automatic: Boolean, downloadsAllowedNow: Boolean): Boolean =
+    !automatic || downloadsAllowedNow
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -395,6 +410,14 @@ object HqLibraryUpgrade {
         automatic: Boolean = false,
     ) {
         ensureLoaded(context)
+        if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
+            TrackLog.i(
+                TAG,
+                "download-check: waiting for an unmetered connection",
+                song.videoId,
+            )
+            return
+        }
         val meta = Downloads.savedMetadataFor(song.videoId)
         val badge = song.downloadFormat ?: meta?.downloadFormat
         val currentTier = DownloadedQuality.tierOf(badge, meta?.hqTier)
@@ -419,7 +442,13 @@ object HqLibraryUpgrade {
                 HqLibraryPolicy.isBetter(currentTier, entry.verified.tier)
             }
         if (entry != null && entryUsable) {
-            enqueueVerified(context, song, entry, automatic = automatic)
+            enqueueVerified(
+                context,
+                song,
+                entry,
+                automatic = automatic,
+                allowMetered = hqUpgradeAllowsMetered(automatic),
+            )
             if (!allowEqual) {
                 TrackLog.i(
                     TAG,
@@ -456,6 +485,7 @@ object HqLibraryUpgrade {
                             song,
                             HqVerificationStore.Entry(song.videoId, sourceId, trackId, verified),
                             automatic = automatic,
+                            allowMetered = hqUpgradeAllowsMetered(automatic),
                         )
                         return@launch
                     }
@@ -494,11 +524,12 @@ object HqLibraryUpgrade {
         song: Song,
         entry: HqVerificationStore.Entry,
         automatic: Boolean,
+        allowMetered: Boolean,
     ) {
         Downloads.enqueue(
             context = context,
             song = song,
-            allowMetered = true,
+            allowMetered = allowMetered,
             quality = DownloadedQuality.qualityFor(entry.verified.tier),
             hq = HqDownloadSource(
                 sourceConfigId = entry.sourceConfigId,
