@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.model.Song
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -93,6 +94,54 @@ class TrackMatcherOstReviewTest {
             thumbnailUrl = null,
         )
         assertEquals(false, TrackMatcher.sameRecording(studio, target))
+    }
+
+    @Test
+    fun `a language take after a mid-title OST label keeps its language marker`() {
+        val korean = TrackMatcher.parseTitle("Song - OST Korean Version")
+        assertEquals("song", korean.core)
+        assertEquals(setOf("korean"), korean.versions)
+
+        val japanese = TrackMatcher.parseTitle("Song - OST Japanese Ver.")
+        assertEquals("song", japanese.core)
+        assertEquals(setOf("japanese"), japanese.versions)
+
+        val original = Song(
+            videoId = "studio-song",
+            title = "Song",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        assertFalse(
+            TrackMatcher.sameRecording(
+                original,
+                TrackMatcher.Target("Song - OST Korean Version", "Artist"),
+            ),
+        )
+    }
+
+    @Test
+    fun `packaging words do not hide a language version`() {
+        val remastered = TrackMatcher.parseTitle("Song (Korean Version Remastered)")
+        assertEquals("song", remastered.core)
+        assertEquals(setOf("korean"), remastered.versions)
+
+        val full = TrackMatcher.parseTitle("Song (Korean Full Version)")
+        assertEquals("song", full.core)
+        assertEquals(setOf("korean"), full.versions)
+
+        val original = Song(
+            videoId = "studio-song",
+            title = "Song",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        assertFalse(
+            TrackMatcher.sameRecording(
+                original,
+                TrackMatcher.Target("Song (Korean Full Version)", "Artist"),
+            ),
+        )
     }
 
     @Test

@@ -817,9 +817,16 @@ object YtMusicRepository {
         // search. This is the same mapping the gated search uses, asked
         // directly for this one row. A downloaded video still qualifies: the
         // lookup reads album metadata only and never touches its file.
-        val catalogue = runCatching {
-            CatalogSongMapper.map(song, allowLocalVideo = true)?.toSong(song)
-        }.getOrNull()
+        val catalogueLookup = try {
+            CatalogSongMapper.mapResult(song, allowLocalVideo = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w(TAG, "audio switch: catalogue lookup failed for '${song.title}'", failure)
+            CatalogSongMapper.MapResult.Failed
+        }
+        val catalogue =
+            (catalogueLookup as? CatalogSongMapper.MapResult.Found)?.song?.toSong(song)
         if (catalogue != null && catalogue.videoId != song.videoId && !catalogue.isVideo) {
             Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
             audioVersionCache[song.videoId] = catalogue
@@ -834,7 +841,13 @@ object YtMusicRepository {
         // instead of remembering the video as having no catalogue release.
         // The same applies when only some of the queries answered — a later
         // failure may have hidden the release an earlier query missed.
-        if (SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun, failedQueries)) {
+        if (
+            SongVersionPolicy.audioSwitchSearchIsConclusive(
+                queriesRun,
+                failedQueries,
+                catalogueFailed = catalogueLookup is CatalogSongMapper.MapResult.Failed,
+            )
+        ) {
             audioVersionCache[song.videoId] = song
         }
         return song

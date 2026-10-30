@@ -178,37 +178,54 @@ internal object CatalogSongMapper {
         song: Song,
         budget: LookupBudget = newBudget(),
         allowLocalVideo: Boolean = false,
-    ): CatalogSong? {
-        if (song.videoId.isBlank()) return null
+    ): CatalogSong? =
+        when (val result = mapResult(song, budget, allowLocalVideo)) {
+            is MapResult.Found -> result.song
+            else -> null
+        }
+
+    /**
+     * [map] with the lookup's outcome kept. A caller that remembers "no song
+     * version" must tell a completed miss from a transient failure: only the
+     * former may be cached for the rest of the run.
+     */
+    internal suspend fun mapResult(
+        song: Song,
+        budget: LookupBudget = newBudget(),
+        allowLocalVideo: Boolean = false,
+    ): MapResult {
+        if (song.videoId.isBlank()) return MapResult.NotFound
         if (song.localUri != null &&
             !(allowLocalVideo && isVideoSource(song))
         ) {
-            return null
+            return MapResult.NotFound
         }
-        if (isCover(song) || isCoverTitle(song.title)) return null
+        if (isCover(song) || isCoverTitle(song.title)) return MapResult.NotFound
         // A row already carrying a release identity is catalogue metadata, not
         // a youtube.com upload; there is nothing to map and no reason to spend
         // a lookup on it.
-        if (song.albumId != null && !song.isVideo) return null
+        if (song.albumId != null && !song.isVideo) return MapResult.NotFound
 
         val cleaned = YouTubeDisplayCleaner.clean(song)
         val title = cleaned.title.trim()
         val artist = cleaned.artist.trim()
-        if (title.isBlank() || artist.isBlank()) return null
-        if (isCoverTitle(title)) return null
+        if (title.isBlank() || artist.isBlank()) return MapResult.NotFound
+        if (isCoverTitle(title)) return MapResult.NotFound
 
         cache.ensureLoaded(MusicGateFallback.sharedStore())
         val now = System.currentTimeMillis()
         val stored = cache.get(song.videoId)
         if (stored != null) {
             if (stored.value != NONE) {
-                decode(stored.value)?.let { return it }
+                decode(stored.value)?.let { return MapResult.Found(it) }
             } else if (!shouldRetryMiss(stored.at, now)) {
-                return null
+                return MapResult.NotFound
             }
         }
 
-        if (!budget.take()) return null
+        // No lookup was spent, so this is not a completed miss: keep the
+        // verdict retryable rather than caching it as "no catalogue release".
+        if (!budget.take()) return MapResult.Failed
 
         val outcome = try {
             inFlight.withPermit {
@@ -230,14 +247,21 @@ internal object CatalogSongMapper {
         return when (outcome) {
             is Outcome.Found -> {
                 cache.put(song.videoId, encode(outcome.song), now)
-                outcome.song
+                MapResult.Found(outcome.song)
             }
             Outcome.NotFound -> {
                 cache.put(song.videoId, NONE, now)
-                null
+                MapResult.NotFound
             }
-            Outcome.Failed -> null
+            Outcome.Failed -> MapResult.Failed
         }
+    }
+
+    /** [mapResult]'s answer: a mapped song, a completed miss, or a retryable failure. */
+    internal sealed interface MapResult {
+        data class Found(val song: CatalogSong) : MapResult
+        data object NotFound : MapResult
+        data object Failed : MapResult
     }
 
     /**

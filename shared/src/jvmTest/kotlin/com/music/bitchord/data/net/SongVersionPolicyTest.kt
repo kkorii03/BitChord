@@ -587,4 +587,22 @@ class SongVersionPolicyTest {
             SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 0, failedQueries = 0),
         )
     }
+
+    @Test
+    fun `a failed catalogue fallback is not a definitive audio switch miss`() {
+        assertTrue(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(
+                queriesRun = 2,
+                failedQueries = 0,
+                catalogueFailed = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(
+                queriesRun = 2,
+                failedQueries = 0,
+                catalogueFailed = true,
+            ),
+        )
+    }
 }

@@ -1053,9 +1053,7 @@ object TrackMatcher {
                     tailRemoved = true
                     // Keep a recognized take as a bracketed marker, dropping
                     // neutral packaging words ("Live Version" -> "(Live)").
-                    val kept = suffixWords.filter {
-                        it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS
-                    }
+                    val kept = keptSoundtrackTakeWords(suffix)
                     text = if (kept.isEmpty()) before else before + " (" + kept.joinToString(" ") + ")"
                 }
                 // The label sits in the middle of the title. What follows it is
@@ -1067,9 +1065,7 @@ object TrackMatcher {
                 else -> {
                     present = true
                     tailRemoved = true
-                    val kept = suffixWords.filter {
-                        it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS
-                    }
+                    val kept = keptSoundtrackTakeWords(suffix)
                     text = if (kept.isEmpty()) before else before + " (" + kept.joinToString(" ") + ")"
                 }
             }
@@ -1122,6 +1118,23 @@ object TrackMatcher {
             val word = normalize(match.groupValues[1]).replace(NON_ALNUM, "")
             if (word !in NEUTRAL_SUFFIX_WORDS) return out
             out = out.substring(0, match.range.first).trimEnd()
+        }
+    }
+
+    /**
+     * The take markers to keep when a soundtrack label's tail is removed.
+     * A language take ("Korean Version", "Japanese Ver.") must keep its
+     * language word: dropping it would leave only the packaging "version" and
+     * let the original recording stand in for the language version.
+     * A language word that is merely work context ("Korean Drama") is not a
+     * take and stays out.
+     */
+    private fun keptSoundtrackTakeWords(text: String): List<String> {
+        val words = wordsOf(text)
+        val languageTake = isLanguageVersion(text)
+        return words.filter {
+            (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
+                (languageTake && it in VERSION_LANGUAGES)
         }
     }
 
@@ -1484,7 +1497,7 @@ object TrackMatcher {
         return words.any { it in VERSION_LANGUAGES } &&
             words.all {
                 it in VERSION_LANGUAGES || it in VERSION_WORDS || it in LANGUAGE_PACKAGING ||
-                    it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
+                    it in PACKAGING_CONNECTORS || it in NOISE_WORDS || it.all(Char::isDigit)
             }
     }
 

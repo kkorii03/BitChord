@@ -185,9 +185,16 @@ object SongVersionPolicy {
      * the one that would have found the song. Caching the original row then
      * would turn a transient network error into a permanent kept(none) for
      * this launch. Only a pass where every query answered may be cached.
+     *
+     * The catalogue fallback is part of the pass. A failed album search after
+     * every query answered is the same transient miss, so it must block the
+     * cached verdict too ([catalogueFailed]).
      */
-    fun audioSwitchSearchIsConclusive(queriesRun: Int, failedQueries: Int): Boolean =
-        queriesRun > 0 && failedQueries == 0
+    fun audioSwitchSearchIsConclusive(
+        queriesRun: Int,
+        failedQueries: Int,
+        catalogueFailed: Boolean = false,
+    ): Boolean = queriesRun > 0 && failedQueries == 0 && !catalogueFailed
 
     /**
      * How much longer than the catalogue track a downloaded song's file may be
