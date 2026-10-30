@@ -63,6 +63,7 @@ internal object HqSwapPolicy {
         if (!sameTrack) return Decision(false, "track-changed", 0L)
         if (pinned) return Decision(false, "pinned", 0L)
         if (crossfadeActive) return Decision(false, "crossfade", 0L)
+        if (!rate.isFinite() || rate <= 0.0) return Decision(false, "bad-rate", 0L)
         val remaining = durationMs.takeIf { it > 0L }?.minus(positionMs)
         if (remaining != null && remaining < MIN_REMAINING_MS) {
             return Decision(false, "too-late", 0L)
