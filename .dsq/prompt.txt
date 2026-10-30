@@ -1,0 +1,14 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 스크린샷, ship\FIXLIST.md 100번): youtube.com 팬 업로드 재생목록 'Joker (2019)' 의 모든 곡이 화면에 가수 'Original Soundtrack', 제목 'Gary Glitter - Rock & Roll Part II | Joker OST - Original Soundtrack' 로 표시(재생목록 목록, 미니 플레이어, 재생 화면, 곡 메뉴 머리). 다른 예: 'The Guess Who - Laughing | Joker OST - Original Soundtrack', 'Hildur Guðnadóttir, Jóhann Jóhannsson - ... | Joker OST', 'Following Sophie | Joker OST'.
+수정: ① youtube.com 영상 행을 곡 정보로 바꾸는 표시 정리 경로(YouTubeDisplayCleaner·CatalogSongMapper·재생목록 파서 등, grep 으로 'Original Soundtrack' 이 가수로 들어가는 곳을 찾을 것)에서 '<가수> - <제목> | <작품> OST[ - Original Soundtrack]' 형식을 가수·제목으로 분리하고 작품명('Joker OST')은 앨범(부제)으로. ② 가수 없는 '<제목> | <작품> OST' 는 가수를 업로더 대신 '<작품> OST' 로 표시하지 말고 원래 채널/작곡가가 있으면 그것, 없으면 작품명을 부제로. ③ 'Original Soundtrack'·'OST'·'Soundtrack' 단독은 절대 가수로 쓰지 않음. ④ 노래 버전 찾기(TrackMatcher audioSwitch, 이미 OST 꼬리 처리 있음)와 같은 파싱 함수를 공유해 두 곳 결과가 같게. 기존 커버 제목 정리(오화요·아카네 리제 커버 등)·공식 MV 꼬리 정리 동작은 그대로(기존 테스트 전부 통과).
+테스트: 위 4가지 제목 + 기존 커버·MV 제목 회귀 단위 테스트.
+반드시: 배터리 우선. 바꾼 함수의 모든 호출부·타입 확인. 업스트림 v1.8.1 코드 쪼개기 금지. 기존 주석 의도를 지우면 요약에 이유. 새 테스트 이름 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:153` (via `TrackMatcher.kt:1083`): any title merely ending in “Soundtrack”/“OST” now takes the soundtrack path and gets truncated with no album subtitle (verified `"Our Soundtrack"` → title `Our`, album null; `"My OST"` → `My`), silently losing part of the real song title. Fix: only enter `cleanSoundtrack` when a work was actually named or the label is dash/pipe-delimited packaging, and otherwise leave the bare tail in the title.
+- LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1161`: `cleanSoundtrackWorkPreserving` reuses `SOUNDTRACK_WORK_NOISE`, which strips legitimate work-name words (verified `(From "Original Sin")` → album `Sin OST`, `(From "The Motion Picture")` → `The OST`). Fix: for display work, strip only the trailing OST/Soundtrack label rather than every occurrence of original/motion/picture.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
