@@ -512,10 +512,15 @@ class ChunkedDataSource(
     }
 
     /**
-     * Opens [spec], waiting out a 429/503 according to its `Retry-After` or,
-     * when it sent none, 1s/2s/4s — at most three retries. The host is rested
-     * for the longer of that wait and [HqRetryPolicy.REST_MS] so candidate
-     * ordering and the next track's read-ahead steer around it.
+     * Opens [spec], letting an awake server's 429 set the pace but waking a
+     * sleeping gateway only once.
+     *
+     * A 429 is waited out according to its `Retry-After` or, when it sent none,
+     * 1s/2s/4s — at most three retries. A 502/503/504 means a free-tier
+     * instance is asleep or booting: the request already sent is the wake-up,
+     * so it is not repeated, and the host is rested for [HqRetryPolicy.REST_MS]
+     * (or its stated `Retry-After`) so candidate ordering and the next track's
+     * read-ahead steer around it.
      */
     private fun openWithRateLimitRetry(spec: DataSpec, open: () -> Long): Long {
         var attempt = 0
@@ -524,21 +529,33 @@ class ChunkedDataSource(
                 return open()
             } catch (e: Exception) {
                 val refusal = rateLimitedCause(e) ?: throw e
-                if (!HqRetryPolicy.isRateLimited(refusal.responseCode)) throw e
+                val code = refusal.responseCode
+                if (!HqRetryPolicy.isRateLimited(code) &&
+                    !HqRetryPolicy.isSleepingGateway(code)
+                ) {
+                    throw e
+                }
                 val host = HqHostTracker.hostOf(spec.uri.toString()) ?: spec.uri.host
                 val header = HqRetryPolicy.retryAfterHeader(refusal.headerFields)
-                val decision = HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
-                HqHostTracker.noteRateLimited(host, header, refusal.responseCode)
+                val decision = HqRetryPolicy.decideAddon(
+                    code = code,
+                    header = header,
+                    attempt = attempt,
+                    nowMs = System.currentTimeMillis(),
+                )
+                val restMs = HqHostTracker.noteRateLimited(host, header, code)
                 val statedMs = HqRetryPolicy.retryAfterMs(header, System.currentTimeMillis())
                 TrackLog.w(
                     TAG,
-                    "hq-stream: ${host ?: "?"} ${refusal.responseCode} " +
+                    "hq-stream: ${host ?: "?"} $code " +
                         "retry-after=${(statedMs ?: decision.waitMs) / 1000}s; " +
                         when {
                             decision.retryAfterTooLong ->
                                 "over ${HqRetryPolicy.MAX_WAIT_MS / 1000}s cap, switching route"
                             decision.retry ->
                                 "retrying (${attempt + 1}/${HqRetryPolicy.MAX_ATTEMPTS})"
+                            HqRetryPolicy.isSleepingGateway(code) ->
+                                "sleeping gateway; one wake request, resting ${restMs / 1000}s"
                             else -> "giving up"
                         },
                 )

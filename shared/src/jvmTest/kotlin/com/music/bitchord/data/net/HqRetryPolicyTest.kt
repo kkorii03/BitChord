@@ -79,4 +79,21 @@ class HqRetryPolicyTest {
         assertEquals(0L, decision.waitMs)
         assertEquals(3_600_000L, decision.restMs)
     }
+
+    @Test
+    fun `a sleeping gateway is woken once and never retried in the same call`() {
+        for (code in listOf(502, 503, 504)) {
+            val decision = HqRetryPolicy.decideAddon(code, null, attempt = 0, nowMs = 0L)
+            assertFalse(decision.retry, "HTTP $code must not be asked again")
+            assertEquals(0L, decision.waitMs)
+            assertEquals(HqRetryPolicy.REST_MS, decision.restMs)
+        }
+    }
+
+    @Test
+    fun `a rate limit on an awake server still gets the first retry`() {
+        val decision = HqRetryPolicy.decideAddon(429, null, attempt = 0, nowMs = 0L)
+        assertTrue(decision.retry)
+        assertEquals(1_000L, decision.waitMs)
+    }
 }

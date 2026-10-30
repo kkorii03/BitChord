@@ -46,6 +46,33 @@ object HqRetryPolicy {
 
     fun isRateLimited(code: Int): Boolean = code == 429 || code == 503
 
+    /**
+     * A gateway answer that usually means a free-tier instance is asleep or
+     * waking rather than a limit on how often it may be asked.
+     *
+     * `502`/`504` are the edge failing to reach the instance; `503` is the
+     * instance itself saying it is not ready. Sending the request again while
+     * the container is still booting only queues more work for the same cold
+     * start, so the addon path wakes it once and leaves it alone.
+     */
+    fun isSleepingGateway(code: Int): Boolean = code == 502 || code == 503 || code == 504
+
+    /**
+     * What an addon JSON call should do with [code].
+     *
+     * A sleeping gateway gets exactly one request: no in-call retry, and a
+     * host rest long enough for later callers to steer around it. A `429` is
+     * still the loader's ordinary ladder because the server is awake and
+     * merely asking for spacing.
+     */
+    fun decideAddon(code: Int, header: String?, attempt: Int, nowMs: Long): Decision =
+        if (isSleepingGateway(code)) {
+            val rest = decide(header, MAX_ATTEMPTS, nowMs)
+            Decision(retry = false, waitMs = 0L, restMs = rest.restMs)
+        } else {
+            decide(header, attempt, nowMs)
+        }
+
     /** `Retry-After` as milliseconds from [nowMs], or null when it did not say. */
     fun retryAfterMs(header: String?, nowMs: Long): Long? {
         val text = header?.trim()?.takeIf { it.isNotEmpty() } ?: return null
