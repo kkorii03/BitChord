@@ -190,6 +190,11 @@ jobs:
           # Size flag: a large non-test change gets a full Opus read, not a skim.
           big=$(git diff --cached --numstat -- . ':(exclude)*Test.kt' ':(exclude)*.md' ':(exclude)*.lockfile' | awk '{s+=$1+$2} END {print s+0}')
           [ "$big" -gt 500 ] && echo "::warning title=size::$big changed non-test lines - full Opus read required" || echo "::notice title=size::$big changed non-test lines"
+          # The test-fix rounds run after the guard, so restore the forbidden
+          # paths once more: a workflow-file change here also makes GitHub
+          # refuse the push (GITHUB_TOKEN has no `workflows` permission).
+          git checkout HEAD -- .github .dsq 2>/dev/null || true
+          git clean -fdq -- .github .dsq 2>/dev/null || true
           git add -A
           git commit -q -m "cloud: $NAME ($RESULT, proof=${PROOF:-n/a})" -m "DeepSeek cloud task on $BASE." || true
           git push -f origin "HEAD:refs/heads/cloud/$NAME"
