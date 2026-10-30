@@ -43,6 +43,13 @@ class LyricsQuestionKeyTest {
     }
 
     @Test
+    fun lengthsEitherSideOfABucketBoundaryShareOneAnswer() {
+        // 299 s and 300.5 s are 1.5 s apart — the ordinary catalogue/decoder
+        // difference — but floor division puts them in different buckets.
+        assertEquals(key(durationMs = 299_000L), key(durationMs = 300_500L))
+    }
+
+    @Test
     fun twoDifferentRecordingsDoNotShareAnAnswer() {
         assertNotEquals(key(durationMs = 200_000L), key(durationMs = 260_000L))
     }

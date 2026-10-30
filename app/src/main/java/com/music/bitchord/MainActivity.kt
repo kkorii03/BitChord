@@ -3079,6 +3079,7 @@ private fun BitChordApp(
             lyricsSource = lyricsSource,
             lyricsProviderStates = lyricsProviderStates,
             onSelectLyricsProvider = viewModel::selectLyricsProvider,
+            onLyricsOpen = viewModel::retryLyricsIfMissed,
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsTranscribing = displayedSong.videoId in lyricsTranscribingVideos,
             lyricsOffsetOpen = showLyricsOffset,

@@ -82,4 +82,24 @@ object NextPrepPolicy {
         if (currentRowId != startedRowId) return true
         return startedQueueKey != currentQueueKey
     }
+
+    /**
+     * Whether the row's current bundle already covers the sound it will play.
+     *
+     * The row id alone is not enough: a download finishing or a file being
+     * replaced by its stream keeps the row but changes the audio. An active
+     * job for the old sound must not make the caller skip the new one, and a
+     * completed bundle for the old sound must not stand for the new one.
+     */
+    fun alreadyHandled(
+        startedRowId: String?,
+        startedQueueKey: String?,
+        rowId: String,
+        queueKey: String,
+        running: Boolean,
+        completedQueueKey: String?,
+    ): Boolean {
+        if (startedRowId != rowId || startedQueueKey != queueKey) return false
+        return running || completedQueueKey == queueKey
+    }
 }

@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -116,6 +117,11 @@ internal object TranslationAhead {
         val source: LyricsSource?,
         val searchedAs: Pair<String, String>?,
         val fromFile: Boolean,
+        /**
+         * A re-check wrote these words and their sync for this file, so the
+         * file's own "already timed for it" rule must not reject that sync.
+         */
+        val overrideRecheck: Boolean = false,
     )
 
     /**
@@ -143,6 +149,7 @@ internal object TranslationAhead {
                     source = override.source,
                     searchedAs = null,
                     fromFile = true,
+                    overrideRecheck = override.kind == LyricsOverrideFile.Kind.RECHECK,
                 )
             }
         }

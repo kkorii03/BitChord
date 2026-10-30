@@ -249,4 +249,56 @@ class NextPrepPolicyTest {
     fun aNextRowWithNoCurrentRowIsStillPrepared() {
         assertTrue(NextPrepPolicy.hasDistinctNextRow(nextIndex = 0, currentIndex = null))
     }
+
+    @Test
+    fun theSameRowWithANewSoundIsPreparedAgainEvenWhileTheOldJobIsActive() {
+        assertFalse(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|true",
+                running = true,
+                completedQueueKey = null,
+            ),
+        )
+    }
+
+    @Test
+    fun theSameRowAndSoundIsLeftAlone() {
+        assertTrue(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|false",
+                running = true,
+                completedQueueKey = null,
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|false",
+                running = false,
+                completedQueueKey = "row-1|video|false",
+            ),
+        )
+    }
+
+    @Test
+    fun aCompletedBundleDoesNotCoverTheSameRowsNewSound() {
+        assertFalse(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|true",
+                running = false,
+                completedQueueKey = "row-1|video|false",
+            ),
+        )
+    }
 }

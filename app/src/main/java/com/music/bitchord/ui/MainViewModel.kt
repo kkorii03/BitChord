@@ -417,6 +417,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Selects a provider from the player drawer — see [LyricsController.selectLyricsProvider]. */
     fun selectLyricsProvider(source: LyricsSource) = lyricsController.selectLyricsProvider(source)
 
+    /**
+     * Reopens the panel after a transient miss — see
+     * [LyricsController.retryLyricsIfMissed].
+     */
+    fun retryLyricsIfMissed() = lyricsController.retryLyricsIfMissed()
+
     /** The AI timing button — see [LyricsController.toggleAiLyricsTiming]. */
     fun toggleAiLyricsTiming() = lyricsController.toggleAiLyricsTiming()
 

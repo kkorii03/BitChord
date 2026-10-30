@@ -143,6 +143,8 @@
 
 ### MEDIUM R1. 영상 가사 재측정이 8초 폴링 루프 (배터리)
 
+> 2차 재검증 필요: 이번에도 고치지 못했다. `AudioCache`의 바이트 증가 이벤트가 아직 없어 `LyricsController.kt:830-845`의 `delay(8_000)` 루프가 남아 있다. 배터리 규칙 위반이므로 다음 차수에서 `AudioCache` prefix 증가 `SharedFlow` + `worthMeasuring`일 때만 `measure` 호출로 바꿔야 한다.
+
 - 파일: `app/src/main/java/com/music/bitchord/ui/LyricsController.kt:56`, `:793-804`
 - 증거: `while (... ) { ...; delay(REMEASURE_CHECK_MS = 8_000) }`가 최대 `MEASURE_WINDOW_MS = 15분`, 최대 10회.
 - 영향: 커버/뮤직비디오 가사 패널이 열린 동안 8초마다 깨어 측정을 재시도한다. 오디오가 더 이상 늘지 않아도 루프는 유예 시간까지 돈다.
@@ -150,6 +152,8 @@
 - 필요한 작업: `AudioCache`에 rendition별 prefix 증가 `SharedFlow<String>`을 추가하고(쓰기 완료 시 emit), `LyricsController`가 그 이벤트에서 `worthMeasuring`일 때만 `measure`를 호출하도록 바꾼다. 테스트는 가짜 flow로 “이벤트 1회당 measure 1회, 이벤트 없으면 0회”를 검증한다.
 
 ### MEDIUM R2. ISRC 식별이 BiniLyrics를 켠 사용자에게만 동작
+
+> 2차 재검증 필요: 이번에도 고치지 못했다. `LyricsRepository.kt:719`, `:982`의 `LyricsSource.BINI_LYRICS !in sequence` 조건은 “끈 제공처는 접촉하지 않는다”는 기존 규칙과 충돌하므로 제품 결정(다운로드 태그/YouTube Music ISRC 우선)이 먼저 필요하다.
 
 - 파일: `LyricsRepository.kt:709`, `:972`
 - 증거: `identify`가 `LyricsSource.BINI_LYRICS !in sequence`이면 null. LRC_RED/LyricsPlus는 이름 매칭으로 내려간다.
@@ -215,3 +219,40 @@
 - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.LrcRedTest' --tests 'com.music.bitchord.LyricsLoadKeyTest' --tests 'com.music.bitchord.NextPrepLogTest' --tests 'com.music.bitchord.CoverLyricsVideoFlagTest' --tests 'com.music.bitchord.TranslationAheadOverrideTest' --tests 'com.music.bitchord.NextPrepCacheKeyTest'` → 통과.
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과.
 - 참고: `ProviderLyricsTest`의 기존 `LyricsSource.entries.size == 21` 단언은 현재 트리(20개)에서 실패한다. 이번 변경과 무관한 기존 불일치이며, 제공처를 추가/삭제하지 않았다. 별도로 21번째 제공처가 의도된 것인지 확인이 필요하다.
+
+---
+
+## 7. 2차 재검증 (Verdict 7건, 2026-10-31)
+
+기준 브랜치 `task/fix-1030` 계열의 1차 결과를 현재 트리에서 다시 읽었다. 아래 7건은 모두 이번에 수정했고, HIGH/MEDIUM은 수정 전 실패하는 테스트를 먼저 추가했다. 1차 문서의 안전 규칙·주석 의도는 지우지 않았다.
+
+| # | 심각도 | 파일:줄 | 증거 | 사용자 영향 | 빈도 | 수정 |
+|---|---|---|---|---|---|---|
+| 1 | HIGH | `NextTrackPreparation.kt:96-113`(`schedule`), `:149`(`attemptsFor`), `:162`, `:221`, `:312`, `:336-338` | 같은 rowId면 active job/completed 검사가 queueKey 검사보다 먼저라 다운로드 완료·파일↔스트림 전환을 건너뛰었고, `attempted`/`lyricsByRow`가 rowId 키라 이전 사운드의 시도·가사를 재사용했다. | 다운로드가 끝난 다음 곡이 옛 스트림용 가사/싱크로 첫 프레임에 뜨고, 새 파일은 다시 준비되지 않는다. | `nextPrepLyrics`를 켠 사용자 + 다운로드 완료/소스 전환. | `NextPrepPolicy.alreadyHandled`로 rowId와 queueKey를 함께 비교하고, 두 맵을 queueKey로 키잉했다. queueKey가 바뀌면 `NextPrepCache`도 지운다. |
+| 2 | MEDIUM | `NextTrackPreparation.kt:501`; `TranslationAhead.kt:124`, `:152` | `lyricsForPrep`은 RECHECK override를 `fromFile=true`로 반환하는데 `timed()`는 `!fromFile || isVideo`만 봐서 다운로드 곡의 새 싱크를 거부했다. | 재검증이 저장한 싱크가 다음 곡 첫 프레임/잠금화면에 적용되지 않고, Step.SYNC가 옛 파일 기준으로 남는다. | `syncSafetyDownloadRecheck`를 켠 사용자. | `AheadLyrics.overrideRecheck`에 Kind를 실어 `LocalTimingPolicy.baseAllowed(..., overrideRecheck)`로 판정한다. 기존 `!fromFile || isVideo` 항은 그대로 포함된다(`true && (기존항 || overrideRecheck)`). |
+| 3 | MEDIUM | `LyricsRepository.kt:196`, `:216-223`, `:693` | `durationMs / 10_000` 내림 버킷은 299.0s와 300.5s처럼 1.5s 차이도 10초 경계를 넘으면 다른 키가 됐다. | 카탈로그 길이로 선반입한 가사가 실제 디코더 길이 조회에서 miss되어 같은 곡을 다시 검색한다. | 길이가 10초 경계 근처인 곡의 다음 곡 준비/재생. | `(durationMs + 5_000) / 10_000`으로 가장 가까운 버킷에 반올림했다. 길이 없음은 여전히 `unknown`으로 분리된다. |
+| 4 | LOW | `LyricsRepository.kt:870-882` | front 검사 후 모든 job이 완료되면 `select {}`에 절이 0개 등록되어 8초 유예를 다 기다렸다. | 단어 싱크 제공처가 모두 먼저 끝난 흔한 조회에서 불필요한 8초 지연. | 캐시 miss + 단어 싱크 경쟁 조회. | 완료된 job을 먼저 걸러 `joined`를 만들고, 비면 즉시 `continue`, 아니면 그 목록에만 `onJoin`을 건다. 폴링 없음. |
+| 5 | MEDIUM | `LyricsController.kt:439-462`; 신규 `LyricsRetry.kt`; `NowPlayingScreen.kt:784`, `:1045`; `MainActivity.kt:3082`; `MainViewModel.kt` | miss 시 `lyricsFor=null`만 풀고, 유일한 호출부인 MainActivity의 `LaunchedEffect`는 패널 재개방으로 다시 실행되지 않았다. | 일시적 네트워크 실패 후 같은 곡에서 가사를 다시 찾을 방법이 없었다. | 끊긴 망/제공처 일시 장애 후 패널을 닫았다 여는 경우. | 패널 열기 이벤트(`onLyricsOpen`)에서 `retryLyricsIfMissed()`를 호출한다. 검색 중이거나 이미 찾은 경우는 no-op이라 배터리 비용이 없다. |
+| 6 | LOW | `NextTrackPreparation.kt:288-302`, `:578-600`; `LyricsController.kt:273`; `PlaybackService.kt:10183` | `NextPrepCache`가 videoId/localFile/isVideo만 비교해, 소스 순서·음절 우선·켬/끔 변경 직후 옛 설정의 준비 가사를 먼저 게시할 수 있었다. | 설정을 바꾼 직후 현재 곡에 이전 설정 결과가 한 프레임 보인다. | 설정 변경 직후. | `Ready`에 `lyricsSettings`(소스 집합·순서·음절 우선)를 넣고 `get`에서 함께 비교한다. |
+| 7 | LOW | `NextTrackPreparation.kt:162`, `:336-338` | 로그의 attempted가 세션 전역 `steps`를 봐서, 이번 실행에서 꺼진 스텝도 이전 시도 때문에 `none/skipped`로 찍혔다. | 다음 곡 준비 성적표의 off/none 구분이 다시 흐려진다. | `nextPrepLyrics`/sync 스위치를 도중에 바꾼 실행. | 이번 run에서 실제로 실행한 `triedThisRun`으로 로그를 계산한다. |
+
+### 성적표와의 연결
+
+- **다음 곡 준비 가사 none 108/173**: 7번 수정으로 “꺼짐(off)”과 “찾지 못함(none)”이 다시 분리된다. 1번 수정은 다운로드가 끝난 다음 곡이 옛 스트림 키로 `none`에 고정되던 경로를 없앤다.
+- **다음 곡 싱크 준비 29%**: 2번 수정으로 재검증 override가 있는 다운로드 곡도 새 싱크를 적용받는다. 다만 `syncWanted`의 영상·한국어·기악·저전력·Deepgram 제외는 실제 실패 기록이 있는 보호 정책이므로 약화하지 않았다.
+- **무손실 4% / 다운로드·고음질 실패 140회**: 가사 영역 밖이며 이번 변경은 다운로드 파일을 읽거나 쓰지 않는다. 관련된 부분(준비 캐시 키·길이 버킷·재검증 싱크)만 위에서 고쳤다.
+
+### 추가 테스트
+
+- `NextPrepPolicyTest.theSameRowWithANewSoundIsPreparedAgainEvenWhileTheOldJobIsActive`
+- `NextPrepPolicyTest.aCompletedBundleDoesNotCoverTheSameRowsNewSound`
+- `LyricsQuestionKeyTest.lengthsEitherSideOfABucketBoundaryShareOneAnswer`
+- `TranslationAheadOverrideTest.aListenersOwnOverrideIsNotReportedAsARecheck` (기존 RECHECK 테스트에 `overrideRecheck` 단언 추가)
+- `LyricsRetryTest.aCheckedMissWithNoClaimIsRetried`
+- `NextPrepCacheKeyTest.changingTheLyricsSettingsDoesNotReuseTheOldAnswer`
+
+### 2차 테스트 결과
+
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.*'` → 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.NextPrepCacheKeyTest' --tests 'com.music.bitchord.TranslationAheadOverrideTest' --tests 'com.music.bitchord.LyricsRetryTest' --tests 'com.music.bitchord.NextPrepLogTest' --tests 'com.music.bitchord.LyricsLoadKeyTest'` → 통과.
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과.

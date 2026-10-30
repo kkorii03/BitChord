@@ -270,7 +270,16 @@ class LyricsController(
         // answer rather than making a request. Off by default: the bundle's
         // lyrics path is a post-ko-101 addition and must not reach this frame.
         if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(videoId, localFile = localUri != null, isVideo = isVideo)?.let { prepared ->
+            NextPrepCache.get(
+                videoId,
+                localFile = localUri != null,
+                isVideo = isVideo,
+                lyricsSettings = NextPrepCache.settingsKey(
+                    sources = sources,
+                    order = AppSettings.lyricsSourceOrder.value,
+                    prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                ),
+            )?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -420,6 +429,35 @@ class LyricsController(
             // instead of being dropped as a duplicate for the whole session.
             if (selected == null) lyricsFor = null
         }
+    }
+
+    /**
+     * Asks the providers once more when the player reopens the lyrics panel
+     * after a transient miss. A found answer or a lookup still running is left
+     * alone, so this is a no-op in the ordinary case and never a poll.
+     */
+    fun retryLyricsIfMissed() {
+        val request = currentLyricsRequest ?: return
+        if (!LyricsRetry.shouldRetry(
+                checked = _lyricsChecked.value,
+                hasLyrics = !_lyrics.value.isNullOrEmpty(),
+                lookupClaimed = lyricsFor != null,
+                hasRequest = true,
+            )
+        ) return
+        TrackLog.d("BitChord", "cmd: lyrics retry after miss", about = request.videoId)
+        loadLyrics(
+            videoId = request.videoId,
+            title = request.title,
+            artist = request.artist,
+            durationMs = request.durationMs,
+            album = request.album,
+            localUri = request.localUri,
+            isVideo = request.isVideo,
+            alternatives = request.alternatives,
+            artistKnown = request.artistKnown,
+            artistAliases = request.artistAliases,
+        )
     }
 
     /**

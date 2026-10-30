@@ -189,11 +189,11 @@ object LyricsRepository {
     ): String = buildString {
         append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
         // A lookup made without a length may have settled on a different edit
-        // than one made with it. Keep the two apart, but bucket the known
-        // length so the next-track prefetch (catalogue length) and the player
-        // (decoder length, usually a second or two apart) still share it.
-        append('\u0005')
-        if (durationMs <= 0L) append("unknown") else append(durationMs / DURATION_BUCKET_MS)
+        // than one made with it. Keep the two apart, but round the known
+        // length to the nearest bucket so the next-track prefetch (catalogue
+        // length) and the player (decoder length, usually a second or two
+        // apart) still share it instead of falling either side of a boundary.
+        append('\u0005').append(durationBucket(durationMs))
         append('\u0006').append(album.orEmpty())
         append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
         append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
@@ -208,10 +208,19 @@ object LyricsRepository {
      *
      * Ten seconds is far wider than the difference between a catalogue row's
      * rounded length and the decoder's exact one, and far narrower than two
-     * edits of the same song. An unknown length is never folded into a known
-     * one: a match made without a length is the one that can be the wrong edit.
+     * edits of the same song. The length is rounded to the nearest bucket so a
+     * pair 1–2 s apart cannot be split by a boundary. An unknown length is
+     * never folded into a known one: a match made without a length is the one
+     * that can be the wrong edit.
      */
     private const val DURATION_BUCKET_MS = 10_000L
+
+    private fun durationBucket(durationMs: Long): String =
+        if (durationMs <= 0L) {
+            "unknown"
+        } else {
+            ((durationMs + DURATION_BUCKET_MS / 2) / DURATION_BUCKET_MS).toString()
+        }
 
     private suspend fun lookUpAll(
         videoId: String,
@@ -681,8 +690,7 @@ object LyricsRepository {
         // the same text is what lets the translation fetched with them be found.
         val memoKey = buildString {
             append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
-            append('\u0005')
-            if (durationMs <= 0L) append("unknown") else append(durationMs / DURATION_BUCKET_MS)
+            append('\u0005').append(durationBucket(durationMs))
             append('\u0006').append(album.orEmpty())
             append('\u0000').append(prioritizeSyllableSync)
             append('\u0000').append(isrc.orEmpty())
@@ -862,10 +870,17 @@ object LyricsRepository {
                 // one is still being asked. Only the front of the list may be
                 // taken; when it is still running, wait for it to finish.
                 if (!pending.first().second.isCompleted) {
+                    // Only the ones still running: selecting on an already
+                    // finished job resumes at once, which would spin here.
+                    val joined = pending.mapNotNull { (_, job) ->
+                        job.takeIf { !it.isCompleted }
+                    }
+                    // Every job can finish between the check above and this
+                    // list. A select with no clauses would wait out the whole
+                    // grace; loop instead and read the now-complete answer.
+                    if (joined.isEmpty()) continue
                     select<Unit> {
-                        // Only the ones still running: selecting on an already
-                        // finished job resumes at once, which would spin here.
-                        pending.forEach { (_, job) -> if (!job.isCompleted) job.onJoin { } }
+                        joined.forEach { it.onJoin { } }
                     }
                     continue
                 }

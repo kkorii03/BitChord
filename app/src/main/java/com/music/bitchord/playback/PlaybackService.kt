@@ -10184,6 +10184,11 @@ class PlaybackService : MediaLibraryService() {
                 currentSong.videoId,
                 localFile = currentSong.localUri != null,
                 isVideo = LyricsTimingSource.isVideo(currentSong),
+                lyricsSettings = NextPrepCache.settingsKey(
+                    sources = AppSettings.lyricsSources.value,
+                    order = AppSettings.lyricsSourceOrder.value,
+                    prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                ),
             )
         } else {
             null

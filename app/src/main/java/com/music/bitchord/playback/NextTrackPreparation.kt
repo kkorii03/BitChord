@@ -63,16 +63,18 @@ internal class NextTrackPreparation(
     private var completedQueueKey: String? = null
 
     /**
-     * Steps already tried for a row in this session. A failed network step is
-     * not retried for the same row: the ordinary post-start path takes over,
-     * which is where the user's battery would otherwise be spent twice.
+     * Steps already tried for a row in this session, keyed by the row's sound
+     * (see [Snapshot.queueKey]). A failed network step is not retried for the
+     * same sound: the ordinary post-start path takes over, which is where the
+     * user's battery would otherwise be spent twice. A download finishing or
+     * a file/stream swap is a different sound and starts a fresh set.
      */
     private val attempted = object : LinkedHashMap<String, MutableSet<Step>>(8, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MutableSet<Step>>) =
             size > MAX_ROWS_REMEMBERED
     }
 
-    /** Lyrics already fetched for a row, so a resumed bundle keeps its answer. */
+    /** Lyrics already fetched for a row's sound, so a resumed bundle keeps its answer. */
     private val lyricsByRow = object : LinkedHashMap<String, TranslationAhead.AheadLyrics>(8, 0.75f, true) {
         override fun removeEldestEntry(
             eldest: MutableMap.MutableEntry<String, TranslationAhead.AheadLyrics>,
@@ -97,10 +99,15 @@ internal class NextTrackPreparation(
             cancel()
             return
         }
-        if (snapshot.rowId == rowId) {
-            if (job?.isActive == true) return
-            if (completedRowId == snapshot.rowId && completedQueueKey == snapshot.queueKey) return
-        }
+        if (NextPrepPolicy.alreadyHandled(
+                startedRowId = rowId,
+                startedQueueKey = queueKey,
+                rowId = snapshot.rowId,
+                queueKey = snapshot.queueKey,
+                running = job?.isActive == true,
+                completedQueueKey = completedQueueKey,
+            )
+        ) return
         if (NextPrepPolicy.shouldCancel(rowId, queueKey, snapshot.rowId, snapshot.queueKey)) {
             job?.cancel()
             NextPrepCache.clear()
@@ -139,8 +146,8 @@ internal class NextTrackPreparation(
         return Snapshot(rowId, index, song, "$rowId|${song.videoId}|${song.localUri != null}")
     }
 
-    private fun attemptsFor(rowId: String): MutableSet<Step> = synchronized(attempted) {
-        attempted.getOrPut(rowId) { mutableSetOf() }
+    private fun attemptsFor(queueKey: String): MutableSet<Step> = synchronized(attempted) {
+        attempted.getOrPut(queueKey) { mutableSetOf() }
     }
 
     private suspend fun run(snapshot: Snapshot) {
@@ -148,7 +155,11 @@ internal class NextTrackPreparation(
         val switches = AppSettings.syncSafetySwitches
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
-        val steps = attemptsFor(snapshot.rowId)
+        val steps = attemptsFor(snapshot.queueKey)
+        // Steps this particular run actually reached, for the log: [steps] is
+        // the session-wide set, so a step disabled now could still appear there
+        // from an earlier sound and be reported as a miss instead of "off".
+        val triedThisRun = mutableSetOf<Step>()
 
         fun stillCurrent(): Boolean {
             val player = currentPlayer() ?: return false
@@ -174,7 +185,7 @@ internal class NextTrackPreparation(
         // The lyrics switch is off by default: the cache may hold lines from
         // an earlier run, so it is not even read while the switch is off.
         var lyrics: TranslationAhead.AheadLyrics? = if (switches.nextPrepLyrics) {
-            synchronized(lyricsByRow) { lyricsByRow[snapshot.rowId] }
+            synchronized(lyricsByRow) { lyricsByRow[expectedQueueKey] }
         } else {
             null
         }
@@ -207,6 +218,7 @@ internal class NextTrackPreparation(
             if (step == Step.MIX) continue
             if (!stillCurrent()) return
             steps += step
+            triedThisRun += step
             try {
                 when (step) {
                     Step.VERSION -> Unit
@@ -217,7 +229,7 @@ internal class NextTrackPreparation(
                             allowHeavy = AppSettings.heavyWorkAllowed,
                         )
                         synchronized(lyricsByRow) {
-                            lyrics?.let { lyricsByRow[snapshot.rowId] = it }
+                            lyrics?.let { lyricsByRow[expectedQueueKey] = it }
                         }
                     }
                     Step.HQ -> hq = prepareHq(song) ?: hq
@@ -282,6 +294,11 @@ internal class NextTrackPreparation(
                     isVideo = LyricsTimingSource.isVideo(song),
                     fromFile = found.fromFile,
                     localFile = song.localUri != null,
+                    lyricsSettings = NextPrepCache.settingsKey(
+                        sources = AppSettings.lyricsSources.value,
+                        order = AppSettings.lyricsSourceOrder.value,
+                        prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    ),
                 ),
             )
         }
@@ -292,6 +309,7 @@ internal class NextTrackPreparation(
         if (Step.MIX in plan.steps) {
             if (!stillCurrent()) return
             steps += Step.MIX
+            triedThisRun += Step.MIX
             try {
                 val player = currentPlayer()
                 if (player != null) {
@@ -315,9 +333,9 @@ internal class NextTrackPreparation(
         TrackLog.i(
             "BitChord",
             "next-prep: ${song.title} version=${song.videoId} " +
-                "lyrics=${NextPrepLog.lyrics(found?.source, attempted = Step.LYRICS in steps)} " +
+                "lyrics=${NextPrepLog.lyrics(found?.source, attempted = Step.LYRICS in triedThisRun)} " +
                 "hq=${hq?.name?.lowercase(Locale.ROOT) ?: "none"} " +
-                "sync=${NextPrepLog.sync(timing != null, attempted = Step.SYNC in steps)} " +
+                "sync=${NextPrepLog.sync(timing != null, attempted = Step.SYNC in triedThisRun)} " +
                 "mix=${if (mix) "ready" else "none"} in ${tookMs}ms",
             about = song.videoId,
         )
@@ -477,7 +495,15 @@ internal class NextTrackPreparation(
         found: TranslationAhead.AheadLyrics,
         song: Song,
     ): LyricsTiming.Timing? {
-        val timeable = !found.fromFile || LyricsTimingSource.isVideo(song)
+        // The old rule was "a file's own timing stands unless it is a video";
+        // a re-check override carries a fresh sync for this file and must be
+        // applied too, exactly as the player and the lyrics screen do.
+        val timeable = LocalTimingPolicy.baseAllowed(
+            timed = true,
+            fromFile = found.fromFile,
+            isVideo = LyricsTimingSource.isVideo(song),
+            overrideRecheck = found.overrideRecheck,
+        )
         val recordTimed = timeable && (!found.fromFile || found.source != null) &&
             !LyricsTiming.timedToVideo(found.source)
         return LyricsTiming.timing(
@@ -534,6 +560,12 @@ internal object NextPrepCache {
         val fromFile: Boolean,
         /** Whether the row played a downloaded file rather than a stream. */
         val localFile: Boolean,
+        /**
+         * The source set, order and syllable preference the lines were chosen
+         * with. A later change must not let the old settings' answer be shown
+         * as if it were the new settings' choice.
+         */
+        val lyricsSettings: String,
     )
 
     @Volatile
@@ -543,10 +575,28 @@ internal object NextPrepCache {
         ready = value
     }
 
-    fun get(videoId: String, localFile: Boolean, isVideo: Boolean): Ready? =
-        ready?.takeIf {
-            it.videoId == videoId && it.localFile == localFile && it.isVideo == isVideo
-        }
+    fun get(
+        videoId: String,
+        localFile: Boolean,
+        isVideo: Boolean,
+        lyricsSettings: String,
+    ): Ready? = ready?.takeIf {
+        it.videoId == videoId &&
+            it.localFile == localFile &&
+            it.isVideo == isVideo &&
+            it.lyricsSettings == lyricsSettings
+    }
+
+    /** One string for the lyrics choices that change what a lookup returns. */
+    fun settingsKey(
+        sources: Set<LyricsSource>,
+        order: List<LyricsSource>,
+        prioritizeSyllableSync: Boolean,
+    ): String = buildString {
+        sources.map { it.name }.sorted().forEach { append(it).append('\u0000') }
+        order.forEach { append(it.name).append('\u0001') }
+        append(prioritizeSyllableSync)
+    }
 
     fun clear() {
         ready = null
