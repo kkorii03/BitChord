@@ -385,21 +385,14 @@ object Backup {
 
     private const val APP_TAG = "bitchord"
 
-    /** Reads at most [maxBytes] of UTF-8 text, refusing rather than growing without bound. */
+    /**
+     * The stream-receiver form of [readBackupText], kept for callers/tests that
+     * already hold an [InputStream]. It delegates rather than reading again:
+     * two bounded readers could disagree about the ceiling or its message.
+     */
     @JvmName("readBackupTextFromStream")
-    internal fun InputStream.readBackupText(maxBytes: Int = MAX_IMPORT_BYTES): String {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(8_192)
-        var total = 0
-        while (true) {
-            val read = read(buffer)
-            if (read < 0) break
-            total += read
-            require(total <= maxBytes) { "백업 파일이 너무 큽니다" }
-            output.write(buffer, 0, read)
-        }
-        return output.toByteArray().decodeToString()
-    }
+    internal fun InputStream.readBackupText(maxBytes: Int = MAX_IMPORT_BYTES): String =
+        readBackupText(this, maxBytes)
 
     /**
      * Upper bound on a backup, shared by export and import.
