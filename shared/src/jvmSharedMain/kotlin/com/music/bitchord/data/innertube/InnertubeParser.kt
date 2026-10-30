@@ -437,10 +437,14 @@ object InnertubeParser {
             section.o("musicCarouselShelfRenderer")?.let { carousel ->
                 val header = carousel.o("header").o("musicCarouselShelfBasicHeaderRenderer")
                 val title = header.o("title").runs()
-                if (VIDEO_WORD.containsMatchIn(title)) return@let
+                // A "Videos" carousel is content on an artist page, not a
+                // dead-end compilation card: keep its MV cards so an artist
+                // whose only work is videos still has a page with something
+                // on it (and so the video can be opened from there).
+                val videoShelf = VIDEO_WORD.containsMatchIn(title)
                 val items = carousel.a("contents").orEmpty().mapNotNull {
-                    parseTwoRowItem(it.o("musicTwoRowItemRenderer"))
-                }.filter { it.browseId != null }
+                    parseTwoRowItem(it.o("musicTwoRowItemRenderer"), allowVideos = videoShelf)
+                }.filter { it.browseId != null || it.videoId != null }
                 val moreEndpoint = header.o("title").a("runs")?.firstNotNullOfOrNull {
                     it.o("navigationEndpoint").o("browseEndpoint")
                 }
@@ -1556,7 +1560,7 @@ object InnertubeParser {
             )
         }
 
-    private fun parseTwoRowItem(renderer: JsonObject?): ShelfItem? {
+    private fun parseTwoRowItem(renderer: JsonObject?, allowVideos: Boolean = false): ShelfItem? {
         if (renderer == null) return null
         val title = renderer.o("title").runs()
         if (title.isBlank()) return null
@@ -1579,7 +1583,7 @@ object InnertubeParser {
         // playlist or artist; widescreen art on one of those means it's a
         // music-video upload rather than the catalogue track — drop it, same
         // as the equivalent check in parseResponsiveListItem.
-        if (resolvedBrowseId == null && videoId != null && thumbnails.isNotSquare()) return null
+        if (resolvedBrowseId == null && videoId != null && !allowVideos && thumbnails.isNotSquare()) return null
         // An album/playlist billed as a video chart/compilation — "N videos"
         // in the subtitle, or "video" in the card's own title (e.g. "Daily
         // Top Music Videos") — is the same dead-end as in parseBrowseItem.
@@ -1601,6 +1605,10 @@ object InnertubeParser {
             videoId = videoId,
             browseId = resolvedBrowseId,
             isArtist = "ARTIST" in pageType,
+            // Wide art on a playable card is a music-video upload. It is only
+            // kept for a Video shelf, so this is exactly the case the player
+            // needs to know about; releases and artist cards stay false.
+            isVideo = videoId != null && thumbnails.isNotSquare(),
         )
     }
 

@@ -43,6 +43,7 @@ import com.music.bitchord.data.model.GENERIC_ACCOUNT_NAME
 import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
+import com.music.bitchord.data.model.detailListingState
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
@@ -2877,15 +2878,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 if (thumbnailUrl == null) artwork = header.thumbnailUrl
                             }
                             description = page.description
-                            if (page.songs.isEmpty()) {
-                                UiState.Error(text(R.string.no_tracks_here))
-                            } else {
-                                more = page.continuation
-                                suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
-                                hidden = page.hiddenSongs.withArtwork(thumbnailUrl ?: artwork)
-                                library = page.library
-                                UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
-                            }
+                            // A page whose only rows are videos (Liked Music's
+                            // hidden ones) is not an empty page: keep those rows
+                            // and let its reveal row be the way to them. Only a
+                            // page with neither tracks nor hidden videos is out
+                            // of content.
+                            more = page.continuation
+                            suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
+                            hidden = page.hiddenSongs.withArtwork(thumbnailUrl ?: artwork)
+                            library = page.library
+                            detailListingState(
+                                songs = page.songs.withArtwork(thumbnailUrl ?: artwork),
+                                hiddenSongs = hidden,
+                                emptyMessage = text(R.string.no_tracks_here),
+                            )
                         },
                         onFailure = { UiState.Error(it.friendly()) },
                     )
@@ -3161,7 +3167,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             delay(150)
             var next: String? = token
             while (next != null) {
-                val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: return@launch
+                val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: run {
+                    // A continuation that fails silently leaves the page
+                    // looking complete while it stopped mid-list. Leave a
+                    // trail; the next visit or tap re-reads from the token.
+                    TrackLog.w("BitChord", "detail: continuation failed for $browseId")
+                    return@launch
+                }
                 // Repository calls may finish after cancellation. Do not let
                 // an in-flight UI page append after the playback service has
                 // taken the continuation over.
