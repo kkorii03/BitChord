@@ -5,6 +5,9 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.music.bitchord.data.TrackLog
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -23,6 +26,13 @@ object AppForeground {
     var isForeground: Boolean = false
         private set
 
+    /**
+     * The same fact as a flow, for background workers that suspend until a
+     * window exists instead of polling for one.
+     */
+    private val _foreground = MutableStateFlow(false)
+    val foreground: StateFlow<Boolean> = _foreground.asStateFlow()
+
     private val foregroundListeners = CopyOnWriteArrayList<() -> Unit>()
     private val backgroundListeners = CopyOnWriteArrayList<() -> Unit>()
 
@@ -31,6 +41,7 @@ object AppForeground {
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 isForeground = true
+                _foreground.value = true
                 foregroundListeners.forEach { listener ->
                     runCatching(listener).onFailure {
                         TrackLog.w(TAG, "foreground listener failed: ${it.message}")
@@ -40,6 +51,7 @@ object AppForeground {
 
             override fun onStop(owner: LifecycleOwner) {
                 isForeground = false
+                _foreground.value = false
                 backgroundListeners.forEach { listener ->
                     runCatching(listener).onFailure {
                         TrackLog.w(TAG, "background listener failed: ${it.message}")

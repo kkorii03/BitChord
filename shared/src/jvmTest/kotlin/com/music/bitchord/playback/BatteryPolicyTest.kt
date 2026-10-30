@@ -85,4 +85,21 @@ class BatteryPolicyTest {
         assertFalse(BatteryPolicy.cachePrefetchBytesAllowed(metered = false, lowPower = true))
         assertFalse(BatteryPolicy.cachePrefetchBytesAllowed(metered = true, lowPower = true))
     }
+
+    @Test
+    fun `artist backfill runs only on screen and out of low power`() {
+        assertTrue(BatteryPolicy.artistBackfillActive(lowPower = false, foreground = true))
+        assertFalse(BatteryPolicy.artistBackfillActive(lowPower = true, foreground = true))
+        assertFalse(BatteryPolicy.artistBackfillActive(lowPower = false, foreground = false))
+        assertFalse(BatteryPolicy.artistBackfillActive(lowPower = true, foreground = false))
+    }
+
+    @Test
+    fun `a download worker stops only after the grace with nothing in flight`() {
+        assertFalse(BatteryPolicy.downloadWorkerShouldStop(idleForMs = 0L, graceMs = 2_000L, busy = false))
+        assertFalse(BatteryPolicy.downloadWorkerShouldStop(idleForMs = 1_999L, graceMs = 2_000L, busy = false))
+        assertFalse(BatteryPolicy.downloadWorkerShouldStop(idleForMs = 2_000L, graceMs = 2_000L, busy = true))
+        assertTrue(BatteryPolicy.downloadWorkerShouldStop(idleForMs = 2_000L, graceMs = 2_000L, busy = false))
+        assertTrue(BatteryPolicy.downloadWorkerShouldStop(idleForMs = 5_000L, graceMs = 2_000L, busy = false))
+    }
 }

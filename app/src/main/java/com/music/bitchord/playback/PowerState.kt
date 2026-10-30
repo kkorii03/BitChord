@@ -2,6 +2,9 @@ package com.music.bitchord.playback
 
 import android.content.Context
 import android.os.PowerManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Whether the screen is interactive, as the playback service sees it.
@@ -24,6 +27,11 @@ internal object PowerState {
     var screenOn: Boolean = true
         private set
 
+    private val _screen = MutableStateFlow(true)
+
+    /** The same fact as a flow, so waiting work resumes on the event, not a timer. */
+    val screen: StateFlow<Boolean> = _screen.asStateFlow()
+
     /** Reads the current state once, for a process that started with the screen off. */
     fun initialize(context: Context) {
         val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -33,5 +41,6 @@ internal object PowerState {
     fun update(value: Boolean) {
         if (screenOn == value) return
         screenOn = value
+        _screen.value = value
     }
 }

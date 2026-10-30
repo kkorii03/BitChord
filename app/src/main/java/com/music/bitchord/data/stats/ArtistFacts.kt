@@ -9,6 +9,8 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.BatteryPolicy
+import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +19,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlinx.serialization.Serializable
@@ -191,6 +195,7 @@ object ArtistFacts {
      */
     private suspend fun worker() {
         for (name in requests) {
+            awaitLookupAllowed()
             val existing = known[key(name)]
             if (existing?.browseId == null) {
                 runCatching { fetchCard(name) }
@@ -205,6 +210,20 @@ object ArtistFacts {
             _revision.value++
             delay(REQUEST_SPACING_MS)
         }
+    }
+
+    /**
+     * Waits, without a timer, until a lookup is worth spending.
+     *
+     * Enrichment is for a page that is only read on screen, so a background
+     * process or a power-saving phone has nothing to gain from it. Both inputs
+     * are flows: the request stays in [requests] and this resumes on the next
+     * foreground or power-save change rather than waking to re-check.
+     */
+    private suspend fun awaitLookupAllowed() {
+        combine(AppSettings.lowPower, AppForeground.foreground) { lowPower, foreground ->
+            BatteryPolicy.artistBackfillActive(lowPower = lowPower, foreground = foreground)
+        }.first { it }
     }
 
     /**
