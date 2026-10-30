@@ -32,31 +32,50 @@ object FriendlyError {
     fun message(context: Context, error: Throwable): String {
         val raw = error.message.orEmpty()
         if (raw.any { it in '\uAC00'..'\uD7A3' }) return raw
+        return context.getString(resourceFor(error))
+    }
+
+    /**
+     * The catalogue row behind [message]. Kept free of [Context] so the mapping
+     * can be tested on the JVM and so every branch has one named cause instead
+     * of one shared "something went wrong".
+     */
+    internal fun resourceFor(error: Throwable): Int {
+        val raw = error.message.orEmpty()
+        if (raw.any { it in '\uAC00'..'\uD7A3' }) return R.string.something_went_wrong
         val lower = raw.lowercase(Locale.ROOT)
         val status = HTTP_STATUS.find(raw)?.groupValues?.get(1)?.toIntOrNull()
         return when {
             error is UnknownHostException ||
                 lower.contains("resolve host") ||
                 lower.contains("unable to resolve") ||
-                lower.contains("unknownhost") -> context.getString(R.string.no_internet_connection)
+                lower.contains("unknownhost") -> R.string.no_internet_connection
             error is SocketTimeoutException ||
                 error is TimeoutException ||
                 lower.contains("timed out") ||
-                lower.contains("timeout") -> context.getString(R.string.connection_timed_out)
+                lower.contains("timeout") -> R.string.connection_timed_out
             error is SSLException ||
                 lower.contains("ssl") ||
-                lower.contains("certificate") -> context.getString(R.string.secure_connection_failed)
-            lower.contains("proxy") -> context.getString(R.string.proxy_unreachable)
+                lower.contains("certificate") -> R.string.secure_connection_failed
+            lower.contains("proxy") -> R.string.proxy_unreachable
             status == 429 || status in 500..599 || lower.contains("too many requests") ->
-                context.getString(R.string.server_busy)
+                R.string.server_busy
             status == 401 || status == 403 ||
                 lower.contains("unauthorized") ||
-                lower.contains("forbidden") -> context.getString(R.string.youtube_request_rejected)
+                lower.contains("forbidden") -> R.string.youtube_request_rejected
+            status == 404 || lower.contains("not found") -> R.string.error_not_found
+            status == 400 || status == 422 ||
+                lower.contains("bad request") -> R.string.error_request_invalid
+            status == 410 ||
+                lower.contains("not available") ||
+                lower.contains("unavailable") ||
+                lower.contains("no suitable") ||
+                lower.contains("no playable") -> R.string.error_content_unavailable
             error is ConnectException ||
                 lower.contains("failed to connect") ||
                 lower.contains("connection refused") ||
-                lower.contains("connect failed") -> context.getString(R.string.connection_failed)
-            else -> context.getString(R.string.something_went_wrong)
+                lower.contains("connect failed") -> R.string.connection_failed
+            else -> R.string.something_went_wrong
         }
     }
 

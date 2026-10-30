@@ -375,18 +375,18 @@
     <string name="show_nerd_stats_subtitle">Codec, bitrate and sample rate on the player</string>
     <string name="app_icon">App icon</string>
     <string name="app_icon_default">Default</string>
-    <string name="app_icon_liquid_glass" translatable="false">Liquid Glass</string>
-    <string name="app_icon_liquid_glass_dark" translatable="false">Liquid Glass Dark</string>
-    <string name="app_icon_liquid_glass_clear" translatable="false">Liquid Glass Clear</string>
-    <string name="app_icon_liquid_glass_clear_dark" translatable="false">Liquid Glass Clear Dark</string>
-    <string name="app_icon_samsung_glass" translatable="false">Samsung Glass</string>
-    <string name="app_icon_samsung_glass_dark" translatable="false">Samsung Glass Dark</string>
-    <string name="app_icon_samsung_glass_clear" translatable="false">Samsung Glass Clear</string>
-    <string name="app_icon_samsung_glass_clear_dark" translatable="false">Samsung Glass Clear Dark</string>
-    <string name="app_icon_pixel_glass" translatable="false">Pixel Glass</string>
-    <string name="app_icon_pixel_glass_dark" translatable="false">Pixel Glass Dark</string>
-    <string name="app_icon_pixel_glass_clear" translatable="false">Pixel Glass Clear</string>
-    <string name="app_icon_pixel_glass_clear_dark" translatable="false">Pixel Glass Clear Dark</string>
+    <string name="app_icon_liquid_glass">Liquid Glass</string>
+    <string name="app_icon_liquid_glass_dark">Liquid Glass Dark</string>
+    <string name="app_icon_liquid_glass_clear">Liquid Glass Clear</string>
+    <string name="app_icon_liquid_glass_clear_dark">Liquid Glass Clear Dark</string>
+    <string name="app_icon_samsung_glass">Samsung Glass</string>
+    <string name="app_icon_samsung_glass_dark">Samsung Glass Dark</string>
+    <string name="app_icon_samsung_glass_clear">Samsung Glass Clear</string>
+    <string name="app_icon_samsung_glass_clear_dark">Samsung Glass Clear Dark</string>
+    <string name="app_icon_pixel_glass">Pixel Glass</string>
+    <string name="app_icon_pixel_glass_dark">Pixel Glass Dark</string>
+    <string name="app_icon_pixel_glass_clear">Pixel Glass Clear</string>
+    <string name="app_icon_pixel_glass_clear_dark">Pixel Glass Clear Dark</string>
     <string name="theme">Theme</string>
     <string name="reduce_animation">Reduce animation</string>
     <string name="reduce_animation_subtitle">Freezes the main player\'s gradient instead of drifting</string>
@@ -612,6 +612,9 @@
     <string name="server_busy">The server is busy. Try again in a moment.</string>
     <string name="proxy_unreachable">Couldn\'t reach the proxy. Check its settings and try again.</string>
     <string name="youtube_request_rejected">YouTube Music rejected the request. Try signing in again.</string>
+    <string name="error_not_found">Couldn\'t find this item. It may have been removed or moved.</string>
+    <string name="error_request_invalid">Couldn\'t handle the request. Check what you entered and try again.</string>
+    <string name="error_content_unavailable">No available version of this item was found. Try another source.</string>
     <string name="something_went_wrong">Something went wrong</string>
     <string name="unknown_artist">Unknown artist</string>
     <plurals name="downloads_failed_count">
