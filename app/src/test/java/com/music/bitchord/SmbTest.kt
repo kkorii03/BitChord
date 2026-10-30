@@ -45,6 +45,10 @@ class SmbTest {
     fun detectsMediaFiles() {
         assertTrue(SmbConfig.isAudioFile("song.flac"))
         assertTrue(SmbConfig.isAudioFile("Song.MP3"))
+        assertTrue(SmbConfig.isAudioFile("take.WAV"))
+        assertTrue(SmbConfig.isAudioFile("clip.3gp"))
+        assertTrue(SmbConfig.isAudioFile("master.dsf"))
+        assertTrue(SmbConfig.isAudioFile("master.dff"))
         assertFalse(SmbConfig.isAudioFile("cover.jpg"))
         assertTrue(SmbConfig.isImageFile("cover.jpg"))
         assertTrue(SmbConfig.isImageFile("folder.PNG"))
@@ -92,6 +96,10 @@ class SmbTest {
         assertNull(SmbConfig.relativePath("smb://nas/Other/song.mp3", "Music"))
         assertNull(SmbConfig.relativePath("smb://nas/Music", "Music"))
         assertNull(SmbConfig.relativePath("not a url", "Music"))
+        assertEquals(
+            "Album/Track #2?.flac",
+            SmbConfig.relativePath("smb://nas/Music/Album/Track #2?.flac", "Music"),
+        )
     }
 
     @Test

@@ -9,8 +9,8 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.TrackEntry
@@ -99,12 +99,15 @@ fun autoplayQueueNeedsRefresh(
     currentIndex >= 0 &&
     currentIndex == itemCount - 1
 
+fun needsYoutubeSeedLookup(song: Song): Boolean =
+    !SongOrigins.hasYouTubeIdentity(song.videoId)
+
 /**
  * Finds the YouTube id that should seed AutoPlay for a song. Module tracks do not
  * carry YouTube ids, so they are matched on YouTube before the radio request.
  */
 suspend fun youtubeSeedFor(song: Song): String? {
-    if (SourceRegistry.parseTrackKey(song.videoId) == null) return song.videoId
+    if (!needsYoutubeSeedLookup(song)) return song.videoId
     val target = TrackMatcher.targetOf(song)
     val query = TrackMatcher.queries(target).firstOrNull() ?: return null
     return YtMusicRepository.search(query, SearchFilter.SONGS)

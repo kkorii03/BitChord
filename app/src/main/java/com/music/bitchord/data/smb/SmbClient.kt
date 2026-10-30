@@ -57,6 +57,7 @@ object SmbClient {
                     val dir = stack.removeFirst()
                     if (!visited.add(dir.lowercase())) continue
                     for (child in listDir(diskShare, dir)) {
+                        if (audio.size >= maxFiles) break
                         val childPath = if (dir.isBlank()) child.path else "$dir/${child.path}"
                         if (child.isDirectory) {
                             if (!visited.contains(childPath.lowercase())) stack.add(childPath)

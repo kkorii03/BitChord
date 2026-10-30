@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.webdav.update
 import coil3.network.NetworkHeaders
 import com.music.bitchord.data.webdav.WebDavAuth
@@ -50,6 +51,10 @@ class WebDavTest {
         assertTrue(WebDavConfig.isAudioFile("song.mp3"))
         assertTrue(WebDavConfig.isAudioFile("Song.FLAC"))
         assertTrue(WebDavConfig.isAudioFile("take.opus"))
+        assertTrue(WebDavConfig.isAudioFile("take.WAV"))
+        assertTrue(WebDavConfig.isAudioFile("clip.3gp"))
+        assertTrue(WebDavConfig.isAudioFile("master.dsf"))
+        assertTrue(WebDavConfig.isAudioFile("master.dff"))
         assertFalse(WebDavConfig.isAudioFile("cover.jpg"))
         assertFalse(WebDavConfig.isAudioFile("notes.txt"))
     }
@@ -347,6 +352,29 @@ class WebDavTest {
         }
     }
 
+    @Test
+    fun `listLibrary enforces maxFiles inside one large directory`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(
+                MockResponse().setResponseCode(207).setBody(
+                    multistatus(
+                        file("Music/a.mp3", "audio/mpeg"),
+                        file("Music/b.mp3", "audio/mpeg"),
+                        file("Music/c.mp3", "audio/mpeg"),
+                    ),
+                ),
+            )
+            val listing = WebDavClient.listLibrary(
+                server.url("/Music").toString(),
+                "",
+                "",
+                maxFiles = 2,
+            ).getOrThrow()
+            assertEquals(2, listing.audio.size)
+        }
+    }
+
     private fun multistatus(vararg rows: String): String = """<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:">
 ${rows.joinToString("\n")}
@@ -380,6 +408,50 @@ ${rows.joinToString("\n")}
             server.enqueue(MockResponse().setResponseCode(405))
             WebDavClient.ensureCollection(dir, "", "").getOrThrow()
             assertEquals("MKCOL", server.takeRequest().method)
+        }
+    }
+
+    @Test
+    fun `malformed multistatus is a failure, not an empty library`() {
+        val failure = runCatching {
+            WebDavClient.parseMultistatus("<d:multistatus><broken", "https://cloud.example.com/Music")
+        }
+        assertTrue(failure.isFailure)
+    }
+
+    @Test
+    fun `multistatus refuses doctype and external entities`() {
+        val xml = """<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE d:multistatus [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/Music/secret.mp3</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>&xxe;</d:displayname>
+      <d:resourcetype/>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>
+"""
+        val failure = runCatching {
+            WebDavClient.parseMultistatus(xml, "https://cloud.example.com/Music")
+        }
+        assertTrue(failure.isFailure)
+    }
+
+    @Test
+    fun `repository surfaces a listing failure instead of an empty library`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(500))
+            val previous = AppSettings.webdavUrl.value
+            AppSettings.webdavUrl.value = server.url("/Music").toString().trimEnd('/')
+            try {
+                val result = runCatching { WebDavRepository.getSongs() }
+                assertTrue(result.isFailure)
+            } finally {
+                AppSettings.webdavUrl.value = previous
+            }
         }
     }
 }

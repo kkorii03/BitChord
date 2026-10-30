@@ -19,7 +19,8 @@ object SmbConfig {
     const val DEFAULT_PORT = 445
 
     val audioExtensions = setOf(
-        "mp3", "m4a", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff", "webm",
+        "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff",
+        "webm", "3gp", "3gpp", "dsf", "dff",
     )
 
     val imageExtensions = setOf("jpg", "jpeg", "png", "webp")
@@ -82,7 +83,7 @@ object SmbConfig {
         val segments = streamUrl.removePrefix("smb://").split('/').filter { it.isNotBlank() }
         if (segments.size < 3) return null
         if (!segments[1].equals(share.trim().trim('/'), ignoreCase = true)) return null
-        val path = segments.drop(2).joinToString("/").substringBefore('?').substringBefore('#')
+        val path = segments.drop(2).joinToString("/")
         return path.takeIf { it.isNotBlank() }
     }
 

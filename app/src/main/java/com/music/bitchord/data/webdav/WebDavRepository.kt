@@ -26,7 +26,7 @@ object WebDavRepository {
             baseUrl = url,
             username = AppSettings.webdavUsername.value,
             password = AppSettings.webdavPassword.value,
-        ).getOrNull() ?: return@withContext emptyList()
+        ).getOrThrow()
         val artByDir = listing.images.groupBy { dirKey(it.url) }
         listing.audio.map { entry ->
             entry.toSong(artworkFor(entry.url, artByDir[dirKey(entry.url)].orEmpty()))

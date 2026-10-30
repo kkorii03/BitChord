@@ -15,7 +15,8 @@ object WebDavConfig {
     const val BROWSE_ID = "local:webdav"
 
     val audioExtensions = setOf(
-        "mp3", "m4a", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff", "webm",
+        "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff",
+        "webm", "3gp", "3gpp", "dsf", "dff",
     )
 
     fun normalizeUrl(raw: String): String {
