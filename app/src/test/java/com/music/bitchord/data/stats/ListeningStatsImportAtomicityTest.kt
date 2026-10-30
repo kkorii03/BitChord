@@ -228,6 +228,35 @@ class ListeningStatsImportAtomicityTest {
         assertFalse("a successful rollback clears the recovered journal", File(directory, "import.journal").exists())
     }
 
+    @Test
+    fun `an import aborts before replacing a journal it could not recover`() = runBlocking {
+        // The month survives only as a `.bak` whose rename back fails (a
+        // non-empty directory holds the old name). The existing journal is now
+        // the only record that this `.bak` is a month, so a new import must not
+        // write over it.
+        val original = File(directory, "2026-09.json").apply { mkdirs() }
+        File(original, "keep").writeText("keep")
+        val backup = File(directory, "2026-09.json.bak")
+        backup.writeText("""{"month":"2026-09","tracks":[],"old":true}""")
+        val journal = File(directory, "import.journal")
+        val journalText = "O 2026-09.json\nN 2026-09.json\n"
+        journal.writeText(journalText)
+
+        val ok = ListeningStats.importAll(
+            listOf(
+                StoredBucket(
+                    month = "2026-10",
+                    tracks = listOf(TrackEntry(id = "blocked", title = "blocked")),
+                ),
+            ),
+        )
+
+        assertFalse(ok)
+        assertTrue("the old journal must not be overwritten", journal.isFile)
+        assertEquals(journalText, journal.readText())
+        assertTrue("the month still only exists as a backup", backup.isFile)
+    }
+
     private fun field(name: String) =
         ListeningStats::class.java.getDeclaredField(name).apply { isAccessible = true }
 }

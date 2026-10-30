@@ -4,12 +4,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
+import java.nio.file.Files
 import java.time.YearMonth
 
 /**
  * A backup this app writes has to be a backup it can read back. The import
  * guard used to be settings-sized while the history kept years of per-day rows,
  * so a long-time listener could export a file that was then refused.
+ *
+ * The round trip streams through a temporary file instead of holding the
+ * encoded document and its decoded object graph at the same time. That keeps
+ * this test within the heap an Android process actually gets; running it in an
+ * oversized test JVM would hide the out-of-memory the streaming path exists to
+ * avoid.
  */
 class BackupSizeBudgetTest {
 
@@ -24,22 +31,25 @@ class BackupSizeBudgetTest {
         }
         val file = Backup.BackupFile(app = "bitchord", version = 2, listening = buckets)
 
-        val bytes = Backup.encode(file).toByteArray()
+        val target = Files.createTempFile("bitchord-backup-size", ".json").toFile()
+        try {
+            target.outputStream().use { Backup.encodeBackupToStream(file, it) }
 
-        assertTrue(
-            "full export was ${bytes.size} bytes, cap is ${Backup.MAX_BACKUP_BYTES}",
-            bytes.size <= Backup.MAX_BACKUP_BYTES,
-        )
-        val restored = with(Backup) {
-            Backup.decode(ByteArrayInputStream(bytes).readTextBounded())
+            assertTrue(
+                "full export was ${target.length()} bytes, cap is ${Backup.MAX_BACKUP_BYTES}",
+                target.length() <= Backup.MAX_BACKUP_BYTES,
+            )
+            val restored = target.inputStream().use { Backup.decodeBackupStream(it) }
+            assertEquals(36, restored.listening.size)
+        } finally {
+            target.delete()
         }
-        assertEquals(36, restored.listening.size)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `a file past the shared cap is refused before decoding`() {
         val tooBig = ByteArray(17) { 'x'.code.toByte() }
-        with(Backup) { ByteArrayInputStream(tooBig).readTextBounded(maxBytes = 16) }
+        with(Backup) { Backup.decodeBackupStream(ByteArrayInputStream(tooBig), maxBytes = 16) }
     }
 
     private fun bucket(month: YearMonth, withDays: Boolean): StoredBucket {

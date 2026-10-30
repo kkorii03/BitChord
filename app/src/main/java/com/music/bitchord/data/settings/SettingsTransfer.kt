@@ -22,9 +22,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -293,17 +294,51 @@ object SettingsTransfer {
         maxBytes: Int = MAX_IMPORT_BYTES,
         tooLargeMessage: String = "설정 파일이 너무 큽니다",
     ): String {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(8_192)
-        var total = 0
+        // Decode as the bytes arrive instead of collecting them into a
+        // ByteArrayOutputStream and then copying that buffer to a String. A
+        // backup can be hundreds of megabytes; the extra full-size copy is what
+        // made an otherwise valid import needlessly run out of memory.
+        val reader = InputStreamReader(
+            CountingInputStream(this, maxBytes, tooLargeMessage),
+            StandardCharsets.UTF_8,
+        )
+        val builder = StringBuilder()
+        val chars = CharArray(8_192)
         while (true) {
-            val read = read(buffer)
+            val read = reader.read(chars)
             if (read < 0) break
+            builder.append(chars, 0, read)
+        }
+        return builder.toString()
+    }
+
+    /** Counts raw bytes and refuses the document once it passes [maxBytes]. */
+    private class CountingInputStream(
+        private val delegate: InputStream,
+        private val maxBytes: Int,
+        private val tooLargeMessage: String,
+    ) : InputStream() {
+        private var total = 0
+
+        private fun count(read: Int) {
+            if (read <= 0) return
             total += read
             require(total <= maxBytes) { tooLargeMessage }
-            output.write(buffer, 0, read)
         }
-        return output.toByteArray().decodeToString()
+
+        override fun read(): Int {
+            val value = delegate.read()
+            if (value >= 0) count(1)
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = delegate.read(buffer, offset, length)
+            count(read)
+            return read
+        }
+
+        override fun close() = delegate.close()
     }
 
     /** Applies a preview that the listener has already seen. */

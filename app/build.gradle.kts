@@ -242,10 +242,12 @@ android {
             // logic it was written to check.
             isReturnDefaultValues = true
             all {
-                // The backup ceiling test round-trips a full 36-month history
-                // with every per-day row present; its fixture and encoded JSON
-                // together need more than the default unit-test heap.
-                it.maxHeapSize = "3g"
+                // The backup ceiling test streams a full 36-month history
+                // through a temp file, but its decoded object graph is still
+                // large. 1g is the size of an Android large-heap process, so
+                // this fails if the import ever needs more than a phone has
+                // instead of hiding an out-of-memory behind a 3g test JVM.
+                it.maxHeapSize = "1g"
             }
         }
     }

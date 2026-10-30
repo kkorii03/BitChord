@@ -69,23 +69,9 @@ object LyricsOverrideStore {
     /** Replaces the override file with a backup's copy; null removes it. */
     internal suspend fun restoreBackupText(context: Context, text: String?): Boolean =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val target = file(context)
-                if (text == null) {
-                    target.delete()
-                } else {
-                    // Parse before replacing: a malformed section must not
-                    // destroy the overrides already on this device.
-                    LyricsOverrideFile.readText(text)
-                    target.parentFile?.mkdirs()
-                    val temporary = File(target.parentFile, ".${target.name}.tmp")
-                    temporary.writeText(text)
-                    if (!temporary.renameTo(target)) {
-                        temporary.copyTo(target, overwrite = true)
-                        temporary.delete()
-                    }
-                }
-                true
-            }.getOrDefault(false)
+            // Through the file's own lock: a re-check write running at the same
+            // time uses the same `.tmp` name, and a rename from either side
+            // would otherwise decide the final file.
+            LyricsOverrideFile.restore(file(context), text)
         }
 }

@@ -2869,11 +2869,36 @@ object LyricsTiming {
         @Volatile private var dirty = false
         private val saving = java.util.concurrent.atomic.AtomicBoolean(false)
 
-        /** Drops the in-memory copy after an import replaced its file. */
-        suspend fun reset() {
-            mutex.withLock {
-                entries = null
-                dirty = false
+        /**
+         * Replaces the store's file with a backup's copy, or removes it.
+         *
+         * Runs under the same [mutex] as [update] and [scheduleSave] so a
+         * debounced save cannot rename its `.tmp` over the restored file, and
+         * resets the in-memory copy so the next read sees the backup instead of
+         * the pre-import entries.
+         */
+        suspend fun restore(text: String?): Boolean = mutex.withLock {
+            runCatching {
+                if (text == null) {
+                    file.delete()
+                } else {
+                    // Read before replacing so a malformed section cannot cost
+                    // the device the timing memory it already had.
+                    json.decodeFromString(Saved.serializer(), text)
+                    file.parentFile?.mkdirs()
+                    val temporary = File(file.parentFile, "${file.name}.tmp")
+                    temporary.writeText(text)
+                    if (!temporary.renameTo(file)) {
+                        temporary.copyTo(file, overwrite = true)
+                        temporary.delete()
+                    }
+                }
+                true
+            }.getOrDefault(false).also { ok ->
+                if (ok) {
+                    entries = null
+                    dirty = false
+                }
             }
         }
 
@@ -2888,17 +2913,22 @@ object LyricsTiming {
             saveScope.launch {
                 try {
                     delay(SAVE_DELAY_MS)
-                    val snapshot = mutex.withLock {
+                    mutex.withLock {
                         dirty = false
-                        Saved(LinkedHashMap(loaded()))
-                    }
-                    runCatching {
-                        val text = json.encodeToString(Saved.serializer(), snapshot)
-                        val temporary = File(file.parentFile, "${file.name}.tmp")
-                        temporary.writeText(text)
-                        if (!temporary.renameTo(file)) {
-                            temporary.copyTo(file, overwrite = true)
-                            temporary.delete()
+                        val snapshot = Saved(LinkedHashMap(loaded()))
+                        // The write stays under the lock as well: a restore
+                        // holds it while it replaces the file, so whichever
+                        // wins the lock is the final content. Writing outside
+                        // it let a snapshot captured before an import rename
+                        // its old text over the restored file.
+                        runCatching {
+                            val text = json.encodeToString(Saved.serializer(), snapshot)
+                            val temporary = File(file.parentFile, "${file.name}.tmp")
+                            temporary.writeText(text)
+                            if (!temporary.renameTo(file)) {
+                                temporary.copyTo(file, overwrite = true)
+                                temporary.delete()
+                            }
                         }
                     }
                 } finally {
@@ -2918,26 +2948,9 @@ object LyricsTiming {
     /** Replaces the timing memory with a backup's copy; null removes it. */
     internal suspend fun restoreBackupText(context: Context, text: String?): Boolean =
         withContext(Dispatchers.IO) {
-            val file = File(context.applicationContext.filesDir, "lyrics_timing_v1.json")
-            runCatching {
-                if (text == null) {
-                    file.delete()
-                } else {
-                    // Read before replacing so a malformed section cannot cost
-                    // the device the timing memory it already had.
-                    json.decodeFromString(Saved.serializer(), text)
-                    file.parentFile?.mkdirs()
-                    val temporary = File(file.parentFile, "${file.name}.tmp")
-                    temporary.writeText(text)
-                    if (!temporary.renameTo(file)) {
-                        temporary.copyTo(file, overwrite = true)
-                        temporary.delete()
-                    }
-                }
-                true
-            }.getOrDefault(false).also { ok ->
-                if (ok) store(context).reset()
-            }
+            // Through the store so a debounced save in flight is serialised
+            // with the replacement instead of racing its own `.tmp` rename.
+            store(context).restore(text)
         }
 
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

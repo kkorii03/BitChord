@@ -21,9 +21,13 @@ import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.PlaylistImportMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
@@ -142,10 +146,9 @@ object Backup {
                 hqVerified = HqVerificationStore.exportBackupRows(context).first,
                 hqRejected = HqVerificationStore.exportBackupRows(context).second,
             )
-            val bytes = encodeBackupBytes(file)
-            context.contentResolver.openOutputStream(target, "wt")
-                ?.use { it.write(bytes) }
+            val output = context.contentResolver.openOutputStream(target, "wt")
                 ?: error("Couldn't open that file for writing")
+            output.use { encodeBackupToStream(file, it) }
             buckets.size
         }
     }
@@ -171,10 +174,9 @@ object Backup {
         playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
     ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
-            val text = context.contentResolver.openInputStream(source)
-                ?.use { it.readBackupText() }
+            val file = context.contentResolver.openInputStream(source)?.use { decodeBackupStream(it) }
                 ?: error("파일을 열 수 없습니다")
-            importText(text, playlistMode, context)
+            apply(file, playlistMode, context)
         }
     }
 
@@ -191,6 +193,19 @@ object Backup {
         context: Context? = null,
     ): Summary {
         val file = decode(text)
+        return apply(file, playlistMode, context)
+    }
+
+    /**
+     * Applies an already decoded backup. Validation runs here so both the text
+     * and streaming entry points refuse a malformed file before the first
+     * write.
+     */
+    private suspend fun apply(
+        file: BackupFile,
+        playlistMode: PlaylistImportMode,
+        context: Context?,
+    ): Summary {
         validate(file)
         val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
             file.localPlaylists.map { it.toLocalPlaylist() }
@@ -348,6 +363,105 @@ object Backup {
     internal fun decode(text: String): BackupFile =
         runCatching { json.decodeFromString(BackupFile.serializer(), text) }
             .getOrElse { error("BitChord 백업 파일이 아닙니다") }
+
+    /**
+     * Reads a backup straight from [input] without first holding its whole text
+     * in memory.
+     *
+     * A full 36-month history is hundreds of megabytes of JSON; buffering that
+     * as a `String` before decoding needs roughly twice the file's size again
+     * on top of the decoded object graph, which is what turned a legitimate
+     * import into an out-of-memory kill on a phone. The reader runs against the
+     * same [MAX_BACKUP_BYTES] ceiling as export and refuses anything larger.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    internal fun decodeBackupStream(input: InputStream, maxBytes: Int = MAX_BACKUP_BYTES): BackupFile =
+        runCatching {
+            val bounded = BoundedInputStream(input, maxBytes)
+            json.decodeFromStream(BackupFile.serializer(), bounded)
+        }.getOrElse { failure ->
+            if (failure is BackupTooLargeException) {
+                throw IllegalArgumentException("백업 파일이 너무 큽니다", failure)
+            }
+            error("BitChord 백업 파일이 아닙니다")
+        }
+
+    /**
+     * Writes a backup straight to [output] through the same ceiling, so export
+     * no longer materialises the encoded document as a `String` and a second
+     * `ByteArray` before writing it.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    internal fun encodeBackupToStream(
+        file: BackupFile,
+        output: OutputStream,
+        maxBytes: Int = MAX_BACKUP_BYTES,
+    ) {
+        val bounded = BoundedOutputStream(output, maxBytes)
+        try {
+            json.encodeToStream(BackupFile.serializer(), file, bounded)
+        } catch (failure: BackupTooLargeException) {
+            throw IllegalArgumentException("백업 파일이 너무 큽니다", failure)
+        }
+    }
+
+    /** Counts bytes read and refuses the document once it passes [maxBytes]. */
+    private class BoundedInputStream(
+        private val delegate: InputStream,
+        private val maxBytes: Int,
+    ) : InputStream() {
+        private var total = 0
+
+        private fun count(read: Int) {
+            if (read <= 0) return
+            total += read
+            if (total > maxBytes) throw BackupTooLargeException()
+        }
+
+        override fun read(): Int {
+            val value = delegate.read()
+            if (value >= 0) count(1)
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = delegate.read(buffer, offset, length)
+            count(read)
+            return read
+        }
+
+        override fun close() = delegate.close()
+    }
+
+    /** Counts bytes written and stops before an export can exceed [maxBytes]. */
+    private class BoundedOutputStream(
+        private val delegate: OutputStream,
+        private val maxBytes: Int,
+    ) : OutputStream() {
+        private var total = 0
+
+        private fun count(written: Int) {
+            if (written <= 0) return
+            total += written
+            if (total > maxBytes) throw BackupTooLargeException()
+        }
+
+        override fun write(value: Int) {
+            count(1)
+            delegate.write(value)
+        }
+
+        override fun write(buffer: ByteArray, offset: Int, length: Int) {
+            count(length)
+            delegate.write(buffer, offset, length)
+        }
+
+        override fun flush() = delegate.flush()
+
+        override fun close() = delegate.close()
+    }
+
+    private class BackupTooLargeException : RuntimeException()
 
     /**
      * Reads an imported document up to [maxBytes], refusing it rather than
