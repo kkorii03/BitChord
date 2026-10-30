@@ -54,8 +54,10 @@ import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
+import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.ShimmerBox
 import com.music.bitchord.ui.components.feedSkeleton
@@ -84,6 +86,7 @@ fun ExploreScreen(
     showTitle: Boolean = true,
 ) {
     var pendingHide by remember { mutableStateOf<MoodGenre?>(null) }
+    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "explore")
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -115,7 +118,11 @@ fun ExploreScreen(
                     }
                 }
                 when (state) {
-                    UiState.Loading -> item { ExploreSkeletonRows(columns) }
+                    UiState.Loading -> if (loadingTimedOut) {
+                        item { LoadingTimeoutState(onRetry = onRetry) }
+                    } else {
+                        item { ExploreSkeletonRows(columns) }
+                    }
                     is UiState.Error -> item {
                         MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                     }
@@ -369,6 +376,7 @@ fun MoodGenrePlaylistsScreen(
     /** Drawn under the title, above the shelves — the charts' country picker. */
     header: @Composable () -> Unit = {},
 ) {
+    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "mood-genre")
     LazyColumn(
         state = listState,
         contentPadding = contentPadding,
@@ -386,7 +394,11 @@ fun MoodGenrePlaylistsScreen(
         }
         item(key = "header") { header() }
         when (state) {
-            UiState.Loading -> feedSkeleton()
+            UiState.Loading -> if (loadingTimedOut) {
+                item { LoadingTimeoutState(onRetry = onRetry) }
+            } else {
+                feedSkeleton()
+            }
             is UiState.Error -> item {
                 MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
             }

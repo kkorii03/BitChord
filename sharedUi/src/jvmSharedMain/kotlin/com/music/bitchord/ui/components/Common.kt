@@ -107,6 +107,8 @@ import com.music.bitchord.data.model.isMatchMissing
 import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.CircularProgressIndicator
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.TrackLog
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Shape
@@ -982,6 +984,55 @@ fun MessageState(
             Button(onClick = onAction) { Text(actionLabel) }
         }
     }
+}
+
+/**
+ * How long a page may show a skeleton before it is treated as failed.
+ *
+ * The screenshot tour found Explore's mood detail and Home sitting on their
+ * skeletons indefinitely. A request that hangs is already caught by the
+ * repository's Result, but a feed made of several sequential best-effort
+ * calls (or a fallback that never answered) can outlive any single HTTP
+ * timeout while the state stays Loading. This is a display deadline, not
+ * another request: the load keeps running and, if it lands, replaces the
+ * error with its content.
+ */
+const val PAGE_LOADING_TIMEOUT_MS = 15_000L
+
+/**
+ * True once [loading] has stayed true for [PAGE_LOADING_TIMEOUT_MS].
+ *
+ * Event-driven: one delay per load, cancelled as soon as the state settles or
+ * the page leaves composition. No polling.
+ */
+@Composable
+fun rememberLoadingTimedOut(loading: Boolean, tag: String): Boolean {
+    var timedOut by remember { mutableStateOf(false) }
+    LaunchedEffect(loading, tag) {
+        if (!loading) {
+            timedOut = false
+            return@LaunchedEffect
+        }
+        timedOut = false
+        delay(PAGE_LOADING_TIMEOUT_MS)
+        timedOut = true
+        TrackLog.w(
+            "BitChord",
+            "ui: $tag still loading after ${PAGE_LOADING_TIMEOUT_MS}ms; showing retry",
+        )
+    }
+    return timedOut
+}
+
+/** Apple Music's quiet failure state: one sentence and the way back in. */
+@Composable
+fun LoadingTimeoutState(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    MessageState(
+        message = stringResource(Res.string.connection_timed_out),
+        modifier = modifier,
+        actionLabel = stringResource(Res.string.retry),
+        onAction = onRetry,
+    )
 }
 
 /**

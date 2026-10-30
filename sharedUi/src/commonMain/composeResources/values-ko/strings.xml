@@ -161,6 +161,7 @@
     <string name="play_next">다음 항목 재생</string>
     <string name="playlist">플레이리스트</string>
     <string name="playlist_action">플레이리스트</string>
+    <string name="connection_timed_out">연결 시간이 초과되었습니다. 다시 시도하십시오.</string>
     <string name="playlists">플레이리스트</string>
     <string name="podcasts">팟캐스트</string>
     <string name="recent_search_edit">‘%1$s’ 편집</string>

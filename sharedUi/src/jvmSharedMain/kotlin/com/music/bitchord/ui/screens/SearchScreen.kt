@@ -97,6 +97,8 @@ import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.LoadingTimeoutState
+import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.songListSkeleton
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -188,6 +190,9 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val resultsTimedOut = rememberLoadingTimedOut(results is UiState.Loading, "search")
+    val nonMusicResults = if (searchingAddons) addonResults else libraryResults
+    val libraryTimedOut = rememberLoadingTimedOut(nonMusicResults is UiState.Loading, "search-library")
     // Resolved here rather than inside the list builder: section headings are
     // our own labels for the result kinds, never YouTube's shelf titles, so
     // they follow the app's language like every other string on the page.
@@ -291,6 +296,7 @@ fun SearchScreen(
                     onAddonHistoryRemove = onAddonHistoryRemove,
                     onAddonHistoryClear = onAddonHistoryClear,
                     onRetry = onRetry,
+                    timedOut = libraryTimedOut,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                     onSongClick = onLibrarySongClick,
@@ -374,7 +380,11 @@ fun SearchScreen(
                         item { MessageState(stringResource(Res.string.search_empty)) }
                     }
                 }
-                results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
+                results is UiState.Loading -> if (resultsTimedOut) {
+                    item(key = "search:timeout") { LoadingTimeoutState(onRetry = onRetry) }
+                } else {
+                    songListSkeleton(circular = filter == SearchFilter.ARTISTS)
+                }
                 results is UiState.Error -> item(key = "search:error") {
                     MessageState(
                         message = results.message,
@@ -542,6 +552,7 @@ private fun LazyListScope.librarySearchResults(
     onAddonHistoryRemove: (String) -> Unit,
     onAddonHistoryClear: () -> Unit,
     onRetry: () -> Unit,
+    timedOut: Boolean,
     currentSong: Song?,
     isPlaying: Boolean,
     onSongClick: (List<Song>, Int) -> Unit,
@@ -556,7 +567,11 @@ private fun LazyListScope.librarySearchResults(
                 stringResource(if (addons) Res.string.search_addons_empty else Res.string.search_library_empty),
             )
         }
-        UiState.Loading -> songListSkeleton(keyPrefix = "skeleton:search:library")
+        UiState.Loading -> if (timedOut) {
+            item(key = "library:timeout") { LoadingTimeoutState(onRetry = onRetry) }
+        } else {
+            songListSkeleton(keyPrefix = "skeleton:search:library")
+        }
         is UiState.Error -> item(key = "library:error") {
             MessageState(
                 message = results.message,

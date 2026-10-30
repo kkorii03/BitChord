@@ -650,8 +650,13 @@ object YtMusicRepository {
     suspend fun moodGenreShelves(browseId: String, params: String?): Result<List<HomeShelf>> {
         val gated = withContext(Dispatchers.IO) { fallbackActive() }
         if (gated || browseId.startsWith("ytc:") || browseId.startsWith("ytq:")) {
-            return withContext(Dispatchers.IO) {
-                Result.success(YouTubeFallback.categoryShelves(browseId))
+            // This used to hand the fallback's result straight back inside
+            // Result.success. A failure there escaped the caller's fold, so
+            // openMoodGenre never got an Error and its page kept the skeleton
+            // for ever. call() catches it, logs the reason, and still keeps
+            // cancellation out of the Result.
+            return call("mood-genre:$browseId (fallback)") {
+                YouTubeFallback.categoryShelves(browseId)
             }
         }
         val key = "$browseId:${params.orEmpty()}"
@@ -669,9 +674,9 @@ object YtMusicRepository {
     suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> =
         moodGenreArtworkLock.withPermit {
             if (browseId.startsWith(ExploreCategories.BROWSE_PREFIX)) {
-                return@withPermit Result.success(
-                    withContext(Dispatchers.IO) { YouTubeFallback.categoryArtwork(browseId) },
-                )
+                return@withPermit call("mood-genre-art:$browseId (fallback)") {
+                    YouTubeFallback.categoryArtwork(browseId)
+                }
             }
             moodGenreShelves(browseId, params).map { shelves ->
                 shelves.asSequence().flatMap { it.items.asSequence() }

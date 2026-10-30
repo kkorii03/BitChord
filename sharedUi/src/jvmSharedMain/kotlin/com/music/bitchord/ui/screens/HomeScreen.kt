@@ -78,6 +78,8 @@ import java.util.Locale
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.LoadingTimeoutState
+import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.RowMoreButton
@@ -199,6 +201,7 @@ fun HomeScreen(
     onDisablePrivateListening: (() -> Unit)? = null,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
+    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "home")
 
     PullToRefresh(
         refreshing = refreshing,
@@ -230,7 +233,9 @@ fun HomeScreen(
             }
             when (state) {
                 is UiState.Loading -> {
-                    if (recentlyPlayedLoading) {
+                    if (loadingTimedOut) {
+                        item { LoadingTimeoutState(onRetry = onRetry) }
+                    } else if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
                         // Recents owns the leading layout while its request is
                         // pending, so the feed behind it starts with ordinary

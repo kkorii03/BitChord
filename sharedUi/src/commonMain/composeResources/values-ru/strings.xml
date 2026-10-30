@@ -153,6 +153,7 @@
     <string name="recent_search_remove">Удалить «%1$s» из недавних запросов</string>
     <string name="recent_searches">Недавние запросы</string>
     <string name="replay_subtitle">Ваши любимые песни, исполнители, альбомы и жанры</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">Повторить</string>
     <string name="saved_to_youtube_music">Сохранено в YouTube Music</string>
     <string name="search">Поиск</string>

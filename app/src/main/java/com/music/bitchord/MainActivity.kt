@@ -3728,6 +3728,7 @@ private fun BitChordApp(
                                 canvasVisible = !(showNowPlaying && playerSong != null),
                                 signedIn = signedIn,
                                 onSignIn = { webSession = WebSessionMode.SIGN_IN },
+                                onRetryLoading = { viewModel.retryDetail(page.browseId) },
                                 listState = pageDetailListState,
                                 activeShelf = detailActiveShelf,
                                 onActiveShelfChange = { detailActiveShelf = it },

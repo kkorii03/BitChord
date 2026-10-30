@@ -153,6 +153,7 @@
     <string name="recent_search_remove">“%1$s” öğesini son aramalardan kaldır</string>
     <string name="recent_searches">Son aramalar</string>
     <string name="replay_subtitle">En çok dinlediğin şarkılar, sanatçılar, albümler ve türler</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">Yeniden dene</string>
     <string name="saved_to_youtube_music">YouTube Music\'e kaydedildi</string>
     <string name="search">Ara</string>
