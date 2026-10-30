@@ -253,6 +253,20 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(1, metric(report, "D2-playback").successes)
         self.assertTrue(metric(report, "D2-playback").passed)
 
+    def test_verify_id_does_not_accept_a_different_recording_with_the_same_title(self) -> None:
+        text = log_text(
+            play("19:00:00.000", "other", "Same Title"),
+            line(
+                "19:00:05.000",
+                "hq-verify: Same Title Qobuz match=95% offset=0 -> accepted id=wanted",
+            ),
+            line("19:00:10.000", "other <- audio/flac 44.1kHz 900kbps 16-bit 2ch", tag="DECODE"),
+        )
+        report = analyze(text)
+        self.assertEqual(1, metric(report, "D2-playback").attempts)
+        self.assertEqual(0, metric(report, "D2-playback").successes)
+        self.assertFalse(metric(report, "D2-playback").passed)
+
     def test_skipped_hq_swap_is_reported_with_its_reason(self) -> None:
         text = log_text(
             play("19:00:00.000", "id1", "Song"),
@@ -273,13 +287,25 @@ class AutoplayTests(unittest.TestCase):
             # A personalised top-up fetches its radio before logging; thirty
             # seconds is ordinary, and the old one-second window called this a
             # zero-refill failure.
-            line("19:00:40.000", "autoplay: +radio 2 +similar 1 +fav 0 (D | E)"),
+            line("19:00:40.000", "autoplay: +radio 2 +similar 1 +fav 0 (D | E) seed=seed1"),
             line("19:05:00.000", "autoplay: dropped 2 cover/karaoke rows seed=seed2"),
         )
         report = analyze(text)
         refill = metric(report, "D3-refill")
         self.assertEqual(3, refill.attempts)
         self.assertEqual(2, refill.successes)
+        self.assertFalse(refill.passed)
+        self.assertEqual(1, report.stats["autoplay"]["zero_refill"])
+
+    def test_seedless_radio_does_not_absorb_a_seeded_drop(self) -> None:
+        text = log_text(
+            line("19:00:10.000", "autoplay: dropped 2 cover/karaoke rows seed=seed1"),
+            line("19:00:20.000", "autoplay: +radio 3 +similar 1 +fav 0 (A | B | C)"),
+        )
+        report = analyze(text)
+        refill = metric(report, "D3-refill")
+        self.assertEqual(2, refill.attempts)
+        self.assertEqual(1, refill.successes)
         self.assertFalse(refill.passed)
         self.assertEqual(1, report.stats["autoplay"]["zero_refill"])
 
@@ -411,14 +437,33 @@ class DownloadLifecycleQualityTests(unittest.TestCase):
             line("19:00:21.000", "hq-library: id9 did not land; it will be retried after the cooldown"),
         )
         report = analyze(text)
+        # One id still failed, so the criterion "실패 0건 / did not land 0건"
+        # is not met even though the rate is 90%.
         self.assertEqual(10, metric(report, "D9-download").attempts)
         self.assertEqual(9, metric(report, "D9-download").successes)
-        self.assertTrue(metric(report, "D9-download").passed)
+        self.assertFalse(metric(report, "D9-download").passed)
         self.assertEqual(10, metric(report, "D9-hq-library").attempts)
         self.assertEqual(9, metric(report, "D9-hq-library").successes)
-        self.assertTrue(metric(report, "D9-hq-library").passed)
+        self.assertFalse(metric(report, "D9-hq-library").passed)
         self.assertEqual(9, report.stats["downloads"]["done"])
         self.assertEqual(9, report.stats["downloads"]["hq_landed"])
+
+    def test_download_attempts_count_unique_ids_after_a_retry(self) -> None:
+        text = log_text(
+            line("19:00:00.000", "download failed for id1: HTTP 500"),
+            line("19:00:01.000", "download failed for id1: HTTP 500"),
+            line("19:00:02.000", "download: id1 done"),
+            line("19:00:03.000", "hq-library: id1 did not land; it will be retried after the cooldown"),
+            line("19:00:04.000", "hq-library: id1 landed"),
+        )
+        report = analyze(text)
+        self.assertEqual(1, metric(report, "D9-download").attempts)
+        self.assertEqual(1, metric(report, "D9-download").successes)
+        self.assertTrue(metric(report, "D9-download").passed)
+        self.assertEqual(1, metric(report, "D9-hq-library").attempts)
+        self.assertEqual(1, metric(report, "D9-hq-library").successes)
+        self.assertTrue(metric(report, "D9-hq-library").passed)
+        self.assertEqual({"id1": 2}, report.stats["downloads"]["failed_ids"])
 
     def test_lifecycle_orphan_window_counts_warm_and_network(self) -> None:
         text = log_text(

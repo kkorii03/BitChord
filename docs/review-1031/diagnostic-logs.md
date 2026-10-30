@@ -11,10 +11,10 @@
 
 | 구분 | 건수 | 내용 |
 | --- | ---: | --- |
-| HIGH 수정 | 7 | PII 3건, D1·D2·D3·D9 채점/로그 형식 4건 |
-| MEDIUM 수정 | 3 | next-prep 조용한 중단, HQ 착지/다운로드 완료 로그 누락 |
+| HIGH 수정 | 8 | PII 3건, D1·D2·D3·D9 채점/로그 형식 5건 |
+| MEDIUM 수정 | 7 | next-prep 조용한 중단, HQ 착지/다운로드 완료 로그 누락, 시드/id 매칭·중복 집계 4건 |
 | 남긴 HIGH/MED | 1 | D10 백그라운드 프로세스 시작 원인 미기록(수정 범위 밖) |
-| 도구 테스트 | 27개 통과 | `python3 -m unittest test_featurehealth` |
+| 도구 테스트 | 30개 통과 | `python3 -m unittest scripts.test_featurehealth` |
 | 앱 테스트 | `NextPrepLogTest`, `LogRedactorTest` 통과 | shared/app 단위 테스트 |
 
 핵심 결론: 성적표의 나쁜 숫자 중 D1·D2·D3는 **기능 자체보다 로그 형식과 도구의
@@ -150,3 +150,58 @@
 - `./gradlew :shared:jvmTest --tests 'com.music.bitchord.playback.NextPrep*'` — OK
 - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.data.LogRedactorTest'` — OK
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` — OK
+
+## 7. 2차 엄격 검토 (2026-10-31) — 채점 도구·스위치 엄격성
+
+이번에는 이전 수정이 만든 완화 지점을 다시 조였다. 앱 로그 형식은 그대로 두고
+도구가 그 로그를 얼마나 엄격하게 해석하는지만 바꿨다.
+
+| # | 심각도 | 파일:줄 | 증거 | 사용자 영향 | 빈도 | 수정 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 12 | HIGH | `scripts/featurehealth.py:162,1382-1413` | D9가 90% 문턱이라 9 done/1 failure가 PASS였고, 기준 문구는 “실패 0건”이었다. 이전의 any-failure 가드가 사라져 있었다. | 실패가 있어도 다운로드/HQ 보관함이 정상으로 보여 실제 실패를 놓친다. | 실패가 10% 미만인 거의 모든 실행 | 문턱을 `1.0`으로 올리고 완료/착지 기준 문구도 100%로 맞춤. 하나라도 done/landed가 없으면 FAIL. |
+| 13 | MEDIUM | `scripts/featurehealth.py:1378-1387` | 시도 수가 로그 줄 수라 재시도한 id가 여러 번 분모/실패에 들어갔다. | 성공률이 실제 곡 수보다 낮게 보이고 140회 같은 실패 수가 부풀려진다. | 재시도가 있는 모든 다운로드 | 시도=고유 id(done∪failed), 성공=done/landed 줄이 있는 고유 id. 재시도 후 성공하면 성공으로 센다. |
+| 14 | MEDIUM | `scripts/featurehealth.py:942-967` | `hq-verify`에 id가 있어도 같은 정규화 제목의 다른 FLAC 증거를 통과시켰다. | 같은 제목의 다른 녹음이 실제 재생으로 오인되어 D2 4%가 왜곡된다. | 제목이 겹치는 HQ 후보 | id가 있는 verify는 증거 id가 같아야만 재생으로 인정하고, id가 없을 때만 제목으로 폴백. |
+| 15 | MEDIUM | `shared/.../NextPrepPolicy.kt:95-110`, `app/.../NextTrackPreparation.kt:321` | `syncValue`가 `nextPrepLyrics` 스위치를 받지 않아 기본 꺼짐 경로가 `skipped(no-lyrics)`로 찍히고 `switch-off`는 도달 불가였다. | D1에서 “설정을 껐다”와 “가사가 없다”를 구분할 수 없어 분모/원인 분석이 틀어진다. | `nextPrepLyrics` 기본값(꺼짐) 사용자 전원 | 스위치를 인자로 넘기고 `no-lyrics` 앞에서 `skipped(switch-off)`를 낸다. 기존 캐시 타이밍=`applied`, 비디오=`video`, 나머지 스위치 사유는 유지. |
+| 16 | MEDIUM | `scripts/featurehealth.py:1047-1051` | drop 시드가 있을 때 시드 없는 `+radio`를 120초 안이면 와일드카드로 인정해 다른 시드의 보충을 가로챘다. | 실제 0곡 보충이 숨고 시드 상관이 무력화되어 D3 24%가 왜곡된다. | 시드가 있는 개인화 보충 | drop과 radio의 시드가 정확히 같을 때만 보충으로 인정(None==None은 같은 무시드 경로로 허용). |
+
+### 7.1 수정 전/후 진리표 (조건 완화 금지 확인)
+
+D9:
+
+| done | failed | 이전 attempts | 이전 successes | 이전 판정 | 이후 attempts | 이후 successes | 이후 판정 |
+| --- | --- | ---: | ---: | --- | ---: | ---: | --- |
+| 9 | 1 | 10 | 9 | PASS(90%) | 10 | 9 | FAIL(100% 문턱) |
+| 1(id 실패 2회 후 성공) | 2줄 | 3 | 1 | FAIL(33%) | 1 | 1 | PASS |
+
+D3 시드:
+
+| drop seed | radio seed | 이전 | 이후 |
+| --- | --- | --- | --- |
+| seed1 | None | 보충으로 인정 | 보충 아님 |
+| seed1 | seed1 | 보충으로 인정 | 보충으로 인정 |
+| None | None | 보충으로 인정 | 보충으로 인정(같은 무시드 경로) |
+| None | seed1 | 보충으로 인정 | 보충 아님 |
+
+D2 id:
+
+| verify id | 증거 id | 이전 | 이후 |
+| --- | --- | --- | --- |
+| 있음 | 같음 | 성공 | 성공 |
+| 있음 | 다름(제목 같음) | 성공(오판) | 실패 |
+| 없음 | 제목 같음 | 성공 | 성공(제목 폴백) |
+
+### 7.2 테스트
+
+- `python3 -m unittest scripts.test_featurehealth` — 30 tests OK
+  (신규: `test_verify_id_does_not_accept_a_different_recording_with_the_same_title`,
+  `test_download_attempts_count_unique_ids_after_a_retry`,
+  `test_seedless_radio_does_not_absorb_a_seeded_drop`)
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.playback.NextPrepLogTest'` — OK
+  (신규: `the next-prep lyrics switch is not mistaken for missing lyrics`)
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` — OK
+
+### 7.3 남긴 결함
+
+- D10 프로세스 시작 원인 미기록(이전 #11)은 이번에도 범위 밖이라 남긴다. 시작
+  원인을 `reason=`으로 넘기려면 미디어 버튼/부팅/WorkManager/위젯/다운로드 서비스
+  진입점에서 프로세스 생성 전에 원인을 저장해야 한다.

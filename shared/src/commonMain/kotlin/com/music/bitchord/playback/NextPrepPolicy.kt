@@ -94,6 +94,7 @@ object NextPrepPolicy {
      */
     fun syncValue(
         isVideo: Boolean,
+        nextPrepLyrics: Boolean,
         syncedLyrics: Boolean,
         heavyWorkAllowed: Boolean,
         aiTimingAhead: Boolean,
@@ -103,6 +104,7 @@ object NextPrepPolicy {
     ): String = when {
         isVideo -> "skipped(video)"
         hasTiming -> "applied"
+        !nextPrepLyrics -> "skipped(switch-off)"
         !syncedLyrics -> "skipped(lyrics-off)"
         !heavyWorkAllowed -> "skipped(heavy-off)"
         !aiTimingAhead -> "skipped(ai-off)"

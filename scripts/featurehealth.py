@@ -159,7 +159,7 @@ COVER_TITLE_RE = re.compile(
 
 PASS_D1_SYNC = 0.80
 PASS_D2_PLAYBACK = 0.90
-PASS_D9_DOWNLOAD = 0.90
+PASS_D9_DOWNLOAD = 1.0
 FIRST_AUDIO_LIMIT_MS = 3000
 LIFECYCLE_WINDOW_SECONDS = 10.0
 
@@ -943,15 +943,24 @@ def analyze(log: Log) -> Report:
     d2_failures: list[Failure] = []
     for event in d2_events:
         wanted = _norm_title(event["title"])
-        ids = {event["id"]} if event["id"] else title_to_ids.get(wanted, set())
-        played = any(
-            evidence["at"] >= event["at"]
-            and (
-                _norm_title(evidence["title"]) == wanted
-                or (evidence["id"] is not None and evidence["id"] in ids)
+        event_id = event["id"]
+        if event_id:
+            # The verify line carries the recording's own video id. A different
+            # recording that happens to share the title must not satisfy it.
+            played = any(
+                evidence["at"] >= event["at"] and evidence["id"] == event_id
+                for evidence in flac_evidence
             )
-            for evidence in flac_evidence
-        )
+        else:
+            ids = title_to_ids.get(wanted, set())
+            played = any(
+                evidence["at"] >= event["at"]
+                and (
+                    _norm_title(evidence["title"]) == wanted
+                    or (evidence["id"] is not None and evidence["id"] in ids)
+                )
+                for evidence in flac_evidence
+            )
         if played:
             d2_success += 1
         else:
@@ -1036,11 +1045,9 @@ def analyze(log: Log) -> Report:
         refilled = any(
             0 <= (radio["at"] - drop["at"]).total_seconds()
             < AUTOPLAY_REFILL_WINDOW_SECONDS
-            and (
-                drop["seed"] is None
-                or radio["seed"] is None
-                or drop["seed"] == radio["seed"]
-            )
+            # A missing seed is not a wildcard: crediting a seeded drop to any
+            # seedless top-up hides zero-refills and defeats correlation.
+            and drop["seed"] == radio["seed"]
             for radio in autoplay_radios
         )
         if not refilled:
@@ -1369,16 +1376,23 @@ def analyze(log: Log) -> Report:
     done_ids = Counter(row["id"] for row in download_dones)
     missing_ids = Counter(row["id"] for row in hq_library_missing)
     landed_ids = Counter(row["id"] for row in hq_library_landed)
-    d9_download_attempts = len(download_dones) + len(download_failures)
-    d9_hq_attempts = len(hq_library_landed) + len(hq_library_missing)
+    # Attempts are unique ids, not log lines: a retried id must not inflate the
+    # rate or the failure count. An id is a success once it has a done/landed
+    # line, even if an earlier attempt failed.
+    download_attempt_ids = set(done_ids) | set(failed_ids)
+    hq_attempt_ids = set(landed_ids) | set(missing_ids)
+    d9_download_attempts = len(download_attempt_ids)
+    d9_hq_attempts = len(hq_attempt_ids)
+    d9_download_successes = len(set(done_ids) & download_attempt_ids)
+    d9_hq_successes = len(set(landed_ids) & hq_attempt_ids)
     metrics.extend(
         [
             _rate_metric(
                 "D9-download",
                 "D9 다운로드 · 완료/실패",
                 d9_download_attempts,
-                len(download_dones),
-                "download done ≥90% · 실패 0건",
+                d9_download_successes,
+                "download done 100% · 실패 0건",
                 PASS_D9_DOWNLOAD,
                 failures=[
                     _failure(
@@ -1394,8 +1408,8 @@ def analyze(log: Log) -> Report:
                 "D9-hq-library",
                 "D9 다운로드 · HQ 착지/미착지",
                 d9_hq_attempts,
-                len(hq_library_landed),
-                "hq-library landed ≥90% · did not land 0건",
+                d9_hq_successes,
+                "hq-library landed 100% · did not land 0건",
                 PASS_D9_DOWNLOAD,
                 failures=[
                     _failure(

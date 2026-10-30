@@ -318,6 +318,7 @@ internal class NextTrackPreparation(
         val tookMs = SystemClock.elapsedRealtime() - startedAt
         val sync = NextPrepPolicy.syncValue(
             isVideo = song.isVideo,
+            nextPrepLyrics = switches.nextPrepLyrics,
             syncedLyrics = AppSettings.syncedLyrics.value,
             heavyWorkAllowed = AppSettings.heavyWorkAllowed,
             aiTimingAhead = AppSettings.aiTimingAhead.value,
