@@ -8,6 +8,7 @@ import com.music.bitchord.data.model.withVideoThumbnailFallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -158,12 +159,16 @@ object LocalPlaylistStore {
      * trip. That is what makes importing the same file twice a no-op in MERGE
      * mode: every row already present is recognised instead of appended again.
      */
-    fun importAll(incoming: List<LocalPlaylist>, mode: PlaylistImportMode): Int {
+    suspend fun importAll(incoming: List<LocalPlaylist>, mode: PlaylistImportMode): Int {
         val next = when (mode) {
             PlaylistImportMode.REPLACE -> replacePlaylists(incoming)
             PlaylistImportMode.MERGE -> mergePlaylists(_playlists.value, incoming)
         }
-        if (!persist(next)) return -1
+        // Go through the same single-thread writer as every edit: a save that
+        // was queued before this import must land first, not after it. Awaiting
+        // the write is what makes the success line match the preference file.
+        val saved = runCatching { writer.async { persist(next) }.await() }.getOrDefault(false)
+        if (!saved) return -1
         _playlists.value = next
         return next.size
     }

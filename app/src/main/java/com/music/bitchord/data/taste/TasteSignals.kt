@@ -95,6 +95,10 @@ object TasteSignals {
 
     private var dirty = false
 
+    /** Whether the last non-empty snapshot reached the file. */
+    @Volatile
+    private var lastWriteOk = true
+
     private val writer = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
     private var scheduled: Job? = null
@@ -423,22 +427,20 @@ object TasteSignals {
         // snapshot sharing them could be read half updated. This runs on the
         // writer coroutine, which is an IO thread.
         val encoded = synchronized(lock) {
-            if (!dirty || !loaded) {
-                null
-            } else {
-                dirty = false
-                pruneLocked()
-                json.encodeToString(
-                    StoredSignals.serializer(),
-                    StoredSignals(
-                        tracks = tracks.values.toList(),
-                        artists = artists.values.toList(),
-                        coverSingers = coverSingers.values.toList(),
-                    ),
-                )
-            }
-        } ?: return@withLock true
-        runCatching {
+            if (!loaded) return@withLock true
+            if (!dirty) return@withLock lastWriteOk
+            dirty = false
+            pruneLocked()
+            json.encodeToString(
+                StoredSignals.serializer(),
+                StoredSignals(
+                    tracks = tracks.values.toList(),
+                    artists = artists.values.toList(),
+                    coverSingers = coverSingers.values.toList(),
+                ),
+            )
+        }
+        val ok = runCatching {
             file.parentFile?.mkdirs()
             // Written aside and renamed, so a kill mid-write leaves the
             // previous file rather than a truncated one.
@@ -450,6 +452,14 @@ object TasteSignals {
             true
         }.onFailure { Log.w(TAG, "Could not write taste signals", it) }
             .getOrDefault(false)
+        lastWriteOk = ok
+        if (!ok) {
+            // A concurrent flush can have taken the snapshot that failed. Put
+            // the changes back so the next caller retries them instead of
+            // finding nothing dirty and reporting a write that never happened.
+            synchronized(lock) { dirty = true }
+        }
+        ok
     }
 
     /**

@@ -143,9 +143,16 @@ object SearchHistory {
             .filter { seen.add(it.id.lowercase()) }
             .take(MAX_ENTRIES)
         if (!this::prefs.isInitialized) return false
-        val saved = prefs.edit()
-            .putString(KEY_HISTORY, json.encodeToString(serializer, trimmed))
-            .commit()
+        // Same writer as [save]: a record queued just before the import must be
+        // written before this one, not after it. Waiting for the task is what
+        // keeps the restored list from being replaced by that older save.
+        val saved = runCatching {
+            writer.submit<Boolean> {
+                prefs.edit()
+                    .putString(KEY_HISTORY, json.encodeToString(serializer, trimmed))
+                    .commit()
+            }.get()
+        }.getOrDefault(false)
         if (saved) _recent.value = trimmed
         return saved
     }

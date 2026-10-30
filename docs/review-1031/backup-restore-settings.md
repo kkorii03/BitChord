@@ -158,3 +158,79 @@
 | LOW | `app/src/main/java/com/music/bitchord/data/stats/Backup.kt:141` | 내보내기는 최종 JSON 문자열과 byte 배열을 메모리에 함께 만든다. | 가져오기 OOM은 1차에서 막았다. 내보내기 스트리밍은 kotlinx.serialization 출력 경로와 `ContentResolver` 쓰기를 함께 바꾸는 별도 작업이라 이번 범위에서 제외했다. |
 | LOW | `Backup.kt:182` | schema 1 복원은 평점 섹션을 복원하지 않는다. | 옛 파일에 그 데이터가 없으므로 의도된 하위 호환이다. |
 | LOW | `ListeningStats.kt:896` | journal rollback은 프로세스가 커밋 도중 죽은 경우를 복구하지만, 파일 시스템이 rename을 부분적으로만 반영하는 극단적 손상까지 보증하지는 않는다. | 정상 POSIX/Android 파일 시스템의 rename 원자성을 전제로 한다. |
+
+## 8. 3차 검증 — 외부 리뷰 지적 반영
+
+기준선은 위 2차 작업 결과다. 아래 여섯 건을 이번에 모두 고쳤다. 줄 번호는 이
+작업 후 코드 기준이다.
+
+| 심각도 | 파일:줄 | 증거 | 사용자 영향 | 얼마나 흔한가 | 수정 |
+|---|---|---|---|---|---|
+| MEDIUM | `app/src/main/java/com/music/bitchord/data/stats/ListeningStats.kt:481`, `:465`, `:511` | `importAll`은 `lastWrite?.join()`을 한 번 읽은 뒤 `writeLock`을 잡는다. 그 사이 `flush`가 스냅샷을 떠서, 또는 `bucketFor`가 월 롤오버 스냅샷을 떠서, 임포트가 `importing`을 내린 뒤에야 writer 작업이 시작될 수 있었다. 그러면 복원한 달을 임포트 전 스냅샷이 덮어쓴다. | 복원 중 재생이 이어지거나 달이 바뀌면 방금 복원한 청취 기록이 옛 기록으로 조용히 바뀐다. | 복원 중 재생·월 롤오버. 드물지만 데이터가 섞인다. | 스냅샷을 뜰 때 `importGeneration`을 함께 캡처하고, `write`가 `writeLock` 안에서 `importing`과 세대를 함께 검사한다. 임포트 커밋에서만 세대를 올린다. |
+| MEDIUM | `ListeningStats.kt:868`, `:896`, `:929`, `:973`, `:992` | 실패 롤백이 `backup.renameTo(original)` 결과를 무시하고 journal을 지웠다. 다음 `init`은 journal이 없으니 남은 `.bak`을 “커밋 후 찌꺼기”로 보고 지운다. `recoverInterruptedImport` 자신도 rename 실패를 무시하고 journal을 지웠다. | `.bak` 되돌리기 한 번이 실패하면 그 달 기록이 영구히 사라진다. 저장 공간 부족·파일 잠금에서 재현. | 실패 복원 + rename 실패. 드물지만 한 번 나면 복구 불가. | `restoreBackups`가 모든 되돌리기를 시도하고 성공 여부를 반환한다. 하나라도 실패하면 journal을 남겨 다음 `init`이 재시도한다. 복구 경로도 `rolledBack`을 추적해 완전히 끝난 뒤에만 journal을 지운다. |
+| MEDIUM | `app/src/main/java/com/music/bitchord/data/spotify/LocalPlaylistStore.kt:162`, `:170` | 가져오기는 writer를 건너뛰고 직접 `persist()`했다. 그 전에 큐에 들어간 `persistAsync`가 나중에 실행되면 복원한 재생목록을 옛 목록으로 덮었다. | 재생목록 저장 직후 가져오기를 하면 성공 표시 뒤에 옛 재생목록이 디스크에 남는다. | 빠르게 저장→가져오기. 드물지만 조용한 유실. | `importAll`을 suspend로 바꾸고 `writer.async { persist(next) }.await()`로 같은 단일 writer에 줄을 세운 뒤 성공했을 때만 메모리 목록을 바꾼다. |
+| LOW | `app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:139`, `:150` | `replace()`는 직접 `commit()`하고 `save()`는 writer에 큐를 넣었다. 가져오기 직전의 저장이 나중에 실행되면 복원한 검색 기록을 덮었다. | 가져오기 직후 검색 기록이 옛 기기 목록으로 돌아간다. | 빠른 검색→가져오기. 드물다. | `replace()`도 같은 writer의 `submit().get()`으로 직렬화하고 결과를 기다린다. |
+| LOW | `app/src/main/java/com/music/bitchord/data/taste/TasteSignals.kt:100`, `:431`, `:455`, `:460` | 디바운스된 `flush()`가 `dirty`를 먼저 가져가 실패하면, 뒤이은 `flushAndAwait()`는 빈 스냅샷을 보고 `true`를 반환했다. | 백업이 “평점을 저장했다”고 표시했지만 실제로는 디스크에 없을 수 있다. | 쓰기 실패와 디바운스가 겹칠 때. 드물다. | 마지막 쓰기 결과(`lastWriteOk`)를 기억하고, 빈 스냅샷이면 그 값을 반환한다. 실패하면 `dirty`를 되살려 다음 호출이 재시도한다. |
+| LOW | `app/src/main/java/com/music/bitchord/data/settings/SettingsTransfer.kt:317`, `:347` | `settingsApplied`/`sourcesApplied`는 호출이 반환된 뒤에만 세워졌다. 저장소가 상태를 바꾼 뒤 던지면 그 저장소의 롤백을 건너뛰었다. | 테마만 새 기기 값이고 나머지는 옛 값인 반쪽 적용이 남을 수 있다. | 저장소가 쓰기 후 예외를 던질 때. 드물다. | 플래그를 없애고 설정·소스·프록시 스냅샷을 무조건 되돌린다. 바뀌지 않은 스냅샷을 다시 쓰는 것은 무해하다. |
+
+### 조건 변경 진리표 — `ListeningStats.write`
+
+| 스냅샷 시점 | 임포트 커밋과의 관계 | 이전 | 이후 |
+|---|---|---|---|
+| 임포트 전 | 커밋 전에 실행 | 씀(임포트가 백업 후 교체) | 씀(같음) |
+| 임포트 전 | 커밋 후에 실행 | **씀 → 복원 덮어씀** | 건너뜀(세대 불일치) |
+| 임포트 중 | 언제나 | 건너뜀(`importing`) | 건너뜀(`importing`) |
+| 임포트 후 | 언제나 | 씀 | 씀(같은 세대) |
+
+즉 기존에 막던 “임포트 중 쓰기”는 그대로 막고, 새로 “임포트 전 스냅샷이 커밋
+후에 도착하는 경우”만 추가로 막았다.
+
+### 조건 변경 진리표 — `SettingsTransfer.apply` 롤백
+
+| 설정 적용 | 소스 적용 | 프록시 적용 | 이전 롤백 | 이후 롤백 |
+|---|---|---|---|---|
+| 성공 | 이후 실패 | 미시도 | 설정만 | 설정·소스(무해한 재적용) |
+| 성공 | 성공 | 이후 실패 | 설정·소스만 | 설정·소스·프록시 |
+| 쓰기 후 예외 | 미시도 | 미시도 | **아무것도 안 함** | 설정 |
+| 실패 | 미시도 | 미시도 | 아무것도 안 함 | 설정(같은 값) |
+
+이전에 롤백하던 경우는 모두 그대로 롤백하고, 플래그가 서지 않아 빠지던 경우를
+추가로 되돌린다.
+
+### 3차 흔한 상황 확인
+
+| 상황 | 확인 내용 | 판정 |
+|---|---|---|
+| 복원 중 재생·월 롤오버 | `importGeneration`이 임포트 전 스냅샷을 커밋 후 차단 | 통과 |
+| 복원 실패 후 앱 재시작 | journal을 남겨 `.bak`을 다음 `init`이 재시도 | 통과 |
+| 재생목록 저장 직후 가져오기 | 같은 writer에서 저장 → 가져오기 순서 보장 | 통과 |
+| 검색 직후 가져오기 | 같은 writer에서 저장 → 대체 순서 보장 | 통과 |
+| 평점 저장 실패 | `flushAndAwait`가 `false`, `dirty` 복구 | 통과 |
+| 설정 쓰기 후 예외 | 설정·소스·프록시를 무조건 스냅샷으로 복구 | 통과 |
+| 큰 파일·옛 형식·비밀값 제외·바꾸기/합치기 | 1·2차 동작 변경 없음 | 통과 |
+
+### 이번에 추가한 테스트
+
+- `ListeningStatsImportAtomicityTest`
+  - `a snapshot captured before an import cannot land after it`
+  - `a rollback that cannot restore a month keeps the journal for the next open`
+- `LocalPlaylistImportOrderingTest`
+  - `a save queued before an import cannot replace the restored playlists`
+- `SearchHistoryImportOrderingTest`
+  - `a save queued before a replace cannot overwrite the restored history`
+- `TasteSignalsRatingBackupTest`
+  - `a failed write is reported by the next await instead of looking saved`
+- `SettingsTransferRollbackTest`
+  - `a store that mutates and then throws is still rolled back`
+
+### 검증
+
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과.
+- 위 테스트 묶음 `:app:testProdDebugUnitTest` 67건 통과.
+
+### 남긴 결함
+
+| 심각도 | 파일:줄 | 내용 | 이유 |
+|---|---|---|---|
+| LOW | `app/src/main/java/com/music/bitchord/data/stats/Backup.kt:141` | 내보내기는 최종 JSON 문자열과 byte 배열을 메모리에 함께 만든다. | 1차 문서와 같은 이유. 스트리밍 인코더와 `ContentResolver` 쓰기를 함께 바꾸는 별도 작업이다. |
+| LOW | `Backup.kt:182` | schema 1 복원은 평점 섹션을 복원하지 않는다. | 옛 파일에 그 데이터가 없으므로 의도된 하위 호환이다. |

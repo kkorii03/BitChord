@@ -20,6 +20,9 @@ class TasteSignalsRatingBackupTest {
     private val fileField = field("file")
     private val loadedField = field("loaded")
     private val tracksField = field("tracks")
+    private val dirtyField = field("dirty")
+    private val lastWriteOkField = field("lastWriteOk")
+    private val scheduledField = field("scheduled")
 
     private lateinit var directory: File
     private val originalFile = fileField.get(TasteSignals)
@@ -30,15 +33,34 @@ class TasteSignalsRatingBackupTest {
         directory = Files.createTempDirectory("bitchord-taste-ratings").toFile()
         fileField.set(TasteSignals, File(directory, "taste/signals.json"))
         loadedField.setBoolean(TasteSignals, true)
+        dirtyField.setBoolean(TasteSignals, false)
+        lastWriteOkField.setBoolean(TasteSignals, true)
+        (scheduledField.get(TasteSignals) as kotlinx.coroutines.Job?)?.cancel()
+        scheduledField.set(TasteSignals, null)
     }
 
     @After
     fun tearDown() {
         @Suppress("UNCHECKED_CAST")
         (tracksField.get(TasteSignals) as MutableMap<String, *>).clear()
+        (scheduledField.get(TasteSignals) as kotlinx.coroutines.Job?)?.cancel()
+        scheduledField.set(TasteSignals, null)
+        dirtyField.setBoolean(TasteSignals, false)
+        lastWriteOkField.setBoolean(TasteSignals, true)
         fileField.set(TasteSignals, originalFile)
         loadedField.setBoolean(TasteSignals, originalLoaded)
         directory.deleteRecursively()
+    }
+
+    @Test
+    fun `a failed write is reported by the next await instead of looking saved`() = runBlocking {
+        // A regular file where the parent directory belongs makes the write
+        // fail without throwing out of the store.
+        File(directory, "taste").writeText("not a directory")
+        TasteSignals.restoreRatings(liked = listOf("liked-a"), disliked = emptyList())
+
+        assertTrue("the first write must report the failure", !TasteSignals.flushAndAwait())
+        assertTrue("a concurrent flush consuming the dirty flag must not report success", !TasteSignals.flushAndAwait())
     }
 
     @Test

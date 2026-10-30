@@ -80,8 +80,39 @@ class SettingsTransferRollbackTest {
         assertEquals(ThemeMode.LIGHT, AppSettings.themeMode.value)
     }
 
+    @Test
+    fun `a store that mutates and then throws is still rolled back`() = runBlocking {
+        // The preference write lands, then [AppSettings.reload] touches the
+        // auth store and throws. The old code set its "applied" flag only after
+        // the call returned, so this half-applied theme stayed.
+        appAuth.set(AppSettings, uninitializedAuthStore())
+        val preview = SettingsTransfer.Preview(
+            file = SettingsTransfer.File(),
+            settings = mapOf("theme_mode" to "DARK"),
+            changedSettings = mapOf("theme_mode" to "DARK"),
+            sources = emptyList(),
+            sourcesChanged = false,
+            proxy = null,
+            proxyChanged = false,
+            skipped = 0,
+        )
+
+        val result = SettingsTransfer.apply(preview)
+
+        assertTrue(result.isFailure)
+        assertEquals("LIGHT", preferences.values["theme_mode"])
+        assertEquals(ThemeMode.LIGHT, AppSettings.themeMode.value)
+    }
+
     private fun field(type: Class<*>, name: String) =
         type.getDeclaredField(name).apply { isAccessible = true }
+
+    private fun uninitializedAuthStore(): AuthStore {
+        val unsafeClass = Class.forName("sun.misc.Unsafe")
+        val unsafe = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+        val allocate = unsafeClass.getMethod("allocateInstance", Class::class.java)
+        return allocate.invoke(unsafe, AuthStore::class.java) as AuthStore
+    }
 
     private fun fakeAuthStore(preferences: FakePreferences): AuthStore {
         val unsafeClass = Class.forName("sun.misc.Unsafe")

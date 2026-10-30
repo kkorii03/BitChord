@@ -26,6 +26,7 @@ class ListeningStatsImportAtomicityTest {
     private val dirtyField = field("dirty")
     private val importingField = field("importing")
     private val lastWriteField = field("lastWrite")
+    private val generationField = field("importGeneration")
 
     private val originalDirectory = directoryField.get(ListeningStats)
     private lateinit var directory: File
@@ -38,6 +39,7 @@ class ListeningStatsImportAtomicityTest {
         dirtyField.setBoolean(ListeningStats, false)
         importingField.setBoolean(ListeningStats, false)
         lastWriteField.set(ListeningStats, null)
+        generationField.setLong(ListeningStats, 0L)
     }
 
     @After
@@ -46,6 +48,7 @@ class ListeningStatsImportAtomicityTest {
         dirtyField.setBoolean(ListeningStats, false)
         importingField.setBoolean(ListeningStats, false)
         lastWriteField.set(ListeningStats, null)
+        generationField.setLong(ListeningStats, 0L)
         directoryField.set(ListeningStats, originalDirectory)
         directory.deleteRecursively()
     }
@@ -101,6 +104,60 @@ class ListeningStatsImportAtomicityTest {
         val text = File(directory, "2026-10.json").readText()
         assertTrue("the restored month must win", text.contains("imported"))
         assertFalse("a pre-import write must not land afterwards", text.contains("stale"))
+    }
+
+    @Test
+    fun `a snapshot captured before an import cannot land after it`() = runBlocking {
+        val month = "2026-10"
+        val target = File(directory, "$month.json")
+        target.writeText("""{"month":"$month","tracks":[{"id":"old","title":"old"}]}""")
+        val captured = generationField.getLong(ListeningStats)
+
+        val imported = ListeningStats.importAll(
+            listOf(
+                StoredBucket(
+                    month = month,
+                    tracks = listOf(TrackEntry(id = "fresh", title = "fresh")),
+                ),
+            ),
+        )
+        assertTrue(imported)
+
+        // This is the job a flush took just before the import flag flipped but
+        // launched after the import had already read `lastWrite`.
+        ListeningStats.write(
+            month,
+            StoredBucket(month = month, tracks = listOf(TrackEntry(id = "stale", title = "stale"))),
+            captured,
+        )
+        val text = target.readText()
+        assertTrue("the restored month must win", text.contains("fresh"))
+        assertFalse("a pre-import snapshot must not land afterwards", text.contains("stale"))
+
+        // A write captured after the import is still applied.
+        ListeningStats.write(
+            month,
+            StoredBucket(month = month, tracks = listOf(TrackEntry(id = "after", title = "after"))),
+            generationField.getLong(ListeningStats),
+        )
+        assertTrue(target.readText().contains("after"))
+    }
+
+    @Test
+    fun `a rollback that cannot restore a month keeps the journal for the next open`() {
+        val original = File(directory, "2026-09.json").apply { mkdirs() }
+        File(original, "keep").writeText("keep")
+        val backup = File(directory, "2026-09.json.bak")
+        backup.writeText("""{"month":"2026-09","tracks":[],"old":true}""")
+        val journal = File(directory, "import.journal")
+        journal.writeText("O 2026-09.json\n")
+
+        val recovery = ListeningStats::class.java.getDeclaredMethod("recoverInterruptedImport")
+            .apply { isAccessible = true }
+        recovery.invoke(ListeningStats)
+
+        assertTrue("the old month is still only in the backup", backup.isFile)
+        assertTrue("the journal must stay so recovery retries", journal.exists())
     }
 
     @Test

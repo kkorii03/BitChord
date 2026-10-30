@@ -110,6 +110,19 @@ object ListeningStats {
     private var importing = false
 
     /**
+     * Bumped at the commit point of every completed import.
+     *
+     * A write captures this when it takes its snapshot. The import joins
+     * [lastWrite], but a flush or a month rollover can take its snapshot just
+     * before [importing] flips and launch its job after that join has already
+     * read [lastWrite]. Comparing the captured value under [writeLock] makes
+     * that write stale once the restored months are in place, so it cannot put
+     * the pre-import month back on disk.
+     */
+    @Volatile
+    private var importGeneration = 0L
+
+    /**
      * The most recently queued write.
      *
      * A throttled [flush] can take the snapshot and hand it to [writer] while
@@ -419,17 +432,17 @@ object ListeningStats {
     fun flush(force: Boolean = false) {
         if (!force && !writeThrottle.shouldWrite(System.currentTimeMillis())) return
         val now = System.currentTimeMillis()
-        pending()?.let { (key, snapshot) ->
+        pending()?.let { (key, snapshot, generation) ->
             writeThrottle.wrote(now)
-            lastWrite = writer.launch { write(key, snapshot) }
+            lastWrite = writer.launch { write(key, snapshot, generation) }
         }
     }
 
     /** As [flush], for a caller that is about to read back what it wrote. */
     private suspend fun flushAndAwait() {
-        val queued = pending()?.let { (key, snapshot) ->
+        val queued = pending()?.let { (key, snapshot, generation) ->
             writeThrottle.wrote(System.currentTimeMillis())
-            writer.launch { write(key, snapshot) }.also { lastWrite = it }
+            writer.launch { write(key, snapshot, generation) }.also { lastWrite = it }
         }
         // No snapshot here means a throttled flush may already have taken one;
         // its write can still be running, so wait for that too. When one was
@@ -439,7 +452,7 @@ object ListeningStats {
     }
 
     /** The open month as bytes-to-be, or null when nothing has changed. */
-    private fun pending(): Pair<String, StoredBucket>? {
+    private fun pending(): Triple<String, StoredBucket, Long>? {
         if (!ready) return null
         return synchronized(lock) {
             // A snapshot taken before an import describes a month the import
@@ -449,7 +462,7 @@ object ListeningStats {
             if (!dirty) return null
             val bucket = open ?: return null
             dirty = false
-            bucket.key to bucket.snapshot()
+            Triple(bucket.key, bucket.snapshot(), importGeneration)
         }
     }
 
@@ -465,24 +478,27 @@ object ListeningStats {
      * Written aside and renamed, so a kill mid-write leaves the previous
      * month rather than a truncated one.
      */
-    private suspend fun write(key: String, snapshot: StoredBucket) = writeLock.withLock {
-        // A write queued just before an import must not land on the restored
-        // folder afterwards. The import joins [lastWrite] before taking this
-        // lock; anything still queued when it runs is stale by definition.
-        if (importing) return@withLock
-        runCatching {
-            directory.mkdirs()
-            val file = File(directory, "$key.json")
-            val temporary = File(directory, "$key.json.tmp")
-            temporary.writeText(json.encodeToString(StoredBucket.serializer(), snapshot))
-            if (!temporary.renameTo(file)) {
-                // renameTo will not replace on some filesystems; the delete is
-                // the only thing standing between that and a .tmp per flush.
-                if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
-            }
-            version++
-        }.onFailure { Log.w(TAG, "Could not write listening bucket $key", it) }
-    }
+    internal suspend fun write(key: String, snapshot: StoredBucket, generation: Long) =
+        writeLock.withLock {
+            // A write queued just before an import must not land on the restored
+            // folder afterwards. The import joins [lastWrite] before taking this
+            // lock; anything still queued when it runs is stale by definition,
+            // and the generation catches the snapshot that was taken before the
+            // flag flipped but whose job was launched after the join.
+            if (importing || generation != importGeneration) return@withLock
+            runCatching {
+                directory.mkdirs()
+                val file = File(directory, "$key.json")
+                val temporary = File(directory, "$key.json.tmp")
+                temporary.writeText(json.encodeToString(StoredBucket.serializer(), snapshot))
+                if (!temporary.renameTo(file)) {
+                    // renameTo will not replace on some filesystems; the delete is
+                    // the only thing standing between that and a .tmp per flush.
+                    if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
+                }
+                version++
+            }.onFailure { Log.w(TAG, "Could not write listening bucket $key", it) }
+        }
 
     /** The bucket for [month], loading or creating it and retiring the last one. */
     private fun bucketFor(month: YearMonth): OpenBucket {
@@ -492,7 +508,8 @@ object ListeningStats {
         // has to reach disk before it is dropped on the floor.
         open?.let { previous ->
             val stale = previous.snapshot()
-            lastWrite = writer.launch { write(previous.key, stale) }
+            val generation = importGeneration
+            lastWrite = writer.launch { write(previous.key, stale, generation) }
         }
         val loaded = read(key) ?: StoredBucket(month = key)
         return OpenBucket.of(key, loaded).also {
@@ -843,9 +860,16 @@ object ListeningStats {
                         }
                     }
                     if (!backedUp) {
-                        backups.forEach { (original, backup) -> backup.renameTo(original) }
                         staged.forEach { (_, file) -> file.delete() }
-                        journal.delete()
+                        // Only drop the journal once every old month is back.
+                        // If a rename back fails, leaving it lets [init] retry;
+                        // deleting it would let the next open purge the `.bak`
+                        // as a leftover and lose that month for good.
+                        if (restoreBackups(backups)) {
+                            journal.delete()
+                        } else {
+                            Log.w(TAG, "Could not restore every listening backup; keeping the journal")
+                        }
                         return@synchronized false
                     }
 
@@ -865,15 +889,15 @@ object ListeningStats {
                     }
                     if (!committed) {
                         // Put the old months back exactly as they were. The
-                        // journal is still here, so the same rollback runs if
-                        // this process dies during it.
-                        applied.forEach { it.delete() }
-                        backups.forEach { (original, backup) ->
-                            if (original.exists()) original.delete()
-                            backup.renameTo(original)
-                        }
+                        // journal stays if any rename back fails, so the same
+                        // rollback runs again on the next [init] instead of
+                        // losing the remaining `.bak` files.
                         staged.forEach { (_, file) -> file.delete() }
-                        journal.delete()
+                        if (restoreBackups(backups, applied)) {
+                            journal.delete()
+                        } else {
+                            Log.w(TAG, "Could not restore every listening backup; keeping the journal")
+                        }
                         return@synchronized false
                     }
 
@@ -883,6 +907,7 @@ object ListeningStats {
                     backups.forEach { (_, backup) -> backup.delete() }
                     open = null
                     dirty = false
+                    importGeneration++
                     version++
                     cached = null
                     true
@@ -891,6 +916,34 @@ object ListeningStats {
         } finally {
             synchronized(lock) { importing = false }
         }
+    }
+
+    /**
+     * Puts every old month named by [backups] back where it was.
+     *
+     * Returns false when any target could not be cleared or any `.bak` could
+     * not be renamed back. The caller must then keep the import journal so
+     * [recoverInterruptedImport] retries on the next open; dropping it would
+     * make that recovery treat the surviving `.bak` files as leftovers.
+     */
+    internal fun restoreBackups(
+        backups: List<Pair<File, File>>,
+        applied: List<File> = emptyList(),
+    ): Boolean {
+        applied.forEach { it.delete() }
+        var restored = true
+        for ((original, backup) in backups) {
+            if (!backup.isFile) continue
+            if (original.exists() && !original.delete()) {
+                restored = false
+                continue
+            }
+            if (!backup.renameTo(original)) {
+                Log.w(TAG, "Could not restore listening bucket ${original.name}")
+                restored = false
+            }
+        }
+        return restored
     }
 
     private fun recoverInterruptedImport() {
@@ -917,21 +970,31 @@ object ListeningStats {
         }
         // Only delete a `.json` that is a backup target or a month the file
         // brought. An old month not yet moved aside has no `.bak` and must stay.
+        var rolledBack = true
         newNames.forEach { name ->
             val target = File(directory, name)
             val backup = File(directory, name + BACKUP_SUFFIX)
-            if (target.isFile && (name !in oldNames || backup.isFile)) target.delete()
+            if (target.isFile && (name !in oldNames || backup.isFile)) {
+                if (!target.delete()) rolledBack = false
+            }
         }
         oldNames.forEach { name ->
             val backup = File(directory, name + BACKUP_SUFFIX)
             if (backup.isFile) {
                 val target = File(directory, name)
-                if (target.exists()) target.delete()
-                backup.renameTo(target)
+                if (target.exists() && !target.delete()) rolledBack = false
+                if (!backup.renameTo(target)) rolledBack = false
             }
         }
         directory.listFiles()?.forEach { file ->
             if (file.isFile && file.name.endsWith(IMPORTING_SUFFIX)) file.delete()
+        }
+        if (!rolledBack) {
+            // A rename that failed now may succeed next time (a full volume, a
+            // file briefly held open). Keeping the journal is what stops the
+            // next open from treating the surviving `.bak` files as leftovers.
+            Log.w(TAG, "Could not fully roll back an interrupted listening import; retrying next open")
+            return
         }
         journal.delete()
         Log.w(TAG, "Rolled back an interrupted listening import")

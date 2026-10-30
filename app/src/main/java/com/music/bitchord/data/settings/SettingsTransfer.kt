@@ -314,12 +314,8 @@ object SettingsTransfer {
             val previousSettings = AppSettings.transferablePrefs()
             val previousSources = if (preview.sourcesChanged) SourceRegistry.transferSnapshot() else null
             val previousProxy = if (preview.proxyChanged) AppSettings.currentProxyConfig() else null
-            var settingsApplied = false
-            var sourcesApplied = false
-            var proxyApplied = false
             try {
                 AppSettings.applyTransferablePrefs(preview.settings)
-                settingsApplied = true
                 // Replacing an identical list would rebuild every source and
                 // throw away their warmed caches (and, since a replacement
                 // invalidates HQ verdicts, every measured pair) for a file that
@@ -328,13 +324,10 @@ object SettingsTransfer {
                 val sources = if (!preview.sourcesChanged) {
                     0
                 } else {
-                    SourceRegistry.replaceFromTransfer(preview.sources).also {
-                        sourcesApplied = true
-                    }
+                    SourceRegistry.replaceFromTransfer(preview.sources)
                 }
                 if (preview.proxyChanged) {
                     preview.proxy?.let(AppSettings::setProxyConfig)
-                    proxyApplied = preview.proxy != null
                 }
                 Summary(
                     settings = preview.changedSettings.size,
@@ -345,15 +338,13 @@ object SettingsTransfer {
                     skipped = preview.skipped,
                 )
             } catch (failure: Throwable) {
-                runCatching {
-                    if (proxyApplied) previousProxy?.let(AppSettings::setProxyConfig)
-                }
-                runCatching {
-                    if (sourcesApplied) previousSources?.let(SourceRegistry::replaceFromTransfer)
-                }
-                runCatching {
-                    if (settingsApplied) AppSettings.applyTransferablePrefs(previousSettings)
-                }
+                // Restore every section unconditionally rather than tracking
+                // which call returned: a store can mutate its state and then
+                // throw, and a flag set after the return would skip its
+                // rollback. Putting an unchanged snapshot back is a no-op.
+                runCatching { previousProxy?.let(AppSettings::setProxyConfig) }
+                runCatching { previousSources?.let(SourceRegistry::replaceFromTransfer) }
+                runCatching { AppSettings.applyTransferablePrefs(previousSettings) }
                 throw failure
             }
         }
