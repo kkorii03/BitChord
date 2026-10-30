@@ -118,9 +118,9 @@ import com.music.bitchord.ui.rememberIsForeground
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.listentogether.PartyMember
-import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.PlayingAudioFormat
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -323,17 +323,25 @@ internal val LocalPlayerTint = compositionLocalOf { Color.White }
 /**
  * The quality badge between the timestamps — "Lossless", "Hi-Res", a loading
  * shimmer while a lossless source is still being looked for.
+ *
+ * [onRevealStats] is the badge's second job: the measured stream is available
+ * on demand by tapping it, rather than sitting permanently under the artwork.
  */
 @Composable
 internal fun PlaybackQualityLabel(
     song: Song,
     isLoading: Boolean,
     modifier: Modifier = Modifier,
+    onRevealStats: (() -> Unit)? = null,
 ) {
     val wifiQuality by PlayerSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by PlayerSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by PlayerSettings.meteredConnection.collectAsStateWithLifecycle()
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+    // The badge describes this track's decoder, not whichever item happened to
+    // publish telemetry last. A stale frame must not light "Lossless" over the
+    // song that just replaced it.
+    val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)
     // Whether this playback session is even asking for a lossless stream — the
     // same computation SourceResolver.requestForNow() makes, mirrored here so
     // "Loading lossless" only appears when a lossless fetch is actually in
@@ -349,18 +357,23 @@ internal fun PlaybackQualityLabel(
         isLoading = isLoading,
         stillRacing = song.videoId in racingLossless,
         losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
-        nerdStats = nerdStats,
+        nerdStats = playingStats,
         modifier = modifier,
+        onRevealStats = onRevealStats,
     )
 }
 
 /**
- * Stats for nerds, on the foot of the sleeve: the measured stream, and under
- * it what Automix's analysis is doing.
+ * Stats for nerds, on the foot of the sleeve: the measured stream.
  *
- * Hidden while the setting is off, except for the few seconds after the
- * artwork was tapped ([revealed]) — Apple Music's equivalent line is not
- * permanently on the sleeve, and a tap on the cover is the way to ask for it.
+ * Shown for the few seconds after the artwork or the quality badge was
+ * tapped ([revealed]) — Apple Music's equivalent line is not permanently on
+ * the sleeve, and a tap is the way to ask for it. The song menu's Info page
+ * carries the same measurements for a longer look.
+ *
+ * Automix's analysis state deliberately has no line here: it describes the
+ * app's own work rather than the music, so it belongs in the diagnostic log,
+ * not on the player.
  */
 @Composable
 internal fun SleeveNerdStats(
@@ -368,23 +381,10 @@ internal fun SleeveNerdStats(
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
-    val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
-    if (!showNerdStats && !revealed) return
+    if (!revealed) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
-    val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
-    val automixVideos by PlayerSettings.automixVideos.collectAsStateWithLifecycle()
-    val smartAnalysis by PlayerSettings.smartAnalysis.collectAsStateWithLifecycle()
-    // A party doesn't mix, and doesn't analyse for one either — see
-    // [com.music.bitchord.playback.CrossfadeController]. So the two flows above
-    // simply stop moving there, and the stats line has to say why rather than
-    // leave their last values on screen as if they still described something.
-    //
-    // Read off the party rather than published as a third flow: it is the same
-    // fact the controller and the analyzer each read for themselves, and a
-    // mirror of it could only ever disagree.
-    val inParty by remember {
-        PlayerPlatform.host.party.map { it.inParty }.distinctUntilChanged()
-    }.collectAsStateWithLifecycle(initialValue = PlayerPlatform.host.party.value.inParty)
+    // The measured stream for this track only; see [PlaybackQualityLabel].
+    val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)
     // A plain white line reads fine over the usual dark tile, but a light
     // stretch of an animated cover — sky, snow, a pale sleeve — washes it out
     // entirely. The shadow costs nothing on a dark background and is what
@@ -400,44 +400,11 @@ internal fun SleeveNerdStats(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier,
     ) {
-        nerdStats?.describe()?.let { stats ->
+        playingStats?.describe()?.let { stats ->
             Text(
                 text = stats,
                 style = nerdStyle,
                 color = Color.White.copy(alpha = 0.65f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-            )
-        }
-        // Only when Automix is actually switched on and the listener has asked
-        // for the diagnostic readout: otherwise this would report on analysis
-        // nothing is going to use, and a tap on the sleeve must not surface it
-        // for someone who never turned the setting on.
-        if (showNerdStats && smartFadeOn) {
-            Text(
-                // Both sides always named, even when they agree, so the line
-                // reads the same way every time and the eye can find the half
-                // it wants without re-parsing the sentence.
-                text = when {
-                    // Ahead of the video case because it is the broader one:
-                    // in a party nothing is analysed for any song, video or
-                    // not, so naming the video limitation there would describe
-                    // a rule that is not the one in force.
-                    inParty -> stringResource(Res.string.automix_stopped_in_party)
-                    song.isVideoOrigin && !automixVideos ->
-                        stringResource(Res.string.automix_not_supported_video)
-                    else -> stringResource(
-                        Res.string.automix_analysis_status,
-                        smartAnalysis.current.localizedLabel(),
-                        smartAnalysis.next.localizedLabel(),
-                    )
-                },
-                style = nerdStyle,
-                // Dimmer than the measured line above it: that one describes
-                // the audio, this one describes the app, and the ranking
-                // should show.
-                color = Color.White.copy(alpha = 0.5f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -1703,11 +1670,9 @@ private fun formatTime(ms: Long): String {
 
 /**
  * The gap between the two timestamps under the seek bar: just the "Lossless"
- * badge when one applies, and nothing otherwise. The stats line that used to
- * fall back to lives inside the sleeve now (see the bottom-centre overlay on
- * the artwork Box above), so there is no tap here to swap it in — the two say
- * the same thing at different resolutions, both read off the stream being
- * decoded rather than off what a source offered to send.
+ * badge when one applies, and nothing otherwise. Tapping it asks the sleeve
+ * for the measured stream (see [SleeveNerdStats]); both read off the decoder's
+ * own format rather than off what a source offered to send.
  */
 @Composable
 private fun LosslessOrStats(
@@ -1716,7 +1681,23 @@ private fun LosslessOrStats(
     losslessRequested: Boolean,
     nerdStats: NerdStats.Snapshot?,
     modifier: Modifier = Modifier,
+    onRevealStats: (() -> Unit)? = null,
 ) {
+    // The badge is the way to ask for the measured stream, so the whole label
+    // takes the tap rather than just the glyph inside it. No ripple: this is
+    // an overlay on artwork, not a surface of its own.
+    val badgeModifier = if (onRevealStats != null) {
+        modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClick = onRevealStats,
+            )
+    } else {
+        modifier
+    }
     when {
         // Still resolving — either the player itself is buffering, or a
         // module is still racing YouTube for this track in the background
@@ -1747,7 +1728,7 @@ private fun LosslessOrStats(
             // and the one badge state that is still going to change.
             pulsing = true,
             animated = false,
-            modifier = modifier,
+            modifier = badgeModifier,
         )
         nerdStats?.showsLosslessBadge == true -> LosslessLabel(
             // Same line Tidal, Qobuz and Apple Music draw it at — see
@@ -1759,13 +1740,13 @@ private fun LosslessOrStats(
             // confirmed. It is what makes the badge read as an achievement
             // rather than a label, which only one of these two is.
             animated = true,
-            modifier = modifier,
+            modifier = badgeModifier,
         )
         nerdStats?.isDolbyAtmos == true -> LosslessLabel(
             text = "Dolby Atmos",
             animated = true,
             iconPainter = painterResource(Res.drawable.ic_dolby_atmos),
-            modifier = modifier,
+            modifier = badgeModifier,
         )
         // Lossy, but the good end of lossy — a module's 320kbps tier, which
         // for a great many tracks is the best copy that exists anywhere the
@@ -1776,7 +1757,7 @@ private fun LosslessOrStats(
             iconPainter = rememberVectorPainter(Icons.Rounded.Headphones),
             // A Material glyph's own size is 24dp; the badge's are drawn small.
             iconSize = 13.dp,
-            modifier = modifier,
+            modifier = badgeModifier,
         )
         // Below that, no badge: "Medium Quality" and "Data Saver" are gone.
         // The space under the bar is kept for what is worth announcing.
@@ -1959,14 +1940,4 @@ private fun codecLabel(mimeType: String?): String? = when {
     mimeType.endsWith("flac") -> "FLAC"
     mimeType.endsWith("alac") -> "ALAC"
     else -> mimeType.substringAfter('/').uppercase(Locale.ROOT)
-}
-
-/** Wording for the stats line; see [TrackAnalysisState]. */
-@Composable
-private fun TrackAnalysisState.localizedLabel(): String = when (this) {
-    TrackAnalysisState.ANALYSED -> stringResource(Res.string.analysis_complete)
-    TrackAnalysisState.REFINING -> stringResource(Res.string.analysis_refining)
-    TrackAnalysisState.ANALYSING -> stringResource(Res.string.analysis_in_progress)
-    TrackAnalysisState.WAITING -> stringResource(Res.string.waiting)
-    TrackAnalysisState.FAILED -> stringResource(Res.string.failed)
 }

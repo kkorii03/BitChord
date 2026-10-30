@@ -2153,6 +2153,7 @@ fun NowPlayingScreen(
                                         modifier = Modifier
                                             .align(Alignment.Center)
                                             .padding(horizontal = 8.dp),
+                                        onRevealStats = { nerdStatsRevealTick++ },
                                     )
                                 }
                             },
@@ -3845,6 +3846,7 @@ fun NowPlayingScreen(
                             modifier = Modifier
                                 .align(Alignment.Center)
                                 .padding(horizontal = 8.dp),
+                            onRevealStats = { nerdStatsRevealTick++ },
                         )
                     }
 
