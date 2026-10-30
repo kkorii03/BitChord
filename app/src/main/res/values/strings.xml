@@ -446,6 +446,8 @@
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay won’t suggest a song already played or suggested this session</string>
     <string name="personalised_autoplay">Personalised autoplay</string>
+    <string name="video_radio_continue">Continue with video songs</string>
+    <string name="video_radio_continue_subtitle">Keep a station seeded by a cover, live clip or self-uploaded song inside that video world</string>
     <string name="personalised_autoplay_subtitle">Orders YouTube’s radio by your likes, skips and recent listening\nMixes in similar tracks from worldwide listening data (ListenBrainz)</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>

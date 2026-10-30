@@ -376,6 +376,8 @@
     <string name="animated_cover_art_subtitle">일부 앨범에서 제공하는 반복 비디오를 정지된 아트워크 대신 재생합니다.</string>
     <string name="dont_repeat_songs_subtitle">이번 세션에서 이미 재생되었거나 추천된 노래는 자동 재생에서 추천하지 않습니다.</string>
     <string name="personalised_autoplay">개인화 추천</string>
+    <string name="video_radio_continue">비디오 노래 이어 듣기</string>
+    <string name="video_radio_continue_subtitle">커버·라이브·직접 올린 노래 영상에서 시작한 라디오를 같은 비디오 노래로 이어 갑니다</string>
     <string name="personalised_autoplay_subtitle">좋아요·건너뛰기·최근 청취 기록으로 YouTube 라디오의 순서를 다듬습니다.\n전 세계 청취 데이터(ListenBrainz)로 비슷한 곡도 섞습니다</string>
     <string name="download_quality_subtitle">연결 상태와 관계없이 노래당 %1$s</string>
     <string name="filter_non_music_audio">음악이 아닌 오디오 제외</string>

@@ -85,6 +85,7 @@ private fun normalizedName(text: String): String =
 enum class VideoSource(val wire: String) {
     MIX("mix"),
     CHANNEL("channel"),
+    RADIO("radio"),
     PLAYLIST("playlist"),
 }
 
@@ -106,6 +107,8 @@ data class VideoCandidate(
     val description: String = "",
     val categories: List<String> = emptyList(),
     val isShort: Boolean = false,
+    /** The row is a YouTube upload, not a catalogue audio track. */
+    val isVideoUpload: Boolean = true,
     /** The source already knows this is a listener's own upload, not an official row. */
     val isUserUpload: Boolean = false,
     val songKey: String = "",
@@ -127,6 +130,7 @@ enum class VideoDropReason(val wire: String) {
     FAN_CLIP("fan-clip"),
     USER_UPLOAD("user-upload"),
     NOT_SONG("not-song"),
+    OFFICIAL("official"),
     SAME_SONG("same-song"),
 }
 
@@ -139,6 +143,8 @@ enum class VideoDropReason(val wire: String) {
  */
 data class VideoFilterOptions(
     val recentVideoIds: Set<String> = emptySet(),
+    /** Underlying songs heard recently, so another cover of one is not repeated. */
+    val recentSongKeys: Set<String> = emptySet(),
     val previousSongKey: String? = null,
     val minDurationSec: Int = 90,
     val maxDurationSec: Int = 8 * 60,
@@ -183,9 +189,20 @@ fun filterVideoCandidates(
     val previousSongKey = options.previousSongKey
         ?.let(::songKeyOf)
         ?.takeIf { it.isNotEmpty() }
+    val recentSongKeys = options.recentSongKeys.mapNotNullTo(HashSet()) { key ->
+        songKeyOf(key).takeIf { it.isNotEmpty() }
+    }
 
     for (candidate in candidates) {
-        val reason = dropReasonFor(mode, seed, candidate, options, seen, previousSongKey)
+        val reason = dropReasonFor(
+            mode,
+            seed,
+            candidate,
+            options,
+            seen,
+            previousSongKey,
+            recentSongKeys,
+        )
         if (reason == null) {
             kept += candidate
         } else {
@@ -202,6 +219,7 @@ private fun dropReasonFor(
     options: VideoFilterOptions,
     seen: MutableSet<String>,
     previousSongKey: String?,
+    recentSongKeys: Set<String>,
 ): VideoDropReason? {
     if (candidate.videoId.isBlank()) return VideoDropReason.INVALID
     if (!seen.add(candidate.videoId)) return VideoDropReason.DUPLICATE
@@ -221,10 +239,22 @@ private fun dropReasonFor(
     if (mode == AutoplayMode.NORMAL && isFanClip(candidate)) {
         return VideoDropReason.FAN_CLIP
     }
-    if (mode == AutoplayMode.VIDEO_RADIO && !looksLikeSong(candidate)) {
-        return VideoDropReason.NOT_SONG
+    if (mode == AutoplayMode.VIDEO_RADIO) {
+        // A video station still must not become a karaoke, 8-bit, piano or
+        // backing-track station. Cover and live markers are deliberately not
+        // in this list: those are the uploads the mode exists for.
+        if (isVideoArrangement(candidate)) return VideoDropReason.ARRANGEMENT
+        // The label's own catalogue rows are what normal mode plays. Mixing
+        // them back in is the exact drift this mode was added to stop.
+        if (!candidate.isVideoUpload) return VideoDropReason.OFFICIAL
+        if (isOfficialCatalogue(candidate)) return VideoDropReason.OFFICIAL
+        if (!looksLikeSong(candidate)) return VideoDropReason.NOT_SONG
     }
     if (previousSongKey != null && candidate.effectiveSongKey == previousSongKey) {
+        return VideoDropReason.SAME_SONG
+    }
+    val songKey = candidate.effectiveSongKey
+    if (songKey.isNotEmpty() && songKey in recentSongKeys) {
         return VideoDropReason.SAME_SONG
     }
     return null
@@ -310,6 +340,40 @@ private fun isArrangement(candidate: VideoCandidate, seed: SeedVideoInfo): Boole
     return TrackMatcher.isCoverArrangement(source, target)
 }
 
+/**
+ * Arrangements that are not a performance of the song, whichever mode is on.
+ *
+ * Deliberately narrower than [isArrangement]: a video station is made of
+ * covers and live clips, so those words cannot be a veto here.
+ */
+private val VIDEO_ARRANGEMENT_MARKERS = listOf(
+    Regex("""(?i)\bkaraoke\b"""),
+    Regex("""노래방"""),
+    Regex("""(?i)\b8[- ]?bit\b"""),
+    Regex("""(?i)\b16[- ]?bit\b"""),
+    Regex("""(?i)\bpiano\b"""),
+    Regex("""피아노"""),
+    Regex("""(?i)\binst(rumental)?\b"""),
+    Regex("""반주"""),
+    Regex("""(?<![A-Za-z])MR(?![A-Za-z])"""),
+)
+
+private fun isVideoArrangement(candidate: VideoCandidate): Boolean =
+    VIDEO_ARRANGEMENT_MARKERS.any {
+        it.containsMatchIn(candidate.title) ||
+            it.containsMatchIn(candidate.channelName) ||
+            it.containsMatchIn(candidate.description)
+    }
+
+/** A `- Topic` or artist-channel official upload, i.e. the catalogue row. */
+private fun isOfficialCatalogue(candidate: VideoCandidate): Boolean {
+    if (isTopicChannel(candidate.channelName)) return true
+    val channel = normalizedName(candidate.channelName)
+    val singer = normalizedName(candidate.effectiveSinger)
+    if (channel.isEmpty() || singer.isEmpty()) return false
+    return channel == singer && OFFICIAL_MV.containsMatchIn(candidate.title)
+}
+
 private val FAN_CLIP_MARKERS = listOf(
     Regex("""(?i)\bfan\s*cam\b"""),
     Regex("""(?i)\bfancam\b"""),
@@ -351,6 +415,44 @@ fun songKeyOf(title: String): String =
         .replace(NON_WORD, " ")
         .replace(WHITESPACE, " ")
         .trim()
+
+/** Fewer video rows than this fall through to the existing AutoPlay path. */
+const val MIN_VIDEO_RADIO_TRACKS = 3
+
+/** Which source a video-radio top-up finally used. */
+enum class VideoRadioFallback(val wire: String) {
+    /** Enough video rows were found; no replacement was needed. */
+    NONE("none"),
+
+    /** The same video world had more material to offer. */
+    SAME_MODE("same-mode"),
+
+    /** The video world was empty or too thin, so ordinary AutoPlay filled in. */
+    NORMAL("normal"),
+
+    /** Nothing playable was found; the queue says so instead of repeating. */
+    EMPTY("empty"),
+}
+
+/**
+ * The staged replacement the design asks for when a video batch is too thin.
+ *
+ * A station that returns one or two rows is not enough to keep playing after
+ * them, so the caller asks the same mode for more material first, then the
+ * ordinary AutoPlay path, and only then gives up. This is pure so the order of
+ * those stages is pinned by tests rather than by whichever branch ran.
+ */
+fun videoRadioFallbackStage(
+    picked: Int,
+    sameModeExhausted: Boolean,
+    normalAvailable: Boolean,
+    minimum: Int = MIN_VIDEO_RADIO_TRACKS,
+): VideoRadioFallback = when {
+    picked >= minimum -> VideoRadioFallback.NONE
+    !sameModeExhausted -> VideoRadioFallback.SAME_MODE
+    normalAvailable -> VideoRadioFallback.NORMAL
+    else -> VideoRadioFallback.EMPTY
+}
 
 /** One same-singer row for every two other-singer rows. */
 const val VIDEO_RADIO_SAME_SINGER_RATIO = 1

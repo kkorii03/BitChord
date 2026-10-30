@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.SearchFilter
@@ -22,6 +23,9 @@ import com.music.bitchord.data.taste.SimilarCandidates
 import com.music.bitchord.data.taste.TastePool
 import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.taste.asSong
+import com.music.bitchord.data.videoradio.AutoplayMode
+import com.music.bitchord.data.videoradio.MIN_VIDEO_RADIO_TRACKS
+import com.music.bitchord.data.videoradio.VideoRadioFallback
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlinx.coroutines.CancellationException
 import java.util.Random
@@ -127,7 +131,140 @@ suspend fun loadAutoplayTracks(
     sessionIds: Set<String> = emptySet(),
 ): Result<List<Song>> {
     val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
+    val mode = videoRadioModeFor(seedSong)
+    // A shared queue is one running order for everyone; a per-listener video
+    // station would make that order depend on whose phone topped it up.
+    val videoWanted = AppSettings.videoRadio.value &&
+        mode == AutoplayMode.VIDEO_RADIO &&
+        !ListenTogether.state.value.inParty
+    val offline = AppSettings.meteredConnection.value == null
+
+    // Offline the only video songs that can play are the downloaded ones; no
+    // station request is worth starting just to fail.
+    if (videoWanted && offline) {
+        val downloaded = Downloads.savedMetadataSnapshot().keys
+            .mapNotNull { Downloads.savedSongFor(it) }
+            .filter { it.isVideo }
+        val pick = pickVideoRadio(seedSong, downloaded, existing, sessionSong)
+        if (pick.ordered.size >= MIN_VIDEO_RADIO_TRACKS) {
+            TrackLog.i("BitChord", pick.logLine(VideoRadioFallback.NONE.wire), about = seedSong.videoId)
+            return Result.success(videoRadioRows(pick, downloaded, seedSong, limit))
+        }
+        TrackLog.i(
+            "BitChord",
+            pick.logLine(VideoRadioFallback.EMPTY.wire),
+            about = seedSong.videoId,
+        )
+        return Result.success(emptyList())
+    }
+
     val radio = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+
+    if (videoWanted) {
+        var sourceSongs = radio
+        var usedSameMode = false
+        var pick = pickVideoRadio(seedSong, radio, existing, sessionSong)
+        // Same-mode replacement: the last completed track's station is more
+        // of the same world, and is normally already in the radio cache. This
+        // is only paid when the seed's own mix was too thin.
+        if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS && AppSettings.heavyWorkAllowed) {
+            val sessionRadio = sessionRadioFor(seedSong, sessionSong)
+            if (sessionRadio.isNotEmpty()) {
+                val combined = radio + sessionRadio
+                val more = pickVideoRadio(seedSong, combined, existing, sessionSong)
+                if (more.ordered.size > pick.ordered.size) {
+                    pick = more
+                    sourceSongs = combined
+                    usedSameMode = true
+                }
+            }
+        }
+        if (pick.ordered.size >= MIN_VIDEO_RADIO_TRACKS) {
+            val stage = if (usedSameMode) VideoRadioFallback.SAME_MODE else VideoRadioFallback.NONE
+            TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
+            return Result.success(videoRadioRows(pick, sourceSongs, seedSong, limit))
+        }
+        // Too thin to keep playing. Remember what the video world offered so
+        // the fallback log says why the ordinary path took over.
+        val fallbackLog = { rows: Int, stage: VideoRadioFallback ->
+            TrackLog.i(
+                "BitChord",
+                "video-radio: seed=${seedSong.videoId} mode=video picked=$rows " +
+                    "from=radio dropped=${pick.filter.droppedSummary()} fallback=${stage.wire}",
+                about = seedSong.videoId,
+            )
+        }
+        return loadNormalAutoplayTracks(
+            existing = existing,
+            seedSong = seedSong,
+            radio = radio,
+            limit = limit,
+            sessionSong = sessionSong,
+            sessionIds = sessionIds,
+            onEmpty = { fallbackLog(0, VideoRadioFallback.EMPTY) },
+            onFilled = { rows -> fallbackLog(rows, VideoRadioFallback.NORMAL) },
+        )
+    }
+
+    return loadNormalAutoplayTracks(
+        existing = existing,
+        seedSong = seedSong,
+        radio = radio,
+        limit = limit,
+        sessionSong = sessionSong,
+        sessionIds = sessionIds,
+        onEmpty = {
+            TrackLog.i(
+                "BitChord",
+                "video-radio: seed=${seedSong.videoId} mode=music picked=0 from=radio dropped= fallback=empty",
+                about = seedSong.videoId,
+            )
+        },
+        onFilled = { rows ->
+            TrackLog.i(
+                "BitChord",
+                "video-radio: seed=${seedSong.videoId} mode=music picked=$rows from=radio dropped= fallback=none",
+                about = seedSong.videoId,
+            )
+        },
+    )
+}
+
+/** Turns the ordered video rows into queue entries, marked so they stay video. */
+private fun videoRadioRows(
+    pick: VideoRadioPick,
+    sourceSongs: List<Song>,
+    seedSong: Song,
+    limit: Int,
+): List<Song> {
+    val byId = sourceSongs.associateBy { it.videoId }
+    return pick.ordered.take(limit.coerceAtLeast(0)).mapNotNull { byId[it.videoId] }.map {
+        it.copy(
+            videoRadio = true,
+            radioName = seedSong.radioName,
+            playbackSource = seedSong.playbackSource,
+            playbackSourceType = seedSong.playbackSourceType,
+            playbackSourceId = seedSong.playbackSourceId,
+        ).asQueueEntry(QueueTier.AUTOPLAY)
+    }
+}
+
+/**
+ * The original AutoPlay path, unchanged for normal mode and for the staged
+ * replacement when a video batch is too thin. The caller supplies the already
+ * fetched radio and is told whether rows were produced, so the video log can
+ * name the stage without a second request.
+ */
+private suspend fun loadNormalAutoplayTracks(
+    existing: List<Song>,
+    seedSong: Song,
+    radio: List<Song>,
+    limit: Int,
+    sessionSong: Song?,
+    sessionIds: Set<String>,
+    onEmpty: () -> Unit,
+    onFilled: (Int) -> Unit,
+): Result<List<Song>> {
     // A radio station returns the cover, karaoke and tribute uploads filed
     // under the seed's title as readily as the recordings; the queue used to
     // take them as they came. Filter at the front so the TASTE ranking below
@@ -155,7 +292,10 @@ suspend fun loadAutoplayTracks(
                 )
             }
     }
-    if (extra.isEmpty()) return Result.success(emptyList())
+    if (extra.isEmpty()) {
+        onEmpty()
+        return Result.success(emptyList())
+    }
 
     // Whatever a source offered, a queue row with no name is unplayable to the
     // listener and indistinguishable from a broken player. Drop it here as the
@@ -175,7 +315,10 @@ suspend fun loadAutoplayTracks(
     }.forEach {
         TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (cover/karaoke)", about = seedSong.videoId)
     }
-    if (playable.isEmpty()) return Result.success(emptyList())
+    if (playable.isEmpty()) {
+        onEmpty()
+        return Result.success(emptyList())
+    }
 
     val rows = playable.map {
         it.copy(
@@ -185,6 +328,7 @@ suspend fun loadAutoplayTracks(
             playbackSourceId = seedSong.playbackSourceId,
         ).asQueueEntry(QueueTier.AUTOPLAY)
     }
+    onFilled(rows.size)
     // Music-only works on the rows before they are appended, like every other
     // queue build: the first few are resolved here and the rest as playback
     // approaches them. A row with no song version is queued as its video.

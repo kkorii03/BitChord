@@ -141,6 +141,7 @@ private val NoSongMeaning = MutableStateFlow(false)
 private val NoAutoTranslate = MutableStateFlow(false)
 private val NoAutomixVideos = MutableStateFlow(false)
 private val NoLowPower = MutableStateFlow(false)
+private val NoVideoRadio = MutableStateFlow(false)
 
 private val NoWatch = MutableStateFlow(WatchOutputUi())
 
@@ -226,9 +227,12 @@ interface PlayerSettingsSource {
      */
     val lowPower: StateFlow<Boolean> get() = NoLowPower
     val versionAlignmentInProgress: StateFlow<Boolean>
+    /** Continue a video-song station with other video songs. */
+    val videoRadioEnabled: StateFlow<Boolean> get() = NoVideoRadio
 
     fun setLastPlayerScreen(value: LastPlayerScreen)
     fun setLyricsOffsetMs(value: Int)
+    fun setVideoRadioEnabled(value: Boolean) = Unit
 }
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */

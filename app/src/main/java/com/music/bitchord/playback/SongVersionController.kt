@@ -79,6 +79,7 @@ internal class SongVersionController(
      */
     fun watchForLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song) {
         if (!AppSettings.preferMusicOnly.value) return
+        if (song.videoRadio) return
         if (YtMusicRepository.isSongVersionMissing(song.videoId)) return
         lateVersionMeasureJob = scope.launch {
             val late = try {
@@ -140,6 +141,7 @@ internal class SongVersionController(
                 if (index >= exoPlayer.mediaItemCount) return@launch
                 val item = exoPlayer.getMediaItemAt(index)
                 val song = item.toSong()
+                if (song.videoRadio) continue
                 if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) continue
                 // A downloaded video is still a video and is resolved like any
                 // other. Offline, its file is the only thing that can play, so
@@ -421,6 +423,7 @@ internal class SongVersionController(
             alreadyAudible -> "already audible"
             !AppSettings.preferMusicOnly.value -> "music only off"
             ListenTogether.state.value.inParty -> "listen together"
+            lookupSong.videoRadio -> "video radio"
             !SongVersionPolicy.wantsSongVersion(
                 lookupSong.isVideo,
                 lookupSong.typeUnknown,

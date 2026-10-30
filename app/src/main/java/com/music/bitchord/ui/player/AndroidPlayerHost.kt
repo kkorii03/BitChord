@@ -83,9 +83,11 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val autoTranslateLyrics get() = AppSettings.autoTranslateLyrics
         override val automixVideos get() = AppSettings.automixVideos
         override val versionAlignmentInProgress get() = AppSettings.versionAlignmentInProgress
+        override val videoRadioEnabled get() = AppSettings.videoRadio
 
         override fun setLastPlayerScreen(value: LastPlayerScreen) = AppSettings.setLastPlayerScreen(value)
         override fun setLyricsOffsetMs(value: Int) = AppSettings.setLyricsOffsetMs(value)
+        override fun setVideoRadioEnabled(value: Boolean) = AppSettings.setVideoRadio(value)
     }
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)

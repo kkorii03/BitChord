@@ -35,6 +35,8 @@ import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -250,6 +252,7 @@ internal fun InlineQueue(
         onHide = onHidePlayer,
     )
     val showHistory by PlayerSettings.showQueueHistory.collectAsStateWithLifecycle()
+    val videoRadio by PlayerSettings.videoRadioEnabled.collectAsStateWithLifecycle()
     val tracks = remember(queue, currentIndex, showHistory) { splitQueue(queue, currentIndex, showHistory) }
     val drag = rememberQueueDrag(listState, tracks, onMove, onDragActiveChange)
     val nowPlaying = tracks.nowPlaying
@@ -369,6 +372,14 @@ internal fun InlineQueue(
                     item(key = "autoplay-heading") {
                         AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
                     }
+                    item(key = "autoplay-video-radio") {
+                        VideoRadioRow(
+                            checked = videoRadio,
+                            enabled = autoplayEnabled,
+                            onCheckedChange = PlayerSettings::setVideoRadioEnabled,
+                            modifier = queueMotion(),
+                        )
+                    }
                     queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove)
                 }
             }
@@ -487,6 +498,40 @@ private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
                 color = Color.White.copy(alpha = 0.55f),
             )
         }
+    }
+}
+
+/** The switch under the AutoPlay heading: keep a video-song station video. */
+@Composable
+private fun VideoRadioRow(
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(Res.string.video_radio_continue),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = if (enabled) 0.85f else 0.4f),
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = Color.White,
+                checkedThumbColor = Color.Black,
+                uncheckedTrackColor = Color.White.copy(alpha = 0.25f),
+                uncheckedThumbColor = Color.White,
+            ),
+        )
     }
 }
 

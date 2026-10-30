@@ -31,6 +31,7 @@ class VideoRadioPolicyTest {
         description: String = "",
         categories: List<String> = emptyList(),
         isShort: Boolean = false,
+        isVideoUpload: Boolean = true,
         isUserUpload: Boolean = false,
         songKey: String = "",
         source: VideoSource = VideoSource.MIX,
@@ -43,6 +44,7 @@ class VideoRadioPolicyTest {
         description = description,
         categories = categories,
         isShort = isShort,
+        isVideoUpload = isVideoUpload,
         isUserUpload = isUserUpload,
         songKey = songKey,
         source = source,
@@ -329,4 +331,78 @@ class VideoRadioPolicyTest {
             ordered.map { it.videoId },
         )
     }
+    @Test
+    fun `video radio keeps covers but drops official catalogue rows`() {
+        val result = filter(
+            AutoplayMode.VIDEO_RADIO,
+            listOf(
+                candidate("topic", title = "Dance Monkey", channel = "Tones and I - Topic"),
+                candidate(
+                    "official-mv",
+                    title = "Dance Monkey (Official MV)",
+                    singer = "Tones and I",
+                    channel = "Tones and I",
+                ),
+                candidate("mapped-audio", title = "Dance Monkey", isVideoUpload = false),
+                candidate("fan-cover", title = "Dance Monkey (Cover)", singer = "Oohyo"),
+                candidate("fan-live", title = "Dance Monkey Live", singer = "Oohyo"),
+            ),
+        )
+        assertEquals(listOf("fan-cover", "fan-live"), result.kept.map { it.videoId })
+        assertEquals(3, result.dropped[VideoDropReason.OFFICIAL])
+    }
+
+    @Test
+    fun `video radio still drops arrangements that are not a performance`() {
+        val result = filter(
+            AutoplayMode.VIDEO_RADIO,
+            listOf(
+                candidate("karaoke", title = "Dance Monkey (Karaoke)"),
+                candidate("eight-bit", title = "Dance Monkey (8-bit)"),
+                candidate("piano", title = "Dance Monkey (Piano Version)"),
+                candidate("inst", title = "Dance Monkey (Inst)"),
+                candidate("mr", title = "Dance Monkey (MR)"),
+                candidate("cover", title = "Dance Monkey (Cover)"),
+                candidate("live", title = "Dance Monkey Live"),
+            ),
+        )
+        assertEquals(listOf("cover", "live"), result.kept.map { it.videoId })
+        assertEquals(5, result.dropped[VideoDropReason.ARRANGEMENT])
+    }
+
+    @Test
+    fun `a recent song key drops another cover of the same song`() {
+        val result = filter(
+            AutoplayMode.VIDEO_RADIO,
+            listOf(
+                candidate("cover", title = "Dance Monkey (Cover)"),
+                candidate("live", title = "Dance Monkey (Live)"),
+                candidate("other", title = "Other Song (Cover)"),
+            ),
+            options = VideoFilterOptions(recentSongKeys = setOf("Dance Monkey")),
+        )
+        assertEquals(listOf("other"), result.kept.map { it.videoId })
+        assertEquals(2, result.dropped[VideoDropReason.SAME_SONG])
+    }
+
+    @Test
+    fun `a thin video batch falls through same mode then normal then empty`() {
+        assertEquals(
+            VideoRadioFallback.NONE,
+            videoRadioFallbackStage(picked = 3, sameModeExhausted = true, normalAvailable = false),
+        )
+        assertEquals(
+            VideoRadioFallback.SAME_MODE,
+            videoRadioFallbackStage(picked = 2, sameModeExhausted = false, normalAvailable = true),
+        )
+        assertEquals(
+            VideoRadioFallback.NORMAL,
+            videoRadioFallbackStage(picked = 2, sameModeExhausted = true, normalAvailable = true),
+        )
+        assertEquals(
+            VideoRadioFallback.EMPTY,
+            videoRadioFallbackStage(picked = 0, sameModeExhausted = true, normalAvailable = false),
+        )
+    }
+
 }
