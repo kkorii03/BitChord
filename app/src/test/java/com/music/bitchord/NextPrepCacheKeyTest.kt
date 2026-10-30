@@ -20,6 +20,8 @@ class NextPrepCacheKeyTest {
         localFile: Boolean = true,
         isVideo: Boolean = false,
         lyricsSettings: String = settings,
+        audioSource: String? = null,
+        substituted: Boolean = false,
     ) =
         NextPrepCache.Ready(
             videoId = videoId,
@@ -31,30 +33,32 @@ class NextPrepCacheKeyTest {
             fromFile = localFile,
             localFile = localFile,
             lyricsSettings = lyricsSettings,
+            audioSource = audioSource,
+            substituted = substituted,
         )
 
     @Test
     fun theSameTrackFromTheSameSoundMatches() {
         NextPrepCache.put(ready())
-        assertNotNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = settings))
+        assertNotNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = settings, audioSource = null, substituted = false))
     }
 
     @Test
     fun aStreamDoesNotUseAFilePreparedCache() {
         NextPrepCache.put(ready(localFile = true))
-        assertNull(NextPrepCache.get("video", localFile = false, isVideo = false, lyricsSettings = settings))
+        assertNull(NextPrepCache.get("video", localFile = false, isVideo = false, lyricsSettings = settings, audioSource = null, substituted = false))
     }
 
     @Test
     fun aSongDoesNotUseAVideoPreparedCache() {
         NextPrepCache.put(ready(isVideo = true))
-        assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = settings))
+        assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = settings, audioSource = null, substituted = false))
     }
 
     @Test
     fun anotherTrackNeverMatches() {
         NextPrepCache.put(ready(videoId = "other"))
-        assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = settings))
+        assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = settings, audioSource = null, substituted = false))
     }
 
     @Test
@@ -65,6 +69,6 @@ class NextPrepCacheKeyTest {
             order = listOf(LyricsSource.KUGOU, LyricsSource.LRCLIB),
             prioritizeSyllableSync = false,
         )
-        assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = changedOrder))
+        assertNull(NextPrepCache.get("video", localFile = true, isVideo = false, lyricsSettings = changedOrder, audioSource = null, substituted = false))
     }
 }

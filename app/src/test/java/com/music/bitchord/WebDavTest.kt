@@ -8,7 +8,6 @@ import com.music.bitchord.data.webdav.WebDavClient
 import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.webdav.WebDavConfig
 import com.music.bitchord.data.webdav.WebDavRepository
-import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer

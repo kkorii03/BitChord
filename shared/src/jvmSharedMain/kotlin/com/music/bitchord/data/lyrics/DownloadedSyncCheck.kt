@@ -116,7 +116,7 @@ object DownloadedSyncCheck {
          * run; recording it is what keeps a structural miss from paying for
          * the same decode on every play.
          */
-        ownCheckAnswered: Boolean = true,
+        ownCheckAnswered: Boolean = false,
         /**
          * Whether the file's own answer was actually applied. A match percent
          * is reported even for a refusal (`refused-match`/`refused-shift`),
@@ -130,8 +130,7 @@ object DownloadedSyncCheck {
         // the next play answer NONE and keep an old wrong sync for ever.
         val ownMatch = ownMatchPercent.takeIf { ownApplied }
         val answered = ownCheckAnswered || ownMatch != null || freshMatchPercent != null
-        val alreadyChecked = !isUnverified(storedVersion)
-        val recordVersion = answered || alreadyChecked
+        val recordVersion = answered
         val freshWins = freshMatchPercent != null &&
             freshMatchPercent > (ownMatch ?: 0)
         val bestMatch = if (freshWins) freshMatchPercent else ownMatch

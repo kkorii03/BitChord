@@ -163,7 +163,9 @@ class LocalMediaFilterTest {
                 path = "/storage/emulated/0/Download/clip.3gp",
             ),
         )
-        assertFalse(
+        // The merged container list keeps playable WAV/3GP in the music set;
+        // the filter-on path still hides them through nonMusicExtensions.
+        assertTrue(
             LocalMediaRepository.hasLocalMusicExtension(
                 displayName = "memo.wav",
                 path = "/storage/emulated/0/Recordings/memo.wav",

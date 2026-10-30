@@ -133,7 +133,10 @@ internal object TranslationAhead {
          * file's own "already timed for it" rule must not reject that sync.
          */
         val recheckOverride: Boolean = false,
-    )
+    ) {
+        /** The older spelling used by callers/tests before the rename. */
+        val overrideRecheck: Boolean get() = recheckOverride
+    }
 
     /**
      * The cheap half of [nextTrack] on its own, for the next-song bundle: the

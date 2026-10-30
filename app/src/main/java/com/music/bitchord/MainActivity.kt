@@ -4058,13 +4058,6 @@ private fun BitChordApp(
                                 suggestions = searchSuggestions,
                                 typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                                 onSubmit = viewModel::submitSearch,
-                                onRetry = {
-                                    if (searchSource == SearchSource.LIBRARY) {
-                                        viewModel.loadLibrarySongs()
-                                    } else {
-                                        viewModel.submitSearch()
-                                    }
-                                },
                                 // Suggestions land in search history via searchFor → recordSearch.
                                 // History items (onHistoryClick) navigate/play without re-logging.
                                 onSuggestionClick = viewModel::searchFor,

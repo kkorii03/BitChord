@@ -28,6 +28,8 @@ class NextPrepCacheKeyTest {
         searchedAs = null,
         isVideo = isVideo,
         fromFile = audioSource != null,
+        localFile = false,
+        lyricsSettings = "",
         audioSource = audioSource,
         substituted = substituted,
     )
@@ -42,9 +44,9 @@ class NextPrepCacheKeyTest {
         val file = LyricsTimingAudioSource.file
         NextPrepCache.put(ready(file, isVideo = false))
 
-        assertEquals("video", NextPrepCache.get("video", file, isVideo = false, substituted = false)?.videoId)
+        assertEquals("video", NextPrepCache.get("video", localFile = false, isVideo = false, lyricsSettings = "", audioSource = file, substituted = false)?.videoId)
         assertNull(
-            NextPrepCache.get("video", LyricsTimingAudioSource.stream, isVideo = false, substituted = false),
+            NextPrepCache.get("video", localFile = false, isVideo = false, lyricsSettings = "", audioSource = LyricsTimingAudioSource.stream, substituted = false),
         )
     }
 
@@ -52,9 +54,9 @@ class NextPrepCacheKeyTest {
     fun `a video's own clock is not the song clock`() {
         NextPrepCache.put(ready(null, isVideo = true))
 
-        assertEquals("video", NextPrepCache.get("video", null, isVideo = true, substituted = false)?.videoId)
+        assertEquals("video", NextPrepCache.get("video", localFile = false, isVideo = true, lyricsSettings = "", audioSource = null, substituted = false)?.videoId)
         assertNull(
-            NextPrepCache.get("video", LyricsTimingAudioSource.stream, isVideo = false, substituted = false),
+            NextPrepCache.get("video", localFile = false, isVideo = false, lyricsSettings = "", audioSource = LyricsTimingAudioSource.stream, substituted = false),
         )
     }
 
@@ -63,7 +65,7 @@ class NextPrepCacheKeyTest {
         NextPrepCache.put(ready(LyricsTimingAudioSource.stream, isVideo = false))
 
         assertNull(
-            NextPrepCache.get("other", LyricsTimingAudioSource.stream, isVideo = false, substituted = false),
+            NextPrepCache.get("other", localFile = false, isVideo = false, lyricsSettings = "", audioSource = LyricsTimingAudioSource.stream, substituted = false),
         )
     }
 
@@ -75,16 +77,20 @@ class NextPrepCacheKeyTest {
             "video",
             NextPrepCache.get(
                 "video",
-                LyricsTimingAudioSource.stream,
+                localFile = false,
                 isVideo = false,
+                lyricsSettings = "",
+                audioSource = LyricsTimingAudioSource.stream,
                 substituted = false,
             )?.videoId,
         )
         assertNull(
             NextPrepCache.get(
                 "video",
-                LyricsTimingAudioSource.stream,
+                localFile = false,
                 isVideo = false,
+                lyricsSettings = "",
+                audioSource = LyricsTimingAudioSource.stream,
                 substituted = true,
             ),
         )
@@ -97,8 +103,10 @@ class NextPrepCacheKeyTest {
         assertNull(
             NextPrepCache.get(
                 "video",
-                LyricsTimingAudioSource.stream,
+                localFile = false,
                 isVideo = false,
+                lyricsSettings = "",
+                audioSource = LyricsTimingAudioSource.stream,
                 substituted = false,
             ),
         )
@@ -106,8 +114,10 @@ class NextPrepCacheKeyTest {
             "video",
             NextPrepCache.get(
                 "video",
-                LyricsTimingAudioSource.stream,
+                localFile = false,
                 isVideo = false,
+                lyricsSettings = "",
+                audioSource = LyricsTimingAudioSource.stream,
                 substituted = true,
             )?.videoId,
         )
