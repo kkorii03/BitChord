@@ -866,6 +866,7 @@
     <string name="song_cache_limit_subtitle">다운로드된 오디오를 저장해서 탐색과 다시 재생을 빠르게 합니다.</string>
     <string name="replay_genres_enabled_subtitle">Last.fm에 아티스트의 장르를 요청합니다. 아티스트 이름만 전송됩니다.</string>
     <string name="replay_genres_disabled_subtitle">이 기능을 끄면 Replay 장르 차트가 표시되지 않습니다.</string>
+    <string name="replay_genres_missing_key_subtitle">Last.fm API 키가 없어 장르를 불러올 수 없습니다.</string>
     <string name="swipe_plays_next">노래를 스와이프하면 다음 항목으로 재생됩니다.</string>
     <string name="swipe_adds_to_queue">끄면 스와이프한 노래가 대기열 맨 끝에 추가됩니다.</string>
     <string name="import_backup_warning">이 기기의 설정과 청취 기록이 파일 내용으로 대체됩니다. 지금 데이터를 지키려면 먼저 내보내십시오.</string>

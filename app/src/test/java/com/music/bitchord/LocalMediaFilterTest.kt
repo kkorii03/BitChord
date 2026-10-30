@@ -148,6 +148,30 @@ class LocalMediaFilterTest {
     }
 
     @Test
+    fun `filter off brings back wav and 3gp audio`() {
+        // The subtitle names WAV as something the filter hides, so switching
+        // it off has to show a WAV file rather than keep the whole format out.
+        assertTrue(
+            LocalMediaRepository.hasPlayableAudioExtension(
+                displayName = "memo.wav",
+                path = "/storage/emulated/0/Recordings/memo.wav",
+            ),
+        )
+        assertTrue(
+            LocalMediaRepository.hasPlayableAudioExtension(
+                displayName = "clip.3gp",
+                path = "/storage/emulated/0/Download/clip.3gp",
+            ),
+        )
+        assertFalse(
+            LocalMediaRepository.hasLocalMusicExtension(
+                displayName = "memo.wav",
+                path = "/storage/emulated/0/Recordings/memo.wav",
+            ),
+        )
+    }
+
+    @Test
     fun `filter off still refuses containers the app cannot play`() {
         assertFalse(
             LocalMediaRepository.hasLocalMusicExtension(

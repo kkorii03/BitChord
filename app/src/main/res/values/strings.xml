@@ -962,6 +962,7 @@
     <string name="song_cache_limit_subtitle">Keeps downloaded audio on disk for instant seeking and replays</string>
     <string name="replay_genres_enabled_subtitle">Asks Last.fm for an artist’s genres. Only the artist name is sent.</string>
     <string name="replay_genres_disabled_subtitle">The Replay genre chart stays hidden while this is off</string>
+    <string name="replay_genres_missing_key_subtitle">A Last.fm API key is needed before genres can be fetched</string>
     <string name="swipe_plays_next">Swiping a song plays it next</string>
     <string name="swipe_adds_to_queue">When disabled, swiping adds the song to the end of the queue</string>
     <string name="import_backup_warning">This replaces this device’s settings and listening history with the contents of the file. Export the current data first if you want to keep it.</string>

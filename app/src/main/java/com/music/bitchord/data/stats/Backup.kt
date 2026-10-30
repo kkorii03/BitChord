@@ -66,12 +66,12 @@ object Backup {
      *
      * A backup is text the user hands us through a document picker, so its size
      * is not ours to trust. Listening buckets and local playlists make a real
-     * one larger than a settings transfer, but a year of listening plus a few
-     * thousand playlist rows is still a few megabytes; 32 MiB leaves room for
-     * that while refusing a file that would exhaust the process before the
-     * schema check can run.
+     * one larger than a settings transfer, and the history alone can reach
+     * several megabytes; the shared 64 MiB cap leaves room for that while
+     * refusing a file that would exhaust the process before the schema check
+     * can run.
      */
-    internal const val MAX_IMPORT_BYTES = 32 * 1024 * 1024
+    internal const val MAX_IMPORT_BYTES = 64 * 1024 * 1024
 
     /**
      * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
@@ -386,9 +386,6 @@ object Backup {
 
     private const val APP_TAG = "bitchord"
 
-    /** A backup carries months of listening, so it needs more room than a settings share. */
-    private const val MAX_BACKUP_BYTES = 32 * 1024 * 1024
-
     /** Reads at most [maxBytes] of UTF-8 text, refusing rather than growing without bound. */
     @JvmName("readBackupTextFromStream")
     internal fun InputStream.readBackupText(maxBytes: Int = MAX_IMPORT_BYTES): String {
@@ -404,6 +401,16 @@ object Backup {
         }
         return output.toByteArray().decodeToString()
     }
+
+    /**
+     * Upper bound on a backup, shared by export and import.
+     *
+     * A backup is preferences and listening history, not media, but the
+     * history alone can reach several megabytes: 36 months of up to 600 tracks
+     * and 400 artists/albums each, with a per-day row per entry, and the JSON
+     * is pretty-printed. A settings-sized limit rejected the app's own exports.
+     */
+    internal const val MAX_BACKUP_BYTES = 64 * 1024 * 1024
 
     /**
      * Bump when the shape below stops being readable by an older build. A file
