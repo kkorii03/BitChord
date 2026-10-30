@@ -595,6 +595,10 @@ class CrossfadeController(
      */
     private var bailFromGain = 0f
 
+    /** The session-side player during a bail, and the faded gain it starts from. */
+    private var bailSurvivor: ExoPlayer? = null
+    private var bailSurvivorFromGain = 1f
+
     /** Dedupes the per-tick plan log down to one line per distinct verdict. */
     private var lastPlanVerdict = ""
 
@@ -942,7 +946,18 @@ class CrossfadeController(
      * player this class has finished with.
      */
     fun onSkipRequested() {
+        val silenceIncoming = CrossfadeArmPolicy.skipSilencesIncoming(
+            isFading = phase == Phase.FADING,
+            handedOff = handedOff,
+        )
         if (phase != Phase.IDLE) bail()
+        if (silenceIncoming && phase == Phase.BAILING) {
+            // The session player is about to be moved onto the very row the
+            // standby is playing, so let the standby go silent now instead of
+            // playing that row twice for the length of the bail ramp.
+            incoming?.volume = 0f
+            bailFromGain = 0f
+        }
         wakeTicker()
     }
 
@@ -2287,9 +2302,11 @@ class CrossfadeController(
         }
         val progress = (SystemClock.elapsedRealtime() - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
+            val survivorGain = CrossfadeGain.bailSurvivor(bailSurvivorFromGain, progress)
+            bailSurvivor?.volume = survivorGain
             val fall = if (leaving === outgoing && ranOn(leaving)) 0f else bailFromGain * fallGain(progress)
             leaving.volume = fall
-            onBlendHeadroom(headroomFor(1f, fall))
+            onBlendHeadroom(headroomFor(survivorGain, fall))
             return
         }
         finish()
@@ -2344,8 +2361,12 @@ class CrossfadeController(
         // this ramp exists to avoid.
         filters.open()
         // Whichever track is *not* the session's is the one ramped away: the
-        // outgoing tail after the handoff, the incoming track before it.
-        if (handedOff) incoming?.volume = 1f else outgoing?.volume = 1f
+        // outgoing tail after the handoff, the incoming track before it. The
+        // session side is ramped back up from where its fader actually was, not
+        // snapped to unity.
+        val survivor = if (handedOff) incoming else outgoing
+        bailSurvivor = survivor
+        bailSurvivorFromGain = survivor?.volume ?: 1f
         bailFromGain = leavingOnBail()?.volume ?: 0f
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
@@ -2417,6 +2438,9 @@ class CrossfadeController(
         outgoing = null
         incoming = null
         handedOff = false
+        bailSurvivor = null
+        bailSurvivorFromGain = 1f
+        bailFromGain = 0f
         outgoingItemIndex = C.INDEX_UNSET
         incomingItemIndex = C.INDEX_UNSET
         incomingWrapsToStart = false
@@ -3650,6 +3674,19 @@ internal object CrossfadeGain {
 
     /** The production outgoing fader: every Automix style uses this pair. */
     fun mixFall(progress: Float): Float = fall(progress)
+
+    /**
+     * The surviving player's gain while an interrupted blend is ramped away.
+     *
+     * An abort used to snap this side straight to unity, which was a jump of up
+     * to nearly full scale when the fade was already well advanced. It now
+     * returns from wherever the fader actually was, on the same short ramp the
+     * leaving side uses.
+     */
+    fun bailSurvivor(fromGain: Float, progress: Float): Float {
+        val from = fromGain.coerceIn(0f, 1f)
+        return (from + (1f - from) * rise(progress)).coerceIn(0f, 1f)
+    }
 
     fun progress(elapsedMs: Long, spanMs: Long): Float {
         if (spanMs <= 0L) return 1f

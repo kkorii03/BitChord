@@ -102,6 +102,9 @@ const val VOCAL_ACTIVE_THRESHOLD = 0.6
  */
 const val MAX_DISCARDED_MUSIC_SECONDS = 12.0
 
+/** Slack for a mix-out anchor that sits exactly on the analysed content end. */
+private const val MIX_ANCHOR_EPSILON = 0.05
+
 /**
  * Fraction of a track's own loud-end reference below which a sample counts as
  * silence rather than music, so a genuine gap costs nothing against the budget.
@@ -515,7 +518,12 @@ fun rankMixInCandidates(analysis: TrackAnalysis): List<RankedMixCandidate> {
 
 /** Falls back to the scalar mix-out fields when the analysis carries no candidate list. */
 private fun mixOutCandidatesOf(analysis: TrackAnalysis, contentEnd: Double): List<MixCandidate> {
-    val supplied = analysis.mixOutCandidates.filter { it.time.isFinite() && it.time > 0 }
+    // An exit after the content end is not an exit: it would fade the song out
+    // in its trailing silence (or past the file), and because a point beyond the
+    // end has no measurable remaining music it used to score as costing nothing.
+    val supplied = analysis.mixOutCandidates.filter {
+        it.time.isFinite() && it.time > 0 && it.time <= contentEnd + MIX_ANCHOR_EPSILON
+    }
     val candidates = supplied.map {
         MixCandidate(time = it.time, score = it.score.orZero(), type = it.type)
     }.toMutableList()
@@ -578,6 +586,7 @@ fun rankMixOutCandidates(
                 measured = measured != null,
             )
         }
+        .filter { it.time <= end + MIX_ANCHOR_EPSILON }
         .filter { it.discardedMusicSeconds <= MAX_DISCARDED_MUSIC_SECONDS }
         .sortedWith(compareByDescending<RankedMixCandidate> { it.rankScore }.thenByDescending { it.time })
 }

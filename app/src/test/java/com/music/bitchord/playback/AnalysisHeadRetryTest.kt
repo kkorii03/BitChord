@@ -37,4 +37,12 @@ class AnalysisHeadRetryTest {
     fun completeHeadNeedNotRetry() {
         assertFalse(analysisHeadShouldRetry(heldBefore = 0, heldAfter = min, roundsStarted = 1, maxRounds = 3, minBytes = min))
     }
+
+    @Test
+    fun aHeadDeferredToAnotherWriterDoesNotConsumeTheClaim() {
+        assertFalse(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = true))
+        assertTrue(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = false))
+        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = false))
+        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = true))
+    }
 }

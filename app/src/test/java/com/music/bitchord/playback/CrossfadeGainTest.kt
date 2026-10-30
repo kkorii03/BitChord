@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CrossfadeGainTest {
@@ -67,5 +68,21 @@ class CrossfadeGainTest {
         assertEquals(6_000L, CrossfadeGain.spanMs(6_000L, 60_000L))
         assertEquals(2_000L, CrossfadeGain.spanMs(6_000L, 6_000L))
         assertEquals(1L, CrossfadeGain.spanMs(0L, 60_000L))
+    }
+
+    @Test
+    fun bailSurvivorReturnsFromTheFadedLevelToUnityWithoutSnapping() {
+        assertEquals(0.2f, CrossfadeGain.bailSurvivor(0.2f, 0f), 0.0001f)
+        assertEquals(1f, CrossfadeGain.bailSurvivor(0.2f, 1f), 0.0001f)
+        assertEquals(1f, CrossfadeGain.bailSurvivor(1f, 0f), 0.0001f)
+        assertEquals(0f, CrossfadeGain.bailSurvivor(0f, 0f), 0.0001f)
+        var last = CrossfadeGain.bailSurvivor(0.2f, 0f)
+        var progress = 0.05f
+        while (progress <= 1f) {
+            val gain = CrossfadeGain.bailSurvivor(0.2f, progress)
+            assertTrue("bail gain went backwards at $progress", gain >= last)
+            last = gain
+            progress += 0.05f
+        }
     }
 }

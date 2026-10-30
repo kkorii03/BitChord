@@ -342,6 +342,7 @@ object AudioCache {
         // [discardBadRendition] clears one track's claim for the same reason.
         analysisHeads.clear()
         analysisHeadsInFlight.clear()
+        analysisHeadDeferredLogged.clear()
         analysisHeadWant.clear()
         stalledAnalysisHeads.clear()
         renditionKeys.clear()
@@ -467,6 +468,7 @@ object AudioCache {
                 // room for is never refilled and the discard buys nothing.
                 uri.getQueryParameter("v")?.let {
                     analysisHeads.remove(it)
+                    analysisHeadDeferredLogged.remove(it)
                     stalledAnalysisHeads.remove(it)
                 }
             }
@@ -1030,6 +1032,7 @@ object AudioCache {
         playedIds.remove(mediaId)
         analysisHeads.remove(mediaId)
         analysisHeadsInFlight.remove(mediaId)
+        analysisHeadDeferredLogged.remove(mediaId)
         analysisHeadWant.remove(mediaId)
         renditionKeys.remove(mediaId)
         var removed = 0
@@ -1261,6 +1264,7 @@ object AudioCache {
                         forgetPurgeCandidate(key)
                         mediaId?.let { id ->
                             analysisHeads.remove(id)
+                            analysisHeadDeferredLogged.remove(id)
                             analysisHeadWant.remove(id)
                             stalledAnalysisHeads.remove(id)
                             renditionKeys.remove(id)
@@ -2258,6 +2262,13 @@ object AudioCache {
      */
     private val analysisHeads = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * Tracks whose head round was deferred because another writer held the
+     * entry, so the per-tick retry does not repeat the same log line. Cleared
+     * when the round finally starts or the entry is forgotten.
+     */
+    private val analysisHeadDeferredLogged = ConcurrentHashMap.newKeySet<String>()
+
     /** Video ids with a head fetch in the air, so a tick cannot stack another on top. */
     private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
 
@@ -2530,20 +2541,29 @@ object AudioCache {
             return
         }
         val videoId = uri.getQueryParameter("v") ?: return
+        // A player read, or read-ahead's own write, holds the entry and is
+        // already bringing the bytes in. Fetching the same range here would
+        // fail the write and leave this round "short" over data that went on
+        // to be cached. Deferral must not consume the one-round claim: doing
+        // that used to leave the track marked "already asked" forever, so once
+        // the other writer let go no later tick could start the fetch. The
+        // claim is taken only when the round may actually start.
+        val anotherWriter = anotherWriterHas(videoId)
+        if (!analysisHeadMayClaim(
+                alreadyRequested = analysisHeads.containsKey(videoId),
+                anotherWriterHas = anotherWriter,
+            )
+        ) {
+            if (anotherWriter && analysisHeadDeferredLogged.add(videoId)) {
+                TrackLog.d(TAG, "analysis head for $videoId deferred: another writer has it", videoId)
+            }
+            return
+        }
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape.
         if (analysisHeads.putIfAbsent(videoId, true) != null) return
-        // A player read, or read-ahead's own write, holds the entry and is
-        // already bringing the bytes in. Fetching the same range here would
-        // fail the write and leave this round "short" over data that went on
-        // to be cached. Keep the claim so the analyzer's per-tick calls do not
-        // repeat this line; the wait that matters clears it before retrying —
-        // see [awaitAnalysisHead].
-        if (anotherWriterHas(videoId)) {
-            TrackLog.d(TAG, "analysis head for $videoId deferred: another writer has it", videoId)
-            return
-        }
+        analysisHeadDeferredLogged.remove(videoId)
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
         // top of a fetch that is still running.

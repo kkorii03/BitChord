@@ -22,3 +22,18 @@ internal fun analysisHeadShouldRetry(
     maxRounds: Int,
     minBytes: Long,
 ): Boolean = roundsStarted < maxRounds && heldAfter < minBytes && heldAfter > heldBefore
+
+/**
+ * Whether a fresh analysis-head round may be claimed right now.
+ *
+ * A track already requested this session is not asked again, and a track whose
+ * cache entry another writer is filling must not race it. The second case is
+ * the one that used to dead-end: the claim was recorded *before* the writer
+ * check, so a deferred round left the track marked "already asked" and no
+ * later tick could ever start the fetch once the writer let go. Deferral must
+ * therefore not consume the claim.
+ */
+internal fun analysisHeadMayClaim(
+    alreadyRequested: Boolean,
+    anotherWriterHas: Boolean,
+): Boolean = !alreadyRequested && !anotherWriterHas

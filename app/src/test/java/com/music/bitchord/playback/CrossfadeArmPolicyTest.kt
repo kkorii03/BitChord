@@ -59,4 +59,12 @@ class CrossfadeArmPolicyTest {
         assertFalse(CrossfadeArmPolicy.canMix(pcm, passthrough))
         assertFalse(CrossfadeArmPolicy.canMix(passthrough, pcm))
     }
+
+    @Test
+    fun aSkipBeforeTheHandoffSilencesTheArmedIncomingTrack() {
+        assertTrue(CrossfadeArmPolicy.skipSilencesIncoming(isFading = true, handedOff = false))
+        assertFalse(CrossfadeArmPolicy.skipSilencesIncoming(isFading = true, handedOff = true))
+        assertFalse(CrossfadeArmPolicy.skipSilencesIncoming(isFading = false, handedOff = false))
+        assertFalse(CrossfadeArmPolicy.skipSilencesIncoming(isFading = false, handedOff = true))
+    }
 }
