@@ -127,3 +127,60 @@
 ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q
 # BUILD SUCCESSFUL
 ```
+
+## 6. 3차 검증(10-30) 처리
+
+이번 차수는 2차 검증(위 5절)이 "고침"으로 둔 항목이 실제 코드에서 유지되는지 다시 읽고,
+검증자가 지적한 두 곳을 고쳤다. 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는
+수정하지 않았다.
+
+### 이전 HIGH·MED 재확인
+
+| 항목 | 이전 상태 | 이번 확인 | 근거 |
+|---|---|---|---|
+| check-net 3b. 429/503 URL을 `recent`에서 무효화하지 않음 | 고침(5절) | 고쳐짐 | `StreamResolver.kt:1224-1228`가 `RATE_LIMIT_CODES`(429/503)면 `recent`에서 지운다. **기기 검증 필요**(재생 중 429/503 실제 응답). |
+| check-net 1. Deepgram no-answer를 완료로 기록 | 고침(5절) | 고쳐짐 | `DownloadedSyncCheck.kt:115-140`이 `ownCheckAnswered`가 false이고 fresh 답도 없으면 `recordVersion=false`. **기기 검증 필요**(가사 싱크). |
+| SourceResolver. 네트워크 실패를 30분 소스 쿨다운으로 집계 | 고침(5절) | 고쳐짐 | `SourceResolver.kt:1054-1060`는 오프라인 타임아웃을, `:1428-1495`는 `isNetworkFailure()`를 소스 실패에서 제외. **기기 검증 필요**(Wi-Fi↔셀룰러). |
+| 오프라인 판정이 `NET_CAPABILITY_INTERNET`만 봄 | 고침(5절) | 이번에 보강 | `AudioCache.kt:652-673,3163-3174`가 캡티브 포털에 더해 **활성 네트워크 없음(capabilities null)도 오프라인**으로 본다. `DownloadHealth.online`은 이미 false를 반환해 일치한다. |
+| SourcesScreen이 예외 원문(영어)을 노출 | 고침(5절) | 고쳐짐 | `SourcesScreen.kt:432,909,964,999`가 `FriendlyError.message`를 거친다. |
+| check-net 9. 일반 다운로드 성공을 HQ 성공으로 정산 | 고침(5절) | 고쳐짐 | `HqLibraryUpgrade.kt:591-615`가 `Downloads.hqApplied` 증거 없으면 일시 실패로 남긴다. |
+| check-net 7 / audit-playback 4. 프록시 URL 세대를 응답 시점에 기록 | 고침(5절) | 고쳐짐 | `ProxyPlayback.kt:145-157`의 `markResolved(..., generation)`에 요청 시작 세대를 넘긴다. **기기 검증 필요**(프록시 라우트 전환). |
+| check-net 8. 다음 곡 가사 준비가 per-song override를 건너뜀 | 고침(5절) | 고쳐짐 | `TranslationAhead.kt:138-147`이 `LyricsOverrideStore.read`를 먼저 본다. |
+| audit-playback 6. 삭제된 로컬 파일을 Media3가 재시도 | 고침(5절) | 고쳐짐 | `PlaybackService.kt:4619`의 `isPermanent`가 `FileNotFoundException`도 영구 실패로 본다. **기기 검증 필요**(파일 삭제 후 재생). |
+| check-flow 5. 저장 파일이 있으면 네트워크 URI도 로컬로 오판 | 고침(5절) | 고쳐짐 | `PlaybackService.kt:7954`는 실제 URI가 없을 때만 저장 파일을 로컬 근거로 쓴다. **기기 검증 필요**(화면 꺼짐 스트리밍). |
+| audit-playback 8. 실패한 전송을 호스트 성공으로 기록 | 고침(5절) | 이번에 보강 | `ChunkedDataSource.kt:32-33,123,162,411,434`가 타임아웃을 실패로, 취소만 제외한다. 아래 표 참고. |
+| audit-lyrics 9. AI 시도가 네트워크 실패·429에도 사용됨으로 기록 | 남음(5절) | 남음 | `LyricsTiming.kt:1405-1415`는 여전히 호출 전에 `noteAttempt`를 기록한다. 주석이 실패한 유료 호출 재과금을 막는 의도라 별도 재시도 예산 없이 바꾸지 않았다. **기기 검증 필요**. |
+| audit-lyrics 4. 일시적 네트워크 실패 뒤 같은 곡 가사를 재시도하지 않음 | 남음(5절) | 남음 | `LyricsController.kt:208,405-413`이 실패한 `lyricsFor` 키를 유지한다. 제공처별 네트워크 오류와 "정말 없음"을 구분하는 정책이 필요하다. **기기 검증 필요**. |
+
+### 새로 찾은 문제(3차)
+
+| 심각도 | 파일:줄 | 증거 | 사용자 영향 | 수정 |
+|---|---|---|---|---|
+| HIGH | `app/src/main/java/com/music/bitchord/playback/AudioCache.kt:652-673` (수정 전 `:665`) | `isOffline()`가 capabilities가 null일 때 `?: false`를 반환했다. `getNetworkCapabilities(activeNetwork)`는 비행기 모드처럼 활성 네트워크가 없으면 null이다. | 비행기 모드에서 앱이 온라인으로 판단해 오프라인 캐시 선택·`SourceResolver`의 오프라인 타임아웃 면제가 모두 우회되고, 다운로드 곡 재생·다음 곡 준비가 네트워크 조회를 시도했다. | 고침: capabilities null을 오프라인으로 처리(`?: true`)하고 판정을 `offlineFromCapabilities`로 분리. 테스트 `NetworkOfflinePolicyTest`. |
+| MED | `app/src/main/java/com/music/bitchord/playback/ChunkedDataSource.kt:32-33,123,162,411,434` (수정 전 `:110` 등) | `SocketTimeoutException`은 `InterruptedIOException`의 하위 타입이다. 기존 `if (e !is InterruptedIOException)`는 타임아웃을 취소로 오인해 `transferFailed`를 세우지 않았고, `close()`가 `noteTransfer(ok=true)`로 죽은 호스트에 성공을 기록했다. | 느린 망/프록시 다운에서 타임아웃난 호스트가 건강도 점수를 얻어 다음 후보 선택에서 계속 앞선다. 동시에 로그에도 실패가 남지 않는다. | 고침: `isTransferCancellation`이 취소(`InterruptedIOException`이면서 `SocketTimeoutException`이 아님)만 제외하고 타임아웃은 실패로 집계. 테스트 `NetworkOfflinePolicyTest`. |
+
+### 이번 수정 파일
+
+| 파일 | 변경 |
+|---|---|
+| `app/src/main/java/com/music/bitchord/playback/AudioCache.kt` | 활성 네트워크가 없을 때(capabilities null) `isOffline()`이 true. 판정 로직을 `offlineFromCapabilities`로 추출. |
+| `app/src/main/java/com/music/bitchord/playback/ChunkedDataSource.kt` | `isTransferCancellation` 추가. 네 곳의 실패 판정이 `SocketTimeoutException`을 실패로 기록하고 진짜 취소만 제외. |
+| `app/src/test/java/com/music/bitchord/playback/NetworkOfflinePolicyTest.kt` | 위 두 판정 7건 테스트. |
+| `docs/review-1031/network-offline.md` | 이 절. |
+
+### 실행 결과 (3차)
+
+```bash
+./gradlew :app:testProdReleaseUnitTest \
+  --tests 'com.music.bitchord.playback.NetworkOfflinePolicyTest' --console=plain -q
+# 7 tests, 0 failures
+
+./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q
+# BUILD SUCCESSFUL
+```
+
+### 남은 우선순위 (3차 기준)
+
+1. **MED (기기 검증 필요)**: AI 엔진 시도를 호출 전에 기록(`LyricsTiming.kt:1405-1415`). 실패한 유료 호출 재과금을 막는 기존 의도가 있어 재시도 예산 설계가 필요하다.
+2. **MED (기기 검증 필요)**: 실패한 가사 조회를 같은 곡 재진입에서 재시도하지 않음(`LyricsController.kt:208,405-413`). 제공처별 네트워크 오류 구분이 필요하다.
+3. **LOW**: 오프라인 일반 자동재생 폴백(`Autoplay.kt`), 재생 기록 재시도(`PlaybackTracker.kt`), 길이 조회 오류 문구(`Downloader.kt`), HQ 거부 TTL(`HqVerificationStore.kt`).
