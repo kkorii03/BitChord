@@ -165,6 +165,7 @@ PASS_D1_SYNC = 0.80
 PASS_D2_PLAYBACK = 0.90
 FIRST_AUDIO_LIMIT_MS = 3000
 LIFECYCLE_WINDOW_SECONDS = 10.0
+REFILL_PAIR_WINDOW_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -489,9 +490,11 @@ def analyze(log: Log) -> Report:
 
         match = HQ_VERIFY_RE.match(text)
         if match:
+            id_match = re.search(r"(?:^|\s)id=(?P<id>\S+)", text)
             hq_verifies.append(
                 {
                     "at": at,
+                    "id": id_match.group("id") if id_match is not None else None,
                     "title": match.group("title"),
                     "source": match.group("source"),
                     "verdict": match.group("verdict"),
@@ -906,12 +909,22 @@ def analyze(log: Log) -> Report:
     for row in hq_verifies:
         if row["verdict"] == "accepted":
             d2_events.append(
-                {"at": row["at"], "title": row["title"], "kind": "hq-verify"}
+                {
+                    "at": row["at"],
+                    "id": row["id"],
+                    "title": row["title"],
+                    "kind": "hq-verify",
+                }
             )
     for row in upgrade_aheads:
         if _is_flac(row["format"]):
             d2_events.append(
-                {"at": row["at"], "title": row["title"], "kind": "upgrade-ahead"}
+                {
+                    "at": row["at"],
+                    "id": None,
+                    "title": row["title"],
+                    "kind": "upgrade-ahead",
+                }
             )
 
     d2_success = 0
@@ -919,11 +932,21 @@ def analyze(log: Log) -> Report:
     for event in d2_events:
         wanted = _norm_title(event["title"])
         ids = title_to_ids.get(wanted, set())
+        event_id = event["id"]
         played = any(
             evidence["at"] >= event["at"]
             and (
-                _norm_title(evidence["title"]) == wanted
-                or (evidence["id"] is not None and evidence["id"] in ids)
+                (
+                    event_id is not None
+                    and evidence["id"] == event_id
+                )
+                or (
+                    event_id is None
+                    and (
+                        _norm_title(evidence["title"]) == wanted
+                        or (evidence["id"] is not None and evidence["id"] in ids)
+                    )
+                )
             )
             for evidence in flac_evidence
         )
@@ -1011,7 +1034,32 @@ def analyze(log: Log) -> Report:
         if not refilled:
             zero_refills.append(drop)
 
-    d3_append_success = sum(1 for row in autoplay_appends if row["n"] > 0)
+    # The ordinary path logs the same refill twice: `autoplay: +radio` when it
+    # picks rows, then `queue: autoplay-append` when those rows reach the
+    # queue. Pair the two so one refill is one attempt rather than inflating
+    # both the attempt and the success counts.
+    paired_radios: set[int] = set()
+    paired_appends: set[int] = set()
+    refill_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for append_index, append in enumerate(autoplay_appends):
+        radio_index = None
+        for candidate_index, radio in enumerate(autoplay_radios):
+            if candidate_index in paired_radios:
+                continue
+            delta = (append["at"] - radio["at"]).total_seconds()
+            if 0 <= delta <= REFILL_PAIR_WINDOW_SECONDS:
+                radio_index = candidate_index
+        if radio_index is not None:
+            paired_radios.add(radio_index)
+            paired_appends.add(append_index)
+            refill_pairs.append((autoplay_radios[radio_index], append))
+    unpaired_radios = [
+        row for index, row in enumerate(autoplay_radios) if index not in paired_radios
+    ]
+    unpaired_appends = [
+        row for index, row in enumerate(autoplay_appends) if index not in paired_appends
+    ]
+
     # A video-radio pass that falls back to the ordinary path logs the same
     # refill twice: the video line (fallback=normal) and the +radio/append that
     # actually filled the queue. Defer to the latter, and judge the rest by the
@@ -1027,16 +1075,21 @@ def analyze(log: Log) -> Report:
         row for row in video_radios if row["fallback"] == "normal"
     ]
     d3_video_success = len(d3_video_success_rows)
+    d3_pair_success = sum(
+        1 for radio, append in refill_pairs if radio["total"] > 0 and append["n"] > 0
+    )
     d3_attempts = (
-        len(autoplay_radios)
+        len(unpaired_radios)
+        + len(refill_pairs)
+        + len(unpaired_appends)
         + len(zero_refills)
-        + len(autoplay_appends)
         + d3_video_success
         + len(d3_video_failure_rows)
     )
     d3_success = (
-        sum(1 for row in autoplay_radios if row["total"] > 0)
-        + d3_append_success
+        sum(1 for row in unpaired_radios if row["total"] > 0)
+        + d3_pair_success
+        + sum(1 for row in unpaired_appends if row["n"] > 0)
         + d3_video_success
     )
     d3_failures = [
@@ -1045,13 +1098,22 @@ def analyze(log: Log) -> Report:
     ]
     d3_failures += [
         _failure(row["at"], "autoplay", "+radio 0 +similar 0 +fav 0")
-        for row in autoplay_radios
+        for row in unpaired_radios
         if row["total"] <= 0
     ]
     d3_failures += [
         _failure(row["at"], "autoplay", "queue: autoplay-append n=0")
-        for row in autoplay_appends
+        for row in unpaired_appends
         if row["n"] <= 0
+    ]
+    d3_failures += [
+        _failure(
+            radio["at"],
+            "autoplay",
+            f"+radio {radio['total']} · autoplay-append n={append['n']}",
+        )
+        for radio, append in refill_pairs
+        if radio["total"] <= 0 or append["n"] <= 0
     ]
     d3_failures += [
         _failure(
@@ -1108,6 +1170,7 @@ def analyze(log: Log) -> Report:
         "radio_sums": [row["total"] for row in autoplay_radios],
         "append": len(autoplay_appends),
         "append_n": [row["n"] for row in autoplay_appends],
+        "refill_pairs": len(refill_pairs),
         "video_lines": len(video_radios),
         "video_refills": d3_video_success + len(d3_video_failure_rows),
         "video_deferred": len(d3_video_deferred),
@@ -1539,8 +1602,8 @@ def analyze(log: Log) -> Report:
             Metric(
                 key="D9-download",
                 label="D9 다운로드 · 실패",
-                attempts=len(download_failures),
-                successes=0 if download_failures else None,
+                attempts=len(failed_ids),
+                successes=0 if failed_ids else None,
                 criterion="download failed 0건",
                 passed=None if not download_failures else False,
                 failures=[
@@ -1556,8 +1619,8 @@ def analyze(log: Log) -> Report:
             Metric(
                 key="D9-hq-library",
                 label="D9 다운로드 · HQ 미착지",
-                attempts=len(hq_library_missing),
-                successes=0 if hq_library_missing else None,
+                attempts=len(missing_ids),
+                successes=0 if missing_ids else None,
                 criterion="hq-library did not land 0건",
                 passed=None if not hq_library_missing else False,
                 failures=[

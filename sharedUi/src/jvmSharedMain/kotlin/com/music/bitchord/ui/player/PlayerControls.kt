@@ -369,19 +369,24 @@ internal fun PlaybackQualityLabel(
  * Shown for the few seconds after the artwork or the quality badge was
  * tapped ([revealed]) — Apple Music's equivalent line is not permanently on
  * the sleeve, and a tap is the way to ask for it. The song menu's Info page
- * carries the same measurements for a longer look.
+ * carries the same measurements for a longer look. The Settings switch keeps
+ * the line up all the time instead.
  *
  * Automix's analysis state deliberately has no line here: it describes the
  * app's own work rather than the music, so it belongs in the diagnostic log,
  * not on the player.
  */
+internal fun nerdStatsVisible(revealed: Boolean, alwaysShow: Boolean): Boolean =
+    revealed || alwaysShow
+
 @Composable
 internal fun SleeveNerdStats(
     song: Song,
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
-    if (!revealed) return
+    val alwaysShow by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
+    if (!nerdStatsVisible(revealed, alwaysShow)) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     // The measured stream for this track only; see [PlaybackQualityLabel].
     val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)
