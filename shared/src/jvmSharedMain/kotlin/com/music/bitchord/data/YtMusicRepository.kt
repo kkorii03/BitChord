@@ -762,12 +762,13 @@ object YtMusicRepository {
         // A row whose type is still unknown is treated as a video for timing:
         // its runtime may already include a visual intro/outro, and refusing
         // that drift is how the song version was written off.
-        val target = TrackMatcher.targetOf(song)
+        val target = TrackMatcher.audioSwitchTargetOf(song)
             .copy(isVideo = song.isVideo || song.typeUnknown)
         var searched = false
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
-        for (query in TrackMatcher.queries(target)) {
+        for (query in TrackMatcher.audioSwitchQueries(song)) {
+            Log.d(TAG, "audio switch: query=$query")
             val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
             if (page.isSuccess) searched = true
             val rows = page.getOrNull()
