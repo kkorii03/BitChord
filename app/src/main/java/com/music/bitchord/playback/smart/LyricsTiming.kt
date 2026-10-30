@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
@@ -717,6 +718,21 @@ object LyricsTiming {
          * two, so there is nothing better to look for.
          */
         preferredOriginal: Song? = null,
+        /**
+         * Wait on the cache's own write signal rather than polling the disk.
+         * The next row is not playing, so its opening arrives from read-ahead
+         * (or the player buffering ahead) at unpredictable moments; a poll
+         * would wake the CPU for a track nobody is listening to yet.
+         */
+        awaitCacheSignal: Boolean = false,
+        /**
+         * Run the pass in the caller's job rather than [measureScope]. The
+         * next-row bundle uses this so replacing that row cancels the
+         * measurement with it; the screen and the late-version path keep the
+         * app-lifetime behaviour so their answer is not lost when a screen
+         * closes.
+         */
+        cancelWithCaller: Boolean = false,
     ) {
         // The song version already resolved for this row. Measuring against
         // the right recording first is what stops a karaoke arrangement or a
@@ -727,13 +743,14 @@ object LyricsTiming {
                 ?.takeIf { it.videoId.isNotBlank() && it.videoId != video.videoId }
         val lock = measuring.getOrPut(video.videoId) { Mutex() }
         // Off the caller's thread — the lyrics screen asks from the main one —
-        // since the kept records are read from disk along the way; and in
-        // [measureScope], so the caller going away doesn't abandon it.
-        measureScope.async {
+        // since the kept records are read from disk along the way. Normally
+        // also in [measureScope], so the caller going away doesn't abandon it;
+        // the next-row bundle opts into its own job instead.
+        suspend fun runMeasurement() {
             lock.withLock {
-                if (!worthMeasuring(context, video.videoId)) return@async
+                if (!worthMeasuring(context, video.videoId)) return@withLock
                 val outcome = try {
-                    measureFresh(context, video, names, videoMs, preferred) { early ->
+                    measureFresh(context, video, names, videoMs, preferred, awaitCacheSignal) { early ->
                         // A quick answer only where there is none yet: a second pass
                         // (more of the video has arrived) must not trade an answer from
                         // the whole record for one from its opening, even for a minute.
@@ -744,15 +761,20 @@ object LyricsTiming {
                     throw cancelled
                 } catch (e: Exception) {
                     TrackLog.w(TAG, "measurement failed: ${e.message}", video.videoId)
-                    return@async
+                    return@withLock
                 }
                 // Only a finished measurement is remembered: a dropped connection or
                 // a decoder that wouldn't open is worth trying again, a refusal is
                 // not (until more of the video, or of the record, is there to look at).
-                if (outcome !is Measured.Done) return@async
+                if (outcome !is Measured.Done) return@withLock
                 keep(context, video.videoId, outcome)
             }
-        }.await()
+        }
+        if (cancelWithCaller) {
+            withContext(Dispatchers.IO) { runMeasurement() }
+        } else {
+            measureScope.async { runMeasurement() }.await()
+        }
     }
 
     /**
@@ -849,6 +871,7 @@ object LyricsTiming {
         names: List<Pair<String, String>>,
         videoMs: Long,
         preferredOriginal: Song?,
+        awaitCacheSignal: Boolean,
         early: suspend (Measured.Done) -> Unit,
     ): Measured {
         val began = System.currentTimeMillis()
@@ -902,7 +925,11 @@ object LyricsTiming {
         // The video, as much as has arrived (it is usually the track playing,
         // and the player is the one fetching it), read once for every candidate
         // and, on later passes, only from where the last one stopped.
-        val copy = awaitVideoOpening(video) ?: return Measured.Retry
+        val copy = if (awaitCacheSignal) {
+            awaitNextVideoOpening(video)
+        } else {
+            awaitVideoOpening(video)
+        } ?: return Measured.Retry
         mark = lap("비디오 대기", mark)
         val complete = copy.isComplete || video.localUri != null
         val job = currentCoroutineContext()[Job]
@@ -1064,6 +1091,30 @@ object LyricsTiming {
             if (copy != null && (copy.isComplete || copy.cachedPrefix >= MIN_VIDEO_BYTES)) return copy
             if (System.currentTimeMillis() >= deadline) return null
             delay(250)
+        }
+    }
+
+    /**
+     * The same wait as [awaitVideoOpening], for a row that is not playing.
+     *
+     * A playing track's bytes arrive through the player, which is why the
+     * ordinary path may look at the disk on a short cadence. The next row has
+     * no player: its opening is written by read-ahead, the player buffering
+     * ahead, or an analysis head, so this suspends on the cache's span-added
+     * signal and re-checks only when something was actually written. No timer,
+     * no delay loop; the same [VIDEO_TIMEOUT_MS] bounds the wait.
+     */
+    private suspend fun awaitNextVideoOpening(video: Song): AudioCache.Rendition? {
+        if (video.localUri != null) {
+            return AudioCache.Rendition(key = "local:${video.videoId}", contentLength = 0L, cachedPrefix = 0L)
+        }
+        val deadline = SystemClock.elapsedRealtime() + VIDEO_TIMEOUT_MS
+        while (true) {
+            val copy = VersionAudioAligner.renditionToMeasure(video.videoId)
+            if (copy != null && (copy.isComplete || copy.cachedPrefix >= MIN_VIDEO_BYTES)) return copy
+            val left = deadline - SystemClock.elapsedRealtime()
+            if (left <= 0L) return null
+            if (!AudioCache.awaitRenditionPrefix(video.videoId, MIN_VIDEO_BYTES, left)) return null
         }
     }
 
@@ -1606,27 +1657,25 @@ object LyricsTiming {
     }
 
     /**
-     * Runs the same measurement, AI fallback and refine path the lyrics screen
-     * uses, but while [song] is still the next queue row.
+     * The free half of [prepareNextPaid]: the measurement and the timing it
+     * already has, while [song] is still the next queue row.
      *
      * The only thing moved is the moment: [measure] reads the copy read-ahead
-     * already put on disk, [verifySong] reads the next row's opening, and
-     * [ensureRefineHeard] does the same. The alignment maths, the engine
-     * choice, the agreement/shift floors and the refine caps are untouched.
-     * [allowAi] is false when the current track has not played long enough (or
-     * the end-of-track deadline is too close): the free measurement still
-     * runs, but no paid engine is asked.
+     * already put on disk, and [timing] reads whatever the store already holds.
+     * The alignment maths and its floors are untouched. This runs immediately,
+     * before any paid-engine gate: the free measurement needs no upload and is
+     * the half that times most covers on its own.
      *
      * Returns the timing that will apply when the row starts; null means the
      * existing paths had nothing to add.
      */
-    suspend fun prepareNext(
+    suspend fun prepareNextFree(
         context: Context,
         song: Song,
         lines: List<LyricLine>,
         fromFile: Boolean,
         source: LyricsSource?,
-        allowAi: Boolean,
+        searchedAs: Pair<String, String>?,
     ): Timing? {
         val query = CoverTitles.lyricsQuery(song)
         val timeable = !fromFile || query.isVideo
@@ -1637,18 +1686,20 @@ object LyricsTiming {
         } else {
             audioSourceKey(song.videoId, song.localUri != null)
         }
-        // The free half first: a video is measured against its original from
-        // the bytes read-ahead already wrote. A song version has no other
-        // recording to measure against; its existing path is the AI song check.
+        // A video is measured against its original from the bytes read-ahead
+        // already wrote. A song version has no other recording to measure
+        // against; its existing path is the AI song check.
         if (recordTimed && song.isVideo && worthMeasuring(context, song.videoId)) {
             measure(
                 context = context,
                 video = song,
-                names = listOf(query.title to query.artist),
+                names = nextPrepNames(query, searchedAs),
                 videoMs = song.durationMillis(),
+                awaitCacheSignal = true,
+                cancelWithCaller = true,
             )
         }
-        var timing = timing(
+        return timing(
             context = context,
             videoId = song.videoId,
             lines = lines,
@@ -1657,7 +1708,35 @@ object LyricsTiming {
             isVideo = song.isVideo,
             audioSource = audioSource,
         )
-        if (!allowAi || !recordTimed) return timing
+    }
+
+    /**
+     * The paid half of the next-row path: the same AI fallback and refine the
+     * lyrics screen uses, run only after the caller's 30 s AI gate has opened.
+     *
+     * The engine choice, the agreement/shift floors and the refine caps are
+     * untouched; only [timing] from [prepareNextFree] is carried in. The
+     * measurement is not repeated here.
+     */
+    suspend fun prepareNextPaid(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        fromFile: Boolean,
+        source: LyricsSource?,
+        timing: Timing?,
+    ): Timing? {
+        val query = CoverTitles.lyricsQuery(song)
+        val timeable = !fromFile || query.isVideo
+        val recordTimed = timeable && (!fromFile || source != null) &&
+            !timedToVideo(source)
+        if (!recordTimed) return timing
+        val audioSource = if (song.isVideo) {
+            null
+        } else {
+            audioSourceKey(song.videoId, song.localUri != null)
+        }
+        var result = timing
 
         if (song.isVideo) {
             // The existing automatic fallback: Gemini/Deepgram only once the
@@ -1675,7 +1754,7 @@ object LyricsTiming {
                     isVideo = true,
                     audioSource = audioSource,
                 )
-                timing = timing(
+                result = timing(
                     context, song.videoId, lines, timeable, recordTimed, true, audioSource,
                 )
             }
@@ -1683,21 +1762,38 @@ object LyricsTiming {
             // The record-timed song check: same Deepgram/Whisper request and
             // same fit/guard the screen runs when the lyrics arrive.
             verifySong(context, song, lines)
-            timing = timing(
+            result = timing(
                 context, song.videoId, lines, timeable, recordTimed, false, audioSource,
             )
         }
 
-        if (timing != null) {
+        if (result != null) {
             // The refine is the last existing stage; it may use an AI transcript
             // it already has or hear the next row's opening. Same policy and caps.
-            ensureRefineHeard(context, song.videoId, song, lines, timing, audioSource)
-            timing = timing(
+            ensureRefineHeard(context, song.videoId, song, lines, result, audioSource)
+            result = timing(
                 context, song.videoId, lines, timeable, recordTimed, song.isVideo, audioSource,
             )
         }
-        return timing
+        return result
     }
+
+    /**
+     * The names a cover is searched under, in the same order the lyrics screen
+     * uses: the video's own reading first when it names the original's artist,
+     * then what its lyrics were found as, then the title alone for a cover
+     * that never names the original, and the query's alternatives.
+     */
+    private fun nextPrepNames(
+        query: CoverTitles.LyricsQuery,
+        searchedAs: Pair<String, String>?,
+    ): List<Pair<String, String>> = buildList {
+        if (query.artistKnown) add(query.title to query.artist)
+        searchedAs?.takeIf { query.artistKnown || it.second != query.artist }?.let(::add)
+        if (!query.artistKnown) add(query.title to "")
+        add(query.title to query.artist)
+        addAll(query.alternatives)
+    }.distinct()
 
     private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
 

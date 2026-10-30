@@ -17,8 +17,10 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
+import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
@@ -2494,6 +2496,48 @@ object AudioCache {
             delay(100)
         }
         return true
+    }
+
+    /**
+     * Waits until [videoId]'s opening is at least [minBytes] on disk, waking on
+     * the cache's own span-added event for the keys that rendition may use.
+     *
+     * This is for a row that is not playing yet: nothing is guaranteed to be
+     * writing it on a clock, so a poll would wake the CPU for a track nobody is
+     * listening to. The listener is registered for the key family read-ahead
+     * writes under (the plain id, its `#alt` siblings, and any rendition keys
+     * already on disk) and removed when the wait ends. Returns false on the
+     * timeout, exactly like the poll it replaces.
+     */
+    suspend fun awaitRenditionPrefix(videoId: String, minBytes: Long, timeoutMs: Long): Boolean {
+        if (openedCache == null) return false
+        if (alignmentPrefixBytes(videoId) >= minBytes) return true
+        val keys = LinkedHashSet<String>().apply {
+            add(videoId)
+            add("$videoId#alt")
+            add("$videoId#alt-noatmos")
+            addAll(renditionKeysFor(videoId))
+        }
+        val reached = CompletableDeferred<Unit>()
+        val listener = object : Cache.Listener {
+            override fun onSpanAdded(cache: Cache, span: CacheSpan) {
+                if (alignmentPrefixBytes(videoId) >= minBytes) reached.complete(Unit)
+            }
+
+            override fun onSpanRemoved(cache: Cache, span: CacheSpan) = Unit
+
+            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
+        }
+        keys.forEach { key -> runCatching { cache.addListener(key, listener) } }
+        return try {
+            if (alignmentPrefixBytes(videoId) >= minBytes) {
+                true
+            } else {
+                withTimeoutOrNull(timeoutMs) { reached.await() } != null
+            }
+        } finally {
+            keys.forEach { key -> runCatching { cache.removeListener(key, listener) } }
+        }
     }
 
     /**

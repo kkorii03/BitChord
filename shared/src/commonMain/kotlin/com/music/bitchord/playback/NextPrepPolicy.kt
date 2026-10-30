@@ -85,9 +85,15 @@ object NextPrepPolicy {
     data class SyncFacts(
         /** The developer switch for the bundle's lyrics/sync path is off. */
         val lyricsOff: Boolean = false,
+        /** The listener's synced-lyrics setting is off, so the step was never wanted. */
+        val syncedLyrics: Boolean = true,
         val hasLyrics: Boolean = false,
         /** The lyrics came from a file whose own clock is not the video's. */
         val fileTimed: Boolean = false,
+        /** Whether the lyrics' clock may be measured against the audio at all. */
+        val recordTimed: Boolean = true,
+        /** The provider's times are already the video's own, so nothing may move them. */
+        val timedToVideo: Boolean = false,
         val heavyWorkAllowed: Boolean = true,
         val aiTimingAhead: Boolean = true,
         val aiUsable: Boolean = true,
@@ -99,14 +105,18 @@ object NextPrepPolicy {
     /**
      * The token for `sync=skipped(<reason>)`, or null when a timing exists and
      * the line says `sync=applied`. Ordered so the reason names the first thing
-     * that actually stopped the path: no lyrics at all, a file clock that must
-     * not be measured, the end-of-track deadline, then the AI gates.
+     * that actually stopped the path: the switches and settings that meant the
+     * step was never wanted, no lyrics at all, a clock that must not be
+     * measured (the video's own times, or a file's foreign clock), the
+     * end-of-track deadline, then the AI gates.
      */
     fun syncSkipReason(facts: SyncFacts): String? = when {
         facts.hasTiming -> null
         facts.lyricsOff -> "lyrics-off"
+        !facts.syncedLyrics -> "synced-off"
         !facts.hasLyrics -> "no-lyrics"
-        facts.fileTimed -> "file-timed"
+        facts.timedToVideo -> "timed-to-video"
+        !facts.recordTimed || facts.fileTimed -> "file-timed"
         !facts.heavyWorkAllowed -> "heavy-off"
         facts.remainingMs <= 0L -> "deadline"
         !facts.aiTimingAhead -> "ai-ahead-off"
