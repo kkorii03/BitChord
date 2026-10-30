@@ -22,7 +22,6 @@ import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.net.TYPEAHEAD_CACHE_ENTRIES
 import com.music.bitchord.data.net.TYPEAHEAD_DEBOUNCE_MS
-import com.music.bitchord.data.net.isCurrentSearchResponse
 import com.music.bitchord.data.net.suggestionRows
 import com.music.bitchord.data.net.typeaheadCacheKey
 import com.music.bitchord.data.net.typeaheadLookupTarget
@@ -333,6 +332,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     private val newestRequestId = AtomicLong(0L)
+
+    /**
+     * Committed searches run independently: a newer one never waits for an
+     * older request's network timeout, and one that is already superseded when
+     * it gets to run is skipped before it spends a round trip.
+     */
+    private val searchRequestPipeline = SearchRequestPipeline(viewModelScope) { newestRequestId.get() }
 
     /**
      * Results of recent searches, so a query searched before is answered
@@ -2412,44 +2418,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
-            // Deliberately collect rather than collectLatest: a committed
-            // search already has its answer gated by request id below, so a
-            // newer one arriving must not cancel the request before it and
-            // tear down its socket for whatever uses that pooled connection
-            // next. Typing goes through the debounced pipelines instead.
+            // The collector only hands each request to its own job. Collecting
+            // rather than collectLatest keeps an in-flight socket alive, but
+            // doing the network call inside this collector serialized every
+            // committed search: a newer filter or query sat behind the older
+            // request's 20–30s timeout, and stale queued requests still spent
+            // a round trip. [SearchRequestPipeline] launches them independently
+            // and skips the ones already superseded before they reach the
+            // network. Typing goes through the debounced pipelines instead.
             .collect { request ->
-                val key = cacheKey(request.query, request.filter)
-                // Something to look at immediately: the exact answer if this
-                // query has been run before, otherwise the closest earlier
-                // one. Only fall back to a spinner with neither.
-                val exact = searchCache.get(key)
-                val cached = exact?.rows ?: prefixMatch(request.query, request.filter)
-                _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
-                // An explicit submit still has to reach the server even when
-                // an anonymous lookup cached the same query: that call is what
-                // records it in the account's history.
-                if (exact != null && request.anonymous) {
-                    searchSession = SearchSession(key, request.requestId, request.filter, exact.continuation)
-                    return@collect
-                }
+                searchRequestPipeline.submit(request.requestId) { isCurrent ->
+                    val key = cacheKey(request.query, request.filter)
+                    // Something to look at immediately: the exact answer if this
+                    // query has been run before, otherwise the closest earlier
+                    // one. Only fall back to a spinner with neither.
+                    val exact = searchCache.get(key)
+                    val cached = exact?.rows ?: prefixMatch(request.query, request.filter)
+                    if (isCurrent()) {
+                        _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
+                    }
+                    // An explicit submit still has to reach the server even when
+                    // an anonymous lookup cached the same query: that call is what
+                    // records it in the account's history.
+                    if (exact != null && request.anonymous) {
+                        if (isCurrent()) {
+                            searchSession = SearchSession(
+                                key,
+                                request.requestId,
+                                request.filter,
+                                exact.continuation,
+                            )
+                        }
+                        return@submit
+                    }
 
-                // Search is YouTube's alone. A module is a *substitution*
-                // layer, not a catalogue to browse: it never has cover art,
-                // radio, related tracks or an album page, so its rows arrived
-                // in the results list looking like YouTube's and then behaved
-                // nothing like them. Every track found here takes the ordinary
-                // YouTube path and is handed to the module at playback time —
-                // see [SourceResolver.substituteForYouTube] — which upgrades
-                // the ones it holds without any of them having to be a
-                // separate row to pick between.
-                val result = YtMusicRepository.searchPage(request.query, request.filter, request.anonymous)
-                // A search that has been superseded shouldn't land on screen,
-                // whether it succeeded or failed.
-                if (!isCurrentSearchResponse(request.requestId, newestRequestId.get())) return@collect
-                _results.value = result.fold(
-                    onSuccess = { page -> published(page, key, request.requestId) },
-                    onFailure = { failure -> UiState.Error(failure.friendly()) },
-                )
+                    // Search is YouTube's alone. A module is a *substitution*
+                    // layer, not a catalogue to browse: it never has cover art,
+                    // radio, related tracks or an album page, so its rows arrived
+                    // in the results list looking like YouTube's and then behaved
+                    // nothing like them. Every track found here takes the ordinary
+                    // YouTube path and is handed to the module at playback time —
+                    // see [SourceResolver.substituteForYouTube] — which upgrades
+                    // the ones it holds without any of them having to be a
+                    // separate row to pick between.
+                    val result = YtMusicRepository.searchPage(
+                        request.query,
+                        request.filter,
+                        request.anonymous,
+                    )
+                    // A search that has been superseded shouldn't land on screen,
+                    // whether it succeeded or failed.
+                    if (!isCurrent()) return@submit
+                    _results.value = result.fold(
+                        onSuccess = { page -> published(page, key, request.requestId) },
+                        onFailure = { failure -> UiState.Error(failure.friendly()) },
+                    )
+                }
             }
     }
 

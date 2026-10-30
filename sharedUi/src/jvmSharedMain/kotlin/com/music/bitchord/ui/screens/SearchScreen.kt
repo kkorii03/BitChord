@@ -685,18 +685,32 @@ private fun LazyListScope.searchSuggestions(
     // row. It keeps the gap under the field stable even when that row changes
     // its text or icon treatment.
     item(key = "suggestions:top-inset") { Spacer(Modifier.height(8.dp)) }
-    // Skip the echo of the typed text (element 0) — it's already visible in
-    // the search field itself — and cap at N so the list stays compact above
-    // the playable-media cards.
-    itemsIndexed(suggestions.drop(1).take(3), key = { _, term -> "suggest:$term" }) { _, term ->
+    // Element 0 is the text as typed. It must be drawn: the view model enters
+    // this mid-edit state from the keystroke itself, before any completion has
+    // arrived, so dropping it leaves an empty spacer in place of the results
+    // until the lookup lands (or forever, if it fails).
+    val rows = suggestionDisplayRows(suggestions)
+    itemsIndexed(rows, key = { _, row -> "suggest:${row.index}:${row.term}" }) { _, row ->
         SuggestionRow(
-            term = term,
-            isQueryAction = false,
-            onFill = { onFill(term) },
-            onClick = { onClick(term) },
+            term = row.term,
+            isQueryAction = row.isQueryAction,
+            onFill = if (row.isQueryAction) null else ({ onFill(row.term) }),
+            onClick = { onClick(row.term) },
         )
     }
 }
+
+/** One suggestion line: the typed query action first, then up to three completions. */
+internal data class SuggestionDisplayRow(
+    val term: String,
+    val isQueryAction: Boolean,
+    val index: Int,
+)
+
+internal fun suggestionDisplayRows(suggestions: List<String>): List<SuggestionDisplayRow> =
+    suggestions.take(4).mapIndexed { index, term ->
+        SuggestionDisplayRow(term = term, isQueryAction = index == 0, index = index)
+    }
 
 /**
  * One typeahead row: tap the text to search it, or the arrow to put it in the

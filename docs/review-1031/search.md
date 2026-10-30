@@ -180,3 +180,76 @@
 - 기존 회귀: `InnertubeSearchPrivacyTest`, `YouTubeWebSearchParserTest`, `SearchPagingTest`,
   `SearchHistoryTrackMappingTest`, `SearchHistoryPauseTest`
 - 빌드: `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과
+
+---
+
+## 6. 2차 엄격 검토(2026-10-31)에서 수정한 결함
+
+### 6-1. [MEDIUM] 애드온 검색 기록이 첫 검색에서 디스크 기록을 덮어씀
+- 파일: `app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:77-115`
+- 증거: `recordAddonQuery`/`removeAddonQuery`가 `saveAddon(...)` 호출 전에
+  `_addonRecent.value`로 새 목록을 만들었다. `saveAddon`은 그 뒤에야 `open()`/`load()`를
+  호출하므로, 앱 시작 직후 첫 애드온 검색은 아직 비어 있는 메모리 목록에 새 단어만 넣고
+  그대로 저장해 디스크의 기존 기록을 지웠다. `removeAddonQuery`도 같은 이유로 전체 삭제가
+  될 수 있었다.
+- 사용자 영향: 앱을 다시 켤 때마다 애드온 검색 기록이 사라지고, 첫 삭제가 나머지 기록까지
+  지운다.
+- 빈도: 애드온 검색을 쓰는 사용자에게 앱 재시작 후 첫 검색마다(항상).
+- 수정: `updateAddons`가 단일 writer 스레드에서 먼저 `open()`으로 디스크를 읽은 뒤
+  변환·저장한다. 디코드도 메인 스레드 밖에서 일어나고, 연속 add/remove 순서도 유지된다.
+- 회귀 테스트: `com.music.bitchord.data.settings.SearchHistoryAddonPersistenceTest`
+  (`the first addon search after launch keeps the stored history`,
+  `removing an addon query before the store opens keeps the rest`)
+
+### 6-2. [MEDIUM] 커밋 검색이 이전 요청의 타임아웃을 기다림
+- 파일: `app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2419-2474`,
+  `app/src/main/java/com/music/bitchord/ui/SearchRequestPipeline.kt:18-30`
+- 증거: `collect` 안에서 `searchPage`를 직접 호출해 요청이 직렬화됐다. 새 필터/검색어는
+  이전 요청이 OkHttp connect 20s/read 30s로 끝날 때까지 `UiState.Loading`조차 못 띄웠고,
+  그 사이 대기열에 남은(이미 최신이 아닌) 요청도 네트워크를 한 번 더 썼다.
+- 사용자 영향: 느린/끊긴 망이나 프록시 재연결 직후 필터를 바꾸면 20~30초 동안 이전 결과나
+  빈 화면에 머문다. 연타하면 불필요한 요청이 뒤따른다.
+- 빈도: 느린 망·필터 연타에서 흔함.
+- 수정 전/후 진리표(요청 R1, R2, 최신 id = 2):
+
+  | 시점 | 수정 전 `collect` | 수정 후 `SearchRequestPipeline` |
+  |---|---|---|
+  | R1 네트워크 진행 중 R2 도착 | R2는 R1 완료까지 시작 안 함 | R2 즉시 시작, R1은 취소하지 않고 완료 |
+  | R1 응답이 R2보다 늦게 도착 | (직렬이라 발생 안 함) | `isCurrent=false`라 화면에 쓰지 않음 |
+  | R1이 시작 전에 이미 최신 아님 | 그래도 네트워크 1회 수행 | 네트워크 전에 건너뜀 |
+  | R1 소켓 | 취소되지 않음 | 취소되지 않음(풀 커넥션 보존) |
+
+- 빌드/검증: `com.music.bitchord.ui.SearchRequestPipelineTest`
+  (`a newer request runs while the previous call is still waiting`,
+  `a request superseded before it starts never reaches the network`)
+
+### 6-3. [MEDIUM] 타이핑 직후 자동완성 목록이 빈 화면이 되어 이전 결과/기록이 사라짐
+- 파일: `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/SearchScreen.kt:679-714`,
+  호출부 `:218`, `:300-321`, 시드 `app/.../MainViewModel.kt:2240-2248`
+- 증거: `onQueryChange`는 입력 즉시 `_suggestions = listOf(typed)`로 `suggesting=true`를
+  만든다. 그런데 `searchSuggestions`는 `drop(1)`만 그려서 typed 행이 사라지고, 결과 영역은
+  `suggesting` 분기로 바뀌어 조회가 끝날 때까지(실패하면 계속) 빈 spacer만 남았다.
+- 사용자 영향: 느린/끊긴 망에서 한 글자 입력하면 이전 결과와 최근 검색이 사라지고 아무 것도
+  없는 화면이 된다. 실패 시 복구도 없다.
+- 빈도: 느린 망에서 타이핑할 때마다.
+- 수정 전/후 진리표:
+
+  | `suggestions` | 수정 전 렌더 | 수정 후 렌더 |
+  |---|---|---|
+  | `[typed]` (조회 전/실패) | 0행(빈 spacer) | typed 1행(검색 액션) |
+  | `[typed, c1, c2, c3, c4]` | c1~c3 | typed + c1~c3 |
+  | `[]` | 결과/기록 표시 | 결과/기록 표시(변경 없음) |
+
+- 수정: `suggestionDisplayRows`가 element 0을 `isQueryAction` 행으로 만들고 최대 4행
+  (typed + 완성 3)을 반환한다. typed 행은 채우기 버튼 없이 검색 액션으로만 동작한다.
+- 회귀 테스트: `com.music.bitchord.ui.screens.SearchSuggestionDisplayTest`
+  (`the typed row is shown before any completion arrives`,
+  `three completions follow the typed query action`)
+
+### 6-4. [LOW] 재생목록 탭 문구와 문서 설명 불일치
+- 파일: `sharedUi/.../SearchScreen.kt:1231-1237`, `shared/.../Models.kt:447`
+- 판정: UI는 `Res.string.playlists`(ko `플레이리스트`)를 쓰고, enum의 `label`은
+  `재생목록`으로 남아 있다. 전역 규칙(Apple Music 용어 `플레이리스트`)에 맞는 것은 UI 쪽이며
+  이번에 문구를 되돌리지 않았다. TV 화면(`TvSearchScreen.kt:168`)만 enum label을 계속 쓴다.
+- 조치: 코드 변경 없음. 위 §2-5의 “한국어 문구가 그대로”라는 표현은 “enum의 `재생목록`이
+  아니라 Apple Music식 `플레이리스트`로 바뀌었다”로 정정한다. TV는 이번 범위 밖이다.
