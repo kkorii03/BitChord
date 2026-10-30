@@ -1376,4 +1376,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">อัตราข้อมูล PCM</string>
+    <string name="pipeline_route">เส้นทาง</string>
+    <string name="pipeline_bit_exact_yes">ใช่</string>
+    <string name="pipeline_bit_exact_dsd">ไม่ — แปลง DSD เป็น PCM</string>
+    <string name="pipeline_bit_exact_loudness">ไม่ — ปรับความดัง</string>
+    <string name="pipeline_bit_exact_eq">ไม่ — EQ</string>
+    <string name="pipeline_bit_exact_spatial">ไม่ — เสียงรอบทิศ</string>
+    <string name="pipeline_bit_exact_downstream">ไม่ — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">แปลงในขั้นถัดไป</string>
+    <string name="route_phone">ลำโพงโทรศัพท์</string>
+    <string name="route_wired">หูฟังแบบมีสาย</string>
+    <string name="route_usb">เสียง USB</string>
+    <string name="route_bluetooth">บลูทูธ</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">เอาต์พุตอื่น</string>
+    <string name="spotify_import_language_preference">การตั้งค่าภาษา</string>
+    <string name="spotify_import_language_hint">เช่น ปัญจาบี มราฐี เกาหลี…</string>
 </resources>

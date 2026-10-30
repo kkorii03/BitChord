@@ -1371,4 +1371,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">PCM データレート</string>
+    <string name="pipeline_route">経路</string>
+    <string name="pipeline_bit_exact_yes">はい</string>
+    <string name="pipeline_bit_exact_dsd">いいえ — DSD を PCM に変換</string>
+    <string name="pipeline_bit_exact_loudness">いいえ — ラウドネス補正</string>
+    <string name="pipeline_bit_exact_eq">いいえ — EQ</string>
+    <string name="pipeline_bit_exact_spatial">いいえ — 空間オーディオ</string>
+    <string name="pipeline_bit_exact_downstream">いいえ — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">後段で変換</string>
+    <string name="route_phone">スマートフォンのスピーカー</string>
+    <string name="route_wired">有線ヘッドフォン</string>
+    <string name="route_usb">USB オーディオ</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">その他の出力</string>
+    <string name="spotify_import_language_preference">言語の優先順位</string>
+    <string name="spotify_import_language_hint">例: パンジャブ語、マラーティー語、韓国語…</string>
 </resources>

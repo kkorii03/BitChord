@@ -2,6 +2,7 @@ package com.music.bitchord.ui.screens
 
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.ui.historyPageState
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,6 +15,14 @@ class HistoryEmptyStateTest {
     @Test
     fun aSignedInAccountWithNothingPlayedIsEmpty() {
         val state: UiState<List<Song>> = UiState.Success(emptyList())
+        assertTrue(historyHasNoSongs(state, signedIn = true))
+    }
+
+    @Test
+    fun aCompletedEmptyHistoryPageReachesTheEmptyState() {
+        val state = historyPageState(emptyList())
+
+        assertTrue(state is UiState.Success)
         assertTrue(historyHasNoSongs(state, signedIn = true))
     }
 

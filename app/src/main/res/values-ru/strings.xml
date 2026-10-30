@@ -1425,4 +1425,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">Скорость передачи PCM</string>
+    <string name="pipeline_route">Маршрут</string>
+    <string name="pipeline_bit_exact_yes">Да</string>
+    <string name="pipeline_bit_exact_dsd">Нет — DSD преобразован в PCM</string>
+    <string name="pipeline_bit_exact_loudness">Нет — коррекция громкости</string>
+    <string name="pipeline_bit_exact_eq">Нет — эквалайзер</string>
+    <string name="pipeline_bit_exact_spatial">Нет — пространственный звук</string>
+    <string name="pipeline_bit_exact_downstream">Нет — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">преобразование на следующем этапе</string>
+    <string name="route_phone">Динамик телефона</string>
+    <string name="route_wired">Проводные наушники</string>
+    <string name="route_usb">USB-аудио</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Другой выход</string>
+    <string name="spotify_import_language_preference">Языковые предпочтения</string>
+    <string name="spotify_import_language_hint">напр. панджаби, маратхи, корейский…</string>
 </resources>

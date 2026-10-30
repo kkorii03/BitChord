@@ -1370,4 +1370,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">Laju data PCM</string>
+    <string name="pipeline_route">Rute</string>
+    <string name="pipeline_bit_exact_yes">Ya</string>
+    <string name="pipeline_bit_exact_dsd">Tidak — DSD dikonversi ke PCM</string>
+    <string name="pipeline_bit_exact_loudness">Tidak — koreksi kenyaringan</string>
+    <string name="pipeline_bit_exact_eq">Tidak — EQ</string>
+    <string name="pipeline_bit_exact_spatial">Tidak — audio spasial</string>
+    <string name="pipeline_bit_exact_downstream">Tidak — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">dikonversi di tahap berikutnya</string>
+    <string name="route_phone">Speaker ponsel</string>
+    <string name="route_wired">Headphone kabel</string>
+    <string name="route_usb">Audio USB</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Output lain</string>
+    <string name="spotify_import_language_preference">Preferensi bahasa</string>
+    <string name="spotify_import_language_hint">mis. Punjabi, Marathi, Korea…</string>
 </resources>

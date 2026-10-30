@@ -1370,4 +1370,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">PCM 数据速率</string>
+    <string name="pipeline_route">路径</string>
+    <string name="pipeline_bit_exact_yes">是</string>
+    <string name="pipeline_bit_exact_dsd">否 — DSD 已转换为 PCM</string>
+    <string name="pipeline_bit_exact_loudness">否 — 响度校正</string>
+    <string name="pipeline_bit_exact_eq">否 — 均衡器</string>
+    <string name="pipeline_bit_exact_spatial">否 — 空间音频</string>
+    <string name="pipeline_bit_exact_downstream">否 — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">在后续环节转换</string>
+    <string name="route_phone">手机扬声器</string>
+    <string name="route_wired">有线耳机</string>
+    <string name="route_usb">USB 音频</string>
+    <string name="route_bluetooth">蓝牙</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">其他输出</string>
+    <string name="spotify_import_language_preference">语言偏好</string>
+    <string name="spotify_import_language_hint">例如：旁遮普语、马拉地语、韩语…</string>
 </resources>

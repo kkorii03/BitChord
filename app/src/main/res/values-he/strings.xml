@@ -1398,4 +1398,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">קצב נתונים PCM</string>
+    <string name="pipeline_route">מסלול</string>
+    <string name="pipeline_bit_exact_yes">כן</string>
+    <string name="pipeline_bit_exact_dsd">לא — DSD הומר ל-PCM</string>
+    <string name="pipeline_bit_exact_loudness">לא — תיקון עוצמה</string>
+    <string name="pipeline_bit_exact_eq">לא — אקולייזר</string>
+    <string name="pipeline_bit_exact_spatial">לא — שמע מרחבי</string>
+    <string name="pipeline_bit_exact_downstream">לא — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">הומר בשלב מאוחר יותר</string>
+    <string name="route_phone">רמקול הטלפון</string>
+    <string name="route_wired">אוזניות חוטיות</string>
+    <string name="route_usb">שמע USB</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">פלט אחר</string>
+    <string name="spotify_import_language_preference">העדפת שפה</string>
+    <string name="spotify_import_language_hint">למשל פנג\'אבי, מראטי, קוריאנית…</string>
 </resources>

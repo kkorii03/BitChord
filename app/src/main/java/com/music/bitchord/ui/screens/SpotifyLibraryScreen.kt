@@ -49,6 +49,7 @@ import com.music.bitchord.data.spotify.SpotifyLibrary
 import com.music.bitchord.data.spotify.SpotifyPlaylist
 import com.music.bitchord.data.spotify.SpotifyTrack
 import com.music.bitchord.ui.FriendlyError
+import kotlinx.coroutines.CancellationException
 
 /**
  * The signed-in Spotify account's playlists. A tap opens one as an ordinary
@@ -70,23 +71,26 @@ fun SpotifyLibraryScreen(
     // Bumped by the retry button so the one loader runs again without
     // duplicating the request logic outside the effect.
     var reload by remember { mutableIntStateOf(0) }
-    var loaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(cookie, reload) {
         if (cookie.isBlank()) {
             playlists = emptyList()
             error = null
-            loaded = false
             return@LaunchedEffect
         }
         loading = true
-        loaded = false
         error = null
-        runCatching { SpotifyLibrary.playlists() }
-            .onSuccess { playlists = it }
-            .onFailure { error = FriendlyError.message(context, it) }
+        try {
+            playlists = SpotifyLibrary.playlists()
+        } catch (cancelled: CancellationException) {
+            // Changing the cookie or tapping retry replaces this effect; the
+            // cancelled one must not write its error/loaded flags over the new
+            // load's state.
+            throw cancelled
+        } catch (failure: Throwable) {
+            error = FriendlyError.message(context, failure)
+        }
         loading = false
-        loaded = true
     }
 
     LazyColumn(
@@ -152,18 +156,8 @@ fun SpotifyLibraryScreen(
                     }
                 }
             }
-            // A connected account with no playlists is an answer, not a
-            // loading state; leaving it blank reads as a request still in
-            // flight.
-            if (loaded && !loading && error == null && playlists.isEmpty()) {
-                item(key = "spotify:empty") {
-                    Text(
-                        text = stringResource(R.string.no_results),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    )
-                }
-            }
+            // No separate "no playlists" row: SpotifyLibrary always offers
+            // Liked Songs first, so a connected account is never empty here.
             items(playlists, key = { it.id }) { item ->
                 LibraryRow(
                     title = item.name,

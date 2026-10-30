@@ -333,6 +333,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val newestRequestId = AtomicLong(0L)
 
     /**
+     * Whether the request currently on screen was made without the account.
+     * A retry repairs that same request and must not turn an anonymous lookup
+     * into a signed one.
+     */
+    private var lastSearchAnonymous = true
+
+    /**
      * Results of recent searches, so a query searched before is answered
      * without asking again. That covers the two ways a query is repeated most:
      * a filter tab, which re-runs the same text against a different tab and
@@ -467,6 +474,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The load in flight, so a tab that is shown while it runs does not ask twice. */
     private var libraryLoadJob: Job? = null
+
+    /** The Local Music scan in flight, so a retry does not stack a second full scan. */
+    private var localMusicLoadJob: Job? = null
 
     /** In-memory cache is partitioned by account and profile; it is never shared. */
     private data class ListenerSnapshot(
@@ -2098,10 +2108,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _history.value = UiState.Loading
         viewModelScope.launch {
             val next = YtMusicRepository.history().fold(
-                onSuccess = { songs ->
-                    if (songs.isEmpty()) UiState.Error(text(R.string.history_empty))
-                    else UiState.Success(songs)
-                },
+                // An empty history is a completed answer, not a failure: the
+                // screen already knows how to say "nothing played yet" from a
+                // successful empty list (see HistoryScreen).
+                onSuccess = { songs -> historyPageState(songs) },
                 onFailure = { UiState.Error(it.friendly()) },
             )
             if (identity == listenerKey()) _history.value = next
@@ -2267,12 +2277,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (q.isEmpty()) return
         when (_searchSource.value) {
             SearchSource.LIBRARY -> loadLibrarySongs()
-            SearchSource.ADDONS -> runAddonSearch(q)
+            SearchSource.ADDONS -> runAddonSearch(q, record = false)
             SearchSource.YOUTUBE -> {
                 searchSubmitted = true
                 _suggestions.value = emptyList()
                 _typeaheadResults.value = emptyList()
-                runSearch(anonymous = false)
+                runSearch(anonymous = lastSearchAnonymous)
             }
         }
     }
@@ -2282,8 +2292,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * only costs its own rows; the list is the rest of them, round-robin so
      * no single catalogue buries the others.
      */
-    private fun runAddonSearch(q: String) {
-        SearchHistory.recordAddonQuery(q)
+    private fun runAddonSearch(q: String, record: Boolean = true) {
+        // A retry repairs the query already in the list; re-recording it would
+        // move it to the top as if the listener had searched again.
+        if (record) SearchHistory.recordAddonQuery(q)
         addonSearchJob?.cancel()
         _searchScrollReset.value += 1
         val addons = SourceRegistry.active().filterIsInstance<AddonSource>()
@@ -2333,21 +2345,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Reads the Local Music folder for the Library source. Re-read on every
      * switch to it, so files added since — or a permission granted since —
-     * are in the next answer; the last list stays up meanwhile.
+     * are in the next answer; a list already on screen stays up meanwhile.
      */
     fun loadLibrarySongs() {
-        viewModelScope.launch {
+        // Retrying used to start a second full media scan beside the first.
+        // There can only be one answer to "what is in the folder now", so the
+        // previous scan is replaced rather than raced. An error is not a list:
+        // show the skeleton while the retry runs instead of leaving the stale
+        // message and its retry button up over the new request.
+        localMusicLoadJob?.cancel()
+        _librarySongs.value = localMusicLoadState(_librarySongs.value)
+        localMusicLoadJob = viewModelScope.launch {
             val context = getApplication<Application>()
             _librarySongs.value = if (!LocalMediaRepository.hasStoragePermission(context)) {
                 UiState.Error(text(R.string.storage_required_read))
             } else {
-                runCatching { LocalMediaRepository.getLocalMusic(context) }.fold(
-                    onSuccess = { songs ->
-                        if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
-                        else UiState.Success(songs)
-                    },
-                    onFailure = { UiState.Error(text(R.string.no_local_audio_found)) },
-                )
+                // Do not fold a cancellation into the failure branch: a newer
+                // scan already owns this state, and writing the old error here
+                // would overwrite its Loading/Success.
+                val songs = try {
+                    LocalMediaRepository.getLocalMusic(context)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    null
+                }
+                when {
+                    songs == null -> UiState.Error(text(R.string.no_local_audio_found))
+                    songs.isEmpty() -> UiState.Error(text(R.string.no_local_audio_found))
+                    else -> UiState.Success(songs)
+                }
             }
         }
     }
@@ -2400,6 +2427,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val id = newestRequestId.incrementAndGet()
+        lastSearchAnonymous = anonymous
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
@@ -2589,11 +2617,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         requestId: Long,
     ): UiState<List<SearchResult>> {
         val rows = page.rows
-        if (rows.isEmpty()) return UiState.Error(text(R.string.no_results))
         searchCache.put(key, SearchCacheEntry(rows, page.continuation))
-        searchSession = SearchSession(key, requestId, _filter.value, page.continuation)
-        prefetchTopResult(rows)
-        return UiState.Success(rows)
+        // "Nothing matched" is a completed answer. Sending it down the Error
+        // branch made the screen offer a retry for a request that had already
+        // succeeded, and made SearchScreen's own empty state unreachable.
+        if (rows.isNotEmpty()) {
+            searchSession = SearchSession(key, requestId, _filter.value, page.continuation)
+            prefetchTopResult(rows)
+        } else {
+            searchSession = null
+        }
+        return searchPageState(rows)
     }
 
     private fun searchResultKey(row: SearchResult): String = when (row) {
@@ -3865,3 +3899,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun quantity(id: Int, count: Int): String =
         getApplication<Application>().resources.getQuantityString(id, count, count)
 }
+
+/**
+ * A completed YouTube search page. An empty page is still a completed answer:
+ * the screen renders it as "nothing matched", with its own retry, rather than
+ * as a failed request.
+ */
+internal fun searchPageState(rows: List<SearchResult>): UiState<List<SearchResult>> =
+    UiState.Success(rows)
+
+/** A completed history page. An empty page is the account's real state. */
+internal fun historyPageState(songs: List<Song>): UiState<List<Song>> =
+    UiState.Success(songs)
+
+/**
+ * What the Local Music tab shows while a (re)scan is starting. A list already
+ * on screen stays there; an error does not, or its stale retry button would sit
+ * over the request that is already running.
+ */
+internal fun localMusicLoadState(current: UiState<List<Song>>): UiState<List<Song>> =
+    if (current is UiState.Success) current else UiState.Loading

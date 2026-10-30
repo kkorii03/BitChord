@@ -211,10 +211,11 @@
   경우에만 `n`을 올리고, 대부분의 단계가 `if tap ...; then shot ...` 또는
   `tap_scrolled`(찾지 못하면 로그만 남기고 1 반환)이다. `index.txt`에는 실패/건너뜀이
   기록되지 않으므로, 같은 스크립트도 네트워크·라벨 스크롤·봇 차단에 따라 74에서 67로
-  줄어든다. 특히 `section_search`의 앨범/아티스트/재생목록 상세는 `tap_first_item`이
-  실패하면 각 3장(상세 1 + 스크롤 2)이 통째로 사라지고, `section_library`의 스마트
-  플레이리스트 한 줄이 안 잡히면 3장이 사라진다. 7장 차이는 이 두 종류의 실패(3+3+1)로
-  설명된다.
+  줄어든다. `section_search`의 앨범/아티스트/재생목록 상세는 `tap_first_item`이 실패하면
+  각 3장(상세 1 + `scroll_shots` 2)이 통째로 사라진다. 따라서 7장 차이는 상세 2개(3+3)와
+  단일 `shot` 조건 1장(1)의 조합으로는 설명되지만, `index.txt`에 건너뜀 기록이 없어
+  정확히 어느 단계였는지는 확정할 수 없다. 이전 판의 "두 종류의 실패(3+3+1)" 서술은
+  스마트 플레이리스트 실패가 3장인데 1로 적혀 산술이 맞지 않았으므로 바로잡는다.
 - **수정하지 않은 이유**: `.github/`는 이번 작업의 금지 영역이다. tour를 의미 있게 만들려면
   (1) `index.txt`에 `skipped:` 줄을 남기고, (2) 최소 화면 수를 assert하며, (3) 검색 결과가
   봇 차단이면 실패로 표시해야 한다. 이는 별도 `.github` 작업이다.
@@ -266,3 +267,53 @@
 - `.github/`, keys, 서명 설정은 건드리지 않았다.
 - 남은 HIGH/MEDIUM은 위 A·B·C이며, 모두 화면 밖 상태 흐름(패스 수명, 재생 서비스 상태,
   `openDetail` 분리)을 먼저 만들어야 해서 이번 파일 범위에서 안전하게 고칠 수 없었다.
+
+## 2차 검토 (지적 9건 처리)
+
+기준: 1차 커밋 `8bb6c37` 위, 2026-10-30. 지적 번호는 1차 VERDICT 순서.
+
+| # | 심각도 | 처리 | 내용 |
+|---|---|---|---|
+| 1 | MEDIUM | **고침** | `published()`가 빈 페이지를 `Error(no_results)`가 아니라 `Success(emptyList())`로 낸다. 이제 `SearchScreen`의 `search_no_results` 빈 상태와 다시 시도가 실제로 도달한다. |
+| 2 | MEDIUM | **고침** | `loadHistory()`가 빈 기록을 `Success(emptyList())`로 낸다. `historyHasNoSongs()`가 살아나 `history_empty`가 그려진다. |
+| 3 | LOW | **고침** | Spotify의 빈 재생목록 분기를 제거했다. `SpotifyLibrary.playlists()`가 항상 Liked Songs를 먼저 넣으므로 이 화면은 실제로 비지 않는다. |
+| 4 | MEDIUM | **고침 + 일부 반박** | `retrySearch()`가 마지막 요청의 `anonymous` 값을 재사용한다. 다만 "계정 유튜브 기록에 남는다"는 영향은 코드상 성립하지 않는다: `Innertube.postMusic`이 모든 search 엔드포인트에 `check(anonymous)`를 걸고(`Innertube.kt:1723-1726`), `search()`는 `anonymous` 인자를 요청에 전달하지 않는다. `InnertubeSearchPrivacyTest`가 이 계약을 고정한다. 플래그 재사용은 원 요청과 캐시 조기반환 동작을 맞추기 위한 것이다. |
+| 5 | LOW | **고침** | `runAddonSearch(q, record = false)` 경로를 추가해 재시도가 `SearchHistory.recordAddonQuery()`로 목록 순서를 바꾸지 않는다. |
+| 6 | MEDIUM | **고침** | 로컬 음악 스캔에 `localMusicLoadJob`을 두고 이전 스캔을 취소한다. 성공 목록은 유지하되 오류 상태는 `Loading`으로 바꿔 낡은 오류/재시도 버튼이 새 요청 위에 남지 않는다. |
+| 7 | MEDIUM | **고침** | 새 17개 키를 `values`/`values-ko` 외 지원 16개 로케일(es, fr, de, pl, pt, id, hi, ja, ru, zh, zh-rTW, he, it, tr, th, vi)에 추가했다. `LocaleStringsTest`의 누락 목록에서 이 17개가 사라졌다. (기존 224개 누락은 이번 변경 전부터 있던 별개 부채다.) |
+| 8 | LOW | **고침** | Spotify 로더가 `CancellationException`을 다시 던져, 쿠키/재시도로 취소된 이펙트가 새 로드의 `error`/`loading`을 덮지 않는다. |
+| 9 | LOW | **고침** | tour 산술을 바로잡았다. 상세 실패는 3장씩이므로 7장은 상세 2개(3+3) + 단일 shot 1장(1) 조합이며, skip 로그가 없어 정확한 단계는 확정 불가라고 명시했다. |
+
+### 조건 변경 전후 진리표
+
+`published()`의 빈 결과:
+
+| rows | 1차 | 2차 |
+|---|---|---|
+| 비어 있음 | `Error(no_results)` (화면은 빈 상태 대신 오류+재시도) | `Success(emptyList())` (화면은 `search_no_results`+재시도) |
+| 1개 이상 | `Success(rows)` | `Success(rows)` |
+
+로컬 음악 재스캔 시작 시 표시:
+
+| 현재 상태 | 1차 | 2차 |
+|---|---|---|
+| `Success(rows)` | 그대로 | 그대로 (목록 유지) |
+| `Loading` | 그대로 | `Loading` |
+| `Error(...)` | 그대로 (낡은 오류+재시도 노출) | `Loading` |
+
+### 이번에 바꾼 파일
+
+- `app/src/main/java/com/music/bitchord/ui/MainViewModel.kt`
+- `app/src/main/java/com/music/bitchord/ui/screens/SpotifyLibraryScreen.kt`
+- `app/src/main/res/values-{de,es,fr,he,hi,id,it,ja,pl,pt,ru,th,tr,vi,zh,zh-rTW}/strings.xml`
+- `app/src/test/java/com/music/bitchord/ui/screens/HistoryEmptyStateTest.kt` (파이프라인 케이스 추가)
+- `app/src/test/java/com/music/bitchord/ui/SearchEmptyPipelineTest.kt` (신규)
+- `app/src/test/java/com/music/bitchord/ui/LocalMusicLoadStateTest.kt` (신규)
+- `docs/review-1031/screens-ui-state.md`
+
+### 검증 (2차)
+
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.ui.SearchEmptyPipelineTest' --tests 'com.music.bitchord.ui.screens.HistoryEmptyStateTest' --tests 'com.music.bitchord.ui.UiTranslationCoverageTest' --console=plain -q` → 통과.
+- `./gradlew :sharedUi:jvmTest --tests 'com.music.bitchord.ui.screens.SearchEmptyStateTest' --console=plain -q` → 통과.
+- `LocaleStringsTest`는 여전히 16개 로케일에서 실패하지만 누락 키는 기존 224개뿐이며, 이번에 추가한 17개는 더 이상 목록에 없다.

@@ -1358,4 +1358,22 @@
     <string name="song_info_unavailable">暫無資訊</string>
     <string name="song_info_error">部分資訊無法載入。</string>
     <string name="song_info_retry">重試</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">PCM 資料速率</string>
+    <string name="pipeline_route">路徑</string>
+    <string name="pipeline_bit_exact_yes">是</string>
+    <string name="pipeline_bit_exact_dsd">否 — DSD 已轉換為 PCM</string>
+    <string name="pipeline_bit_exact_loudness">否 — 響度校正</string>
+    <string name="pipeline_bit_exact_eq">否 — 等化器</string>
+    <string name="pipeline_bit_exact_spatial">否 — 空間音訊</string>
+    <string name="pipeline_bit_exact_downstream">否 — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">在後續環節轉換</string>
+    <string name="route_phone">手機揚聲器</string>
+    <string name="route_wired">有線耳機</string>
+    <string name="route_usb">USB 音訊</string>
+    <string name="route_bluetooth">藍牙</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">其他輸出</string>
+    <string name="spotify_import_language_preference">語言偏好</string>
+    <string name="spotify_import_language_hint">例如：旁遮普語、馬拉地語、韓語…</string>
 </resources>
