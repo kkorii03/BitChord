@@ -22,6 +22,8 @@ import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.net.TYPEAHEAD_CACHE_ENTRIES
 import com.music.bitchord.data.net.TYPEAHEAD_DEBOUNCE_MS
+import com.music.bitchord.data.net.isCurrentSearchResponse
+import com.music.bitchord.data.net.suggestionRows
 import com.music.bitchord.data.net.typeaheadCacheKey
 import com.music.bitchord.data.net.typeaheadLookupTarget
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
@@ -2231,6 +2233,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The Library source answers from the device on every keystroke (see
         // [libraryResults]); YouTube's completions have nothing to add to it.
         if (_searchSource.value != SearchSource.YOUTUBE) return
+        // The field has already moved past the old answer. Keeping the old
+        // suggestion/media rows up until the 300ms lookup returns showed
+        // completions and songs for a different prefix — and if the lookup
+        // failed, they stayed under the new text indefinitely. The typed line
+        // is enough to mark the page as mid-edit until the answer arrives.
+        _suggestions.value = listOf(newValue)
+        _typeaheadResults.value = emptyList()
         // While typing, surface text completions — the pipeline already feeds
         // them through [suggestRequests] and publishes results via typeahead.
         suggestRequests.tryEmit(newValue)
@@ -2403,7 +2412,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
-            .collectLatest { request ->
+            // Deliberately collect rather than collectLatest: a committed
+            // search already has its answer gated by request id below, so a
+            // newer one arriving must not cancel the request before it and
+            // tear down its socket for whatever uses that pooled connection
+            // next. Typing goes through the debounced pipelines instead.
+            .collect { request ->
                 val key = cacheKey(request.query, request.filter)
                 // Something to look at immediately: the exact answer if this
                 // query has been run before, otherwise the closest earlier
@@ -2416,7 +2430,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // records it in the account's history.
                 if (exact != null && request.anonymous) {
                     searchSession = SearchSession(key, request.requestId, request.filter, exact.continuation)
-                    return@collectLatest
+                    return@collect
                 }
 
                 // Search is YouTube's alone. A module is a *substitution*
@@ -2431,7 +2445,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val result = YtMusicRepository.searchPage(request.query, request.filter, request.anonymous)
                 // A search that has been superseded shouldn't land on screen,
                 // whether it succeeded or failed.
-                if (request.requestId != newestRequestId.get()) return@collectLatest
+                if (!isCurrentSearchResponse(request.requestId, newestRequestId.get())) return@collect
                 _results.value = result.fold(
                     onSuccess = { page -> published(page, key, request.requestId) },
                     onFailure = { failure -> UiState.Error(failure.friendly()) },
@@ -2508,8 +2522,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
                     return@collectLatest
                 }
-                val rows = listOf(target) +
-                    fetched.filterNot { it.equals(target, ignoreCase = true) }
+                val rows = suggestionRows(target, fetched)
                 synchronized(suggestionCache) { suggestionCache[key] = rows }
                 _suggestions.value = rows
             }

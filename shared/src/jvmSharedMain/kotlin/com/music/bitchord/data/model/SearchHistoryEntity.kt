@@ -46,3 +46,31 @@ fun SearchHistoryEntity.toSong(): Song? = if (entityType == EntityType.TRACK && 
         thumbnailUrl = artworkUrl,
     )
 } else null
+
+/**
+ * What tapping this recent entry should do.
+ *
+ * A saved track plays directly. An album, artist or playlist opens its page.
+ * A raw query from an old build (`q:<term>`, see [toSong]) has no video behind
+ * it, so it must run the words again rather than hand a fake video id to the
+ * player — which used to fail silently for anyone upgrading with history from
+ * an earlier version.
+ */
+sealed interface SearchHistoryAction {
+    data class Play(val song: Song) : SearchHistoryAction
+    data class Open(
+        val browseId: String,
+        val title: String,
+        val subtitle: String,
+        val artworkUrl: String?,
+        val entityType: EntityType,
+    ) : SearchHistoryAction
+    data class Search(val term: String) : SearchHistoryAction
+}
+
+fun SearchHistoryEntity.historyAction(): SearchHistoryAction = when (entityType) {
+    EntityType.TRACK -> toSong()?.let(SearchHistoryAction::Play)
+        ?: SearchHistoryAction.Search(title.ifBlank { id.removePrefix("q:") })
+    EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST ->
+        SearchHistoryAction.Open(id, title, subtitle, artworkUrl, entityType)
+}

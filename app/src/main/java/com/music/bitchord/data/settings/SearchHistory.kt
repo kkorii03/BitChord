@@ -85,7 +85,12 @@ object SearchHistory {
     fun clearAddonQueries() = saveAddon(emptyList())
 
     private fun saveAddon(value: List<String>) {
+        // Same opening rule as the entity list: an Addons search can be the
+        // first search-history call after launch, before the deferred open has
+        // run.
+        open()
         _addonRecent.value = value
+        if (!this::prefs.isInitialized) return
         prefs.edit().putString(KEY_ADDON_HISTORY, json.encodeToString(addonSerializer, value)).apply()
     }
 

@@ -5,6 +5,7 @@ import com.music.bitchord.ui.components.SwipeToQueueBox
 import com.music.bitchord.ui.components.contextClick
 import androidx.compose.ui.unit.Dp
 import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -99,7 +100,6 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
-import java.util.Locale
 
 @Composable
 fun SearchScreen(
@@ -140,6 +140,8 @@ fun SearchScreen(
     suggestions: List<String>,
     typeaheadResults: List<SearchResult>,
     onSubmit: () -> Unit,
+    /** Re-runs the current query from an error state, so a transient failure isn't a dead end. */
+    onRetry: () -> Unit = {},
     onSuggestionClick: (String) -> Unit,
     onHistoryClick: (SearchHistoryEntity) -> Unit,
     onHistoryRemove: (String) -> Unit,
@@ -288,6 +290,7 @@ fun SearchScreen(
                     onAddonHistoryClick = onAddonHistoryClick,
                     onAddonHistoryRemove = onAddonHistoryRemove,
                     onAddonHistoryClear = onAddonHistoryClear,
+                    onRetry = onRetry,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                     onSongClick = onLibrarySongClick,
@@ -313,6 +316,7 @@ fun SearchScreen(
                             onBrowseClick = { item ->
                                 onBrowseClick(item)
                             },
+                            onBrowseLongPress = onBrowseLongPress,
                             currentSong = currentSong,
                             isPlaying = isPlaying,
                         )
@@ -371,7 +375,13 @@ fun SearchScreen(
                     }
                 }
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
-                results is UiState.Error -> item { MessageState(results.message) }
+                results is UiState.Error -> item {
+                    MessageState(
+                        message = results.message,
+                        actionLabel = stringResource(Res.string.retry),
+                        onAction = onRetry,
+                    )
+                }
                 results is UiState.Success -> {
                     val tracks = results.data
                         .mapNotNull { row -> when (row) {
@@ -515,6 +525,7 @@ private fun LazyListScope.librarySearchResults(
     onAddonHistoryClick: (String) -> Unit,
     onAddonHistoryRemove: (String) -> Unit,
     onAddonHistoryClear: () -> Unit,
+    onRetry: () -> Unit,
     currentSong: Song?,
     isPlaying: Boolean,
     onSongClick: (List<Song>, Int) -> Unit,
@@ -530,7 +541,13 @@ private fun LazyListScope.librarySearchResults(
             )
         }
         UiState.Loading -> songListSkeleton(keyPrefix = "skeleton:search:library")
-        is UiState.Error -> item(key = "library:error") { MessageState(results.message) }
+        is UiState.Error -> item(key = "library:error") {
+            MessageState(
+                message = results.message,
+                actionLabel = stringResource(Res.string.retry),
+                onAction = onRetry,
+            )
+        }
         is UiState.Success -> if (results.data.isEmpty()) {
             item(key = "library:no-match") {
                 MessageState(
@@ -758,6 +775,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
     onSongClick: (Song) -> Unit,
     onSongLongPress: ((Song) -> Unit)?,
     onBrowseClick: (BrowseItem) -> Unit,
+    onBrowseLongPress: ((BrowseItem) -> Unit)?,
     currentSong: Song?,
     isPlaying: Boolean,
 ) {
@@ -790,7 +808,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
             is SearchResult.Browse -> BrowseRow(
                 item = result.item,
                 onClick = { onBrowseClick(result.item) },
-                onLongPress = onSongLongPress?.let { { /* browse long-press not applicable */ } },
+                onLongPress = onBrowseLongPress?.let { { it(result.item) } },
             )
             is SearchResult.TopTrack -> TypeaheadSongRow(
                 song = result.song,
@@ -1119,9 +1137,7 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             )
             Text(
                 text = appleCardKind(item.type)?.let { appleSubtitleText(item.subtitle, it) }
-                    ?: item.subtitle.ifBlank {
-                        item.type.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) }
-                    },
+                    ?: item.subtitle.ifBlank { stringResource(browseFallbackLabel(item.type)) },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -1129,6 +1145,20 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             )
         }
     }
+}
+
+/**
+ * The type noun a search row falls back to when YouTube gave it no subtitle.
+ *
+ * The row still has to name what it is in the app's language; using the enum
+ * name made every blank-subtitle album or playlist read "Album"/"Playlist"
+ * even in Korean. OTHER is a plain song/video card, so it takes the song noun.
+ */
+internal fun browseFallbackLabel(type: BrowseType): StringResource = when (type) {
+    BrowseType.ALBUM -> Res.string.album
+    BrowseType.ARTIST -> Res.string.artist
+    BrowseType.PLAYLIST -> Res.string.playlist
+    BrowseType.OTHER -> Res.string.song
 }
 
 /**
@@ -1166,7 +1196,7 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
                     .padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 Text(
-                    text = entry.label,
+                    text = entry.localizedLabel(),
                     style = MaterialTheme.typography.labelLarge,
                     color = if (selected) MaterialTheme.colorScheme.background
                     else MaterialTheme.colorScheme.onBackground,
@@ -1179,3 +1209,19 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
 
 /** Rounded, but well short of a capsule — the corner reads as a cut, not a curve. */
 private val FILTER_PILL_SHAPE = RoundedCornerShape(12.dp)
+
+/**
+ * The tab names follow the app's language, not the enum's hardcoded Korean.
+ * The Korean wording is unchanged; other locales no longer see Korean pills.
+ */
+internal fun SearchFilter.labelResource(): StringResource = when (this) {
+    SearchFilter.ALL -> Res.string.search_filter_all
+    SearchFilter.SONGS -> Res.string.songs
+    SearchFilter.VIDEOS -> Res.string.search_filter_videos
+    SearchFilter.ALBUMS -> Res.string.albums
+    SearchFilter.ARTISTS -> Res.string.artists
+    SearchFilter.PLAYLISTS -> Res.string.playlists
+}
+
+@Composable
+private fun SearchFilter.localizedLabel(): String = stringResource(labelResource())
