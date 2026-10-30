@@ -343,9 +343,11 @@ class AddonClient(rawBaseUrl: String) {
 
             val wait = client.newCall(request).execute().use { response ->
                 when {
-                    response.isSuccessful ->
+                    response.isSuccessful -> {
+                        HqHostTracker.noteSuccess(HqHostTracker.hostOf(url))
                         return@withContext response.body?.string()?.takeIf { it.isNotBlank() }
                             ?: throw AddonException("Empty response")
+                    }
                     response.code == 404 -> throw AddonNotFound()
                     // A 429 or 503 is back-pressure, not a missing track. The
                     // wait is the server's own Retry-After when it named one,

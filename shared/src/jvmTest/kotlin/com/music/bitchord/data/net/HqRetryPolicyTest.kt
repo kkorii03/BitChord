@@ -37,6 +37,22 @@ class HqRetryPolicyTest {
     }
 
     @Test
+    fun `consecutive refusals double the rest up to ten minutes`() {
+        assertEquals(60_000L, HqRetryPolicy.escalatingRestMs(1))
+        assertEquals(120_000L, HqRetryPolicy.escalatingRestMs(2))
+        assertEquals(240_000L, HqRetryPolicy.escalatingRestMs(3))
+        assertEquals(480_000L, HqRetryPolicy.escalatingRestMs(4))
+        assertEquals(600_000L, HqRetryPolicy.escalatingRestMs(5))
+        assertEquals(600_000L, HqRetryPolicy.escalatingRestMs(50))
+    }
+
+    @Test
+    fun `a server retry-after longer than the escalation is kept`() {
+        assertEquals(3_600_000L, HqRetryPolicy.escalatingRestMs(1, statedRestMs = 3_600_000L))
+        assertEquals(120_000L, HqRetryPolicy.escalatingRestMs(2, statedRestMs = 5_000L))
+    }
+
+    @Test
     fun `a short retry-after is waited out`() {
         val decision = HqRetryPolicy.decide("5", attempt = 0, nowMs = 0L)
         assertTrue(decision.retry)

@@ -137,6 +137,24 @@ class HqVerifyPolicyTest {
     }
 
     @Test
+    fun `a healthy candidate host comes before a resting one`() {
+        val order = HqVerifyPolicy.candidateOrder(
+            hosts = listOf("tired.example", "fast.example", null, "also-tired.example"),
+            isResting = { it == "tired.example" || it == "also-tired.example" },
+        )
+        assertEquals(listOf(1, 2, 0, 3), order)
+    }
+
+    @Test
+    fun `when every host is resting the original candidate order is kept`() {
+        val order = HqVerifyPolicy.candidateOrder(
+            hosts = listOf("a.example", "b.example"),
+            isResting = { true },
+        )
+        assertEquals(listOf(0, 1), order)
+    }
+
+    @Test
     fun `a second rate limit stays unmeasured and is never a rejection`() {
         assertFalse(
             HqVerifyPolicy.retryCandidateDownload("1", attempt = 1, nowMs = 0L).retry,

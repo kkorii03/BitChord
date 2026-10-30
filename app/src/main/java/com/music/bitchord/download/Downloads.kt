@@ -11,6 +11,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.HqAutoDownloadPolicy
+import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.TranslationAhead
@@ -1803,13 +1804,22 @@ object Downloads {
             } else {
                 work()
             }
+            host?.let(HqHostTracker::noteSuccess)
             completed = true
         } catch (e: CancellationException) {
             cancelled = true
             clear(id)
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "download failed for $id: ${e.message}", e)
+            // A 429 is back-pressure, not a stack worth printing on every
+            // automatic target; the one line says which host and when the
+            // pass will try again.
+            val rateLimit = e.rateLimitCode()
+            if (rateLimit != null) {
+                Log.w(TAG, "download rate limited for $id: HTTP $rateLimit")
+            } else {
+                Log.w(TAG, "download failed for $id: ${e.message}", e)
+            }
             if (automatic) {
                 failure = e.automaticFailure()
                 // No DownloadSession row: the pass reports its own wait, and a
@@ -2534,9 +2544,21 @@ object Downloads {
      * to the song it stopped.
      */
     private fun Exception.friendly(): String {
-        Log.w(TAG, "download failed: ${message.orEmpty()}", this)
+        val rateLimit = rateLimitCode()
+        if (rateLimit != null) {
+            Log.w(TAG, "download rate limited: HTTP $rateLimit")
+        } else {
+            Log.w(TAG, "download failed: ${message.orEmpty()}", this)
+        }
         return appContext?.let { FriendlyError.message(it, this) }
             ?: "다운로드 실패 — 연결 상태를 확인하십시오"
+    }
+
+    /** The 429/503 status behind this failure, when it is the server asking for time. */
+    private fun Throwable.rateLimitCode(): Int? {
+        val code = (this as? DownloadHttpException)?.code
+            ?: HqAutoDownloadPolicy.statusCode(message)
+        return code?.takeIf(HqRetryPolicy::isRateLimited)
     }
 
     /**

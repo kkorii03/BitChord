@@ -30,6 +30,7 @@ internal class HqHostGate(
         val active = mutableSetOf<String>()
         var restUntilMs = 0L
         var lastRateLimitedAtMs = 0L
+        var consecutiveRateLimits = 0
         var successes = 0
         var failures = 0
         var bytes = 0L
@@ -93,17 +94,38 @@ internal class HqHostGate(
         }
     }
 
-    /** Records a 429/503 and rests the host for at least [HqRetryPolicy.REST_MS]. */
+    /**
+     * Records a 429/503 and rests the host for at least [HqRetryPolicy.REST_MS].
+     *
+     * Repeated refusals from the same host double that rest, up to
+     * [HqRetryPolicy.MAX_REST_MS]; a server's longer `Retry-After` is still
+     * honoured. [noteSuccess] clears the streak.
+     */
     fun noteRateLimited(host: String?, header: String?, code: Int, nowMs: Long = clock()): Long {
         val key = normalize(host) ?: return 0L
         val decision = HqRetryPolicy.decide(header, HqRetryPolicy.MAX_ATTEMPTS, nowMs)
-        synchronized(this) {
+        return synchronized(this) {
             val state = states.getOrPut(key) { State() }
             state.lastRateLimitedAtMs = nowMs
             state.failures += 1
-            state.restUntilMs = maxOf(state.restUntilMs, nowMs + decision.restMs)
+            state.consecutiveRateLimits += 1
+            val restMs = HqRetryPolicy.escalatingRestMs(
+                consecutiveRateLimits = state.consecutiveRateLimits,
+                statedRestMs = decision.restMs,
+            )
+            state.restUntilMs = maxOf(state.restUntilMs, nowMs + restMs)
+            restMs
         }
-        return decision.restMs
+    }
+
+    /** A request to [host] succeeded: the next refusal starts its rest over. */
+    fun noteSuccess(host: String?) {
+        val key = normalize(host) ?: return
+        synchronized(this) {
+            val state = states.getOrPut(key) { State() }
+            state.consecutiveRateLimits = 0
+            state.successes += 1
+        }
     }
 
     fun rest(host: String?, durationMs: Long, nowMs: Long = clock()) {
@@ -136,6 +158,7 @@ internal class HqHostGate(
         synchronized(this) {
             val state = states.getOrPut(key) { State() }
             if (ok) {
+                state.consecutiveRateLimits = 0
                 state.successes += 1
                 state.bytes += bytes.coerceAtLeast(0L)
                 state.elapsedMs += elapsedMs.coerceAtLeast(0L)
@@ -228,6 +251,8 @@ internal object HqHostTracker {
 
     fun noteRateLimited(host: String?, header: String?, code: Int): Long =
         gate.noteRateLimited(host, header, code)
+
+    fun noteSuccess(host: String?) = gate.noteSuccess(host)
 
     fun rest(host: String?, durationMs: Long) = gate.rest(host, durationMs)
 
