@@ -317,3 +317,82 @@
 - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.ui.SearchEmptyPipelineTest' --tests 'com.music.bitchord.ui.screens.HistoryEmptyStateTest' --tests 'com.music.bitchord.ui.UiTranslationCoverageTest' --console=plain -q` → 통과.
 - `./gradlew :sharedUi:jvmTest --tests 'com.music.bitchord.ui.screens.SearchEmptyStateTest' --console=plain -q` → 통과.
 - `LocaleStringsTest`는 여전히 16개 로케일에서 실패하지만 누락 키는 기존 224개뿐이며, 이번에 추가한 17개는 더 이상 목록에 없다.
+
+## 3차 검토 (VERDICT 2건 처리)
+
+기준: 3차 체크아웃(`dsq/deep-ui-1031-r3`, 베이스 2차 커밋), 2026-10-30. 지적 번호는
+VERDICT 순서. 1차·2차에서 고친 경로(빈 결과 `Success`, 재시도 배선, 로컬 음악 상태)는
+다시 코드로 확인했고 그대로 살아 있다.
+
+| # | 심각도 | 처리 | 파일:줄 | 내용 |
+|---|---|---|---|---|
+| 1 | MEDIUM | **고침** | `app/.../ui/MainViewModel.kt:2275-2289`, `:2399-2405`, `:2422-2438`, `:2465-2484`, `:3917-3929` | 빈 검색 페이지가 캐시된 뒤 익명 재시도가 캐시만 돌려주고 YouTube에 가지 않던 문제. 재시도에 `forceNetwork`를 실어 캐시를 건너뛰게 했다. |
+| 2 | LOW | **고침** | `app/src/main/res/values-zh-rHK/strings.xml:1286-1302`, `values-b+zh+Hant/strings.xml:1286-1302` | 새 파이프라인/경로/Spotify 17개 키가 이 두 번체 리소스에 없어 영어로 떨어지던 문제. `zh-rTW`와 같은 번체 값으로 채웠다. |
+
+### 1. 익명 검색의 빈 결과 재시도가 무효였던 문제 (MEDIUM)
+
+- **증거(수정 전)**: `startSearchPipeline`은 `val exact = searchCache.get(key)` 뒤
+  `if (exact != null && request.anonymous) { searchSession = ...; return@collectLatest }`로
+  네트워크 호출 전에 반환했다(`MainViewModel.kt:2469` 근방). `retrySearch()`는
+  `runSearch(anonymous = lastSearchAnonymous)`만 호출했고 `lastSearchAnonymous`는
+  기본값 `true`다(`:340`). 따라서 한 번 빈 결과를 받아 캐시되면, 빈 상태의 `다시 시도`
+  버튼은 같은 `SearchRequest`를 다시 보내지만 파이프라인이 캐시된 빈 페이지를 그대로
+  돌려주고 끝났다. 사용자는 버튼이 고장 난 것으로 본다.
+- **영향**: 검색 0건 화면에서 재시도를 눌러도 아무 변화가 없다. 네트워크가 잠시 끊겼다
+  돌아온 경우에도 이전의 빈 캐시가 남아 있으면 복구할 수 없다.
+- **빈도**: 익명 검색(추천·최근 검색 탭, 필터 탭)은 기본 경로이고, 0건은 오타·희귀곡에서
+  흔하다. 그 0건 화면의 재시도는 2차에서 막 추가한 경로라 바로 걸린다.
+- **고친 곳**:
+  - `SearchRequest`/`runSearch`에 `forceNetwork`를 추가하고, `retrySearch()`의 YouTube
+    분기만 `forceNetwork = true`로 보낸다. Addons/Library 재시도는 원래 매번 다시 읽으므로
+    건드리지 않았다.
+  - 파이프라인은 `forceNetwork`이면 `exact`/`prefixMatch`를 화면에 올리지 않고 `Loading`으로
+    시작한 뒤 서버에 묻는다. 캐시 조기반환은 새 순수 함수 `reuseCachedSearchPage()`가
+    결정한다.
+- **진리표(캐시 재사용 조건)**:
+
+  | 캐시 있음 | anonymous | forceNetwork | 수정 전 | 수정 후 |
+  |---|---|---|---|---|
+  | true | true | false | 재사용(서버 생략) | 재사용(서버 생략) |
+  | true | true | true (재시도) | 재사용(서버 생략) — 결함 | **서버 호출** |
+  | true | false | false (명시 제출) | 서버 호출 | 서버 호출 |
+  | false | * | * | 서버 호출 | 서버 호출 |
+
+  기존 조건의 모든 항(캐시 존재·익명·명시 제출)을 유지하고 `forceNetwork` 항만 추가했다.
+- **회귀 테스트**: `app/src/test/java/com/music/bitchord/ui/SearchRetryCacheTest.kt` 4건.
+  특히 `retryNeverReusesTheCachedPageEvenWhenAnonymous`가 수정 전 조건
+  (`exact != null && anonymous`)이면 실패한다.
+
+### 2. 번체 중국어 리소스 누락 (LOW)
+
+- **증거(수정 전)**: 1·2차에서 추가한 17개 키가 지원 16개 로케일에는 들어갔지만
+  `values-zh-rHK`와 `values-b+zh+Hant`에는 없었다(`grep -c`가 0). 이 두 디렉터리를 쓰는
+  Hong Kong/스크립트 해석 사용자는 새 파이프라인·경로·Spotify 라벨을 영어로 본다.
+- **고친 곳**: `values-zh-rTW`의 번체 문구를 그대로 두 파일에 추가했다. 기존 파일이 이미
+  같은 용어(`播放列表`, `位元精確`)를 쓰고 있어 문체가 어긋나지 않는다.
+- **비고**: 앱 언어 목록(`SUPPORTED_LANGUAGES`)은 `zh-TW → values-zh-rTW`만 직접 고르므로
+  `LocaleStringsTest` 대상은 아니지만, 단말 로케일이 `zh-HK`/`zh-Hant`일 때 Android가 이
+  디렉터리로 해석하므로 실제 누출 경로다.
+
+### 검증 (3차)
+
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.ui.SearchRetryCacheTest' --tests 'com.music.bitchord.ui.UiTranslationCoverageTest' --console=plain -q` → 통과.
+- 두 번체 XML은 `xml.dom.minidom` 파싱으로 유효성 확인, 17개 키 존재를 `grep`으로 재확인.
+- 새 테스트: `SearchRetryCacheTest` (app).
+
+### 이번에 바꾼 파일 (3차)
+
+- `app/src/main/java/com/music/bitchord/ui/MainViewModel.kt`
+- `app/src/main/res/values-zh-rHK/strings.xml`
+- `app/src/main/res/values-b+zh+Hant/strings.xml`
+- `app/src/test/java/com/music/bitchord/ui/SearchRetryCacheTest.kt` (신규)
+- `docs/review-1031/screens-ui-state.md`
+
+### 남긴 것
+
+- 2차 문서의 A(HQ 보관함 실패 표시)·B(자동 재생 로딩/실패 구분)·C(상세 페이지 재시도)는
+  이번에도 문서만 남겼다. 모두 화면 밖 상태 흐름(패스 수명·재생 서비스 상태·`openDetail`
+  분리)을 먼저 만들어야 해서 이 화면 레인에서 안전하게 고칠 수 없다.
+- `published()`는 빈 페이지를 계속 캐시한다. 재시도는 `forceNetwork`로 우회하므로 no-op이
+  아니며, 필터 탭·추천 재선택의 즉시 응답이라는 캐시 목적은 유지한다.

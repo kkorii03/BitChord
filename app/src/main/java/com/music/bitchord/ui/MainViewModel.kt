@@ -2282,7 +2282,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 searchSubmitted = true
                 _suggestions.value = emptyList()
                 _typeaheadResults.value = emptyList()
-                runSearch(anonymous = lastSearchAnonymous)
+                // A retry exists to replace the page that is on screen, so it
+                // must not be answered from the cache: reusing a cached empty
+                // page was why the "no results" retry did nothing at all.
+                runSearch(anonymous = lastSearchAnonymous, forceNetwork = true)
             }
         }
     }
@@ -2398,6 +2401,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val filter: SearchFilter,
         val requestId: Long,
         val anonymous: Boolean = true,
+        val forceNetwork: Boolean = false,
     )
 
     private fun cacheKey(query: String, filter: SearchFilter) = "${filter.name}:$query"
@@ -2415,7 +2419,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?.rows
     }
 
-    private fun runSearch(anonymous: Boolean = true) {
+    private fun runSearch(anonymous: Boolean = true, forceNetwork: Boolean = false) {
         val query = _query.value
         if (query.isBlank()) {
             // Nothing in flight can still be waiting to overwrite this: the
@@ -2431,7 +2435,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
-        searchRequests.tryEmit(SearchRequest(query, _filter.value, id, anonymous))
+        searchRequests.tryEmit(SearchRequest(query, _filter.value, id, anonymous, forceNetwork))
     }
 
     /**
@@ -2461,12 +2465,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // query has been run before, otherwise the closest earlier
                 // one. Only fall back to a spinner with neither.
                 val exact = searchCache.get(key)
-                val cached = exact?.rows ?: prefixMatch(request.query, request.filter)
+                // A retry starts from the spinner rather than the stale page
+                // it is replacing; a normal lookup keeps the cached/prefix
+                // answer up while the network call runs.
+                val cached = if (request.forceNetwork) {
+                    null
+                } else {
+                    exact?.rows ?: prefixMatch(request.query, request.filter)
+                }
                 _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
                 // An explicit submit still has to reach the server even when
                 // an anonymous lookup cached the same query: that call is what
-                // records it in the account's history.
-                if (exact != null && request.anonymous) {
+                // records it in the account's history. A retry also bypasses
+                // the cache, or an empty cached page made it a no-op.
+                if (reuseCachedSearchPage(request.anonymous, request.forceNetwork, exact != null) && exact != null) {
                     searchSession = SearchSession(key, request.requestId, request.filter, exact.continuation)
                     return@collectLatest
                 }
@@ -3899,6 +3911,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun quantity(id: Int, count: Int): String =
         getApplication<Application>().resources.getQuantityString(id, count, count)
 }
+
+/**
+ * Whether the cached page for a query may answer a request without a network
+ * round trip.
+ *
+ * Anonymous lookups reuse the cache — that is what keeps a filter tab and a
+ * suggestion tap instant — while a submitted search must reach the server
+ * because that call is what records it in the account's history. A retry never
+ * reuses the cache: the cached page is exactly the answer the listener asked to
+ * replace, and reusing an empty one made the "no results" retry do nothing.
+ */
+internal fun reuseCachedSearchPage(
+    anonymous: Boolean,
+    forceNetwork: Boolean,
+    hasCachedPage: Boolean,
+): Boolean = hasCachedPage && anonymous && !forceNetwork
 
 /**
  * A completed YouTube search page. An empty page is still a completed answer:
