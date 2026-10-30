@@ -123,49 +123,101 @@ object YtMusicRepository {
     suspend fun home(force: Boolean = false): Result<HomeFeed> = call("home") {
         if (Innertube.cookie != null) runCatching { Innertube.ensureSessionScope() }
         val key = Innertube.sessionKey()
-        // A GATED verdict older than a day gets exactly one re-check, here,
-        // because Home is the first page every launch touches.
-        if (MusicGateFallback.shouldTryMusic(key)) {
-            val home = try {
-                // Signed even if the current verdict would read Music signed
-                // out: this re-check exists to learn the account's verdict.
-                Innertube.browse("FEmusic_home", forceSigned = true)
-            } catch (failure: Exception) {
-                // A working proxy is the listener's way out of the gate. If
-                // the request fails on the wire, surface that error instead of
-                // silently reading youtube.com behind their back; only the
-                // gate's own refusal still justifies the fallback there.
-                // A proxy that is down is different: the direct retry (see
-                // Innertube.postMusic) succeeded, recorded UNREACHABLE, and
-                // Home must fall back rather than show an error screen. An
-                // offline phone leaves health UNKNOWN, so the normal network
-                // error is surfaced instead.
-                if (
-                    MusicGateFallback.shouldUseYouTubeFallback(
-                        proxyUsable = YouTubeProxy.config.usable,
-                        proxyUnreachable = ProxyHealthMonitor.state.value == ProxyHealth.UNREACHABLE,
-                        gateActive = MusicGateFallback.isActive(key),
-                        gateSignal = isMusicGateSignal(failure),
-                    )
-                ) {
-                    Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
-                    return@call YouTubeFallback.home(force)
+        val tryMusic = MusicGateFallback.shouldTryMusic(key)
+        // The chart the feed's trending shelf is replaced with does not depend
+        // on the feed itself. Start it beside the Home browse instead of after
+        // it, so a cold start pays for the slower of the two rather than their
+        // sum. A fallback or a failed browse cancels it inside the helper.
+        val attempt = loadWithChartBefore(
+            startChart = { if (tryMusic) startContentCountryChart() else null },
+            load = {
+                if (!tryMusic) {
+                    FallbackHome(YouTubeFallback.home(force))
+                } else {
+                    try {
+                        // Signed even if the current verdict would read Music
+                        // signed out: this re-check exists to learn the
+                        // account's verdict.
+                        MusicHome(Innertube.browse("FEmusic_home", forceSigned = true))
+                    } catch (failure: Exception) {
+                        // A working proxy is the listener's way out of the
+                        // gate. If the request fails on the wire, surface that
+                        // error instead of silently reading youtube.com behind
+                        // their back; only the gate's own refusal still
+                        // justifies the fallback there. A proxy that is down is
+                        // different: the direct retry (see Innertube.postMusic)
+                        // succeeded, recorded UNREACHABLE, and Home must fall
+                        // back rather than show an error screen. An offline
+                        // phone leaves health UNKNOWN, so the normal network
+                        // error is surfaced instead.
+                        if (
+                            MusicGateFallback.shouldUseYouTubeFallback(
+                                proxyUsable = YouTubeProxy.config.usable,
+                                proxyUnreachable = ProxyHealthMonitor.state.value == ProxyHealth.UNREACHABLE,
+                                gateActive = MusicGateFallback.isActive(key),
+                                gateSignal = isMusicGateSignal(failure),
+                            )
+                        ) {
+                            Log.w(TAG, "home: youtube.com fallback (music browse failed: ${failure.message})")
+                            FallbackHome(YouTubeFallback.home(force))
+                        } else {
+                            throw failure
+                        }
+                    }
                 }
-                throw failure
-            }
-            if (!MusicGateFallback.isActive(key)) {
+            },
+            keepChart = { it is MusicHome && !MusicGateFallback.isActive(key) },
+        )
+        when (val loaded = attempt.first) {
+            is MusicHome -> {
                 Log.d(TAG, "home: music.youtube.com (gate ${MusicGateFallback.state(key)})")
-                return@call HomeFeed(
-                    contentCountryCharts(InnertubeParser.parseHome(home)),
-                    InnertubeParser.continuationToken(home),
+                val chart = attempt.second ?: Innertube.contentCountry()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::cachedContentCountryChart)
+                HomeFeed(
+                    withContentCountryChart(InnertubeParser.parseHome(loaded.root), chart),
+                    InnertubeParser.continuationToken(loaded.root),
                 )
             }
+            is FallbackHome -> {
+                Log.d(
+                    TAG,
+                    "home: youtube.com fallback (gate ${MusicGateFallback.state(key)})",
+                )
+                loaded.feed
+            }
         }
-        Log.d(
-            TAG,
-            "home: youtube.com fallback (gate ${MusicGateFallback.state(key)})",
-        )
-        YouTubeFallback.home(force)
+    }
+
+    private sealed interface HomeAttempt
+    private class MusicHome(val root: JsonObject) : HomeAttempt
+    private class FallbackHome(val feed: HomeFeed) : HomeAttempt
+
+    /**
+     * Starts [startChart] before [load], then keeps the chart only when the
+     * loaded answer can use it. A failed load cancels a chart nobody will
+     * await, so a fallback/error does not leave a request running.
+     *
+     * Extracted so the overlap rule is testable without a network: the old
+     * Home path awaited its browse first and only then began the chart lookup.
+     */
+    internal suspend fun <T> loadWithChartBefore(
+        startChart: () -> SharedLookups.Lookup<HomeShelf?>?,
+        load: suspend () -> T,
+        keepChart: (T) -> Boolean = { true },
+    ): Pair<T, HomeShelf?> {
+        val chart = startChart()
+        val loaded = try {
+            load()
+        } catch (failure: Throwable) {
+            chart?.result?.cancel()
+            throw failure
+        }
+        if (!keepChart(loaded)) {
+            chart?.result?.cancel()
+            return loaded to null
+        }
+        return loaded to chart?.result?.await()
     }
 
     /** Recently played is rendered independently, at the top of the Play page. */
@@ -199,9 +251,15 @@ object YtMusicRepository {
      * its later pages or a supplement, filled from the content country's
      * chart: the feed itself picks them by the account's registered country.
      */
-    private suspend fun contentCountryCharts(shelves: List<HomeShelf>): List<HomeShelf> {
+    private suspend fun contentCountryCharts(shelves: List<HomeShelf>): List<HomeShelf> =
+        withContentCountryChart(shelves, contentCountryChart())
+
+    private fun withContentCountryChart(
+        shelves: List<HomeShelf>,
+        chart: HomeShelf?,
+    ): List<HomeShelf> {
         if (shelves.none { TRENDING_TITLE.matches(it.title) }) return shelves
-        val chart = contentCountryChart() ?: return shelves
+        chart ?: return shelves
         return shelves.map { shelf ->
             if (TRENDING_TITLE.matches(shelf.title)) {
                 shelf.copy(items = chart.items, moreBrowseId = chart.moreBrowseId, moreParams = chart.moreParams)
@@ -216,10 +274,30 @@ object YtMusicRepository {
     @Volatile
     private var chartCache: Triple<String, Long, HomeShelf>? = null
 
+    private fun cachedContentCountryChart(country: String): HomeShelf? =
+        chartCache?.let { (c, at, shelf) ->
+            shelf.takeIf { c == country && System.currentTimeMillis() - at < 30 * 60_000L }
+        }
+
+    /**
+     * Starts the content-country chart lookup without waiting for Home's own
+     * browse. The lookup is shared, so the feed and any supplement that asks
+     * while it is in flight wait on the same request.
+     */
+    private fun startContentCountryChart(): SharedLookups.Lookup<HomeShelf?>? {
+        val country = Innertube.contentCountry()?.takeIf { it.isNotBlank() } ?: return null
+        if (cachedContentCountryChart(country) != null) return null
+        return chartLookups.lookup(country) { loadContentCountryChart(country) }
+    }
+
     /** The content country's top song shelf, kept half an hour (Home and its pages all ask). */
     private suspend fun contentCountryChart(): HomeShelf? {
         val country = Innertube.contentCountry()?.takeIf { it.isNotBlank() } ?: return null
-        chartCache?.let { (c, at, shelf) -> if (c == country && System.currentTimeMillis() - at < 30 * 60_000L) return shelf }
+        cachedContentCountryChart(country)?.let { return it }
+        return chartLookups.lookup(country) { loadContentCountryChart(country) }.result.await()
+    }
+
+    private suspend fun loadContentCountryChart(country: String): HomeShelf? {
         fun songs(shelf: HomeShelf) = shelf.items.isNotEmpty() && shelf.items.count { it.videoId != null } * 2 > shelf.items.size
         val page = runCatching { InnertubeParser.parseHome(Innertube.charts(country)) }.getOrNull().orEmpty()
         // Some answers carry the songs themselves; signed in, the page is chart
@@ -1027,6 +1105,7 @@ object YtMusicRepository {
      */
     private val lookupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val songVersionLookups = SharedLookups<SongVersionAnswer>(lookupScope)
+    private val chartLookups = SharedLookups<HomeShelf?>(lookupScope)
 
     /** A resolved answer and the source that gave it, for the log line. */
     private data class SongVersionAnswer(val song: Song?, val via: String)

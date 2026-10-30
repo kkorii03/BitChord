@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.cover.ArtworkCandidateKind
 import com.music.bitchord.data.cover.downloadedArtworkCandidates
 import com.music.bitchord.data.model.Song
@@ -35,30 +36,33 @@ object DownloadedArtworkResolver {
     private const val TAG = "BitChord"
 
     /**
-     * Resolved answers, with an empty string standing in for "none" because a
-     * [ConcurrentHashMap] may not hold null. Concurrent asks for different
-     * tracks run independently; asks for one track share a single extraction.
+     * Resolved answers, with an empty string standing in for "none" because the
+     * memo holds non-null values. Bounded: a long session opens far more
+     * downloaded tracks than one screen, and an answer kept for all of them
+     * grows the heap with the library.
      */
-    private val resolved = ConcurrentHashMap<String, String>()
+    private const val RESOLVED_ENTRIES = 512
+
+    private val resolved = BoundedMemo<String, String>(RESOLVED_ENTRIES)
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val claimed = ConcurrentHashMap.newKeySet<String>()
     private val inFlightLock = Mutex()
 
     suspend fun resolve(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
         val key = keyOf(song)
-        resolved[key]?.let { return@withContext it.takeIf { value -> value.isNotEmpty() } }
+        resolved.get(key)?.let { return@withContext it.takeIf { value -> value.isNotEmpty() } }
         val job = inFlightLock.withLock { inFlight.getOrPut(key) { CompletableDeferred() } }
         if (claimed.add(key)) {
             try {
                 val value = resolveNow(context.applicationContext, song) ?: ""
-                resolved[key] = value
+                resolved.getOrPut(key) { value }
                 job.complete(value)
             } catch (cancelled: CancellationException) {
                 job.complete("")
                 throw cancelled
             } catch (error: Throwable) {
                 Log.d(TAG, "cover lookup failed for ${song.videoId}: ${error.message}")
-                resolved[key] = ""
+                resolved.getOrPut(key) { "" }
                 job.complete("")
             } finally {
                 claimed.remove(key)

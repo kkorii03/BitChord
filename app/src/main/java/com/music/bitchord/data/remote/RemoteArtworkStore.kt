@@ -2,6 +2,7 @@ package com.music.bitchord.data.remote
 
 import android.content.Context
 import android.net.Uri
+import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.model.Song
 import java.io.File
 import java.security.MessageDigest
@@ -31,7 +32,14 @@ object RemoteArtworkStore {
 
     private const val MAX_DIR_BYTES = 100L * 1024 * 1024
 
-    private val memory = ConcurrentHashMap<String, String>()
+    /**
+     * A process-long answer per track. Bounded: a long session sees far more
+     * covers than a screen ever shows, and keeping every URI for ever is a
+     * leak that grows with the library rather than with what is visible.
+     */
+    private const val MEMORY_ENTRIES = 512
+
+    private val memory = BoundedMemo<String, String>(MEMORY_ENTRIES)
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String?>>()
     private val claimed = ConcurrentHashMap.newKeySet<String>()
     private val inFlightLock = Mutex()
@@ -43,11 +51,10 @@ object RemoteArtworkStore {
     suspend fun resolveArt(context: Context, song: Song): String? {
         song.thumbnailUrl?.let { return it }
         val key = song.videoId
-        memory[key]?.let { return it }
+        memory.get(key)?.let { return it }
         val appContext = context.applicationContext
         diskHit(appContext, key)?.let {
-            memory[key] = it
-            return it
+            return memory.getOrPut(key) { it }
         }
         val job = inFlightLock.withLock {
             inFlight.getOrPut(key) { CompletableDeferred() }
@@ -65,7 +72,9 @@ object RemoteArtworkStore {
                 }
             }
         }
-        return runCatching { job.await() }.getOrNull()?.also { memory[key] = it }
+        return runCatching { job.await() }.getOrNull()?.let { uri ->
+            memory.getOrPut(key) { uri }
+        }
     }
 
     private suspend fun extractAndStore(context: Context, song: Song, key: String): String? =

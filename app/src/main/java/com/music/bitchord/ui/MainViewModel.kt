@@ -117,6 +117,19 @@ import java.util.concurrent.atomic.AtomicLong
 /** What the Search tab searches: YouTube Music, or the Local Music folder on this device. */
 enum class SearchSource { YOUTUBE, LIBRARY, ADDONS }
 
+/** Work that may run after the first screen has had time to settle. */
+internal enum class StartupDeferredWork { ACCOUNT, UPDATE_CHECK }
+
+/**
+ * The only launch work allowed behind the start-up delay. Feeds are absent on
+ * purpose: Explore and Library are fetched by the tab that shows them, never
+ * by a timer racing Home's first request.
+ */
+internal fun startupDeferredWork(signedIn: Boolean): List<StartupDeferredWork> = buildList {
+    if (signedIn) add(StartupDeferredWork.ACCOUNT)
+    add(StartupDeferredWork.UPDATE_CHECK)
+}
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val authStore = AuthStore(app)
@@ -1386,17 +1399,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startTypeaheadMediaPipeline()
         loadHome()
         // Explore, Library and the account menus are none of them on the first
-        // screen, and each one starts network work. Load them from the tab that
-        // shows them (onExploreShown/onLibraryShown) or, if the listener never
-        // goes there, once startup has settled ? so opening the app is not
-        // four feeds racing the first frame.
+        // screen, and each one starts network work. The two feeds load only
+        // from the tab that shows them (onExploreShown/onLibraryShown), so a
+        // launch does not spend requests on a page the listener never opens.
+        // What is left here is the account identity and the once-a-day update
+        // check — neither blocks or competes with Home's first row.
         viewModelScope.launch {
             delay(STARTUP_DEFER_MS)
-            if (_explore.value is UiState.Loading && exploreLoadJob?.isActive != true) loadExplore()
-            if (_signedIn.value) {
-                if (_library.value is UiState.Loading && libraryLoadJob?.isActive != true) loadLibrary()
-                loadAccount()
-                loadPlaylists()
+            for (work in startupDeferredWork(_signedIn.value)) {
+                when (work) {
+                    StartupDeferredWork.ACCOUNT -> loadAccount()
+                    StartupDeferredWork.UPDATE_CHECK -> {
+                        // A leftover APK only means "Install Now" for the session
+                        // that downloaded it ??see AppUpdateChecker.clearCache.
+                        AppUpdateChecker.clearCache(getApplication())
+                        // The GitHub round trip is not part of opening the app:
+                        // ask at most once a day rather than on every cold start.
+                        AppUpdateChecker.checkDaily(getApplication())
+                    }
+                }
             }
         }
         viewModelScope.launch {
@@ -1480,16 +1501,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             AppSettings.hiddenExploreCategories.drop(1).collect {
                 if (rawExploreSections.isNotEmpty()) publishExplore()
             }
-        }
-        viewModelScope.launch {
-            // A leftover APK only means "Install Now" for the session that
-            // downloaded it ??see AppUpdateChecker.clearCache.
-            AppUpdateChecker.clearCache(getApplication())
-            // The GitHub round trip is not part of opening the app: let the
-            // first screen settle, and ask at most once a day rather than on
-            // every cold start.
-            delay(STARTUP_DEFER_MS)
-            AppUpdateChecker.checkDaily(getApplication())
         }
     }
 
