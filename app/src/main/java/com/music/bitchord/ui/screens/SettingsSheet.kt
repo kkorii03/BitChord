@@ -305,7 +305,6 @@ fun SettingsScreen(
     val autoRedownloadMvSound by AppSettings.autoRedownloadMvSound.collectAsStateWithLifecycle()
     val autoReplaceHqDownloads by AppSettings.autoReplaceHqDownloads.collectAsStateWithLifecycle()
     val autoPrefetchHq by AppSettings.autoPrefetchHq.collectAsStateWithLifecycle()
-    val hqPrefetchLimit by AppSettings.hqPrefetchLimit.collectAsStateWithLifecycle()
     val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -712,17 +711,7 @@ fun SettingsScreen(
         SearchableSettingsGroup(
             search,
             header = stringResource(R.string.downloads),
-            footer = buildString {
-                append(stringResource(R.string.auto_redownload_mv_sound_subtitle))
-                append(' ')
-                append(stringResource(R.string.auto_replace_hq_downloads_subtitle))
-                append(' ')
-                append(stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit))
-                append(' ')
-                append(stringResource(R.string.auto_download_liked_subtitle))
-                append(' ')
-                append(stringResource(R.string.download_health_recheck_subtitle))
-            },
+            footer = stringResource(R.string.settings_footer_downloads),
         ) {
             val downloadQualityTitle = stringResource(R.string.download_quality)
             row(downloadQualityTitle, "offline", "lossless") {
@@ -814,23 +803,7 @@ fun SettingsScreen(
         SearchableSettingsGroup(
             search,
             header = stringResource(R.string.playback),
-            footer = buildString {
-                append(stringResource(R.string.resume_on_headphones_subtitle))
-                append(' ')
-                append(stringResource(R.string.personalised_autoplay_subtitle))
-                append(' ')
-                append(stringResource(R.string.video_radio_continue_subtitle))
-                append(' ')
-                append(
-                    stringResource(
-                        if (smartFade) {
-                            R.string.automix_enabled_subtitle
-                        } else {
-                            R.string.automix_disabled_subtitle
-                        },
-                    ),
-                )
-            },
+            footer = stringResource(R.string.settings_footer_playback),
         ) {
             val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
             row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
@@ -2030,13 +2003,7 @@ fun SettingsScreen(
         SearchableSettingsGroup(
             search,
             header = stringResource(R.string.advanced_options),
-            footer = buildString {
-                append(stringResource(R.string.sync_safety_next_prep_subtitle))
-                append(' ')
-                append(stringResource(R.string.sync_safety_download_recheck_subtitle))
-                append(' ')
-                append(stringResource(R.string.sync_safety_hq_sync_subtitle))
-            },
+            footer = stringResource(R.string.settings_footer_advanced),
         ) {
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
             row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
