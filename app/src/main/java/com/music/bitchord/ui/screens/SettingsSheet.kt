@@ -2291,8 +2291,9 @@ fun SettingsScreen(
         )
     }
 
-    // The password leaves the phone in this file, so say so before the share
-    // sheet opens rather than after somebody has already sent it.
+    // The password and any token in a source URL leave the phone in this file,
+    // so say so before the share sheet opens rather than after somebody has
+    // already sent it.
     if (confirmSendSettings) {
         AlertDialog(
             onDismissRequest = { confirmSendSettings = false },

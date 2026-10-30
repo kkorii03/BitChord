@@ -38,15 +38,16 @@ import java.util.Locale
  */
 object LogRedactor {
     private val COOKIE = Regex("""(?i)((?:set-)?cookie\s*[:=]\s*)[^\r\n]+""")
-    private val AUTHORIZATION = Regex("""(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+""")
+    private val AUTHORIZATION =
+        Regex("""(?i)(authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9_-]*\s+)?[^\s,;]+""")
     private val SESSION_ID = Regex(
         """(?i)\b(SAPISID|APISID|HSID|SSID|SID|__Secure-[A-Za-z0-9_]+)\s*[=:]\s*[^\s;,]+""",
     )
     private val GOOGLE_API_KEY = Regex("""AIza[0-9A-Za-z_\-]{20,}""")
     private val SK_KEY = Regex("""\bsk-[A-Za-z0-9_\-]{16,}""")
     private val EMAIL = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""")
-    private val URL_USERINFO = Regex("""(?i)\b(https?://)[^/\s@]+@""")
-    private val URL_QUERY = Regex("""(?i)(https?://[^\s?#]+)[?#][^\s]*""")
+    private val URL_USERINFO = Regex("""(?i)\b((?:https?|wss?)://)[^/\s@]+@""")
+    private val URL_QUERY = Regex("""(?i)((?:https?|wss?)://[^\s?#]+)[?#][^\s]*""")
 
     fun redact(input: String): String {
         var out = COOKIE.replace(input, "\$1[redacted]")

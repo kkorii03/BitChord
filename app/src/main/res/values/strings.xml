@@ -238,7 +238,7 @@
     <string name="settings_transfer_send_subtitle">Proxy, sources, audio quality, automix and lyrics, as one file</string>
     <string name="settings_transfer_import">Import settings</string>
     <string name="settings_transfer_import_subtitle">Choose a file, review what changes, then apply</string>
-    <string name="settings_transfer_send_warning">This includes your proxy password. Only send it to someone you trust.</string>
+    <string name="settings_transfer_send_warning">This includes your proxy password and any personal token in a source address. Only send it to someone you trust.</string>
     <string name="settings_transfer_send_confirm">Send</string>
     <string name="settings_transfer_share_opened">Share sheet opened</string>
     <string name="settings_transfer_send_failed">Couldn’t send settings: %1$s</string>

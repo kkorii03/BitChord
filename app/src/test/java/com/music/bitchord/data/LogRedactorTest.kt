@@ -31,6 +31,18 @@ class LogRedactorTest {
     }
 
     @Test
+    fun tokenAndBasicAuthorizationSchemesAreFullyRedacted() {
+        assertEquals(
+            "Authorization: [redacted]",
+            LogRedactor.redact("Authorization: Token 0123456789abcdef"),
+        )
+        assertEquals(
+            "Proxy-Authorization: [redacted]",
+            LogRedactor.redact("Proxy-Authorization: Basic dXNlcjpwYXNz"),
+        )
+    }
+
+    @Test
     fun apiKeysAreRedacted() {
         val out = LogRedactor.redact("key AIzaSyA1234567890abcdefghij and sk-or-v1-abcdefghijklmnop")
         assertFalse(out.contains("AIzaSyA1234567890abcdefghij"))
@@ -71,6 +83,13 @@ class LogRedactorTest {
         assertFalse(out.contains("pass"))
         assertFalse(out.contains("secret"))
         assertFalse(out.contains("fragment"))
+    }
+
+    @Test
+    fun websocketQueryIsDroppedToo() {
+        val out = LogRedactor.redact("socket wss://party.example/ws?token=secret")
+        assertEquals("socket wss://party.example/ws", out)
+        assertFalse(out.contains("token=secret"))
     }
 
     @Test

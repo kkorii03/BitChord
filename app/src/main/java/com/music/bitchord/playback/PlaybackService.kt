@@ -1250,8 +1250,12 @@ class PlaybackService : MediaLibraryService() {
 
             // ListenBrainz: "now playing" on play/resume too, not just on
             // transition — a track started from idle or resumed from pause
-            // otherwise stays silent on the site.
-            if (isPlaying && song != null) {
+            // otherwise stays silent on the site. Private mode must not even
+            // remember the track here: onDestroy closes out whatever this
+            // field holds when the service stops.
+            if (isPlaying && song != null &&
+                PrivateListening.allows(ListeningSink.SCROBBLING, AppSettings.privateListening.value)
+            ) {
                 if (listenBrainzSong?.videoId != song.videoId || listenBrainzStartMs == 0L) {
                     listenBrainzSong = song
                     listenBrainzStartMs = System.currentTimeMillis()
@@ -9967,7 +9971,9 @@ class PlaybackService : MediaLibraryService() {
         // service scope: it is cancelled a few lines down, and the request
         // should still reach ListenBrainz.
         val lastSong = listenBrainzSong
-        if (lastSong != null && listenBrainzStartMs > 0L) {
+        if (lastSong != null && listenBrainzStartMs > 0L &&
+            PrivateListening.allowsLastChanceScrobble(AppSettings.privateListening.value)
+        ) {
             val lbEnabled =
                 AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
             val lbToken = AppSettings.listenBrainzToken.value

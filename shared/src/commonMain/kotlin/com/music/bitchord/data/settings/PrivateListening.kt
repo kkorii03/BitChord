@@ -66,6 +66,18 @@ object PrivateListening {
     }
 
     /**
+     * Whether the playback service may close out the current track when it
+     * stops.
+     *
+     * The last-chance submit in `onDestroy` runs outside the scrobble manager,
+     * so it has to ask the same question explicitly. Without this gate a
+     * private track whose session was only ever opened for "now playing" would
+     * be submitted as a finished listen when the service is swiped away.
+     */
+    fun allowsLastChanceScrobble(privateListening: Boolean): Boolean =
+        allows(ListeningSink.SCROBBLING, privateListening)
+
+    /**
      * Whether a private session that started at [sinceMs] is still running at
      * [nowMs].
      *
