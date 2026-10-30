@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 120
     env:
       MODEL: openrouter/deepseek/deepseek-v4.1-flash-1017
+      # The reviewer stays on one model so coder models can be compared fairly.
+      REVIEW_MODEL: openrouter/deepseek/deepseek-v4.1-flash-1017
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -63,7 +65,7 @@ jobs:
             "small_model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
             "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow", "external_directory": "allow" },
             "provider": { "openrouter": { "models": { "deepseek/deepseek-v4.1-flash-1017": {
-              "options": { "provider": { "order": ["cloudflare", "deepseek", "deepinfra/fp8"], "allow_fallbacks": false } } } } } }
+              "options": { "provider": { "order": ["particle-ai", "cloudflare", "deepinfra/fp8"], "allow_fallbacks": false } } } } } }
           }
           EOF
           cat > "$RUNNER_TEMP/ds/env.txt" <<'EOF'
@@ -203,7 +205,7 @@ jobs:
           set +e
           git diff "$BASE" HEAD -- . ':(exclude)*.md' > "$RUNNER_TEMP/ds/change.diff"
           review="You are a strict senior reviewer. Another developer made the change in $RUNNER_TEMP/ds/change.diff (read it; you may open any repository file for context, but do NOT edit anything). The task they were given is in $RUNNER_TEMP/ds/prompt.txt. Find real defects only: logic that compiles but is wrong, a removed safety rule/guard/cap, a dropped term in a rewritten condition, data loss or file corruption risk, a race, a crash (null, OOM, main-thread I/O), battery waste (polling, timers, wake locks held too long), a task requirement not actually implemented, or a claim in the task summary the diff does not back. For each: severity HIGH/MEDIUM/LOW, file:line, one-sentence why, one-sentence fix. No style remarks. First line of your answer exactly 'VERDICT: OK' or 'VERDICT: ISSUES n'. Max 25 lines."
-          opencode run -m "$MODEL" "$review" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$RUNNER_TEMP/ds/review.txt"
+          opencode run -m "$REVIEW_MODEL" "$review" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$RUNNER_TEMP/ds/review.txt"
           verdict=$(grep -m1 -oE 'VERDICT: [A-Z]+( [0-9]+)?' "$RUNNER_TEMP/ds/review.txt")
           echo "::notice title=review::${verdict:-VERDICT: none}"
           exit 0
