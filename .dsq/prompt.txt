@@ -3,3 +3,13 @@
 수정: ① 재시도를 다 쓴 곡은 자동 경로에서 다시 시도하지 않음(손으로 누를 때만), 앱 시작마다 같은 경고 반복 금지. ② 앱이 백그라운드일 때 DownloadService 를 시작하지 않음 — 다음에 앱이 앞으로 올 때(lifecycle foreground 이벤트) 처리. ③ 이미 무손실 완전 사본이 있는 곡은 대상에서 제외. ④ 화면 없고 재생 요청 없는 프로세스 시작에선 InnerTubeX 준비를 미루고 첫 재생 요청이나 첫 화면 표시 때 수행(첫 소리 속도 회귀 없게 — 재생 요청 시 즉시 준비). 왜 프로세스가 뒤에서 켜지는지(WorkManager·미디어 재개·알람 등) 코드로 찾아 요약에 적고, 우리 코드가 불필요하게 깨우는 것이면 끔.
 테스트: 자동 재시도 대상 판정(재시도 소진·무손실 사본 있음·백그라운드) 순수 함수 단위 테스트.
 반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 기존 코드 의도(주석)를 지우면 요약에 이유. 다운로드된 곡·커버 곡·MV/노래 버전 판정 경로는 이 작업과 무관하면 건드리지 말 것. 업스트림 v1.8.1 코드 정리·파일 쪼개기 금지. 새 app 테스트는 이름을 요약에 적을 것(CI 목록에 Opus가 추가). 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제.
+
+
+== 2차 작업 (현재 브랜치 = 1차 결과) ==
+1차 결과를 독립 검토자가 검사한 지적을 전부 고칠 것. 지적이 틀렸다고 판단하면 코드 근거와 함께 요약에 이유를 적고 넘어감.
+검토 지적:
+VERDICT: ISSUES 3
+HIGH app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:169 — A saved file at LOSSLESS_16 or better is treated as already answering every target, so a verified higher rung (hi-res/Atmos) is never fetched, contradicting HqLibraryPolicy/H3's "replace even when already high quality". Fix: skip only when the saved/cached tier is at least as good as the verified tier.
+MEDIUM app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:269 — When a persisted plan is non-empty but every entry has become ineligible, hasRetryableWork returns false, so no worker runs, prunePlan never clears the plan, and newly verified entries are never considered. Fix: prune the plan before this check or also test verified entries outside the plan.
+MEDIUM app/src/main/java/com/music/bitchord/download/Downloads.kt:456 — onForeground only logs a failed startForegroundService and leaves the pending rows queued, so the recovery path can leave downloads looking accepted forever with no failure row or retry. Fix: reuse enqueue's removal/fail cleanup (or persist a deferred retry) when the foreground start fails.
+마지막 요약에 지적 번호별 처리(고침/반박)를 한 줄씩.
