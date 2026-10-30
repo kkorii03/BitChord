@@ -138,16 +138,26 @@ object ProxyPlayback {
     /**
      * Records that [videoId] resolved through the proxy to [url].
      *
+     * [generation] is the route that was in force when the request was made,
+     * not when this answer arrived. A health monitor may have switched to the
+     * backup while the request was in flight; stamping the new generation onto
+     * a URL minted by the old one would make [ProxyPlaybackPolicy.cachedUrlUsable]
+     * hand it back until its TTL ran out.
+     *
      * @return true when this is the first success remembered for the id, so
      *   the caller can say so once rather than on every re-open.
      */
     @Synchronized
-    fun markResolved(videoId: String, url: String): Boolean {
+    fun markResolved(
+        videoId: String,
+        url: String,
+        generation: Long = YouTubeProxy.routeGeneration,
+    ): Boolean {
         val key = canonical(url)
         val first = !remembered.containsKey(videoId)
         remembered.remove(videoId)?.let { proxiedUrls.remove(it) }
         remembered[videoId] = key
-        proxiedUrls[key] = ProxiedUrl(videoId, YouTubeProxy.routeGeneration)
+        proxiedUrls[key] = ProxiedUrl(videoId, generation)
         rememberedTimestamps[videoId] = System.currentTimeMillis()
         trimToCap()
         scheduleSave()

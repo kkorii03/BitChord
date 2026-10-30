@@ -69,6 +69,14 @@ class ChunkedDataSource(
     /** Set when the request can't be improved on, and is simply forwarded. */
     private var passthrough = false
 
+    /**
+     * Whether this transfer ended on a failure rather than at the end of the
+     * bytes. [close] must not credit the host with a success for a 403, a
+     * timeout or a truncated range: that is how a failing host kept its place
+     * at the front of the next candidate list.
+     */
+    private var transferFailed = false
+
     override fun addTransferListener(transferListener: TransferListener) {
         upstream.addTransferListener(transferListener)
     }
@@ -84,6 +92,7 @@ class ChunkedDataSource(
         currentHost = HqHostTracker.hostOf(dataSpec.uri.toString())
         openedAtMs = System.currentTimeMillis()
         bytesRead = 0L
+        transferFailed = false
 
         val total = dataSpec.uri.getQueryParameter("clen")?.toLongOrNull()
         if (total == null) {
@@ -99,6 +108,7 @@ class ChunkedDataSource(
                 return openWithRateLimitRetry(dataSpec) { upstream.open(dataSpec) }
             } catch (e: Exception) {
                 if (e !is InterruptedIOException) {
+                    transferFailed = true
                     // `host` is null exactly when the URL was too broken to
                     // parse, which is the case most in need of naming ??so fall
                     // back to the string itself rather than logging "null".
@@ -137,11 +147,18 @@ class ChunkedDataSource(
             // the time this surfaces as a playback error. A cancelled read-ahead
             // arrives here too and means nothing ??see [AudioCache.prefetchQueue].
             if (e !is InterruptedIOException) {
+                transferFailed = true
                 TrackLog.w(
                     TAG,
                     "range $position-${position + length - 1} refused for " +
                         "${spec.uri.getQueryParameter("c")}: ${e.message}",
                 )
+                // A 429/503 has already been counted (and the host rested) by
+                // openWithRateLimitRetry; adding another failure here would
+                // escalate the penalty twice for one refusal.
+                val rateLimited = e is HttpDataSource.InvalidResponseCodeException &&
+                    HqRetryPolicy.isRateLimited(e.responseCode)
+                if (!rateLimited) HqHostTracker.noteFailure(currentHost)
                 if (e is HttpDataSource.InvalidResponseCodeException) {
                     val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
                     if (resumed != null) {
@@ -375,7 +392,15 @@ class ChunkedDataSource(
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (passthrough) {
-            val read = upstream.read(buffer, offset, length)
+            val read = try {
+                upstream.read(buffer, offset, length)
+            } catch (e: Exception) {
+                if (e !is InterruptedIOException) {
+                    transferFailed = true
+                    HqHostTracker.noteFailure(currentHost)
+                }
+                throw e
+            }
             if (read > 0) bytesRead += read
             return read
         }
@@ -390,7 +415,15 @@ class ChunkedDataSource(
                 closeChunk()
                 openChunk()
             }
-            val read = upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt())
+            val read = try {
+                upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt())
+            } catch (e: Exception) {
+                if (e !is InterruptedIOException) {
+                    transferFailed = true
+                    HqHostTracker.noteFailure(currentHost)
+                }
+                throw e
+            }
             if (read != C.RESULT_END_OF_INPUT) {
                 position += read
                 chunkRemaining -= read
@@ -406,6 +439,8 @@ class ChunkedDataSource(
         // recovery. A short read is a transport failure, not the end of the
         // track, because `clen` already said how many bytes there are.
         val message = "truncated stream at $position ($bytesRemaining bytes missing)"
+        transferFailed = true
+        HqHostTracker.noteFailure(currentHost)
         TrackLog.w(TAG, "hq-stream: $message")
         throw IOException(message)
     }
@@ -424,12 +459,18 @@ class ChunkedDataSource(
     override fun close() {
         closeChunk()
         if (openedAtMs != 0L) {
-            HqHostTracker.noteTransfer(
-                currentHost,
-                bytesRead,
-                System.currentTimeMillis() - openedAtMs,
-                ok = true,
-            )
+            // A failed transfer already recorded its failure where it happened
+            // (open/read); adding a success here is what let a host that
+            // answered 403 or timed out keep its health score and stay ahead
+            // of a working host on the next pick.
+            if (!transferFailed) {
+                HqHostTracker.noteTransfer(
+                    currentHost,
+                    bytesRead,
+                    System.currentTimeMillis() - openedAtMs,
+                    ok = true,
+                )
+            }
         }
         baseSpec = null
         bytesRemaining = 0L
@@ -437,6 +478,7 @@ class ChunkedDataSource(
         currentHost = null
         openedAtMs = 0L
         bytesRead = 0L
+        transferFailed = false
     }
 
     /**

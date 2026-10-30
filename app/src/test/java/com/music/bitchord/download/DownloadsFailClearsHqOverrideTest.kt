@@ -62,6 +62,28 @@ class DownloadsFailClearsHqOverrideTest {
         )
     }
 
+    @Test
+    fun `a transient network failure keeps the verified pair for the retry`() {
+        val pair = HqDownloadSource(
+            sourceConfigId = "source",
+            trackId = "track",
+            tier = HqTier.LOSSLESS_16,
+        )
+        overrides[failedId] = pair
+
+        fail(failedId, "Unable to resolve host \"example.com\"", keepVerifiedPair = true)
+
+        assertEquals(
+            "the pair is still the answer once the connection returns",
+            pair,
+            overrides[failedId],
+        )
+        assertEquals(
+            DownloadState.Failed("Unable to resolve host \"example.com\""),
+            Downloads.active.value[failedId],
+        )
+    }
+
     private fun fail(videoId: String, reason: String) {
         val method = Downloads::class.java.getDeclaredMethod(
             "fail",
@@ -69,5 +91,15 @@ class DownloadsFailClearsHqOverrideTest {
             String::class.java,
         ).apply { isAccessible = true }
         method.invoke(Downloads, videoId, reason)
+    }
+
+    private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
+        val method = Downloads::class.java.getDeclaredMethod(
+            "fail",
+            String::class.java,
+            String::class.java,
+            Boolean::class.javaPrimitiveType,
+        ).apply { isAccessible = true }
+        method.invoke(Downloads, videoId, reason, keepVerifiedPair)
     }
 }

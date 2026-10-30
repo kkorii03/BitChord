@@ -2,6 +2,7 @@ package com.music.bitchord.data.net
 
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -70,6 +71,28 @@ class ProxyRouteGenerationTest {
 
         assertFalse(ProxyPlayback.isCurrentRoute(generation))
         assertFalse(ProxyPlayback.usesProxyFor(url))
+    }
+
+
+    @Test
+    fun `a url stamped with the request generation is stale after a switch`() {
+        YouTubeProxy.update(withBackup)
+        // The request starts on the primary, then the health monitor moves the
+        // route before the answer arrives. The answer belongs to the primary.
+        val requestGeneration = ProxyPlayback.currentRouteGeneration
+        YouTubeProxy.switchRoute(ProxyRoute.BACKUP, "test")
+
+        ProxyPlayback.markResolved("v3", url, requestGeneration)
+
+        assertEquals(requestGeneration, ProxyPlayback.generationFor(url))
+        assertFalse(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                requestGeneration,
+                ProxyPlayback.currentRouteGeneration,
+                canResolveViaProxy = true,
+            ),
+            "the URL must not look current just because it arrived after the switch",
+        )
     }
 
     @Test

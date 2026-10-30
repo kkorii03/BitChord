@@ -654,7 +654,15 @@ object AudioCache {
         val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val capabilities = runCatching { connectivity.getNetworkCapabilities(connectivity.activeNetwork) }
             .getOrNull()
-        return capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) != true
+        // A captive portal advertises INTERNET but only serves its sign-in
+        // page. Treating that as online sent every lookup into a timeout; the
+        // portal's own capability is the event-free way to tell them apart.
+        // (A proxy-only network can be unvalidated but is not a portal, so
+        // VALIDATED is deliberately not required here.)
+        return capabilities?.let {
+            !it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
+        } ?: false
     }
 
     /**

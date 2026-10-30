@@ -81,3 +81,49 @@
 5. **MED**: HQ 교체 실패 뒤 일반 다운로드 성공을 HQ 성공으로 정산(check-net 9).
 6. **MED**: 실패한 전송을 호스트 성공으로 기록(check-net/audit-playback 8).
 7. **LOW**: 오프라인 일반 자동재생 폴백, 재생 기록 재시도, 길이 조회 오류 문구, HQ 거부 TTL.
+
+## 5. 2차 검증(10-31) 처리
+
+이 절은 위 1~4절보다 나중 판단이다. 이전 차수가 "남음"으로 둔 HIGH·MEDIUM과 업스트림 검증자의 지적을 코드로 다시 확인해 고쳤다.
+
+| 번호 | 이전 상태 | 이번 처리 | 근거 |
+|---|---|---|---|
+| 검증자 1 (MED) | `Downloads.fail()`이 모든 실패에서 `hqOverrides`를 지워, 일시적 망 장애에도 검증된 쌍을 잃고 재시도가 기존 저음질 파일을 채택해 Done으로 끝날 수 있었다. | 고침 | `Downloads.kt:1896`가 `automaticFailure().transient`를 넘기고, `:2603-2624`의 `fail(..., keepVerifiedPair)`는 일시 실패에서만 쌍을 남긴다. 영구 실패는 이전 차수대로 지운다. 테스트 `DownloadsFailClearsHqOverrideTest` 2건(영구=지움, 일시=유지). |
+| check-net 3b (HIGH) | 429/503 뒤 `recent`의 같은 URL을 20분 재사용. | 고침 | `StreamResolver.kt:1224-1228`가 `RATE_LIMIT_CODES(429/503, `:1693`)`면 `recent`에서 지우고 클라이언트는 벤치하지 않는다. **기기 검증 필요**(재생 중 429/503 실제 응답). |
+| SourceResolver 쿨다운 (MED) | DNS/연결/프록시 실패와 오프라인 타임아웃도 소스 실패로 세어 30분 휴식. | 고침 | `SourceResolver.kt:1054-1060`는 오프라인 타임아웃을, `:1428-1495`는 `isNetworkFailure()`(UnknownHost/Connect/NoRoute/Timeout/SSL/마커)를 소스 실패에서 제외. **기기 검증 필요**(Wi-Fi↔셀룰러 전환). |
+| 오프라인 판정 (MED) | `NET_CAPABILITY_INTERNET`만 확인. | 고침 | `AudioCache.kt:658-667`, `DownloadHealth.kt:266-273`가 `CAPTIVE_PORTAL`을 함께 본다. 프록시 전용 망을 오프라인으로 오판하지 않도록 `VALIDATED`는 요구하지 않는다. **기기 검증 필요**(캡티브 포털/프록시 망). |
+| SourcesScreen 문구 (MED) | 예외 원문(영어)이 그대로 노출. | 고침 | `SourcesScreen.kt:432,909,964,999`가 `FriendlyError.message`를 거친다. `FriendlyError.kt`에 문자열 overload 추가. |
+| check-net 9 / HQ 정산 (MED) | 같은 id의 일반 다운로드 성공을 HQ 대상 성공으로 정산. | 고침 | `HqLibraryUpgrade.kt:591-615`이 `Downloads.hqApplied`를 확인하고, 증거가 없으면 일시 실패로 남겨 재시도한다. |
+| audit-playback 8 / 호스트 건강도 (MED) | 실패한 전송도 `close()`에서 성공으로 기록. | 고침 | `ChunkedDataSource.kt:78,95,111,150,399,422,442,466`가 `transferFailed`를 기록하고 성공 카운트를 건너뛴다. 429/503은 `openWithRateLimitRetry`가 이미 세므로 중복 집계하지 않는다. |
+| check-net 1 (남음) | Deepgram no-answer(5xx/401/네트워크)도 `syncCheckVersion=1`로 남아 다시 검사되지 않음. | 고침 | `DownloadedSyncCheck.kt:115-140`이 `ownCheckAnswered=false`(no-answer)이고 fresh 답도 없으면 `recordVersion=false`; no-words/no-fit은 디코드를 반복하지 않도록 기록한다. 테스트 `anUnansweredCheckDoesNotRecordTheVersion`, `aStructuralMissStillRecordsTheVersionSoItIsNotDecodedAgain`. **기기 검증 필요**(가사 싱크). |
+| check-net 7 / audit-playback 4 (남음) | 프록시 URL 세대를 응답 도착 시점에 찍음. | 고침 | `ProxyPlayback.markResolved(..., generation)`에 요청 시작 세대를 넘긴다(`StreamResolver.kt:833,865,1503,1532`, `ProxyPlayback.kt:151-165`). **기기 검증 필요**(프록시 라우트 전환). |
+| check-net 8 (가사 준비) (남음) | 다음 곡 가사 준비가 per-song override를 건너뜀. | 고침 | `TranslationAhead.kt:138-147`이 `LyricsOverrideStore.read`를 먼저 본다. |
+| audit-playback 6 (남음) | 삭제된 로컬 파일을 Media3가 3번 재시도. | 고침 | `PlaybackService.kt:4619`의 `isPermanent`가 `FileNotFoundException`도 영구 실패로 본다. **기기 검증 필요**(파일 삭제 후 재생). |
+| check-flow 5 (남음) | 저장 파일이 있으면 실제 URI가 네트워크여도 로컬로 오판. | 고침 | `PlaybackService.kt:7954`는 실제 URI가 없을 때만 저장 파일을 로컬 근거로 쓴다. **기기 검증 필요**(화면 꺼짐 스트리밍). |
+
+### 아직 남은 항목
+
+| 심각도 | 파일:줄 | 이유 |
+|---|---|---|
+| MED | `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1405-1415` (audit-lyrics 9) | AI 엔진 시도를 호출 전에 기록한다. 코드 주석이 "실패한 유료 호출도 다시 하지 않는다"는 실제 비용 문제를 설명하고 있어, 네트워크 실패만 골라내는 별도 재시도 예산 없이 바꾸면 유료 호출이 반복될 수 있다. **기기 검증 필요**. |
+| MED | `app/src/main/java/com/music/bitchord/ui/LyricsController.kt:208,405-413` (audit-lyrics 4) | 같은 곡 재진입 시 `lyricsFor`가 실패한 조회를 기억해 제공처를 다시 묻지 않는다. 제공처별 `NETWORK_ERROR/TIMEOUT`와 "정말 없음"을 구분하는 정책이 필요해 이번에는 문서에만 남긴다. **기기 검증 필요**. |
+
+### 실행 결과 (2차)
+
+```bash
+./gradlew :app:testProdReleaseUnitTest \
+  --tests 'com.music.bitchord.download.DownloadsFailClearsHqOverrideTest' \
+  --tests 'com.music.bitchord.ui.FriendlyErrorTest' --console=plain -q
+# DownloadsFailClearsHqOverrideTest: 2 tests, 0 failures
+# FriendlyErrorTest: 5 tests, 0 failures
+
+./gradlew :shared:jvmTest \
+  --tests 'com.music.bitchord.data.lyrics.DownloadedSyncCheckDecideTest' \
+  --tests 'com.music.bitchord.data.net.ProxyRouteGenerationTest' \
+  --tests 'com.music.bitchord.data.net.ProxyPlaybackStateTest' --console=plain -q
+# DownloadedSyncCheckDecideTest: 16 tests, 0 failures
+# ProxyRouteGenerationTest: 4 tests, 0 failures
+
+./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q
+# BUILD SUCCESSFUL
+```
