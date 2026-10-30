@@ -10084,14 +10084,23 @@ class PlaybackService : MediaLibraryService() {
         withContext(Dispatchers.Main.immediate) {
             val exoPlayer = player ?: return@withContext false
             val played = exoPlayer.currentPosition
-            if (NextPrepPolicy.aiGateOpen(played)) return@withContext true
             val duration = exoPlayer.duration
-            if (duration > 0L &&
-                !NextPrepPolicy.canStartStep(NextPrepPolicy.remainingMs(duration, played))
-            ) {
+            val remaining = if (duration > 0L) {
+                NextPrepPolicy.remainingMs(duration, played)
+            } else {
+                Long.MAX_VALUE
+            }
+            // The current track's allowance ends twenty seconds before its
+            // handoff, so even an already-open gate must not start a paid
+            // request inside that window (a short or near-end track).
+            if (!NextPrepPolicy.canStartStep(remaining)) return@withContext false
+            if (NextPrepPolicy.aiGateOpen(played)) return@withContext true
+            val waitMs = NextPrepPolicy.AI_MIN_PLAYED_MS - played
+            // Waiting for the gate would only start the request at or after
+            // the handoff; keep the free measurement and skip the paid one.
+            if (remaining != Long.MAX_VALUE && remaining <= waitMs) {
                 return@withContext false
             }
-            val waitMs = NextPrepPolicy.AI_MIN_PLAYED_MS - played
             val reached = CompletableDeferred<Unit>()
             val message = runCatching {
                 exoPlayer.createMessage { _, _ -> reached.complete(Unit) }

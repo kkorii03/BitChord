@@ -289,19 +289,22 @@ internal object TranslationAhead {
             val gemini = com.music.bitchord.data.lyrics.LyricsTranslation
             // The calibration few are asked alongside; each video at most once
             // ever, or every lyrics delivery would pay for the same sample.
-            var calibration = timing.calibrationSample(song.videoId) &&
+            val calibration = timing.calibrationSample(song.videoId) &&
                 AppSettings.aiTimingAhead.value &&
                 (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 timing.wantsAi(context, song.videoId, found.lines)
-            if (calibration && !timing.claimCalibrationSample(context, song.videoId)) {
-                calibration = false
-            }
+            var calibrationRan = false
             val ahead = if (calibration) {
                 scope.launch {
                     // Paid engines wait for the current song's early-skip
                     // window even when this pass started before it; the free
                     // measurement below is not held up by the wait.
                     if (!paidGate()) return@launch
+                    // Claim the once-ever sample only after the gate opens: a
+                    // track skipped early must keep its sample for a delivery
+                    // that can actually make the request.
+                    if (!timing.claimCalibrationSample(context, song.videoId)) return@launch
+                    calibrationRan = true
                     runCatching {
                         timing.placeWithAi(
                             context,
@@ -327,7 +330,7 @@ internal object TranslationAhead {
                 timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
             }
             ahead?.join()
-            if (!calibration && AppSettings.aiTimingAhead.value &&
+            if (!calibrationRan && AppSettings.aiTimingAhead.value &&
                 (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 !timing.measuredTiming(context, song.videoId) &&
                 timing.wantsAi(context, song.videoId, found.lines) &&
