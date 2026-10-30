@@ -109,17 +109,28 @@ object DownloadedSyncCheck {
         ownMatchPercent: Int?,
         freshMatchPercent: Int?,
         freshKey: Int,
+        /**
+         * Whether the file's own check actually reached an engine. A
+         * "no-answer" (5xx/401/network) did not, so the version must stay
+         * unset and the next play may try again. A "no-words"/"no-fit" did
+         * run; recording it is what keeps a structural miss from paying for
+         * the same decode on every play.
+         */
+        ownCheckAnswered: Boolean = true,
     ): Replacement {
+        val answered = ownCheckAnswered || freshMatchPercent != null
+        val alreadyChecked = !isUnverified(storedVersion)
+        val recordVersion = answered || alreadyChecked
         val freshWins = freshMatchPercent != null &&
             freshMatchPercent > (ownMatchPercent ?: 0)
         val bestMatch = if (freshWins) freshMatchPercent else ownMatchPercent
         if (!shouldReplace(storedVersion, existingMatchPercent, bestMatch)) {
-            return Replacement(replace = false, winner = null, key = null, recordVersion = true)
+            return Replacement(replace = false, winner = null, key = null, recordVersion = recordVersion)
         }
         return if (freshWins) {
-            Replacement(replace = true, winner = Winner.FRESH, key = freshKey, recordVersion = true)
+            Replacement(replace = true, winner = Winner.FRESH, key = freshKey, recordVersion = recordVersion)
         } else {
-            Replacement(replace = true, winner = Winner.STORED, key = existingKey, recordVersion = true)
+            Replacement(replace = true, winner = Winner.STORED, key = existingKey, recordVersion = recordVersion)
         }
     }
 }

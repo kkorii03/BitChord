@@ -18,6 +18,19 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
+
+/**
+ * Whether [e] is a cancelled transfer rather than a failed one.
+ *
+ * A cancelled read-ahead arrives as an [InterruptedIOException] and must not
+ * count against the host. A [SocketTimeoutException] also extends
+ * [InterruptedIOException], but a timeout is the network failing: leaving it
+ * out of the failure record let a dead host keep its place, and [close] then
+ * credited it with a success.
+ */
+internal fun isTransferCancellation(e: Throwable): Boolean =
+    e is InterruptedIOException && e !is SocketTimeoutException
 
 /**
  * Fetches a stream as a run of bounded ranges instead of one open-ended read.
@@ -112,7 +125,7 @@ class ChunkedDataSource(
             try {
                 return openWithRateLimitRetry(dataSpec) { upstream.open(dataSpec) }
             } catch (e: Exception) {
-                if (e !is InterruptedIOException) {
+                if (!isTransferCancellation(e)) {
                     transferFailed = true
                     // `host` is null exactly when the URL was too broken to
                     // parse, which is the case most in need of naming ??so fall
@@ -152,12 +165,26 @@ class ChunkedDataSource(
             // a range is refused, and it isn't recoverable from anywhere else by
             // the time this surfaces as a playback error. A cancelled read-ahead
             // arrives here too and means nothing ??see [AudioCache.prefetchQueue].
-            if (e !is InterruptedIOException) {
+            if (!isTransferCancellation(e)) {
+                transferFailed = true
                 TrackLog.w(
                     TAG,
                     "range $position-${position + length - 1} refused for " +
                         "${spec.uri.getQueryParameter("c")}: ${e.message}",
                 )
+                // A 429/503 has already been counted (and the host rested) by
+                // openWithRateLimitRetry; adding another failure here would
+                // escalate the penalty twice for one refusal.
+                val refusal = rateLimitedCause(e)
+                val rateLimited = refusal != null &&
+                    HqRetryPolicy.isRateLimited(refusal.responseCode)
+                if (rateLimited) {
+                    // Recorded by [openWithRateLimitRetry] already.
+                    failureNoted = true
+                } else {
+                    HqHostTracker.noteFailure(currentHost)
+                    failureNoted = true
+                }
                 if (e is HttpDataSource.InvalidResponseCodeException) {
                     val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
                     if (resumed != null) {
@@ -165,13 +192,6 @@ class ChunkedDataSource(
                         chunkOpen = true
                         return
                     }
-                }
-                transferFailed = true
-                // A rate-limited give-up was already recorded by
-                // [openWithRateLimitRetry]; anything else has not been yet.
-                val refusal = rateLimitedCause(e)
-                if (refusal != null && HqRetryPolicy.isRateLimited(refusal.responseCode)) {
-                    failureNoted = true
                 }
                 // This is the only place a refusal of the *real* fetch is seen.
                 // Left here it is just a failed track; handed back, it is the
@@ -401,7 +421,11 @@ class ChunkedDataSource(
             val read = try {
                 upstream.read(buffer, offset, length)
             } catch (e: Exception) {
-                if (e !is InterruptedIOException) transferFailed = true
+                if (!isTransferCancellation(e)) {
+                    transferFailed = true
+                    HqHostTracker.noteFailure(currentHost)
+                    failureNoted = true
+                }
                 throw e
             }
             if (read > 0) bytesRead += read
@@ -421,7 +445,11 @@ class ChunkedDataSource(
             val read = try {
                 upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt())
             } catch (e: Exception) {
-                if (e !is InterruptedIOException) transferFailed = true
+                if (!isTransferCancellation(e)) {
+                    transferFailed = true
+                    HqHostTracker.noteFailure(currentHost)
+                    failureNoted = true
+                }
                 throw e
             }
             if (read != C.RESULT_END_OF_INPUT) {
@@ -439,8 +467,10 @@ class ChunkedDataSource(
         // recovery. A short read is a transport failure, not the end of the
         // track, because `clen` already said how many bytes there are.
         val message = "truncated stream at $position ($bytesRemaining bytes missing)"
-        TrackLog.w(TAG, "hq-stream: $message")
         transferFailed = true
+        HqHostTracker.noteFailure(currentHost)
+        failureNoted = true
+        TrackLog.w(TAG, "hq-stream: $message")
         throw IOException(message)
     }
 

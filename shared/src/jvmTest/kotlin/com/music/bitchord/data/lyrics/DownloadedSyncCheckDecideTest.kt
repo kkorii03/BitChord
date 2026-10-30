@@ -245,4 +245,37 @@ class DownloadedSyncCheckDecideTest {
         assertNull(decision.key)
         assertTrue(decision.recordVersion)
     }
+
+    @Test
+    fun aStructuralMissStillRecordsTheVersionSoItIsNotDecodedAgain() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownCheckAnswered = true,
+        )
+        assertFalse(decision.replace)
+        assertTrue(decision.recordVersion)
+    }
+
+    @Test
+    fun anUnansweredCheckDoesNotRecordTheVersion() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = null,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownCheckAnswered = false,
+        )
+        assertFalse(decision.replace)
+        assertFalse(
+            decision.recordVersion,
+            "a no-answer must leave the version unset so the next play retries",
+        )
+    }
 }

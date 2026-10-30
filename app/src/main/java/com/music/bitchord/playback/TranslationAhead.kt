@@ -143,6 +143,17 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
     ): AheadLyrics {
+        // A per-song override is what the player will show, so the prep pass
+        // must use it too. Reading the file's tags first spent a provider
+        // lookup on a song whose displayed lyrics were already decided.
+        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
+            return AheadLyrics(
+                lines = override.lines,
+                source = override.source,
+                searchedAs = null,
+                fromFile = false,
+            )
+        }
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.withSource(app, uri)
             if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {

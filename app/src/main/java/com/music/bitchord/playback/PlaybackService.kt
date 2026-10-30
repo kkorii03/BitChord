@@ -4740,6 +4740,11 @@ class PlaybackService : MediaLibraryService() {
             var depth = 0
             while (cause != null && depth++ < CAUSE_DEPTH) {
                 if (cause is StreamResolver.PermanentlyUnplayableException) return true
+                // A local file that is gone will not come back between two
+                // Media3 retries. Without this the player spent three tries
+                // (and a few seconds) on the same missing path before
+                // [recoverFrom] could restream the track.
+                if (cause is java.io.FileNotFoundException) return true
                 cause = cause.cause?.takeIf { it !== cause }
             }
             return false
@@ -8176,7 +8181,10 @@ class PlaybackService : MediaLibraryService() {
         if (!localPath.isNullOrBlank()) {
             return true
         }
-        if (Downloads.verifiedSavedUri(mediaId) != null) {
+        // A saved copy for this id does not make a *streamed* item local: the
+        // URI in hand is what the player is reading. Only use the download as
+        // the answer when the item carries no URI to read instead.
+        if (uri == null && Downloads.verifiedSavedUri(mediaId) != null) {
             return true
         }
         return false

@@ -2224,6 +2224,9 @@ object LyricsTiming {
                 ownMatchPercent = own.match,
                 freshMatchPercent = if (bestFresh != null) result.match else null,
                 freshKey = freshKey,
+                // A no-answer did not reach an engine, so the version stays
+                // unset and the next play retries. No-words/no-fit did run.
+                ownCheckAnswered = result !== own || own.result != "no-answer",
             )
             if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
                 // The fresh sheet's fit belongs to its own lines. Both have to

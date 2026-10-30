@@ -18,6 +18,17 @@ import javax.net.ssl.SSLException
  * alone — only the technical leftovers are replaced.
  */
 object FriendlyError {
+    /**
+     * The same sentence for a failure that only survives as text.
+     *
+     * [SourceHealth.Unreachable] carries a reason string rather than the
+     * exception that produced it, and a source screen must not print the
+     * server's English `Failed to connect to …` in the middle of a Korean
+     * row. Wrapping it keeps one classification table for both shapes.
+     */
+    fun message(context: Context, rawReason: String): String =
+        message(context, IllegalStateException(rawReason))
+
     fun message(context: Context, error: Throwable): String {
         val raw = error.message.orEmpty()
         if (raw.any { it in '\uAC00'..'\uD7A3' }) return raw
