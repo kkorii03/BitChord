@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 120
     env:
       MODEL: openrouter/deepseek/deepseek-v4.1-flash-1017
+      # The reviewer stays on one model so coder models can be compared fairly.
+      REVIEW_MODEL: openrouter/deepseek/deepseek-v4.1-flash-1017
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -61,9 +63,9 @@ jobs:
             "$schema": "https://opencode.ai/config.json",
             "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
             "small_model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-            "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow" },
+            "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow", "external_directory": "allow" },
             "provider": { "openrouter": { "models": { "deepseek/deepseek-v4.1-flash-1017": {
-              "options": { "provider": { "order": ["cloudflare", "deepseek", "deepinfra/fp8"], "allow_fallbacks": false } } } } } }
+              "options": { "provider": { "order": ["particle-ai", "cloudflare", "deepinfra/fp8"], "allow_fallbacks": false } } } } } }
           }
           EOF
           cat > "$RUNNER_TEMP/ds/env.txt" <<'EOF'
@@ -74,7 +76,16 @@ jobs:
           and for shared tests ./gradlew :shared:jvmTest --tests '<your test>' --console=plain -q. Fix every compile error before you finish.
           rg (ripgrep) and grep both work. Do not print whole-repository listings. Do not commit or push. Never touch .github/, keys/, *.jks or signing config.
           Battery first in app code: no periodic polling or timers, event-driven only.
+          NEVER (each of these broke a real change on 10-26):
+          - Never delete or weaken an existing safety rule, guard or cap whose comment explains a real failure (e.g. phone-speaker PCM16 cap for Samsung distortion). Keep it unless the task names it.
+          - Never rewrite, truncate or re-tag a downloaded audio file in place, and never load a whole media file into memory.
+          - Never claim in the summary that something is wired/connected/done unless the diff contains it; list exactly the files you changed.
+          - Never change user-visible wording style; Korean UI follows Apple Music (noun labels, formal 합니다체, terms 보관함/플레이리스트/다음 항목 재생/나중에 재생/셔플).
+          - When you refactor a condition, keep every term of the old one (write the old and new truth table in your summary).
           EOF
+          # The real root, so DeepSeek does not guess /home/user/... and get its
+          # edits refused as "external_directory" (seen on yz-hq2-library).
+          echo "The repository root is exactly $GITHUB_WORKSPACE . Use paths relative to it (app/src/..., shared/src/...); never invent another absolute path." >> "$RUNNER_TEMP/ds/env.txt"
 
       - name: DeepSeek
         shell: bash
@@ -82,10 +93,19 @@ jobs:
           set +e
           prompt="$(cat "$RUNNER_TEMP/ds/env.txt")"$'\n\n'"$(cat "$RUNNER_TEMP/ds/prompt.txt")"
           opencode run -m "$MODEL" "$prompt" 2>&1 | tee "$RUNNER_TEMP/ds/out1.txt" | tail -c 200000
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "::warning title=ds::no changes, retrying once"
-            opencode run -m "$MODEL" "$prompt"$'\n\n'"(Retry: the last run ended with no file changes. Do not list the repository; go straight to the files named above and finish the task.)" 2>&1 | tee "$RUNNER_TEMP/ds/out2.txt" | tail -c 200000
-          fi
+          # A refused tool call ends the whole run mid-task; so does an empty answer.
+          for round in 2 3; do
+            last="$RUNNER_TEMP/ds/out$((round-1)).txt"
+            if [ -z "$(git status --porcelain)" ]; then
+              why="the last run ended with no file changes. Do not list the repository; go straight to the files named above"
+            elif grep -q "rejected permission" "$last"; then
+              why="the last run was cut off when an edit was refused (wrong absolute path). Your earlier edits are kept (see git status / git diff). Use paths relative to $GITHUB_WORKSPACE and continue where it stopped"
+            else
+              break
+            fi
+            echo "::warning title=ds::round $round: $why"
+            opencode run -m "$MODEL" "$prompt"$'\n\n'"(Continue: $why, and finish the whole task.)" 2>&1 | tee "$RUNNER_TEMP/ds/out$round.txt" | tail -c 200000
+          done
           exit 0
 
       - name: Guard and compile gate
@@ -113,24 +133,104 @@ jobs:
             git add -A
           done
           rm -f compile.log
+          # Test gate (10-26, user: never trust DeepSeek): run the same test
+          # commands the Korean WIP check runs, read from that workflow, and
+          # make DeepSeek fix what it broke before anything is pushed.
+          if [ "$RESULT" = compiled ]; then
+            grep -oE "\./gradlew :(shared:jvmTest --tests 'com\.music\.bitchord\.data\.lyrics|app:testProdDebugUnitTest)[^|]*--console=plain" .github/workflows/ko-wip-check.yml > "$RUNNER_TEMP/ds/tests.sh"
+            for attempt in 1 2 3; do
+              : > tests.log; ok=1
+              while IFS= read -r cmd; do bash -c "$cmd" >> tests.log 2>&1 || ok=0; done < "$RUNNER_TEMP/ds/tests.sh"
+              if [ $ok = 1 ]; then echo "::notice title=tests::passed"; break; fi
+              RESULT=tests-failed; echo "RESULT=tests-failed" >> "$GITHUB_ENV"
+              [ $attempt -eq 3 ] && { echo "::error title=tests::still failing after 2 fixes"; break; }
+              errs=$(grep -E "^e: |FAILED|AssertionError|expected:" tests.log | head -30)
+              opencode run -m "$MODEL" "$(cat "$RUNNER_TEMP/ds/env.txt")"$'\n\n'"The project tests fail after your change. Fix the code (not the tests, unless a test asserts the exact old behaviour this task was told to change — then say so). Failures:"$'\n'"$errs"$'\n'"Then rerun: $(head -c 3000 "$RUNNER_TEMP/ds/tests.sh"). At the end, summary in max 6 lines." 2>&1 | tee -a "$RUNNER_TEMP/ds/fix.txt" | tail -c 50000
+              ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q > /dev/null 2>&1 && RESULT=compiled || RESULT=compile-failed
+              echo "RESULT=$RESULT" >> "$GITHUB_ENV"
+              [ "$RESULT" = compiled ] || break
+            done
+            rm -f tests.log
+          fi
+          # Proof gate (10-26, user: make DeepSeek work properly). A new or
+          # changed test must FAIL on the base code; one that passes there
+          # proves nothing about the bug. Run them in a worktree of $BASE.
+          if [ "$RESULT" = compiled ]; then
+            tests=$(git diff --cached --name-only --diff-filter=AM | grep -E 'Test\.kt$')
+            if [ -z "$tests" ]; then
+              echo "::warning title=proof::no new or changed test - Opus must reject unless the task needed none"
+              PROOF=none; echo "PROOF=none" >> "$GITHUB_ENV"
+            else
+              git worktree add -q "$RUNNER_TEMP/base" "$BASE" 2>/dev/null
+              # module/src/<set>/(kotlin|java)/pkg/Cls.kt -> ":module:<task> --tests pkg.Cls"
+              : > "$RUNNER_TEMP/ds/proof.cmds"
+              for t in $tests; do
+                mkdir -p "$RUNNER_TEMP/base/$(dirname "$t")"; cp "$t" "$RUNNER_TEMP/base/$t"
+                mod=${t%%/*}
+                cls=$(echo "$t" | sed -E 's#^[^/]+/src/[^/]+/(kotlin|java)/##; s#\.kt$##; s#/#.#g')
+                if [ "$mod" = app ]; then task=testProdDebugUnitTest; else task=jvmTest; fi
+                echo "./gradlew :$mod:$task --tests '$cls' --console=plain -q" >> "$RUNNER_TEMP/ds/proof.cmds"
+              done
+              ( cd "$RUNNER_TEMP/base" && chmod +x gradlew && ok=1 && ran=0 && \
+                while IFS= read -r c; do ran=1; bash -c "$c" || ok=0; done < "$RUNNER_TEMP/ds/proof.cmds"; \
+                [ "$ran" = 1 ] || exit 2; exit $((1-ok)) ) > "$RUNNER_TEMP/ds/proof.log" 2>&1
+              rc=$?
+              if [ $rc -eq 2 ]; then
+                echo "::warning title=proof::no test command could be built"; PROOF=unknown; echo "PROOF=unknown" >> "$GITHUB_ENV"
+              elif [ $rc -eq 0 ]; then
+                echo "::error title=proof::the new tests PASS on the base code - they do not prove the bug"
+                PROOF=weak; echo "PROOF=weak" >> "$GITHUB_ENV"
+              else
+                echo "::notice title=proof::new tests fail (or do not compile) on the base code"
+                PROOF=ok; echo "PROOF=ok" >> "$GITHUB_ENV"
+              fi
+              git worktree remove --force "$RUNNER_TEMP/base" 2>/dev/null
+            fi
+          fi
+          # Size flag: a large non-test change gets a full Opus read, not a skim.
+          big=$(git diff --cached --numstat -- . ':(exclude)*Test.kt' ':(exclude)*.md' ':(exclude)*.lockfile' | awk '{s+=$1+$2} END {print s+0}')
+          [ "$big" -gt 500 ] && echo "::warning title=size::$big changed non-test lines - full Opus read required" || echo "::notice title=size::$big changed non-test lines"
+          # The test-fix rounds run after the guard, so restore the forbidden
+          # paths once more: a workflow-file change here also makes GitHub
+          # refuse the push (GITHUB_TOKEN has no `workflows` permission).
+          git checkout HEAD -- .github .dsq 2>/dev/null || true
+          git clean -fdq -- .github .dsq 2>/dev/null || true
           git add -A
-          git commit -q -m "cloud: $NAME ($RESULT)" -m "DeepSeek cloud task on $BASE." || true
+          git commit -q -m "cloud: $NAME ($RESULT, proof=${PROOF:-n/a})" -m "DeepSeek cloud task on $BASE." || true
           git push -f origin "HEAD:refs/heads/cloud/$NAME"
           echo "::notice title=result::cloud/$NAME $RESULT $(git rev-parse --short HEAD)"
           if [ "$RESULT" = compiled ]; then gh workflow run ko-wip-check.yml --repo "$GITHUB_REPOSITORY" --ref "cloud/$NAME"; fi
+
+      # A second, independent DeepSeek reads only the diff and hunts for what
+      # compiles but is wrong. Opus still decides; this is a pre-filter.
+      - name: Adversarial review
+        if: env.RESULT == 'compiled'
+        shell: bash
+        run: |
+          set +e
+          git diff "$BASE" HEAD -- . ':(exclude)*.md' > "$RUNNER_TEMP/ds/change.diff"
+          review="You are a strict senior reviewer. Another developer made the change in $RUNNER_TEMP/ds/change.diff (read it; you may open any repository file for context, but do NOT edit anything). The task they were given is in $RUNNER_TEMP/ds/prompt.txt. Find real defects only: logic that compiles but is wrong, a removed safety rule/guard/cap, a dropped term in a rewritten condition, data loss or file corruption risk, a race, a crash (null, OOM, main-thread I/O), battery waste (polling, timers, wake locks held too long), a task requirement not actually implemented, or a claim in the task summary the diff does not back. For each: severity HIGH/MEDIUM/LOW, file:line, one-sentence why, one-sentence fix. No style remarks. First line of your answer exactly 'VERDICT: OK' or 'VERDICT: ISSUES n'. Max 25 lines."
+          opencode run -m "$REVIEW_MODEL" "$review" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$RUNNER_TEMP/ds/review.txt"
+          verdict=$(grep -m1 -oE 'VERDICT: [A-Z]+( [0-9]+)?' "$RUNNER_TEMP/ds/review.txt")
+          echo "::notice title=review::${verdict:-VERDICT: none}"
+          exit 0
 
       - name: Summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## $NAME: ${RESULT:-?}"
+            echo "## $NAME: ${RESULT:-?} · proof=${PROOF:-?}"
             echo '```'
             git diff --stat "$BASE" HEAD 2>/dev/null | tail -30
             echo '```'
             echo '### DeepSeek summary (last 40 lines)'
             echo '```'
             cat "$RUNNER_TEMP"/ds/out*.txt 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | tail -40
+            echo '```'
+            echo '### Adversarial review'
+            echo '```'
+            tail -40 "$RUNNER_TEMP/ds/review.txt" 2>/dev/null
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
