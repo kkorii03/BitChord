@@ -33,15 +33,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
-import kotlin.math.sin
 import java.util.Locale
 
 /**
@@ -515,6 +512,9 @@ class CrossfadeController(
     }
 
     private var fadeStartedAt = 0L
+
+    private var lastFadeQuarter = 0
+    private val fadeQuarterGains = arrayOfNulls<String>(3)
 
     /**
      * Both tracks' analyses as the blend began, for the beat the scrubber
@@ -1563,7 +1563,7 @@ class CrossfadeController(
         phase = Phase.ARMING
         TrackLog.d(
             "BitChord",
-            "crossfade: start out=${out.currentMediaItem?.mediaId} in=${items.getOrNull(nextIndex)?.mediaId} " +
+            "crossfade: arm out=${out.currentMediaItem?.mediaId} in=${items.getOrNull(nextIndex)?.mediaId} " +
                 "fade=${fade}ms cue=${incomingCueTimeMs}ms smart=$smart",
             about = items.getOrNull(nextIndex)?.mediaId,
         )
@@ -1766,6 +1766,8 @@ class CrossfadeController(
         into.volume = 0f
         into.playWhenReady = true
         fadeStartedAt = SystemClock.elapsedRealtime()
+        lastFadeQuarter = 0
+        fadeQuarterGains.fill(null)
         nudgeUntil = 0L
         lockCount = 0
         outClock.reset()
@@ -1795,6 +1797,13 @@ class CrossfadeController(
         Log.d(
             TAG,
             "arm ready out=${outItem?.mediaId} in=${inItem?.mediaId} took=${standbyLeadMs}ms",
+        )
+        TrackLog.d(
+            "BitChord",
+            "crossfade: start out=${outItem?.mediaId} in=${inItem?.mediaId} fade=${fadeMs}ms " +
+                "cue=${incomingCueTimeMs}ms smart=$smartFadeActive " +
+                "gains in=${gainText(into.volume)} out=${gainText(out.volume)}",
+            about = inItem?.mediaId,
         )
 
         // Published before the mix flag, in the same tick: the scrubber shows
@@ -1930,8 +1939,7 @@ class CrossfadeController(
             .takeIf { it != C.TIME_UNSET && it > 0L }
             ?.minus(incomingCueTimeMs)
             ?.coerceAtLeast(0L)
-        val incomingCap = remainingIncoming?.div(3) ?: Long.MAX_VALUE
-        val span = minOf(fadeMs, incomingCap).coerceAtLeast(1L)
+        val span = CrossfadeGain.spanMs(fadeMs, remainingIncoming)
         val elapsed = (inClock.read(player) - incomingCueTimeMs).coerceAtLeast(0.0).toFloat()
         // Advanced: [fadeMs] is outgoing time, and a stretched incoming track
         // covers `rate` times as much of its own timeline in it — unscaled, a
@@ -1973,6 +1981,7 @@ class CrossfadeController(
         val outgoingGain = (1.0 + (render.outgoingGain - 1.0) * matchWeight).toFloat().coerceIn(0f, 1f)
         player.volume = (rise * incomingGain).coerceIn(0f, 1f)
         out.volume = if (ranOn(out)) 0f else (fall * outgoingGain).coerceIn(0f, 1f)
+        logFadeGains(progress, player.volume, out.volume)
         onBlendHeadroom(
             headroomFor(
                 mixRise(outgoingAt) * incomingGain,
@@ -2005,12 +2014,50 @@ class CrossfadeController(
         val tailDone = !render.echo || elapsed / wallSpan >= render.echoAt + render.echoTailMs / wallSpan
         val done = (progress >= 1f && tailDone) || settingSwitchedOff
         if (done) {
+            logFadeEnd(out, player, progress)
             // A blend cut short before its midpoint still ends on the incoming
             // track — it is the one playing on, and what [finish] keeps.
             handOff(out, player)
             finish()
         }
     }
+
+    private fun logFadeGains(progress: Float, incomingGain: Float, outgoingGain: Float) {
+        val quarter = when {
+            progress >= 0.75f -> 3
+            progress >= 0.5f -> 2
+            progress >= 0.25f -> 1
+            else -> 0
+        }
+        if (quarter <= lastFadeQuarter) return
+        for (q in lastFadeQuarter + 1..quarter) {
+            fadeQuarterGains[q - 1] = "${q * 25}%=${gainText(incomingGain)}/${gainText(outgoingGain)}"
+        }
+        lastFadeQuarter = quarter
+        if (quarter < 3) return
+        TrackLog.d(
+            "BitChord",
+            "crossfade: gains 25/50/75 ${fadeQuarterGains.joinToString(" ")} " +
+                "at=${SystemClock.elapsedRealtime() - fadeStartedAt}ms",
+            about = incoming?.currentMediaItem?.mediaId,
+        )
+    }
+
+    private fun logFadeEnd(out: ExoPlayer, into: ExoPlayer, progress: Float) {
+        val quarters = fadeQuarterGains.filterNotNull()
+        val quarterText = if (quarters.isEmpty()) "" else " ${quarters.joinToString(" ")}"
+        TrackLog.d(
+            "BitChord",
+            "crossfade: end out=${out.currentMediaItem?.mediaId} in=${into.currentMediaItem?.mediaId} " +
+                "fade=${fadeMs}ms overlap=${SystemClock.elapsedRealtime() - fadeStartedAt}ms " +
+                "progress=${gainText(progress)}$quarterText " +
+                "gains end=${gainText(into.volume)}/${gainText(out.volume)}",
+            about = into.currentMediaItem?.mediaId,
+        )
+    }
+
+    private fun gainText(gain: Float): String =
+        String.format(Locale.ROOT, "%.3f", gain.coerceIn(0f, 1f))
 
     /**
      * Tells the scrubber where the blend's beats fall, and whether it is moving.
@@ -2760,11 +2807,9 @@ class CrossfadeController(
         )
 
     /** Equal-power pair: [riseGain]² + [fallGain]² = 1, so the blend never dips. */
-    private fun riseGain(progress: Float): Float =
-        sin(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
+    private fun riseGain(progress: Float): Float = CrossfadeGain.rise(progress)
 
-    private fun fallGain(progress: Float): Float =
-        cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
+    private fun fallGain(progress: Float): Float = CrossfadeGain.fall(progress)
 
     /**
      * The incoming fader for the blend in flight. Classic Automix — and every
