@@ -133,6 +133,7 @@ import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricLineIndex
+import com.music.bitchord.data.lyrics.LyricWord
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.translationLanguageName
@@ -2878,13 +2879,40 @@ private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String):
     return remember(trackKey) { SubLyricsReveal(progress.asState(), shown) }
 }
 
-/** Whether [made] — a translation or romanization — keeps [source]'s line timings. */
-private fun sameTiming(made: List<LyricLine>, source: List<LyricLine>): Boolean =
-    made.size == source.size && made.indices.all { made[it].timeMs == source[it].timeMs }
-
 /** The same small lines re-timed: same count, same words. */
 private fun sameWords(a: List<LyricLine>?, b: List<LyricLine>?): Boolean =
     a != null && b != null && a.size == b.size && a.indices.all { a[it].text == b[it].text }
+
+/**
+ * Whether the translated lines were made from the same timing as [source].
+ *
+ * Line starts alone are not enough. Word sync often arrives after the first
+ * line-only sheet, on exactly the same stamps, and a hold can change without
+ * its start moving; either one leaves the translated sheet projecting the old
+ * envelope unless it is rebuilt. A translated line keeps the original it was
+ * made from in [LyricLine.timingSource], which is what makes the comparison
+ * possible without confusing its own translated words with the source's.
+ */
+internal fun sameTiming(made: List<LyricLine>, source: List<LyricLine>): Boolean =
+    made.size == source.size && made.indices.all { index ->
+        val a = made[index]
+        val b = source[index]
+        a.timeMs == b.timeMs &&
+            a.sungUntilMs == b.sungUntilMs &&
+            sourceWordsOf(a) == sourceWordsOf(b) &&
+            sameBackgroundTiming(a.background, b.background)
+    }
+
+/** The source words a display line was timed from; its own words when untranslated. */
+private fun sourceWordsOf(line: LyricLine): List<LyricWord> =
+    line.timingSource?.words ?: line.words
+
+private fun sameBackgroundTiming(a: LyricLine?, b: LyricLine?): Boolean {
+    if (a == null || b == null) return a == null && b == null
+    return a.timeMs == b.timeMs &&
+        a.sungUntilMs == b.sungUntilMs &&
+        sourceWordsOf(a) == sourceWordsOf(b)
+}
 
 /**
  * Opens downward out of the line above: the height grows from nothing while
@@ -3238,19 +3266,11 @@ internal fun rememberLyricsTranslation(
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
     val configuredLocale = appLanguageTag()
     val preferredTranslation by PlayerSettings.translationLanguage.collectAsStateWithLifecycle()
-    // Settings wins where it has been set; blank means follow the app. Only the
-    // app-language path is reduced to a base language — a code chosen in
-    // Settings is already exactly what the endpoint wants and narrowing it
-    // would throw away the script half of zh-TW. Chinese is the exception on the
-    // app path too: bare "zh" comes back Simplified, so the script maps to zh-TW / zh-CN.
+    // Settings wins where it has been set; blank means follow the app. One
+    // resolver for the player, the prefetch and the lock screen, so all three
+    // file and read the same cache entry — see [LocaleTags.translationTarget].
     val translationLanguage = remember(configuredLocale, preferredTranslation) {
-        preferredTranslation.ifBlank {
-            if (LocaleTags.isChineseTag(configuredLocale)) {
-                LocaleTags.translationWireTarget(configuredLocale)
-            } else {
-                Locale.forLanguageTag(configuredLocale).language.ifBlank { "en" }
-            }
-        }
+        LocaleTags.translationTarget(preferredTranslation, configuredLocale)
     }
     val translationLanguageName = remember(configuredLocale, translationLanguage) {
         translationLanguageName(translationLanguage, Locale.forLanguageTag(configuredLocale))

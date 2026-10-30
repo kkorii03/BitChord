@@ -79,11 +79,17 @@ internal object TranslationAhead {
 
     /** The language the translate button would ask for, worked out the way the player does. */
     fun targetLanguage(context: Context): String {
-        val chosen = AppSettings.translationLanguage.value.trim()
-        if (chosen.isNotEmpty()) return chosen
-        val locale = AppCompatDelegate.getApplicationLocales().get(0)
-            ?: context.resources.configuration.locales.get(0)
-        return locale?.language.orEmpty().ifBlank { "en" }
+        // [LocaleTags.translationTarget] is the same resolver the player uses,
+        // Chinese script included: a prefetch filed under bare "zh" while the
+        // player asks for "zh-TW" would never be found, so a downloaded song
+        // would have no translation offline.
+        val appTag = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
+            ?.takeIf { it.isNotBlank() }
+            ?: context.resources.configuration.locales.get(0)?.toLanguageTag().orEmpty()
+        return com.music.bitchord.data.LocaleTags.translationTarget(
+            com.music.bitchord.data.settings.AppSettings.translationLanguage.value,
+            appTag,
+        )
     }
 
     /**
@@ -388,10 +394,16 @@ internal object TranslationAhead {
 
     private suspend fun translate(trackId: String, lines: List<LyricLine>, target: String, keep: Boolean) {
         try {
-            gate.withLock {
+            val result = gate.withLock {
                 withTimeoutOrNull(LOOKUP_TIMEOUT_MS) {
                     LyricsTranslation.translate(trackId, lines, target, keep = keep)
                 }
+            }
+            // The failure is not thrown, so without this the automatic pass
+            // would leave no trace at all: the next play silently pays for the
+            // same request again.
+            if (result == null || result is LyricsTranslation.Result.Unavailable) {
+                Log.d(TAG, "no translation ahead for $trackId (${target}): ${result ?: "timed out"}")
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

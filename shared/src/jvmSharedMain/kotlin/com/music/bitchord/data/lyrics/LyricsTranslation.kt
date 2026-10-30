@@ -1,6 +1,7 @@
 package com.music.bitchord.data.lyrics
 
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.LocaleTags
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -931,8 +932,19 @@ object LyricsTranslation {
         else -> Locale.forLanguageTag(tag.replace('_', '-')).language.lowercase(Locale.ROOT)
     }
 
-    private fun sameLanguage(first: String, second: String): Boolean =
-        canonicalLanguage(first) == canonicalLanguage(second)
+    /**
+     * Whether [second] is a destination no translation is needed for. Chinese
+     * is compared by script as well as language: zh-CN and zh-TW are two ways
+     * of writing one language, and a Simplified sheet asked into Traditional
+     * still needs the conversion Google Translate does. Reporting it as
+     * "already in this language" would leave the reading in the wrong script.
+     */
+    internal fun sameLanguage(first: String, second: String): Boolean {
+        if (LocaleTags.isChineseTag(first) || LocaleTags.isChineseTag(second)) {
+            return LocaleTags.sameLanguageScriptAware(first, second)
+        }
+        return canonicalLanguage(first) == canonicalLanguage(second)
+    }
 
     private fun cacheKey(trackId: String, target: String, slots: List<TextSlot>): String {
         val source = buildString {
