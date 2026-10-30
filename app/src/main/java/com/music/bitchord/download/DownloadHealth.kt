@@ -60,6 +60,42 @@ internal fun downloadHealthKeepsPendingUpgrade(
     upgradeQueued: Boolean,
 ): Boolean = needsUpgrade && !upgradeQueued
 
+/**
+ * How many times a pending upgrade marker may ask for a search before it is
+ * retired.
+ *
+ * The repair cooldown already limits a retry to once a day. This cap stops a
+ * track that no source can improve from starting one search per day forever:
+ * after it, the verdict is recorded as done and the ordinary high-quality pass
+ * remains responsible for finding a source if one appears later.
+ */
+internal const val PENDING_UPGRADE_MAX_ATTEMPTS = 3
+
+/**
+ * Whether a pending upgrade marker may ask the resolver for a better source at
+ * [nowMs]. A marker with no recorded request is due once; after that the same
+ * 24-hour repair cooldown as a condemned file applies.
+ */
+internal fun downloadHealthMayRetryPending(
+    lastRequestMs: Long?,
+    attempts: Int,
+    nowMs: Long,
+    maxAttempts: Int = PENDING_UPGRADE_MAX_ATTEMPTS,
+): Boolean =
+    attempts < maxAttempts &&
+        DownloadHealthPolicy.mayRequestRepair(lastRequestMs, nowMs)
+
+/**
+ * Whether a request outcome may start the repair cooldown.
+ *
+ * A queued download and a launched search both spent the request; only a
+ * refusal before any work started must leave the cooldown untouched so the
+ * next allowed playback asks again.
+ */
+internal fun downloadHealthCountsAsRequested(
+    request: HqLibraryUpgrade.UpgradeRequest,
+): Boolean = request != HqLibraryUpgrade.UpgradeRequest.REFUSED
+
 object DownloadHealth {
 
     private const val TAG = "BitChord"
@@ -68,6 +104,7 @@ object DownloadHealth {
     private const val KEY_VERSION = "version"
     private const val KEY_REPAIR_REQUESTED = "repair_requested"
     private const val KEY_PENDING_UPGRADE = "pending_upgrade"
+    private const val KEY_UPGRADE_ATTEMPTS = "upgrade_attempts"
 
     /**
      * Bump when the rules change enough that every file should be looked at
@@ -116,16 +153,20 @@ object DownloadHealth {
                     // Only start the cooldown when a repair was actually
                     // accepted. On mobile data the Wi-Fi-only rule refuses it;
                     // recording that as requested would park the repair for a
-                    // day even though nothing was queued.
-                    if (HqLibraryUpgrade.requestUpgrade(
-                            context,
-                            song,
-                            allowEqual = true,
-                            automatic = true,
-                        )
-                    ) {
+                    // day even though nothing was queued. A launched search is
+                    // accepted too, even though the download it may find can
+                    // still be refused later.
+                    val request = HqLibraryUpgrade.requestUpgrade(
+                        context,
+                        song,
+                        allowEqual = true,
+                        automatic = true,
+                    )
+                    if (downloadHealthCountsAsRequested(request)) {
                         markRepairRequested(context, id, now)
                     }
+                } else {
+                    TrackLog.i(TAG, "download-check: repair retry cooling down", id)
                 }
                 val action = if (online) {
                     DownloadHealthPolicy.Action.STREAM
@@ -158,9 +199,40 @@ object DownloadHealth {
                     )
                     return@withContext null
                 }
-                if (HqLibraryUpgrade.requestUpgrade(context, song, automatic = true)) {
-                    markChecked(context, id, signature)
-                    clearPendingUpgrade(context, id)
+                val now = System.currentTimeMillis()
+                val attempts = upgradeAttempts(context, id)
+                if (!downloadHealthMayRetryPending(lastRepairRequest(context, id), attempts, now)) {
+                    if (attempts >= PENDING_UPGRADE_MAX_ATTEMPTS) {
+                        // No source proved better in the allowed tries. Record
+                        // the verdict as done so playback stops decoding the
+                        // same file; the ordinary HQ pass can still find a
+                        // source later if one appears.
+                        markChecked(context, id, signature)
+                        clearPendingUpgrade(context, id)
+                        clearUpgradeAttempts(context, id)
+                        TrackLog.i(
+                            TAG,
+                            "download-check: upgrade search retired attempts=$attempts",
+                            id,
+                        )
+                    } else {
+                        TrackLog.i(TAG, "download-check: upgrade retry cooling down", id)
+                    }
+                    return@withContext null
+                }
+                when (HqLibraryUpgrade.requestUpgrade(context, song, automatic = true)) {
+                    HqLibraryUpgrade.UpgradeRequest.QUEUED -> {
+                        markRepairRequested(context, id, now)
+                        markChecked(context, id, signature)
+                        clearPendingUpgrade(context, id)
+                        clearUpgradeAttempts(context, id)
+                    }
+                    HqLibraryUpgrade.UpgradeRequest.SEARCHING -> {
+                        markRepairRequested(context, id, now)
+                        markUpgradeAttempt(context, id, attempts + 1)
+                        TrackLog.i(TAG, "download-check: upgrade search started", id)
+                    }
+                    HqLibraryUpgrade.UpgradeRequest.REFUSED -> Unit
                 }
                 return@withContext null
             }
@@ -218,16 +290,36 @@ object DownloadHealth {
                         return@withContext null
                     }
                     // The file is condemned either way, so the branch above
-                    // retries on the next playback even if this request was
-                    // refused for now.
-                    HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
+                    // retries later even if this request was refused for now.
+                    // A launched search counts as an accepted attempt and
+                    // starts the cooldown; otherwise every playback would run
+                    // it again with no pause.
+                    val request = HqLibraryUpgrade.requestUpgrade(
+                        context,
+                        song,
+                        allowEqual = true,
+                        automatic = true,
+                    )
+                    if (downloadHealthCountsAsRequested(request)) {
+                        markRepairRequested(context, id, System.currentTimeMillis())
+                    }
                 }
                 DownloadHealthPolicy.Action.UPGRADE -> {
-                    upgradeQueued = HqLibraryUpgrade.requestUpgrade(
+                    when (val request = HqLibraryUpgrade.requestUpgrade(
                         context,
                         song,
                         automatic = true,
-                    )
+                    )) {
+                        HqLibraryUpgrade.UpgradeRequest.QUEUED -> {
+                            upgradeQueued = true
+                        }
+                        HqLibraryUpgrade.UpgradeRequest.SEARCHING -> {
+                            upgradeQueued = false
+                        }
+                        HqLibraryUpgrade.UpgradeRequest.REFUSED -> {
+                            upgradeQueued = false
+                        }
+                    }
                 }
                 DownloadHealthPolicy.Action.NONE -> Unit
             }
@@ -276,6 +368,7 @@ object DownloadHealth {
             .remove(KEY_CHECKED)
             .remove(KEY_REPAIR_REQUESTED)
             .remove(KEY_PENDING_UPGRADE)
+            .remove(KEY_UPGRADE_ATTEMPTS)
             .putInt(KEY_VERSION, CHECK_VERSION)
             .apply()
         TrackLog.i(TAG, "download-check: versions cleared")
@@ -375,6 +468,39 @@ object DownloadHealth {
             .mapNotNull { line ->
                 val tab = line.indexOf('\t')
                 if (tab <= 0) null else line.substring(0, tab) to line.substring(tab + 1)
+            }
+            .toMap()
+
+    private fun upgradeAttempts(context: Context, id: String): Int =
+        readUpgradeAttempts(prefs(context))[id] ?: 0
+
+    private fun markUpgradeAttempt(context: Context, id: String, attempts: Int) {
+        val prefs = prefs(context)
+        val next = readUpgradeAttempts(prefs) + (id to attempts)
+        prefs.edit()
+            .putString(KEY_UPGRADE_ATTEMPTS, encodePairs(next.mapValues { it.value.toString() }))
+            .apply()
+    }
+
+    private fun clearUpgradeAttempts(context: Context, id: String) {
+        val prefs = prefs(context)
+        val attempts = readUpgradeAttempts(prefs)
+        if (id !in attempts) return
+        prefs.edit()
+            .putString(KEY_UPGRADE_ATTEMPTS, encodePairs((attempts - id).mapValues { it.value.toString() }))
+            .apply()
+    }
+
+    private fun readUpgradeAttempts(
+        prefs: android.content.SharedPreferences,
+    ): Map<String, Int> =
+        prefs.getString(KEY_UPGRADE_ATTEMPTS, null).orEmpty()
+            .lineSequence()
+            .mapNotNull { line ->
+                val tab = line.indexOf('\t')
+                if (tab <= 0) return@mapNotNull null
+                val attempts = line.substring(tab + 1).toIntOrNull() ?: return@mapNotNull null
+                line.substring(0, tab) to attempts
             }
             .toMap()
 

@@ -93,9 +93,12 @@ object Backup {
                 dislikedVideoIds = overrides.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
                 searchHistory = SearchHistory.export(),
             )
-            val text = encode(file)
+            val bytes = encode(file).toByteArray()
+            // The reader refuses anything past this cap, so writing a larger
+            // file would leave the user with a backup they cannot restore.
+            require(bytes.size <= MAX_BACKUP_BYTES) { "백업 파일이 너무 큽니다" }
             context.contentResolver.openOutputStream(target, "wt")
-                ?.use { it.write(text.toByteArray()) }
+                ?.use { it.write(bytes) }
                 ?: error("Couldn't open that file for writing")
             buckets.size
         }
@@ -170,12 +173,16 @@ object Backup {
             .getOrElse { error("BitChord 백업 파일이 아닙니다") }
 
     /**
-     * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
-     * rather than growing the buffer without bound. Shares the limit used by
-     * settings import: a backup is preferences and a listening history, not a
-     * media file, so anything larger is not one of ours.
+     * Reads at most [MAX_BACKUP_BYTES] of UTF-8 text, refusing the document
+     * rather than growing the buffer without bound.
+     *
+     * The same cap bounds export, so a file this app wrote is always readable
+     * back. It is sized for the retention limits [ListeningStats] keeps — 36
+     * months with 600 tracks and 400 names a month, including per-day rows —
+     * rather than for a settings-sized document. Anything larger than what the
+     * app can itself produce is still refused.
      */
-    private fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
+    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_BACKUP_BYTES): String {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(8_192)
         var total = 0
@@ -218,8 +225,15 @@ object Backup {
 
     private const val APP_TAG = "bitchord"
 
-    /** Upper bound on an imported backup, matching settings import. */
-    private const val MAX_IMPORT_BYTES = 1_000_000
+    /**
+     * Upper bound on a backup, shared by export and import.
+     *
+     * A backup is preferences and listening history, not media, but the
+     * history alone can reach several megabytes: 36 months of up to 600 tracks
+     * and 400 artists/albums each, with a per-day row per entry, and the JSON
+     * is pretty-printed. A settings-sized limit rejected the app's own exports.
+     */
+    internal const val MAX_BACKUP_BYTES = 64 * 1024 * 1024
 
     /**
      * Bump when the shape below stops being readable by an older build. A file

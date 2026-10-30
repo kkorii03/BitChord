@@ -20,6 +20,7 @@
 | 이번에 고침 | 3 | 자동 HQ/다운로드 건강 검사와 MV 사운드 자동 복구가 Wi-Fi 전용 다운로드를 우회하던 문제, 비음악 필터를 꺼도 WAV/3GP가 계속 숨겨지던 문제 |
 | 2차(10-31 지적) 고침 | 3 | HQ 미검증 폴백의 metered 우회, 연결 거부 시 checked/쿨다운 기록, MV 자동 복구의 Wi-Fi 복귀 시 휴면 — 8절 |
 | 3차(10-31 지적) 고침 | 5+3 | 비동기 HQ 교체가 checked/쿨다운을 먼저 기록, MV 복구의 retry 백오프/포그라운드 순서, metered 설정 변경 미감지, 반복 디코드, Replay 장르 키 소스, Last.fm 지금 재생 표시, Backup 무제한 읽기 — 9절 |
+| 4차(10-31 지적) 고침 | 3 | 백업 가져오기 상한이 자체 내보내기를 거부, 비동기 수리 검색이 쿨다운을 기록하지 못함, pending 업그레이드가 매 재생 재검색 — 10절 |
 | 이번에는 문서만 | 4 | AI 가사/타이밍 키 없음, sync safety 백업 타입 검증 누락, 대기열 한국어 용어 불일치, 설정 화면의 업스트림 링크 |
 | 이전 감사에서 고쳐짐 | 8 | HQ 설정 전송, HQ 자동 패스 metered, 설정 파일 크기 제한, 영어 예외 노출, 곡 메뉴 속도 초기화, 취침 타이머 용어, 비음악 필터 IS_MUSIC, 수동 가사 제공처 필터 |
 | 이전 감사에서 남음 | 3 | 대기열 용어, sync safety KNOWN_PREFS, AI 가사/타이밍 키 게이팅 |
@@ -35,7 +36,7 @@
 | MED | `SettingsTransfer.kt` | 가져오기 파일을 `readBytes()`로 통째로 읽음 | **고쳐짐** | `MAX_IMPORT_BYTES = 1_000_000`(`:127`), `readTextBounded()`(`:292`) |
 | MED | `SettingsSheet.kt` | 실패 줄에 영어 기술 예외 노출 | **고쳐짐** | `FriendlyError.message(...)`(`SettingsSheet.kt:417,451,473,491,511,544`) |
 | MED | `SongActionsSheet.kt` | 곡 메뉴 기본값 재설정이 피치만 되돌림 | **고쳐짐** | `setPlaybackSpeed(1f)` + `setPitchSemitones(0)`(`SongActionsSheet.kt:934-935`) |
-| MED | `Backup.kt` | 백업 가져오기가 파일 전체를 메모리에 올림 | **남음** | 여전히 `readBytes()`(`Backup.kt:124`) |
+| MED | `Backup.kt` | 백업 가져오기가 파일 전체를 메모리에 올림 | **고쳐짐** | `readTextBounded()`로 상한을 두고 읽는다(`Backup.kt:185`). 상한은 4차에서 자체 내보내기를 포함하도록 넓혔다(10절) |
 | LOW | `values-ko/strings.xml` | 수면 타이머를 "잠자기 타이머"라고 부름 | **고쳐짐** | `sleep_timer` = "취침 타이머"(`values-ko/strings.xml:651`) |
 | LOW | `sharedUi/.../values-ko/strings.xml` | "다음 항목 재생"과 "다음 재생" 혼용 | **남음** | `next_from`/`next_in_queue`/`up_next`가 모두 "다음 재생"(`:106-107,132`) |
 | LOW | `AppSettings.kt` | `ko_sync_safety_*`가 `KNOWN_PREFS`에 없음 | **남음** | 키 정의만 있고 `KNOWN_PREFS` 목록에는 없음(`:3672-3674`) |
@@ -57,7 +58,7 @@
 | MED | `playback/smart/LyricsTiming.kt:567-568`, `ui/LyricsController.kt:1086-1091` | `heavyWorkAllowed`/`aiTimingAhead`/`Deepgram.usable`이 false면 로그 없이 반환한다. `autoLyricsTiming`은 기본 꺼짐이지만 `aiTimingAhead`는 기본 켬(`AppSettings.kt:782,1311`)이다. | Deepgram/Gemini 키가 없는 기본 상태에서 "AI 싱크 미리 맞추기"가 켜져 보이지만 아무 일도 하지 않고 로그도 없다. | 문서만. 키 없음과 저전력/스위치 끔을 구분해 로그를 남기고, 키가 없으면 설정 행을 비활성화해야 한다. **폰 검증 필요(가사 싱크 경로).** |
 | MED | `data/stats/ArtistFacts.kt:132-133` | `genresAvailable = AppSettings.replayGenres.value && BuildConfig.LASTFM_API_KEY.isNotBlank()`. 설정 스위치는 키 유무와 무관하게 켜진다(`SettingsSheet.kt:1786-1804`). | Last.fm 키가 없는 빌드에서 "Replay 장르"를 켜도 장르 차트가 조용히 비어 있다. | **고침(3차)**. `genresAvailable`과 요청 URL이 같은 `AppSettings.lastfmApiKey.value`를 읽고, 키가 없으면 설정 행을 비활성화하며 `replay_genres_missing_key_subtitle`로 이유를 표시한다. |
 | MED | `ui/screens/AccountAndScrobblingScreen.kt:333-340`, `data/settings/AppSettings.kt:2402-2406` | "지금 재생" 스위치는 `lastfmScrobbleEnabled`와 무관하게 노출되지만, setter가 `!lastfmScrobbleEnabled && value`이면 즉시 반환한다. | Last.fm 스크로블을 끈 상태에서 "지금 재생"을 눌러도 스위치가 움직이지 않고 설명도 없다. | **고침(3차)**. `lastfmScrobbleEnabled`일 때만 행과 구분선을 그린다(`AccountAndScrobblingScreen.kt:330-348`). |
-| MED | `data/stats/Backup.kt:124` | 백업 가져오기가 `openInputStream(...).readBytes()`로 파일 전체를 읽는다. 설정 공유는 이미 1 MB 상한이 있다(`SettingsTransfer.kt:127,292`). | 다른 앱이 큰 JSON을 BitChord로 공유하면 가져오기에서 OOM으로 프로세스가 죽을 수 있다. | **고침(3차)**. `readTextBounded()`와 같은 1 MB 상한을 `Backup`에 두고 초과 시 `백업 파일이 너무 큽니다`로 거부한다(`Backup.kt:172-190`). |
+| MED | `data/stats/Backup.kt:124` | 백업 가져오기가 `openInputStream(...).readBytes()`로 파일 전체를 읽는다. 설정 공유는 이미 1 MB 상한이 있다(`SettingsTransfer.kt:127,292`). | 다른 앱이 큰 JSON을 BitChord로 공유하면 가져오기에서 OOM으로 프로세스가 죽을 수 있다. | **고침(3차, 4차 보정)**. `readTextBounded()`로 상한을 두되, 3차의 1 MB 상한은 자체 내보내기를 거부했다. 4차에서 `MAX_BACKUP_BYTES`(64 MB)를 내보내기와 가져오기가 함께 쓰고, 내보내기도 같은 상한을 넘으면 쓰지 않는다(`Backup.kt:99,185,236`). |
 | LOW | `data/settings/AppSettings.kt:3672-3674` | `ko_sync_safety_next_prep`·`..._download_recheck`·`..._hq_sync`가 `readAll()`에서는 `getBoolean`으로 읽지만 `KNOWN_PREFS`에는 없다. `importPrefs`는 모르는 키를 타입 검증 없이 쓴다(`:2930-2945`). | 손상된 백업에서 이 키가 문자열이면 다음 `reload()`의 `getBoolean`에서 예외가 난다. 정상 백업은 Boolean이라 문제없다. | 문서만. 세 키를 `KNOWN_PREFS`의 `bools(...)`에 추가해야 한다. |
 | LOW | `sharedUi/src/commonMain/composeResources/values-ko/strings.xml:106-107,132` | 앱은 "다음 항목 재생", 플레이어 대기열은 "다음 재생"을 쓴다. | 같은 동작을 두 이름으로 부른다. | 문서만(이전 감사와 동일). Apple Music 용어로 통일할 때 `next_from`/`next_in_queue`/`up_next`를 함께 정리해야 한다. |
 | LOW | `ui/screens/SettingsSheet.kt:2137-2153` | 설정 화면 하단 링크가 업스트림 `kushagrasinghx` GitHub/Discord/웹사이트를 가리킨다. | 사용자가 포크가 아닌 업스트림으로 이동한다. | 문서만. 포크 저장소/지원 링크로 바꿔야 한다. |
@@ -163,7 +164,7 @@
 | Replay | (화면 이동) | `SettingsSheet.kt:1777` | 정상(이동) |
 | Replay 장르 | `replay_genres` | `ArtistFacts.kt:132-133` | 조건부 — Last.fm 키 없으면 효과없음 |
 | 데이터 내보내기 | (동작) | `Backup.exportTo` | 정상(버튼) |
-| 데이터 가져오기 | (동작) | `Backup.importFrom` | 정상(버튼), 단 MED 무제한 읽기 |
+| 데이터 가져오기 | (동작) | `Backup.importFrom` | 정상(버튼, 4차에서 내보내기와 같은 크기 상한) |
 | 설정 보내기 | (동작) | `SettingsTransfer.share` | 정상(버튼) |
 | 설정 가져오기 | (동작) | `SettingsTransfer.importFrom/apply` | 정상(버튼) |
 | 스와이프하여 다음에 재생 | `swipe_to_play_next` | `AndroidAppUiHost.kt:12`, `MainActivity.kt:2130` | 정상 |
@@ -342,7 +343,7 @@
 
 | # | 심각도 | 지적 | 판정 | 근거 / 수정 |
 |---|---|---|---|---|
-| 1 | MED | `requestUpgrade`가 비동기 검색/enqueue 전에 true를 돌려줘 호출부가 checked/쿨다운을 먼저 기록 | **고침** | 반환값을 "동기적으로 검증된 쌍을 큐에 넣었을 때만 true"로 바꿨다(`HqLibraryUpgrade.kt:406-411,546-550`). 비동기 검색은 false다. `DownloadHealth`는 true일 때만 checked/repair-requested를 기록하고, false면 `pending_upgrade` 마커를 남겨 다음 허용 재생에서 다시 요청한다(`DownloadHealth.kt:148-165,233-247`). |
+| 1 | MED | `requestUpgrade`가 비동기 검색/enqueue 전에 true를 돌려줘 호출부가 checked/쿨다운을 먼저 기록 | **고침** | 반환값을 "동기적으로 검증된 쌍을 큐에 넣었을 때만 true"로 바꿨다(`HqLibraryUpgrade.kt:406-411,546-550`). 비동기 검색은 false다. `DownloadHealth`는 true일 때만 checked/repair-requested를 기록하고, false면 `pending_upgrade` 마커를 남겨 다음 허용 재생에서 다시 요청한다(`DownloadHealth.kt:148-165,233-247`). Boolean은 4차에서 `QUEUED/SEARCHING/REFUSED`로 대체됐다 — 10.1 #2. |
 | 2 | MED | `APPEND_OR_REPLACE`가 `Result.retry()` 백오프 중인 워커 뒤에 붙어 즉시 복구가 지연 | **고침** | Wi-Fi 전용이면 워커 제약을 `UNMETERED`로 걸어 metered 실행 자체를 막고(`MvSoundRedownload.kt:151-157`), 허용으로 바뀌는 전이에서는 `REPLACE`로 예약한다(`MvSoundRedownload.kt:166-169`, `BitChordApplication.kt:269-274`). 재시작·재생의 일반 예약은 기존 `APPEND_OR_REPLACE`를 유지한다. |
 | 3 | MED | `meteredConnection`만 관찰해 `wifiOnlyDownloads`를 셀룰러에서 끄면 MV 복구가 깨어나지 않음 | **고침** | `meteredConnection`과 `wifiOnlyDownloads`를 `combine`해 `downloadsAllowedNow`의 false→true 전이를 감지한다(`BitChordApplication.kt:253-276`). 폴링·타이머 없이 기존 상태 흐름만 읽는다. |
 | 4 | MED | metered 검사가 포그라운드 검사보다 먼저라 배경 워커가 셀룰러에서 계속 재시도 | **고침** | `AppForeground.isForeground`를 먼저 확인하고 배경이면 성공 종료한다(`MvSoundRedownload.kt:190-195`). 사용할 수 없는 연결이면 `retry()` 대신 로그 후 성공 종료하며, 포그라운드/허용 전이 이벤트가 다시 예약한다(`:196-203`). |
@@ -368,7 +369,7 @@
 | MV 사운드 자동 재다운로드 | `auto_redownload_mv_sound` | `download/MvSoundRedownload.kt:138-169,190-208`, `BitChordApplication.kt:253-276` | 정상(3차) |
 | Replay 장르 | `replay_genres` | `data/stats/ArtistFacts.kt:132-133,242`, `ui/screens/SettingsSheet.kt:1789-1808` | 정상(3차) — 키 없으면 행 비활성화 + 사유 표시 |
 | Last.fm 지금 재생 | `lastfm_now_playing` | `ui/screens/AccountAndScrobblingScreen.kt:325-347` | 정상(3차) — 스크로블 끄면 행 숨김 |
-| 데이터 가져오기 | (동작 버튼) | `data/stats/Backup.kt:126,173-190,222` | 정상(3차) — 1 MB 상한 |
+| 데이터 가져오기 | (동작 버튼) | `data/stats/Backup.kt:105,185` | 정상(3차, 4차 보정) — 내보내기와 같은 64 MB 상한 |
 
 ### 9.4 건너뛰는 조건 (3차 추가분)
 
@@ -393,3 +394,43 @@
 - 실행 결과:
   - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과
   - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.download.RepairMeteredPolicyTest' --tests 'com.music.bitchord.download.HqLibraryMeteredPolicyTest' --tests 'com.music.bitchord.download.MvSoundRedownloadPolicyTest' --tests 'com.music.bitchord.download.HqLibraryUpgradeBackgroundPruneTest' --console=plain -q` → 통과
+
+## 10. 4차 작업 — 10-31 검증자 지적 3건
+
+이번 라운드는 3차에서 바꾼 `requestUpgrade`의 Boolean 반환 의미가 만든 두 문제와,
+그때 넣은 1 MB 백업 상한이 자체 내보내기를 거부하던 문제를 고쳤다. 재생 핵심
+경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는 건드리지 않았다.
+
+### 10.1 지적 3건 처리
+
+| # | 심각도 | 지적 | 판정 | 근거 / 수정 |
+|---|---|---|---|---|
+| 1 | HIGH | `data/stats/Backup.kt`의 1 MB 가져오기 상한이 앱이 직접 내보낸 백업을 거부 | **고침** | `ListeningStats`는 36개월 × 600곡/400이름을 보관하고 `Backup`은 `prettyPrint=true`로 직렬화한다. 내보내기에는 상한이 없어 1 MB를 쉽게 넘는다. `MAX_BACKUP_BYTES = 64 MB`를 내보내기·가져오기가 함께 쓰고, 내보내기도 이 값을 넘으면 파일을 쓰지 않고 `백업 파일이 너무 큽니다`로 실패한다(`Backup.kt:99,185,236`). 따라서 성공한 내보내기는 항상 가져올 수 있다. |
+| 2 | MED | `HqLibraryUpgrade.requestUpgrade`가 비동기 검색을 시작한 뒤 false를 돌려줘 `DownloadHealth`가 `markRepairRequested`를 못 함 | **고침** | 반환 타입을 `UpgradeRequest.QUEUED / SEARCHING / REFUSED`로 나눴다(`HqLibraryUpgrade.kt:403,431,444,485,569`). `downloadHealthCountsAsRequested()`는 `REFUSED`만 false다(`DownloadHealth.kt:95`). 잘못된 녹음 판정과 pending 경로 모두 QUEUED·SEARCHING이면 24시간 쿨다운을 기록한다(`DownloadHealth.kt:165,304`). 검색이 실제로 시작된 경우에도 다음 재생이 즉시 재검색하지 않는다. |
+| 3 | MED | `pending_upgrade` 마커를 매 재생마다 쿨다운·시도 상한·만료 없이 `requestUpgrade`로 재시도 | **고침** | pending 재시도도 같은 `mayRequestRepair` 24시간 쿨다운을 통과해야 한다. 시도 횟수를 `upgrade_attempts`에 기록하고 `PENDING_UPGRADE_MAX_ATTEMPTS = 3`에 도달하면 마커와 횟수를 지우고 checked로 기록해 같은 파일을 다시 디코드하지 않는다(`DownloadHealth.kt:72,79,193-226`). 쿨다운 대기는 `download-check: upgrade retry cooling down`, 소진은 `download-check: upgrade search retired attempts=N` 로그를 남긴다. 자동 HQ 패스는 이후에도 더 좋은 소스를 찾을 수 있다. |
+
+### 10.2 진리표 (4차 이전 → 이후)
+
+| 경로 | 4차 이전 | 4차 이후 |
+|---|---|---|
+| 자체 내보내기 1 MB 초과 | 내보내기 성공, 가져오기 실패 | 내보내기·가져오기 모두 같은 64 MB 상한, 성공한 파일은 항상 복원 |
+| 잘못된 녹음, 자동 수리 검색 시작 | false → 쿨다운 미기록 → 매 재생 재검색 | SEARCHING → 24시간 쿨다운 기록 → 하루 1회 |
+| 잘못된 녹음, Wi-Fi 규칙 거부 | false → 쿨다운 미기록(의도) | REFUSED → 쿨다운 미기록(기존 의도 유지) |
+| pending, 허용 연결, 첫 재시도 | 디코드 없이 즉시 검색 | 디코드 없이 검색, 쿨다운 기록 |
+| pending, 허용 연결, 쿨다운 중 | 매 재생 검색 | 로그만 남기고 대기 |
+| pending, 3회 시도 후 | 영구 재검색 | 마커 제거 + checked, 로그 |
+
+기존 안전 규칙은 유지했다: `downloadsAllowedNow` 검사, `REFUSED`일 때 쿨다운을 기록하지 않는 규칙, 내보내기/가져오기의 크기 상한 자체는 약화하지 않고 값만 내보내기 최대치에 맞췄다.
+
+### 10.3 4차 테스트
+
+- `app/src/test/java/com/music/bitchord/data/stats/BackupSizeBudgetTest.kt`
+  - `a full-size history fits the shared export and import limit` — 36개월, 한 달은 600곡/400아티스트/400앨범 + 일별 행, 나머지는 전체 행. 인코딩 크기가 상한 이하이고 `readTextBounded`를 통해 다시 디코드된다.
+  - `a file past the shared cap is refused before decoding`
+- `app/src/test/java/com/music/bitchord/download/DownloadHealthRetryPolicyTest.kt`
+  - `a pending upgrade asks once then waits for the cooldown`
+  - `a pending upgrade is retired after the attempt cap`
+  - `a started search counts as a request but a refusal does not`
+- 실행 결과:
+  - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → 통과
+  - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.data.stats.*' --tests 'com.music.bitchord.download.*' --tests 'com.music.bitchord.data.settings.*' --console=plain -q` → 통과

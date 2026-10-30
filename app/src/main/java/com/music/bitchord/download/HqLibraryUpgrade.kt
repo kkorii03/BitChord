@@ -394,6 +394,24 @@ object HqLibraryUpgrade {
     }
 
     /**
+     * What became of a quality upgrade request.
+     *
+     * [QUEUED] and [SEARCHING] both mean the request was accepted: something
+     * is now running. [REFUSED] is the only outcome where nothing started, so
+     * only it may leave a caller's cooldown unrecorded.
+     */
+    enum class UpgradeRequest {
+        /** A verified pair was known and its download is already queued. */
+        QUEUED,
+
+        /** No proved pair was known, so one asynchronous search is running. */
+        SEARCHING,
+
+        /** The Wi-Fi-only rule refused the request before anything started. */
+        REFUSED,
+    }
+
+    /**
      * The song menu's quality upgrade for a file already on the device.
      *
      * A verified higher pair is fetched through the same pinned replacement as
@@ -403,19 +421,19 @@ object HqLibraryUpgrade {
      * pair does nothing; a repair may fall back to a re-fetch only when the
      * served rendition is at least the rung of the file it replaces.
      *
-     * @return true only when a verified pair was queued at once. False means the
-     *   Wi-Fi-only rule blocked the request before any search started, or the
-     *   one search for this track is still running. The caller must not record
-     *   the request as handled in either case: the search can still end on a
-     *   connection that no longer allows the download, so the file stays
-     *   unchecked (or pending) and the next allowed playback asks again.
+     * @return [UpgradeRequest.QUEUED] when a verified pair was queued at once,
+     *   [UpgradeRequest.SEARCHING] when one search for this track was started,
+     *   or [UpgradeRequest.REFUSED] when the Wi-Fi-only rule blocked the
+     *   request before anything started. A caller recording a cooldown must
+     *   treat SEARCHING as accepted: the search has already spent the network
+     *   even though the later download can still be refused.
      */
     fun requestUpgrade(
         context: Context,
         song: Song,
         allowEqual: Boolean = false,
         automatic: Boolean = false,
-    ): Boolean {
+    ): UpgradeRequest {
         ensureLoaded(context)
         if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
             TrackLog.i(
@@ -423,7 +441,7 @@ object HqLibraryUpgrade {
                 "download-check: waiting for an unmetered connection",
                 song.videoId,
             )
-            return false
+            return UpgradeRequest.REFUSED
         }
         val meta = Downloads.savedMetadataFor(song.videoId)
         val badge = song.downloadFormat ?: meta?.downloadFormat
@@ -464,7 +482,7 @@ object HqLibraryUpgrade {
                     song.videoId,
                 )
             }
-            return true
+            return UpgradeRequest.QUEUED
         }
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
@@ -545,9 +563,10 @@ object HqLibraryUpgrade {
             )
         }
         // The search is asynchronous: it may finish on a connection that no
-        // longer allows the download. Reporting "queued" here would make the
-        // caller record a verdict the download never accepted.
-        return false
+        // longer allows the download. Reporting QUEUED here would make the
+        // caller record a verdict the download never accepted; SEARCHING says
+        // only that the request itself was accepted and has started.
+        return UpgradeRequest.SEARCHING
     }
 
     private fun enqueueVerified(
