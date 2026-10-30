@@ -10460,8 +10460,20 @@ class PlaybackService : MediaLibraryService() {
         // already has this track's lines and correction, so they go up on the
         // first frame instead of after the lookup — only while its lyrics
         // switch is on; off, this frame waits for the ordinary lookup.
+        val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
+        val preparedAudioSource = if (coverQuery.isVideo) {
+            null
+        } else {
+            com.music.bitchord.playback.smart.LyricsTiming
+                .audioSourceKey(currentSong.videoId, currentSong.localUri != null)
+        }
         val prepared = if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(currentSong.videoId)
+            NextPrepCache.get(
+                currentSong.videoId,
+                preparedAudioSource,
+                coverQuery.isVideo,
+                !coverQuery.isVideo && StreamChoice.isSubstitute(currentSong.videoId),
+            )
         } else {
             null
         }
@@ -10488,8 +10500,8 @@ class PlaybackService : MediaLibraryService() {
             val localUri = currentSong.localUri
             var lines: List<LyricLine>? = null
             var foundSource: com.music.bitchord.data.lyrics.LyricsSource? = null
-            val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
             var fromFile = false
+            var recheckOverride = false
             // A per-song override outranks both the file's own tags/sidecar and
             // every provider, and is what a re-check writes instead of touching
             // the audio file. See LyricsOverrideFile.
@@ -10498,6 +10510,8 @@ class PlaybackService : MediaLibraryService() {
                 lines = override.lines
                 foundSource = override.source
                 fromFile = localUri != null
+                recheckOverride = override.kind ==
+                    com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.RECHECK
             } else if (localUri != null) {
                 EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
                     lines = file.lines
@@ -10532,10 +10546,35 @@ class PlaybackService : MediaLibraryService() {
             // The same rules the lyrics screen keeps: a song's own file is timed
             // for it (a correction by hand only); a video's lyrics — streamed,
             // or carried in its download — take Gemini's answer, and the
-            // measurement when they are known to be the record's.
-            val timeable = timed && (!fromFile || coverQuery.isVideo)
-            val recordTimed = timeable && (!fromFile || foundSource != null) &&
-                !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
+            // measurement when they are known to be the record's. A re-checked
+            // download is timed for that file, so the lock screen, notification
+            // and car subtitle get the same correction as the lyrics screen.
+            val sourceTimedToVideo = com.music.bitchord.playback.smart.LyricsTiming
+                .timedToVideo(foundSource)
+            // A substituted stream is a different recording under the same
+            // video id, so an upload's measurement/AI answer must not move its
+            // lyrics or be recorded against it. Same guard as the lyrics screen.
+            val substituted = !coverQuery.isVideo &&
+                StreamChoice.isSubstitute(currentSong.videoId)
+            val timeable = com.music.bitchord.playback.LocalTimingPolicy
+                .streamTimingAllowed(
+                    com.music.bitchord.playback.LocalTimingPolicy.downloadedTimingTimeable(
+                        timed = timed,
+                        fromFile = fromFile,
+                        isVideo = coverQuery.isVideo,
+                        recheckOverride = recheckOverride,
+                        sourceTimedToVideo = sourceTimedToVideo,
+                    ),
+                    isVideo = coverQuery.isVideo,
+                    substituted = substituted,
+                )
+            val recordTimed = com.music.bitchord.playback.LocalTimingPolicy
+                .streamTimingAllowed(
+                    timeable && (!fromFile || foundSource != null) &&
+                        !sourceTimedToVideo,
+                    isVideo = coverQuery.isVideo,
+                    substituted = substituted,
+                )
             suspend fun publish() {
                 val shown = if (timed && raw != null) {
                     com.music.bitchord.playback.smart.LyricsTiming
@@ -10545,8 +10584,8 @@ class PlaybackService : MediaLibraryService() {
                             raw,
                             baseAllowed = timeable,
                             measuredAllowed = recordTimed,
-                            isVideo = currentSong.isVideo,
-                            audioSource = if (currentSong.isVideo) {
+                            isVideo = coverQuery.isVideo,
+                            audioSource = if (coverQuery.isVideo) {
                                 null
                             } else {
                                 com.music.bitchord.playback.smart.LyricsTiming

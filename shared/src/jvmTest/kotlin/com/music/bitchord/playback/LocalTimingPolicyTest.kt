@@ -43,4 +43,102 @@ class LocalTimingPolicyTest {
         assertTrue(LocalTimingPolicy.measureNow(file, isVideo = false, timingForeign = true))
         assertFalse(LocalTimingPolicy.measureNow(file, isVideo = false, timingForeign = false))
     }
+
+    @Test
+    fun `a rechecked download is timeable on every surface`() {
+        assertTrue(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                recheckOverride = true,
+                sourceTimedToVideo = false,
+            ),
+        )
+        assertFalse(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                recheckOverride = false,
+                sourceTimedToVideo = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a videos own captions are never moved by a record-based answer`() {
+        assertFalse(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = false,
+                recheckOverride = true,
+                sourceTimedToVideo = true,
+            ),
+        )
+        assertTrue(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = true,
+                fromFile = true,
+                isVideo = true,
+                recheckOverride = false,
+                sourceTimedToVideo = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `untimed lines are never timeable`() {
+        assertFalse(
+            LocalTimingPolicy.downloadedTimingTimeable(
+                timed = false,
+                fromFile = false,
+                isVideo = true,
+                recheckOverride = true,
+                sourceTimedToVideo = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a substitute stream never applies or records an upload clock`() {        assertFalse(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = true,
+                isVideo = false,
+                substituted = true,
+            ),
+        )
+        // A video's own upload is not a substitute file, and a normal stream is unchanged.
+        assertTrue(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = true,
+                isVideo = true,
+                substituted = true,
+            ),
+        )
+        assertTrue(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = true,
+                isVideo = false,
+                substituted = false,
+            ),
+        )
+        assertFalse(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = false,
+                isVideo = false,
+                substituted = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a local file never waits for a stream opening`() {
+        // A local file is already whole: no AudioCache.served event exists for
+        // it, so waiting parked the AI fallback until the measure window ended.
+        assertFalse(LocalTimingPolicy.measureWaitsForStream(file))
+        assertTrue(LocalTimingPolicy.measureWaitsForStream(null))
+        assertTrue(LocalTimingPolicy.measureWaitsForStream("   "))
+    }
 }

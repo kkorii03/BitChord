@@ -54,6 +54,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -567,8 +571,19 @@ object LyricsTiming {
         // refineHeardKnown below answers true. Answers saved before words were
         // kept have none (10-27: qQNbfxDLxq0, base=ai, stayed -0.24 s with no
         // refine at all), so they are heard once like a measured song.
-        if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return false
-        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) {
+            TrackLog.d(
+                TAG,
+                "refine-heard skipped heavy=${AppSettings.heavyWorkAllowed} " +
+                    "ahead=${AppSettings.aiTimingAhead.value}",
+                videoId,
+            )
+            return false
+        }
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) {
+            TrackLog.d(TAG, "refine-heard skipped: Deepgram not usable", videoId)
+            return false
+        }
         if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return false
         val key = textKey(lines, audioSource)
         val lock = refining.getOrPut(videoId) { Mutex() }
@@ -1085,12 +1100,25 @@ object LyricsTiming {
         if (video.localUri != null) {
             return AudioCache.Rendition(key = "local:${video.videoId}", contentLength = 0L, cachedPrefix = 0L)
         }
-        val deadline = System.currentTimeMillis() + VIDEO_TIMEOUT_MS
-        while (true) {
-            val copy = VersionAudioAligner.renditionToMeasure(video.videoId)
-            if (copy != null && (copy.isComplete || copy.cachedPrefix >= MIN_VIDEO_BYTES)) return copy
-            if (System.currentTimeMillis() >= deadline) return null
-            delay(250)
+        fun readyCopy(): AudioCache.Rendition? =
+            VersionAudioAligner.renditionToMeasure(video.videoId)
+                ?.takeIf { it.isComplete || it.cachedPrefix >= MIN_VIDEO_BYTES }
+        readyCopy()?.let { return it }
+        // Event-driven: wake when the player opens the next stream for this
+        // video, or when playback has read another chunk of it (more bytes are
+        // on disk to measure), never on a timer. The deadline is the same bound
+        // as before; a pass that never sees the opening simply gives up.
+        return withTimeoutOrNull(VIDEO_TIMEOUT_MS) {
+            AudioCache.served
+                // Subscribe first, then look at what is already on disk. The
+                // check used to run before subscribing, so bytes that landed
+                // in between were missed and the pass slept until the timeout.
+                // onSubscription runs once the subscription is live and wakes
+                // the collector for bytes that are already there.
+                .onSubscription { readyCopy()?.let { emit(video.videoId) } }
+                .filter { it == video.videoId }
+                .mapNotNull { readyCopy() }
+                .first()
         }
     }
 
@@ -1376,7 +1404,10 @@ object LyricsTiming {
         audioSource: String? = null,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
-        if (sung.size < MIN_AI_LINES) return null
+        if (sung.size < MIN_AI_LINES) {
+            TrackLog.d(TAG, "AI timing skipped: only ${sung.size} sung lines", videoId)
+            return null
+        }
         val key = textKey(lines, audioSource)
         // One decision for every automatic caller, made from what is kept —
         // the screen, the next-song preparation and the calibration sample
@@ -1617,7 +1648,15 @@ object LyricsTiming {
                 artist = song.artist,
                 texts = sung.map { it.value.text },
             )
-        ) return false
+        ) {
+            TrackLog.d(
+                TAG,
+                "lyrics-sync: song-check skipped by guard video=${song.isVideo} " +
+                    "timed=$timed sung=${sung.size}",
+                song.videoId,
+            )
+            return false
+        }
         val key = textKey(
             lines,
             audioSourceKey(song.videoId, song.localUri != null),
@@ -1639,7 +1678,15 @@ object LyricsTiming {
             songOnly = true,
         )
         val engine = ENGINE_DEEPGRAM_WHISPER
-        if (engine !in engines || !com.music.bitchord.data.lyrics.Deepgram.usable) return false
+        if (engine !in engines || !com.music.bitchord.data.lyrics.Deepgram.usable) {
+            TrackLog.d(
+                TAG,
+                "lyrics-sync: song-check skipped engine=$engine allowed=${engine in engines} " +
+                    "deepgram=${com.music.bitchord.data.lyrics.Deepgram.usable}",
+                song.videoId,
+            )
+            return false
+        }
         // Whisper takes a minute or two, and a screen job is cancelled the
         // moment the track changes: run the request on the app-lifetime scope
         // so it finishes and keeps its answer. One request per video and
@@ -1805,6 +1852,22 @@ object LyricsTiming {
      * [SongSyncRetry.MAX_INLINE_WAIT_MS] is deferred to the next playback.
      */
     private val songSyncGate = Mutex()
+
+    /**
+     * Bumped for a video whenever [resetSongCheck] drops the answer of the
+     * recording that was there. A re-check captures the value before it waits
+     * on [songSyncGate]; if it changed while it waited, the file it was about
+     * to answer for is gone and its result must not be written over the new
+     * one. Reset also clears [syncCheckVersion], so the old guard alone let a
+     * waiting check see "unverified" and re-apply the previous bytes' answer.
+     */
+    private val songSyncGenerations = ConcurrentHashMap<String, Long>()
+
+    private fun songSyncGenerationOf(videoId: String): Long = songSyncGenerations[videoId] ?: 0L
+
+    private fun bumpSongSyncGeneration(videoId: String) {
+        songSyncGenerations.merge(videoId, 1L, Long::plus)
+    }
 
     /** No song check may be sent before this, after a 429; 0 when clear. */
     @Volatile
@@ -2051,10 +2114,14 @@ object LyricsTiming {
      * one. The text key already names file vs stream, but a replaced file can
      * keep the same path, so the record itself has to be dropped.
      */
-    suspend fun resetSongCheck(context: Context, videoId: String) {
+    suspend fun resetSongCheck(context: Context, videoId: String) = songSyncGate.withLock {
+        // Hold the same gate as recheckDownloaded: a check already listening to
+        // the old bytes must not write its answer or override after this reset,
+        // which would put the replaced file back on the old recording's sync.
         // The file these lyrics came from is gone or has different bytes. An
         // automatic override still holds its old sheet and sync, so it has to
         // go with the answer; a listener's own override is left alone.
+        bumpSongSyncGeneration(videoId)
         LyricsOverrideStore.removeRecheck(context, videoId)
         store(context).update(videoId) {
             it.copy(
@@ -2075,6 +2142,31 @@ object LyricsTiming {
                 // version left behind made recheckDownloaded answer NONE and
                 // the new file kept the old timing for ever.
                 syncCheckVersion = 0,
+                // The chroma measurement was made from the old bytes too. Its
+                // answer must not move the new recording's lyrics.
+                autoChecked = false,
+                autoShiftMs = null,
+                autoVersion = 0,
+                auto = null,
+                autoComplete = false,
+                autoNoChange = false,
+                autoRecordPartial = false,
+                autoVideoBytes = 0L,
+                autoVideoSeconds = 0.0,
+                autoNote = null,
+                searchVersion = 0,
+                biasSampled = false,
+                // The refine transcript was heard from the old recording. Its
+                // text key names only the file, so without this the new file
+                // would reuse the old words and the old line correction.
+                refineMs = null,
+                refineSlopePerMin = 0.0,
+                refineLines = 0,
+                refineMad = null,
+                refineHeardKey = null,
+                refineHeardWords = emptyList(),
+                refineHeardSeconds = 0.0,
+                refineHeardExtended = false,
             )
         }
         recheckTokens.remove(videoId)
@@ -2149,12 +2241,27 @@ object LyricsTiming {
         artistKnown: Boolean,
         artistAliases: List<String>,
     ): LyricsRepository.Result? {
+        // Captured before any suspension: a reset that runs while this check
+        // waits for the gate changes it, and then this answer names old bytes.
+        val startedGeneration = songSyncGenerationOf(song.videoId)
         // Off by default: neither the check nor the override it writes may
         // change a downloaded file's lyrics on this build.
-        if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches)) return null
-        val localUri = song.localUri?.takeIf { it.isNotBlank() } ?: return null
-        if (lines.none { it.timeMs > 0 }) return null
-        if (!com.music.bitchord.data.lyrics.Deepgram.usable) return null
+        if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches)) {
+            TrackLog.d(TAG, "lyrics-sync: download re-check skipped (switch off)", song.videoId)
+            return null
+        }
+        val localUri = song.localUri?.takeIf { it.isNotBlank() } ?: run {
+            TrackLog.d(TAG, "lyrics-sync: download re-check skipped (no local file)", song.videoId)
+            return null
+        }
+        if (lines.none { it.timeMs > 0 }) {
+            TrackLog.d(TAG, "lyrics-sync: download re-check skipped (untimed lines)", song.videoId)
+            return null
+        }
+        if (!com.music.bitchord.data.lyrics.Deepgram.usable) {
+            TrackLog.d(TAG, "lyrics-sync: download re-check skipped (deepgram unavailable)", song.videoId)
+            return null
+        }
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (!LyricsAiGuard.songTimingWanted(
                 isVideo = song.isVideo,
@@ -2164,7 +2271,15 @@ object LyricsTiming {
                 artist = artist,
                 texts = sung.map { it.value.text },
             )
-        ) return null
+        ) {
+            TrackLog.d(
+                TAG,
+                "lyrics-sync: download re-check skipped by guard video=${song.isVideo} " +
+                    "sung=${sung.size}",
+                song.videoId,
+            )
+            return null
+        }
         val audioSource = audioSourceKey(song.videoId, localFile = true)
         val key = textKey(lines, audioSource)
         val before = store(context).get(song.videoId)
@@ -2174,9 +2289,21 @@ object LyricsTiming {
             providerUnknown = providerUnknown,
             matchPercent = beforeMatch,
         )
-        if (reason == DownloadedSyncCheck.Recheck.NONE) return null
+        if (reason == DownloadedSyncCheck.Recheck.NONE) {
+            TrackLog.d(TAG, "lyrics-sync: download re-check skipped (already checked)", song.videoId)
+            return null
+        }
         recheckTokens[song.videoId] = reason.token
         return songSyncGate.withLock {
+            // A reset may have replaced this file while the check waited here.
+            // The version it cleared made it look unverified, but the captured
+            // song/lines still name the old recording: writing this answer or
+            // its override would put the new file back on the old sync.
+            if (songSyncGenerationOf(song.videoId) != startedGeneration) {
+                TrackLog.d(TAG, "lyrics-sync: download re-check dropped (file replaced)", song.videoId)
+                recheckTokens.remove(song.videoId)
+                return@withLock null
+            }
             // Another flight may have finished this file while this one waited.
             val entry = store(context).get(song.videoId)
             if (!DownloadedSyncCheck.isUnverified(entry?.syncCheckVersion)) {
@@ -2224,6 +2351,10 @@ object LyricsTiming {
                 ownMatchPercent = own.match,
                 freshMatchPercent = if (bestFresh != null) result.match else null,
                 freshKey = freshKey,
+                // A refusal carries a match percent with no fitted sync. It
+                // has not verified the file, so it must not be recorded as an
+                // answer or make the old sync look replaceable.
+                ownApplied = own.fitted != null,
             )
             if (decision.replace && decision.winner == DownloadedSyncCheck.Winner.FRESH) {
                 // The fresh sheet's fit belongs to its own lines. Both have to

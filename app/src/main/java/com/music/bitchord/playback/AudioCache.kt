@@ -47,8 +47,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -726,6 +729,28 @@ object AudioCache {
     val contentsChanged: StateFlow<Int> = _contentsChanged.asStateFlow()
 
     /**
+     * Fires the media id each time the player (or a read-ahead) opens a stream
+     * for it — the point at which more bytes are about to be written. A timing
+     * pass that is waiting for a video's opening can suspend on this instead
+     * of polling the cache on a timer.
+     */
+    private val _served = MutableSharedFlow<String>(extraBufferCapacity = 16)
+
+    val served: SharedFlow<String> = _served.asSharedFlow()
+
+    /** How many bytes playback has read per video, so a wake-up is not sent for every buffer. */
+    private val playedProgress = ConcurrentHashMap<String, Long>()
+
+    private fun notePlayedBytes(videoId: String, bytes: Int) {
+        if (bytes <= 0) return
+        val after = playedProgress.merge(videoId, bytes.toLong(), Long::plus) ?: return
+        val before = after - bytes
+        if (before / PROGRESS_STEP_BYTES != after / PROGRESS_STEP_BYTES) _served.tryEmit(videoId)
+    }
+
+    private const val PROGRESS_STEP_BYTES = 256L * 1024
+
+    /**
      * What the queue said about the tracks the cache is about to hold.
      *
      * The resolver seam [recordServed] runs at only has a DataSpec in hand —
@@ -837,6 +862,7 @@ object AudioCache {
         if (openedCache == null) return
         if (spec.uri.scheme != "bitchord") return
         val mediaId = mediaIdIn(spec.uri) ?: return
+        _served.tryEmit(mediaId)
         val key = spec.key ?: keyFactory.buildCacheKey(spec)
         val origin = originOf(spec.uri, mediaId, servedUrl)
         val song = notedSongs[mediaId]
@@ -1392,8 +1418,11 @@ object AudioCache {
                 }
             }
 
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                activeDs.read(buffer, offset, length)
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                val read = activeDs.read(buffer, offset, length)
+                heldVideoId?.let { if (read > 0) notePlayedBytes(it, read) }
+                return read
+            }
 
             override fun getUri(): Uri? = activeDs.uri
 
