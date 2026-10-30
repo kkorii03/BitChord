@@ -168,7 +168,7 @@ class AudioSwitchOstTitleTest {
         assertEquals("song", parts.core)
         assertEquals(setOf("live"), parts.versions)
         assertEquals(
-            listOf("song live"),
+            listOf("song live artist", "song live"),
             TrackMatcher.queries(
                 TrackMatcher.Target("Song - Original Soundtrack (Live)", "Artist"),
             ),

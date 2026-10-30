@@ -542,4 +542,67 @@ class SongVersionPolicyTest {
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", "video"))
         assertFalse(SongVersionPolicy.mayAdoptDownloadedFile("song", null))
     }
+
+    @Test
+    fun `a failed search is not a definitive no-version verdict`() {
+        assertFalse(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = false,
+                answered = false,
+                found = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = false,
+                found = false,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = true,
+                found = false,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = false,
+                answered = false,
+                found = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a partially failed audio switch search is not a definitive miss`() {
+        assertFalse(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 2, failedQueries = 1),
+        )
+        assertTrue(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 2, failedQueries = 0),
+        )
+        assertFalse(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 0, failedQueries = 0),
+        )
+    }
+
+    @Test
+    fun `a failed catalogue fallback is not a definitive audio switch miss`() {
+        assertTrue(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(
+                queriesRun = 2,
+                failedQueries = 0,
+                catalogueFailed = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.audioSwitchSearchIsConclusive(
+                queriesRun = 2,
+                failedQueries = 0,
+                catalogueFailed = true,
+            ),
+        )
+    }
 }

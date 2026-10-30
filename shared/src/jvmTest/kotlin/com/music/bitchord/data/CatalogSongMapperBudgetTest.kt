@@ -1,5 +1,7 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -39,5 +41,19 @@ class CatalogSongMapperBudgetTest {
         assertFalse(budget.take())
         assertEquals(0, budget.used())
         assertEquals(0, budget.remaining())
+    }
+
+    @Test
+    fun `a lookup refused by the budget is a retryable failure not a miss`() = runBlocking {
+        val song = Song(
+            videoId = "budget-song",
+            title = "Song",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        assertEquals(
+            CatalogSongMapper.MapResult.Failed,
+            CatalogSongMapper.mapResult(song, CatalogSongMapper.LookupBudget(0)),
+        )
     }
 }

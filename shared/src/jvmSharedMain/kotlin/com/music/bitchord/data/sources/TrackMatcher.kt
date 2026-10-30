@@ -121,10 +121,12 @@ object TrackMatcher {
         // a name no catalogue row carries.
         if (identity.artist.isNotBlank()) return plainQueries(identity.title, identity.artist)
         val work = identity.work
-        // A pipe/trailing OST label is the fan-upload shape, so its uploader
-        // is not the performer. A "(From ...)" title can be a catalogue row
-        // with a real credit, which is kept unless that credit is a channel.
-        val uploader = identity.tailRemoved || isUploaderCredit(target.artist)
+        // The channel is the uploader only when the row's credit actually
+        // looks like one ("Joker OST", "Various Artists", a Topic channel).
+        // The pipe/trailing-label shape alone does not prove that: a fan upload
+        // can still carry the real performer in its credit, and dropping them
+        // spends the search on a name no catalogue row carries.
+        val uploader = isUploaderCredit(target.artist)
         if (work == null || !uploader) {
             return plainQueries(identity.title, if (uploader) "" else target.artist)
         }
@@ -218,7 +220,10 @@ object TrackMatcher {
             // auto-generated channel ("5 Seconds of Summer - Topic"), not to a
             // different act. The suffix is the channel's, not the artist's, so
             // leaving it on made the exact-name check refuse the official song.
-            expandArtistName(part.replace(TOPIC_CHANNEL_SUFFIX, "")).forEach { name ->
+            // A VEVO channel is the same plumbing ("ArtistVEVO" is "Artist").
+            expandArtistName(
+                part.replace(TOPIC_CHANNEL_SUFFIX, "").replace(VEVO_CHANNEL_SUFFIX, ""),
+            ).forEach { name ->
                 out += name
             }
         }
@@ -1084,11 +1089,15 @@ object TrackMatcher {
                 }
                 // A bracketed take after the label ("Song - Original
                 // Soundtrack (Live)") still reaches the ordinary bracket pass.
+                // Packaging that follows the bracket ("... (Live) Version")
+                // belongs to the label, not the song, so it goes too; otherwise
+                // it survives the bracket pass as part of the core and the
+                // exact-core gates refuse the row.
                 suffix.startsWith("(") || suffix.startsWith("[") -> {
                     present = true
                     tailRemoved = true
                     labelPackaged = true
-                    text = before + " " + after
+                    text = before + " " + stripTrailingNeutralSuffix(after)
                 }
                 isNeutralSoundtrackSuffix(suffixWords) -> {
                     present = true
@@ -1102,14 +1111,21 @@ object TrackMatcher {
                     labelPackaged = true
                     // Keep a recognized take as a bracketed marker, dropping
                     // neutral packaging words ("Live Version" -> "(Live)").
-                    val kept = suffixWords.filter {
-                        it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS
-                    }
+                    val kept = keptSoundtrackTakeWords(suffix)
                     text = if (kept.isEmpty()) before else before + " (" + kept.joinToString(" ") + ")"
                 }
-                // The label is in the middle of the title, not a tail:
-                // leave it and the words after it untouched.
-                else -> Unit
+                // The label sits in the middle of the title. What follows it is
+                // the work's packaging, not the song's name, so the label and
+                // its tail are removed rather than left to become the core
+                // ("Song - OST Something" is still "song"). A take inside that
+                // tail ("Live at Wembley", "Remix by X") is still the take and
+                // must survive, or the studio recording stands in for it.
+                else -> {
+                    present = true
+                    tailRemoved = true
+                    val kept = keptSoundtrackTakeWords(suffix)
+                    text = if (kept.isEmpty()) before else before + " (" + kept.joinToString(" ") + ")"
+                }
             }
         }
 
@@ -1163,6 +1179,38 @@ object TrackMatcher {
                     it in NEUTRAL_SUFFIX_WORDS || it in TRAILING_NOISE || it in NOISE_WORDS
                 }
             )
+
+    /**
+     * Drops trailing version/edition packaging after a bracketed take, so
+     * "Song - Original Soundtrack (Live) Version" keeps the live marker but
+     * not the label's "version" word in the title proper.
+     */
+    private fun stripTrailingNeutralSuffix(text: String): String {
+        var out = text.trimEnd()
+        while (true) {
+            val match = TRAILING_WORD.find(out) ?: return out
+            val word = normalize(match.groupValues[1]).replace(NON_ALNUM, "")
+            if (word !in NEUTRAL_SUFFIX_WORDS) return out
+            out = out.substring(0, match.range.first).trimEnd()
+        }
+    }
+
+    /**
+     * The take markers to keep when a soundtrack label's tail is removed.
+     * A language take ("Korean Version", "Japanese Ver.") must keep its
+     * language word: dropping it would leave only the packaging "version" and
+     * let the original recording stand in for the language version.
+     * A language word that is merely work context ("Korean Drama") is not a
+     * take and stays out.
+     */
+    private fun keptSoundtrackTakeWords(text: String): List<String> {
+        val words = wordsOf(text)
+        val languageTake = isLanguageVersion(text)
+        return words.filter {
+            (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
+                (languageTake && it in VERSION_LANGUAGES)
+        }
+    }
 
     /**
      * Whether a dash/pipe tail names a take or upload packaging rather than
@@ -1318,6 +1366,15 @@ object TrackMatcher {
                     classify(head, versions, context)
                     tail
                 }
+                isLanguageVersion(tail) -> {
+                    // "Song - Korean Version" is a language take of "Song",
+                    // not a song called "Korean Version". Tested before the
+                    // translation pair so a Hangul title with a Latin language
+                    // tail ("여수밤바다 - Japanese Version") stays one take of
+                    // the Hangul title instead of gaining a phantom alt core.
+                    classify(tail, versions, context)
+                    head
+                }
                 isTranslationPair(head, tail, artist) -> {
                     val hangulHead = hasHangul(head)
                     val keep = if (hangulHead) head else tail
@@ -1359,6 +1416,7 @@ object TrackMatcher {
         var words = text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
+        var droppedTail = 0
         // "Paniyon Sa Full Song", "Tum Hi Ho Audio" — an upload's trailing
         // label, printed without brackets to hang it on. The unambiguous take
         // markers get the same treatment ("Kizuna No Kiseki Instrumental"):
@@ -1370,15 +1428,31 @@ object TrackMatcher {
         // its name.
         while (words.size > 1) {
             val last = words.last()
-            if (last in TRAILING_NOISE) words = words.dropLast(1)
-            else if (last in TRAILING_TAKES) {
+            // "Version"/"Edition" after a bracketed take is packaging, not a
+            // take: "Song (Live) Version" is the live recording of "Song", and
+            // leaving the word in the core made the exact-title gates refuse it.
+            if (last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) {
+                words = words.dropLast(1)
+                droppedTail++
+            } else if (last in TRAILING_TAKES) {
                 versions += last
                 words = words.dropLast(1)
+                droppedTail++
             } else break
         }
 
+        // CJK cores are built from the raw text rather than [words], so the
+        // same trailing packaging has to come off that text too. Otherwise
+        // "紅蓮華 (Live) Version" keeps `version` in its core and the
+        // exact-title gates refuse the live take and the plain row alike.
+        var coreText = text
+        repeat(droppedTail) {
+            val match = TRAILING_SPLIT_TOKEN.find(coreText) ?: return@repeat
+            coreText = coreText.substring(0, match.range.first)
+        }
+
         val coreString = if (containsCJK) {
-            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
             words.joinToString("")
         }
@@ -1486,6 +1560,18 @@ object TrackMatcher {
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
+        val languages = words.mapNotNull { VERSION_LANGUAGES[it] }.distinct()
+        if (languages.isNotEmpty() && isLanguageVersion(segment)) {
+            // A language version is a different recording. "Version"/"ver" is
+            // its packaging, so the language is the marker that has to agree;
+            // any other take word ("Korean Remix") still counts. A language
+            // word that is merely context ("Korean Drama OST", "English
+            // Translation") names the work or the listing, not a take, so it
+            // stays out of versions and cannot reject the plain catalogue row.
+            versions += languages
+            versions += words.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
+            return
+        }
         val marks = words.filter { it in VERSION_WORDS }
         if (marks.isNotEmpty()) {
             versions += marks
@@ -1494,13 +1580,38 @@ object TrackMatcher {
         context += words.filter { it.length > 2 && it !in NOISE_WORDS }
     }
 
+    /**
+     * Whether [text] is only a language version of the title ("Korean",
+     * "Korean Version", "Japanese Ver."), which belongs to the head rather
+     * than taking over as the song's name.
+     */
+    private fun isLanguageVersion(text: String): Boolean {
+        val words = normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (words.isEmpty()) return false
+        return words.any { it in VERSION_LANGUAGES } &&
+            words.all {
+                it in VERSION_LANGUAGES || it in VERSION_WORDS || it in LANGUAGE_PACKAGING ||
+                    it in PACKAGING_CONNECTORS || it in NOISE_WORDS || it.all(Char::isDigit)
+            }
+    }
+
     /** Whether [text] is nothing but (part of) [artist] — the "Artist - Title" upload shape. */
     private fun isArtistName(text: String, artist: String): Boolean {
         if (artist.isBlank()) return false
         val words =
             text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
-        val credited = normalize(artist).split(WORD_SPLIT)
+        // Use the same credit expansion as matching: it drops the Topic/VEVO
+        // channel plumbing and splits aliases, so "Artist - Song" is inverted
+        // when the row's credit is the artist's channel ("ArtistVEVO") just as
+        // it is for a plain "Artist" credit. The raw words stay in the set so
+        // every spelling the old check accepted still matches.
+        val credited = (
+            normalize(artist).split(WORD_SPLIT) +
+                artistVariants(artist).flatMap { it.split(WORD_SPLIT) }
+            )
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
             .toSet()
@@ -1913,6 +2024,10 @@ object TrackMatcher {
     private val TRAILING_ALIAS = Regex("""^(.*?)[(\[（【]([^)\]）】]*)[)\]）】]\s*$""")
     /** `~` and the wave dash `〜` join words in Japanese titles ("真夜中のドア〜stay"). */
     private val WORD_SPLIT = Regex("""[\s.·~〜]+""")
+    /** The last word of a text, for stripping trailing edition packaging. */
+    private val TRAILING_WORD = Regex("""\s+(\S+)\s*$""")
+    /** The last word after any [WORD_SPLIT] boundary, for stripping a CJK core's packaging. */
+    private val TRAILING_SPLIT_TOKEN = Regex("""[.\s·~〜]+[^.\s·~〜]+\s*$""")
     /**
      * What survives into identity: any language's letters and digits.
      * ASCII-only (`[^a-z0-9]`) is what emptied every CJK/Devanagari title to
@@ -1963,6 +2078,9 @@ object TrackMatcher {
      */
     private val TOPIC_CHANNEL_SUFFIX = Regex("""\s+-\s+topic$""", RegexOption.IGNORE_CASE)
 
+    /** A VEVO channel is the artist's own channel, not a second name ("ArtistVEVO"). */
+    private val VEVO_CHANNEL_SUFFIX = Regex("""(?i)(?<=[a-z0-9])\s*vevo$""")
+
     /**
      * What makes a listing a different recording rather than a different
      * listing of the same one. A title carrying one of these on one side only
@@ -1986,6 +2104,23 @@ object TrackMatcher {
         "翻唱", "现场", "混音",
         "커버", "라이브", "리믹스",
     )
+
+    /**
+     * Language words that make a row a version of the song rather than the
+     * song itself. Kept apart from [VERSION_WORDS] because the language is the
+     * part that must agree: "Korean Ver." and "Korean Version" are the same
+     * take, and both differ from the original. Every spelling folds to one
+     * canonical key so a Japanese listing and an English catalogue row agree.
+     */
+    private val VERSION_LANGUAGES = mapOf(
+        "korean" to "korean", "한국어" to "korean", "韓国語" to "korean", "韓語" to "korean",
+        "english" to "english", "영어" to "english", "英語" to "english",
+        "japanese" to "japanese", "일본어" to "japanese", "日本語" to "japanese",
+        "chinese" to "chinese", "중국어" to "chinese", "中国語" to "chinese",
+    )
+
+    /** Packaging around a language marker: "Version", "Ver.". */
+    private val LANGUAGE_PACKAGING = setOf("version", "ver")
 
     /**
      * The [VERSION_WORDS] that are a take even printed bare at the end of a
