@@ -54,4 +54,44 @@ object LocalTimingPolicy {
         isVideo: Boolean,
         overrideRecheck: Boolean,
     ): Boolean = timed && (!fromFile || isVideo || overrideRecheck)
+
+    /**
+     * Whether a failed measurement should wait for the stream to open again.
+     * A stream's opening arrives over time, so `AudioCache.served` is the
+     * event to wake on. A local file is already whole: no stream-open event
+     * exists for it, and waiting for one parked the AI fallback for the whole
+     * measure window after the first attempt.
+     */
+    fun measureWaitsForStream(localUri: String?): Boolean = localUri.isNullOrBlank()
+
+    /**
+     * Whether timed lines from a downloaded file may be moved onto the clock of
+     * the sound that is playing. A file's own embedded timing is left alone, but
+     * a video's file and a re-checked override are timed for the file's audio,
+     * so their stored answer is valid here just as it is on the lyrics screen.
+     *
+     * [recheckOverride] is the per-song sheet written by a downloaded-file
+     * re-check; [sourceTimedToVideo] keeps a video's own captions from being
+     * moved by a record-based answer.
+     */
+    fun downloadedTimingTimeable(
+        timed: Boolean,
+        fromFile: Boolean,
+        isVideo: Boolean,
+        recheckOverride: Boolean,
+        sourceTimedToVideo: Boolean,
+    ): Boolean = timed && (!fromFile || isVideo || (recheckOverride && !sourceTimedToVideo))
+
+    /**
+     * Whether a stored measurement or AI answer may be applied or recorded for
+     * what is playing. A substitute stream is a different recording under the
+     * same video id, so its clock is not the YouTube upload's: neither apply
+     * an answer made for the upload nor spend an engine on the substitute.
+     * A video's own upload is never treated as substituted here.
+     */
+    fun streamTimingAllowed(
+        timeable: Boolean,
+        isVideo: Boolean,
+        substituted: Boolean,
+    ): Boolean = timeable && !(substituted && !isVideo)
 }

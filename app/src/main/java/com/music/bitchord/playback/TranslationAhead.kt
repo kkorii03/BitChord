@@ -132,7 +132,7 @@ internal object TranslationAhead {
          * A re-check wrote these words and their sync for this file, so the
          * file's own "already timed for it" rule must not reject that sync.
          */
-        val overrideRecheck: Boolean = false,
+        val recheckOverride: Boolean = false,
     )
 
     /**
@@ -161,7 +161,7 @@ internal object TranslationAhead {
                     source = override.source,
                     searchedAs = null,
                     fromFile = true,
-                    overrideRecheck = override.kind == LyricsOverrideFile.Kind.RECHECK,
+                    recheckOverride = override.kind == LyricsOverrideFile.Kind.RECHECK,
                 )
             }
         }

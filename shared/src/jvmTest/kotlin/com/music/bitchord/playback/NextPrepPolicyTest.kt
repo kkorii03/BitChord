@@ -336,4 +336,23 @@ class NextPrepPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aResolvedSongVersionIsADifferentStateFromTheVideoRow() {
+        assertFalse(
+            NextPrepPolicy.stateKey("row-1", "video-id") ==
+                NextPrepPolicy.stateKey("row-1", "song-version-id"),
+        )
+        assertEquals(
+            NextPrepPolicy.stateKey("row-1", "video-id"),
+            NextPrepPolicy.stateKey("row-1", "video-id"),
+        )
+    }
+
+    @Test
+    fun aVideoOrSubstituteNeverRunsTheSongSyncStep() {
+        assertTrue(NextPrepPolicy.syncMayRun(isVideo = false, substituted = false))
+        assertFalse(NextPrepPolicy.syncMayRun(isVideo = true, substituted = false))
+        assertFalse(NextPrepPolicy.syncMayRun(isVideo = false, substituted = true))
+    }
 }

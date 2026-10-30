@@ -40,6 +40,21 @@ object NextPrepPolicy {
     }
 
     /**
+     * The identity a row's prepared work belongs to: the queue row and the
+     * recording that will actually play for it. A row whose song version is
+     * resolved from the video to the record is a different recording, and its
+     * attempts, lyrics and sync must not be inherited from the video.
+     */
+    fun stateKey(rowId: String, videoId: String): String = "$rowId|$videoId"
+
+    /**
+     * Whether the song-sync step may run for this row. A video is timed by the
+     * measurement/AI path instead, and a substitute stream has a different
+     * clock from the recording the stored answer was made against.
+     */
+    fun syncMayRun(isVideo: Boolean, substituted: Boolean): Boolean = !isVideo && !substituted
+
+    /**
      * The steps still worth running, in their fixed order: wanted, not already
      * stored, and not already tried for this row.
      */

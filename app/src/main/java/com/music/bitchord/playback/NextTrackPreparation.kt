@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
@@ -179,8 +180,8 @@ internal class NextTrackPreparation(
         )
     }
 
-    private fun attemptsFor(queueKey: String): MutableSet<Step> = synchronized(attempted) {
-        attempted.getOrPut(queueKey) { mutableSetOf() }
+    private fun attemptsFor(stateKey: String): MutableSet<Step> = synchronized(attempted) {
+        attempted.getOrPut(stateKey) { mutableSetOf() }
     }
 
     private suspend fun run(snapshot: Snapshot) {
@@ -188,7 +189,12 @@ internal class NextTrackPreparation(
         val switches = AppSettings.syncSafetySwitches
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
-        val steps = attemptsFor(snapshot.queueKey)
+        // Attempts and lyrics belong to the sound that will play — the queue row
+        // with its source and lyrics settings — and to the recording itself: a
+        // video resolved to its song version must not inherit the video's
+        // failed steps or its lyrics.
+        var stateKey = NextPrepPolicy.stateKey(snapshot.queueKey, song.videoId)
+        var steps = attemptsFor(stateKey)
         var syncTiming: LyricsTiming.Timing? = null
         var deadlineHit = false
         // Steps this particular run actually reached, for the log: [steps] is
@@ -217,7 +223,15 @@ internal class NextTrackPreparation(
                 )
                 queueKey = expectedQueueKey
             }
-            if (resolved != null) song = resolved
+            if (resolved != null) {
+                song = resolved
+                val resolvedKey = NextPrepPolicy.stateKey(expectedQueueKey, resolved.videoId)
+                if (resolvedKey != stateKey) {
+                    stateKey = resolvedKey
+                    steps = attemptsFor(stateKey)
+                    NextPrepCache.clear()
+                }
+            }
         }
         if (!stillCurrent()) return
 
@@ -225,7 +239,7 @@ internal class NextTrackPreparation(
         // The lyrics switch is off by default: the cache may hold lines from
         // an earlier run, so it is not even read while the switch is off.
         var lyrics: TranslationAhead.AheadLyrics? = if (switches.nextPrepLyrics) {
-            synchronized(lyricsByRow) { lyricsByRow[expectedQueueKey] }
+            synchronized(lyricsByRow) { lyricsByRow[stateKey] }
         } else {
             null
         }
@@ -284,7 +298,7 @@ internal class NextTrackPreparation(
                                 allowHeavy = AppSettings.heavyWorkAllowed,
                             )
                             synchronized(lyricsByRow) {
-                                lyrics?.let { lyricsByRow[expectedQueueKey] = it }
+                                lyrics?.let { lyricsByRow[stateKey] = it }
                             }
                         }
                         Step.HQ -> hq = prepareHq(song) ?: hq
@@ -293,7 +307,12 @@ internal class NextTrackPreparation(
                             val lines = found?.lines?.takeIf { list ->
                                 list.any { it.text.isNotBlank() }
                             }
-                            if (lines != null) {
+                            // A substitute stream is a different recording under
+                            // the same id; its clock is not the upload's, so no
+                            // sync is measured or recorded for it.
+                            val query = CoverTitles.lyricsQuery(song)
+                            val substituted = StreamChoice.isSubstitute(song.videoId)
+                            if (lines != null && !substituted) {
                                 // Free measurement and timing first: they need
                                 // no upload and are what times most covers.
                                 val prepared = LyricsTiming.prepareNextFree(
@@ -377,6 +396,7 @@ internal class NextTrackPreparation(
             lines
         }
         if (lines != null && shown != null && SyncSafetyPolicy.firstFrameCacheAllowed(switches)) {
+            val query = CoverTitles.lyricsQuery(song)
             NextPrepCache.put(
                 NextPrepCache.Ready(
                     videoId = song.videoId,
@@ -384,10 +404,16 @@ internal class NextTrackPreparation(
                     shown = shown,
                     source = found.source,
                     searchedAs = found.searchedAs,
-                    isVideo = LyricsTimingSource.isVideo(song),
+                    isVideo = query.isVideo,
                     fromFile = found.fromFile,
                     localFile = song.localUri != null,
                     lyricsSettings = snapshot.lyricsSettings,
+                    audioSource = if (query.isVideo) {
+                        null
+                    } else {
+                        LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
+                    },
+                    substituted = !query.isVideo && StreamChoice.isSubstitute(song.videoId),
                 ),
             )
         }
@@ -779,6 +805,9 @@ internal class NextTrackPreparation(
     // ---- (d) song sync -------------------------------------------------------
 
     private fun syncWanted(song: Song): Boolean {
+        // A substitute stream is a different recording under the same id; its
+        // clock is not the upload's, so it never runs a song sync.
+        if (StreamChoice.isSubstitute(song.videoId)) return false
         if (!AppSettings.heavyWorkAllowed) return false
         // A video's free chroma measurement needs no paid engine; the AI
         // fallback inside prepareNextPaid still respects aiTimingAhead/Deepgram.
@@ -794,25 +823,29 @@ internal class NextTrackPreparation(
         found: TranslationAhead.AheadLyrics,
         song: Song,
     ): LyricsTiming.Timing? {
-        // The old rule was "a file's own timing stands unless it is a video";
-        // a re-check override carries a fresh sync for this file and must be
-        // applied too, exactly as the player and the lyrics screen do.
-        val timeable = LocalTimingPolicy.baseAllowed(
+        // A file's own timing stands unless it is a video; a re-check override
+        // carries a fresh sync for this file and is applied too, exactly as the
+        // player and the lyrics screen do. A substitute stream is a different
+        // recording under the same id, so its clock is never written.
+        val query = CoverTitles.lyricsQuery(song)
+        val sourceTimedToVideo = LyricsTiming.timedToVideo(found.source)
+        val timeable = LocalTimingPolicy.downloadedTimingTimeable(
             timed = true,
             fromFile = found.fromFile,
-            isVideo = LyricsTimingSource.isVideo(song),
-            overrideRecheck = found.overrideRecheck,
+            isVideo = query.isVideo,
+            recheckOverride = found.recheckOverride,
+            sourceTimedToVideo = sourceTimedToVideo,
         )
-        val recordTimed = timeable && (!found.fromFile || found.source != null) &&
-            !LyricsTiming.timedToVideo(found.source)
+        val substituted = StreamChoice.isSubstitute(song.videoId)
+        val recordTimed = timeable && (!found.fromFile || found.source != null) && !sourceTimedToVideo
         return LyricsTiming.timing(
             context = context,
             videoId = song.videoId,
             lines = lines,
-            baseAllowed = timeable,
-            measuredAllowed = recordTimed,
-            isVideo = LyricsTimingSource.isVideo(song),
-            audioSource = if (LyricsTimingSource.isVideo(song)) {
+            baseAllowed = timeable && !substituted,
+            measuredAllowed = recordTimed && !substituted,
+            isVideo = query.isVideo,
+            audioSource = if (query.isVideo) {
                 null
             } else {
                 LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
@@ -868,6 +901,15 @@ internal object NextPrepCache {
          * as if it were the new settings' choice.
          */
         val lyricsSettings: String,
+        /** The file/stream clock these lines were timed for; null for a video's own upload. */
+        val audioSource: String?,
+        /**
+         * Whether the sound was a substitute stream when these lines were
+         * timed. A substitute has a different clock from the YouTube upload a
+         * stored measurement or AI answer was made against, so its cache entry
+         * must not be served after the choice changes.
+         */
+        val substituted: Boolean,
     )
 
     @Volatile
@@ -882,12 +924,14 @@ internal object NextPrepCache {
         localFile: Boolean,
         isVideo: Boolean,
         lyricsSettings: String,
-    ): Ready? = ready?.takeIf {
-        it.videoId == videoId &&
-            it.localFile == localFile &&
-            it.isVideo == isVideo &&
-            it.lyricsSettings == lyricsSettings
-    }
+        audioSource: String?,
+        substituted: Boolean,
+    ): Ready? =
+        ready?.takeIf {
+            it.videoId == videoId && it.localFile == localFile &&
+                it.isVideo == isVideo && it.lyricsSettings == lyricsSettings &&
+                it.audioSource == audioSource && it.substituted == substituted
+        }
 
     /** One string for the lyrics choices that change what a lookup returns. */
     fun settingsKey(
