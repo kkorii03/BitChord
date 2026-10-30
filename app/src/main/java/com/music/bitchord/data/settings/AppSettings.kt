@@ -594,8 +594,14 @@ object AppSettings {
      * Prefer the catalogue audio release when the selected result is a music
      * video. The video itself is still handed to the player first so its
      * metadata appears immediately while the catalogue match is resolved.
+     *
+     * On by default for a fresh install: turning a music video into its song
+     * release is the app's first job, so a new listener should not have to find
+     * the switch first. An install that already had settings keeps the old off
+     * default unless it stored a choice, and that stored choice wins — see
+     * [preferMusicOnlyDefault].
      */
-    val preferMusicOnly = MutableStateFlow(false)
+    val preferMusicOnly = MutableStateFlow(true)
 
     /**
      * Jumps over the parts of a YouTube video that are not the song — the
@@ -1269,7 +1275,14 @@ object AppSettings {
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
-        preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        preferMusicOnly.value = preferMusicOnlyDefault(
+            if (prefs.contains(KEY_PREFER_MUSIC_ONLY)) {
+                prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+            } else {
+                null
+            },
+            existingInstall = hadSettingsBeforeMigrations,
+        )
         skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
         skipSponsorParts.value = prefs.getBoolean(KEY_SKIP_SPONSOR_PARTS, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
@@ -3825,3 +3838,21 @@ internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
  * this.
  */
 internal fun hqAutomationDefault(existingInstall: Boolean): Boolean = !existingInstall
+
+/**
+ * The music-only preference when this launch has never stored one.
+ *
+ * The catalogue song release is what the app is for, so a genuinely fresh
+ * install (no settings written before this launch) starts on. An install that
+ * already had settings was running with the old default, which was off, so an
+ * absent key stays off rather than silently flipping that listener's playback.
+ * A stored [Boolean] — including the `false` a listener chose — is kept exactly
+ * as written; only the absence is defaulted.
+ *
+ * [existingInstall] is whether the preference file already held settings before
+ * this launch wrote any — not whether onboarding is complete. A normal app
+ * update has finished onboarding, so the onboarding flag cannot stand in for
+ * this.
+ */
+internal fun preferMusicOnlyDefault(stored: Boolean?, existingInstall: Boolean): Boolean =
+    stored ?: !existingInstall
