@@ -75,6 +75,44 @@ class LocalPlaylistStoreTest {
         assertNull(parsePlaylists("not json at all"))
     }
 
+    private fun playlist(id: String, title: String = "Title $id") = LocalPlaylist(
+        id = id,
+        title = title,
+        songs = listOf(com.music.bitchord.data.model.Song(videoId = "v-$id", title = "Song", artist = "Artist", thumbnailUrl = null)),
+    )
+
+    @Test
+    fun `two saves in the same millisecond get different ids`() {
+        val first = newLocalPlaylistId(nowMs = 1_700_000_000_000, existing = emptySet())
+        val second = newLocalPlaylistId(
+            nowMs = 1_700_000_000_000,
+            existing = setOf(first),
+        )
+
+        assertEquals("sp_local_1700000000000", first)
+        assertEquals("sp_local_1700000000001", second)
+        assertTrue(first != second)
+    }
+
+    @Test
+    fun `deleting by browse id removes exactly the named local playlist`() {
+        val list = listOf(playlist("sp_local_1"), playlist("sp_local_2"))
+
+        val updated = withoutPlaylist(list, "local:playlist:sp_local_1")
+
+        assertEquals(listOf("sp_local_2"), updated.map { it.id })
+    }
+
+    @Test
+    fun `renaming by browse id keeps position and changes only that title`() {
+        val list = listOf(playlist("sp_local_1", "Old"), playlist("sp_local_2", "Other"))
+
+        val updated = renamedPlaylists(list, "local:playlist:sp_local_1", "New")
+
+        assertEquals(listOf("sp_local_1", "sp_local_2"), updated.map { it.id })
+        assertEquals(listOf("New", "Other"), updated.map { it.title })
+    }
+
     @Test
     fun `the old null spellings read back as absent`() {
         val raw = """[{"id":"a","title":"Alpha","songs":[{"videoId":"v1","title":"One","artist":"A","thumbnailUrl":"null","albumName":null}]}]"""
