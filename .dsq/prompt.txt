@@ -1,8 +1,16 @@
-(공통 주의 10-26 10시: 이 PC 셸에는 rg(ripgrep)가 없다 — 검색은 OpenCode 내장 grep/glob 도구나 PowerShell Select-String/Get-ChildItem 을 쓴다. 도구 하나가 실패해도 멈추지 말고 다른 방법으로 계속해 작업을 끝까지 하고, 마지막 요약을 반드시 출력한다.)
-(10-26 06:55 Opus: 원래 '12 화면 정리' — 15 자리에서 빈 응답 nochange, 재투입.)
-작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-lane2 (브랜치 task/lane2 의 지금 HEAD 에서 작업. ko-101 태그는 비교 기준점일 뿐 되돌리지 말 것). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지(컴파일은 CI). .github/, keys\, 서명 설정, .ds-ctx/ 수정 금지.
-검사 범위(사용자 지시, 필수): ko-101 이후 오늘·밤사이 추가·수정된 모든 기능과 코드(git log ko-101..HEAD, git diff ko-101..HEAD — 예: 노래 검증, 가사 제목 정규화, 크로스페이드·자동 믹스, 싱크 채점 모드, 다운로드 곡 메뉴·사진, 고음질 소스·등급·다음 곡 준비, 설정 공유, 커버 가수 이동, 충전 조건 제거 등)를 기존 코드와 똑같이 이 작업의 대상에 포함한다. 새로 들어온 코드일수록 먼저 본다. 이 작업 전에 끝난 대기열 작업의 결과도 포함.
-공통 원칙: 사용자 기능·동작·설정·저장 데이터 형식은 바꾸지 않는다(이 작업이 명시한 것 제외). 한 번에 너무 많이 바꾸지 말고 이 지시의 범위만. 바꾼 함수·클래스의 모든 호출부와 타입을 다시 읽고 확인(널 안전·스마트캐스트 주의, 과거 Song? 스마트캐스트 컴파일 오류 있었음). 기존 주석의 의도를 지울 때는 요약에 이유. 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 사용자 폰은 저장공간 1TB·데이터 무제한이라 데이터/용량보다 배터리를 우선한다. 새 순수 로직은 shared com.music.bitchord.data... 패키지 테스트(자동 실행)로 검증. 결과 기록은 C:\Users\jang\Desktop\BitChord\BitChord-lane2\docs\cleanup\ 아래 해당 md 파일(새로 만들 수 있음)에 남긴다.
-마지막에 10줄 이내로 요약: 수정 파일 수 / 핵심 변경 / 테스트 / 다음 단계에 남긴 것.
-작업:
-[UI/UX 3차: 애플뮤직다움 전수] C:\Users\jang\Desktop\BitChord\ship\UI-AUDIT.md(.ds-ctx\UI-AUDIT.md) 1·2차 이후 남은 부분을 전 화면에서 찾아 고친다: (1) 말투 — 모든 한국어 문자열(values-ko)을 애플뮤직 한국어 톤으로 통일: 짧은 해요체, 명사형 메뉴(예: 보관함에 추가, 다음에 재생), 느낌표·이모지·기술 용어 지양, 같은 개념은 같은 단어(재생목록/플레이리스트 혼용 금지 등). 바꾼 문자열 전후 표를 docs\cleanup\tone.md 에. (2) 글꼴·크기·굵기 — 큰 제목(34sp 굵게), 섹션 제목(22sp 굵게), 본문(17sp), 보조(15/13sp 회색) 체계를 공통 Typography로 정리하고 화면별 하드코딩 글자 크기를 공통 값으로 교체. 한글과 영문 글꼴이 섞여 어색한 곳 정리. (3) 간격 — 좌우 여백 20dp, 섹션 간격, 목록 줄 높이를 공통 값으로 통일. (4) 남은 머티리얼 요소(리플, 원형 프로그레스, 토스트 모양, 다이얼로그)를 iOS 느낌으로. 기능 삭제 금지.
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지 작업). 기준 브랜치 task/hq-prefetch(사용자 폰 vc85).
+버그(폰 로그로 증명, ship\FIXLIST.md 81번): youtube.com 재생목록(Joker OST 팬 업로드 34곡)이 전부 영상 버전(video=y)으로 재생, 노래 버전 0곡. 제목 예: 'Lawrence Welk - The Moon Is a Silver Dollar | Joker OST - Original Soundtrack', 'Following Sophie | Joker OST', 'Cream - White Room | Joker OST', 'Hildur Guðnadóttir, Jóhann Jóhannsson - ... | Joker OST'. 로그: 'song version: <id> kept (none)', 'search: music.youtube.com/search kind=audio-switch ... length=32' 다음 'length=12', 후보 전부 'audio switch: reject ... reason=title'(Swords Crossed, He's a Pirate 등 엉뚱한 곡) → 검색어/제목 파싱이 '| <작품> OST - Original Soundtrack' 꼬리와 '가수 - 제목' 형식을 처리 못 함.
+할 일: 노래 버전 찾기(audio switch)에 쓰는 제목 정리·가수/제목 분리 함수를 찾아 ① ' | <작품> OST', ' - Original Soundtrack', '(From <작품>)', 'OST' 꼬리 제거 ② '가수 - 제목 | 작품' 에서 가수·제목 분리 ③ 가수가 없고 OST 꼬리만 있으면 업로더 대신 '<제목> <작품> soundtrack' 질의 ④ 검색어 원문을 로그에 남김(제목·가수만, 계정 정보 없음): 'audio switch: query=...'. 기존 커버 판정·같은 가수 규칙·한국어 제목 정리 동작은 그대로(기존 테스트 전부 통과).
+테스트: 위 4가지 제목 예와 기존 형식(공식 MV 꼬리, 커버 제목) 회귀 단위 테스트.
+반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 기존 코드 의도(주석)를 지우면 요약에 이유. 다운로드된 곡·커버 곡·MV/노래 버전 판정 경로는 이 작업과 무관하면 건드리지 말 것. 업스트림 v1.8.1 코드 정리·파일 쪼개기 금지. 새 app 테스트는 이름을 요약에 적을 것(CI 목록에 Opus가 추가). 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제.
+
+
+== 2차 작업 (현재 브랜치 = 1차 결과) ==
+1차 결과를 독립 검토자가 검사한 지적을 전부 고칠 것. 지적이 틀렸다고 판단하면 코드 근거와 함께 요약에 이유를 적고 넘어감.
+검토 지적:
+VERDICT: ISSUES 4
+- HIGH — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:942` — For the required no-performer case (`Following Sophie | Joker OST`) `audioSwitchTargetOf` keeps the uploader as `target.artist`, so `bestSameArtist`/`bestOfficialAudioForVideo` reject the real catalogue row even though the new query finds it. Fix: give the matching target no uploader credit for this shape and match the cleaned title/work, preserving same-artist checks only for real credits.
+- MEDIUM — `TrackMatcher.kt:916` — `audioSwitchIdentity` accepts any pre-dash head as the performer, so `Joker OST - Following Sophie | Joker OST` searches `following sophie joker ost` instead of the required `<title> <work> soundtrack`. Fix: run `isUploaderCredit` on the parsed head and fall back to the work query when it is the channel/OST label.
+- MEDIUM — `TrackMatcher.kt:913` (and `:1078`) — After removing the OST tail, the first dash/pipe is always inverted as artist-title, so `Song - Live | Joker OST` becomes title `live` and `Song | Official Video | Joker OST` becomes title `official`, losing the song title. Fix: only invert when the tail is not a known packaging/take label and keep `live`/`remix` in `versions`.
+- MEDIUM — `TrackMatcher.kt:1668` — `TRAILING_SOUNDTRACK`'s `(?:\s+.*)?$` swallows everything after the soundtrack word, so `Song - Original Soundtrack (Live)` loses its `live` marker and can match the studio take. Fix: stop the match at the soundtrack label and classify any remaining take marker into `versions`.
+마지막 요약에 지적 번호별 처리(고침/반박)를 한 줄씩.
