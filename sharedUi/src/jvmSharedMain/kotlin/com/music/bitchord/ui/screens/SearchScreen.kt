@@ -53,6 +53,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -114,6 +117,9 @@ fun SearchScreen(
     results: UiState<List<SearchResult>>?,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
+    /** A continuation failed; the end of the list offers the retry below. */
+    loadMoreFailed: Boolean = false,
+    onRetryLoadMore: () -> Unit = onLoadMore,
     /** Re-runs the search that failed, in whichever source answered it. */
     onRetry: () -> Unit = {},
     listState: LazyListState,
@@ -140,7 +146,6 @@ fun SearchScreen(
      */
     browseCategories: UiState<List<MoodGenreSection>>? = null,
     onBrowseCategoryClick: (MoodGenre) -> Unit = {},
-    onBrowseCategoryVisible: (MoodGenre) -> Unit = {},
     suggestions: List<String>,
     typeaheadResults: List<SearchResult>,
     onSubmit: () -> Unit,
@@ -190,9 +195,22 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val resultsTimedOut = rememberLoadingTimedOut(results is UiState.Loading, "search")
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val resultsTimedOut = rememberLoadingTimedOut(
+        loading = results is UiState.Loading,
+        tag = "search",
+        requestKey = Triple(query, filter, loadAttempt),
+    )
+    val retrySearch = {
+        loadAttempt += 1
+        onRetry()
+    }
     val nonMusicResults = if (searchingAddons) addonResults else libraryResults
-    val libraryTimedOut = rememberLoadingTimedOut(nonMusicResults is UiState.Loading, "search-library")
+    val libraryTimedOut = rememberLoadingTimedOut(
+        loading = nonMusicResults is UiState.Loading,
+        tag = "search-library",
+        requestKey = Triple(query, filter, loadAttempt),
+    )
     // Resolved here rather than inside the list builder: section headings are
     // our own labels for the result kinds, never YouTube's shelf titles, so
     // they follow the app's language like every other string on the page.
@@ -295,7 +313,7 @@ fun SearchScreen(
                     onAddonHistoryClick = onAddonHistoryClick,
                     onAddonHistoryRemove = onAddonHistoryRemove,
                     onAddonHistoryClear = onAddonHistoryClear,
-                    onRetry = onRetry,
+                    onRetry = retrySearch,
                     timedOut = libraryTimedOut,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
@@ -372,7 +390,6 @@ fun SearchScreen(
                                 row = row,
                                 columns = browseColumns,
                                 onCategoryClick = onBrowseCategoryClick,
-                                onCategoryVisible = onBrowseCategoryVisible,
                                 onCategoryLongClick = null,
                             )
                         }
@@ -381,7 +398,7 @@ fun SearchScreen(
                     }
                 }
                 results is UiState.Loading -> if (resultsTimedOut) {
-                    item(key = "search:timeout") { LoadingTimeoutState(onRetry = onRetry) }
+                    item(key = "search:timeout") { LoadingTimeoutState(onRetry = retrySearch) }
                 } else {
                     songListSkeleton(circular = filter == SearchFilter.ARTISTS)
                 }
@@ -389,7 +406,7 @@ fun SearchScreen(
                     MessageState(
                         message = results.message,
                         actionLabel = stringResource(Res.string.retry),
-                        onAction = onRetry,
+                        onAction = retrySearch,
                     )
                 }
                 results is UiState.Success -> {
@@ -437,7 +454,7 @@ fun SearchScreen(
                             MessageState(
                                 stringResource(Res.string.search_no_results, query.trim()),
                                 actionLabel = stringResource(Res.string.retry),
-                                onAction = onRetry,
+                                onAction = retrySearch,
                             )
                         }
                     }
@@ -503,6 +520,14 @@ fun SearchScreen(
                             keyPrefix = "skeleton:search:more",
                             circular = filter == SearchFilter.ARTISTS,
                         )
+                    } else if (loadMoreFailed) {
+                        item(key = "search:more-failed") {
+                            MessageState(
+                                stringResource(Res.string.connection_timed_out),
+                                actionLabel = stringResource(Res.string.retry),
+                                onAction = onRetryLoadMore,
+                            )
+                        }
                     }
                 }
             }

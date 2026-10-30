@@ -1629,7 +1629,11 @@ object LyricsTiming {
             lines,
             audioSourceKey(song.videoId, song.localUri != null),
         )
-        val entry = store(context).get(song.videoId) ?: return false
+        val entry = store(context).get(song.videoId)
+        if (entry == null) {
+            TrackLog.d(TAG, "lyrics-sync: song-check skipped (no entry)", song.videoId)
+            return false
+        }
         return entry.aiTextKey == key && entry.ai != null
     }
 
@@ -1662,12 +1666,23 @@ object LyricsTiming {
             audioSourceKey(song.videoId, song.localUri != null),
         )
         val entry = store(context).get(song.videoId)
+        if (entry == null) {
+            TrackLog.d(TAG, "lyrics-sync: song-check skipped (no entry)", song.videoId)
+            return false
+        }
         // A 429 is not a failed answer: the engine was never really asked, so
         // it is not recorded as spent. The song waits instead until the
         // server's own delay has passed, and the next playback (an event, not
         // a timer) tries again.
-        val retryAt = entry?.songRetryAtMs
-        if (entry?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) return false
+        val retryAt = entry.songRetryAtMs
+        if (entry.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+            TrackLog.d(
+                TAG,
+                "lyrics-sync: song-check deferred until ${retryAt}",
+                song.videoId,
+            )
+            return false
+        }
         val engines = AiTimingPolicy.nextEngines(
             knowledge(entry),
             key,
@@ -2573,8 +2588,14 @@ object LyricsTiming {
      * measurement had nothing to compare) was never marked at all.
      */
     suspend fun claimCalibrationSample(context: Context, videoId: String): Boolean {
-        if (!calibrationSample(videoId)) return false
-        if (store(context).get(videoId)?.calibrationSampled == true) return false
+        if (!calibrationSample(videoId)) {
+            TrackLog.d(TAG, "lyrics-sync: calibration skipped (not sampled)", videoId)
+            return false
+        }
+        if (store(context).get(videoId)?.calibrationSampled == true) {
+            TrackLog.d(TAG, "lyrics-sync: calibration skipped (already sampled)", videoId)
+            return false
+        }
         var claimed = false
         store(context).update(videoId) { entry ->
             if (entry.calibrationSampled) {

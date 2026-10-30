@@ -240,6 +240,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _searchLoadingMore = MutableStateFlow(false)
     val searchLoadingMore: StateFlow<Boolean> = _searchLoadingMore.asStateFlow()
 
+    /** A continuation failed; the list keeps its token so the end row can retry. */
+    private val _searchLoadMoreFailed = MutableStateFlow(false)
+    val searchLoadMoreFailed: StateFlow<Boolean> = _searchLoadMoreFailed.asStateFlow()
+
     /** Increments once per first-page request so the UI can reset its list. */
     private val _searchScrollReset = MutableStateFlow(0)
     val searchScrollReset: StateFlow<Int> = _searchScrollReset.asStateFlow()
@@ -1938,7 +1942,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun homeShelfRequestSettled(identity: String?, generation: Long) {
         if (!isCurrentHomeLoad(identity, generation)) return
-        _homePendingShelves.value = (_homePendingShelves.value - 1).coerceAtLeast(0)
+        val remaining = (_homePendingShelves.value - 1).coerceAtLeast(0)
+        _homePendingShelves.value = remaining
+        // Every first-page request finished without publishing a shelf. That
+        // is a completed, empty feed — a signed-out or gated Home, not a load
+        // that is still running. Leaving Loading here made the page sit on its
+        // skeleton until the timeout offered a retry for a request that had
+        // already answered.
+        if (remaining == 0 && _home.value is UiState.Loading) {
+            TrackLog.d("BitChord", "home: settled with no shelves")
+            _home.value = UiState.Success(emptyList())
+        }
     }
 
     private fun isCurrentHomeLoad(identity: String?, generation: Long) =
@@ -2396,18 +2410,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         _addonResults.value = UiState.Loading
         addonSearchJob = viewModelScope.launch {
-            val perAddon = coroutineScope {
+            val answers = coroutineScope {
                 addons.map { addon ->
                     async {
-                        withTimeoutOrNull(ADDON_SEARCH_TIMEOUT_MS) {
-                            runCatching { addon.search(q, limit = ADDON_SEARCH_LIMIT) }.getOrDefault(emptyList())
-                        } ?: emptyList()
+                        addon.displayName to withTimeoutOrNull(ADDON_SEARCH_TIMEOUT_MS) {
+                            runCatching { addon.search(q, limit = ADDON_SEARCH_LIMIT) }
+                        }
                     }
                 }.map { it.await() }
             }
+            // A catalogue that failed is not an empty catalogue. Folding every
+            // failure into `emptyList()` made a page of dead addons look like a
+            // successful "nothing matched" answer; keep the distinction and
+            // only report no results when at least one addon actually answered.
+            val answered = answers.mapNotNull { (_, result) -> result?.getOrNull() }
+            val failed = answers.filter { (_, result) ->
+                result == null || result.isFailure
+            }
+            failed.forEach { (name, result) ->
+                TrackLog.w(
+                    "BitChord",
+                    "search: addon $name failed (${result?.exceptionOrNull()?.message ?: "timed out"})",
+                )
+            }
+            if (answered.isEmpty() && failed.isNotEmpty()) {
+                _addonResults.value = UiState.Error(text(R.string.connection_failed))
+                return@launch
+            }
             val merged = buildList {
-                val longest = perAddon.maxOfOrNull { it.size } ?: 0
-                for (i in 0 until longest) perAddon.forEach { rows -> rows.getOrNull(i)?.let(::add) }
+                val longest = answered.maxOfOrNull { it.size } ?: 0
+                for (i in 0 until longest) answered.forEach { rows -> rows.getOrNull(i)?.let(::add) }
             }
             _addonResults.value = UiState.Success(merged)
         }
@@ -2515,6 +2547,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             newestRequestId.incrementAndGet()
             searchSession = null
             _searchLoadingMore.value = false
+            _searchLoadMoreFailed.value = false
             _results.value = null
             return
         }
@@ -2523,6 +2556,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
+        _searchLoadMoreFailed.value = false
         searchRequests.tryEmit(SearchRequest(query, _filter.value, id, anonymous, forceNetwork))
     }
 
@@ -2629,6 +2663,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val token = session.continuation ?: return
         if (_searchLoadingMore.value) return
         _searchLoadingMore.value = true
+        _searchLoadMoreFailed.value = false
         viewModelScope.launch {
             try {
                 val next = YtMusicRepository.searchContinuation(token, session.filter)
@@ -2640,6 +2675,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
                         searchSession = session.copy(continuation = page.continuation)
                         _results.value = UiState.Success(merged)
+                    }.onFailure { failure ->
+                        // A page that failed mid-list used to vanish: the rows
+                        // already shown looked complete and paging stopped with
+                        // no explanation. Keep the token and offer a retry at
+                        // the end of the list instead.
+                        TrackLog.w(
+                            "BitChord",
+                            "search: continuation failed (${failure.message})",
+                        )
+                        _searchLoadMoreFailed.value = true
                     }
                 }
             } finally {

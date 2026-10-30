@@ -305,6 +305,7 @@ fun SettingsScreen(
     val autoRedownloadMvSound by AppSettings.autoRedownloadMvSound.collectAsStateWithLifecycle()
     val autoReplaceHqDownloads by AppSettings.autoReplaceHqDownloads.collectAsStateWithLifecycle()
     val autoPrefetchHq by AppSettings.autoPrefetchHq.collectAsStateWithLifecycle()
+    val hqPrefetchLimit by AppSettings.hqPrefetchLimit.collectAsStateWithLifecycle()
     val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -736,9 +737,12 @@ fun SettingsScreen(
                 )
             }
             val autoRedownloadMvSoundTitle = stringResource(R.string.auto_redownload_mv_sound)
+            val autoRedownloadMvSoundSubtitle =
+                stringResource(R.string.auto_redownload_mv_sound_subtitle)
             row(autoRedownloadMvSoundTitle, "mv", "video", "download", "automatic", divided = false) {
                 SettingsSubRow(
                     title = autoRedownloadMvSoundTitle,
+                    subtitle = autoRedownloadMvSoundSubtitle,
                     checked = autoRedownloadMvSound,
                     onCheckedChange = { checked ->
                         AppSettings.setAutoRedownloadMvSound(checked)
@@ -751,9 +755,12 @@ fun SettingsScreen(
                 )
             }
             val autoReplaceHqTitle = stringResource(R.string.auto_replace_hq_downloads)
+            val autoReplaceHqSubtitle =
+                stringResource(R.string.auto_replace_hq_downloads_subtitle)
             row(autoReplaceHqTitle, "hq", "high quality", "lossless", "replace", "고음질", divided = false) {
                 SettingsSubRow(
                     title = autoReplaceHqTitle,
+                    subtitle = autoReplaceHqSubtitle,
                     checked = autoReplaceHqDownloads,
                     onCheckedChange = { checked ->
                         AppSettings.setAutoReplaceHqDownloads(checked)
@@ -762,9 +769,12 @@ fun SettingsScreen(
                 )
             }
             val autoPrefetchHqTitle = stringResource(R.string.auto_prefetch_hq)
+            val autoPrefetchHqSubtitle =
+                stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit)
             row(autoPrefetchHqTitle, "hq", "high quality", "prefetch", "offline", "고음질", divided = false) {
                 SettingsSubRow(
                     title = autoPrefetchHqTitle,
+                    subtitle = autoPrefetchHqSubtitle,
                     checked = autoPrefetchHq,
                     onCheckedChange = { checked ->
                         AppSettings.setAutoPrefetchHq(checked)
@@ -773,10 +783,13 @@ fun SettingsScreen(
                 )
             }
             val recheckDownloadsTitle = stringResource(R.string.download_health_recheck)
+            val recheckDownloadsSubtitle =
+                stringResource(R.string.download_health_recheck_subtitle)
             row(recheckDownloadsTitle, "download", "recheck", "verify", "다운로드", "점검", divided = false) {
                 SettingsRow(
                     icon = Icons.Rounded.Cached,
                     title = recheckDownloadsTitle,
+                    subtitle = recheckDownloadsSubtitle,
                     trailing = { Chevron() },
                     onClick = { DownloadHealth.resetChecks(context) },
                 )
@@ -791,9 +804,12 @@ fun SettingsScreen(
                 )
             }
             val autoDownloadLikedTitle = stringResource(R.string.auto_download_liked)
+            val autoDownloadLikedSubtitle =
+                stringResource(R.string.auto_download_liked_subtitle)
             row(autoDownloadLikedTitle, "like", "heart", "offline", divided = false) {
                 SettingsSubRow(
                     title = autoDownloadLikedTitle,
+                    subtitle = autoDownloadLikedSubtitle,
                     checked = autoDownloadLiked,
                     onCheckedChange = AppSettings::setAutoDownloadLiked,
                 )

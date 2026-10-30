@@ -599,6 +599,10 @@ class MainActivity : AppCompatActivity() {
         // Replaces what getIntent() returns, so the extra this consumes is the
         // one that just arrived and not the one the task was started with.
         setIntent(intent)
+        // Read before the relays consume their extras: a widget's open-player
+        // flag is removed by [PlayerDeepLink.consume], and a fingerprint taken
+        // afterwards no longer showed that this arrival was a widget request.
+        val fingerprint = LaunchReplay.fingerprint(intent)
         PlayerDeepLink.consume(
             intent,
             launchedFromHistory = intent.isLaunchedFromHistory(),
@@ -606,7 +610,7 @@ class MainActivity : AppCompatActivity() {
         JamInviteLink.consume(intent)
         SettingsTransferInbox.consume(intent)
         MusicLink.consume(intent)
-        handledLaunchFingerprints += LaunchReplay.fingerprint(intent)
+        handledLaunchFingerprints += fingerprint
         applyDebugLaunchSwitches(intent)
     }
 
@@ -3940,7 +3944,6 @@ private fun BitChordApp(
                                 state = exploreState,
                                 listState = exploreListState,
                                 onCategoryClick = viewModel::openMoodGenre,
-                                onCategoryVisible = viewModel::loadMoodGenreArtwork,
                                 onHideCategory = { AppSettings.hideExploreCategory(it.title) },
                                 onRetry = viewModel::loadExplore,
                                 refreshing = MainViewModel.Feed.EXPLORE in refreshing,
@@ -3958,6 +3961,8 @@ private fun BitChordApp(
                                 val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
                                 val searchLoadingMore by
                                     viewModel.searchLoadingMore.collectAsStateWithLifecycle()
+                                val searchLoadMoreFailed by
+                                    viewModel.searchLoadMoreFailed.collectAsStateWithLifecycle()
                                 val searchScrollReset by
                                     viewModel.searchScrollReset.collectAsStateWithLifecycle()
                                 val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
@@ -3972,8 +3977,10 @@ private fun BitChordApp(
                                 onFilterChange = viewModel::onFilterChange,
                                 results = results,
                                 loadingMore = searchLoadingMore,
+                                loadMoreFailed = searchLoadMoreFailed,
                                 onLoadMore = viewModel::loadMoreSearchResults,
                                 onRetry = viewModel::retrySearch,
+                                onRetryLoadMore = viewModel::loadMoreSearchResults,
                                 listState = searchListState,
                                 scrollResetTrigger = searchScrollReset,
                                 focusRequested = searchFocusRequested,
@@ -4058,7 +4065,6 @@ private fun BitChordApp(
                                     selectedTab = TAB_EXPLORE
                                     viewModel.openMoodGenre(category)
                                 },
-                                onBrowseCategoryVisible = viewModel::loadMoodGenreArtwork,
                                 suggestions = searchSuggestions,
                                 typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                                 onSubmit = viewModel::submitSearch,

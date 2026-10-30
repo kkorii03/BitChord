@@ -55,8 +55,16 @@ class KoreanStringsTest {
         assertEquals("나중에 재생됩니다", value("app", "song_added_to_queue"))
         assertEquals("다음 항목 재생", value("sharedUi", "play_next"))
         assertEquals("다음 항목 재생", value("tv", "tv_play_next"))
+        assertEquals("다음 항목", value("tv", "tv_up_next"))
         assertEquals("나중에 재생", value("tv", "tv_play_last"))
         assertEquals("다음 항목 재생", value("wearos", "up_next"))
+    }
+
+    @Test
+    fun advancedSyncFooterUsesTheKoreanQualityTerm() {
+        val subtitle = value("app", "sync_safety_hq_sync_subtitle").orEmpty()
+        assertFalse(subtitle.contains("HQ"))
+        assertTrue(subtitle.contains("고음질"))
     }
 
     @Test

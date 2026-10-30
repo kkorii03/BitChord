@@ -385,6 +385,9 @@ internal fun SleeveNerdStats(
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
+    // The tap is the quick look; the Settings switch puts the same line on the
+    // sleeve for good. Reading only [revealed] left the still-present "Show
+    // stats for nerds" toggle doing nothing on the phone player.
     val alwaysShow by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!nerdStatsVisible(revealed, alwaysShow)) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
