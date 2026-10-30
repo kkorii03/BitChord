@@ -68,10 +68,23 @@ object WebDavUploads {
      * `localUri`. Readability itself is checked at upload time and reported
      * per track — this is only the cheap gate for showing the row.
      */
-    fun isUploadable(song: Song): Boolean {
-        if (WebDavConfig.isWebDavId(song.videoId)) return false
-        val uri = song.localUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return false
-        return uri.scheme == "content" || uri.scheme == "file"
+    fun isUploadable(song: Song): Boolean =
+        isUploadableSource(
+            videoId = song.videoId,
+            scheme = song.localUri
+                ?.let { runCatching { Uri.parse(it) }.getOrNull() }
+                ?.scheme,
+        )
+
+    /**
+     * The part of [isUploadable] that does not need Android's parser, so the
+     * rule can be tested: a row already on the server is out, and the sound
+     * must be a content/file URI. A finished YouTube download passes both —
+     * its YouTube id is not a WebDAV id and its saved file is a content URI.
+     */
+    internal fun isUploadableSource(videoId: String, scheme: String?): Boolean {
+        if (WebDavConfig.isWebDavId(videoId)) return false
+        return scheme == "content" || scheme == "file"
     }
 
     suspend fun upload(context: Context, songs: List<Song>): Summary = withContext(Dispatchers.IO) {

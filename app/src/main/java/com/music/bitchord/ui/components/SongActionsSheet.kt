@@ -392,7 +392,7 @@ fun SongActionsSheet(
                 onClick = it,
             )
         }
-        WebDavUploadRow(song, palette, isLocalFile, onUploadToWebDav)
+        WebDavUploadRow(song, palette, onUploadToWebDav)
         ActionRow(
             icon = Icons.Rounded.Radio,
             label = stringResource(R.string.start_radio),
@@ -790,18 +790,19 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
  * reads its state where it is drawn rather than threading it through the
  * sheet's signature.
  *
- * Shown only for readable local files. A track already on the server, or a
- * stream with no bytes on this device, has nothing to send up.
+ * Shown for any readable file on this device, including a finished download:
+ * `WebDavUploads.isUploadable` already accepts its content/file URI and turns
+ * down a row that already lives on the server. Testing `isLocalFile` here hid
+ * the row for downloads even though the uploader could send them.
  */
 @Composable
 private fun WebDavUploadRow(
     song: Song,
     palette: ArtworkPalette,
-    isLocalFile: Boolean,
     onUpload: (() -> Unit)?,
 ) {
     onUpload ?: return
-    if (!isLocalFile || !WebDavUploads.isUploadable(song)) return
+    if (!WebDavUploads.isUploadable(song)) return
     val active by WebDavUploads.active.collectAsStateWithLifecycle()
     when (val state = active[song.videoId]) {
         is WebDavUploads.TrackState.Running -> ActionRow(

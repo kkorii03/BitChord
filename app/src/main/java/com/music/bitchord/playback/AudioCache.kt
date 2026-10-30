@@ -47,8 +47,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -738,6 +741,64 @@ object AudioCache {
 
     /** Bumped whenever the cache is emptied, so an open Cached songs folder can re-read itself. */
     val contentsChanged: StateFlow<Int> = _contentsChanged.asStateFlow()
+
+    private val _renditionCompleted = MutableSharedFlow<String>(extraBufferCapacity = 16)
+
+    /**
+     * Video ids whose rendition just became complete on disk, one emission per
+     * rendition key. Event-driven — nothing polls — and used by the lyrics
+     * panel to offer AI timing once a stream that was still arriving when the
+     * lyrics loaded has finished caching. See [watchRenditionCompletion].
+     */
+    val renditionCompleted: SharedFlow<String> = _renditionCompleted.asSharedFlow()
+
+    /** Cache keys whose completion listener is installed, so each is watched once. */
+    private val watchedCompletionKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /** Keys already reported complete, so adding more spans does not repeat the event. */
+    private val completedKeys = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Watches [videoId]'s renditions for the moment one holds the whole file,
+     * then emits its video id on [renditionCompleted]. Safe to call repeatedly;
+     * a key is only watched once for the process.
+     *
+     * The plain and substitute keys are watched even before they exist, so a
+     * track whose first bytes arrive after the lyrics are shown is still
+     * caught. Callers that need an event must call this before collecting.
+     */
+    fun watchRenditionCompletion(videoId: String) {
+        if (openedCache == null) return
+        watchCompletionKey(videoId)
+        watchCompletionKey("$videoId$ALT_SUFFIX")
+        renditionKeysFor(videoId).forEach(::watchCompletionKey)
+    }
+
+    private fun watchCompletionKey(key: String) {
+        if (openedCache == null) return
+        if (!watchedCompletionKeys.add(key)) return
+        val listener = object : Cache.Listener {
+            override fun onSpanAdded(cache: Cache, span: CacheSpan) {
+                val rendition = renditionFor(key) ?: return
+                if (!rendition.isComplete) return
+                if (!completedKeys.add(key)) return
+                _renditionCompleted.tryEmit(key.substringBefore('#'))
+            }
+
+            override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
+                // The entry (or one of its spans) is gone; a later rebuild of
+                // the same key must be allowed to report completion again.
+                completedKeys.remove(key)
+            }
+
+            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
+        }
+        runCatching { cache.addListener(key, listener) }
+            .onFailure {
+                watchedCompletionKeys.remove(key)
+                TrackLog.w(TAG, "could not watch cache completion for $key: ${it.message}")
+            }
+    }
 
     /**
      * What the queue said about the tracks the cache is about to hold.
@@ -3034,6 +3095,10 @@ object AudioCache {
         // next, so cold is the one state that cannot be cached.
         if (keys.isNotEmpty()) {
             renditionKeys[videoId] = now to keys
+            // A rendition key can appear after the watch started (a quality
+            // upgrade is the common one); watch it as soon as the refreshed
+            // list names it, so its completion is not missed.
+            keys.forEach(::watchCompletionKey)
         } else {
             renditionKeys.remove(videoId)
         }

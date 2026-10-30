@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LocalTimingPolicy
 import com.music.bitchord.playback.NextPrepCache
 import com.music.bitchord.playback.PowerState
@@ -20,6 +21,7 @@ import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.playback.smart.SyncTestMode
+import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
@@ -622,6 +624,25 @@ class LyricsController(
     private var appliedTiming: LyricsTiming.Timing? = null
 
     /**
+     * Whether the AI timing action has an engine for this song right now.
+     *
+     * The audio term is read here, and read again on [AudioCache.renditionCompleted]:
+     * an ordinary stream is still partial when the lyrics load, and a
+     * Deepgram-only setup had no action for the rest of playback even after
+     * the copy finished caching. Recomputed only on that event, never polled.
+     */
+    private fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean =
+        LyricsAiGuard.manualTimingAvailable(
+            geminiUsable = LyricsTranslation.geminiKeyUsable,
+            deepgramUsable = com.music.bitchord.data.lyrics.Deepgram.usable,
+            audioAvailable = VideoAudio.audioReadyForTiming(request.videoId),
+            durationMs = request.durationMs,
+            title = request.title,
+            artist = request.artist,
+            lyricsTexts = lines.orEmpty().map { it.text },
+        )
+
+    /**
      * Applies what is known about this track's timing to [lines] at once —
      * an AI answer or measurement kept for the video, the listener's own
      * correction — then, for a video whose lyrics are the record's
@@ -663,6 +684,13 @@ class LyricsController(
             adjustable = adjustable,
             manualAvailable = timed,
             videoOwn = videoOwn,
+            // A hand-asked timing tries Deepgram/Whisper first and Gemini
+            // after. Deepgram is skipped for Korean/instrumental titles and
+            // needs the song's audio on disk, so a Deepgram-only setup has no
+            // engine for those cases — offering the action would only end in
+            // aiFailed. No engine can move fewer than three sung lines, and a
+            // track too long or short to decode inline has no Deepgram sound.
+            aiAvailable = request != null && aiTimingAvailable(request, lines),
         )
         if (!timed || request == null || lines == null) return
         val generation = lyricsGeneration
@@ -673,6 +701,26 @@ class LyricsController(
             launch {
                 LyricsTiming.changes.collect { videoId ->
                     if (videoId == request.videoId) refreshTiming(generation, lines)
+                }
+            }
+            // A stream that is still arriving when the lyrics load becomes a
+            // complete analysis copy later. The cache says so as it commits
+            // the last span; re-read the audio term once, then, so the action
+            // is not hidden for the whole playback. Only ever turns it on: a
+            // completion cannot make a usable copy unusable.
+            launch {
+                AudioCache.watchRenditionCompletion(request.videoId)
+                AudioCache.renditionCompleted.collect { videoId ->
+                    if (videoId != request.videoId) return@collect
+                    if (currentLyricsRequest?.videoId != request.videoId) return@collect
+                    if (_lyricsTiming.value.aiAvailable) return@collect
+                    if (!aiTimingAvailable(request, lines)) return@collect
+                    _lyricsTiming.update { it.copy(aiAvailable = true) }
+                    TrackLog.d(
+                        "BitChord",
+                        "AI timing is available: the audio copy finished caching",
+                        videoId,
+                    )
                 }
             }
             refreshTiming(generation, lines)

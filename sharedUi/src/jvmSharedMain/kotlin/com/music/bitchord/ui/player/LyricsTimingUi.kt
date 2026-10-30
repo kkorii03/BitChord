@@ -17,6 +17,13 @@ data class LyricsTimingUi(
     val aiRunning: Boolean = false,
     /** The last Gemini request came back with nothing usable. */
     val aiFailed: Boolean = false,
+    /**
+     * A hand-asked timing can reach an engine that can answer for this song:
+     * Gemini's key, or Deepgram's when the title/lyrics aren't skipped and the
+     * audio is on disk. The action is not offered otherwise — the press could
+     * only end in `aiFailed`.
+     */
+    val aiAvailable: Boolean = false,
     /** Video seconds per record second, when the video runs at its own pace; null at the record's. */
     val rate: Double? = null,
     /** How much of the song agreed with the timing, 0–100; null when not known. */
@@ -38,3 +45,25 @@ data class LyricsTimingUi(
      */
     val heardWords: List<LyricsWordAlign.Heard> = emptyList(),
 )
+
+/**
+ * Whether the sync drawer can offer its AI timing action.
+ *
+ * A hand-asked timing may spend Deepgram, Whisper or Gemini, so at least one
+ * engine must be able to answer for this song and its audio — see
+ * [LyricsTimingUi.aiAvailable]. It used to be gated on the Gemini song-meaning
+ * key alone, which hid the action from a listener with only Deepgram set up.
+ * The shown answer can still be taken back without a key, so `byAi` keeps the
+ * action reachable even after a key is removed.
+ */
+internal fun aiTimingActionEnabled(timing: LyricsTimingUi): Boolean =
+    timing.adjustable && (timing.byAi || timing.aiAvailable)
+
+/**
+ * Whether the romanization toggle belongs on the lyric controls.
+ *
+ * It is about the text on screen, not about timing. Leaving the slot empty
+ * whenever AI timing was offered made the toggle unreachable on Android,
+ * where the AI timing action is always offered to the player.
+ */
+internal fun romanizationActionEnabled(hasLyrics: Boolean): Boolean = hasLyrics

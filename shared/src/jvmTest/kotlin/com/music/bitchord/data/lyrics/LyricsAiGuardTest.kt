@@ -140,6 +140,156 @@ class LyricsAiGuardTest {
     }
 
     @Test
+    fun aHandTimingNeedsAnEngineThatCanAnswerForThisSong() {
+        // Regression: the action was offered from key presence alone. A
+        // Deepgram-only setup then pressed it on Korean/instrumental songs or
+        // before the audio was on disk and only got aiFailed.
+        val english = listOf("one two three", "four five six", "seven eight nine")
+        assertTrue(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                durationMs = 180_000L,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = english,
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                durationMs = 180_000L,
+                title = "사랑해",
+                artist = "아이유",
+                lyricsTexts = listOf("사랑해 너를 영원히", "너만 바라봐", "언제나 함께"),
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                durationMs = 180_000L,
+                title = "River Flows in You (Inst.)",
+                artist = "Yiruma",
+                lyricsTexts = english,
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = false,
+                durationMs = 180_000L,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = english,
+            ),
+        )
+        // Gemini fetches the video, so it needs neither Deepgram's title rule
+        // nor the audio on disk.
+        assertTrue(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = true,
+                deepgramUsable = false,
+                audioAvailable = false,
+                durationMs = 180_000L,
+                title = "사랑해",
+                artist = "아이유",
+                lyricsTexts = listOf("사랑해 너를 영원히", "너만 바라봐", "언제나 함께"),
+            ),
+        )
+    }
+
+    @Test
+    fun aHandTimingTurnsAvailableWhenTheAudioFinishesCaching() {
+        // A Deepgram-only action is hidden while the stream is partial. The
+        // same song must become available once the copy is complete, which is
+        // what the cache's completion event recomputes.
+        val english = listOf("one two three", "four five six", "seven eight nine")
+        fun available(audioAvailable: Boolean) = LyricsAiGuard.manualTimingAvailable(
+            geminiUsable = false,
+            deepgramUsable = true,
+            audioAvailable = audioAvailable,
+            durationMs = 180_000L,
+            title = "Loved",
+            artist = "IU",
+            lyricsTexts = english,
+        )
+        assertFalse(available(audioAvailable = false))
+        assertTrue(available(audioAvailable = true))
+    }
+
+    @Test
+    fun noEngineCanMoveFewerThanThreeSungLines() {
+        // placeWithAi returns before asking any engine, so the action must not
+        // be offered for a track with only one or two non-blank lines — even
+        // when Gemini is set up. Blank lines do not count.
+        val lines = listOf("only one line", "   ", "", "and a second")
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = true,
+                deepgramUsable = false,
+                audioAvailable = false,
+                durationMs = 180_000L,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = lines,
+            ),
+        )
+        assertTrue(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = true,
+                deepgramUsable = false,
+                audioAvailable = false,
+                durationMs = 180_000L,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = lines + "and a third",
+            ),
+        )
+    }
+
+    @Test
+    fun deepgramOnlyHidesWhenTheInlineAudioWindowCannotHoldTheSong() {
+        val english = listOf("one two three", "four five six", "seven eight nine")
+        // Over VideoAudio's seven-minute inline cap, or under the ten-second
+        // floor, decode returns null, so a Deepgram-only action fails.
+        assertFalse(LyricsAiGuard.audioFitsInline(LyricsAiGuard.MAX_TIMING_AUDIO_MS + 1))
+        assertFalse(LyricsAiGuard.audioFitsInline(LyricsAiGuard.MIN_TIMING_AUDIO_MS - 1))
+        assertTrue(LyricsAiGuard.audioFitsInline(LyricsAiGuard.MAX_TIMING_AUDIO_MS))
+        assertTrue(LyricsAiGuard.audioFitsInline(LyricsAiGuard.MIN_TIMING_AUDIO_MS))
+        // An unknown length waits for the player to report it instead of hiding.
+        assertTrue(LyricsAiGuard.audioFitsInline(0L))
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                durationMs = LyricsAiGuard.MAX_TIMING_AUDIO_MS + 1,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = english,
+            ),
+        )
+        // Gemini still fetches the video itself.
+        assertTrue(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = true,
+                deepgramUsable = false,
+                audioAvailable = false,
+                durationMs = LyricsAiGuard.MAX_TIMING_AUDIO_MS + 1,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = english,
+            ),
+        )
+    }
+
+    @Test
     fun mrMustBeACapitalisedStandaloneMarker() {
         assertTrue(LyricsAiGuard.isInstrumentalTitle("Song MR"))
         assertTrue(LyricsAiGuard.isInstrumentalTitle("Song (MR)"))
