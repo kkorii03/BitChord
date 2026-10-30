@@ -157,6 +157,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // (see StartupWork), and the startup thread is serial so a first launch
         // still never has two Keystore creations running at once.
         SourceRegistry.init(this)
+        // Per-addon server success counts, response times and rests survive a
+        // restart, so the first track of a new session already steers around a
+        // host that was asleep or rate limiting yesterday. Reads one small
+        // preference file; writes happen only when a request is measured.
+        com.music.bitchord.playback.HqHostTracker.init(this)
         // Cheap here (it only records paths and starts its own warm-up job), and
         // it has to be ready before the first resolution, which can be the
         // restored queue playing the moment the service starts.

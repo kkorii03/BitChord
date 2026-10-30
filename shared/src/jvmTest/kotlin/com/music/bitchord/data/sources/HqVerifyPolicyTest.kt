@@ -187,6 +187,24 @@ class HqVerifyPolicyTest {
     }
 
     @Test
+    fun `a sleeping candidate gateway gets one wake request, not an in-call retry`() {
+        for (code in listOf(502, 503, 504)) {
+            val retry = HqVerifyPolicy.retryCandidateDownload(
+                retryAfterHeader = null,
+                attempt = 0,
+                nowMs = 0L,
+                code = code,
+            )
+            assertFalse("HTTP $code must not be retried", retry.retry)
+            assertEquals(0L, retry.waitMs)
+        }
+        // A 429 from an awake server keeps its one measured retry.
+        assertTrue(
+            HqVerifyPolicy.retryCandidateDownload(null, attempt = 0, nowMs = 0L, code = 429).retry,
+        )
+    }
+
+    @Test
     fun `a lossless stream fetches at least its PCM rate, whatever kbps it states`() {
         // 16-bit/44.1 kHz stereo is 1411 kbps; a FLAC that states 320 must not cut the head short.
         val flac = StreamFormat(codec = "flac", kbps = 320, sampleRateHz = 44_100, bitDepth = 16)

@@ -699,6 +699,26 @@ object HqAudioVerify {
                     }
                     val candidate = candidateDeferred.await()
                         ?: return@coroutineScope DownloadedSound.Unavailable
+                    // The same bar the stream path applies: a head that stopped
+                    // short of the window is not a shorter recording, and a low
+                    // match from it must not become a stored rejection. Only a
+                    // measured, complete pair can condemn a file on disk.
+                    val referenceComplete =
+                        HqReferenceCache.completeEnough(reference, COMPARE_SECONDS)
+                    val candidateComplete =
+                        HqReferenceCache.completeEnough(candidate, COMPARE_SECONDS)
+                    if (referenceComplete && !candidateComplete) {
+                        logVerdict(
+                            title = "downloaded file",
+                            sourceName = "download",
+                            match = 0,
+                            offset = 0L,
+                            accepted = false,
+                            about = youtubeId,
+                            measured = false,
+                        )
+                        return@coroutineScope DownloadedSound.Unavailable
+                    }
                     val result = runCatching {
                         ChromaAlignment.align(reference, candidate, videoComplete = false)
                     }.getOrNull() ?: return@coroutineScope DownloadedSound.Unavailable
@@ -715,7 +735,12 @@ object HqAudioVerify {
                         about = youtubeId,
                     )
                     if (!verdict.accepted) {
-                        if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank()) {
+                        if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank() &&
+                            HqVerifyPolicy.shouldPersistRejection(
+                                referenceAvailable = referenceComplete && candidateComplete,
+                                accepted = verdict.accepted,
+                            )
+                        ) {
                             HqVerificationStore.reject(context, youtubeId, sourceConfigId, trackId)
                         }
                         return@coroutineScope DownloadedSound.Rejected
@@ -1040,6 +1065,10 @@ object HqAudioVerify {
             // A cancelled call surfaces as an IOException; only report it
             // as a download failure when the coroutine is still wanted.
             currentCoroutineContext().ensureActive()
+            // The candidate server failed this time. Recorded so the next
+            // candidate choice can prefer a host that actually answered,
+            // rather than retrying the same dead edge for every track.
+            HqHostTracker.noteFailure(HqHostTracker.hostOf(stream.url))
             TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
             CandidateFetch.Failed
         } finally {
@@ -1092,6 +1121,7 @@ object HqAudioVerify {
                     retryAfterHeader = limited.retryAfter,
                     attempt = attempt,
                     nowMs = System.currentTimeMillis(),
+                    code = limited.code,
                 )
                 val restMs = HqHostTracker.noteRateLimited(host, limited.retryAfter, limited.code)
                 logRateLimited(limited, retry)

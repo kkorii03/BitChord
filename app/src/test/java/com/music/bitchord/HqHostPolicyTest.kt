@@ -2,6 +2,7 @@ package com.music.bitchord
 
 import com.music.bitchord.playback.HqHostGate
 import com.music.bitchord.playback.HqHostTracker
+import com.music.bitchord.playback.HostHealthRecord
 import com.music.bitchord.playback.HqResumeCandidate
 import com.music.bitchord.playback.HqResumePolicy
 import com.music.bitchord.data.net.HqRetryPolicy
@@ -276,5 +277,43 @@ class HqHostPolicyTest {
         QualityUpgrade.onPlaybackStarted(mediaId, rendition = null)
 
         assertFalse("the next play gets another attempt", QualityUpgrade.hasRefusedFor(mediaId))
+    }
+
+    @Test
+    fun `a slow but working addon sorts behind a fast one`() {
+        val gate = HqHostGate { 0L }
+        repeat(3) { gate.noteResponse("slow.example", 6_000L, ok = true, nowMs = it.toLong()) }
+        repeat(3) { gate.noteResponse("fast.example", 300L, ok = true, nowMs = it.toLong()) }
+
+        assertTrue(
+            "a 6s average response must be worse than a 300ms one",
+            gate.penalty("slow.example", nowMs = 10L) > gate.penalty("fast.example", nowMs = 10L),
+        )
+    }
+
+    @Test
+    fun `host health and rest survive a restart`() {
+        val before = HqHostGate { 1_000L }
+        repeat(3) { before.noteResponse("slow.example", 6_000L, ok = true, nowMs = 1_000L) }
+        before.noteRateLimited("tired.example", header = "120", code = 429, nowMs = 1_000L)
+
+        val after = HqHostGate { 1_000L }
+        after.restore(before.snapshot(), nowMs = 1_000L)
+
+        assertEquals(1, after.penalty("slow.example", nowMs = 1_000L))
+        assertTrue(after.isResting("tired.example", nowMs = 1_000L))
+    }
+
+    @Test
+    fun `a health record older than a week is not restored`() {
+        val old = HostHealthRecord(
+            failures = 9,
+            successes = 0,
+            lastActivityMs = 0L,
+        )
+        val gate = HqHostGate { 10L * 24 * 60 * 60 * 1000 }
+        gate.restore(mapOf("forgotten.example" to old), nowMs = 10L * 24 * 60 * 60 * 1000)
+
+        assertEquals(0, gate.penalty("forgotten.example", nowMs = 10L * 24 * 60 * 60 * 1000))
     }
 }

@@ -107,7 +107,12 @@ object HqVerifyPolicy {
         retryAfterHeader: String?,
         attempt: Int,
         nowMs: Long,
+        code: Int = 429,
     ): CandidateRetry {
+        // A gateway answer means the free-tier instance is asleep or booting.
+        // Repeating the request while it starts does not make it wake sooner;
+        // the one request already sent is the wake-up.
+        if (HqRetryPolicy.isSleepingGateway(code)) return CandidateRetry(retry = false, waitMs = 0L)
         if (attempt >= MAX_CANDIDATE_RETRIES) return CandidateRetry(retry = false, waitMs = 0L)
         val stated = HqRetryPolicy.retryAfterMs(retryAfterHeader, nowMs)
         // No Retry-After (Cloudflare in front of Monochrome sends none): the
