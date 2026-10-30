@@ -133,6 +133,8 @@ object PartyPersonalQueueStash {
         val video: Boolean = false,
         /** Video origin, kept when a video row was swapped to its catalogue release. */
         val videoOrigin: Boolean? = null,
+        /** Queued by video radio, so restoring must not turn it into a catalogue row. */
+        val videoRadio: Boolean = false,
         val radio: String? = null,
         val source: String? = null,
         val sourceType: String? = null,
@@ -151,6 +153,7 @@ object PartyPersonalQueueStash {
                 isExplicit = explicit,
                 isVideo = video,
                 isVideoOrigin = videoOrigin ?: video,
+                videoRadio = videoRadio,
                 queueTier = resolvedTier,
                 queueEntryId = entryId,
                 radioName = radio,
@@ -180,6 +183,7 @@ object PartyPersonalQueueStash {
                 explicit = song.isExplicit,
                 video = song.isVideo,
                 videoOrigin = song.isVideoOrigin,
+                videoRadio = song.videoRadio,
                 radio = song.radioName,
                 source = song.playbackSource,
                 sourceType = song.playbackSourceType?.name,

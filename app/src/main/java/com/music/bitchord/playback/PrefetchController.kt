@@ -83,7 +83,7 @@ internal class PrefetchController(
         }
 
         val next = upcomingSongs.firstOrNull()
-        val ahead = if (preferAudio && next != null) {
+        val ahead = if (preferAudio && next != null && !next.videoRadio) {
             SongVersionPolicy.aheadSongVersion(
                 isVideo = next.isVideo,
                 typeUnknown = next.typeUnknown,

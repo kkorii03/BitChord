@@ -187,6 +187,7 @@ object LastPlayed {
         val originalArtist: String? = null,
         val coverSinger: String? = null,
         val coverOriginalArtist: String? = null,
+        val videoRadio: Boolean = false,
     ) {
         fun toSong(): Song {
             val resolvedTier = when (tier) {
@@ -220,6 +221,7 @@ object LastPlayed {
                 originalArtist = originalArtist,
                 coverSinger = coverSinger,
                 coverOriginalArtist = coverOriginalArtist,
+                videoRadio = videoRadio,
             ).withVideoThumbnailFallback()
         }
 
@@ -248,6 +250,7 @@ object LastPlayed {
                 originalArtist = song.originalArtist,
                 coverSinger = song.coverSinger,
                 coverOriginalArtist = song.coverOriginalArtist,
+                videoRadio = song.videoRadio,
             )
         }
     }

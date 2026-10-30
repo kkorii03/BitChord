@@ -459,6 +459,15 @@ object AppSettings {
      */
     val personalisedAutoplay = MutableStateFlow(true)
 
+    /**
+     * Keep a station seeded by a video song inside that video-song world.
+     *
+     * On by default, as decided for the cover/live/self-upload case: the
+     * automatic tail must not drift back to catalogue recordings, nor be
+     * emptied by the normal cover filter. Off restores the old AutoPlay path.
+     */
+    val videoRadio = MutableStateFlow(true)
+
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
 
@@ -1217,6 +1226,7 @@ object AppSettings {
         }.getOrDefault(ThemeMode.DARK)
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
         personalisedAutoplay.value = prefs.getBoolean(KEY_PERSONALISED_AUTOPLAY, true)
+        videoRadio.value = prefs.getBoolean(KEY_VIDEO_RADIO, true)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         notificationPermissionAsked.value = prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, false)
         repeatMode.value = PlaybackParametersMath.clampRepeatMode(
@@ -1611,6 +1621,11 @@ object AppSettings {
     fun setPersonalisedAutoplay(value: Boolean) {
         personalisedAutoplay.value = value
         prefs.edit().putBoolean(KEY_PERSONALISED_AUTOPLAY, value).apply()
+    }
+
+    fun setVideoRadio(value: Boolean) {
+        videoRadio.value = value
+        prefs.edit().putBoolean(KEY_VIDEO_RADIO, value).apply()
     }
 
     fun setShuffleEnabled(value: Boolean) {
@@ -2926,6 +2941,7 @@ object AppSettings {
             KEY_EQ_FOCUSED,
             KEY_AUTOPLAY,
             KEY_PERSONALISED_AUTOPLAY,
+            KEY_VIDEO_RADIO,
             KEY_SHUFFLE_ENABLED,
             KEY_NOTIFICATION_PERMISSION_ASKED,
             KEY_NERD_STATS,
@@ -3267,6 +3283,7 @@ object AppSettings {
         put(KEY_RESUME_ON_HEADPHONES, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_PERSONALISED_AUTOPLAY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_AUTOPLAY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
+        put(KEY_VIDEO_RADIO, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_PREFER_MUSIC_ONLY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_SKIP_NON_MUSIC_PARTS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
         put(KEY_SKIP_SPONSOR_PARTS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
@@ -3395,6 +3412,7 @@ object AppSettings {
         KEY_RESUME_ON_HEADPHONES -> resumeOnHeadphones.value
         KEY_PERSONALISED_AUTOPLAY -> personalisedAutoplay.value
         KEY_AUTOPLAY -> autoplay.value
+        KEY_VIDEO_RADIO -> videoRadio.value
         KEY_PREFER_MUSIC_ONLY -> preferMusicOnly.value
         KEY_SKIP_NON_MUSIC_PARTS -> skipNonMusicParts.value
         KEY_SKIP_SPONSOR_PARTS -> skipSponsorParts.value
@@ -3598,6 +3616,7 @@ object AppSettings {
     private const val KEY_THEME = "theme_mode"
     private const val KEY_AUTOPLAY = "autoplay"
     private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"
+    private const val KEY_VIDEO_RADIO = "video_radio"
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked"
     private const val KEY_REPEAT_MODE = "repeat_mode"

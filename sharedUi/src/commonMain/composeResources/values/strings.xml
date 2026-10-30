@@ -10,9 +10,10 @@
     <string name="automix_not_supported_video">Automix · Video song: simple crossfade</string>
     <string name="automix_stopped_in_party">Automix: stopped in listen together</string>
     <string name="autoplay">AutoPlay</string>
-    <string name="autoplay_empty_description">Similar music will keep playing</string>
+    <string name="autoplay_empty_description">No recommendations found</string>
     <string name="autoplay_off">AutoPlay off</string>
     <string name="autoplay_on">AutoPlay on</string>
+    <string name="video_radio_continue">Continue with video songs</string>
     <string name="autoplay_queue_description">Similar music, selected to play next</string>
     <string name="bit_depth">%1$d-bit</string>
     <string name="cancel">Cancel</string>

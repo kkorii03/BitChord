@@ -221,6 +221,7 @@ import com.music.bitchord.playback.commitRadioQueue
 import com.music.bitchord.playback.fromAutoplay
 import com.music.bitchord.playback.hasYouTubeOriginal
 import com.music.bitchord.playback.loadAutoplayTracks
+import com.music.bitchord.playback.videoRadioEnabledFor
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.playBoundedContext
 import com.music.bitchord.playback.contextEntryKey
@@ -1816,7 +1817,7 @@ private fun BitChordApp(
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
         val c = controller ?: return@LaunchedEffect
-        if (preferMusicOnly && !partyState.inParty &&
+        if (preferMusicOnly && !partyState.inParty && !videoRadioEnabledFor(song) &&
             SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
             (song.localUri == null || !AudioCache.isOffline()) &&
             song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
@@ -1922,7 +1923,7 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
-            val played = if (AppSettings.preferMusicOnly.value) {
+            val played = if (AppSettings.preferMusicOnly.value && !videoRadioEnabledFor(song)) {
                 try {
                     withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
                         YtMusicRepository.songVersion(song, beforeAudio = true)
@@ -2025,7 +2026,7 @@ private fun BitChordApp(
                     // The station's first track is the seed, and it is about to
                     // become current. Resolve its song version here, before the
                     // queue is handed over, so the music video never starts.
-                    val played = if (AppSettings.preferMusicOnly.value) {
+                    val played = if (AppSettings.preferMusicOnly.value && !videoRadioEnabledFor(seed)) {
                         try {
                             withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
                                 YtMusicRepository.songVersion(seed, beforeAudio = true)

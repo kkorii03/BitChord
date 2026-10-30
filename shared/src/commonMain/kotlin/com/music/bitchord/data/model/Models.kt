@@ -160,6 +160,12 @@ data class Song(
     val coverSinger: String? = null,
     /** Whose song a cover is, when its title says. */
     val coverOriginalArtist: String? = null,
+    /**
+     * Queued by video radio as a video song, so it must keep playing as the
+     * upload the listener chose. This suppresses the automatic MV-to-song
+     * version swap; the upload type itself stays in [isVideo].
+     */
+    val videoRadio: Boolean = false,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY

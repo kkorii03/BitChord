@@ -249,6 +249,7 @@ fun Song.toSongBundle(): Bundle = bundleOf(
     "originalArtist" to originalArtist,
     "coverSinger" to coverSinger,
     "coverOriginalArtist" to coverOriginalArtist,
+    "videoRadio" to videoRadio,
     "queueTier" to queueTier.name,
     "queueEntryId" to queueEntryId,
     // `bundleOf` has no overload for a list of strings, so the two halves of
@@ -291,6 +292,7 @@ fun songFromBundle(b: Bundle): Song {
         originalArtist = b.getString("originalArtist"),
         coverSinger = b.getString("coverSinger"),
         coverOriginalArtist = b.getString("coverOriginalArtist"),
+        videoRadio = b.getBoolean("videoRadio"),
     )
 }
 
@@ -485,6 +487,7 @@ fun MediaItem.toSong() = Song(
     originalArtist = mediaMetadata.extras?.getString(EXTRA_ORIGINAL_ARTIST),
     coverSinger = mediaMetadata.extras?.getString(EXTRA_COVER_SINGER),
     coverOriginalArtist = mediaMetadata.extras?.getString(EXTRA_COVER_ORIGINAL_ARTIST),
+    videoRadio = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_RADIO) == true,
 )
 
 internal val mediaItemTiers = java.util.Collections.synchronizedMap(java.util.WeakHashMap<MediaItem, QueueTier>())
@@ -593,6 +596,7 @@ private const val EXTRA_ORIGINAL_TITLE = "bitchord.originalTitle"
 private const val EXTRA_ORIGINAL_ARTIST = "bitchord.originalArtist"
 private const val EXTRA_COVER_SINGER = "bitchord.coverSinger"
 private const val EXTRA_COVER_ORIGINAL_ARTIST = "bitchord.coverOriginalArtist"
+private const val EXTRA_VIDEO_RADIO = "bitchord.videoRadio"
 
 /** Set only on the replacement item produced by [QualityUpgrade]. */
 const val EXTRA_QUALITY_UPGRADED = "bitchord.qualityUpgraded"
@@ -796,7 +800,7 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
                 if (queueTier != QueueTier.CONTEXT || queueEntryId != null || fromAutoplay ||
                     offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
-                    isExplicit != null || isVideo || typeUnknown || isVideoOrigin || radioName != null ||
+                    isExplicit != null || isVideo || typeUnknown || isVideoOrigin || videoRadio || radioName != null ||
                     sourceQuality != null ||
                     playbackSource != null || playbackSourceType != null || playbackSourceId != null ||
                     shown.originalTitle != null
@@ -826,6 +830,7 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
                             EXTRA_ORIGINAL_ARTIST to shown.originalArtist,
                             EXTRA_COVER_SINGER to shown.coverSinger,
                             EXTRA_COVER_ORIGINAL_ARTIST to shown.coverOriginalArtist,
+                            EXTRA_VIDEO_RADIO to shown.videoRadio,
                         ),
                     )
                 }

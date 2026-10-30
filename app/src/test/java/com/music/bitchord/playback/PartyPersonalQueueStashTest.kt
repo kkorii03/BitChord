@@ -166,6 +166,28 @@ class PartyPersonalQueueStashTest {
         assertFalse(restored.wasPlaying)
     }
 
+    @Test
+    fun testVideoRadioFlagSurvivesStashAndRestore() {
+        val songs = listOf(
+            Song(
+                videoId = "cover",
+                title = "Not a Dream",
+                artist = "아카네 리제",
+                thumbnailUrl = null,
+                isVideo = true,
+                videoRadio = true,
+            ),
+            Song(videoId = "plain", title = "Song", artist = "Artist", thumbnailUrl = null),
+        )
+
+        PartyPersonalQueueStash.stash(songs, index = 0, positionMs = 0L, wasPlaying = false)
+        val restored = PartyPersonalQueueStash.load()
+
+        assertNotNull(restored)
+        assertTrue(restored!!.songs[0].videoRadio)
+        assertFalse(restored.songs[1].videoRadio)
+    }
+
     private class FakeSharedPreferences : SharedPreferences {
         private val data = mutableMapOf<String, Any?>()
 

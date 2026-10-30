@@ -106,6 +106,7 @@ import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
+import com.music.bitchord.data.net.AUTOPLAY_MIN_QUEUED_AHEAD
 import com.music.bitchord.data.net.autoplayTopUpNeeded
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
@@ -3546,6 +3547,11 @@ class PlaybackService : MediaLibraryService() {
                 enabled = autoplayEnabled(party),
                 repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
                 queuedAhead = queuedAhead,
+                minAhead = if (!party.inParty && videoRadioEnabledFor(current)) {
+                    VIDEO_RADIO_MIN_QUEUED_AHEAD
+                } else {
+                    AUTOPLAY_MIN_QUEUED_AHEAD
+                },
             ) ||
             (party.inParty && autoplaySupplierId(party) != party.you?.memberId)
         ) {

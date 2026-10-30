@@ -10,9 +10,10 @@
     <string name="automix_not_supported_video">자동 믹스 · 비디오 노래: 단순 크로스페이드</string>
     <string name="automix_stopped_in_party">자동 믹스: 함께 듣기 중에는 중단됨</string>
     <string name="autoplay">자동 재생</string>
-    <string name="autoplay_empty_description">비슷한 음악이 계속 재생됩니다.</string>
+    <string name="autoplay_empty_description">추천 곡을 찾지 못했습니다</string>
     <string name="autoplay_off">자동 재생: 끔</string>
     <string name="autoplay_on">자동 재생: 켬</string>
+    <string name="video_radio_continue">비디오 노래 이어 듣기</string>
     <string name="autoplay_queue_description">다음에 재생하도록 선택된 비슷한 음악</string>
     <string name="bit_depth">%1$d비트</string>
     <string name="cancel">취소</string>

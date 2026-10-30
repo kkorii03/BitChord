@@ -320,6 +320,7 @@ internal class NextTrackPreparation(
     private fun versionWanted(song: Song): Boolean {
         if (!AppSettings.preferMusicOnly.value) return false
         val lookup = lookupSong(song)
+        if (lookup.videoRadio) return false
         if (!SongVersionPolicy.wantsSongVersion(lookup.isVideo, lookup.typeUnknown)) return false
         if (lookup.localUri != null && AudioCache.isOffline()) return false
         return true

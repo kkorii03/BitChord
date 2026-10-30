@@ -272,6 +272,7 @@ fun SettingsScreen(
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
     val resumeOnHeadphones by AppSettings.resumeOnHeadphones.collectAsStateWithLifecycle()
     val personalisedAutoplay by AppSettings.personalisedAutoplay.collectAsStateWithLifecycle()
+    val videoRadio by AppSettings.videoRadio.collectAsStateWithLifecycle()
     // Read again whenever the page comes back, which is how a grant made in
     // the system's own screen shows up here.
     val settingsForeground = com.music.bitchord.ui.rememberIsForeground()
@@ -831,6 +832,22 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setPersonalisedAutoplay(!personalisedAutoplay) },
+                )
+            }
+            val videoRadioTitle = stringResource(R.string.video_radio_continue)
+            row(videoRadioTitle, "video", "radio", "cover", "비디오") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = videoRadioTitle,
+                    subtitle = stringResource(R.string.video_radio_continue_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = videoRadio,
+                            onCheckedChange = AppSettings::setVideoRadio,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setVideoRadio(!videoRadio) },
                 )
             }
             val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
