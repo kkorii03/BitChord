@@ -51,21 +51,31 @@ fun videoRadioModeFor(song: Song): AutoplayMode = autoplayModeFor(videoRadioSeed
 fun videoRadioEnabledFor(song: Song): Boolean =
     AppSettings.videoRadio.value && videoRadioModeFor(song) == AutoplayMode.VIDEO_RADIO
 
-/** Video candidates are fetched only when this few rows remain ahead. */
-const val VIDEO_RADIO_MIN_QUEUED_AHEAD = 3
+/**
+ * Video candidates are fetched once the queue has at most three rows ahead.
+ *
+ * [com.music.bitchord.data.net.autoplayTopUpNeeded] compares with `<`, so the
+ * value passed as its minimum is one above the design's threshold.
+ */
+const val VIDEO_RADIO_MIN_QUEUED_AHEAD = 4
 
 /** The underlying song key used to stop two covers of one song in a row. */
 fun videoRadioSongKey(song: Song): String =
     songKeyOf(CoverTitles.read(song)?.title ?: song.originalTitle ?: song.title)
 
 /**
- * The radio rows as video candidates. The radio has already filtered its rows
- * as music (the YouTube mix goes through the music classifier), so the rows
- * carry a music category rather than making this path ask once per video.
+ * The radio rows as video candidates.
+ *
+ * No category is invented here: a youtube.com row does not state one, and
+ * stamping every row "Music" would defeat the song-marker filter. The shared
+ * filter therefore judges these rows on their real title and channel. Rows
+ * known to have come from the seed's video mix or channel are uploads even
+ * when the web renderer could not confirm a wide thumbnail.
  */
 fun videoRadioCandidates(
     songs: List<Song>,
     seed: SeedVideoInfo,
+    sources: Map<String, VideoSource> = emptyMap(),
 ): List<VideoCandidate> = songs.mapNotNull { song ->
     if (song.videoId.isBlank()) return@mapNotNull null
     val rawTitle = song.originalTitle?.takeIf { it.isNotBlank() } ?: song.title
@@ -73,7 +83,7 @@ fun videoRadioCandidates(
     val singer = song.coverSinger?.takeIf { it.isNotBlank() }
         ?: CoverTitles.read(song)?.singer?.takeIf { it.isNotBlank() }
         ?: song.artist
-    val source = when {
+    val source = sources[song.videoId] ?: when {
         channel.equals(seed.channelName, ignoreCase = true) -> VideoSource.CHANNEL
         song.isVideo -> VideoSource.MIX
         else -> VideoSource.RADIO
@@ -84,14 +94,12 @@ fun videoRadioCandidates(
         channelName = channel,
         singer = singer,
         durationSec = TrackMatcher.secondsOf(song.durationText),
-        isVideoUpload = song.isVideo || song.videoRadio,
-        categories = listOf(MUSIC_CATEGORY),
+        isVideoUpload = song.isVideo || song.videoRadio ||
+            source == VideoSource.MIX || source == VideoSource.CHANNEL,
         songKey = songKeyOf(CoverTitles.read(song)?.title ?: rawTitle),
         source = source,
     )
 }
-
-private const val MUSIC_CATEGORY = "Music"
 
 /** What one video-radio pass found, ready for the log line and the queue. */
 data class VideoRadioPick(
@@ -130,6 +138,7 @@ fun pickVideoRadio(
     radio: List<Song>,
     existing: List<Song>,
     previousSong: Song? = null,
+    sources: Map<String, VideoSource> = emptyMap(),
 ): VideoRadioPick {
     val seed = videoRadioSeedInfo(seedSong)
     val recent = existing.takeLast(RECENT_VIDEO_WINDOW)
@@ -142,7 +151,7 @@ fun pickVideoRadio(
     val filter = filterVideoCandidates(
         mode = AutoplayMode.VIDEO_RADIO,
         seed = seed,
-        candidates = videoRadioCandidates(radio, seed),
+        candidates = videoRadioCandidates(radio, seed, sources),
         options = options,
     )
     return VideoRadioPick(

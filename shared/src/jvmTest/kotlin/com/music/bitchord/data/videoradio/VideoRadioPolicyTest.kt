@@ -165,13 +165,36 @@ class VideoRadioPolicyTest {
                 candidate("live-marker", title = "Dance Monkey Live"),
                 candidate("sing-marker", title = "Sing Dance Monkey"),
                 candidate("japanese-marker", title = "Dance Monkey 歌ってみた"),
+                candidate("channel-marker", title = "Dance Monkey", channel = "노래 아카이브"),
             ),
         )
         assertEquals(
-            listOf("music-category", "cover-marker", "korean-marker", "live-marker", "sing-marker", "japanese-marker"),
+            listOf(
+                "music-category",
+                "cover-marker",
+                "korean-marker",
+                "live-marker",
+                "sing-marker",
+                "japanese-marker",
+                "channel-marker",
+            ),
             result.kept.map { it.videoId },
         )
         assertEquals(1, result.dropped[VideoDropReason.NOT_SONG])
+    }
+
+    @Test
+    fun `a video row with no title or singer is dropped as no metadata`() {
+        val result = filter(
+            AutoplayMode.VIDEO_RADIO,
+            listOf(
+                candidate("blank-title", title = ""),
+                candidate("blank-singer", singer = "", channel = ""),
+                candidate("kept", title = "Dance Monkey (Cover)"),
+            ),
+        )
+        assertEquals(listOf("kept"), result.kept.map { it.videoId })
+        assertEquals(2, result.dropped[VideoDropReason.NO_METADATA])
     }
 
     @Test
@@ -403,6 +426,11 @@ class VideoRadioPolicyTest {
             VideoRadioFallback.EMPTY,
             videoRadioFallbackStage(picked = 0, sameModeExhausted = true, normalAvailable = false),
         )
+    }
+
+    @Test
+    fun `a thin offline batch is reported as partial`() {
+        assertEquals("partial", VideoRadioFallback.PARTIAL.wire)
     }
 
 }

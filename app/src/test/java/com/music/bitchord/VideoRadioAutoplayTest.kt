@@ -83,4 +83,52 @@ class VideoRadioAutoplayTest {
         val pick = pickVideoRadio(seed, radio, existing = listOf(seed))
         assertEquals(1, pick.ordered.size)
     }
+
+    @Test
+    fun `a radio row without a real song marker is not kept by an invented category`() {
+        val seed = song("seed", "Dance Monkey (Cover)", "오화요")
+        val radio = listOf(
+            seed,
+            song("chatter", "A Day In My Life", "Someone", originalArtist = "Someone"),
+            song("cover", "Other Song (Cover)", "A", originalArtist = "A"),
+        )
+        val pick = pickVideoRadio(seed, radio, existing = listOf(seed))
+        assertEquals(listOf("cover"), pick.ordered.map { it.videoId })
+    }
+
+    @Test
+    fun `a row with no title or channel is dropped before ordering`() {
+        val seed = song("seed", "Dance Monkey (Cover)", "오화요")
+        val radio = listOf(
+            seed,
+            song("nameless", "", ""),
+            song("cover", "Other Song (Cover)", "A", originalArtist = "A"),
+        )
+        val pick = pickVideoRadio(seed, radio, existing = listOf(seed))
+        assertEquals(listOf("cover"), pick.ordered.map { it.videoId })
+        assertTrue(pick.filter.dropped.isNotEmpty())
+    }
+
+    @Test
+    fun `explicit source tags survive into the pick log`() {
+        val seed = song("seed", "Dance Monkey (Cover)", "오화요")
+        val radio = listOf(
+            seed,
+            song("mix-1", "Other Song (Cover)", "A"),
+            song("channel-1", "Third Song Live", "오화요"),
+            song("radio-1", "Fourth Song (Cover)", "B"),
+        )
+        val pick = pickVideoRadio(
+            seed,
+            radio,
+            existing = listOf(seed),
+            sources = mapOf(
+                "mix-1" to com.music.bitchord.data.videoradio.VideoSource.MIX,
+                "channel-1" to com.music.bitchord.data.videoradio.VideoSource.CHANNEL,
+                "radio-1" to com.music.bitchord.data.videoradio.VideoSource.RADIO,
+            ),
+        )
+        assertEquals(3, pick.ordered.size)
+        assertEquals("channel", pick.from)
+    }
 }

@@ -121,6 +121,7 @@ data class VideoCandidate(
 /** Why a candidate was dropped, counted per reason for the `dropped=` log field. */
 enum class VideoDropReason(val wire: String) {
     INVALID("invalid"),
+    NO_METADATA("no-metadata"),
     DUPLICATE("duplicate"),
     RECENT("recent"),
     SHORTS("shorts"),
@@ -222,6 +223,12 @@ private fun dropReasonFor(
     recentSongKeys: Set<String>,
 ): VideoDropReason? {
     if (candidate.videoId.isBlank()) return VideoDropReason.INVALID
+    // A row with no title or no singer/channel is the nameless queue item the
+    // ordinary AutoPlay path already refuses; video radio must not queue it
+    // just because the source knows a video id.
+    if (candidate.title.isBlank() || candidate.effectiveSinger.isBlank()) {
+        return VideoDropReason.NO_METADATA
+    }
     if (!seen.add(candidate.videoId)) return VideoDropReason.DUPLICATE
     if (candidate.videoId in options.recentVideoIds) return VideoDropReason.RECENT
     if (isShort(candidate)) return VideoDropReason.SHORTS
@@ -285,7 +292,9 @@ private val MUSIC_CATEGORY = Regex("""(?i)\bmusic\b|음악""")
 private fun looksLikeSong(candidate: VideoCandidate): Boolean =
     candidate.categories.any { MUSIC_CATEGORY.containsMatchIn(it) } ||
         SONG_MARKERS.any {
-            it.containsMatchIn(candidate.title) || it.containsMatchIn(candidate.description)
+            it.containsMatchIn(candidate.title) ||
+                it.containsMatchIn(candidate.description) ||
+                it.containsMatchIn(candidate.channelName)
         }
 
 private val TALK_MARKERS = listOf(
@@ -429,6 +438,9 @@ enum class VideoRadioFallback(val wire: String) {
 
     /** The video world was empty or too thin, so ordinary AutoPlay filled in. */
     NORMAL("normal"),
+
+    /** Fewer than a full batch, but these are the only playable rows (offline). */
+    PARTIAL("partial"),
 
     /** Nothing playable was found; the queue says so instead of repeating. */
     EMPTY("empty"),

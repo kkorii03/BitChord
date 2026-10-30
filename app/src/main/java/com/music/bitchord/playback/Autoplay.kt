@@ -26,8 +26,13 @@ import com.music.bitchord.data.taste.asSong
 import com.music.bitchord.data.videoradio.AutoplayMode
 import com.music.bitchord.data.videoradio.MIN_VIDEO_RADIO_TRACKS
 import com.music.bitchord.data.videoradio.VideoRadioFallback
+import com.music.bitchord.data.videoradio.VideoRadioSourceRows
+import com.music.bitchord.data.videoradio.VideoRadioSources
+import com.music.bitchord.data.videoradio.VideoSource
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Random
 
 /** Most AutoPlay-suggested tracks kept queued ahead of the current one at once. */
@@ -142,39 +147,69 @@ suspend fun loadAutoplayTracks(
     // Offline the only video songs that can play are the downloaded ones; no
     // station request is worth starting just to fail.
     if (videoWanted && offline) {
-        val downloaded = Downloads.savedMetadataSnapshot().keys
-            .mapNotNull { Downloads.savedSongFor(it) }
-            .filter { it.isVideo }
-        val pick = pickVideoRadio(seedSong, downloaded, existing, sessionSong)
-        if (pick.ordered.size >= MIN_VIDEO_RADIO_TRACKS) {
-            TrackLog.i("BitChord", pick.logLine(VideoRadioFallback.NONE.wire), about = seedSong.videoId)
-            return Result.success(videoRadioRows(pick, downloaded, seedSong, limit))
-        }
-        TrackLog.i(
-            "BitChord",
-            pick.logLine(VideoRadioFallback.EMPTY.wire),
-            about = seedSong.videoId,
-        )
-        return Result.success(emptyList())
+        return loadOfflineVideoRadio(seedSong, existing, sessionSong, limit)
     }
 
-    val radio = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
-
     if (videoWanted) {
-        var sourceSongs = radio
+        // The video mix and the seed channel are the material the design asks
+        // for; the Music radio below is only paid for when they are too thin.
+        val sourceRows = VideoRadioSources.collect(
+            seedVideoId = seed,
+            channelName = seedSong.originalArtist?.takeIf { it.isNotBlank() }
+                ?: seedSong.artist,
+        )
+        var sourceSongs = sourceRows.songs
+        var sourceMap = sourceRows.sources.toMutableMap()
         var usedSameMode = false
-        var pick = pickVideoRadio(seedSong, radio, existing, sessionSong)
+        var pick = pickVideoRadio(seedSong, sourceSongs, existing, sessionSong, sourceMap)
+        var radioResult: Result<List<Song>>? = null
+
+        if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS) {
+            radioResult = YtMusicRepository.radio(seed)
+            val radio = radioResult.getOrElse { emptyList() }
+            if (radio.isNotEmpty()) {
+                val merged = mergeVideoSources(sourceSongs, sourceMap, radio, VideoSource.RADIO)
+                val more = pickVideoRadio(
+                    seedSong,
+                    merged.songs,
+                    existing,
+                    sessionSong,
+                    merged.sources,
+                )
+                if (more.ordered.size > pick.ordered.size) {
+                    pick = more
+                }
+                // Keep the radio in the pool even when it did not improve this
+                // pick: the same-mode replacement below used to combine it with
+                // the session radio, and every old term is kept.
+                sourceSongs = merged.songs
+                sourceMap = merged.sources.toMutableMap()
+            }
+        }
+
         // Same-mode replacement: the last completed track's station is more
         // of the same world, and is normally already in the radio cache. This
-        // is only paid when the seed's own mix was too thin.
+        // is only paid when the seed's own material was too thin.
         if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS && AppSettings.heavyWorkAllowed) {
             val sessionRadio = sessionRadioFor(seedSong, sessionSong)
             if (sessionRadio.isNotEmpty()) {
-                val combined = radio + sessionRadio
-                val more = pickVideoRadio(seedSong, combined, existing, sessionSong)
+                val merged = mergeVideoSources(
+                    sourceSongs,
+                    sourceMap,
+                    sessionRadio,
+                    VideoSource.RADIO,
+                )
+                val more = pickVideoRadio(
+                    seedSong,
+                    merged.songs,
+                    existing,
+                    sessionSong,
+                    merged.sources,
+                )
                 if (more.ordered.size > pick.ordered.size) {
                     pick = more
-                    sourceSongs = combined
+                    sourceSongs = merged.songs
+                    sourceMap = merged.sources.toMutableMap()
                     usedSameMode = true
                 }
             }
@@ -184,28 +219,28 @@ suspend fun loadAutoplayTracks(
             TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
             return Result.success(videoRadioRows(pick, sourceSongs, seedSong, limit))
         }
-        // Too thin to keep playing. Remember what the video world offered so
-        // the fallback log says why the ordinary path took over.
-        val fallbackLog = { rows: Int, stage: VideoRadioFallback ->
-            TrackLog.i(
-                "BitChord",
-                "video-radio: seed=${seedSong.videoId} mode=video picked=$rows " +
-                    "from=radio dropped=${pick.filter.droppedSummary()} fallback=${stage.wire}",
-                about = seedSong.videoId,
-            )
+
+        // Too thin to keep playing. The log keeps the video pick's own source
+        // and count, and names the ordinary path as the stage that replaced it.
+        val fallbackLog = { stage: VideoRadioFallback ->
+            TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
         }
+        val fallbackRadio = radioResult
+            ?.getOrElse { return Result.failure(it) }
+            ?: YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
         return loadNormalAutoplayTracks(
             existing = existing,
             seedSong = seedSong,
-            radio = radio,
+            radio = fallbackRadio,
             limit = limit,
             sessionSong = sessionSong,
             sessionIds = sessionIds,
-            onEmpty = { fallbackLog(0, VideoRadioFallback.EMPTY) },
-            onFilled = { rows -> fallbackLog(rows, VideoRadioFallback.NORMAL) },
+            onEmpty = { fallbackLog(VideoRadioFallback.EMPTY) },
+            onFilled = { fallbackLog(VideoRadioFallback.NORMAL) },
         )
     }
 
+    val radio = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
     return loadNormalAutoplayTracks(
         existing = existing,
         seedSong = seedSong,
@@ -228,6 +263,53 @@ suspend fun loadAutoplayTracks(
             )
         },
     )
+}
+
+/**
+ * Offline video radio: the downloaded video rows are the whole world, so they
+ * are read and filtered off the main thread. A thin but non-empty batch is
+ * still returned — silence is worse than two songs, and the queue's own empty
+ * state is reserved for having nothing playable at all.
+ */
+private suspend fun loadOfflineVideoRadio(
+    seedSong: Song,
+    existing: List<Song>,
+    sessionSong: Song?,
+    limit: Int,
+): Result<List<Song>> {
+    val (downloaded, pick) = withContext(Dispatchers.IO) {
+        val rows = Downloads.savedMetadataSnapshot().keys
+            .mapNotNull { Downloads.savedSongFor(it) }
+            .filter { it.isVideo }
+        rows to pickVideoRadio(seedSong, rows, existing, sessionSong)
+    }
+    val stage = when {
+        pick.ordered.isEmpty() -> VideoRadioFallback.EMPTY
+        pick.ordered.size < MIN_VIDEO_RADIO_TRACKS -> VideoRadioFallback.PARTIAL
+        else -> VideoRadioFallback.NONE
+    }
+    TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
+    return Result.success(
+        if (pick.ordered.isEmpty()) emptyList() else videoRadioRows(pick, downloaded, seedSong, limit),
+    )
+}
+
+/** Adds [extra] after [songs], keeping the first row for an id and its source. */
+private fun mergeVideoSources(
+    songs: List<Song>,
+    sources: Map<String, VideoSource>,
+    extra: List<Song>,
+    extraSource: VideoSource,
+): VideoRadioSourceRows {
+    val mergedSongs = LinkedHashMap<String, Song>()
+    val mergedSources = HashMap<String, VideoSource>(sources)
+    songs.forEach { mergedSongs.putIfAbsent(it.videoId, it) }
+    extra.forEach { song ->
+        if (song.videoId.isNotBlank() && mergedSongs.putIfAbsent(song.videoId, song) == null) {
+            mergedSources[song.videoId] = extraSource
+        }
+    }
+    return VideoRadioSourceRows(mergedSongs.values.toList(), mergedSources)
 }
 
 /** Turns the ordered video rows into queue entries, marked so they stay video. */

@@ -1817,7 +1817,7 @@ private fun BitChordApp(
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
         val c = controller ?: return@LaunchedEffect
-        if (preferMusicOnly && !partyState.inParty &&
+        if (preferMusicOnly && !partyState.inParty && !videoRadioEnabledFor(song) &&
             SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
             (song.localUri == null || !AudioCache.isOffline()) &&
             song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
