@@ -13,5 +13,12 @@
                 <action android:name="com.music.bitchord.debug.IMPORT_SETTINGS" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name="com.music.bitchord.debug.DebugScenarioReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.music.bitchord.debug.SCENARIO" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
