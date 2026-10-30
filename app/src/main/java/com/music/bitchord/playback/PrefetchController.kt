@@ -32,6 +32,7 @@ internal class PrefetchController(
     private val scope: CoroutineScope,
     private val currentPlayer: () -> ExoPlayer?,
     private val alternateLookupTimeoutMs: Long,
+    private val definitiveAlternateTimeoutMs: Long,
     private val permanentReason: (Throwable?) -> String?,
     private val swapToAlternate: (MediaItem, Song) -> MediaItem,
 ) {
@@ -216,22 +217,38 @@ internal class PrefetchController(
         alternatePreResolveJob?.cancel()
         alternatePreResolveFor = song.videoId
         alternatePreResolveJob = scope.launch(TrackLog.about(song.videoId)) {
-            val definitive = StreamResolver.isUnplayable(song.videoId) || withContext(Dispatchers.IO) {
+            val reason = StreamResolver.unplayableReason(song.videoId) ?: withContext(Dispatchers.IO) {
                 try {
                     StreamResolver.resolve(song.videoId)
-                    false
+                    null
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
-                    permanentReason(failure) != null
-                }
-            }
-            if (!definitive) return@launch
-            val alternate = withContext(Dispatchers.IO) {
-                withTimeoutOrNull(alternateLookupTimeoutMs) {
-                    YtMusicRepository.findAlternateRecording(song, setOf(song.videoId))
+                    permanentReason(failure)
                 }
             } ?: return@launch
+            // Marked before the replacement search starts, so the crossfade
+            // controller already knows not to arm into this id while the
+            // search is still running. A found alternate replaces the row
+            // with its own id, which the mark does not cover.
+            StreamResolver.markUnplayable(song.videoId, reason)
+            val alternate = withContext(Dispatchers.IO) {
+                // This is the read-ahead half of the same verdict the playback
+                // path handles. It must use the definitive budget too, or the
+                // next track's row can sit here for the old 12 s while the
+                // playback path is already searching for the same alternate.
+                withTimeoutOrNull(definitiveAlternateTimeoutMs) {
+                    YtMusicRepository.findAlternateRecording(song, setOf(song.videoId))
+                }
+            }
+            if (alternate == null) {
+                TrackLog.w(
+                    "BitChord",
+                    "unplayable: ${song.videoId} $reason -> skip",
+                    about = song.videoId,
+                )
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 val live = currentPlayer() ?: return@withContext
                 val index = live.nextMediaItemIndex
@@ -239,7 +256,7 @@ internal class PrefetchController(
                 if (live.getMediaItemAt(index).mediaId != song.videoId) return@withContext
                 TrackLog.w(
                     "BitChord",
-                    "failure: ${song.videoId} unplayable -> alternate ${alternate.videoId} (${alternate.title})",
+                    "unplayable: ${song.videoId} $reason -> alt ${alternate.videoId}",
                     about = song.videoId,
                 )
                 live.replaceMediaItem(index, swapToAlternate(live.getMediaItemAt(index), alternate))

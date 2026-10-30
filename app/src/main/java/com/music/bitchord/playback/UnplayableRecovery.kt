@@ -1,5 +1,7 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.innertube.UnplayableReason
+
 /**
  * What a failed playback attempt should do next.
  *
@@ -28,7 +30,7 @@ internal object UnplayableRecovery {
      * expired.
      */
     fun isDefinitive(permanentReason: String?, alreadyMarkedUnplayable: Boolean): Boolean =
-        alreadyMarkedUnplayable || !permanentReason.isNullOrBlank()
+        alreadyMarkedUnplayable || UnplayableReason.isDefinitive(permanentReason)
 
     fun decide(definitive: Boolean, hasAlternate: Boolean): UnplayableRecoveryAction = when {
         definitive && hasAlternate -> UnplayableRecoveryAction.SWAP_ALTERNATE

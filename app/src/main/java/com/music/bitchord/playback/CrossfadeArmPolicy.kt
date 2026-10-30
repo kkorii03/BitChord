@@ -18,6 +18,9 @@ internal enum class CrossfadeSkipReason(val wire: String) {
 
     /** The queue pointed at the item already playing, so there was nothing to fade into. */
     SAME_ITEM("same-item"),
+
+    /** Read-ahead already settled that the incoming upload cannot be served. */
+    UNPLAYABLE("unplayable"),
 }
 
 /**
