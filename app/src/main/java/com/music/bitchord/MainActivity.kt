@@ -5189,9 +5189,11 @@ private fun BitChordApp(
                     {
                         songActions = null
                         scope.launch {
-                            val text = LogRedactor.redact(
-                                TrackLog.forTrack(song, NerdStats.current.value),
-                            )
+                            val text = withContext(Dispatchers.Default) {
+                                LogRedactor.redact(
+                                    TrackLog.forTrack(song, NerdStats.current.value),
+                                )
+                            }
                             clipboard.setText(AnnotatedString(text))
                             // The line count, not just "copied": it is the
                             // one thing the system's own paste confirmation

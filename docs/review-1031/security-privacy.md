@@ -166,3 +166,51 @@
 4. Last.fm API 시크릿의 APK 추출 가능성은 서버 측 키 제한/회전 정책으로 관리 (LOW).
 5. WebDAV 주소에 userinfo가 들어온 경우 평문 설정·백업에 남지 않도록 `setWebDavUrl`/`normalizeUrl`에서 분리·거부하는 후속 정리 (LOW).
 6. `Presence`의 300초 주기 ping은 개인정보 노출은 없지만 배터리 관점에서 이벤트 기반으로 바꿀 후속 검토 (LOW).
+
+## 8. 3차 검토 (2026-10-31, 이전 차수 지적 반영)
+
+이전 차수(2차) 결과에서 지적된 2건을 코드로 재확인하고 처리했다. 재생 핵심 경로는 건드리지 않았다.
+
+### 8.1 지적별 처리
+
+| 이전 지적 | 이전 상태 | 현재 코드 확인 | 처리 |
+|---|---|---|---|
+| `DiagnosticsExport.kt:41` AUTHORIZATION 정규식이 첫 단어를 스킴으로 삼아 나머지 값을 남긴다 | 남음 | 남음. `SAPISIDHASH … SAPISID1PHASH … SAPISID3PHASH …`(`Innertube.kt:2165-2167`) 형태에서 첫 해시만 지우고 1P/3P 해시가 남았다. | **고침** |
+| `MainActivity.kt:5192` 로그 복사가 Main 디스패처에서 최대 3,000줄/512KB를 7회 정규식으로 정리한다 | 남음 | 남음. `rememberCoroutineScope`(Main)에서 `TrackLog.forTrack` 반환 후 `LogRedactor.redact`를 호출했다. | **고침** |
+
+### 8.2 정규식 조건 변경 전후 진리표
+
+`AUTHORIZATION` 값 매칭(콜론 뒤) 기준. `$1`은 헤더 이름 접두사이며 두 경우 모두 동일하다.
+
+| 입력 값 형태 | 기존 동작 | 새 동작 |
+|---|---|---|
+| `Bearer <token>` | `[redacted]` | `[redacted]` |
+| `Token <key>` / `Basic <base64>` | `[redacted]` | `[redacted]` |
+| `<token>` (공백 없음) | `[redacted]` | `[redacted]` |
+| `<word1> <word2> <word3>` | `<word1> <word2>`만 지우고 `<word3>` 남음 | 줄 끝까지 `[redacted]` |
+| `SAPISIDHASH <h1> SAPISID1PHASH <h2> SAPISID3PHASH <h3>` | 첫 `SAPISIDHASH <h1>`만 지움. **1P/3P 해시 노출** | 줄 끝까지 `[redacted]` |
+| 같은 줄 뒤에 다른 필드가 붙은 경우 | 그 필드 일부가 남을 수 있음 | 줄 끝까지 함께 `[redacted]` |
+
+기존 식의 `authorization`/`proxy-authorization` 접두사 인식과 스킴 유무 양쪽 커버리지는 유지했고, `[^\s,;]+`(한 토큰) 대신 `[^\r\n]+`(줄 전체)로 넓혀 값의 모든 파트를 지운다.
+
+### 8.3 새로 찾은 문제
+
+| 심각도 | 파일:줄 | 증거 | 사용자 영향 | 수정안 / 상태 |
+|---|---|---|---|---|
+| MED | `app/src/main/java/com/music/bitchord/data/DiagnosticsExport.kt:41` | 위 8.2. 실제 `Innertube.authorizationFor`는 공백으로 구분된 다중 해시를 만든다(`Innertube.kt:2165-2167`). | 로그 복사/내보내기에 1P/3P 서명 해시가 남아 계정 요청 위조에 악용될 수 있다. | **고침**: `(?i)((?:proxy-)?authorization\s*[:=]\s*)[^\r\n]+`로 줄 끝까지 제거. |
+| LOW | `app/src/main/java/com/music/bitchord/MainActivity.kt:5192` | 로그 복사 코루틴이 `rememberCoroutineScope`(Main)에서 시작하고, `LogRedactor.redact`의 7회 정규식 패스가 Main에서 돌았다. | 큰 로그를 복사할 때 UI 버벅임/ANR 가능. | **고침**: `withContext(Dispatchers.Default)`로 감싸 정리·레드랙션을 백그라운드에서 수행. |
+
+### 8.4 테스트
+
+```bash
+./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.data.LogRedactorTest' --console=plain -q
+./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q
+```
+
+모두 통과. 새 테스트:
+- `LogRedactorTest.schemelessAuthorizationValueIsFullyRedacted`
+- `LogRedactorTest.multiPartSapisidAuthorizationIsRedactedToEndOfLine`
+
+### 8.5 남은 일
+
+1. 파티 토큰 암호화 저장소 이전, WebDAV URL userinfo 거부, 시크릿 모드 진단 헤더 곡 줄 제거는 7.4와 동일하게 문서/후속 과제로 남는다.

@@ -39,7 +39,7 @@ import java.util.Locale
 object LogRedactor {
     private val COOKIE = Regex("""(?i)((?:set-)?cookie\s*[:=]\s*)[^\r\n]+""")
     private val AUTHORIZATION =
-        Regex("""(?i)(authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9_-]*\s+)?[^\s,;]+""")
+        Regex("""(?i)((?:proxy-)?authorization\s*[:=]\s*)[^\r\n]+""")
     private val SESSION_ID = Regex(
         """(?i)\b(SAPISID|APISID|HSID|SSID|SID|__Secure-[A-Za-z0-9_]+)\s*[=:]\s*[^\s;,]+""",
     )

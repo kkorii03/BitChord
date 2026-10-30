@@ -43,6 +43,26 @@ class LogRedactorTest {
     }
 
     @Test
+    fun schemelessAuthorizationValueIsFullyRedacted() {
+        val out = LogRedactor.redact("Authorization: abcdef0123456789 trailing words")
+        assertEquals("Authorization: [redacted]", out)
+        assertFalse(out.contains("abcdef0123456789"))
+        assertFalse(out.contains("trailing"))
+    }
+
+    @Test
+    fun multiPartSapisidAuthorizationIsRedactedToEndOfLine() {
+        val out = LogRedactor.redact(
+            "Authorization: SAPISIDHASH 1700000000_deadbeef " +
+                "SAPISID1PHASH 1700000000_onepart SAPISID3PHASH 1700000000_threepart",
+        )
+        assertEquals("Authorization: [redacted]", out)
+        assertFalse(out.contains("deadbeef"))
+        assertFalse(out.contains("onepart"))
+        assertFalse(out.contains("threepart"))
+    }
+
+    @Test
     fun apiKeysAreRedacted() {
         val out = LogRedactor.redact("key AIzaSyA1234567890abcdefghij and sk-or-v1-abcdefghijklmnop")
         assertFalse(out.contains("AIzaSyA1234567890abcdefghij"))
