@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import android.os.SystemClock
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.playback.QualityUpgrade
@@ -7,7 +8,9 @@ import com.music.bitchord.playback.StreamChoice
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -109,5 +112,20 @@ class StreamChoiceTest {
 
         assertNull(StreamChoice.of("track-6"))
         assertEquals(false, StreamChoice.isSubstitute("track-6"))
+    }
+
+    /**
+     * An expired pin must tell the resolver to drop the partial entry before it
+     * chooses a new rendition. Forgetting the URL alone left the old prefix on
+     * disk for the next resolve to continue with a different file.
+     */
+    @Test
+    fun `an expired choice is reported once for its cache entry to be cleared`() {
+        StreamChoice.remember("track-7", stream("googlevideo.com"), substituted = false)
+
+        val staleAfter = SystemClock.elapsedRealtime() + 24 * 60 * 60 * 1000L
+        assertNull(StreamChoice.of("track-7", nowMs = staleAfter))
+        assertTrue(StreamChoice.consumeExpired("track-7"))
+        assertFalse(StreamChoice.consumeExpired("track-7"))
     }
 }

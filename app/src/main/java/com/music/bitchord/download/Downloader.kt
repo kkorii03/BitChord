@@ -112,13 +112,21 @@ object Downloader {
                 if (reresolved) error("Download refused after ${position}B (HTTP ${response.code})")
                 reresolved = true
                 Log.w(TAG, "re-resolving $videoId after HTTP ${response.code} at $position")
-                url = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a).url
+                val replacement = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a)
                 // Resolving again re-runs the whole client walk, and a
                 // different client can answer with a different format. Resuming
                 // one stream into the middle of another produces a file that is
-                // the right length and unplayable, so a length that has moved
-                // is a failure rather than something to work around.
-                if (contentLength(url) != total) error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
+                // the right length and unplayable, so a length or container
+                // that has moved is a failure rather than something to work
+                // around. The container check is the one the length can miss:
+                // MP4 and WebM can be the same size, but their bytes cannot be
+                // spliced.
+                if (replacement.downloadExtension != stream.downloadExtension ||
+                    contentLength(replacement.url) != total
+                ) {
+                    error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
+                }
+                url = replacement.url
                 continue
             }
 

@@ -1667,7 +1667,14 @@ object LyricsTiming {
         // server's own delay has passed, and the next playback (an event, not
         // a timer) tries again.
         val retryAt = entry?.songRetryAtMs
-        if (entry?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) return false
+        if (entry?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+            TrackLog.d(
+                TAG,
+                "lyrics-sync: song-check skipped (rate limited ${(retryAt - System.currentTimeMillis()) / 1000}s)",
+                song.videoId,
+            )
+            return false
+        }
         val engines = AiTimingPolicy.nextEngines(
             knowledge(entry),
             key,
@@ -1886,6 +1893,12 @@ object LyricsTiming {
         val pending = store(context).get(song.videoId)
         val retryAt = pending?.songRetryAtMs
         if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+            TrackLog.d(
+                TAG,
+                "lyrics-sync: download re-check skipped (rate limited " +
+                    "${(retryAt - System.currentTimeMillis()) / 1000}s)",
+                song.videoId,
+            )
             return@withLock false
         }
         val check = runSongCheck(context, song, lines, key, engine) ?: return@withLock false

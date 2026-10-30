@@ -64,4 +64,19 @@ class UnplayableRecoveryTest {
         )
         assertFalse(UnplayableRecovery.isDefinitive(null, alreadyMarkedUnplayable = false))
     }
+
+    @Test
+    fun `a definitive run is bounded so a repeated row cannot loop for ever`() {
+        assertTrue(UnplayableRecovery.allowsVerdictSkip(0))
+        assertTrue(
+            UnplayableRecovery.allowsVerdictSkip(
+                UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS - 1,
+            ),
+        )
+        assertFalse(
+            UnplayableRecovery.allowsVerdictSkip(
+                UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS,
+            ),
+        )
+    }
 }

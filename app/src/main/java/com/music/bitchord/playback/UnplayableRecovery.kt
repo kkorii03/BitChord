@@ -37,4 +37,19 @@ internal object UnplayableRecovery {
         definitive -> UnplayableRecoveryAction.SKIP_NEXT
         else -> UnplayableRecoveryAction.RETRY
     }
+
+    /**
+     * How far a run of definitive refusals may carry the queue before it
+     * stops. Verdicts are normally allowed to walk straight through a queue
+     * of region-locked or age-gated tracks, but a repeated queue row (or
+     * repeat-one) gives the same media id back after every skip, and without a
+     * bound that is an endless error/skip loop rather than progress. The
+     * allowance is deliberately larger than [MAX_CONSECUTIVE_SKIPS]: a whole
+     * album of unavailable rows is still a run a listener expects to pass.
+     */
+    const val MAX_CONSECUTIVE_VERDICT_SKIPS = 20
+
+    /** Whether one more definitive skip is still progress rather than a loop. */
+    fun allowsVerdictSkip(consecutiveVerdictSkips: Int): Boolean =
+        consecutiveVerdictSkips < MAX_CONSECUTIVE_VERDICT_SKIPS
 }
