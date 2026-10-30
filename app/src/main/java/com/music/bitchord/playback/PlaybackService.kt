@@ -389,6 +389,33 @@ class PlaybackService : MediaLibraryService() {
     private val songCache = ConcurrentHashMap<String, Song>()
 
     /**
+     * Remembers [song] for the Auto browse tree and the resolution paths that
+     * ask for a cached row by id.
+     *
+     * The cache had no ceiling, so every searched, browsed, downloaded or
+     * locally scanned row stayed for the life of the process. It is an
+     * optimisation only: an evicted row is resolved again exactly like one that
+     * was never seen, so the oldest arbitrary entries are dropped once the size
+     * reaches [MAX_SONG_CACHE_ENTRIES].
+     */
+    private fun cacheSong(song: Song) {
+        val overflow = songCacheEvictionCount(songCache.size, MAX_SONG_CACHE_ENTRIES)
+        if (overflow > 0) {
+            val keys = songCache.keys.iterator()
+            repeat(overflow) {
+                if (!keys.hasNext()) return@repeat
+                keys.next()
+                keys.remove()
+            }
+        }
+        songCache[song.videoId] = song
+    }
+
+    private fun cacheSongs(songs: List<Song>) {
+        songs.forEach(::cacheSong)
+    }
+
+    /**
      * [YtMusicRepository.home] cached briefly for Android Auto's browse tree.
      *
      * Recents and Quick Picks each read the same home feed, and Auto re-runs
@@ -426,7 +453,7 @@ class PlaybackService : MediaLibraryService() {
         if (songs.isNotEmpty()) {
             cachedRecents = SystemClock.elapsedRealtime() to songs
             cachedRecentsKey = key
-            songs.forEach { songCache[it.videoId] = it }
+            cacheSongs(songs)
         }
         songs
     }
@@ -460,7 +487,7 @@ class PlaybackService : MediaLibraryService() {
         if (songs.isNotEmpty()) {
             cachedQuickPicks = SystemClock.elapsedRealtime() to songs
             cachedQuickPicksKey = key
-            songs.forEach { songCache[it.videoId] = it }
+            cacheSongs(songs)
         }
         songs
     }
@@ -509,7 +536,7 @@ class PlaybackService : MediaLibraryService() {
         if (songs.isNotEmpty()) {
             cachedLiked = SystemClock.elapsedRealtime() to songs
             cachedLikedCookie = cookie
-            songs.forEach { songCache[it.videoId] = it }
+            cacheSongs(songs)
             LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
         }
         songs
@@ -11290,7 +11317,7 @@ class PlaybackService : MediaLibraryService() {
                     } else {
                         cachedRecentsSongs()
                     }
-                    songs.forEach { songCache[it.videoId] = it }
+                    cacheSongs(songs)
                     if (songs.isNotEmpty()) songs.map { it.toMediaItem() } else listOf(
                         createInfoItem(
                             "msg:empty_recents",
@@ -11316,7 +11343,7 @@ class PlaybackService : MediaLibraryService() {
                                 .orEmpty()
                         }
                     }
-                    songs.forEach { songCache[it.videoId] = it }
+                    cacheSongs(songs)
                     if (songs.isNotEmpty()) songs.map { it.toMediaItem() } else listOf(
                         createInfoItem(
                             "msg:empty_quick_picks",
@@ -11340,7 +11367,7 @@ class PlaybackService : MediaLibraryService() {
                         } else {
                             cachedLikedSongs()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
+                        cacheSongs(songs)
                         if (songs.isNotEmpty()) {
                             songs.map { it.toMediaItem() }
                         } else {
@@ -11356,7 +11383,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 MEDIA_DOWNLOADS_ID -> {
                     val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
-                    downloaded.forEach { songCache[it.videoId] = it }
+                    cacheSongs(downloaded)
                     if (downloaded.isNotEmpty()) downloaded.map { it.toMediaItem() } else listOf(
                         createInfoItem(
                             "msg:empty_downloads",
@@ -11391,7 +11418,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 MEDIA_LOCAL_MUSIC_ID -> {
                     val local = LocalMediaRepository.getLocalMusic(this@PlaybackService)
-                    local.forEach { songCache[it.videoId] = it }
+                    cacheSongs(local)
                     if (local.isNotEmpty()) local.map { it.toMediaItem() } else listOf(
                         createInfoItem(
                             "msg:empty_local",
@@ -11412,7 +11439,7 @@ class PlaybackService : MediaLibraryService() {
                             } catch (_: Exception) {
                                 emptyList()
                             }
-                            songs.forEach { songCache[it.videoId] = it }
+                            cacheSongs(songs)
                             songs.map { it.toMediaItem() }
                         }
                         parentId.startsWith("browse:") -> {
@@ -11424,7 +11451,7 @@ class PlaybackService : MediaLibraryService() {
                             } catch (_: Exception) {
                                 emptyList()
                             }
-                            songs.forEach { songCache[it.videoId] = it }
+                            cacheSongs(songs)
                             songs.map { it.toMediaItem() }
                         }
                         else -> {
@@ -11599,7 +11626,7 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 searchAll(query).also { storeSearchResults(query, it.first, it.second) }
             }
-            songs.forEach { songCache[it.videoId] = it }
+            cacheSongs(songs)
             val items = songs.map { it.toMediaItem() } + browses.map(::browseItemToGridItem)
             LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), params)
         }
@@ -11648,7 +11675,7 @@ class PlaybackService : MediaLibraryService() {
                                 emptyList()
                             }
                         }
-                        songs.forEach { songCache[it.videoId] = it }
+                        cacheSongs(songs)
                         if (songs.isNotEmpty()) {
                             resolved.addAll(songs.map { it.toMediaItem() })
                         }
@@ -11663,7 +11690,7 @@ class PlaybackService : MediaLibraryService() {
                         } catch (_: Exception) {
                             emptyList()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
+                        cacheSongs(songs)
                         resolved.addAll(songs.map { it.toMediaItem() })
                     }
                     id.startsWith("browse:") -> {
@@ -11675,7 +11702,7 @@ class PlaybackService : MediaLibraryService() {
                         } catch (_: Exception) {
                             emptyList()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
+                        cacheSongs(songs)
                         resolved.addAll(songs.map { it.toMediaItem() })
                     }
                     id == MEDIA_ROOT_ID || id == MEDIA_RECENTS_ID -> {
@@ -11694,7 +11721,7 @@ class PlaybackService : MediaLibraryService() {
                     }
                     id == MEDIA_DOWNLOADS_ID -> {
                         val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
-                        downloaded.forEach { songCache[it.videoId] = it }
+                        cacheSongs(downloaded)
                         resolved.addAll(downloaded.map { it.toMediaItem() })
                     }
                     id == MEDIA_PLAYLISTS_ID -> {
@@ -11710,12 +11737,12 @@ class PlaybackService : MediaLibraryService() {
                         } catch (_: Exception) {
                             emptyList()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
+                        cacheSongs(songs)
                         resolved.addAll(songs.map { it.toMediaItem() })
                     }
                     id == MEDIA_LOCAL_MUSIC_ID -> {
                         val local = LocalMediaRepository.getLocalMusic(this@PlaybackService)
-                        local.forEach { songCache[it.videoId] = it }
+                        cacheSongs(local)
                         resolved.addAll(local.map { it.toMediaItem() })
                     }
                     songCache.containsKey(id) -> {
@@ -11850,7 +11877,7 @@ class PlaybackService : MediaLibraryService() {
         }
         searchResults[query] = songs
         searchBrowseResults[query] = browses
-        songs.forEach { songCache[it.videoId] = it }
+        cacheSongs(songs)
     }
 
     private fun browseItemToGridItem(item: BrowseItem): MediaItem = createGridPlaylistItem(
@@ -11922,7 +11949,7 @@ class PlaybackService : MediaLibraryService() {
                 artist = InnertubeParser.artistFromSubtitle(subtitle),
                 thumbnailUrl = thumbnailUrl,
             )
-            songCache[vid] = song
+            cacheSong(song)
             return song.toMediaItem()
         }
         val bid = browseId
@@ -11997,6 +12024,8 @@ class PlaybackService : MediaLibraryService() {
         const val MAX_AUTO_PAGE_SIZE = 50
         const val MAX_AUTO_SEARCH_QUERY_CHARS = 200
         const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
+        /** Ceiling for [songCache]; see [cacheSong]. */
+        const val MAX_SONG_CACHE_ENTRIES = 2_048
 
         // Android Auto Content Style Hints
         const val EXTRA_CONTENT_STYLE_SUPPORTED = "android.media.browse.extra.CONTENT_STYLE_SUPPORTED"
@@ -12371,3 +12400,13 @@ private fun missingMeta(song: com.music.bitchord.data.model.Song?): String {
     }
     return missing.ifEmpty { listOf("ok") }.joinToString(",")
 }
+
+/**
+ * How many entries [PlaybackService.cacheSong] has to drop so that adding one
+ * more keeps the cache at or below [max].
+ *
+ * Pure so the ceiling can be checked without a running service; returns zero
+ * while there is still room.
+ */
+internal fun songCacheEvictionCount(size: Int, max: Int): Int =
+    if (size >= max) size - max + 1 else 0

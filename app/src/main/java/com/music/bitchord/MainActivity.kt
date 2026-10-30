@@ -918,8 +918,6 @@ private fun BitChordApp(
     )
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
-    val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
-    val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
 
     // One line, once: how long from process start to real Home content. See
     // StartupTrace for where the other end of that measurement is. Keyed on a
@@ -951,17 +949,10 @@ private fun BitChordApp(
             showUpdateDialog = true
         }
     }
-    val query by viewModel.query.collectAsStateWithLifecycle()
-    val results by viewModel.results.collectAsStateWithLifecycle()
-    val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+    // Each tab's own data is collected where that tab is drawn, not here: this
+    // function is the shell around every page and sheet, so a keystroke in
+    // search must not rebuild it. See the per-branch collects below.
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
-    val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
-    val chartCountries by viewModel.chartCountries.collectAsStateWithLifecycle()
-    val libraryState by viewModel.library.collectAsStateWithLifecycle()
-    val filter by viewModel.filter.collectAsStateWithLifecycle()
-    val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
-    val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
-    val addonResults by viewModel.addonResults.collectAsStateWithLifecycle()
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val incomingJamInvite by JamInviteLink.pending.collectAsStateWithLifecycle()
     var activeJamInviteCode by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1018,20 +1009,6 @@ private fun BitChordApp(
     val googleAccounts by viewModel.googleAccounts.collectAsStateWithLifecycle()
     val activeAccountId by viewModel.activeAccountId.collectAsStateWithLifecycle()
     val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
-    val historyState by viewModel.history.collectAsStateWithLifecycle()
-    val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
-    val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
-    val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
-    val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
-    // Gemini writing the playing track's lyrics down, when no source had them:
-    // the panel says so instead of sitting on its skeleton for a minute.
-    val lyricsTranscribingVideos by LyricsRepository.transcribing.collectAsStateWithLifecycle()
-    val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
-    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
-    val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
-    val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
-    val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
-    val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
     // Local Music, Downloads and the other device folders draw as release
     // pages, but they have no artwork to wash the top inset in, so they keep
     // the plain bar; their top bar trades the overflow for a sort-and-view
@@ -1099,13 +1076,6 @@ private fun BitChordApp(
     // sort control because the button that opens it sits in the top bar beside
     // it, and reset with the page so a filter never follows you to the next one.
     var detailSearching by rememberSaveable(topDetail?.browseId) { mutableStateOf(false) }
-    val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
-    // Which tracks are being held on YouTube's own upload, so the player's menu
-    // offers the way back out of a revert rather than the revert again.
-    val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
-    val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
-    val playlists by viewModel.playlists.collectAsStateWithLifecycle()
-    val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
 
     LaunchedEffect(topDetail?.browseId) { detailActiveShelf = null }
 
@@ -1130,18 +1100,6 @@ private fun BitChordApp(
     // has anything left to open.
     val downloadedReleases = remember(savedCollections, savedDownloads) {
         Downloads.savedReleases()
-    }
-    // Playlists imported without (or instead of) a YouTube Music account live
-    // in the app's own store, and sit on the same shelf as the downloaded ones.
-    val localPlaylists by com.music.bitchord.data.spotify.LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
-    val localPlaylistItems = localPlaylists.map { playlist ->
-        ShelfItem(
-            title = playlist.title,
-            subtitle = stringResource(R.string.local_playlist_subtitle, playlist.songs.size),
-            thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
-            videoId = null,
-            browseId = playlist.browseId,
-        )
     }
     // What a browse id is recorded under in Downloads.collections, when it names
     // a release downloaded whole — see BrowseTarget.downloadId. A downloaded
@@ -2814,6 +2772,18 @@ private fun BitChordApp(
     // The player's whole parameter list, kept apart from the sheet that
     // mounts it so the sheet's own setup reads on its own.
     val nowPlaying: @Composable (Song) -> Unit = { song ->
+        // The player's own answers are collected here rather than in the shell,
+        // so a lyric arriving or a like changing repaints the player without
+        // rebuilding the pages and sheets behind it.
+        val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
+        val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
+        val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
+        val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
+        val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
+        // Gemini writing the playing track's lyrics down, when no source had them:
+        // the panel says so instead of sitting on its skeleton for a minute.
+        val lyricsTranscribingVideos by LyricsRepository.transcribing.collectAsStateWithLifecycle()
+        val lyricsProviderStates by viewModel.lyricsProviderStates.collectAsStateWithLifecycle()
         val effectiveSong = optimisticVersionSong?.takeIf {
             it.videoId == convertedAudioId || it.videoId == convertedVideoId || it.videoId == keepVideoId ||
             it.videoId == YtMusicRepository.cachedAudioVersion(song.videoId)?.videoId ||
@@ -3244,6 +3214,7 @@ private fun BitChordApp(
                     }
                     val pageContent: @Composable () -> Unit = {
                         if (pageRoute == AppRoute.History) {
+                            val historyState by viewModel.history.collectAsStateWithLifecycle()
                             HistoryScreen(
                                 state = historyState,
                                 listState = historyListState,
@@ -3415,6 +3386,7 @@ private fun BitChordApp(
                                 contentPadding = listPadding,
                             )
                         } else if (page != null) {
+                            val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
                             // Local Music, Downloads and the other device folders are
                             // this same release page: the header any playlist has, then
                             // Songs / Artists / Albums under it. An album or artist
@@ -3777,7 +3749,11 @@ private fun BitChordApp(
                                 },
                             )
                         } else when ((destination as? AppDestination.Tab)?.index ?: selectedTab) {
-                            TAB_HOME -> HomeScreen(
+                            TAB_HOME -> {
+                                val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
+                                val homeRecentlyPlayedLoading by
+                                    viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
+                                HomeScreen(
                                 state = homeState,
                                 listState = homeListState,
                                 currentSong = player.song,
@@ -3819,7 +3795,12 @@ private fun BitChordApp(
                                     AppSettings.setPrivateListening(false, PrivateListeningSource.SETTINGS)
                                 },
                             )
-                            TAB_EXPLORE -> selectedMoodGenre?.let { category ->
+                            }
+                            TAB_EXPLORE -> {
+                                val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+                                val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
+                                val chartCountries by viewModel.chartCountries.collectAsStateWithLifecycle()
+                                selectedMoodGenre?.let { category ->
                                 MoodGenrePlaylistsScreen(
                                     title = category.title,
                                     state = moodGenreShelves,
@@ -3872,7 +3853,22 @@ private fun BitChordApp(
                                 pullState = explorePull,
                                 contentPadding = listPadding,
                             )
-                            TAB_SEARCH -> SearchScreen(
+                            }
+                            TAB_SEARCH -> {
+                                val query by viewModel.query.collectAsStateWithLifecycle()
+                                val results by viewModel.results.collectAsStateWithLifecycle()
+                                val filter by viewModel.filter.collectAsStateWithLifecycle()
+                                val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
+                                val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+                                val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+                                val searchLoadingMore by
+                                    viewModel.searchLoadingMore.collectAsStateWithLifecycle()
+                                val searchScrollReset by
+                                    viewModel.searchScrollReset.collectAsStateWithLifecycle()
+                                val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
+                                val addonResults by viewModel.addonResults.collectAsStateWithLifecycle()
+                                val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+                                SearchScreen(
                                 query = query,
                                 onQueryChange = viewModel::onQueryChange,
                                 filter = filter,
@@ -4053,7 +4049,26 @@ private fun BitChordApp(
                                     )
                                 },
                             )
-                            else -> LibraryScreen(
+                            }
+                            else -> {
+                                val libraryState by viewModel.library.collectAsStateWithLifecycle()
+                                val localPlaylists by
+                                    com.music.bitchord.data.spotify.LocalPlaylistStore.playlists
+                                        .collectAsStateWithLifecycle()
+                                val localPlaylistItems = localPlaylists.map { playlist ->
+                                    ShelfItem(
+                                        title = playlist.title,
+                                        subtitle = stringResource(
+                                            R.string.local_playlist_subtitle,
+                                            playlist.songs.size,
+                                        ),
+                                        thumbnailUrl = playlist.songs
+                                            .firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+                                        videoId = null,
+                                        browseId = playlist.browseId,
+                                    )
+                                }
+                                LibraryScreen(
                                 signedIn = signedIn,
                                 state = libraryState,
                                 listState = libraryListState,
@@ -4088,6 +4103,7 @@ private fun BitChordApp(
                                 deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
                                 isPlaying = player.isPlaying,
                             )
+                            }
                         }
                     }
                     // A pushed page keeps its saved state — a scroll position,
@@ -4229,6 +4245,10 @@ private fun BitChordApp(
                             // The search field lives up here in the bar, beside the
                             // account photo, so it answers the nav bar's Search tap
                             // itself: focus and keyboard, the way the page used to.
+                            // Collected here, not in the app shell: a keystroke
+                            // must rebuild the field, not every page and sheet.
+                            val query by viewModel.query.collectAsStateWithLifecycle()
+                            val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
                             val keyboard = LocalSoftwareKeyboardController.current
                             LaunchedEffect(searchFocusRequested) {
                                 if (searchFocusRequested) {
@@ -4811,6 +4831,17 @@ private fun BitChordApp(
         // and the player open, and the popup a held row lifts into. Every
         // callback below is the same in either; only the frame differs.
         val songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit = { heldSong, presentation ->
+            // Menu-only answers, collected with the menu itself: liking,
+            // reverting, a quality race and the lyric snapshot are read here
+            // and nowhere else, so they must not invalidate the app shell.
+            val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
+            // Which tracks are being held on YouTube's own upload, so the player's menu
+            // offers the way back out of a revert rather than the revert again.
+            val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
+            val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
+            val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
+            val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
+            val playlists by viewModel.playlists.collectAsStateWithLifecycle()
             // Set by whoever opened it — see [menuFromPlayer]. It cannot be
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
@@ -5313,6 +5344,8 @@ private fun BitChordApp(
                 onDismissRequest = dismiss,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
+                val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+                val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
                 PlaylistPickerSheet(
                     playlists = playlists,
                     loading = playlistsLoading,
@@ -5384,6 +5417,9 @@ private fun BitChordApp(
         // the whole release — the queue rows above all.
         // One body for the sheet and the popup alike — see songMenuBody.
         val browseMenuBody: @Composable (BrowseTarget, SongActionsPresentation) -> Unit = { target, presentation ->
+            // Collection rows change while this sheet is up; the shell must not
+            // rebuild for them.
+            val playlists by viewModel.playlists.collectAsStateWithLifecycle()
             // Every row here closes the menu first: the tracks may still have to
             // be fetched, and leaving the sheet up over a request nothing on it
             // reports on reads as a tap that didn't land.
