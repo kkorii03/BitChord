@@ -1385,12 +1385,25 @@ object StreamResolver {
         // that was deliberately deferred until someone asked for a track.
         InnerTubeXResolver.ensureWarm()
         val stream = downloadStream(videoId, maxKbps, requireM4a)
-        val allowed = if (requireM4a) setOf("m4a") else setOf("m4a", "webm")
-        check(stream.downloadExtension in allowed) {
+        check(downloadContainerAllowed(stream.downloadExtension, requireM4a)) {
             "Can't save ${stream.mimeType} — try again"
         }
         return stream
     }
+
+    /**
+     * Whether a download may keep [extension].
+     *
+     * Only an export to the system Music collection insists on AAC-in-MP4.
+     * An app-private download has always accepted either container — see
+     * [downloadStream]'s own allowed set — so an InnerTubeX answer that came
+     * back as MP4 must not be thrown away just because Opus would have been
+     * preferred. Doing so sent the download on to extraction, which was then
+     * asked for a rendition the track may not have, and failed a track whose
+     * perfectly usable MP4 was already in hand.
+     */
+    internal fun downloadContainerAllowed(extension: String, requireM4a: Boolean): Boolean =
+        if (requireM4a) extension == "m4a" else extension == "m4a" || extension == "webm"
 
     private suspend fun downloadStream(videoId: String, maxKbps: Int, requireM4a: Boolean): Stream =
         withContext(TrackLog.about(videoId)) {
@@ -1424,7 +1437,7 @@ object StreamResolver {
             // answer; above it (best Opus over Standard's 128kbps) extraction
             // below can pick the lower rung, and this is kept as the fallback.
             val found = innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a)
-                ?.takeIf { if (requireM4a) it.downloadExtension == "m4a" else it.downloadExtension == "webm" }
+                ?.takeIf { downloadContainerAllowed(it.downloadExtension, requireM4a) }
             if (found != null) {
                 offered = true
                 if (found.kbps <= maxKbps) return@withContext found
@@ -1510,7 +1523,7 @@ object StreamResolver {
             return null
         }
         val wantedExtension = if (requireM4a) "m4a" else "webm"
-        if (found.downloadExtension != wantedExtension) {
+        if (!downloadContainerAllowed(found.downloadExtension, requireM4a)) {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: ${found.mimeType} is not $wantedExtension")
             return null
         }

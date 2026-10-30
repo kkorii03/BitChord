@@ -29,4 +29,44 @@ class AutoplayQueuePolicyTest {
         assertFalse(autoplayTopUpNeeded(true, false, 2, minAhead = 2))
         assertTrue(autoplayTopUpNeeded(true, false, 1, minAhead = 2))
     }
+
+    @Test
+    fun `a batch appended after the queue ended is started explicitly`() {
+        assertTrue(
+            shouldResumeAfterTopUp(
+                playbackEnded = true,
+                playWhenReady = true,
+                appendedAtEnd = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a paused queue is not un-paused by a late top-up`() {
+        assertFalse(
+            shouldResumeAfterTopUp(
+                playbackEnded = true,
+                playWhenReady = false,
+                appendedAtEnd = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a top-up that did not land at the end leaves the playhead alone`() {
+        assertFalse(
+            shouldResumeAfterTopUp(
+                playbackEnded = true,
+                playWhenReady = true,
+                appendedAtEnd = false,
+            ),
+        )
+        assertFalse(
+            shouldResumeAfterTopUp(
+                playbackEnded = false,
+                playWhenReady = true,
+                appendedAtEnd = true,
+            ),
+        )
+    }
 }

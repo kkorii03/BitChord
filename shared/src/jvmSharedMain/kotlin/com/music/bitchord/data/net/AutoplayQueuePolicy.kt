@@ -27,3 +27,25 @@ fun autoplayTopUpNeeded(
     queuedAhead: Int,
     minAhead: Int = AUTOPLAY_MIN_QUEUED_AHEAD,
 ): Boolean = enabled && !repeatAll && queuedAhead < minAhead
+
+/**
+ * Whether a batch appended at the end of a finished queue has to be started
+ * explicitly.
+ *
+ * ExoPlayer stays in `STATE_ENDED` when items are added after the last one has
+ * played; the new rows are queued but nothing seeks to them, so AutoPlay could
+ * fill the tail and still leave the listener in silence until they pressed
+ * play. Resuming is only right for a queue that actually ran out while the
+ * listener still wanted sound: [playWhenReady] is false after a pause, and a
+ * top-up that landed while some other row was current must not move the
+ * playhead.
+ *
+ * @param playbackEnded the player was in `STATE_ENDED` before the append.
+ * @param playWhenReady the listener had not paused.
+ * @param appendedAtEnd the new rows were added after the current last row.
+ */
+fun shouldResumeAfterTopUp(
+    playbackEnded: Boolean,
+    playWhenReady: Boolean,
+    appendedAtEnd: Boolean,
+): Boolean = playbackEnded && playWhenReady && appendedAtEnd

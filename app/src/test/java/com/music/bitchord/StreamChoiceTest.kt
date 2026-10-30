@@ -1,5 +1,10 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.net.ProxyConfig
+import com.music.bitchord.data.net.ProxyMode
+import com.music.bitchord.data.net.ProxyPlayback
+import com.music.bitchord.data.net.ProxyScope
+import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.playback.QualityUpgrade
@@ -109,5 +114,39 @@ class StreamChoiceTest {
 
         assertNull(StreamChoice.of("track-6"))
         assertEquals(false, StreamChoice.isSubstitute("track-6"))
+    }
+
+    /**
+     * A proxied URL is bound to the server that minted it. Pinning it here must
+     * not outlive the route: after the proxy is switched off or moved, handing
+     * the old URL back is a 403 rather than a play.
+     */
+    @Test
+    fun `a proxied choice stops being handed back after the route changes`() {
+        val id = "track-proxy"
+        val url = "https://rr1.googlevideo.com/videoplayback?proxied=$id"
+        try {
+            YouTubeProxy.update(
+                ProxyConfig(
+                    mode = ProxyMode.HTTP,
+                    host = "proxy.example",
+                    port = 8080,
+                    scope = ProxyScope.MUSIC_ONLY,
+                ),
+            )
+            ProxyPlayback.markResolved(id, url)
+            StreamChoice.remember(id, SourceStream(url), substituted = false)
+            assertNotNull(StreamChoice.of(id))
+
+            YouTubeProxy.update(ProxyConfig())
+
+            assertNull(
+                "a URL minted on the old proxy route was handed back after the route changed",
+                StreamChoice.of(id),
+            )
+        } finally {
+            StreamChoice.forget(id)
+            YouTubeProxy.update(ProxyConfig())
+        }
     }
 }

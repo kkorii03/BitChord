@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import android.os.SystemClock
+import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.sources.SourceStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -74,7 +75,9 @@ object StreamChoice {
      */
     fun of(videoId: String): SourceStream? {
         val choice = chosen[videoId] ?: return null
-        if (SystemClock.elapsedRealtime() - choice.at > TTL_MS) {
+        if (SystemClock.elapsedRealtime() - choice.at > TTL_MS ||
+            ProxyPlayback.isStaleProxiedUrl(choice.stream.url)
+        ) {
             chosen.remove(videoId)
             return null
         }

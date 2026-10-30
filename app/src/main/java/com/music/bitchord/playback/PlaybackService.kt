@@ -108,6 +108,7 @@ import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.AUTOPLAY_MIN_QUEUED_AHEAD
 import com.music.bitchord.data.net.autoplayTopUpNeeded
+import com.music.bitchord.data.net.shouldResumeAfterTopUp
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.Innertube
@@ -3670,7 +3671,26 @@ class PlaybackService : MediaLibraryService() {
                             .filterNot { song -> queuedNow.any { QueueBuilder.isSameRecording(it, song) } }
                             .take(room.coerceAtLeast(0))
                         if (fresh.isNotEmpty()) {
+                            // ExoPlayer stays in STATE_ENDED when rows are added
+                            // after the last one played: the queue grows but
+                            // nothing seeks to it. Without this the tail was
+                            // filled and the listener still heard silence until
+                            // they pressed play themselves.
+                            val ended = latestPlayer.playbackState == Player.STATE_ENDED
+                            val atEnd = latestPlayer.currentMediaItemIndex ==
+                                latestPlayer.mediaItemCount - 1
+                            val firstAdded = latestPlayer.mediaItemCount
                             latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
+                            if (shouldResumeAfterTopUp(
+                                    playbackEnded = ended,
+                                    playWhenReady = latestPlayer.playWhenReady,
+                                    appendedAtEnd = atEnd,
+                                )
+                            ) {
+                                latestPlayer.seekTo(firstAdded, 0L)
+                                latestPlayer.prepare()
+                                latestPlayer.play()
+                            }
                             autoplaySessionIds += fresh.map { it.videoId }
                             TrackLog.i(
                                 "BitChord",
@@ -5359,7 +5379,17 @@ class PlaybackService : MediaLibraryService() {
     private fun skipPastUnplayable(mediaId: String, reason: String) {
         val exoPlayer = player ?: return
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
-        if (!exoPlayer.hasNextMediaItem()) {
+        // Repeat-one reports the current row as the next one, so
+        // seekToNextMediaItem() would stay on the track that just failed and
+        // the verdict would loop: prepare, fail, "skip" to itself. Pick a
+        // genuinely different row instead, and stop when there is none.
+        val target = SkipTargetPolicy.targetAfterFailure(
+            currentIndex = exoPlayer.currentMediaItemIndex,
+            nextIndex = exoPlayer.nextMediaItemIndex,
+            itemCount = exoPlayer.mediaItemCount,
+            repeatOne = exoPlayer.repeatMode == Player.REPEAT_MODE_ONE,
+        )
+        if (target == SkipTargetPolicy.NO_TARGET) {
             TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
             reportPlaybackFailure(mediaId, R.string.playback_error)
             return
@@ -5368,7 +5398,7 @@ class PlaybackService : MediaLibraryService() {
         TrackLog.d("BitChord", "cmd: next from failure", about = mediaId)
         if (summarySong?.videoId == mediaId) summaryEndedOverride = "error"
         reportPlaybackFailure(mediaId, R.string.playback_unplayable_skipped)
-        exoPlayer.seekToNextMediaItem()
+        exoPlayer.seekTo(target, 0L)
         // No play() here: an error does not clear playWhenReady, so prepare()
         // resumes exactly as far as the listener had asked for. Calling play()
         // would un-pause a queue they had paused.

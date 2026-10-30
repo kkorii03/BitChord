@@ -214,6 +214,17 @@ object ProxyPlayback {
 
     fun isProxiedUrl(url: String): Boolean = proxiedUrls.containsKey(canonical(url))
 
+    /**
+     * Whether [url] was minted on a proxy route that is no longer in force.
+     *
+     * A direct URL — or one this process never saw minted — is never stale. A
+     * proxied URL whose generation has moved, or whose proxy has since been
+     * switched off, must not be handed to a player: googlevideo binds it to the
+     * old server's address and answers 403.
+     */
+    fun isStaleProxiedUrl(url: String): Boolean =
+        isProxiedUrl(url) && !usesProxyFor(url)
+
     /** The route generation that minted [url], or null when it was not proxied. */
     fun generationFor(url: String): Long? = proxiedUrls[canonical(url)]?.generation
 
