@@ -13,6 +13,13 @@
     <exclude domain="sharedpref" path="bitchord_auth_plain.xml" />
     <exclude domain="sharedpref" path="bitchord_sources.xml" />
     <exclude domain="sharedpref" path="bitchord_sources_plain.xml" />
+    <!--
+       HQ plans and verdicts name a sourceConfigId. Sources are device-local and
+       excluded above, so restoring these without them would leave targets that
+       can never resolve; the pass re-plans on the device that owns the sources.
+    -->
+    <exclude domain="sharedpref" path="hq_library.xml" />
+    <exclude domain="sharedpref" path="hq_verification.xml" />
     <!-- Playback queues are local session state; do not resurrect them after reinstall. -->
     <exclude domain="sharedpref" path="bitchord_last_played.xml" />
     <exclude domain="sharedpref" path="bitchord_bounded_context.xml" />

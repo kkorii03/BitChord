@@ -10,6 +10,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
+import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.spotify.LocalPlaylist
 import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.PlaylistImportMode
@@ -75,6 +76,11 @@ object Backup {
         runCatching {
             val buckets = ListeningStats.exportAll()
             val overrides = LikeState.overrides.value
+            // TasteSignals holds ratings already written to disk on an earlier
+            // run; session overrides cover one made since launch and win over
+            // an older stored value. Union them so an export after a restart
+            // still carries the listener's likes instead of only this process.
+            val ratings = TasteSignals.ratings() + overrides
             val file = BackupFile(
                 app = APP_TAG,
                 version = SCHEMA_VERSION,
@@ -89,8 +95,8 @@ object Backup {
                     }.toMap(),
                 listening = buckets,
                 localPlaylists = LocalPlaylistStore.exportAll().map { BackupPlaylist.from(it) },
-                likedVideoIds = overrides.filterValues { it == LikeStatus.LIKE }.keys.sorted(),
-                dislikedVideoIds = overrides.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
+                likedVideoIds = ratings.filterValues { it == LikeStatus.LIKE }.keys.sorted(),
+                dislikedVideoIds = ratings.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
                 searchHistory = SearchHistory.export(),
             )
             val text = encode(file)
@@ -143,8 +149,15 @@ object Backup {
                 // Explicit rather than relying on the settings map: schema 2
                 // states the list itself, and an empty list is a real answer.
                 SearchHistory.replace(file.searchHistory)
-                file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
-                file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
+                val restoredRatings = buildMap {
+                    file.likedVideoIds.forEach { put(it, LikeStatus.LIKE) }
+                    file.dislikedVideoIds.forEach { put(it, LikeStatus.DISLIKE) }
+                }
+                restoredRatings.forEach { (videoId, status) -> LikeState.set(videoId, status) }
+                // LikeState makes the restore visible now; TasteSignals is what
+                // survives the next launch, which the session map alone did not.
+                TasteSignals.restoreRatings(restoredRatings)
+                TasteSignals.flush()
             }
             Summary(
                 months = file.listening.size,

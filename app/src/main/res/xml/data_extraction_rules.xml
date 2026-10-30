@@ -9,6 +9,9 @@
         <exclude domain="sharedpref" path="bitchord_auth_plain.xml" />
         <exclude domain="sharedpref" path="bitchord_sources.xml" />
         <exclude domain="sharedpref" path="bitchord_sources_plain.xml" />
+        <!-- HQ plans and verdicts refer to sources that are device-local and excluded. -->
+        <exclude domain="sharedpref" path="hq_library.xml" />
+        <exclude domain="sharedpref" path="hq_verification.xml" />
         <!-- Playback queues are local session state; do not resurrect them after reinstall. -->
         <exclude domain="sharedpref" path="bitchord_last_played.xml" />
         <exclude domain="sharedpref" path="bitchord_bounded_context.xml" />
@@ -19,6 +22,9 @@
         <exclude domain="sharedpref" path="bitchord_auth_plain.xml" />
         <exclude domain="sharedpref" path="bitchord_sources.xml" />
         <exclude domain="sharedpref" path="bitchord_sources_plain.xml" />
+        <!-- HQ plans and verdicts refer to sources that are device-local and excluded. -->
+        <exclude domain="sharedpref" path="hq_library.xml" />
+        <exclude domain="sharedpref" path="hq_verification.xml" />
         <!-- Playback queues are local session state; do not resurrect them after reinstall. -->
         <exclude domain="sharedpref" path="bitchord_last_played.xml" />
         <exclude domain="sharedpref" path="bitchord_bounded_context.xml" />
