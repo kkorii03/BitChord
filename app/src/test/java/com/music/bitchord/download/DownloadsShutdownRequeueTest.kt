@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -37,6 +38,8 @@ class DownloadsShutdownRequeueTest {
     @Suppress("UNCHECKED_CAST")
     private val active = field("_active").get(Downloads) as MutableStateFlow<Map<String, DownloadState>>
 
+    private val claimIdsField = field("claimIds")
+
     @Before
     fun setUp() {
         Downloads.onStopped()
@@ -44,6 +47,7 @@ class DownloadsShutdownRequeueTest {
         clearSet(automaticField)
         clearSet(mvRepairField)
         clearSet(requeuedField)
+        clearMap(claimIdsField)
         active.value = emptyMap()
         DownloadSession.clear()
     }
@@ -55,6 +59,7 @@ class DownloadsShutdownRequeueTest {
         clearSet(automaticField)
         clearSet(mvRepairField)
         clearSet(requeuedField)
+        clearMap(claimIdsField)
         active.value = emptyMap()
         DownloadSession.clear()
     }
@@ -64,7 +69,7 @@ class DownloadsShutdownRequeueTest {
         add(automaticField)
         add(mvRepairField)
         pending[videoId] = song
-        assertEquals(song, Downloads.takeNext())
+        assertEquals(song, take().song)
         // [Downloads.run] removes these two when the transfer starts; a requeue
         // has to put them back or the retry is no longer a pinned replacement.
         remove(automaticField)
@@ -90,7 +95,7 @@ class DownloadsShutdownRequeueTest {
     fun `a transfer that already finished is not put back in the queue`() {
         add(automaticField)
         pending[videoId] = song
-        assertEquals(song, Downloads.takeNext())
+        assertEquals(song, take().song)
         remove(automaticField)
         // A completed transfer clears its active row; the job may still be
         // between that clear and onIdle when the shutdown arrives.
@@ -106,7 +111,7 @@ class DownloadsShutdownRequeueTest {
     fun `an automatic transfer without a manager row does not gain one`() {
         add(automaticField)
         pending[videoId] = song
-        assertEquals(song, Downloads.takeNext())
+        assertEquals(song, take().song)
         remove(automaticField)
         active.value = mapOf(videoId to DownloadState.Running(0.25f))
 
@@ -119,15 +124,66 @@ class DownloadsShutdownRequeueTest {
     @Test
     fun `a requeued row is not claimed again while its old worker still owns it`() {
         pending[videoId] = song
-        assertEquals(song, Downloads.takeNext())
+        val first = take()
         active.value = mapOf(videoId to DownloadState.Running(0.25f))
 
         Downloads.requeueInFlightForShutdown()
         assertNull(Downloads.takeNext())
 
         Downloads.onStopped()
-        assertEquals(song, Downloads.takeNext())
+        val second = take()
+        assertEquals(song, second.song)
+        assertTrue(second.claimId != first.claimId)
     }
+
+    @Test
+    fun `a requeued transfer keeps its request when its old worker starts late`() {
+        add(automaticField)
+        add(mvRepairField)
+        pending[videoId] = song
+        val claim = take()
+        // [run] removes the flags after [takeNext]; the shutdown's requeue puts
+        // them back, but the old worker can still start and take them away
+        // again before it sees the cancellation.
+        remove(automaticField)
+        remove(mvRepairField)
+        active.value = mapOf(videoId to DownloadState.Running(0.25f))
+
+        Downloads.requeueInFlightForShutdown()
+
+        assertNull(Downloads.beginRun(videoId, claim.claimId))
+        assertTrue(contains(automaticField))
+        assertTrue(contains(mvRepairField))
+
+        Downloads.onStopped()
+        val retry = take()
+        val flags = requireNotNull(Downloads.beginRun(videoId, retry.claimId))
+        assertTrue(flags.automatic)
+        assertTrue(flags.mvRepair)
+    }
+
+    @Test
+    fun `a stale worker leaves the claim that replaced it alone`() {
+        add(automaticField)
+        pending[videoId] = song
+        val old = take()
+        active.value = mapOf(videoId to DownloadState.Running(0.25f))
+
+        Downloads.requeueInFlightForShutdown()
+        Downloads.onStopped()
+        val replacement = take()
+
+        // The old job can only find out it was cancelled after the new service
+        // has already claimed the row. Its cleanup must be a no-op, and the
+        // replacement's claim must stay intact until its own worker finishes.
+        assertNull(Downloads.beginRun(videoId, old.claimId))
+        Downloads.onIdle(videoId, old.claimId)
+        assertNull(Downloads.takeNext())
+        assertTrue(contains(automaticField))
+        assertNotNull(Downloads.beginRun(videoId, replacement.claimId))
+    }
+
+    private fun take(): Downloads.Claim = requireNotNull(Downloads.takeNext())
 
     private fun field(name: String) = Downloads::class.java
         .getDeclaredField(name)
@@ -136,6 +192,11 @@ class DownloadsShutdownRequeueTest {
     private fun clearSet(field: java.lang.reflect.Field) {
         @Suppress("UNCHECKED_CAST")
         (field.get(Downloads) as MutableSet<String>).clear()
+    }
+
+    private fun clearMap(field: java.lang.reflect.Field) {
+        @Suppress("UNCHECKED_CAST")
+        (field.get(Downloads) as MutableMap<String, *>).clear()
     }
 
     private fun add(field: java.lang.reflect.Field) {

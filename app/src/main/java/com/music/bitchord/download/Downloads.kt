@@ -282,6 +282,21 @@ object Downloads {
     private val running = LinkedHashMap<String, InFlight>()
 
     /**
+     * The claim each id currently belongs to, including a requeued row whose
+     * old job is still finishing. A handler that no longer matches its claim
+     * must not clear the newer worker's overrides or settle it.
+     * Guarded by [lock].
+     */
+    private val claimIds = HashMap<String, Long>()
+
+    private var nextClaimId = 0L
+
+    /** One worker's claim on a row, so a stale handler can recognise itself. */
+    internal data class Claim(val song: Song, val claimId: Long)
+
+    internal class RunFlags(val automatic: Boolean, val mvRepair: Boolean)
+
+    /**
      * What a worker claimed, kept with the job so a foreground-service timeout
      * can put the row back in the queue with the same request it had.
      */
@@ -290,6 +305,7 @@ object Downloads {
         /** The automatic-pass flags [run] removes when it starts; restored on requeue. */
         val automatic: Boolean,
         val mvRepair: Boolean,
+        val claimId: Long,
         var job: Job? = null,
     )
 
@@ -1775,33 +1791,56 @@ object Downloads {
      * instant where a track is in neither the queue nor the running slot and a
      * [cancel] for it would quietly do nothing.
      */
-    internal fun takeNext(): Song? = synchronized(lock) {
+    internal fun takeNext(): Claim? = synchronized(lock) {
         // A row requeued by a shutdown can still be named by its old worker
         // until [onStopped] runs; it is not available to a new worker yet.
         val entry = pending.entries.firstOrNull { it.key !in running } ?: return null
         pending.remove(entry.key)
         requeuedForShutdown.remove(entry.key)
+        val claimId = ++nextClaimId
+        claimIds[entry.key] = claimId
         running[entry.key] = InFlight(
             song = entry.value,
             automatic = entry.key in automaticIds,
             mvRepair = entry.key in mvSoundRepairIds,
+            claimId = claimId,
         )
-        entry.value
+        Claim(entry.value, claimId)
     }
 
     /** Attach the job fetching [videoId], unless it has been cancelled meanwhile. */
-    internal fun onRunning(videoId: String, job: Job) {
+    internal fun onRunning(videoId: String, claimId: Long, job: Job) {
         val cancelled = synchronized(lock) {
-            val inFlight = running[videoId] ?: return@synchronized true
+            val inFlight = running[videoId]
+            if (inFlight == null || inFlight.claimId != claimId) return@synchronized true
             inFlight.job = job
             false
         }
         if (cancelled) job.cancel()
     }
 
+    /**
+     * Take the flags for a claim that is actually starting.
+     *
+     * Returns null when a newer worker owns the id, or when a shutdown already
+     * requeued this row. In the latter case the flags stay in the sets: the
+     * retry reads them, and removing them here used to turn an automatic or
+     * MV-repair request into an ordinary user download.
+     */
+    internal fun beginRun(videoId: String, claimId: Long): RunFlags? = synchronized(lock) {
+        if (claimIds[videoId] != claimId) return@synchronized null
+        if (videoId in requeuedForShutdown) return@synchronized null
+        RunFlags(
+            automatic = automaticIds.remove(videoId),
+            mvRepair = mvSoundRepairIds.remove(videoId),
+        )
+    }
+
     /** [videoId] is finished, one way or another, and no longer holds a worker. */
-    internal fun onIdle(videoId: String) {
+    internal fun onIdle(videoId: String, claimId: Long) {
         synchronized(lock) {
+            if (claimIds[videoId] != claimId) return@synchronized
+            claimIds.remove(videoId)
             running.remove(videoId)
             requeuedForShutdown.remove(videoId)
         }
@@ -1886,10 +1925,11 @@ object Downloads {
      * shared between them but the two state flows, and both are written through
      * atomic updates for exactly that reason.
      */
-    internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
+    internal suspend fun run(context: Context, song: Song, claimId: Long) = withContext(Dispatchers.IO) {
         val id = song.videoId
-        val automatic = synchronized(lock) { automaticIds.remove(id) }
-        val mvRepair = synchronized(lock) { mvSoundRepairIds.remove(id) }
+        val flags = beginRun(id, claimId) ?: return@withContext
+        val automatic = flags.automatic
+        val mvRepair = flags.mvRepair
         // Set before the lookup, not after it. Resolving where a lossless track
         // comes from is the long part of a download, and leaving the row on
         // "Queued" for all of it reads as a queue that has stopped rather than
@@ -1939,14 +1979,22 @@ object Downloads {
             cancelled = true
             // A shutdown already put this row back in the queue with its
             // request; clearing here would erase that work and lose the
-            // pinned source/tier the retry needs.
-            requeued = synchronized(lock) { requeuedForShutdown.remove(id) }
-            if (!requeued) clear(id)
+            // pinned source/tier the retry needs. A newer claim owns the id
+            // after a restart, so a stale handler must touch nothing.
+            synchronized(lock) {
+                if (claimIds[id] != claimId) throw e
+                requeued = requeuedForShutdown.remove(id)
+                if (!requeued) clear(id)
+            }
             throw e
         } catch (e: Exception) {
             // A shutdown may have queued this row again while the failure was
             // being thrown; keep the request and let the retry answer.
-            requeued = synchronized(lock) { requeuedForShutdown.remove(id) }
+            val current = synchronized(lock) {
+                if (claimIds[id] != claimId) return@synchronized false
+                requeued = requeuedForShutdown.remove(id)
+                true
+            }
             // A 429 is back-pressure, not a stack worth printing on every
             // automatic target; the one line says which host and when the
             // pass will try again. A deferred automatic download is the same
@@ -1960,7 +2008,11 @@ object Downloads {
                     Log.w(TAG, "download rate limited for $id: HTTP $rateLimit")
                 else -> Log.w(TAG, "download failed for $id: ${e.message}", e)
             }
-            if (automatic) {
+            // A restarted service may already be downloading this id again.
+            // That worker owns the overrides and the visible row now.
+            if (!current) {
+                // Nothing to settle; the newer claim will report its own result.
+            } else if (automatic) {
                 failure = e.automaticFailure()
                 // No DownloadSession row: the pass reports its own wait, and a
                 // server's 429 is not a failure the listener needs a badge for.
@@ -1971,40 +2023,47 @@ object Downloads {
             }
         } finally {
             if (host != null) HqHostTracker.endDownload(id, host)
-            // The worker may have finished without ever seeing the cancellation
-            // (the stop landed just as the transfer returned); pick up the
-            // shutdown's marker here too.
-            requeued = requeued || synchronized(lock) { requeuedForShutdown.remove(id) }
-            if (requeued) {
-                if (completed) {
-                    // The transfer finished in the same instant the service
-                    // stopped: keep the completion and drop the queue entry
-                    // the shutdown put back.
-                    synchronized(lock) { pending.remove(id) }
-                } else {
-                    // A failure in that window is not the final answer — the
-                    // row is going back into the queue. Automatic-pass work
-                    // has no manager row, so only reset one that exists.
-                    _active.update { it + (id to DownloadState.Queued) }
-                    if (DownloadSession.state.value.items.any { it.videoId == id }) {
-                        DownloadSession.queued(song)
+            var ownsClaim = false
+            synchronized(lock) {
+                if (claimIds[id] != claimId) return@synchronized
+                ownsClaim = true
+                // The worker may have finished without ever seeing the
+                // cancellation (the stop landed just as the transfer returned);
+                // pick up the shutdown's marker here too.
+                requeued = requeued || requeuedForShutdown.remove(id)
+                if (requeued) {
+                    if (completed) {
+                        // The transfer finished in the same instant the service
+                        // stopped: keep the completion and drop the queue entry
+                        // the shutdown put back.
+                        pending.remove(id)
+                    } else {
+                        // A failure in that window is not the final answer — the
+                        // row is going back into the queue. Automatic-pass work
+                        // has no manager row, so only reset one that exists.
+                        _active.update { it + (id to DownloadState.Queued) }
+                        if (DownloadSession.state.value.items.any { it.videoId == id }) {
+                            DownloadSession.queued(song)
+                        }
                     }
                 }
             }
-            if (mvRepair && !cancelled && (!requeued || completed)) {
-                if (completed) {
-                    MvSoundRedownload.clearFailed(context, id)
-                } else {
-                    MvSoundRedownload.markFailed(context, id)
+            if (ownsClaim) {
+                if (mvRepair && !cancelled && (!requeued || completed)) {
+                    if (completed) {
+                        MvSoundRedownload.clearFailed(context, id)
+                    } else {
+                        MvSoundRedownload.markFailed(context, id)
+                    }
                 }
-            }
-            // One HQ target at a time: the next one is only queued once this
-            // one has landed or failed, so the pass cannot fan out into the
-            // four-worker download queue. Cheap for ordinary downloads — the
-            // id is not the pass's active target and the call returns. A row
-            // requeued for a shutdown has not settled; the retry will answer.
-            if (!requeued || completed) {
-                HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure)
+                // One HQ target at a time: the next one is only queued once this
+                // one has landed or failed, so the pass cannot fan out into the
+                // four-worker download queue. Cheap for ordinary downloads — the
+                // id is not the pass's active target and the call returns. A row
+                // requeued for a shutdown has not settled; the retry will answer.
+                if (!requeued || completed) {
+                    HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure)
+                }
             }
         }
     }
