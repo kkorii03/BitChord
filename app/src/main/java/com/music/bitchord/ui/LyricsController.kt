@@ -19,6 +19,7 @@ import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.playback.smart.SyncTestMode
+import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
@@ -657,14 +658,24 @@ class LyricsController(
         // As the source timed them, until [refreshTiming] says otherwise.
         appliedTiming = null
         if (lines != null) _lyrics.value = lines
+        val audioReady = request != null && VideoAudio.audioReadyForTiming(request.videoId)
         _lyricsTiming.value = LyricsTimingUi(
             adjustable = adjustable,
             manualAvailable = timed,
             videoOwn = videoOwn,
             // A hand-asked timing tries Deepgram/Whisper first and Gemini
-            // after, so either key makes the action meaningful.
-            aiAvailable = LyricsTranslation.geminiKeyUsable ||
-                com.music.bitchord.data.lyrics.Deepgram.usable,
+            // after. Deepgram is skipped for Korean/instrumental titles and
+            // needs the song's audio on disk, so a Deepgram-only setup has no
+            // engine for those cases — offering the action would only end in
+            // aiFailed.
+            aiAvailable = LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = LyricsTranslation.geminiKeyUsable,
+                deepgramUsable = com.music.bitchord.data.lyrics.Deepgram.usable,
+                audioAvailable = audioReady,
+                title = request?.title.orEmpty(),
+                artist = request?.artist.orEmpty(),
+                lyricsTexts = lines.orEmpty().map { it.text },
+            ),
         )
         if (!timed || request == null || lines == null) return
         val generation = lyricsGeneration

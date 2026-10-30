@@ -75,6 +75,18 @@ object VideoAudio {
     }
 
     /**
+     * Whether [wav] already holds, or could return without waiting, the
+     * song's sound for [videoId] — the same two checks [wav] makes before it
+     * decodes. The AI timing action uses this to stay off when Deepgram is
+     * the only engine set up and there is nothing for it to hear.
+     */
+    fun audioReadyForTiming(videoId: String): Boolean {
+        synchronized(recent) { recent[videoId] }?.let { return true }
+        if (!PowerState.screenOn) return false
+        return VersionAudioAligner.renditionToMeasure(videoId)?.isComplete == true
+    }
+
+    /**
      * The opening of [song] — by default [SONG_CHECK_SECONDS] — as a 16 kHz
      * mono WAV, so a record-timed song's lyrics can be checked against the
      * recording that is playing.

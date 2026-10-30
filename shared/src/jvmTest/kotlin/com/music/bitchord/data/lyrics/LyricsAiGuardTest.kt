@@ -140,6 +140,65 @@ class LyricsAiGuardTest {
     }
 
     @Test
+    fun aHandTimingNeedsAnEngineThatCanAnswerForThisSong() {
+        // Regression: the action was offered from key presence alone. A
+        // Deepgram-only setup then pressed it on Korean/instrumental songs or
+        // before the audio was on disk and only got aiFailed.
+        assertTrue(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = listOf("I love you forever"),
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                title = "사랑해",
+                artist = "아이유",
+                lyricsTexts = listOf("사랑해 너를 영원히"),
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = true,
+                title = "River Flows in You (Inst.)",
+                artist = "Yiruma",
+                lyricsTexts = listOf("la la"),
+            ),
+        )
+        assertFalse(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = false,
+                deepgramUsable = true,
+                audioAvailable = false,
+                title = "Loved",
+                artist = "IU",
+                lyricsTexts = listOf("I love you forever"),
+            ),
+        )
+        // Gemini fetches the video, so it needs neither Deepgram's title rule
+        // nor the audio on disk.
+        assertTrue(
+            LyricsAiGuard.manualTimingAvailable(
+                geminiUsable = true,
+                deepgramUsable = false,
+                audioAvailable = false,
+                title = "사랑해",
+                artist = "아이유",
+                lyricsTexts = listOf("사랑해 너를 영원히"),
+            ),
+        )
+    }
+
+    @Test
     fun mrMustBeACapitalisedStandaloneMarker() {
         assertTrue(LyricsAiGuard.isInstrumentalTitle("Song MR"))
         assertTrue(LyricsAiGuard.isInstrumentalTitle("Song (MR)"))

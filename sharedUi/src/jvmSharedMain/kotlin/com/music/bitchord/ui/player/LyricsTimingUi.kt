@@ -18,9 +18,10 @@ data class LyricsTimingUi(
     /** The last Gemini request came back with nothing usable. */
     val aiFailed: Boolean = false,
     /**
-     * An AI timing provider is usable right now: Deepgram's key (with Whisper)
-     * or Gemini's. A hand-asked timing may spend either, so the action is not
-     * offered when neither is set up — the press could only end in `aiFailed`.
+     * A hand-asked timing can reach an engine that can answer for this song:
+     * Gemini's key, or Deepgram's when the title/lyrics aren't skipped and the
+     * audio is on disk. The action is not offered otherwise — the press could
+     * only end in `aiFailed`.
      */
     val aiAvailable: Boolean = false,
     /** Video seconds per record second, when the video runs at its own pace; null at the record's. */
@@ -49,7 +50,8 @@ data class LyricsTimingUi(
  * Whether the sync drawer can offer its AI timing action.
  *
  * A hand-asked timing may spend Deepgram, Whisper or Gemini, so at least one
- * of their keys must be usable. It used to be gated on the Gemini song-meaning
+ * engine must be able to answer for this song and its audio — see
+ * [LyricsTimingUi.aiAvailable]. It used to be gated on the Gemini song-meaning
  * key alone, which hid the action from a listener with only Deepgram set up.
  * The shown answer can still be taken back without a key, so `byAi` keeps the
  * action reachable even after a key is removed.

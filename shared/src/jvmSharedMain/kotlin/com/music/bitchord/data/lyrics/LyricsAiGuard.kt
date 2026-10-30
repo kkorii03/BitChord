@@ -82,6 +82,25 @@ object LyricsAiGuard {
         texts: List<String>,
     ): Boolean = !isVideo && timed && sungLines >= 3 && wantsDeepgram(title, artist, texts)
 
+    /**
+     * Whether a hand-asked timing has an engine that can answer for this song.
+     *
+     * Deepgram is skipped for Korean and instrumental titles and cannot run
+     * without the song's audio on disk; Gemini can still fetch the video. A
+     * Deepgram-only setup therefore has nothing to ask when either skip
+     * applies, and offering the action would only end in `aiFailed`.
+     */
+    fun manualTimingAvailable(
+        geminiUsable: Boolean,
+        deepgramUsable: Boolean,
+        audioAvailable: Boolean,
+        title: String,
+        artist: String,
+        lyricsTexts: List<String>,
+    ): Boolean =
+        geminiUsable ||
+            (deepgramUsable && audioAvailable && wantsDeepgram(title, artist, lyricsTexts))
+
     /** Korean when the name is written in Hangul or the words themselves are. */
     fun isKoreanSong(title: String, artist: String, lyricsTexts: List<String>): Boolean =
         OriginalNames.worthTrying(title, artist) || Deepgram.languageFor(lyricsTexts) == "ko"
