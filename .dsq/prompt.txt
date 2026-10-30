@@ -1,0 +1,6 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030. 작게, 집중해서: 아래 검토 지적만 고칠 것(다른 리팩터링·이동 금지). 이전 시도는 컴파일 관문에서 80분 넘게 막혀 취소됨 — 바꾸는 범위를 최소로 하고, 바꾼 뒤 ':app:compileProdReleaseKotlin -Pbitchord.arm64Only=true' 로 바로 확인.
+지적:
+HIGH ? app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:5936 ? Definitive verdicts go through `switchToAlternateOrSkip` → `skipPastUnplayable` and never call `skipReason`, so the new `allowsVerdictSkip` cap is bypassed and repeat-one/duplicate-row same-id loops remain unbounded (the doc's claim #14 is not backed)
+MEDIUM ? app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2075 / StreamChoice.kt:143 ? The expired marker is cleared by any intervening `StreamChoice.remember` (read-ahead or `ChunkedDataSource`) before `consumeExpired`, and `AudioCache.discard` failures are swallowed, so the partial prefix can still be continued
+
+각 지적마다 수정 전 실패하는 단위 테스트. 배터리 우선. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약.
