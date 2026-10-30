@@ -1077,10 +1077,18 @@ object SourceResolver {
                 // on is already sitting there. Folding those in costs no time at
                 // all and is what lets rank break a tie between two sources that
                 // both answered quickly.
-                val ready = listOf(first) + running.filter { it !== first && it.isCompleted }
-                running -= ready.toSet()
-                for (done in ready) {
-                    val (source, stream) = done.await()
+                val readyDeferred = listOf(first) + running.filter { it !== first && it.isCompleted }
+                running -= readyDeferred.toSet()
+                val ready = readyDeferred.map { it.await() }
+                // A song with another addon answer must try the healthy host
+                // first; a resting one is still kept as the last resort rather
+                // than dropped. The loop below also refuses a resting host, so
+                // this order only decides which healthy answer is seen first.
+                val candidateOrder = HqVerifyPolicy.candidateOrder(
+                    ready.map { HqHostTracker.hostOf(it.second?.url) },
+                ) { HqHostTracker.isResting(it) }
+                for (index in candidateOrder) {
+                    val (source, stream) = ready[index]
                     if (stream == null) continue
                     val host = HqHostTracker.hostOf(stream.url)
                     if (host != null && host in excludeHosts) continue

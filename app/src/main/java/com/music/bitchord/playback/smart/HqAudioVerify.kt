@@ -22,15 +22,19 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -42,6 +46,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -78,6 +83,31 @@ object HqAudioVerify {
 
     /** Serialises candidate downloads per host; see [downloadCandidate]. */
     private val candidateHostLocks = ConcurrentHashMap<String, Mutex>()
+
+    /**
+     * Songs whose candidate download was refused with a 429 and whose host is
+     * resting. The next playback event, or the next verification request for
+     * the same song, checks whether that rest has passed and asks once more.
+     * Nothing here polls: an entry is read only when one of those events
+     * happens.
+     */
+    private class PendingRateLimit(
+        val context: Context,
+        val youtubeId: String,
+        val target: TrackMatcher.Target,
+        val stream: SourceStream,
+        val host: String?,
+        val manual: Boolean,
+    )
+
+    private val pendingRateLimits = ConcurrentHashMap<String, PendingRateLimit>()
+
+    /** One queue's worth is enough; an old refusal is not worth unbounded memory. */
+    private const val MAX_PENDING_RATE_LIMITS = 64
+
+    /** The retry itself is started by an event, never by a timer. */
+    private val pendingRetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val pendingRetryRunning = AtomicBoolean(false)
 
     /**
      * References whose opening could not be had during this playback, and why.
@@ -120,6 +150,9 @@ object HqAudioVerify {
         /** A real measurement that did not match the YouTube recording. */
         data object Mismatch : Outcome
 
+        /** The play changed before this attempt could measure anything. */
+        data object Abandoned : Outcome
+
         /** The YouTube reference itself could not be opened, decoded or reached. */
         data class NoReference(val reason: NoReferenceReason) : Outcome
 
@@ -161,6 +194,21 @@ object HqAudioVerify {
         val retryAfter: String?,
         val headerFields: Map<String, List<String>>,
     ) : IOException("HTTP $code")
+
+    /** The candidate head's download answer, keeping the 429 apart from other failures. */
+    private sealed interface DownloadFetch {
+        data class Bytes(val value: Long) : DownloadFetch
+        data class RateLimited(val host: String?, val restMs: Long) : DownloadFetch
+        data object Abandoned : DownloadFetch
+    }
+
+    /** The candidate's answer, keeping a rate-limited download from looking like a decode failure. */
+    private sealed interface CandidateFetch {
+        data class Ready(val value: Candidate) : CandidateFetch
+        data class RateLimited(val host: String?, val restMs: Long) : CandidateFetch
+        data object Abandoned : CandidateFetch
+        data object Failed : CandidateFetch
+    }
 
     /**
      * The reference profiles already measured in this session, by YouTube id.
@@ -226,6 +274,21 @@ object HqAudioVerify {
         target: TrackMatcher.Target,
         stream: SourceStream,
         manual: Boolean = false,
+    ): Outcome {
+        // A verification request is another event that may find a host's rest
+        // over. The song being asked about here is handled below, so leave it
+        // out to avoid two attempts for one pair.
+        retryPendingRateLimits(exceptYoutubeId = youtubeId)
+        return verifyOutcome(context, youtubeId, target, stream, manual, recordRateLimit = true)
+    }
+
+    private suspend fun verifyOutcome(
+        context: Context,
+        youtubeId: String,
+        target: TrackMatcher.Target,
+        stream: SourceStream,
+        manual: Boolean,
+        recordRateLimit: Boolean,
     ): Outcome = withContext(Dispatchers.IO) {
         val epoch = playbackEpoch.get()
         if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable
@@ -261,6 +324,7 @@ object HqAudioVerify {
             return@withContext Outcome.Mismatch
         }
         HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let {
+            pendingRateLimits.remove(youtubeId)
             return@withContext Outcome.Verified(it)
         }
         // Only a measured mismatch is stored here; a missing reference never is.
@@ -272,6 +336,26 @@ object HqAudioVerify {
         if (StreamContainer.isManifest(stream.url)) {
             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
             return@withContext Outcome.Unavailable
+        }
+
+        // A song whose last attempt was refused is not asked again while its
+        // host is still resting. A different, healthy candidate is allowed
+        // through at once: that is the point of trying the other addon first.
+        val incomingHost = HqHostTracker.hostOf(stream.url)
+        pendingRateLimits[youtubeId]?.let { pending ->
+            val restMs = HqHostTracker.restRemainingMs(pending.host)
+            if (!manual && restMs > 0L &&
+                (incomingHost == null || incomingHost == pending.host ||
+                    HqHostTracker.isResting(incomingHost))
+            ) {
+                TrackLog.d(
+                    TAG,
+                    "decode: hq-verify '${target.title}' deferred ${restMs}ms; " +
+                        "${pending.host ?: "host"} is resting",
+                    youtubeId,
+                )
+                return@withContext Outcome.Unavailable
+            }
         }
 
         val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
@@ -292,7 +376,7 @@ object HqAudioVerify {
                     // verification in front of the reported 2.2–8.4 s prove
                     // times had the same sequential shape. A missing reference
                     // cancels the candidate read before anything waits on it.
-                    val candidateDeferred = async { candidateFeatures(context, stream, epoch) }
+                    val candidateDeferred = async { candidateFetch(context, stream, epoch) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
@@ -303,10 +387,29 @@ object HqAudioVerify {
                         candidateDeferred.cancel()
                         return@coroutineScope Outcome.NoReference(reference.reason)
                     }
-                    val candidate = candidateDeferred.await()
-                    if (candidate == null) {
-                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
-                        return@coroutineScope Outcome.Unavailable
+                    val candidate = when (val fetched = candidateDeferred.await()) {
+                        is CandidateFetch.Ready -> fetched.value
+                        is CandidateFetch.RateLimited -> {
+                            if (recordRateLimit) {
+                                notePendingRateLimit(
+                                    context,
+                                    youtubeId,
+                                    target,
+                                    stream,
+                                    fetched,
+                                    manual,
+                                )
+                            }
+                            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+                            return@coroutineScope Outcome.Unavailable
+                        }
+                        CandidateFetch.Abandoned -> {
+                            return@coroutineScope Outcome.Abandoned
+                        }
+                        CandidateFetch.Failed -> {
+                            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+                            return@coroutineScope Outcome.Unavailable
+                        }
                     }
                     // A head that stops short of the window while the reference
                     // has the full one is not a shorter answer: comparing it
@@ -382,6 +485,7 @@ object HqAudioVerify {
                         sourceArtist = stream.trackArtist,
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
+                    pendingRateLimits.remove(youtubeId)
                     // A downloaded or pre-saved copy may now be replaceable with
                     // this newly proved rung, even if it was already high quality.
                     HqLibraryUpgrade.onVerified(context)
@@ -403,16 +507,122 @@ object HqAudioVerify {
         (this as? Outcome.Verified)?.value
 
     /**
+     * Whether this attempt has used the one retry a pending entry grants.
+     *
+     * Only [Outcome.Abandoned] leaves the entry for the next event: the play
+     * changed before anything was measured, so the attempt was not really a
+     * retry. Every other answer — including [Outcome.Unavailable],
+     * [Outcome.NoReference] and a null outcome from an unexpected exception —
+     * is definitive and must not be repeated on every later playback event.
+     */
+    internal fun Outcome?.settlesPendingRetry(): Boolean = this !is Outcome.Abandoned
+
+    /** Remembers a 429-unmeasured song so a later event can ask once more. */
+    private fun notePendingRateLimit(
+        context: Context,
+        youtubeId: String,
+        target: TrackMatcher.Target,
+        stream: SourceStream,
+        limited: CandidateFetch.RateLimited,
+        manual: Boolean,
+    ) {
+        if (pendingRateLimits.size >= MAX_PENDING_RATE_LIMITS) {
+            pendingRateLimits.keys.firstOrNull()?.let { pendingRateLimits.remove(it) }
+        }
+        pendingRateLimits[youtubeId] = PendingRateLimit(
+            context = context.applicationContext ?: context,
+            youtubeId = youtubeId,
+            target = target,
+            stream = stream,
+            host = limited.host,
+            manual = manual,
+        )
+        TrackLog.d(
+            TAG,
+            "decode: hq-verify '${target.title}' will be retried after " +
+                "${limited.restMs / 1_000}s rest",
+            youtubeId,
+        )
+    }
+
+    /**
+     * Re-asks every pending song whose host has finished resting.
+     *
+     * Called only from playback events and verification requests, never from a
+     * timer. The entry is kept only when the attempt was abandoned because the
+     * play changed: a verified answer, a measured mismatch, a missing
+     * reference, an unmeasurable candidate or a second 429 all consume the one
+     * retry. The host's rest is re-checked before every attempt because the
+     * previous song in this loop may have just been refused and rested it.
+     */
+    private fun retryPendingRateLimits(exceptYoutubeId: String? = null) {
+        val due = pendingRateLimits.values.filter {
+            it.youtubeId != exceptYoutubeId &&
+                HqHostTracker.restRemainingMs(it.host) <= 0L
+        }
+        if (due.isEmpty()) return
+        if (!pendingRetryRunning.compareAndSet(false, true)) return
+        pendingRetryScope.launch {
+            try {
+                for (pending in due) {
+                    // The snapshot above is one moment in time. A retry earlier
+                    // in this loop can have just got 429 and extended the host's
+                    // rest, so check again before asking the same server.
+                    if (HqHostTracker.restRemainingMs(pending.host) > 0L) continue
+                    // A concurrent success may already have answered this song.
+                    if (pendingRateLimits[pending.youtubeId] !== pending) continue
+                    TrackLog.d(
+                        TAG,
+                        "decode: hq-verify retrying '${pending.target.title}' after host rest",
+                        pending.youtubeId,
+                    )
+                    val outcome = try {
+                        verifyOutcome(
+                            pending.context,
+                            pending.youtubeId,
+                            pending.target,
+                            pending.stream,
+                            pending.manual,
+                            recordRateLimit = false,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failed: Exception) {
+                        TrackLog.d(
+                            TAG,
+                            "decode: hq-verify retry failed for ${pending.youtubeId}: ${failed.message}",
+                            pending.youtubeId,
+                        )
+                        null
+                    }
+                    // Only an attempt abandoned because the play changed keeps
+                    // the entry: it did not really get its one retry. A second
+                    // 429, a measured answer, a missing reference or any other
+                    // unmeasurable candidate is definitive and must not be
+                    // downloaded and decoded again on every later event.
+                    if (outcome.settlesPendingRetry()) {
+                        pendingRateLimits.remove(pending.youtubeId, pending)
+                    }
+                }
+            } finally {
+                pendingRetryRunning.set(false)
+            }
+        }
+    }
+
+    /**
      * The next playback event makes every remembered missing reference stale.
      *
      * A failure belongs to the attempt that met it — a slow head, a decoder
      * that was busy — not to the recording or to the next time the track is
      * played. Clearing here is what makes the next play try again without a
-     * ten-minute timer.
+     * ten-minute timer. It is also the event that wakes a song left unmeasured
+     * by a 429 once its host has rested.
      */
     fun onPlaybackStarted() {
         noReference.clear()
         playbackEpoch.getAndSet(PlaybackEpoch()).changed.complete(Unit)
+        retryPendingRateLimits()
     }
 
     /** What the sound comparison says about a file already on the device. */
@@ -761,11 +971,11 @@ object HqAudioVerify {
      * bounded retry below fixes the observed 429s without changing when
      * verification starts.
      */
-    private suspend fun candidateFeatures(
+    private suspend fun candidateFetch(
         context: Context,
         stream: SourceStream,
         epoch: PlaybackEpoch,
-    ): Candidate? = candidateFeatures(
+    ): CandidateFetch = candidateFetch(
         File(context.cacheDir, CANDIDATE_DIR),
         stream,
         ProxyPlayback.mediaClientFor(stream.url),
@@ -776,41 +986,39 @@ object HqAudioVerify {
         directory: File,
         stream: SourceStream,
         client: OkHttpClient = ProxyPlayback.mediaClientFor(stream.url),
-    ): Candidate? = candidateFeatures(directory, stream, client, playbackEpoch.get())
+    ): Candidate? = candidateFetch(directory, stream, client, playbackEpoch.get()).readyOrNull()
 
-    private suspend fun candidateFeatures(
+    private fun CandidateFetch.readyOrNull(): Candidate? =
+        (this as? CandidateFetch.Ready)?.value
+
+    private suspend fun candidateFetch(
         directory: File,
         stream: SourceStream,
         client: OkHttpClient,
         epoch: PlaybackEpoch,
-    ): Candidate? {
+    ): CandidateFetch {
         val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
-        if (needed <= 0L) return null
+        if (needed <= 0L) return CandidateFetch.Failed
         if (!ensureCandidateDirectory(directory)) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-dir")
-            return null
+            return CandidateFetch.Failed
         }
         val file = try {
             File.createTempFile("candidate-", ".bin", directory)
         } catch (e: Exception) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-file ${e.message}")
-            return null
+            return CandidateFetch.Failed
         }
         return try {
-            val bytes = try {
-                downloadCandidate(stream, file, needed, client, epoch) ?: return null
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (e: Exception) {
-                // A cancelled call surfaces as an IOException; only report it
-                // as a download failure when the coroutine is still wanted.
-                currentCoroutineContext().ensureActive()
-                TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
-                return null
+            val bytes = when (val download = downloadCandidate(stream, file, needed, client, epoch)) {
+                is DownloadFetch.Bytes -> download.value
+                is DownloadFetch.RateLimited ->
+                    return CandidateFetch.RateLimited(download.host, download.restMs)
+                DownloadFetch.Abandoned -> return CandidateFetch.Abandoned
             }
             if (bytes <= 0L) {
                 TrackLog.w(TAG, "decode: hq-verify failed at=download bytes=0")
-                return null
+                return CandidateFetch.Failed
             }
             val coroutine = currentCoroutineContext()
             // abort answers "stop now?", so it is the inverse of isActive. Passing
@@ -823,9 +1031,17 @@ object HqAudioVerify {
             coroutine.ensureActive()
             if (features == null) {
                 TrackLog.w(TAG, "decode: hq-verify failed at=candidate-decode bytes=$bytes")
-                return null
+                return CandidateFetch.Failed
             }
-            Candidate(features, bytes)
+            CandidateFetch.Ready(Candidate(features, bytes))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            // A cancelled call surfaces as an IOException; only report it
+            // as a download failure when the coroutine is still wanted.
+            currentCoroutineContext().ensureActive()
+            TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
+            CandidateFetch.Failed
         } finally {
             runCatching { file.delete() }
         }
@@ -858,28 +1074,33 @@ object HqAudioVerify {
         limit: Long,
         client: OkHttpClient,
         epoch: PlaybackEpoch,
-    ): Long? {
+    ): DownloadFetch {
         var attempt = 0
         // One candidate download per host at a time. With AutoPlay filling the
         // queue, the read-ahead verified the current track and the next ones
         // together against the same Cloudflare edge, and the phone run of
         // 10-26 22:23-22:30 got 429 on every second request; the pairs of
         // refusals were always within a second of each other.
-        val host = runCatching { java.net.URI(stream.url).host }.getOrNull().orEmpty()
+        val host = HqHostTracker.hostOf(stream.url).orEmpty()
         while (true) {
             try {
-                return withCandidateHost(host) { downloadPrefix(stream, file, limit, client) }
+                val bytes = withCandidateHost(host) { downloadPrefix(stream, file, limit, client) }
+                HqHostTracker.noteSuccess(host)
+                return DownloadFetch.Bytes(bytes)
             } catch (limited: RateLimitedDownload) {
                 val retry = HqVerifyPolicy.retryCandidateDownload(
                     retryAfterHeader = limited.retryAfter,
                     attempt = attempt,
                     nowMs = System.currentTimeMillis(),
                 )
+                val restMs = HqHostTracker.noteRateLimited(host, limited.retryAfter, limited.code)
                 logRateLimited(limited, retry)
-                if (!retry.retry) return null
+                if (!retry.retry) {
+                    return DownloadFetch.RateLimited(host, restMs)
+                }
                 if (!samePlaybackAfter(retry.waitMs, epoch)) {
                     TrackLog.d(TAG, "decode: hq-verify retry abandoned at=download track-changed")
-                    return null
+                    return DownloadFetch.Abandoned
                 }
                 attempt++
             }

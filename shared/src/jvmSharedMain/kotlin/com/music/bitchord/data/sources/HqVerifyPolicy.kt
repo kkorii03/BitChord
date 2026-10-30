@@ -119,6 +119,30 @@ object HqVerifyPolicy {
         return CandidateRetry(retry = true, waitMs = wait)
     }
 
+    /**
+     * The order to try a song's candidates in when some of their hosts are
+     * resting after a 429.
+     *
+     * Every candidate on a healthy host comes first, in the caller's original
+     * order; candidates on resting hosts come last. A song with another addon
+     * answer therefore gets that answer tried before it waits for the tired
+     * host, and a song whose only answer is resting keeps its one candidate
+     * rather than losing it. Pure so the ordering can be tested without a
+     * server or a clock.
+     */
+    fun candidateOrder(
+        hosts: List<String?>,
+        isResting: (String?) -> Boolean,
+    ): List<Int> {
+        // One clock read per host. Asking twice could see a rest expire between
+        // the two filters, leaving that index in neither list and silently
+        // dropping a candidate that had already been taken out of the race.
+        val restingFlags = hosts.map(isResting)
+        val healthy = hosts.indices.filter { !restingFlags[it] }
+        val resting = hosts.indices.filter { restingFlags[it] }
+        return healthy + resting
+    }
+
     /** One retry only: no loop, and no timer beyond the server's own wait. */
     const val MAX_CANDIDATE_RETRIES = 1
 

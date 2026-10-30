@@ -29,6 +29,13 @@ object HqRetryPolicy {
     const val REST_MS = 60_000L
 
     /**
+     * Ceiling for the doubling below. A host that keeps refusing gets longer
+     * and longer to recover, but never more than ten minutes of being skipped
+     * on every later request.
+     */
+    const val MAX_REST_MS = 10 * 60_000L
+
+    /**
      * The longest a loader thread may be held on a `Retry-After`.
      *
      * A stated delay past this is treated as "come back later": the request
@@ -75,6 +82,23 @@ object HqRetryPolicy {
 
     /** 1s, 2s, 4s — the wait before retry [attempt] (0 is the first retry). */
     fun backoffMs(attempt: Int): Long = 1_000L shl attempt.coerceIn(0, MAX_ATTEMPTS - 1)
+
+    /**
+     * How long to leave a host alone after its [consecutiveRateLimits]-th
+     * refusal in a row.
+     *
+     * The first refusal rests for [REST_MS]; each further one doubles that,
+     * up to [MAX_REST_MS]. A server's own longer `Retry-After` is still
+     * believed: [statedRestMs] wins when it is past the escalation. A success
+     * resets the caller's streak, so a recovered host starts at [REST_MS]
+     * again rather than carrying the old penalty forever.
+     */
+    fun escalatingRestMs(consecutiveRateLimits: Int, statedRestMs: Long = 0L): Long {
+        val streak = consecutiveRateLimits.coerceAtLeast(1)
+        val doublings = (streak - 1).coerceIn(0, 20)
+        val escalated = REST_MS * (1L shl doublings)
+        return maxOf(statedRestMs, escalated.coerceAtMost(MAX_REST_MS))
+    }
 
     /**
      * What a refusal means: whether to retry, how long to wait, and how long
