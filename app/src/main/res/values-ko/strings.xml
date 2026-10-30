@@ -1044,7 +1044,7 @@
 
     <string name="sync_safety_hq_sync">고음질 싱크 재적용</string>
 
-    <string name="sync_safety_hq_sync_subtitle">개발자용입니다. 저장된 HQ 오프셋과 배속을 가사 싱크에 다시 적용합니다. 끄면 제공처의 원래 시각을 사용합니다.</string>
+    <string name="sync_safety_hq_sync_subtitle">개발자용입니다. 저장된 고음질 오프셋과 배속을 가사 싱크에 다시 적용합니다. 끄면 제공처의 원래 시각을 사용합니다.</string>
     <string name="lyrics_debug_logs">가사 디버그 로그</string>
     <string name="lyrics_debug_logs_subtitle">가사 패널에 실시간 API 요청 및 스크래퍼 활동 표시</string>
     <string name="shelf_trending_community_playlists">인기 커뮤니티 플레이리스트</string>

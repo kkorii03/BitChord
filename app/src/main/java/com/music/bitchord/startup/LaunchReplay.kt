@@ -3,6 +3,7 @@ package com.music.bitchord.startup
 import android.app.SearchManager
 import android.content.Intent
 import android.net.Uri
+import com.music.bitchord.playback.PlayerDeepLink
 
 /**
  * Whether the launch intent in hand is the one this task already served, rather
@@ -46,14 +47,44 @@ internal object LaunchReplay {
     /** The parts of an intent that decide what it asks the app to do. */
     fun fingerprint(intent: Intent?): String {
         if (intent == null) return ""
-        return buildString {
-            append(intent.action.orEmpty()).append('\u0000')
-            append(intent.dataString.orEmpty()).append('\u0000')
-            append(intent.type.orEmpty()).append('\u0000')
-            append(intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()).append('\u0000')
-            append(intent.getStringExtra(SearchManager.QUERY).orEmpty()).append('\u0000')
-            @Suppress("DEPRECATION")
-            append(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.toString().orEmpty())
-        }
+        @Suppress("DEPRECATION")
+        val stream = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.toString().orEmpty()
+        return fingerprintOf(
+            action = intent.action,
+            data = intent.dataString,
+            type = intent.type,
+            text = intent.getStringExtra(Intent.EXTRA_TEXT),
+            query = intent.getStringExtra(SearchManager.QUERY),
+            stream = stream,
+            openPlayer = intent.getBooleanExtra(PlayerDeepLink.EXTRA_OPEN_PLAYER, false),
+        )
+    }
+
+    /**
+     * [fingerprint]'s fields, split out so a test can prove that a widget's
+     * player request is part of what makes an intent distinct without an
+     * Android runtime to build an [Intent].
+     *
+     * Every widget-artwork intent carries only [openPlayer]; with that left
+     * out they all hashed to the same empty string, so a new widget tap
+     * delivered to a recreated activity was mistaken for the task's restored
+     * original and silently dropped.
+     */
+    internal fun fingerprintOf(
+        action: String?,
+        data: String?,
+        type: String?,
+        text: String?,
+        query: String?,
+        stream: String?,
+        openPlayer: Boolean,
+    ): String = buildString {
+        append(action.orEmpty()).append('\u0000')
+        append(data.orEmpty()).append('\u0000')
+        append(type.orEmpty()).append('\u0000')
+        append(text.orEmpty()).append('\u0000')
+        append(query.orEmpty()).append('\u0000')
+        append(stream.orEmpty()).append('\u0000')
+        append(openPlayer)
     }
 }

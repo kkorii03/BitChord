@@ -381,7 +381,11 @@ internal fun SleeveNerdStats(
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
-    if (!revealed) return
+    // The tap is the quick look; the Settings switch puts the same line on the
+    // sleeve for good. Reading only [revealed] left the still-present "Show
+    // stats for nerds" toggle doing nothing on the phone player.
+    val showNerdStats by PlayerPlatform.host.settings.showNerdStats.collectAsStateWithLifecycle()
+    if (!revealed && !showNerdStats) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     // The measured stream for this track only; see [PlaybackQualityLabel].
     val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)

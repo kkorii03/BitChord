@@ -28,8 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,8 +70,6 @@ fun ExploreScreen(
     listState: LazyListState,
     onCategoryClick: (MoodGenre) -> Unit,
     onRetry: () -> Unit,
-    /** Called once for each tile that scrolls into view without a cover yet. */
-    onCategoryVisible: (MoodGenre) -> Unit = {},
     /**
      * Offers to hide a long-pressed tile. Null keeps the desktop build's grid
      * exactly as it was: no hide affordance, no dialog.
@@ -86,7 +84,16 @@ fun ExploreScreen(
     showTitle: Boolean = true,
 ) {
     var pendingHide by remember { mutableStateOf<MoodGenre?>(null) }
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "explore")
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val loadingTimedOut = rememberLoadingTimedOut(
+        loading = state is UiState.Loading,
+        tag = "explore",
+        requestKey = loadAttempt,
+    )
+    val retry = {
+        loadAttempt += 1
+        onRetry()
+    }
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -119,12 +126,12 @@ fun ExploreScreen(
                 }
                 when (state) {
                     UiState.Loading -> if (loadingTimedOut) {
-                        item { LoadingTimeoutState(onRetry = onRetry) }
+                        item { LoadingTimeoutState(onRetry = retry) }
                     } else {
                         item { ExploreSkeletonRows(columns) }
                     }
                     is UiState.Error -> item {
-                        MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                        MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = retry)
                     }
                     is UiState.Success -> {
                         // Moods and genres read as one grid; the server's
@@ -139,7 +146,6 @@ fun ExploreScreen(
                                 row = row,
                                 columns = columns,
                                 onCategoryClick = onCategoryClick,
-                                onCategoryVisible = onCategoryVisible,
                                 onCategoryLongClick = onHideCategory?.let {
                                     { item ->
                                         if (!ExploreCategoryFilter.isProtected(item)) pendingHide = item
@@ -190,7 +196,6 @@ internal fun MoodGenreRow(
     row: List<MoodGenre>,
     columns: Int,
     onCategoryClick: (MoodGenre) -> Unit,
-    onCategoryVisible: (MoodGenre) -> Unit,
     onCategoryLongClick: ((MoodGenre) -> Unit)?,
 ) {
     Row(
@@ -204,7 +209,6 @@ internal fun MoodGenreRow(
                 item = item,
                 onClick = { onCategoryClick(item) },
                 onLongClick = onCategoryLongClick?.let { longClick -> { longClick(item) } },
-                onVisible = { onCategoryVisible(item) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -224,17 +228,8 @@ private fun MoodGenreCard(
     item: MoodGenre,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
-    onVisible: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // A LazyColumn composes a card only when it scrolls into view, which is the
-    // right moment to ask for its cover. Once one has arrived the key changes
-    // and the second run does nothing. The cover is no longer painted on the
-    // phone tile, but keeping the one-shot request leaves the shared cache
-    // warm for anything else that borrows it.
-    LaunchedEffect(item.browseId, item.params, item.thumbnailUrl) {
-        if (item.thumbnailUrl == null) onVisible()
-    }
     MoodGenreSleeve(
         item = item,
         modifier = modifier
@@ -376,7 +371,16 @@ fun MoodGenrePlaylistsScreen(
     /** Drawn under the title, above the shelves — the charts' country picker. */
     header: @Composable () -> Unit = {},
 ) {
-    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "mood-genre")
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val loadingTimedOut = rememberLoadingTimedOut(
+        loading = state is UiState.Loading,
+        tag = "mood-genre",
+        requestKey = loadAttempt,
+    )
+    val retry = {
+        loadAttempt += 1
+        onRetry()
+    }
     LazyColumn(
         state = listState,
         contentPadding = contentPadding,
@@ -395,12 +399,12 @@ fun MoodGenrePlaylistsScreen(
         item(key = "header") { header() }
         when (state) {
             UiState.Loading -> if (loadingTimedOut) {
-                item { LoadingTimeoutState(onRetry = onRetry) }
+                item { LoadingTimeoutState(onRetry = retry) }
             } else {
                 feedSkeleton()
             }
             is UiState.Error -> item {
-                MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = retry)
             }
             // Indexed: two shelves may share a heading (charts do), and a
             // repeated key would take the whole list down.

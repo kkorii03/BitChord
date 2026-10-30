@@ -80,4 +80,30 @@ class LaunchReplayTest {
             ),
         )
     }
+
+    @Test
+    fun `a widget player request is part of the launch fingerprint`() {
+        // Both intents have no action, data, type or text; only the widget's
+        // open-player extra tells them apart. Leaving it out made every widget
+        // tap hash to the same empty string as any other bare launch.
+        val plain = LaunchReplay.fingerprintOf(
+            action = null,
+            data = null,
+            type = null,
+            text = null,
+            query = null,
+            stream = null,
+            openPlayer = false,
+        )
+        val widget = LaunchReplay.fingerprintOf(
+            action = null,
+            data = null,
+            type = null,
+            text = null,
+            query = null,
+            stream = null,
+            openPlayer = true,
+        )
+        assertFalse(plain == widget)
+    }
 }
