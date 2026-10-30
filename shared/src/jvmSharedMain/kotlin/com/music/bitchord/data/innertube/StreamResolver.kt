@@ -1292,8 +1292,17 @@ object StreamResolver {
     }
 
     /** The headers a media fetch for [url] must carry to match whoever minted it. */
-    fun mediaHeadersFor(url: String): Map<String, String> =
-        InnerTubeXResolver.headersFor(url) ?: PlayerClient.forStreamUrl(url).mediaHeaders()
+    fun mediaHeadersFor(url: String): Map<String, String> {
+        // Only googlevideo URLs can have been minted by InnerTubeX. Checking
+        // that first keeps a module's own URL from loading the whole extractor
+        // just to ask a map that can never contain it.
+        val minted = if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") == true) {
+            InnerTubeXResolver.headersFor(url)
+        } else {
+            null
+        }
+        return minted ?: PlayerClient.forStreamUrl(url).mediaHeaders()
+    }
 
     private const val INNERTUBEX_ATTEMPTS = 3
 
@@ -1972,7 +1981,14 @@ object StreamResolver {
      * pause.
      */
     fun onRateLimited(url: String) {
-        val videoId = InnerTubeXResolver.extractedFor(url)?.videoId
+        // InnerTubeX only knows the googlevideo URLs it minted; a module URL
+        // must still reach the listener without loading the extractor.
+        val extracted = if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") == true) {
+            InnerTubeXResolver.extractedFor(url)
+        } else {
+            null
+        }
+        val videoId = extracted?.videoId
             ?: recent.entries.firstOrNull { it.value.url == url }?.key
         if (videoId != null) {
             recent.remove(videoId)
