@@ -132,8 +132,16 @@ class ChunkedDataSource(
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
-                    HqHostTracker.noteFailure(currentHost)
-                    failureNoted = true
+                    // A 429/503 has already been counted by
+                    // openWithRateLimitRetry; noting it here again would
+                    // double the penalty for one refusal.
+                    val refusal = rateLimitedCause(e)
+                    if (refusal != null && HqRetryPolicy.isRateLimited(refusal.responseCode)) {
+                        failureNoted = true
+                    } else {
+                        HqHostTracker.noteFailure(currentHost)
+                        failureNoted = true
+                    }
                     report(dataSpec, e)
                 }
                 throw e
@@ -166,7 +174,6 @@ class ChunkedDataSource(
             // the time this surfaces as a playback error. A cancelled read-ahead
             // arrives here too and means nothing ??see [AudioCache.prefetchQueue].
             if (!isTransferCancellation(e)) {
-                transferFailed = true
                 TrackLog.w(
                     TAG,
                     "range $position-${position + length - 1} refused for " +
@@ -178,20 +185,27 @@ class ChunkedDataSource(
                 val refusal = rateLimitedCause(e)
                 val rateLimited = refusal != null &&
                     HqRetryPolicy.isRateLimited(refusal.responseCode)
+                if (e is HttpDataSource.InvalidResponseCodeException) {
+                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
+                    if (resumed != null) {
+                        chunkRemaining = resumed
+                        chunkOpen = true
+                        // The refusal was successfully re-resolved, so this
+                        // open is not a failed transfer: it must earn the
+                        // success/throughput credit on close.
+                        return
+                    }
+                }
+                // Only a refusal that could not be recovered is a failed
+                // transfer; marking it before the recovery attempt made a
+                // successful re-resolve close as failed and lose its credit.
+                transferFailed = true
                 if (rateLimited) {
                     // Recorded by [openWithRateLimitRetry] already.
                     failureNoted = true
                 } else {
                     HqHostTracker.noteFailure(currentHost)
                     failureNoted = true
-                }
-                if (e is HttpDataSource.InvalidResponseCodeException) {
-                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
-                    if (resumed != null) {
-                        chunkRemaining = resumed
-                        chunkOpen = true
-                        return
-                    }
                 }
                 // This is the only place a refusal of the *real* fetch is seen.
                 // Left here it is just a failed track; handed back, it is the

@@ -291,4 +291,29 @@ class AudioSwitchOstTitleTest {
         assertEquals("followingsophie", midTitle.core)
     }
 
+    @Test
+    fun `a take inside a longer tail is not mistaken for a credit`() {
+        val live = TrackMatcher.parseTitle("Bohemian Rhapsody - Live at Wembley | Joker OST")
+        assertEquals("bohemianrhapsody", live.core)
+        assertEquals(setOf("live"), live.versions)
+
+        val got = identity("Bohemian Rhapsody - Live at Wembley | Joker OST")
+        assertTrue(got.title.startsWith("bohemian rhapsody"))
+        assertFalse(got.title.startsWith("live at wembley"))
+        assertEquals("", got.artist)
+    }
+
+    @Test
+    fun `a bare soundtrack word in the song name is not a release label`() {
+        assertEquals("Our Soundtrack", identity("Our Soundtrack").title)
+        assertEquals("My OST", identity("My OST").title)
+    }
+
+    @Test
+    fun `a work name ending in ost is not truncated`() {
+        assertEquals("lost", identity("Song | Lost OST").work)
+        assertEquals("ghost", identity("Song | Ghost OST").work)
+        assertEquals("the post", identity("Song | The Post OST").work)
+        assertEquals("lost", identity("Song (From \"Lost\")").work)
+    }
 }

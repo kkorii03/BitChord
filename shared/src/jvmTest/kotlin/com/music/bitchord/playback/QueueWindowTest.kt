@@ -257,6 +257,21 @@ class QueueWindowTest {
     }
 
     @Test
+    fun reorderingAPlannedCycleCarriesIntoLaterManualCycles() {
+        val window = QueueWindow(3).startAt(0)
+        repeat(2) { assertTrue(window.advanceAutomatically() != null) }
+        val nextCycle = window.cycleId + 1L
+
+        assertTrue(window.reorderPlannedCycle(nextCycle, listOf(0, 2, 1)))
+
+        val after = window.upcoming(20, repeatAll = true)
+        val firstAfter = after.filter { it.cycleId == nextCycle }.map { it.canonicalIndex }
+        val secondAfter = after.filter { it.cycleId == nextCycle + 1L }.map { it.canonicalIndex }
+        assertEquals(listOf(0, 2, 1), firstAfter)
+        assertEquals(listOf(0, 2, 1), secondAfter)
+    }
+
+    @Test
     fun deletingThePlayingRowRejectsItsNextCycleDuplicate() {
         val window = QueueWindow(3).startAt(2)
         val duplicate = window.upcoming(10, repeatAll = true)

@@ -105,9 +105,11 @@ internal object MediaSessionArtwork {
             ArtworkSource.NONE -> null
         }
         // Also spent here for the playing item: an item built earlier may have
-        // been the first to carry this URI, and the grant has to exist before
-        // System UI, Auto or Automotive opens it.
-        uri?.let(Uri::parse)?.let { grantRead(context, it) }
+        // been the first to carry this URI, the grant has to exist before
+        // System UI, Auto or Automotive opens it, and a receiving process that
+        // restarted (a later car session) loses its old grant. Re-grant every
+        // time rather than trusting the process-lifetime cache.
+        uri?.let(Uri::parse)?.let { grantRead(context, it, always = true) }
         if (uri == recorded) return metadata
         return metadata.buildUpon().setArtworkUri(uri?.let(Uri::parse)).build()
     }
@@ -148,10 +150,11 @@ internal object MediaSessionArtwork {
      * Grants are per URI and package, so one pass per pair is enough. Only
      * content URIs need one; an https still is readable by every process.
      */
-    private fun grantRead(context: Context, uri: Uri) {
+    private fun grantRead(context: Context, uri: Uri, always: Boolean = false) {
         if (!uri.scheme.equals("content", ignoreCase = true)) return
         for (reader in READER_PACKAGES) {
-            if (!granted.add("$reader|$uri")) continue
+            if (!always && !granted.add("$reader|$uri")) continue
+            granted.add("$reader|$uri")
             runCatching {
                 context.grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }

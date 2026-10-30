@@ -589,8 +589,15 @@ internal object CatalogSongMapper {
          */
         allowVideoLongerThanSong: Boolean = false,
     ): Boolean {
-        val wanted = TrackMatcher.secondsOf(source) ?: return true
-        val got = TrackMatcher.secondsOf(candidate) ?: return true
+        val wantedText = source?.trim()
+        val gotText = candidate?.trim()
+        val wanted = TrackMatcher.secondsOf(wantedText)
+        val got = TrackMatcher.secondsOf(gotText)
+        // Absent durations are unknown and compatible; a non-blank value that
+        // does not parse ("3:60") is malformed, not absent. Treating it as
+        // unknown let such a row pass the drift check, so fail closed.
+        if (wanted == null) return wantedText.isNullOrBlank()
+        if (got == null) return gotText.isNullOrBlank()
         if (allowVideoLongerThanSong && got <= wanted) return true
         return abs(wanted - got) <= limitSec
     }

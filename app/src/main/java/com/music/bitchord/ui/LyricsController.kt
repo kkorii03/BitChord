@@ -287,6 +287,8 @@ class LyricsController(
                     sources = sources,
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    syncedLyrics = AppSettings.syncedLyrics.value,
+                    nextPrepLyrics = AppSettings.syncSafetyNextPrep.value,
                 ),
                 audioSource = preparedAudioSource,
                 substituted = preparedSubstituted,
@@ -772,6 +774,15 @@ class LyricsController(
             // completion cannot make a usable copy unusable.
             launch {
                 AudioCache.watchRenditionCompletion(request.videoId)
+                // A completion may have landed between the initial readiness
+                // check and this collector subscribing (the flow has no replay
+                // buffer). Read the current state once here so that event is
+                // not lost; afterwards every completion arrives as an emission.
+                if (!_lyricsTiming.value.aiAvailable &&
+                    aiTimingAvailable(request, lines)
+                ) {
+                    _lyricsTiming.update { it.copy(aiAvailable = true) }
+                }
                 AudioCache.renditionCompleted.collect { videoId ->
                     if (videoId != request.videoId) return@collect
                     if (currentLyricsRequest?.videoId != request.videoId) return@collect

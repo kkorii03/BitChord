@@ -782,7 +782,12 @@ object AudioCache {
                 val rendition = renditionFor(key) ?: return
                 if (!rendition.isComplete) return
                 if (!completedKeys.add(key)) return
-                _renditionCompleted.tryEmit(key.substringBefore('#'))
+                // Only remember it as delivered when the event actually reached
+                // the buffer. A full 16-slot buffer during bulk writes must not
+                // mark the completion done and leave the AI button hidden.
+                if (!_renditionCompleted.tryEmit(key.substringBefore('#'))) {
+                    completedKeys.remove(key)
+                }
             }
 
             override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
@@ -1462,7 +1467,10 @@ object AudioCache {
             override fun open(dataSpec: DataSpec): Long {
                 // A DataSource instance is normally closed before it is opened
                 // again, but the hold must not be counted twice if it is not.
-                releaseHeld()
+                // This is not a terminal release: the same instance re-retains
+                // the key below, so a seek/reopen must not count as the reader
+                // letting go and trigger an analysis fetch that races it.
+                releaseHeld(allowRetry = false)
                 val scheme = dataSpec.uri.scheme
                 activeDs = if (scheme == "file" || scheme == "content") {
                     upstreamDs
@@ -1506,7 +1514,7 @@ object AudioCache {
                 }
             }
 
-            private fun releaseHeld() {
+            private fun releaseHeld(allowRetry: Boolean = true) {
                 heldKey?.let { key ->
                     release(playbackKeysInUse, key)
                     if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
@@ -1514,8 +1522,11 @@ object AudioCache {
                 heldVideoId?.let { videoId ->
                     release(playbackVideoIdsInUse, videoId)
                     // The held analysis claim waits for this event rather than
-                    // for the next idle tick to discover the lock is gone.
-                    retryAnalysisHeadIfReaderReleased(videoId)
+                    // for the next idle tick to discover the lock is gone. A
+                    // pre-open release that is immediately followed by a
+                    // re-retain (seek/reopen) is not that event: retrying then
+                    // would race the just-reopened playback reader.
+                    if (allowRetry) retryAnalysisHeadIfReaderReleased(videoId)
                 }
                 heldKey = null
                 heldVideoId = null
@@ -2227,6 +2238,10 @@ object AudioCache {
      */
     fun cancelLosslessPrefetchFor(mediaId: String?) {
         if (mediaId == null || losslessPrefetchFor != mediaId) return
+        // A timed-out next-row prefetch is deliberately left running; once that
+        // row becomes current it must not be aborted by the following row's
+        // schedule, or the playing track loses its in-progress lossless copy.
+        if (mediaId == currentMediaId) return
         val active = losslessPrefetchJob?.isActive == true
         if (active) losslessPrefetchJob?.cancel()
         losslessPrefetchJob = null
