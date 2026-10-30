@@ -132,21 +132,61 @@ object Downloader {
                 }
                 val body = it.body ?: error("Download failed: empty response")
                 val source = body.byteStream()
-                var readForChunk = 0L
-                while (readForChunk < length) {
-                    coroutineContext.ensureActive()
-                    val wanted = minOf(buffer.size.toLong(), length - readForChunk).toInt()
-                    val read = source.read(buffer, 0, wanted)
-                    if (read == -1) break
-                    sink.write(buffer, 0, read)
-                    readForChunk += read
-                    position += read
-                    onProgress(position, total)
+                if (it.code == 200) {
+                    // A proxy or cache in front of googlevideo may answer a
+                    // ranged request with the whole file and a 200. Writing
+                    // only `length` bytes of that response and then asking for
+                    // the next range would put the opening of the file into
+                    // the middle of the output, exactly as [fetchDirect]'s
+                    // comment warns. The whole body is the answer, so skip the
+                    // bytes already written and take the rest.
+                    val declared = it.header("Content-Length")?.toLongOrNull()
+                    if (declared != null && declared != total) {
+                        error("Download server sent ${declared}B, expected ${total}B")
+                    }
+                    var skip = position
+                    while (skip > 0L) {
+                        coroutineContext.ensureActive()
+                        val wanted = minOf(buffer.size.toLong(), skip).toInt()
+                        val read = source.read(buffer, 0, wanted)
+                        if (read == -1) error("Download ended while skipping to ${position}B")
+                        skip -= read
+                    }
+                    var readAny = false
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val read = source.read(buffer)
+                        if (read == -1) break
+                        sink.write(buffer, 0, read)
+                        position += read
+                        readAny = true
+                        onProgress(position, total)
+                    }
+                    if (!readAny) error("Download failed: empty response")
+                    if (position != total) error("Download ended at ${position}B of ${total}B")
+                } else {
+                    it.header("Content-Range")
+                        ?.substringAfter("bytes ", "")
+                        ?.substringBefore('-')
+                        ?.toLongOrNull()
+                        ?.takeIf { start -> start != position }
+                        ?.let { start -> error("Download range started at ${start}B, expected ${position}B") }
+                    var readForChunk = 0L
+                    while (readForChunk < length) {
+                        coroutineContext.ensureActive()
+                        val wanted = minOf(buffer.size.toLong(), length - readForChunk).toInt()
+                        val read = source.read(buffer, 0, wanted)
+                        if (read == -1) break
+                        sink.write(buffer, 0, read)
+                        readForChunk += read
+                        position += read
+                        onProgress(position, total)
+                    }
+                    // A range that stops short is not fatal on its own — the next
+                    // pass simply asks for what is left — but one that yields
+                    // nothing at all would loop here forever.
+                    if (readForChunk == 0L) error("Download stalled at ${position}B")
                 }
-                // A range that stops short is not fatal on its own — the next
-                // pass simply asks for what is left — but one that yields
-                // nothing at all would loop here forever.
-                if (readForChunk == 0L) error("Download stalled at ${position}B")
             }
         }
 
@@ -261,6 +301,16 @@ object Downloader {
                     ?.substringAfter('/', "")
                     ?.toLongOrNull()
                     ?.takeIf { it > 0 }
+                    // A server or proxy that ignores Range answers 200 with the
+                    // whole file. It has no Content-Range to read, but its
+                    // Content-Length is the same total, and refusing it here
+                    // made every such download fail before the first byte. A
+                    // 206 without a usable Content-Range is left null: its
+                    // Content-Length is the slice, not the track.
+                    ?: response.takeIf { it.code == 200 }
+                        ?.header("Content-Length")
+                        ?.toLongOrNull()
+                        ?.takeIf { it > 0 }
             }
         }.onFailure { Log.w(TAG, "could not measure the track: ${it.message}") }.getOrNull()
     }

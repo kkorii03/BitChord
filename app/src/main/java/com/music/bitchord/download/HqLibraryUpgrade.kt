@@ -54,6 +54,18 @@ import java.util.concurrent.TimeUnit
 internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
 
 /**
+ * Whether a download's success is also proof that the pass's replacement
+ * landed.
+ *
+ * The queue refuses a second request for an id that is already queued or
+ * running, so a user download of the same song can finish while the pass is
+ * waiting on it. That download did not necessarily carry the verified pair;
+ * the record's own provenance is what says it did.
+ */
+internal fun hqReplacementLanded(downloadSucceeded: Boolean, applied: Boolean): Boolean =
+    downloadSucceeded && applied
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -580,7 +592,40 @@ object HqLibraryUpgrade {
     ) {
         if (!ready) return
         if (synchronized(lock) { activeVideoId } != videoId) return
-        settle(context, videoId, success, failure = failure)
+        if (!success) {
+            settle(context, videoId, success = false, failure = failure)
+            return
+        }
+        val target = synchronized(lock) {
+            plan.firstOrNull { it.target.videoId == videoId }
+        }
+        // A target that is no longer in the plan has nothing left to verify;
+        // keep the old answer for it. A target still present must actually
+        // carry the verified pair, or a user's own download of the same id
+        // would be mistaken for the replacement and the plan would advance
+        // without the higher-quality file.
+        val applied = target == null || Downloads.hqApplied(
+            videoId,
+            HqDownloadSource(
+                sourceConfigId = target.target.sourceConfigId,
+                trackId = target.target.trackId,
+                tier = target.target.verifiedTier,
+            ),
+        )
+        if (!hqReplacementLanded(success, applied)) {
+            TrackLog.w(
+                TAG,
+                "hq-library: $videoId finished without the verified pair; not counting it as landed",
+            )
+            settle(
+                context,
+                videoId,
+                success = false,
+                failure = DownloadFailure(transient = false),
+            )
+            return
+        }
+        settle(context, videoId, success = true, failure = failure)
     }
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {

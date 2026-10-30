@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
@@ -42,6 +43,12 @@ class DownloadService : Service() {
     private var drain: Job? = null
     private var notifier: Job? = null
 
+    /** Whether a drain is running, and whether another start arrived meanwhile. */
+    private val drainGate = DrainGate()
+
+    /** Distinguishes this drain from one a late start request just began. */
+    private var drainGeneration = 0L
+
     /** What the notification is currently about. */
     @Volatile
     private var current: Song? = null
@@ -66,15 +73,7 @@ class DownloadService : Service() {
             return START_NOT_STICKY
         }
 
-        if (drain == null) {
-            drain = scope.launch {
-                drainQueue()
-                // Not shutdown(stopWork = true): this is the drain coroutine,
-                // and cancelling its own job here would be cancelling itself.
-                shutdown(stopWork = false)
-            }
-            notifier = scope.launch { reflectProgress() }
-        }
+        ensureDrain()
         // Not sticky: a queue is a list of things asked for in a session, and
         // reviving the service without one would put up a notification about
         // nothing.
@@ -113,20 +112,69 @@ class DownloadService : Service() {
         repeat(WORKERS) { launch { work() } }
     }
 
+    /**
+     * Start a drain unless one is already running.
+     *
+     * A start request that lands while the last drain is finishing is not
+     * dropped: the finishing coroutine checks the queue again and starts
+     * another drain instead of stopping the service. The old code only asked
+     * whether [drain] was null, so a request in that window was accepted by
+     * Android and then silently ignored — the track sat in the queue with no
+     * worker and no later event guaranteed to wake it.
+     */
+    private fun ensureDrain() {
+        if (!drainGate.begin()) return
+        val generation = ++drainGeneration
+        if (notifier?.isActive != true) {
+            notifier = scope.launch { reflectProgress() }
+        }
+        drain = scope.launch {
+            drainQueue()
+            // A start request may have begun a newer drain between the last
+            // worker returning and this line. That one owns the service now;
+            // stopping it here would recreate the lost wake-up this exists for.
+            if (generation != drainGeneration) return@launch
+            if (drainGate.finish(queueBusy = Downloads.busy())) {
+                ensureDrain()
+            } else {
+                // Not shutdown(stopWork = true): this is the drain coroutine,
+                // and cancelling its own job here would be cancelling itself.
+                shutdown(stopWork = false)
+            }
+        }
+    }
+
     private suspend fun work() {
-        var idleFor = 0L
+        var idleSince = 0L
+        var idle = false
         while (true) {
+            // Read the generation before looking at the queue. If an enqueue
+            // lands between the two, takeNext sees it; if it lands after, the
+            // changed version wakes the wait below immediately. Reading it
+            // afterwards would miss exactly that race.
+            val seen = Downloads.workVersion()
             val song = Downloads.takeNext()
             if (song == null) {
                 // Nothing to take, but something may still be arriving — or
                 // another worker may fail a track back into view. Only a queue
                 // that stays empty, with nothing else in flight, is finished.
-                if (idleFor >= IDLE_GRACE_MS && !Downloads.busy()) return
-                delay(IDLE_POLL_MS)
-                idleFor += IDLE_POLL_MS
+                if (!Downloads.busy()) {
+                    if (!idle) {
+                        idle = true
+                        idleSince = SystemClock.elapsedRealtime()
+                    }
+                    val waited = SystemClock.elapsedRealtime() - idleSince
+                    if (waited >= IDLE_GRACE_MS) return
+                    Downloads.awaitWorkChange(seen, IDLE_GRACE_MS - waited)
+                } else {
+                    // A track is in flight. Wait for it to finish (or for a new
+                    // one to arrive) rather than waking every 100ms to ask.
+                    idle = false
+                    Downloads.awaitWorkChange(seen)
+                }
                 continue
             }
-            idleFor = 0L
+            idle = false
             current = song
             postNotification()
 
@@ -148,7 +196,10 @@ class DownloadService : Service() {
     }
 
     private fun shutdown(stopWork: Boolean) {
-        if (stopWork) drain?.cancel()
+        if (stopWork) {
+            drain?.cancel()
+            drainGate.reset()
+        }
         notifier?.cancel()
         drain = null
         notifier = null
@@ -158,6 +209,7 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        drainGate.reset()
         Downloads.onStopped()
         super.onDestroy()
     }
@@ -287,7 +339,40 @@ class DownloadService : Service() {
          * a finished one would leave the whole batch to whoever won the race.
          */
         const val IDLE_GRACE_MS = 2_000L
+    }
+}
 
-        const val IDLE_POLL_MS = 100L
+/**
+ * Whether a drain should start, and whether one arrived while it was finishing.
+ *
+ * Kept separate from the service so the "start during finish" case — the one
+ * that used to leave a queued track with nothing to run it — can be exercised
+ * without Android.
+ */
+internal class DrainGate {
+
+    private var active = false
+
+    /** @return true when the caller should launch a drain now. */
+    @Synchronized
+    fun begin(): Boolean {
+        if (active) return false
+        active = true
+        return true
+    }
+
+    /**
+     * @param queueBusy whether a track arrived after the workers gave up.
+     * @return true when another drain must follow this one instead of stopping.
+     */
+    @Synchronized
+    fun finish(queueBusy: Boolean): Boolean {
+        active = false
+        return queueBusy
+    }
+
+    @Synchronized
+    fun reset() {
+        active = false
     }
 }
