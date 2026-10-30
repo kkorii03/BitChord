@@ -257,7 +257,7 @@ internal class NextTrackPreparation(
                             if (lines != null) {
                                 // Free measurement and timing first: they need
                                 // no upload and are what times most covers.
-                                var prepared = LyricsTiming.prepareNextFree(
+                                val prepared = LyricsTiming.prepareNextFree(
                                     context = context,
                                     song = song,
                                     lines = lines,
@@ -279,7 +279,10 @@ internal class NextTrackPreparation(
                                         (NextPrepPolicy.canStartStep(leftNow) &&
                                             awaitAiGate(player, leftNow))
                                     if (gateOpen) {
-                                        prepared = LyricsTiming.prepareNextPaid(
+                                        // The paid answer replaces the free one:
+                                        // it is the correction the next row must
+                                        // open with, and what the log reports.
+                                        syncTiming = LyricsTiming.prepareNextPaid(
                                             context = context,
                                             song = song,
                                             lines = lines,
@@ -356,7 +359,7 @@ internal class NextTrackPreparation(
             val beforeHq = currentPlayer()?.let { remainingMs(it) } ?: Long.MAX_VALUE
             if (NextPrepPolicy.canStartStep(beforeHq)) {
                 try {
-                    awaitLosslessDownload(song, beforeHq)
+                    if (awaitLosslessDownload(song, beforeHq)) deadlineHit = true
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
@@ -687,21 +690,24 @@ internal class NextTrackPreparation(
      * [prepareHq]: the bundle runs one step at a time, and a whole FLAC must
      * not compete with the measurement/AI/refine it was launched beside.
      */
-    private suspend fun awaitLosslessDownload(song: Song, remainingMs: Long) {
-        if (remainingMs <= 0L) return
-        val stream = StreamChoice.of(song.videoId) ?: return
-        if (!HqQuality.isLosslessTier(stream.format)) return
-        val uri = currentNextItemUri(song.videoId) ?: return
+    private suspend fun awaitLosslessDownload(song: Song, remainingMs: Long): Boolean {
+        if (remainingMs <= 0L) return true
+        val stream = StreamChoice.of(song.videoId) ?: return false
+        if (!HqQuality.isLosslessTier(stream.format)) return false
+        val uri = currentNextItemUri(song.videoId) ?: return false
         val upgraded = runCatching {
             Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
-        }.getOrNull() ?: return
+        }.getOrNull() ?: return false
         // Starting the background job first makes the awaited call join it
         // instead of opening a second writer on the same entry.
         hqPrefetchVideoId = song.videoId
         AudioCache.prefetchVerifiedRendition(upgraded, song.title, stream)
-        withRemaining(remainingMs) {
+        // A null here is the deadline cutting the download short; the pinned
+        // rendition and the background job are still there, but the bundle
+        // must say it ran out of time rather than claim the step finished.
+        return withRemaining(remainingMs) {
             AudioCache.downloadVerifiedRendition(upgraded, song.title, stream)
-        }
+        } == null
     }
 
     /**

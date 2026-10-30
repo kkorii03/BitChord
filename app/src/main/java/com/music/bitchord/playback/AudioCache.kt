@@ -2511,7 +2511,10 @@ object AudioCache {
      */
     suspend fun awaitRenditionPrefix(videoId: String, minBytes: Long, timeoutMs: Long): Boolean {
         if (openedCache == null) return false
-        if (alignmentPrefixBytes(videoId) >= minBytes) return true
+        if (alignmentPrefixBytes(videoId) >= minBytes) {
+            refreshRenditionKeys(videoId)
+            return true
+        }
         val keys = LinkedHashSet<String>().apply {
             add(videoId)
             add("$videoId#alt")
@@ -2530,14 +2533,25 @@ object AudioCache {
         }
         keys.forEach { key -> runCatching { cache.addListener(key, listener) } }
         return try {
-            if (alignmentPrefixBytes(videoId) >= minBytes) {
+            val ready = if (alignmentPrefixBytes(videoId) >= minBytes) {
                 true
             } else {
                 withTimeoutOrNull(timeoutMs) { reached.await() } != null
             }
+            // The wait can see the bytes through the direct cache-key reads
+            // while [renditionKeysFor]'s five-second memo still lacks the key
+            // they landed under. The caller re-checks through that memo, so
+            // without dropping it here the loop spins until the memo expires.
+            if (ready) refreshRenditionKeys(videoId)
+            ready
         } finally {
             keys.forEach { key -> runCatching { cache.removeListener(key, listener) } }
         }
+    }
+
+    /** Drops the rendition-key memo so the next read sees a newly written key. */
+    private fun refreshRenditionKeys(videoId: String) {
+        renditionKeys.remove(videoId)
     }
 
     /**

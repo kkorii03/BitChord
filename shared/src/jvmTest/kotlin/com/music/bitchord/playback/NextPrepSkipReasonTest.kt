@@ -107,6 +107,26 @@ class NextPrepSkipReasonTest {
     }
 
     @Test
+    fun everySkipReasonUsesTheSkippedParenthesesFormat() {
+        val cases = listOf(
+            facts(lyricsOff = true, hasLyrics = false) to "lyrics-off",
+            facts(syncedLyrics = false, hasLyrics = false) to "synced-off",
+            facts(hasLyrics = false) to "no-lyrics",
+            facts(timedToVideo = true) to "timed-to-video",
+            facts(fileTimed = true) to "file-timed",
+            facts(heavyWorkAllowed = false) to "heavy-off",
+            facts(remainingMs = 0L) to "deadline",
+            facts(aiTimingAhead = false) to "ai-ahead-off",
+            facts(aiUsable = false) to "ai-unavailable",
+            facts(currentPlayedMs = 0L) to "ai-too-early",
+            facts() to "no-answer",
+        )
+        cases.forEach { (facts, reason) ->
+            assertEquals("skipped($reason)", NextPrepPolicy.syncStatus(facts))
+        }
+    }
+
+    @Test
     fun aMissingAnswerIsLabelledWithItsReason() {
         assertEquals("none(deadline)", NextPrepPolicy.noneWithReason("deadline"))
         assertEquals("none(none)", NextPrepPolicy.noneWithReason(null))

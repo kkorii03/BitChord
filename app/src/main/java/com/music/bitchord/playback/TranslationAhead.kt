@@ -96,7 +96,12 @@ internal object TranslationAhead {
      * the one the player needs instantly when the track opens. See
      * [TranslationAheadPolicy] for when the heavy pass is allowed ahead.
      */
-    fun nextTrack(context: Context, next: Song?, allowHeavy: Boolean) {
+    fun nextTrack(
+        context: Context,
+        next: Song?,
+        allowHeavy: Boolean,
+        paidGate: suspend () -> Boolean = { true },
+    ) {
         if (next == null || !AppSettings.syncedLyrics.value) {
             nextJob?.cancel()
             nextId = null
@@ -107,7 +112,7 @@ internal object TranslationAhead {
         nextJob?.cancel()
         nextId = next.videoId
         val app = context.applicationContext
-        nextJob = scope.launch { prepare(app, next, allowHeavy) }
+        nextJob = scope.launch { prepare(app, next, allowHeavy, paidGate) }
     }
 
     /** The lyrics a prep pass found, and whether they came out of a downloaded file. */
@@ -180,6 +185,7 @@ internal object TranslationAhead {
         app: Context,
         song: Song,
         allowHeavy: Boolean,
+        paidGate: suspend () -> Boolean = { true },
     ) {
         // A per-song override is what the player will show, so translate that
         // rather than the file's older tags or a fresh provider answer.
@@ -213,7 +219,7 @@ internal object TranslationAhead {
         // outside the job that owns the lookup: this song is about to be the
         // one playing, and the next nextTrack — the moment it starts — must not
         // throw away a measurement half done for it.
-        startTiming(app, song, found)
+        startTiming(app, song, found, paidGate)
         if (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value) {
             translate(song.videoId, lines, targetLanguage(app), keep = song.localUri != null)
         }
@@ -223,12 +229,19 @@ internal object TranslationAhead {
     /** Timing jobs still running: this song's, the one before (now usually playing). */
     private val timingJobs = ArrayDeque<Pair<String, Job>>()
 
-    private fun startTiming(context: Context, song: Song, found: LyricsRepository.Result) {
+    private fun startTiming(
+        context: Context,
+        song: Song,
+        found: LyricsRepository.Result,
+        paidGate: suspend () -> Boolean,
+    ) {
         synchronized(timingJobs) {
             timingJobs.removeAll { !it.second.isActive }
             if (timingJobs.any { it.first == song.videoId }) return
             while (timingJobs.size >= MAX_TIMING_JOBS) timingJobs.removeFirst().second.cancel()
-            timingJobs.addLast(song.videoId to scope.launch { prepareTiming(context, song, found) })
+            timingJobs.addLast(
+                song.videoId to scope.launch { prepareTiming(context, song, found, paidGate) },
+            )
         }
     }
 
@@ -246,7 +259,12 @@ internal object TranslationAhead {
      * a few megabytes, and the alternative is lyrics out of time for the
      * first half-minute of every cover.
      */
-    private suspend fun prepareTiming(context: Context, song: Song, found: LyricsRepository.Result) {
+    private suspend fun prepareTiming(
+        context: Context,
+        song: Song,
+        found: LyricsRepository.Result,
+        paidGate: suspend () -> Boolean,
+    ) {
         // Low power defers the whole ahead-of-time pass: it uploads or streams
         // for a track nobody is listening to yet. The next track's own
         // automatic pass picks it up once heavy work is allowed again; the
@@ -280,6 +298,10 @@ internal object TranslationAhead {
             }
             val ahead = if (calibration) {
                 scope.launch {
+                    // Paid engines wait for the current song's early-skip
+                    // window even when this pass started before it; the free
+                    // measurement below is not held up by the wait.
+                    if (!paidGate()) return@launch
                     runCatching {
                         timing.placeWithAi(
                             context,
@@ -308,7 +330,8 @@ internal object TranslationAhead {
             if (!calibration && AppSettings.aiTimingAhead.value &&
                 (gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 !timing.measuredTiming(context, song.videoId) &&
-                timing.wantsAi(context, song.videoId, found.lines)
+                timing.wantsAi(context, song.videoId, found.lines) &&
+                paidGate()
             ) {
                 timing.placeWithAi(
                     context,
@@ -323,7 +346,8 @@ internal object TranslationAhead {
             if ((gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
                 timing.measurementGaveUp(context, song.videoId) &&
                 (AppSettings.autoLyricsTiming.value || AppSettings.aiTimingAhead.value) &&
-                timing.wantsAi(context, song.videoId, found.lines)
+                timing.wantsAi(context, song.videoId, found.lines) &&
+                paidGate()
             ) {
                 timing.placeWithAi(
                     context,
