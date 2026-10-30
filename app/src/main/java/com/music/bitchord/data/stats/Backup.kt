@@ -17,6 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -121,7 +123,7 @@ object Backup {
     ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
-                ?.use { it.readBytes().decodeToString() }
+                ?.use { it.readTextBounded() }
                 ?: error("파일을 열 수 없습니다")
             val file = decode(text)
             validate(file)
@@ -160,6 +162,25 @@ object Backup {
         }
     }
 
+    /**
+     * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
+     * rather than growing the buffer without bound. A backup comes from the
+     * file picker, so its size is whatever the picked document happens to be.
+     */
+    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var total = 0
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "백업 파일이 너무 큽니다" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray().decodeToString()
+    }
+
     internal fun encode(file: BackupFile): String =
         json.encodeToString(BackupFile.serializer(), file)
 
@@ -195,6 +216,9 @@ object Backup {
     )
 
     private const val APP_TAG = "bitchord"
+
+    /** A backup is text; anything past this is not a file this build wrote. */
+    internal const val MAX_IMPORT_BYTES = 4_000_000
 
     /**
      * Bump when the shape below stops being readable by an older build. A file

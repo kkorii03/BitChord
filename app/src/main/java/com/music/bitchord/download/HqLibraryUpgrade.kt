@@ -54,6 +54,14 @@ import java.util.concurrent.TimeUnit
 internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
 
 /**
+ * Whether a verdict arriving now has a run that must rebuild after its current
+ * target settles. The worker may have picked its target without storing it in
+ * the active slot yet, so a non-empty plan counts as a run in flight too.
+ */
+internal fun rebuildAfterVerdict(activeVideoId: String?, planSize: Int): Boolean =
+    activeVideoId != null || planSize > 0
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -229,7 +237,15 @@ object HqLibraryUpgrade {
 
     /** Called at app start, on playback and on the foreground event; safe to call repeatedly. */
     fun scheduleIfEnabled(context: Context) {
-        ensureLoaded(context)
+        // The persisted plan can hold thousands of lines. Parsing it on the
+        // caller's main thread (app start and every track start) is an ANR
+        // waiting to happen, so the first load runs on IO and schedules from
+        // there. Later calls find it ready and stay synchronous.
+        if (!ready) {
+            val app = context.applicationContext
+            manualScope.launch { scheduleIfEnabled(app) }
+            return
+        }
         if (!runAllowed()) return
         // Android refuses a foreground service started without a window, so
         // the pass waits for the next [onForeground] event instead of trying
@@ -338,7 +354,10 @@ object HqLibraryUpgrade {
         ensureLoaded(context)
         if (!enabled()) return
         synchronized(lock) {
-            rebuildRequested = activeVideoId != null
+            // A worker may have picked its target and not yet stored it in
+            // [activeVideoId]; the plan being non-empty is what says that run
+            // still has to rebuild after the verdict it is holding finishes.
+            rebuildRequested = rebuildAfterVerdict(activeVideoId, plan.size)
             plan = emptyList()
             done = 0
             total = 0

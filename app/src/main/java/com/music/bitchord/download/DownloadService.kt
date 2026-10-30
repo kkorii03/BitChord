@@ -82,6 +82,24 @@ class DownloadService : Service() {
     }
 
     /**
+     * Android 15+ gives a `dataSync` foreground service a limited time in a
+     * rolling 24-hour window. Once it is spent the system calls this and only
+     * grants a few seconds before declaring the app ANR unless the service has
+     * stopped. A long download queue can reach that limit, so stop cleanly and
+     * leave the remaining rows queued for the next foreground event instead of
+     * letting the process be killed.
+     */
+    override fun onTimeout(startId: Int) {
+        shutdown(stopWork = true)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        if (fgsType == ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) {
+            shutdown(stopWork = true)
+        }
+    }
+
+    /**
      * [WORKERS] tracks at a time, each pulling from the same queue.
      *
      * This used to be one, on the reasoning that these are ranged fetches
