@@ -60,12 +60,29 @@ object VideoAudio {
 
     suspend fun wav(context: Context, videoId: String): ByteArray? = withContext(Dispatchers.IO) {
         synchronized(recent) { recent[videoId] }?.let { return@withContext it }
-        if (!PowerState.screenOn) return@withContext null
+        if (!PowerState.screenOn) {
+            TrackLog.d(TAG, "AI timing: the screen is off", videoId)
+            return@withContext null
+        }
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         AudioCache.keepForTiming(videoId)
-        if (!AudioCache.awaitAnalysisTrack(opus, FETCH_TIMEOUT_MS)) return@withContext null
+        if (!AudioCache.awaitAnalysisTrack(opus, FETCH_TIMEOUT_MS)) {
+            TrackLog.d(TAG, "AI timing: no analysis audio on disk", videoId)
+            return@withContext null
+        }
         val copy = VersionAudioAligner.renditionToMeasure(videoId)
-        if (copy == null || !copy.isComplete) return@withContext null
+        if (copy == null) {
+            TrackLog.d(TAG, "AI timing: no cache copy to decode", videoId)
+            return@withContext null
+        }
+        if (!copy.isComplete) {
+            TrackLog.d(
+                TAG,
+                "AI timing: copy is still ${copy.cachedPrefix}/${copy.contentLength} bytes",
+                videoId,
+            )
+            return@withContext null
+        }
         synchronized(locks.getOrPut(videoId) { Any() }) {
             synchronized(recent) { recent[videoId] }?.let { return@synchronized it }
             val bytes = decode(context, videoId) ?: return@synchronized null
@@ -75,24 +92,52 @@ object VideoAudio {
     }
 
     /**
-     * Whether [wav] can get this song's sound for [videoId] — now, or by
-     * waiting for the stream the player is already filling. The AI timing
-     * action uses this to stay off when Deepgram is the only engine set up
-     * and there is nothing for it to hear.
+     * Whether [wav] can get this song's sound for [videoId] right now. The AI
+     * timing action uses this to stay off when Deepgram is the only engine set
+     * up and there is nothing for it to hear.
      *
-     * A freshly streamed track is not whole for a while yet, but [wav] waits
-     * for a complete copy before it decodes, so a rendition that is merely in
-     * progress (the listener is playing it) is ready enough to offer the
-     * action. The same holds for a substitute's `#alt` entry: [wav]'s wait
-     * accepts its prefix ([AudioCache.awaitAnalysisHead]) and
-     * [VersionAudioAligner.renditionToMeasure] opens it once whole. Only when
-     * the cache holds nothing at all is there no sound to wait for here.
+     * This must ask exactly what [wav] asks. A freshly streamed track is
+     * usually still partial — the player only holds the window around the
+     * playhead — and [wav] needs the copy it decodes to be on disk in full, so
+     * offering the action for a merely in-progress rendition only ends in
+     * `aiFailed`. The earlier change that accepted any cached bytes did
+     * exactly that: on an ordinary stream the button appeared, then `wav`
+     * returned null. Readiness is therefore the same *chosen* copy
+     * ([VersionAudioAligner.chooseMeasurementCopy]) being complete.
      */
     fun audioReadyForTiming(videoId: String): Boolean {
-        synchronized(recent) { recent[videoId] }?.let { return true }
-        if (!PowerState.screenOn) return false
+        val cached = synchronized(recent) { recent[videoId] } != null
+        if (cached) return true
+        val screenOn = PowerState.screenOn
+        if (!screenOn) return false
         val watch = Uri.parse("bitchord://watch?v=$videoId")
-        return AudioCache.renditionsOf(watch).isNotEmpty()
+        return timingAudioReady(
+            recentCached = false,
+            screenOn = screenOn,
+            onDisk = AudioCache.renditionsOf(watch),
+        )
+    }
+
+    /**
+     * [audioReadyForTiming]'s rule with the cache already read, so the
+     * readiness/`wav` contract can be tested without an Android cache.
+     *
+     * [wav] decodes [VersionAudioAligner.renditionToMeasure] only when that
+     * copy is complete, so both must name the same copy and require its
+     * completeness. A partial same-source opening is picked over a complete
+     * substitute whenever it reaches the measurement floor, and `wav` then
+     * fails on it too; matching the pick here keeps the button off in that
+     * case.
+     */
+    internal fun timingAudioReady(
+        recentCached: Boolean,
+        screenOn: Boolean,
+        onDisk: List<AudioCache.Rendition>,
+    ): Boolean {
+        if (recentCached) return true
+        if (!screenOn) return false
+        val copy = VersionAudioAligner.chooseMeasurementCopy(onDisk) ?: return false
+        return copy.isComplete
     }
 
     /**

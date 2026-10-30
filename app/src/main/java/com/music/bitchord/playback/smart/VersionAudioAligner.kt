@@ -327,7 +327,15 @@ object VersionAudioAligner {
     /** The copy of [videoId] that [openDataSource] reads — see there for the order. */
     internal fun renditionToMeasure(videoId: String): AudioCache.Rendition? {
         val watch = Uri.parse("bitchord://watch?v=$videoId")
-        val onDisk = AudioCache.renditionsOf(watch)
+        return chooseMeasurementCopy(AudioCache.renditionsOf(watch))
+    }
+
+    /**
+     * Which of [onDisk] a measurement would open — the same choice
+     * [renditionToMeasure] makes, separated from the cache so readiness can be
+     * tested with plain values.
+     */
+    internal fun chooseMeasurementCopy(onDisk: List<AudioCache.Rendition>): AudioCache.Rendition? {
         val sameSource = onDisk
             .filter { !it.key.endsWith("#alt") }
             .maxByOrNull { it.cachedPrefix }
