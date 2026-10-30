@@ -158,7 +158,7 @@ class LyricsController(
      * from its downloaded file to the song stream, and the check of the old
      * recording must not stand for the new one.
      */
-    private var lyricsFor: Triple<String, String?, Set<LyricsSource>>? = null
+    private var lyricsFor: LyricsLoadKey? = null
 
     init {
         // Kept lyrics a background check has since bettered (word timing where
@@ -204,10 +204,13 @@ class LyricsController(
         } else {
             emptySet()
         }
-        val key = Triple(
-            videoId,
-            if (isVideo) null else LyricsTiming.audioSourceKey(videoId, localUri != null),
-            sources,
+        val key = LyricsLoadKey.of(
+            videoId = videoId,
+            isVideo = isVideo,
+            localUri = localUri,
+            sources = sources,
+            order = AppSettings.lyricsSourceOrder.value,
+            prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
         if (lyricsFor == key) return
         // The duration lands a beat after the track, and a database match needs
@@ -271,7 +274,16 @@ class LyricsController(
         // answer rather than making a request. Off by default: the bundle's
         // lyrics path is a post-ko-101 addition and must not reach this frame.
         if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(videoId)?.let { prepared ->
+            NextPrepCache.get(
+                videoId,
+                localFile = localUri != null,
+                isVideo = isVideo,
+                lyricsSettings = NextPrepCache.settingsKey(
+                    sources = sources,
+                    order = AppSettings.lyricsSourceOrder.value,
+                    prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                ),
+            )?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -415,7 +427,41 @@ class LyricsController(
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)
             _lyricsChecked.value = true
+            // A miss is not a final answer: a source may have been down or the
+            // phone offline. Forget the claim so a later look at the same
+            // track (a settings change, reopening the panel) asks again,
+            // instead of being dropped as a duplicate for the whole session.
+            if (selected == null) lyricsFor = null
         }
+    }
+
+    /**
+     * Asks the providers once more when the player reopens the lyrics panel
+     * after a transient miss. A found answer or a lookup still running is left
+     * alone, so this is a no-op in the ordinary case and never a poll.
+     */
+    fun retryLyricsIfMissed() {
+        val request = currentLyricsRequest ?: return
+        if (!LyricsRetry.shouldRetry(
+                checked = _lyricsChecked.value,
+                hasLyrics = !_lyrics.value.isNullOrEmpty(),
+                lookupClaimed = lyricsFor != null,
+                hasRequest = true,
+            )
+        ) return
+        TrackLog.d("BitChord", "cmd: lyrics retry after miss", about = request.videoId)
+        loadLyrics(
+            videoId = request.videoId,
+            title = request.title,
+            artist = request.artist,
+            durationMs = request.durationMs,
+            album = request.album,
+            localUri = request.localUri,
+            isVideo = request.isVideo,
+            alternatives = request.alternatives,
+            artistKnown = request.artistKnown,
+            artistAliases = request.artistAliases,
+        )
     }
 
     /**

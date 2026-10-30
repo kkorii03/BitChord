@@ -75,6 +75,16 @@ class LrcRedTest {
     }
 
     @Test
+    fun `album version and radio edit name the same recording`() {
+        val plain = listOf(LrcRed.Hit(isrc = "USRC17607839", title = "Song", artist = "Artist", duration = 200.0))
+        assertEquals("USRC17607839", LrcRed.best(plain, "Song (Album Version)", "Artist", 200_000)?.isrc)
+        assertEquals("USRC17607839", LrcRed.best(plain, "Song (Radio Edit)", "Artist", 200_000)?.isrc)
+        assertEquals("USRC17607839", LrcRed.best(plain, "Song (Original Mix)", "Artist", 200_000)?.isrc)
+        // A real take still separates them.
+        assertNull(LrcRed.best(plain, "Song (Live)", "Artist", 200_000))
+    }
+
+    @Test
     fun `only a well formed isrc becomes a path`() {
         assertEquals("https://lrc.red/s/GBUM71029604.ttml", LrcRed.documentUrl(" gbum71029604 "))
         assertNull(LrcRed.documentUrl("../search.json?q=x"))

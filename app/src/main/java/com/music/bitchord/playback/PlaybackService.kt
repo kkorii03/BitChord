@@ -9791,9 +9791,17 @@ class PlaybackService : MediaLibraryService() {
                 AppSettings.lyricsSourceOrder,
                 AppSettings.prioritizeSyllableSync,
             ) { synced, sources, order, prio ->
-                synced to sources
+                // Keep every term: the order and the syllable preference
+                // change which answer wins, so a change to either must reload
+                // the track already playing, not just the next one.
+                listOf(synced, sources, order, prio)
             }.distinctUntilChanged().collect {
                 loadLyricsForCurrentTrack()
+                // A completed next-row bundle was keyed by the old settings, so
+                // it is not the answer for the new choice. Re-schedule it under
+                // the new settings; with no change the sound identity is the
+                // same and this is a no-op.
+                player?.let { active -> if (active.isPlaying) scheduleNextPrep(active) }
             }
         }
         scope.launch {
@@ -10610,7 +10618,16 @@ class PlaybackService : MediaLibraryService() {
         // first frame instead of after the lookup — only while its lyrics
         // switch is on; off, this frame waits for the ordinary lookup.
         val prepared = if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(currentSong.videoId)
+            NextPrepCache.get(
+                currentSong.videoId,
+                localFile = currentSong.localUri != null,
+                isVideo = LyricsTimingSource.isVideo(currentSong),
+                lyricsSettings = NextPrepCache.settingsKey(
+                    sources = AppSettings.lyricsSources.value,
+                    order = AppSettings.lyricsSourceOrder.value,
+                    prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                ),
+            )
         } else {
             null
         }
@@ -10639,6 +10656,7 @@ class PlaybackService : MediaLibraryService() {
             var foundSource: com.music.bitchord.data.lyrics.LyricsSource? = null
             val coverQuery = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(currentSong)
             var fromFile = false
+            var overrideRecheck = false
             // A per-song override outranks both the file's own tags/sidecar and
             // every provider, and is what a re-check writes instead of touching
             // the audio file. See LyricsOverrideFile.
@@ -10647,6 +10665,7 @@ class PlaybackService : MediaLibraryService() {
                 lines = override.lines
                 foundSource = override.source
                 fromFile = localUri != null
+                overrideRecheck = override.kind == com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.RECHECK
             } else if (localUri != null) {
                 EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
                     lines = file.lines
@@ -10682,7 +10701,12 @@ class PlaybackService : MediaLibraryService() {
             // for it (a correction by hand only); a video's lyrics — streamed,
             // or carried in its download — take Gemini's answer, and the
             // measurement when they are known to be the record's.
-            val timeable = timed && (!fromFile || coverQuery.isVideo)
+            val timeable = LocalTimingPolicy.baseAllowed(
+                timed = timed,
+                fromFile = fromFile,
+                isVideo = LyricsTimingSource.isVideo(currentSong),
+                overrideRecheck = overrideRecheck,
+            )
             val recordTimed = timeable && (!fromFile || foundSource != null) &&
                 !com.music.bitchord.playback.smart.LyricsTiming.timedToVideo(foundSource)
             suspend fun publish() {
@@ -10694,8 +10718,12 @@ class PlaybackService : MediaLibraryService() {
                             raw,
                             baseAllowed = timeable,
                             measuredAllowed = recordTimed,
-                            isVideo = currentSong.isVideo,
-                            audioSource = if (currentSong.isVideo) {
+                            // A cover is a video even when its row lost the flag
+                            // (a Recents row). The lyrics screen uses the same
+                            // [LyricsTimingSource] answer; the row's own flag
+                            // here gave one song two different sync keys.
+                            isVideo = LyricsTimingSource.isVideo(currentSong),
+                            audioSource = if (LyricsTimingSource.isVideo(currentSong)) {
                                 null
                             } else {
                                 com.music.bitchord.playback.smart.LyricsTiming

@@ -39,4 +39,19 @@ object LocalTimingPolicy {
         isVideo: Boolean,
         timingForeign: Boolean,
     ): Boolean = localUri.isNullOrBlank() || isVideo || timingForeign
+
+    /**
+     * Whether a row's stored timing may be applied.
+     *
+     * A song's own downloaded file is timed for it already, so only a
+     * correction by hand applies — unless a re-check wrote a fresh sheet for
+     * this file, which exists precisely so its new sync is used. A video's
+     * file and a stream are always adjustable.
+     */
+    fun baseAllowed(
+        timed: Boolean,
+        fromFile: Boolean,
+        isVideo: Boolean,
+        overrideRecheck: Boolean,
+    ): Boolean = timed && (!fromFile || isVideo || overrideRecheck)
 }

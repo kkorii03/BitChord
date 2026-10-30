@@ -133,6 +133,23 @@ object NextPrepPolicy {
     fun noneWithReason(reason: String?): String = "none(${reason ?: "none"})"
 
     /**
+     * The identity of the sound a bundle is for: the row, the recording that
+     * will play, whether it is a downloaded file, and the lyrics settings the
+     * answer was chosen with.
+     *
+     * A change to any part means an old answer is not the answer for the new
+     * sound. In particular a lyrics settings change must not let the lines
+     * chosen under the old source set/order be stored or shown as the new
+     * choice, so it is part of this identity rather than a separate check.
+     */
+    fun soundKey(
+        rowId: String,
+        videoId: String,
+        localFile: Boolean,
+        lyricsSettings: String,
+    ): String = "$rowId|$videoId|$localFile|$lyricsSettings"
+
+    /**
      * Whether [nextIndex] is a row other than the one playing at
      * [currentIndex].
      *
@@ -162,5 +179,25 @@ object NextPrepPolicy {
         if (startedRowId == null) return false
         if (currentRowId != startedRowId) return true
         return startedQueueKey != currentQueueKey
+    }
+
+    /**
+     * Whether the row's current bundle already covers the sound it will play.
+     *
+     * The row id alone is not enough: a download finishing or a file being
+     * replaced by its stream keeps the row but changes the audio. An active
+     * job for the old sound must not make the caller skip the new one, and a
+     * completed bundle for the old sound must not stand for the new one.
+     */
+    fun alreadyHandled(
+        startedRowId: String?,
+        startedQueueKey: String?,
+        rowId: String,
+        queueKey: String,
+        running: Boolean,
+        completedQueueKey: String?,
+    ): Boolean {
+        if (startedRowId != rowId || startedQueueKey != queueKey) return false
+        return running || completedQueueKey == queueKey
     }
 }

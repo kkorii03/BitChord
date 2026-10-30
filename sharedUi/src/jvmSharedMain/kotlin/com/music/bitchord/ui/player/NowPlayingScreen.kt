@@ -790,6 +790,11 @@ fun NowPlayingScreen(
     lyricsSource: LyricsSource?,
     lyricsProviderStates: Map<LyricsSource, LyricsProviderState>,
     onSelectLyricsProvider: (LyricsSource) -> Unit,
+    /**
+     * Called when the listener opens the lyrics panel, so a transient miss can
+     * be retried on the same track. Null for a host with no lookup to repeat.
+     */
+    onLyricsOpen: (() -> Unit)? = null,
     lyricsUnavailable: Boolean,
     /**
      * Whether Gemini is writing this track's lyrics down right now. Nothing
@@ -1056,6 +1061,7 @@ fun NowPlayingScreen(
     // started an exit animation and reversed it on the following frame.
     val openLyrics: () -> Unit = {
         if (!lyricsOpen) TrackLog.d("BitChord", "cmd: lyrics open from ui", about = song.videoId)
+        onLyricsOpen?.invoke()
         lyricsControlsOpen = true
         lyricsOpen = true
         queueOpen = false

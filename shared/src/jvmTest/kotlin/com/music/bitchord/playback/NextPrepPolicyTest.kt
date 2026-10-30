@@ -4,6 +4,7 @@ import com.music.bitchord.playback.NextPrepPolicy.Step
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class NextPrepPolicyTest {
@@ -248,5 +249,91 @@ class NextPrepPolicyTest {
     @Test
     fun aNextRowWithNoCurrentRowIsStillPrepared() {
         assertTrue(NextPrepPolicy.hasDistinctNextRow(nextIndex = 0, currentIndex = null))
+    }
+
+    @Test
+    fun changingTheLyricsSettingsMakesItANewSound() {
+        val before = NextPrepPolicy.soundKey("row-1", "video", localFile = false, lyricsSettings = "lrclib")
+        val after = NextPrepPolicy.soundKey("row-1", "video", localFile = false, lyricsSettings = "kugou|lrclib")
+        assertNotEquals(before, after)
+        assertFalse(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = before,
+                rowId = "row-1",
+                queueKey = after,
+                running = false,
+                completedQueueKey = before,
+            ),
+        )
+        assertTrue(NextPrepPolicy.shouldCancel("row-1", before, "row-1", after))
+    }
+
+    @Test
+    fun theSameSoundWithTheSameSettingsIsStillLeftAlone() {
+        val sound = NextPrepPolicy.soundKey("row-1", "video", localFile = true, lyricsSettings = "lrclib")
+        assertTrue(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = sound,
+                rowId = "row-1",
+                queueKey = sound,
+                running = false,
+                completedQueueKey = sound,
+            ),
+        )
+        assertFalse(NextPrepPolicy.shouldCancel("row-1", sound, "row-1", sound))
+    }
+
+    @Test
+    fun theSameRowWithANewSoundIsPreparedAgainEvenWhileTheOldJobIsActive() {
+        assertFalse(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|true",
+                running = true,
+                completedQueueKey = null,
+            ),
+        )
+    }
+
+    @Test
+    fun theSameRowAndSoundIsLeftAlone() {
+        assertTrue(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|false",
+                running = true,
+                completedQueueKey = null,
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|false",
+                running = false,
+                completedQueueKey = "row-1|video|false",
+            ),
+        )
+    }
+
+    @Test
+    fun aCompletedBundleDoesNotCoverTheSameRowsNewSound() {
+        assertFalse(
+            NextPrepPolicy.alreadyHandled(
+                startedRowId = "row-1",
+                startedQueueKey = "row-1|video|false",
+                rowId = "row-1",
+                queueKey = "row-1|video|true",
+                running = false,
+                completedQueueKey = "row-1|video|false",
+            ),
+        )
     }
 }
