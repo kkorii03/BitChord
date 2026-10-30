@@ -41,6 +41,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.withContext
@@ -269,6 +270,38 @@ object Downloads {
     private val lock = Any()
 
     /**
+     * A counter bumped whenever the queue or its in-flight set changes.
+     *
+     * [DownloadService]'s workers wait on this instead of sleeping in a poll
+     * loop. A version rather than a channel because every waiter must see the
+     * change, and [MutableStateFlow] gives that for free: one enqueue wakes all
+     * four workers, which is what lets them share a batch that arrives at once.
+     * The value itself means nothing beyond "something changed".
+     */
+    private val _workVersion = MutableStateFlow(0L)
+
+    /** The current work generation; take it before looking at the queue. */
+    internal fun workVersion(): Long = _workVersion.value
+
+    /** Wake every waiting worker after [pending] or [running] changes. */
+    internal fun signalWork() {
+        _workVersion.update { it + 1 }
+    }
+
+    /**
+     * Suspend until the queue changes after [since], or [timeoutMs] passes.
+     *
+     * The timeout is only the idle grace at the end of a batch, never a poll:
+     * an enqueue or a finished track completes this immediately.
+     */
+    internal suspend fun awaitWorkChange(since: Long, timeoutMs: Long): Long? =
+        withTimeoutOrNull(timeoutMs) { _workVersion.first { it != since } }
+
+    /** Wait for the next change with no deadline, for a worker whose queue is busy. */
+    internal suspend fun awaitWorkChange(since: Long): Long =
+        _workVersion.first { it != since }
+
+    /**
      * The tracks taken off the queue and not yet finished, to the job fetching
      * each — null in the gap between a worker claiming a track and its job
      * existing.
@@ -422,6 +455,7 @@ object Downloads {
                 publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
             )
         }
+        signalWork()
 
         val app = context.applicationContext
         // Android refuses a foreground service started from a background
@@ -1806,6 +1840,7 @@ object Downloads {
     /** [videoId] is finished, one way or another, and no longer holds a worker. */
     internal fun onIdle(videoId: String) {
         synchronized(lock) { running.remove(videoId) }
+        signalWork()
     }
 
     /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
@@ -1821,6 +1856,7 @@ object Downloads {
      */
     internal fun onStopped() {
         synchronized(lock) { running.clear() }
+        signalWork()
     }
 
     /**
