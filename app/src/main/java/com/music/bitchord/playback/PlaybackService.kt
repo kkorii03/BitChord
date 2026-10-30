@@ -1661,6 +1661,31 @@ class PlaybackService : MediaLibraryService() {
                             pendingAutoplayAdvanceFor = null
                             pendingAutoplayAdvanceTarget = null
                         }
+                        // The party path arms before the target is known and
+                        // only records it after topUpPartyAutoplay waits for
+                        // the server echo. PartySync can append the party's
+                        // next item during that wait, so adopt it here or the
+                        // failed track is never left.
+                        target == null && nextId != null -> {
+                            val party = ListenTogether.state.value
+                            val partyNext = if (party.inParty) {
+                                partyUpcomingAfter(party.queue, party.playback, pending)
+                                    .firstOrNull()?.videoId
+                            } else {
+                                null
+                            }
+                            pendingAutoplayAdvanceFor = null
+                            pendingAutoplayAdvanceTarget = null
+                            if (partyNext == nextId) {
+                                TrackLog.w(
+                                    "BitChord",
+                                    "autoplay: party refilled after $pending could not play; continuing",
+                                    about = pending,
+                                )
+                                exoPlayer.seekToNextMediaItem()
+                                exoPlayer.prepare()
+                            }
+                        }
                     }
                 }
             }
@@ -6176,6 +6201,8 @@ class PlaybackService : MediaLibraryService() {
             currentRate = current?.rate ?: 1.0,
             pinned = OriginalVersion.isPinned(mediaId),
             versionSwapActive = versionSwapJob?.isActive == true,
+            videoRadio = item?.toSong()?.videoRadio == true,
+            isVideo = item?.toSong()?.isVideo == true,
         )
     }
 
@@ -8762,6 +8789,9 @@ class PlaybackService : MediaLibraryService() {
         val context = boundedContextRegistry.snapshot() ?: return
         val source = boundedContextSource ?: return
         if (context.contextToken != boundedContextToken || context.songs.isEmpty()) return
+        // Pruning the last blocked row can leave the player empty; the
+        // coerceIn below would then use (0, -1) and throw. Nothing to persist.
+        if (player.mediaItemCount == 0) return
         val currentIndex = player.currentMediaItemIndex.coerceIn(0, player.mediaItemCount - 1)
         val range = LastPlayed.window(player.mediaItemCount, currentIndex)
         if (range.isEmpty()) return
@@ -10844,6 +10874,8 @@ class PlaybackService : MediaLibraryService() {
                     sources = AppSettings.lyricsSources.value,
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                    syncedLyrics = AppSettings.syncedLyrics.value,
+                    nextPrepLyrics = AppSettings.syncSafetyNextPrep.value,
                 ),
                 audioSource = preparedAudioSource,
                 substituted = !coverQuery.isVideo && StreamChoice.isSubstitute(currentSong.videoId),

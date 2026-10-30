@@ -128,6 +128,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val resolver by lazy { context.contentResolver }
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
+    /** A queue and its repeat cycles, not every track ever heard in a session. */
+    private val maxCachedAnalyses = 256
     /** The opening-window result, kept separately so it survives a later tail pass. */
     private val headResults = ConcurrentHashMap<String, TrackAnalysis>()
     /** The closing-window result, merged with [headResults] for the planner. */
@@ -516,6 +518,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         provisional.remove(trackId)
         val merged = mergeWindows(trackId, durationSeconds)
         results[trackId] = merged
+        trimAnalysisCaches(keep = trackId)
         completeWindow(trackId, window)
         // Only a track measured at both ends is persisted. A head-only result
         // is missing the outgoing half, and a tail-only one the incoming half;
@@ -544,6 +547,24 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         windowsOf(trackId).add(window)
         if (results[trackId] == null) results[trackId] = empty(trackId, durationSeconds)
         completeWindow(trackId, window)
+    }
+
+    /**
+     * Bounds the session's in-memory analysis to a long queue rather than
+     * letting it grow for every track ever played. The store still holds the
+     * persisted answers; an evicted track is measured again if it comes back.
+     */
+    private fun trimAnalysisCaches(keep: String) {
+        if (results.size <= maxCachedAnalyses) return
+        val excess = results.size - maxCachedAnalyses
+        val victims = results.keys.filter { it != keep && it !in running }.take(excess)
+        for (victim in victims) {
+            results.remove(victim)
+            headResults.remove(victim)
+            tailResults.remove(victim)
+            measuredWindows.remove(victim)
+            regionFailures.keys.removeAll { it.startsWith("$victim@") }
+        }
     }
 
     private fun windowsOf(trackId: String): MutableSet<AnalysisWindow> =

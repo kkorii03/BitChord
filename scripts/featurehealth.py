@@ -1075,6 +1075,10 @@ def analyze(log: Log) -> Report:
         row for row in video_radios if row["fallback"] == "normal"
     ]
     d3_video_success = len(d3_video_success_rows)
+    # A fallback=normal video line and the ordinary +radio/append that follows
+    # it describe one refill. The deferred line is left out of the counts below
+    # because the ordinary pair (or its unpaired append) already counts that
+    # refill exactly once.
     d3_pair_success = sum(
         1 for radio, append in refill_pairs if radio["total"] > 0 and append["n"] > 0
     )

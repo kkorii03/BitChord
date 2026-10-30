@@ -128,8 +128,56 @@ class HqSwapPolicyEdgeTest {
     }
 
     @Test
-    fun `a youtube clock whose current rate is unusable falls back to the raw position`() {
-        assertEquals(42_000L, HqSwapPolicy.toYoutubeMs(42_000L, 2_000L, 0.0))
-        assertEquals(42_000L, HqSwapPolicy.toYoutubeMs(42_000L, 2_000L, Double.NaN))
+    fun `a corrupt current rate refuses the swap instead of using the raw position`() {
+        val zero = HqSwapPolicy.decide(
+            positionMs = 42_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 2_000L,
+            rate = 1.0,
+            currentRate = 0.0,
+        )
+        val nan = HqSwapPolicy.decide(
+            positionMs = 42_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 2_000L,
+            rate = 1.0,
+            currentRate = Double.NaN,
+        )
+
+        assertFalse(zero.allowed)
+        assertEquals("bad-current-rate", zero.reason)
+        assertFalse(nan.allowed)
+        assertEquals("bad-current-rate", nan.reason)
+    }
+
+    @Test
+    fun `a video radio row is never swapped to a catalogue master`() {
+        val radio = HqSwapPolicy.decide(
+            positionMs = 40_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 0L,
+            rate = 1.0,
+            videoRadio = true,
+        )
+        val video = HqSwapPolicy.decide(
+            positionMs = 40_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 0L,
+            rate = 1.0,
+            isVideo = true,
+        )
+
+        assertFalse(radio.allowed)
+        assertEquals("video-radio", radio.reason)
+        assertFalse(video.allowed)
+        assertEquals("video-radio", video.reason)
     }
 }

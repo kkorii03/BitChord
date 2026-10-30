@@ -736,6 +736,19 @@ class QueueWindow(
 
     private fun plannedOrder(cycle: Long): IntArray {
         plannedCycles[cycle]?.let { return it }
+        // A hand-dragged non-shuffle queue repeats in the permutation the
+        // listener left, not in canonical order. Deriving every later cycle
+        // from the previous one keeps a drag at a repeat-all boundary from
+        // reverting after one cycle (or duplicating the boundary track).
+        if (!shuffled && manualOrder && cycle > activeCycleId) {
+            val previousCycle = cycle - 1L
+            val previousOrder = if (previousCycle == activeCycleId) {
+                logicalOrder
+            } else {
+                plannedOrder(previousCycle)
+            }
+            return previousOrder.copyOf().also { plannedCycles[cycle] = it }
+        }
         val previousCycle = cycle - 1L
         val previousFinal = if (previousCycle == activeCycleId) {
             boundaryFinal()

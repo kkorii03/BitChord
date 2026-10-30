@@ -170,6 +170,8 @@ internal class NextTrackPreparation(
             sources = AppSettings.lyricsSources.value,
             order = AppSettings.lyricsSourceOrder.value,
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+            syncedLyrics = AppSettings.syncedLyrics.value,
+            nextPrepLyrics = AppSettings.syncSafetyNextPrep.value,
         )
         return Snapshot(
             rowId,
@@ -940,10 +942,16 @@ internal object NextPrepCache {
         sources: Set<LyricsSource>,
         order: List<LyricsSource>,
         prioritizeSyllableSync: Boolean,
+        syncedLyrics: Boolean = false,
+        nextPrepLyrics: Boolean = true,
     ): String = buildString {
         sources.map { it.name }.sorted().forEach { append(it).append('\u0000') }
         order.forEach { append(it.name).append('\u0001') }
         append(prioritizeSyllableSync)
+        // Turning synced lyrics (or the next-prep switch) on after a no-lyrics
+        // bundle completed must re-prepare the next row, so both are identity.
+        append('\u0002').append(syncedLyrics)
+        append('\u0003').append(nextPrepLyrics)
     }
 
     fun clear() {

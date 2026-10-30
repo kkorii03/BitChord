@@ -298,10 +298,24 @@ suspend fun loadAutoplayTracks(
             fallbackFailed = fallback.isFailure,
         )
         if (beforeNormal != VideoRadioFallbackAction.USE_NORMAL) {
-            // The ordinary path could not answer at all — a broken connection.
-            // A thin video pick is still playable, and the offline path already
-            // keeps one for the same reason: silence is worse than two songs.
-            // Only give up when there is nothing at all.
+            // The station request failed, but the ordinary path still has
+            // local favourites and cached similar rows that need no radio
+            // answer. Ask it with an empty radio before giving up; a thin video
+            // pick is still playable, and only all-empty sources are a failure.
+            val offlineNormal = loadNormalAutoplayTracks(
+                existing = existing,
+                seedSong = seedSong,
+                radio = emptyList(),
+                limit = limit,
+                sessionSong = sessionSong,
+                sessionIds = sessionIds,
+                onEmpty = { fallbackLog(VideoRadioFallback.EMPTY) },
+                onFilled = { fallbackLog(VideoRadioFallback.NORMAL) },
+            )
+            if (offlineNormal.getOrNull().orEmpty().isNotEmpty()) return offlineNormal
+            // Nothing local either. A thin video pick is still playable, and
+            // the offline path already keeps one for the same reason: silence
+            // is worse than two songs. Only give up when there is nothing.
             val stage = videoRadioFallbackStage(
                 picked = pick.ordered.size,
                 sameModeExhausted = true,

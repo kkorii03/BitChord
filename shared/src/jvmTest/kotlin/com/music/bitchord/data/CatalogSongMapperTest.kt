@@ -85,6 +85,15 @@ class CatalogSongMapperTest {
     }
 
     @Test
+    fun `a stated but malformed run time fails closed`() {
+        assertFalse(CatalogSongMapper.durationCompatible("3:20", "3:60"))
+        assertFalse(CatalogSongMapper.durationCompatible("3:60", "3:20"))
+        assertFalse(CatalogSongMapper.durationCompatible("3:20", "not-a-time"))
+        assertTrue(CatalogSongMapper.durationCompatible("", "3:20"))
+        assertTrue(CatalogSongMapper.durationCompatible("3:20", "  "))
+    }
+
+    @Test
     fun `a stored miss is retried after seven days`() {
         val now = 10_000_000_000L
         val day = 24L * 60L * 60L * 1000L
