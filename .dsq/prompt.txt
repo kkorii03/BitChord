@@ -1,0 +1,16 @@
+﻿BitChord 안드로이드 앱(Kotlin, Compose, Media3). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지). 기준 브랜치 task/fix-1030. 대대적 엄격 검토(사용자: 양보 없는 철저한 검사) — 한 영역을 끝까지 판다.
+영역: 진단 로그 — 모든 기능의 시도·성공·건너뜀·실패가 로그에 남는지, 로그 시각이 실제 동작 시각인지(예: crossfade start 가 arm 시점에 찍혀 착시), scripts/featurehealth.py 가 D1~D11 을 정확히 셀 수 있는 형식인지(도구와 앱 로그 형식을 맞추고 도구 테스트도 갱신), 개인정보(쿠키·토큰·이메일·전체 URL) 미포함.
+규칙(양보 없음): ① 영역의 모든 진입점→처리→결과를 코드로 따라가 '흔한 상황'(커버 영상·비디오 노래·셔플·앱 재시작 후·화면 꺼짐·백그라운드·프록시 켬·다운로드된 곡·느린/끊긴 망·Android 14+ 제약)마다 실제로 끝까지 동작하는지 표로. ② 조용히 건너뛰는 경로(조건 거짓 → 로그 없이 return)는 전부 결함. ③ 결과를 docs/review-1031/<작업 이름>.md: 심각도 · 파일:줄 · 증거 · 사용자 영향 · 얼마나 흔한지 · 수정안. ④ HIGH·MEDIUM 은 이번에 직접 수정(파일 범위가 크면 가장 위험한 것부터 최대 10건), 각 수정마다 수정 전 실패하는 단위 테스트 먼저. 고치지 못한 HIGH·MEDIUM 은 이유와 필요한 작업을 문서에. ⑤ 실제 사용 성적표(vc85, 362곡): 다음 곡 싱크 준비 29%, 무손실 확인 후 실제 무손실 재생 4%, 자동 재생 보충 성공 24%, 사용자 조작 없는 백그라운드 시작 11회, 다운로드·고음질 보관함 실패 140회 — 이 영역과 관련된 숫자가 왜 나쁜지 코드로 설명하고 고칠 것.
+반드시: 배터리 우선(주기 폴링·delay 루프·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입 확인. 업스트림 v1.8.1(7d956f21) 코드 삭제·쪼개기 금지(우리 코드는 고쳐도 됨, 업스트림 줄 수정은 최소). 기존 주석 의도를 지우면 요약에 이유. 새 app/shared 테스트 이름을 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 고친 결함 수(HIGH/MED) / 남긴 결함 / 테스트 결과 / 문서 경로.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 5
+- HIGH — `scripts/featurehealth.py:1376-1403` — D9 now uses a 90% rate, so 9 done/1 failure passes even though the criterion still requires “실패 0건”/“did not land 0건”, removing the old any-failure guard; make `passed` false whenever `download_failures` or `hq_library_missing` is non-empty, or set the threshold to 1.0.
+- MEDIUM — `scripts/featurehealth.py:1372-1373` — attempts are still line counts, so an id that fails twice then succeeds is 1/3 and repeated failures inflate the 140 count the docs discuss; count unique ids (done ∪ failed) and successes as ids with a done/landed line.
+- MEDIUM — `scripts/featurehealth.py:946-955` — when `hq-verify` carries an id, the condition still accepts any FLAC evidence with the same normalized title, so a different recording with the same title is counted as the verified playback; require id equality when `event["id"]` is present and use title only as fallback.
+- MEDIUM — `shared/src/commonMain/kotlin/com/music/bitchord/playback/NextPrepPolicy.kt:105-110` (call at `app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt:319`) — `syncValue` never receives `nextPrepLyrics`, the switch that actually removes the LYRICS/SYNC steps, so the default-off path is logged as `skipped(no-lyrics)` and `switch-off` is unreachable; pass the switch and emit `skipped(switch-off)` before the no-lyrics branch.
+- MEDIUM — `scripts/featurehealth.py:1036-1043` — a missing seed is treated as a wildcard, so a `seed=seed1` drop can be credited to any seedless `+radio` within 120s (the new test does exactly this), defeating seed correlation and hiding zero-refills; match only when both seeds are present and equal, or use a per-top-up id.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
