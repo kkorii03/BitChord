@@ -2694,6 +2694,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
             else -> fallback
         }
+
+        /**
+         * What [openDetail] should load a page as.
+         *
+         * A card that already says it is an artist is stronger evidence than
+         * its id's prefix. YouTube's library feed hands some artists a non-`UC`
+         * id that happens to start with an album or playlist prefix, and the
+         * prefix alone would send the page to the wrong loader (an album page
+         * with no tracks instead of the artist's shelves).
+         */
+        fun detailTypeFor(browseId: String, hint: BrowseType): BrowseType =
+            if (hint == BrowseType.ARTIST) BrowseType.ARTIST else browseTypeOf(browseId, hint)
     }
 
     /**
@@ -2754,7 +2766,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openSpotifyPage(browseId, title, subtitle, thumbnailUrl)
             return
         }
-        val resolved = browseTypeOf(browseId, type)
+        val resolved = detailTypeFor(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -2844,11 +2856,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             // "No top songs" is not an empty artist page: the
                             // albums and singles shelves below are the page.
                             // Only a page with neither has nothing to show.
-                            if (page.songs.isEmpty() && page.sections.isEmpty()) {
-                                UiState.Error(text(R.string.no_tracks_here))
-                            } else {
-                                UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
-                            }
+                            detailListingState(
+                                songs = page.songs.withArtwork(thumbnailUrl ?: artwork),
+                                hiddenSongs = emptyList(),
+                                emptyMessage = text(R.string.no_tracks_here),
+                                hasShelves = page.sections.isNotEmpty(),
+                            )
                         },
                         onFailure = { UiState.Error(it.friendly()) },
                     )
@@ -3187,34 +3200,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 var progressed = false
                 val updated = stack.map { current ->
                     if (current.browseId != browseId) return@map current
-                    val existing = (current.songs as? UiState.Success)?.data ?: return@map current
-                    val known = existing.mapTo(HashSet()) { it.contextEntryKey() }
-                    val added = fetched.songs
-                        .filter { known.add(it.contextEntryKey()) }
-                        .withArtwork(artworkFallback)
-                    val knownVideoIds = (existing + added).mapTo(HashSet()) { it.videoId }
-                    // Suggestions can arrive on a later page than the real
-                    // tracks, once the playlist's own continuation runs dry —
-                    // see parsePlaylistShelf — so they're tracked separately
-                    // rather than folded into [known].
-                    val knownSuggested = current.suggestedSongs.mapTo(HashSet()) { it.videoId }
-                    val addedSuggested = fetched.suggested
-                        .filter { it.videoId !in knownVideoIds && knownSuggested.add(it.videoId) }
-                        .withArtwork(artworkFallback)
-                    // Liked Music's video rows can arrive on any page; they are
-                    // counted and revealed together with the first page's.
-                    val knownHidden = current.hiddenSongs.mapTo(HashSet()) { it.videoId }
-                    val addedHidden = fetched.hiddenSongs
-                        .filter { it.videoId !in knownVideoIds && knownHidden.add(it.videoId) }
-                        .withArtwork(artworkFallback)
-                    if (added.isEmpty() && addedSuggested.isEmpty() && addedHidden.isEmpty()) return@map current
+                    val merged = current.mergeDetailContinuation(
+                        newSongs = fetched.songs,
+                        newSuggested = fetched.suggested,
+                        newHiddenSongs = fetched.hiddenSongs,
+                        nextContinuation = fetched.continuation,
+                        artworkFallback = artworkFallback,
+                    ) ?: return@map current
                     progressed = true
-                    current.copy(
-                        songs = UiState.Success(existing + added),
-                        suggestedSongs = current.suggestedSongs + addedSuggested,
-                        hiddenSongs = current.hiddenSongs + addedHidden,
-                        continuation = fetched.continuation,
-                    )
+                    merged
                 }
                 // A page with nothing new for any copy means the feed has looped
                 // back rather than run dry with a token still attached.
@@ -3852,4 +3846,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun quantity(id: Int, count: Int): String =
         getApplication<Application>().resources.getQuantityString(id, count, count)
+}
+
+/**
+ * One continuation page folded into an open detail page, or null when it adds
+ * nothing new (the feed looped back) or the page is still loading.
+ *
+ * An empty listing is not a dead end: Liked Music can answer its first page
+ * with no songs and no hidden videos, putting the page in the error/empty
+ * state, while the only hidden videos arrive on a continuation. Such a page is
+ * promoted to Success as soon as the continuation contributes rows, so those
+ * rows are not fetched and then thrown away.
+ */
+internal fun DetailPage.mergeDetailContinuation(
+    newSongs: List<Song>,
+    newSuggested: List<Song>,
+    newHiddenSongs: List<Song>,
+    nextContinuation: String?,
+    artworkFallback: String?,
+): DetailPage? {
+    val existing = when (val state = songs) {
+        is UiState.Success -> state.data
+        is UiState.Error -> emptyList()
+        UiState.Loading -> return null
+    }
+    val known = existing.mapTo(HashSet()) { it.contextEntryKey() }
+    val added = newSongs
+        .filter { known.add(it.contextEntryKey()) }
+        .withArtworkFallback(artworkFallback)
+    val knownVideoIds = (existing + added).mapTo(HashSet()) { it.videoId }
+    // Suggestions can arrive on a later page than the real tracks, once the
+    // playlist's own continuation runs dry — see parsePlaylistShelf — so they
+    // are tracked separately rather than folded into [known].
+    val knownSuggested = suggestedSongs.mapTo(HashSet()) { it.videoId }
+    val addedSuggested = newSuggested
+        .filter { it.videoId !in knownVideoIds && knownSuggested.add(it.videoId) }
+        .withArtworkFallback(artworkFallback)
+    // Liked Music's video rows can arrive on any page; they are counted and
+    // revealed together with the first page's.
+    val knownHidden = hiddenSongs.mapTo(HashSet()) { it.videoId }
+    val addedHidden = newHiddenSongs
+        .filter { it.videoId !in knownVideoIds && knownHidden.add(it.videoId) }
+        .withArtworkFallback(artworkFallback)
+    if (added.isEmpty() && addedSuggested.isEmpty() && addedHidden.isEmpty()) return null
+    return copy(
+        songs = UiState.Success(existing + added),
+        suggestedSongs = suggestedSongs + addedSuggested,
+        hiddenSongs = hiddenSongs + addedHidden,
+        continuation = nextContinuation,
+    )
+}
+
+private fun List<Song>.withArtworkFallback(fallback: String?): List<Song> {
+    if (fallback == null) return this
+    return map { if (it.thumbnailUrl == null) it.copy(thumbnailUrl = fallback) else it }
 }

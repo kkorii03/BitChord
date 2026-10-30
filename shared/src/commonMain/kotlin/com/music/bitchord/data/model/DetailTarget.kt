@@ -28,13 +28,15 @@ val ShelfItem.isTrackCard: Boolean
  * What a release page's track area shows once its first response lands.
  *
  * A page with no tracks of its own is an empty state — except when it has
- * hidden video rows to reveal (Liked Music's videos), which are content the
- * page must keep rather than replace with "No tracks here".
+ * hidden video rows to reveal (Liked Music's videos) or an album/video shelf
+ * below (an artist whose only work is videos), which are content the page must
+ * keep rather than replace with "No tracks here".
  */
 fun detailListingState(
     songs: List<Song>,
     hiddenSongs: List<Song>,
     emptyMessage: String,
+    hasShelves: Boolean = false,
 ): UiState<List<Song>> =
-    if (songs.isEmpty() && hiddenSongs.isEmpty()) UiState.Error(emptyMessage)
+    if (songs.isEmpty() && hiddenSongs.isEmpty() && !hasShelves) UiState.Error(emptyMessage)
     else UiState.Success(songs)

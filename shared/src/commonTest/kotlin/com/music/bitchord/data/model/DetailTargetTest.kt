@@ -64,6 +64,13 @@ class DetailTargetTest {
     }
 
     @Test
+    fun `an artist with only shelves is content, not the empty state`() {
+        val state = detailListingState(emptyList(), emptyList(), "No tracks here", hasShelves = true)
+        assertTrue(state is UiState.Success)
+        assertEquals(emptyList(), (state as UiState.Success<List<Song>>).data)
+    }
+
+    @Test
     fun `tracks keep precedence over hidden videos`() {
         val songs = listOf(song("song"))
         val state = detailListingState(songs, listOf(song("video")), "No tracks here")
