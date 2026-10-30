@@ -153,6 +153,7 @@
     <string name="recent_search_remove">最近の検索から「%1$s」を削除</string>
     <string name="recent_searches">最近の検索</string>
     <string name="replay_subtitle">よく聴いた曲、アーティスト、アルバム、ジャンル</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">再試行</string>
     <string name="saved_to_youtube_music">YouTube Musicに保存済み</string>
     <string name="search">検索</string>

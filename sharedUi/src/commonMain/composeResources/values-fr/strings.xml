@@ -153,6 +153,7 @@
     <string name="recent_search_remove">Retirer « %1$s » des recherches récentes</string>
     <string name="recent_searches">Recherches récentes</string>
     <string name="replay_subtitle">Vos meilleures chansons, artistes, albums et genres</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">Réessayer</string>
     <string name="saved_to_youtube_music">Enregistrée sur YouTube Music</string>
     <string name="search">Rechercher</string>

@@ -153,6 +153,7 @@
     <string name="recent_search_remove">हाल की खोजों से “%1$s” हटाएं</string>
     <string name="recent_searches">हाल की खोजें</string>
     <string name="replay_subtitle">आपके टॉप गाने, कलाकार, एल्बम और शैलियां</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">फिर कोशिश करें</string>
     <string name="saved_to_youtube_music">YouTube Music में सेव की गई</string>
     <string name="search">खोजें</string>

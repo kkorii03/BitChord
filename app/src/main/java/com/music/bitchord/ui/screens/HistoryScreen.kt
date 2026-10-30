@@ -25,8 +25,10 @@ import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.playingRowMatcher
+import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PlayingAccent
+import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.songListSkeleton
@@ -58,6 +60,7 @@ fun HistoryScreen(
     isPlaying: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val loadingTimedOut = rememberLoadingTimedOut(state is UiState.Loading, "history")
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
@@ -85,7 +88,11 @@ fun HistoryScreen(
             return@LazyColumn
         }
         when (state) {
-            is UiState.Loading -> songListSkeleton(count = 10, keyPrefix = "skeleton:history")
+            is UiState.Loading -> if (loadingTimedOut) {
+                item(key = "history:timeout") { LoadingTimeoutState(onRetry = onRetry) }
+            } else {
+                songListSkeleton(count = 10, keyPrefix = "skeleton:history")
+            }
 
             is UiState.Error -> item(key = "history:message") {
                 MessageState(

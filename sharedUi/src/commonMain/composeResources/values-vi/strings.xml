@@ -153,6 +153,7 @@
     <string name="recent_search_remove">Xóa “%1$s” khỏi tìm kiếm gần đây</string>
     <string name="recent_searches">Tìm kiếm gần đây</string>
     <string name="replay_subtitle">Bài hát, nghệ sĩ, album và thể loại hàng đầu của bạn</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">Thử lại</string>
     <string name="saved_to_youtube_music">Đã lưu vào YouTube Music</string>
     <string name="search">Tìm kiếm</string>

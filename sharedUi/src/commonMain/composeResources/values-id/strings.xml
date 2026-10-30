@@ -153,6 +153,7 @@
     <string name="recent_search_remove">Hapus “%1$s” dari pencarian terbaru</string>
     <string name="recent_searches">Pencarian terbaru</string>
     <string name="replay_subtitle">Lagu, artis, album, dan genre teratas Anda</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">Coba lagi</string>
     <string name="saved_to_youtube_music">Disimpan ke YouTube Music</string>
     <string name="search">Cari</string>

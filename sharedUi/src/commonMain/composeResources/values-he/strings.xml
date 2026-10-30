@@ -153,6 +153,7 @@
     <string name="recent_search_remove">הסרת “%1$s” מהחיפושים האחרונים</string>
     <string name="recent_searches">חיפושים אחרונים</string>
     <string name="replay_subtitle">השירים, האמנים, האלבומים והז\'אנרים המובילים שלך</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">ניסיון חוזר</string>
     <string name="saved_to_youtube_music">נשמר ל-YouTube Music</string>
     <string name="search">חיפוש</string>

@@ -252,6 +252,19 @@ kotlin {
 }
 
 /*
+ * InnerTubeX ships class file version 65 (Java 21), so a unit-test worker on the
+ * Java 17 the rest of the build targets cannot initialise it. Tests run on a
+ * Java 21 launcher while production code stays on 17.
+ */
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(
+        javaToolchains.launcherFor {
+            languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(21))
+        },
+    )
+}
+
+/*
  * NewPipeExtractor ships its own org.schabi.newpipe.extractor.utils.Utils, and
  * app/src/main/java carries a patched copy at the same package path (see that
  * file for why it exists). A debug build keeps project and library dex separate,

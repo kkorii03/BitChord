@@ -162,6 +162,7 @@
     <string name="personalized_recommendations">Get personalized recommendations for you</string>
     <string name="pinned">Pinned</string>
     <string name="play_next">Play next</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="playlist">playlist</string>
     <string name="playlist_action">Playlist</string>
     <string name="playlists">Playlists</string>

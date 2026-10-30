@@ -170,7 +170,9 @@ import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.LikedMusicCover
+import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
+import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.artworkCorner
@@ -379,7 +381,10 @@ fun DetailScreen(
      * [ArtworkPalette] so it reads as this page rather than a sheet over it.
      */
     reorder: (@Composable (ArtworkPalette) -> Unit)? = null,
+    /** Re-runs the page's first load in place after its error state. */
+    onRetryLoading: (() -> Unit)? = null,
 ) {
+    val loadingTimedOut = rememberLoadingTimedOut(page.songs is UiState.Loading, "detail")
     val visibleSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // Liked Music keeps the account's non-music videos aside by default;
     // the row below the header reveals them. Everywhere else this is empty.
@@ -790,7 +795,11 @@ fun DetailScreen(
             if (!isArtist) aboutItem()
 
             when (val state = page.songs) {
-                is UiState.Loading -> detailSkeleton(isArtist)
+                is UiState.Loading -> if (loadingTimedOut && onRetryLoading != null) {
+                    item(key = "detail:timeout") { LoadingTimeoutState(onRetry = onRetryLoading) }
+                } else {
+                    detailSkeleton(isArtist)
+                }
                 is UiState.Error -> if (smartEmpty) {
                     item(key = "smart-empty") {
                         SmartPlaylistEmptyState(
@@ -798,6 +807,14 @@ fun DetailScreen(
                             palette = palette,
                             onSignIn = onSignIn.takeIf { smartNeedsSignIn },
                             modifier = Modifier.fillParentMaxHeight(0.55f),
+                        )
+                    }
+                } else if (onRetryLoading != null) {
+                    item {
+                        MessageState(
+                            state.message,
+                            actionLabel = stringResource(R.string.try_again),
+                            onAction = onRetryLoading,
                         )
                     }
                 } else {

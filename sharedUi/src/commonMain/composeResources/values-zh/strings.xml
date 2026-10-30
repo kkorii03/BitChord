@@ -153,6 +153,7 @@
     <string name="recent_search_remove">从最近搜索中移除“%1$s”</string>
     <string name="recent_searches">最近搜索</string>
     <string name="replay_subtitle">你的热门歌曲、艺人、专辑和流派</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
     <string name="retry">重试</string>
     <string name="saved_to_youtube_music">已保存到 YouTube Music</string>
     <string name="search">搜索</string>

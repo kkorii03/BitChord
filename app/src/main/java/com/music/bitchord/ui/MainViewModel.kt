@@ -1843,6 +1843,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** The Home error state's Retry button: a tab load, not a fresh launch. */
     fun retryHome() = loadHome("tab")
 
+    /**
+     * The detail page's Retry button: replaces the failed page in place with a
+     * fresh load at the same stack depth. Re-calling [openDetail] directly
+     * would push a second copy, so Back would need two taps.
+     */
+    fun retryDetail(browseId: String) {
+        val stack = _detailStack.value
+        val index = stack.indexOfLast { it.browseId == browseId }
+        if (index < 0) return
+        val page = stack[index]
+        _detailStack.value = stack.toMutableList().apply { removeAt(index) }
+        openDetail(
+            browseId = page.browseId,
+            title = page.title,
+            subtitle = page.subtitle,
+            thumbnailUrl = page.thumbnailUrl,
+            type = page.type,
+        )
+    }
+
     /** A full load; [reason] names the trigger in the log — see [refreshHome]. */
     fun loadHome(reason: String = "startup") {
         com.music.bitchord.data.TrackLog.d("BitChord", "home: refresh by $reason")
