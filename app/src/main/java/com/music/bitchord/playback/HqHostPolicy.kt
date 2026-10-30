@@ -364,6 +364,12 @@ internal object HqHostTracker {
     @Volatile
     private var prefs: SharedPreferences? = null
 
+    /**
+     * Serialises snapshot+apply so an older snapshot cannot land after a newer
+     * one when [noteTransfer] and [noteResponse] write from different threads.
+     */
+    private val persistLock = Any()
+
     private const val PREFS_NAME = "hq_host_health"
     private const val KEY_HOSTS = "hosts"
 
@@ -443,13 +449,15 @@ internal object HqHostTracker {
 
     private fun persist() {
         val store = prefs ?: return
-        // A long session can meet many CDN hosts. The store is a sorting hint,
-        // not an audit log, so only the most recently seen are worth keeping.
-        val recent = gate.snapshot().entries
-            .sortedByDescending { it.value.lastActivityMs }
-            .take(MAX_PERSISTED_HOSTS)
-            .associate { it.key to it.value }
-        store.edit().putString(KEY_HOSTS, encode(recent)).apply()
+        synchronized(persistLock) {
+            // A long session can meet many CDN hosts. The store is a sorting hint,
+            // not an audit log, so only the most recently seen are worth keeping.
+            val recent = gate.snapshot().entries
+                .sortedByDescending { it.value.lastActivityMs }
+                .take(MAX_PERSISTED_HOSTS)
+                .associate { it.key to it.value }
+            store.edit().putString(KEY_HOSTS, encode(recent)).apply()
+        }
     }
 
     /** Enough for every addon and streaming host one listener is likely to use. */

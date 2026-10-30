@@ -44,6 +44,7 @@ import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.AppForeground
 import com.music.bitchord.startup.StartupTrace
+import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -159,9 +160,13 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         SourceRegistry.init(this)
         // Per-addon server success counts, response times and rests survive a
         // restart, so the first track of a new session already steers around a
-        // host that was asleep or rate limiting yesterday. Reads one small
-        // preference file; writes happen only when a request is measured.
-        com.music.bitchord.playback.HqHostTracker.init(this)
+        // host that was asleep or rate limiting yesterday. The first
+        // getSharedPreferences open can wait on a disk parse, so it runs on the
+        // startup thread; a request that arrives before it finishes simply
+        // starts with an empty gate and is merged into by restore().
+        StartupWork.background("hq-host-health") {
+            com.music.bitchord.playback.HqHostTracker.init(this)
+        }
         // Cheap here (it only records paths and starts its own warm-up job), and
         // it has to be ready before the first resolution, which can be the
         // restored queue playing the moment the service starts.

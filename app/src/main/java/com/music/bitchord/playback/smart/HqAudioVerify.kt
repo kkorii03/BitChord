@@ -1219,7 +1219,15 @@ object HqAudioVerify {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
                         val headerFields = response.headers.toMultimap()
-                        if (HqRetryPolicy.isRateLimited(response.code)) {
+                        // 502/504 mean the free-tier instance is asleep, not a
+                        // generic I/O fault. They must reach the same branch as
+                        // 503 so the one wake request is not retried and the
+                        // host is rested; otherwise this verifier kept hitting
+                        // a cold container while playback's own gate never saw
+                        // the refusal.
+                        if (HqRetryPolicy.isRateLimited(response.code) ||
+                            HqRetryPolicy.isSleepingGateway(response.code)
+                        ) {
                             throw RateLimitedDownload(
                                 code = response.code,
                                 retryAfter = HqRetryPolicy.retryAfterHeader(headerFields),

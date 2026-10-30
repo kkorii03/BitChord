@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.smart
 
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -107,6 +108,31 @@ class HqAudioVerifyCancellationTest {
         val occupied = File(root, "occupied").apply { writeText("not a folder") }
 
         assertFalse(HqAudioVerify.ensureCandidateDirectory(occupied))
+    }
+
+    @Test
+    fun `a sleeping candidate gateway is woken once and rested`() = runBlocking {
+        for (code in listOf(502, 504)) {
+            HqHostTracker.resetForTest()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    MockResponse().setResponseCode(code)
+            }
+            val directory = File(root, "hq_verify_$code").apply { mkdirs() }
+            val stream = SourceStream(url = server.url("/candidate").toString())
+            val before = server.requestCount
+
+            val result = HqAudioVerify.candidateFeatures(directory, stream, OkHttpClient())
+
+            assertNull(result)
+            assertEquals("HTTP $code must be asked exactly once", 1, server.requestCount - before)
+            val host = HqHostTracker.hostOf(stream.url)
+            assertTrue(
+                "HTTP $code must rest the host after the single wake request",
+                HqHostTracker.isResting(host),
+            )
+        }
+        HqHostTracker.resetForTest()
     }
 
     @Test

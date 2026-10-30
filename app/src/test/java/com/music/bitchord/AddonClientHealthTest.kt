@@ -1,12 +1,14 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.sources.addon.AddonClient
+import com.music.bitchord.data.sources.addon.AddonUnavailable
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -67,6 +69,30 @@ class AddonClientHealthTest {
         assertEquals(1, record!!.responseSamples)
         assertEquals(1, record.successes)
         assertTrue(record.lastResponseMs >= 0L)
+    }
+
+    @Test
+    fun `a body cut off mid-response is a server fault and rests the host`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setBody("""{"tracks":[]}""")
+                .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
+        )
+        val client = AddonClient(server.url("/").toString())
+
+        val result = client.probeSearch()
+
+        assertTrue(result.isFailure)
+        assertTrue(
+            "a truncated body must reach callers as AddonUnavailable, not a bare IOException",
+            result.exceptionOrNull() is AddonUnavailable,
+        )
+        val host = HqHostTracker.hostOf(server.url("/").toString())
+        assertTrue("a body-read transport failure must rest the host", HqHostTracker.isResting(host))
+        val record = HqHostTracker.snapshotForTest()[host]
+        assertNotNull(record)
+        assertEquals(1, record!!.responseSamples)
+        assertEquals(1, record.failures)
     }
 
     @Test

@@ -306,14 +306,17 @@ class HqHostPolicyTest {
 
     @Test
     fun `a health record older than a week is not restored`() {
+        val now = 10L * 24 * 60 * 60 * 1000
         val old = HostHealthRecord(
             failures = 9,
             successes = 0,
-            lastActivityMs = 0L,
+            // Non-zero so this exercises the seven-day comparison, not the
+            // separate "never had any activity" drop path.
+            lastActivityMs = now - 8L * 24 * 60 * 60 * 1000,
         )
-        val gate = HqHostGate { 10L * 24 * 60 * 60 * 1000 }
-        gate.restore(mapOf("forgotten.example" to old), nowMs = 10L * 24 * 60 * 60 * 1000)
+        val gate = HqHostGate { now }
+        gate.restore(mapOf("forgotten.example" to old), nowMs = now)
 
-        assertEquals(0, gate.penalty("forgotten.example", nowMs = 10L * 24 * 60 * 60 * 1000))
+        assertEquals(0, gate.penalty("forgotten.example", nowMs = now))
     }
 }

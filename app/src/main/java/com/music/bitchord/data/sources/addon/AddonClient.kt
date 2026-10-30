@@ -19,6 +19,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -365,70 +366,85 @@ class AddonClient(rawBaseUrl: String) {
                 throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
             }
 
-            val wait = call.use { response ->
-                val elapsedMs = System.currentTimeMillis() - startedAtMs
-                when {
-                    response.isSuccessful -> {
-                        val text = response.body?.string()?.takeIf { it.isNotBlank() }
-                        if (text == null) {
+            val wait = try {
+                call.use { response ->
+                    val elapsedMs = System.currentTimeMillis() - startedAtMs
+                    when {
+                        response.isSuccessful -> {
+                            val text = response.body?.string()?.takeIf { it.isNotBlank() }
+                            if (text == null) {
+                                HqHostTracker.noteResponse(host, elapsedMs, ok = false)
+                                throw AddonException("Empty response")
+                            }
+                            HqHostTracker.noteResponse(host, elapsedMs, ok = true)
+                            return@withContext text
+                        }
+                        response.code == 404 -> {
+                            // The server answered; it simply does not hold this
+                            // recording. That is a successful round trip, not a
+                            // fault that should lower its health score.
+                            HqHostTracker.noteResponse(host, elapsedMs, ok = true)
+                            throw AddonNotFound()
+                        }
+                        // A 429 is back-pressure from an awake server; 502/503/504
+                        // is a free-tier instance that is asleep or booting. The
+                        // latter gets exactly one wake-up request: retrying while
+                        // the container is still starting only queues more work
+                        // against the same cold start.
+                        HqRetryPolicy.isRateLimited(response.code) ||
+                            HqRetryPolicy.isSleepingGateway(response.code) -> {
+                            val header = response.header("Retry-After")
+                            // The gate returns the escalated rest, which is longer
+                            // than this attempt's decision once the host has
+                            // refused repeatedly. Keep that figure: using the
+                            // un-escalated one made the next request arrive at the
+                            // same host after the base minute and extend the burst.
+                            val restMs = HqHostTracker.noteRateLimited(host, header, response.code)
+                            val decision = HqRetryPolicy.decideAddon(
+                                code = response.code,
+                                header = header,
+                                attempt = attempt,
+                                nowMs = System.currentTimeMillis(),
+                            )
+                            if (!decision.retry) {
+                                // Giving up here is not permission to call again at
+                                // once. The host was just rested for at least
+                                // REST_MS, or for the server's longer Retry-After;
+                                // the next request has to wait out that same rest
+                                // instead of turning one refusal into a stream of
+                                // them.
+                                quietUntilMs = System.currentTimeMillis() + restMs
+                                throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
+                            }
+                            decision.waitMs
+                        }
+                        // A 5xx is a server having a bad minute and will be tried
+                        // again on the next track; a 4xx is this app asking for
+                        // something it will never be given — a wrong URL, a token
+                        // that has expired — and no amount of retrying fixes it.
+                        // The sources screen renders the two differently, and
+                        // painting a transient outage as a configuration error
+                        // sends people to re-paste a URL that was always correct.
+                        response.code >= 500 -> {
                             HqHostTracker.noteResponse(host, elapsedMs, ok = false)
-                            throw AddonException("Empty response")
+                            throw AddonUnavailable("HTTP ${response.code}")
                         }
-                        HqHostTracker.noteResponse(host, elapsedMs, ok = true)
-                        return@withContext text
+                        else -> throw AddonException("HTTP ${response.code}")
                     }
-                    response.code == 404 -> {
-                        // The server answered; it simply does not hold this
-                        // recording. That is a successful round trip, not a
-                        // fault that should lower its health score.
-                        HqHostTracker.noteResponse(host, elapsedMs, ok = true)
-                        throw AddonNotFound()
-                    }
-                    // A 429 is back-pressure from an awake server; 502/503/504
-                    // is a free-tier instance that is asleep or booting. The
-                    // latter gets exactly one wake-up request: retrying while
-                    // the container is still starting only queues more work
-                    // against the same cold start.
-                    HqRetryPolicy.isRateLimited(response.code) ||
-                        HqRetryPolicy.isSleepingGateway(response.code) -> {
-                        val header = response.header("Retry-After")
-                        // The gate returns the escalated rest, which is longer
-                        // than this attempt's decision once the host has
-                        // refused repeatedly. Keep that figure: using the
-                        // un-escalated one made the next request arrive at the
-                        // same host after the base minute and extend the burst.
-                        val restMs = HqHostTracker.noteRateLimited(host, header, response.code)
-                        val decision = HqRetryPolicy.decideAddon(
-                            code = response.code,
-                            header = header,
-                            attempt = attempt,
-                            nowMs = System.currentTimeMillis(),
-                        )
-                        if (!decision.retry) {
-                            // Giving up here is not permission to call again at
-                            // once. The host was just rested for at least
-                            // REST_MS, or for the server's longer Retry-After;
-                            // the next request has to wait out that same rest
-                            // instead of turning one refusal into a stream of
-                            // them.
-                            quietUntilMs = System.currentTimeMillis() + restMs
-                            throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
-                        }
-                        decision.waitMs
-                    }
-                    // A 5xx is a server having a bad minute and will be tried
-                    // again on the next track; a 4xx is this app asking for
-                    // something it will never be given — a wrong URL, a token
-                    // that has expired — and no amount of retrying fixes it.
-                    // The sources screen renders the two differently, and
-                    // painting a transient outage as a configuration error
-                    // sends people to re-paste a URL that was always correct.
-                    response.code >= 500 -> {
-                        HqHostTracker.noteResponse(host, elapsedMs, ok = false)
-                        throw AddonUnavailable("HTTP ${response.code}")
-                    }
-                    else -> throw AddonException("HTTP ${response.code}")
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: IOException) {
+                // The status line arrived, but the body read timed out or the
+                // connection was cut mid-JSON. This is the same server fault as
+                // a refused connection, but it used to escape the transport
+                // catch above as a bare IOException: no response sample, no
+                // rest, and callers did not recognize it as AddonUnavailable.
+                currentCoroutineContext().ensureActive()
+                HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
+                HqHostTracker.rest(host, TRANSPORT_REST_MS)
+                TrackLog.w(TAG, "  ✗ addon body failed ${redact(url)}: ${failure.message}")
+                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
             }
             quietUntilMs = System.currentTimeMillis() + wait
             attempt++
