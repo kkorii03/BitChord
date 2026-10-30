@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.DownloadedSyncCheck
@@ -25,6 +26,7 @@ import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.retimedBy
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.TrackMatcher
@@ -1603,6 +1605,100 @@ object LyricsTiming {
         return running.await()
     }
 
+    /**
+     * Runs the same measurement, AI fallback and refine path the lyrics screen
+     * uses, but while [song] is still the next queue row.
+     *
+     * The only thing moved is the moment: [measure] reads the copy read-ahead
+     * already put on disk, [verifySong] reads the next row's opening, and
+     * [ensureRefineHeard] does the same. The alignment maths, the engine
+     * choice, the agreement/shift floors and the refine caps are untouched.
+     * [allowAi] is false when the current track has not played long enough (or
+     * the end-of-track deadline is too close): the free measurement still
+     * runs, but no paid engine is asked.
+     *
+     * Returns the timing that will apply when the row starts; null means the
+     * existing paths had nothing to add.
+     */
+    suspend fun prepareNext(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        fromFile: Boolean,
+        source: LyricsSource?,
+        allowAi: Boolean,
+    ): Timing? {
+        val query = CoverTitles.lyricsQuery(song)
+        val timeable = !fromFile || query.isVideo
+        val recordTimed = timeable && (!fromFile || source != null) &&
+            !timedToVideo(source)
+        val audioSource = if (song.isVideo) {
+            null
+        } else {
+            audioSourceKey(song.videoId, song.localUri != null)
+        }
+        // The free half first: a video is measured against its original from
+        // the bytes read-ahead already wrote. A song version has no other
+        // recording to measure against; its existing path is the AI song check.
+        if (recordTimed && song.isVideo && worthMeasuring(context, song.videoId)) {
+            measure(
+                context = context,
+                video = song,
+                names = listOf(query.title to query.artist),
+                videoMs = song.durationMillis(),
+            )
+        }
+        var timing = timing(
+            context = context,
+            videoId = song.videoId,
+            lines = lines,
+            baseAllowed = timeable,
+            measuredAllowed = recordTimed,
+            isVideo = song.isVideo,
+            audioSource = audioSource,
+        )
+        if (!allowAi || !recordTimed) return timing
+
+        if (song.isVideo) {
+            // The existing automatic fallback: Gemini/Deepgram only once the
+            // measurement has given up, with the same wantsAi policy.
+            if (measurementGaveUp(context, song.videoId) &&
+                wantsAi(context, song.videoId, lines, audioSource)
+            ) {
+                placeWithAi(
+                    context = context,
+                    videoId = song.videoId,
+                    lines = lines,
+                    automatic = true,
+                    title = query.title,
+                    artist = query.artist,
+                    isVideo = true,
+                    audioSource = audioSource,
+                )
+                timing = timing(
+                    context, song.videoId, lines, timeable, recordTimed, true, audioSource,
+                )
+            }
+        } else if (!songVerified(context, song, lines)) {
+            // The record-timed song check: same Deepgram/Whisper request and
+            // same fit/guard the screen runs when the lyrics arrive.
+            verifySong(context, song, lines)
+            timing = timing(
+                context, song.videoId, lines, timeable, recordTimed, false, audioSource,
+            )
+        }
+
+        if (timing != null) {
+            // The refine is the last existing stage; it may use an AI transcript
+            // it already has or hear the next row's opening. Same policy and caps.
+            ensureRefineHeard(context, song.videoId, song, lines, timing, audioSource)
+            timing = timing(
+                context, song.videoId, lines, timeable, recordTimed, song.isVideo, audioSource,
+            )
+        }
+        return timing
+    }
+
     private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
 
     /**
@@ -1910,8 +2006,15 @@ object LyricsTiming {
         val entry = store(context).get(videoId)
         val key = textKey(lines, audioSource)
         val match = entry?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
-        val stored = entry?.aiTextKey == key &&
-            (entry.ai != null || entry.aiShiftMs != null || entry.aiStarts != null)
+        // A stored answer is either the AI/song-check one keyed to these
+        // lyrics, or a chroma measurement. The measurement is not keyed to a
+        // lyric sheet (it times the recording), so requiring aiTextKey here
+        // made every measured video report stored=n even when its next-prep
+        // measurement had just been saved.
+        val stored = (entry?.aiTextKey == key &&
+            (entry.ai != null || entry.aiShiftMs != null || entry.aiStarts != null)) ||
+            (entry?.autoVersion == AUTO_VERSION &&
+                (entry.auto != null || entry.autoNoChange))
         val recheck = if (!downloaded) {
             DownloadedSyncCheck.Recheck.NONE.token
         } else {

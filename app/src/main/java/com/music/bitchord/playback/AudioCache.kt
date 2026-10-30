@@ -1438,6 +1438,10 @@ object AudioCache {
     /** The single background lossless fetch, so two tracks never download at once. */
     private var losslessPrefetchJob: Job? = null
 
+    /** The track [losslessPrefetchJob] belongs to, so a queue change can stop only that one. */
+    @Volatile
+    private var losslessPrefetchFor: String? = null
+
     /**
      * Tracks whose lossless copy finished while they were still playing, with
      * the rendition key that must be kept.
@@ -2067,6 +2071,7 @@ object AudioCache {
         QualityUpgrade.force(mediaId, stream)
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         val host = HqHostTracker.hostOf(stream.url)
+        losslessPrefetchFor = mediaId
         losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
             val complete = fetchLosslessRendition(uri, title, stream, mediaId, host)
             if (!complete) return@launch
@@ -2078,6 +2083,20 @@ object AudioCache {
             }
         }
         return true
+    }
+
+    /**
+     * Stops the background lossless fetch if it belongs to [mediaId] — the row
+     * that was just replaced as the next track. A fetch for any other track
+     * (the one currently playing, most importantly) is left alone.
+     */
+    fun cancelLosslessPrefetchFor(mediaId: String?) {
+        if (mediaId == null || losslessPrefetchFor != mediaId) return
+        val active = losslessPrefetchJob?.isActive == true
+        if (active) losslessPrefetchJob?.cancel()
+        losslessPrefetchJob = null
+        losslessPrefetchFor = null
+        if (active) losslessPrefetchAttempted.remove(mediaId)
     }
 
     /**

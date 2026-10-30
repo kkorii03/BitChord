@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import android.content.Context
+import android.net.Uri
 import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
@@ -25,9 +26,11 @@ import com.music.bitchord.playback.NextPrepPolicy.Step
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
 /**
@@ -60,6 +63,9 @@ internal class NextTrackPreparation(
     /** The queue row this bundle belongs to and the pair it was started for. */
     private var rowId: String? = null
     private var queueKey: String? = null
+
+    /** The next row's video whose lossless hq-prefetch this bundle started. */
+    private var hqPrefetchVideoId: String? = null
     private var completedRowId: String? = null
     private var completedQueueKey: String? = null
 
@@ -104,6 +110,7 @@ internal class NextTrackPreparation(
         }
         if (NextPrepPolicy.shouldCancel(rowId, queueKey, snapshot.rowId, snapshot.queueKey)) {
             job?.cancel()
+            cancelPreparedDownloads()
             NextPrepCache.clear()
         }
         rowId = snapshot.rowId
@@ -118,11 +125,18 @@ internal class NextTrackPreparation(
     fun cancel() {
         job?.cancel()
         job = null
+        cancelPreparedDownloads()
         rowId = null
         queueKey = null
         completedRowId = null
         completedQueueKey = null
         NextPrepCache.clear()
+    }
+
+    /** Stops the lossless fetch this bundle started for a row that is no longer next. */
+    private fun cancelPreparedDownloads() {
+        AudioCache.cancelLosslessPrefetchFor(hqPrefetchVideoId)
+        hqPrefetchVideoId = null
     }
 
     private fun snapshot(player: ExoPlayer): Snapshot? {
@@ -147,6 +161,8 @@ internal class NextTrackPreparation(
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
         val steps = attemptsFor(snapshot.rowId)
+        var syncTiming: LyricsTiming.Timing? = null
+        var deadlineHit = false
 
         fun stillCurrent(): Boolean {
             val player = currentPlayer() ?: return false
@@ -204,6 +220,15 @@ internal class NextTrackPreparation(
         for (step in plan.steps) {
             if (step == Step.MIX) continue
             if (!stillCurrent()) return
+            val player = currentPlayer() ?: return
+            val left = remainingMs(player, song)
+            if (!NextPrepPolicy.canStartStep(left)) {
+                // The current track is inside its last twenty seconds. Every
+                // later step would compete with the handoff, so keep only what
+                // has already finished and say why in the one log line below.
+                deadlineHit = true
+                break
+            }
             steps += step
             try {
                 when (step) {
@@ -221,11 +246,25 @@ internal class NextTrackPreparation(
                     Step.HQ -> hq = prepareHq(song) ?: hq
                     Step.SYNC -> {
                         val found = lyrics
-                        val lines = found?.lines
-                        if (lines != null && lines.any { it.timeMs > 0 } && !song.isVideo) {
-                            if (!LyricsTiming.songVerified(context, song, lines)) {
-                                LyricsTiming.verifySong(context, song, lines)
-                            }
+                        val lines = found?.lines?.takeIf { list ->
+                            list.any { it.text.isNotBlank() }
+                        }
+                        if (lines != null) {
+                            // The existing measurement -> AI -> refine path,
+                            // moved to now and fed by read-ahead's copy. Paid
+                            // engines wait until the current song has actually
+                            // played past the early-skip window, and stay off
+                            // when the listener turned AI timing ahead off.
+                            val allowAi = AppSettings.aiTimingAhead.value &&
+                                Deepgram.usable && awaitAiGate(player, left)
+                            syncTiming = LyricsTiming.prepareNext(
+                                context = context,
+                                song = song,
+                                lines = lines,
+                                fromFile = found.fromFile,
+                                source = found.source,
+                                allowAi = allowAi,
+                            )
                         }
                     }
                     Step.MIX -> Unit
@@ -246,8 +285,8 @@ internal class NextTrackPreparation(
         if (!stillCurrent()) return
 
         val found = lyrics
-        val lines = found?.lines?.takeIf { it.any { line -> line.text.isNotBlank() } }
-        val timing = try {
+        val lines = found?.lines?.takeIf { line -> line.any { it.text.isNotBlank() } }
+        val timing = syncTiming ?: try {
             lines?.let { timed(it, found, song) }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -278,41 +317,161 @@ internal class NextTrackPreparation(
             )
         }
 
+        // The sync answer is stored above, so the lossless download can now
+        // use whatever is left without delaying the lyrics. It is still
+        // bounded by the same end-of-track deadline as every other step.
+        if (hq != null && !deadlineHit) {
+            if (!stillCurrent()) return
+            val beforeHq = currentPlayer()?.let { remainingMs(it, song) } ?: Long.MAX_VALUE
+            if (NextPrepPolicy.canStartStep(beforeHq)) {
+                try {
+                    awaitLosslessDownload(song, beforeHq)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    TrackLog.d(
+                        "BitChord",
+                        "next-prep hq download failed: ${failure.message}",
+                        about = song.videoId,
+                    )
+                }
+            }
+        }
+
         // The mix analysis is last because it can take a while; the lyrics and
         // their correction are already in the cache above, so a track that
-        // starts early still gets them on its first frame.
+        // starts early still gets them on its first frame. Re-check the
+        // deadline here too: an earlier step (the sync measurement or the
+        // lossless download) can consume the rest of the track's allowance.
         if (Step.MIX in plan.steps) {
             if (!stillCurrent()) return
-            steps += Step.MIX
-            try {
-                val player = currentPlayer()
-                if (player != null) {
-                    prepareMix(player)
-                    mix = awaitMix(song.videoId)
+            val beforeMix = currentPlayer()?.let { remainingMs(it, song) } ?: Long.MAX_VALUE
+            if (deadlineHit || !NextPrepPolicy.canStartStep(beforeMix)) {
+                deadlineHit = true
+            } else {
+                steps += Step.MIX
+                try {
+                    val player = currentPlayer()
+                    if (player != null) {
+                        prepareMix(player)
+                        mix = awaitMix(song.videoId)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    TrackLog.d(
+                        "BitChord",
+                        "next-prep mix failed: ${failure.message}",
+                        about = song.videoId,
+                    )
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                TrackLog.d(
-                    "BitChord",
-                    "next-prep mix failed: ${failure.message}",
-                    about = song.videoId,
-                )
             }
         }
 
         completedRowId = snapshot.rowId
         completedQueueKey = expectedQueueKey
+        val playerNow = currentPlayer()
+        val playedMs = playerNow?.currentPosition ?: 0L
+        val leftNow = playerNow?.let { remainingMs(it, song) } ?: Long.MAX_VALUE
+        val query = CoverTitles.lyricsQuery(song)
+        val fileTimed = found?.fromFile == true && !query.isVideo
+        val syncFacts = NextPrepPolicy.SyncFacts(
+            lyricsOff = !switches.nextPrepLyrics,
+            hasLyrics = lines != null,
+            fileTimed = fileTimed,
+            heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+            aiTimingAhead = AppSettings.aiTimingAhead.value,
+            aiUsable = Deepgram.usable,
+            currentPlayedMs = playedMs,
+            remainingMs = if (deadlineHit) 0L else leftNow,
+            hasTiming = timing != null,
+        )
+        val lyricsLabel = found?.source?.name?.lowercase(Locale.ROOT)
+            ?: if (lines != null) {
+                "none"
+            } else {
+                NextPrepPolicy.noneWithReason(lyricsSkipReason(switches, lines))
+            }
+        val hqLabel = hq?.name?.lowercase(Locale.ROOT)
+            ?: NextPrepPolicy.noneWithReason(
+                if (deadlineHit) "deadline" else hqSkipReason(song),
+            )
+        val mixLabel = if (mix) {
+            "ready"
+        } else {
+            NextPrepPolicy.noneWithReason(
+                if (deadlineHit) "deadline" else mixSkipReason(song),
+            )
+        }
         val tookMs = SystemClock.elapsedRealtime() - startedAt
         TrackLog.i(
             "BitChord",
             "next-prep: ${song.title} version=${song.videoId} " +
-                "lyrics=${found?.source?.name?.lowercase(Locale.ROOT) ?: "none"} " +
-                "hq=${hq?.name?.lowercase(Locale.ROOT) ?: "none"} " +
-                "sync=${if (timing != null) "applied" else "skipped"} " +
-                "mix=${if (mix) "ready" else "none"} in ${tookMs}ms",
+                "lyrics=$lyricsLabel " +
+                "hq=$hqLabel " +
+                "sync=${NextPrepPolicy.syncStatus(syncFacts)} " +
+                "mix=$mixLabel in ${tookMs}ms" +
+                if (deadlineHit) " (deadline)" else "",
             about = song.videoId,
         )
+    }
+
+    /** How long the current track can still give the bundle before its handoff. */
+    private fun remainingMs(player: ExoPlayer, song: Song): Long {
+        val duration = player.duration.takeIf { it > 0 } ?: song.durationMillis()
+        if (duration <= 0L) return Long.MAX_VALUE
+        return NextPrepPolicy.remainingMs(duration, player.currentPosition)
+    }
+
+    /**
+     * Waits, on the player's own clock rather than a polling loop, until the
+     * current track has played [NextPrepPolicy.AI_MIN_PLAYED_MS]. Returns false
+     * when the deadline would arrive first, so the free steps still run and the
+     * paid ones are skipped with `sync=skipped(ai-too-early)`.
+     */
+    private suspend fun awaitAiGate(player: ExoPlayer, remainingMs: Long): Boolean {
+        val played = player.currentPosition
+        if (NextPrepPolicy.aiGateOpen(played)) return true
+        val waitMs = NextPrepPolicy.AI_MIN_PLAYED_MS - played
+        if (remainingMs != Long.MAX_VALUE && remainingMs <= waitMs) return false
+        val reached = CompletableDeferred<Unit>()
+        val message = runCatching {
+            player.createMessage { _, _ -> reached.complete(Unit) }
+                .setPosition(NextPrepPolicy.AI_MIN_PLAYED_MS)
+                .setDeleteAfterDelivery(true)
+                .send()
+        }.getOrNull() ?: return false
+        return try {
+            withTimeoutOrNull(waitMs + AI_GATE_GRACE_MS) { reached.await() } != null
+        } finally {
+            message.cancel()
+        }
+    }
+
+    private fun lyricsSkipReason(
+        switches: SyncSafetyPolicy.Switches,
+        lines: List<LyricLine>?,
+    ): String? = when {
+        lines != null -> null
+        !switches.nextPrepLyrics -> "off"
+        !AppSettings.syncedLyrics.value -> "synced-off"
+        else -> "no-answer"
+    }
+
+    private fun hqSkipReason(song: Song): String? = when {
+        song.isVideo -> "video"
+        song.localUri != null -> "local"
+        SourceRegistry.parseTrackKey(song.videoId) != null -> "source"
+        !SourceResolver.canSubstituteForYouTube() -> "no-source"
+        else -> "no-answer"
+    }
+
+    private fun mixSkipReason(song: Song): String? = when {
+        !AppSettings.smartFadeEnabled.value -> "off"
+        ListenTogether.state.value.inParty -> "party"
+        !AppSettings.automixVideos.value &&
+            (currentPlayer()?.currentMediaItem?.isVideoOrigin == true || song.isVideo) -> "video"
+        else -> "not-ready"
     }
 
     // ---- (a) version ---------------------------------------------------------
@@ -452,14 +611,71 @@ internal class NextTrackPreparation(
                 null
             }
         }
+        if (found != null && tier != null && HqQuality.isLosslessTier(found.format)) {
+            // The same hq-prefetch path a mid-song swap uses: pin the verified
+            // copy so the standby's losslessAheadItem() opens it, then let the
+            // whole rendition land on disk. Starting the background job first
+            // makes the awaited call join it instead of opening a second writer.
+            runCatching {
+                StreamChoice.remember(
+                    song.videoId,
+                    found,
+                    substituted = found.sourceConfigId != null,
+                )
+            }
+            val uri = currentNextItemUri(song.videoId)
+            if (uri != null) {
+                val upgraded = runCatching {
+                    Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
+                }.getOrNull()
+                if (upgraded != null) {
+                    // Start the background hq-prefetch now, but do not hold the
+                    // sync step behind a whole FLAC. It is awaited after the
+                    // timing has been stored, so a long download cannot make
+                    // the next row start without its lyrics sync.
+                    hqPrefetchVideoId = song.videoId
+                    AudioCache.prefetchVerifiedRendition(upgraded, song.title, found)
+                }
+            }
+        }
         return tier ?: existingHq(song)
+    }
+
+    /**
+     * Waits for the background hq-prefetch started by [prepareHq] to put the
+     * whole verified lossless rendition on disk. Bounded by the current track's
+     * deadline; a timeout leaves the background job running, and the standby
+     * still opens the pinned rendition, so the next row is lossless either way.
+     */
+    private suspend fun awaitLosslessDownload(song: Song, remainingMs: Long) {
+        if (remainingMs <= 0L) return
+        val stream = StreamChoice.of(song.videoId) ?: return
+        if (!HqQuality.isLosslessTier(stream.format)) return
+        val uri = currentNextItemUri(song.videoId) ?: return
+        val upgraded = runCatching {
+            Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
+        }.getOrNull() ?: return
+        withTimeoutOrNull(remainingMs) {
+            AudioCache.downloadVerifiedRendition(upgraded, song.title, stream)
+        }
+    }
+
+    private fun currentNextItemUri(videoId: String): Uri? {
+        val player = currentPlayer() ?: return null
+        val index = player.nextMediaItemIndex
+        if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return null
+        val item = player.getMediaItemAt(index)
+        if (item.mediaId != videoId) return null
+        return item.localConfiguration?.uri
     }
 
     // ---- (d) song sync -------------------------------------------------------
 
     private fun syncWanted(song: Song): Boolean {
-        if (song.isVideo) return false
         if (!AppSettings.heavyWorkAllowed) return false
+        // A video's free chroma measurement needs no paid engine; the AI
+        // fallback inside prepareNext still respects aiTimingAhead/Deepgram.
+        if (song.isVideo) return true
         if (!AppSettings.aiTimingAhead.value) return false
         return Deepgram.usable
     }
@@ -503,6 +719,9 @@ internal class NextTrackPreparation(
     private companion object {
         const val MAX_ROWS_REMEMBERED = 12
         const val NEXT_PREP_HQ_WAIT_MS = 15_000L
+
+        /** A player message at 30 s is the gate; this only covers a seek/pause race. */
+        const val AI_GATE_GRACE_MS = 5_000L
     }
 }
 
