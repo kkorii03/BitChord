@@ -1,0 +1,13 @@
+﻿BitChord 안드로이드 앱(Kotlin, Compose, Media3). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지). 기준 브랜치 task/fix-1030. 전체 앱 검토 작업(사용자 요청 10-30).
+주제: 최적화(속도·부드러움·메모리). 볼 것: 앱 시작(Application.onCreate·첫 화면까지 동기 작업), 메인 스레드의 디스크·네트워크·큰 JSON 처리, Compose 재구성 폭주(매 프레임 바뀌는 state 를 넓은 범위에서 읽음, remember 누락, 목록 key 누락), 같은 요청 중복(같은 곡 정보·검색·표지를 여러 곳에서 따로 요청), 큰 비트맵·캐시 크기 상한 없음, 코루틴 누수(취소 안 되는 scope), 로그 문자열을 꺼진 상태에서도 만드는 비용.
+방식: ① 이전 감사 문서(docs/audit/*.md, docs/AUDIT_*.md)를 먼저 읽고, 거기 나온 문제가 지금 코드에서 고쳐졌는지 확인해 표로(고쳐짐/남음/해당 없음). ② 새로 찾은 문제는 docs/review-1031/<이 작업 이름>.md 에 표: 심각도(HIGH/MED/LOW) · 파일:줄 · 증거(코드 근거, 추측 금지) · 사용자 영향 · 수정안. ③ HIGH·MED 중 원인이 분명하고 한두 파일 안에서 고칠 수 있는 것만 이번에 직접 수정 + 단위 테스트(최대 8건). 나머지는 문서에만. 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는 수정하지 말고 문서에만(폰 검증 필요).
+반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 업스트림 v1.8.1(7d956f21)에 있던 코드는 삭제·쪼개기 금지 — 업스트림 쪽 문제는 문서에만. 기존 코드 의도(주석)를 지우면 요약에 이유. 새 app 테스트는 이름을 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제(문서 경로 포함).
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- MEDIUM — app/src/main/java/com/music/bitchord/data/stats/Backup.kt:214 — The new 32 MB import ceiling has no matching export check, so the app can create a backup larger than it will later refuse to restore; enforce the same limit during export or stream the import so every exported backup round-trips.
+- LOW — app/src/main/java/com/music/bitchord/BitChordApplication.kt:415 — `logProcessStart` writes one line (`pid now`) but reads `readLines().getOrNull(1)`, so `previousAt` is always null/0 and every launch is logged cold; parse the timestamp from line 0 (or write two lines) and add a file round-trip test.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
