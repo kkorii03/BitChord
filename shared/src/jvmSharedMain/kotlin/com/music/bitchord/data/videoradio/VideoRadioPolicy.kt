@@ -473,6 +473,42 @@ fun videoRadioFallbackStage(
     else -> VideoRadioFallback.EMPTY
 }
 
+/** The next step for a thin video pick. */
+enum class VideoRadioFallbackAction {
+    /** Run the ordinary (radio/ favourites / similar / session) path. */
+    USE_NORMAL,
+
+    /** Return the video rows already picked. */
+    KEEP_PICK,
+
+    /** There is neither a pick nor an ordinary answer: report the failure. */
+    FAIL,
+}
+
+/**
+ * What to do with a thin video pick, before and after the ordinary path.
+ *
+ * [normalRows] is null until that path has run. A successful but empty station
+ * still runs it, because the local sources it adds are exactly what an empty
+ * station lacks. Once it has run, zero rows mean the pick is the only playable
+ * material and must not be thrown away.
+ */
+fun videoRadioFallbackAction(
+    picked: Int,
+    fallbackFailed: Boolean,
+    normalRows: Int? = null,
+): VideoRadioFallbackAction = when {
+    fallbackFailed -> if (picked > 0) {
+        VideoRadioFallbackAction.KEEP_PICK
+    } else {
+        VideoRadioFallbackAction.FAIL
+    }
+    normalRows == null -> VideoRadioFallbackAction.USE_NORMAL
+    normalRows > 0 -> VideoRadioFallbackAction.USE_NORMAL
+    picked > 0 -> VideoRadioFallbackAction.KEEP_PICK
+    else -> VideoRadioFallbackAction.USE_NORMAL
+}
+
 /** One same-singer row for every two other-singer rows. */
 const val VIDEO_RADIO_SAME_SINGER_RATIO = 1
 const val VIDEO_RADIO_OTHER_SINGER_RATIO = 2

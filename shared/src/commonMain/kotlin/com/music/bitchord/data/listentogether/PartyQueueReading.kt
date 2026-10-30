@@ -44,3 +44,32 @@ fun partyUpcomingAfter(queue: PartyQueue, playback: PartyPlayback, videoId: Stri
  */
 fun partyTopUpEchoed(before: List<PartyTrack>, videoId: String, after: List<PartyTrack>): Boolean =
     after.count { it.videoId == videoId } > before.count { it.videoId == videoId }
+
+/**
+ * The suggestions the party's echo proves were actually queued.
+ *
+ * The server truncates an add to the party's remaining slots, so the first
+ * suggestion landing is not proof that the rest did. Counting the new
+ * occurrences of each id — the queue keeps its history, so old ones do not
+ * count — keeps only what really landed. The caller may then write off only
+ * those rows as suggested and retry the rest.
+ */
+fun partyTopUpLanded(
+    before: List<PartyTrack>,
+    suggestions: List<String>,
+    after: List<PartyTrack>,
+): List<String> {
+    val remaining = after.groupingBy { it.videoId }.eachCount().toMutableMap()
+    for (track in before) {
+        val left = remaining[track.videoId] ?: continue
+        if (left <= 1) remaining.remove(track.videoId) else remaining[track.videoId] = left - 1
+    }
+    val landed = ArrayList<String>(suggestions.size)
+    for (id in suggestions) {
+        val left = remaining[id] ?: 0
+        if (left <= 0) continue
+        landed += id
+        if (left == 1) remaining.remove(id) else remaining[id] = left - 1
+    }
+    return landed
+}

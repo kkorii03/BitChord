@@ -103,6 +103,7 @@ import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyTopUpEchoed
+import com.music.bitchord.data.listentogether.partyTopUpLanded
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.HqRetryPolicy
@@ -1547,6 +1548,14 @@ class PlaybackService : MediaLibraryService() {
             }
             // Turning repeat-all back off can leave the current item at the end
             // of the queue, which is the same trigger as a normal transition.
+            // Leaving repeat-one has to release the seed first: it is still
+            // latched to the track that was looping, and the reload below would
+            // otherwise be skipped as same-seed, leaving the queue empty.
+            if (repeatOneSeedShouldClear(previous, repeatMode)) {
+                autoplayLoadJob?.cancel()
+                autoplayLoadJob = null
+                autoplaySeed = null
+            }
             loadAutoplayForCurrentTrack()
         }
 
@@ -3546,9 +3555,17 @@ class PlaybackService : MediaLibraryService() {
      * everything arriving in one burst at the end of the queue.
      */
     private fun loadAutoplayForCurrentTrack() {
-        val exoPlayer = player ?: return
+        val exoPlayer = player
+        if (exoPlayer == null) {
+            TrackLog.d("BitChord", "autoplay: skip reason=no-player")
+            return
+        }
         val party = ListenTogether.state.value
-        val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        val current = exoPlayer.currentMediaItem?.toSong()
+        if (current == null) {
+            TrackLog.d("BitChord", "autoplay: skip reason=no-current-song")
+            return
+        }
         // Every track after the current one, not just AutoPlay's own tail.
         // Counting only suggestions meant ten were topped back up to ten on
         // every change, so a station was fetched for nearly every track played
@@ -3821,8 +3838,20 @@ class PlaybackService : MediaLibraryService() {
                 ListenTogether.state.first { state ->
                     partyTopUpEchoed(before, added, state.queue.items)
                 }
-            } != null
-            if (echoed) fresh else null
+            }
+            if (echoed == null) return@withContext null
+            // The server truncates the batch to the party's remaining slots, so
+            // only the rows whose occurrences actually appear are queued. Report
+            // that subset: the caller writes off exactly these as suggested and
+            // may retry the rows the server refused.
+            val landedIds = partyTopUpLanded(
+                before = before,
+                suggestions = fresh.map { it.videoId },
+                after = echoed.queue.items,
+            )
+            val pools = fresh.groupByTo(HashMap()) { it.videoId }
+                .mapValuesTo(HashMap()) { it.value.toMutableList() }
+            landedIds.mapNotNull { id -> pools[id]?.removeFirstOrNull() }
         }
     }
 

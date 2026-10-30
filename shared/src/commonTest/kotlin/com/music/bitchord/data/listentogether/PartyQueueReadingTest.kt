@@ -76,4 +76,41 @@ class PartyQueueReadingTest {
 
         assertTrue(partyTopUpEchoed(before, "new", before + PartyTrack("new")))
     }
+
+    @Test
+    fun onlyTheRowsTheServerKeptAreReportedAsLanded() {
+        // The server truncates an add to the remaining slots, so the first
+        // suggestion landing is not proof that the rest did.
+        val before = listOf(PartyTrack("current"))
+        val after = before + PartyTrack("one")
+
+        assertEquals(
+            listOf("one"),
+            partyTopUpLanded(before, listOf("one", "two", "three"), after),
+        )
+    }
+
+    @Test
+    fun theLandedRowsCountNewOccurrencesNotHistory() {
+        val before = listOf(PartyTrack("played"), PartyTrack("current"))
+        val after = before + PartyTrack("played") + PartyTrack("new")
+
+        assertEquals(
+            listOf("played", "new"),
+            partyTopUpLanded(before, listOf("played", "new"), after),
+        )
+        // A refused add changes nothing, so nothing landed.
+        assertEquals(emptyList(), partyTopUpLanded(before, listOf("new"), before))
+    }
+
+    @Test
+    fun duplicateSuggestionIdsAreConsumedOnlyAsOftenAsTheyLanded() {
+        val before = listOf(PartyTrack("current"))
+        val after = before + PartyTrack("same")
+
+        assertEquals(
+            listOf("same"),
+            partyTopUpLanded(before, listOf("same", "same"), after),
+        )
+    }
 }

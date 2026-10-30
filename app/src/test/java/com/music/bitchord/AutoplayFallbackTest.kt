@@ -1,6 +1,8 @@
 package com.music.bitchord
 
+import androidx.media3.common.Player
 import com.music.bitchord.playback.autoplayQueueNeedsRefresh
+import com.music.bitchord.playback.repeatOneSeedShouldClear
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,5 +46,16 @@ class AutoplayFallbackTest {
                 repeatOne = true,
             ),
         )
+    }
+
+    @Test
+    fun `leaving repeat one releases the seed so the queue can refill`() {
+        // The seed stays latched while repeat-one loops the same track. Without
+        // clearing it, the reload after repeat-one ends is skipped as same-seed.
+        assertTrue(repeatOneSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_OFF))
+        assertTrue(repeatOneSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ALL))
+        assertFalse(repeatOneSeedShouldClear(Player.REPEAT_MODE_OFF, Player.REPEAT_MODE_ONE))
+        assertFalse(repeatOneSeedShouldClear(Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_OFF))
+        assertFalse(repeatOneSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ONE))
     }
 }

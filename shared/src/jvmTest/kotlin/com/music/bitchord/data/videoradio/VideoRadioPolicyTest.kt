@@ -457,4 +457,44 @@ class VideoRadioPolicyTest {
         )
     }
 
+    @Test
+    fun `a successful empty station still runs the ordinary path`() {
+        // An empty answer is not a failure: local favourites, similar rows and
+        // the session radio are exactly what it lacks. Only a real failure may
+        // skip that path.
+        assertEquals(
+            VideoRadioFallbackAction.USE_NORMAL,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = false),
+        )
+        assertEquals(
+            VideoRadioFallbackAction.USE_NORMAL,
+            videoRadioFallbackAction(picked = 0, fallbackFailed = false),
+        )
+    }
+
+    @Test
+    fun `a thin video pick survives when the ordinary path filters every row`() {
+        // The station answered, but covers, missing metadata or duplicates left
+        // the ordinary path with nothing. The video rows are still playable.
+        assertEquals(
+            VideoRadioFallbackAction.KEEP_PICK,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = false, normalRows = 0),
+        )
+        // Ordinary local sources did produce rows; they are the better mix.
+        assertEquals(
+            VideoRadioFallbackAction.USE_NORMAL,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = false, normalRows = 3),
+        )
+        // A station that never answered keeps the pick outright.
+        assertEquals(
+            VideoRadioFallbackAction.KEEP_PICK,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = true),
+        )
+        // With no video rows there is nothing to keep.
+        assertEquals(
+            VideoRadioFallbackAction.FAIL,
+            videoRadioFallbackAction(picked = 0, fallbackFailed = true),
+        )
+    }
+
 }
