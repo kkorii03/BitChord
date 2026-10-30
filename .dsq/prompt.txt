@@ -1,0 +1,23 @@
+﻿BitChord 안드로이드 앱(Kotlin, Compose, Media3). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지). 기준 브랜치 task/fix-1030. 대대적 엄격 검토(사용자: 양보 없는 철저한 검사) — 한 영역을 끝까지 판다.
+영역: 가사 싱크 — LyricsTiming(측정·chroma)·AI 타이밍(Gemini/Deepgram)·RefinePolicy·저장값(stored) 재사용·판정 순서·수동 오프셋. 정렬 수학은 바꾸지 말고, 언제 실행되고 언제 건너뛰는지·저장값이 다른 녹음 기준인데 재사용되는지·비디오 곡 처리 위주. 성적표: 가사 있는 곡 중 싱크 보정 73.5%, 다음 곡 준비 싱크 29%.
+규칙(양보 없음): ① 영역의 모든 진입점→처리→결과를 코드로 따라가 '흔한 상황'(커버 영상·비디오 노래·셔플·앱 재시작 후·화면 꺼짐·백그라운드·프록시 켬·다운로드된 곡·느린/끊긴 망·Android 14+ 제약)마다 실제로 끝까지 동작하는지 표로. ② 조용히 건너뛰는 경로(조건 거짓 → 로그 없이 return)는 전부 결함. ③ 결과를 docs/review-1031/<작업 이름>.md: 심각도 · 파일:줄 · 증거 · 사용자 영향 · 얼마나 흔한지 · 수정안. ④ HIGH·MEDIUM 은 이번에 직접 수정(파일 범위가 크면 가장 위험한 것부터 최대 10건), 각 수정마다 수정 전 실패하는 단위 테스트 먼저. 고치지 못한 HIGH·MEDIUM 은 이유와 필요한 작업을 문서에. ⑤ 실제 사용 성적표(vc85, 362곡): 다음 곡 싱크 준비 29%, 무손실 확인 후 실제 무손실 재생 4%, 자동 재생 보충 성공 24%, 사용자 조작 없는 백그라운드 시작 11회, 다운로드·고음질 보관함 실패 140회 — 이 영역과 관련된 숫자가 왜 나쁜지 코드로 설명하고 고칠 것.
+반드시: 배터리 우선(주기 폴링·delay 루프·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입 확인. 업스트림 v1.8.1(7d956f21) 코드 삭제·쪼개기 금지(우리 코드는 고쳐도 됨, 업스트림 줄 수정은 최소). 기존 주석 의도를 지우면 요약에 이유. 새 app/shared 테스트 이름을 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 고친 결함 수(HIGH/MED) / 남긴 결함 / 테스트 결과 / 문서 경로.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 6
+HIGH — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/DownloadedSyncCheck.kt:116` (`LyricsTiming.kt:2064`): `answered` counts any non-null `own.match` as verification, but `runSongCheck` returns a match with `fitted == null` for `refused-match`/`refused-shift`, so `decide` returns `replace=true` and `recheckDownloaded` records `syncCheckVersion` without storing a sync (after `resetSongCheck` the file can stay unsynced forever).
+Fix: pass `ownMatchPercent = own.match.takeIf { own.fitted != null }` (or an explicit applied flag) so refused answers leave the version unrecorded.
+HIGH — `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:10265-10274`: the lock-screen/notification/car timing path omits the `StreamChoice.isSubstitute` guard used by `LyricsController.refreshTiming`, so it applies a YouTube-clock measurement/AI answer to a substitute stream despite the docs claiming the same rules.
+Fix: compute `substituted` and AND it into both `timeable` and `recordTimed` before calling `timing()`.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt:572` (key at 293-302): `NextPrepCache` keys on videoId/audioSource/isVideo but not substitute status, so a cache prepared before a substitute is chosen is served on the substitute's first frame with the wrong clock.
+Fix: include `StreamChoice.isSubstitute(videoId)` in `Ready`/`get`, or clear the cache when the choice changes.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1876` (gate at 2019): `resetSongCheck` does not take `songSyncGate`, so an in-flight `recheckDownloaded` can write the old file's override/answer after the reset and undo the replacement fix.
+Fix: run the reset under `songSyncGate` or check a per-video generation token before the recheck's writes.
+MEDIUM — `app/src/main/java/com/music/bitchord/ui/LyricsController.kt:804-814` and `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1071-1076`: the 8-second re-measure loop and 250 ms `awaitVideoOpening` loop remain, violating the task's no-delay/polling battery rule (the docs acknowledge leaving them).
+Fix: replace both with an AudioCache "new bytes/opening ready" event and re-measure only on that event.
+MEDIUM — `app/src/main/java/com/music/bitchord/ui/LyricsController.kt:670` and `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1573,1994-2007`: several skip paths still return with no `lyrics-sync:` reason log, contrary to the task's "every silent skip is a defect" rule and the docs' own remaining list.
+Fix: add one reason line (without lyric text) before each early return.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
