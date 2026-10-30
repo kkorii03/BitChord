@@ -283,7 +283,9 @@ internal fun InlineQueue(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(Res.string.queue),
+                // Apple Music names this screen after what it lists, not after
+                // the player control that opened it.
+                text = stringResource(Res.string.up_next),
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White,
                 modifier = Modifier.weight(1f),
