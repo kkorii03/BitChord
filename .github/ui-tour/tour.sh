@@ -690,6 +690,10 @@ else
   run_section section_settings settings
   run_section section_search search
   run_section section_now_playing now-playing
+  # The Settings groups open their detail as sheets from a row; this walks
+  # them (section_settings above only reaches the group headers).
+  section_settings_sheets() { reset_home; OUT="$OUT" bash scripts/ui-tour-settings.sh; }
+  [ -f scripts/ui-tour-settings.sh ] && run_section section_settings_sheets settings-sheets
 fi
 
 adb logcat -d > "$OUT/logcat.txt"
