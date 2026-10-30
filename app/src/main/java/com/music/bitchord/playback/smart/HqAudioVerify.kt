@@ -91,16 +91,32 @@ object HqAudioVerify {
      * Nothing here polls: an entry is read only when one of those events
      * happens.
      */
-    private class PendingRateLimit(
+    private data class PendingRateLimit(
         val context: Context,
         val youtubeId: String,
         val target: TrackMatcher.Target,
         val stream: SourceStream,
         val host: String?,
         val manual: Boolean,
+        /**
+         * How many retries this entry has already spent on a transient
+         * reference/decode failure. A genuinely permanent reference failure
+         * arrives here as [NoReferenceReason.DECODE_FAILED] (the WAV path
+         * cannot tell "no source" apart), so without a bound the entry would
+         * download and decode the candidate on every playback event forever.
+         */
+        val transientAttempts: Int = 0,
     )
 
     private val pendingRateLimits = ConcurrentHashMap<String, PendingRateLimit>()
+
+    /**
+     * Transient reference/decode failures tolerated for one pending 429 entry.
+     * Only playback events drive these attempts, never a timer; three is
+     * enough for a screen-off or busy-decoder spell without turning a truly
+     * missing source into a download on every later event.
+     */
+    internal const val MAX_PENDING_TRANSIENT_ATTEMPTS = 3
 
     /** One queue's worth is enough; an old refusal is not worth unbounded memory. */
     private const val MAX_PENDING_RATE_LIMITS = 64
@@ -140,7 +156,16 @@ object HqAudioVerify {
         HEAD_TIMEOUT("head-timeout"),
         NO_SOURCE("no-source"),
         DECODE_FAILED("decode-failed"),
-        CANCELLED("cancelled"),
+        CANCELLED("cancelled");
+
+        /**
+         * Whether this is a failure of the moment rather than of the recording.
+         * A screen-off head timeout, a busy decoder or a cancelled play says
+         * nothing about the song, so a pending 429 retry stays for the next
+         * event. A missing source is the one reason that cannot fix itself.
+         */
+        val transient: Boolean
+            get() = this != NO_SOURCE
     }
 
     /** The full answer of a verification, including why it could not be measured. */
@@ -153,11 +178,23 @@ object HqAudioVerify {
         /** The play changed before this attempt could measure anything. */
         data object Abandoned : Outcome
 
+        /**
+         * The host is still resting from an earlier 429, so this request was
+         * not attempted at all. Unlike a measured failure it must not consume
+         * the one retry a pending entry grants.
+         */
+        data object Deferred : Outcome
+
         /** The YouTube reference itself could not be opened, decoded or reached. */
         data class NoReference(val reason: NoReferenceReason) : Outcome
 
-        /** The candidate could not be measured, or the request was not verifiable. */
-        data object Unavailable : Outcome
+        /**
+         * The candidate could not be measured, or the request was not
+         * verifiable. [transient] marks a network/decode/alignment failure that
+         * says nothing about the candidate and may succeed on the next event;
+         * only a permanent refusal settles a pending 429 retry.
+         */
+        data class Unavailable(val transient: Boolean = false) : Outcome
     }
 
     private sealed interface Reference {
@@ -291,7 +328,7 @@ object HqAudioVerify {
         recordRateLimit: Boolean,
     ): Outcome = withContext(Dispatchers.IO) {
         val epoch = playbackEpoch.get()
-        if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable
+        if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable()
         // A source-backed row has no YouTube song version to compare with;
         // its own source is the reference, so there is nothing to verify here.
         if (SourceTrackKeys.parse(youtubeId) != null) {
@@ -335,7 +372,7 @@ object HqAudioVerify {
         // proved and must not be swapped in blind.
         if (StreamContainer.isManifest(stream.url)) {
             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
-            return@withContext Outcome.Unavailable
+            return@withContext Outcome.Unavailable()
         }
 
         // A song whose last attempt was refused is not asked again while its
@@ -354,7 +391,7 @@ object HqAudioVerify {
                         "${pending.host ?: "host"} is resting",
                     youtubeId,
                 )
-                return@withContext Outcome.Unavailable
+                return@withContext Outcome.Deferred
             }
         }
 
@@ -401,14 +438,14 @@ object HqAudioVerify {
                                 )
                             }
                             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
-                            return@coroutineScope Outcome.Unavailable
+                            return@coroutineScope Outcome.Unavailable()
                         }
                         CandidateFetch.Abandoned -> {
                             return@coroutineScope Outcome.Abandoned
                         }
                         CandidateFetch.Failed -> {
                             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
-                            return@coroutineScope Outcome.Unavailable
+                            return@coroutineScope Outcome.Unavailable(transient = true)
                         }
                     }
                     // A head that stops short of the window while the reference
@@ -434,7 +471,7 @@ object HqAudioVerify {
                             bytes = candidate.bytes,
                             measured = false,
                         )
-                        return@coroutineScope Outcome.Unavailable
+                        return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     val result = runCatching {
                         ChromaAlignment.align(
@@ -448,7 +485,7 @@ object HqAudioVerify {
                         // that says nothing about the candidate, so it must not
                         // become a stored rejection.
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
-                        return@coroutineScope Outcome.Unavailable
+                        return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     val match = result.matchPercent
                     val offset = result.map.map(0L)
@@ -509,13 +546,36 @@ object HqAudioVerify {
     /**
      * Whether this attempt has used the one retry a pending entry grants.
      *
-     * Only [Outcome.Abandoned] leaves the entry for the next event: the play
-     * changed before anything was measured, so the attempt was not really a
-     * retry. Every other answer — including [Outcome.Unavailable],
-     * [Outcome.NoReference] and a null outcome from an unexpected exception —
-     * is definitive and must not be repeated on every later playback event.
+     * A retry is only consumed by an answer that actually settles the question:
+     * a measured verdict, a second 429, or a refusal that cannot fix itself.
+     * The play changing ([Outcome.Abandoned]), a host still resting
+     * ([Outcome.Deferred]) and a transient reference/decode/alignment failure
+     * all leave the entry for the next event — otherwise a screen-off head
+     * timeout or a busy decoder would silently cancel the one retry without the
+     * candidate ever being measured.
+     *
+     * [transientAttempts] is the number of transient attempts spent including
+     * this one. A permanent reference failure can look transient forever (the
+     * WAV path reports every null as [NoReferenceReason.DECODE_FAILED]), so
+     * after [MAX_PENDING_TRANSIENT_ATTEMPTS] the entry is settled rather than
+     * downloading and decoding the same candidate on every playback event.
      */
-    internal fun Outcome?.settlesPendingRetry(): Boolean = this !is Outcome.Abandoned
+    internal fun Outcome?.settlesPendingRetry(transientAttempts: Int = 0): Boolean = when (this) {
+        null -> true
+        is Outcome.Abandoned, is Outcome.Deferred -> false
+        is Outcome.NoReference ->
+            !reason.transient || transientAttempts >= MAX_PENDING_TRANSIENT_ATTEMPTS
+        is Outcome.Unavailable ->
+            !transient || transientAttempts >= MAX_PENDING_TRANSIENT_ATTEMPTS
+        else -> true
+    }
+
+    /** Whether this outcome spends one of the bounded transient retries. */
+    internal fun Outcome?.countsTowardsTransientRetryBudget(): Boolean = when (this) {
+        is Outcome.NoReference -> reason.transient
+        is Outcome.Unavailable -> transient
+        else -> false
+    }
 
     /** Remembers a 429-unmeasured song so a later event can ask once more. */
     private fun notePendingRateLimit(
@@ -549,11 +609,12 @@ object HqAudioVerify {
      * Re-asks every pending song whose host has finished resting.
      *
      * Called only from playback events and verification requests, never from a
-     * timer. The entry is kept only when the attempt was abandoned because the
-     * play changed: a verified answer, a measured mismatch, a missing
-     * reference, an unmeasurable candidate or a second 429 all consume the one
-     * retry. The host's rest is re-checked before every attempt because the
-     * previous song in this loop may have just been refused and rested it.
+     * timer. The entry is kept when the attempt was abandoned because the play
+     * changed, when the host is still resting, or when the reference/candidate
+     * failed for a transient reason; a verified answer, a measured mismatch, a
+     * permanent refusal or a second 429 all consume the one retry. The host's
+     * rest is re-checked before every attempt because the previous song in this
+     * loop may have just been refused and rested it.
      */
     private fun retryPendingRateLimits(exceptYoutubeId: String? = null) {
         val due = pendingRateLimits.values.filter {
@@ -595,13 +656,31 @@ object HqAudioVerify {
                         )
                         null
                     }
-                    // Only an attempt abandoned because the play changed keeps
-                    // the entry: it did not really get its one retry. A second
-                    // 429, a measured answer, a missing reference or any other
-                    // unmeasurable candidate is definitive and must not be
+                    // An abandoned play, a still-resting host and a transient
+                    // reference/decode failure keep the entry: none of them
+                    // actually got the one retry. A second 429, a measured
+                    // answer or a permanent refusal settles it and must not be
                     // downloaded and decoded again on every later event.
-                    if (outcome.settlesPendingRetry()) {
+                    // Transient failures are bounded, because a permanent
+                    // missing reference also arrives as DECODE_FAILED.
+                    val transientAttempts = pending.transientAttempts +
+                        if (outcome.countsTowardsTransientRetryBudget()) 1 else 0
+                    if (outcome.settlesPendingRetry(transientAttempts)) {
+                        if (!outcome.settlesPendingRetry()) {
+                            TrackLog.d(
+                                TAG,
+                                "decode: hq-verify giving up on '${pending.target.title}' " +
+                                    "after $transientAttempts transient attempts",
+                                pending.youtubeId,
+                            )
+                        }
                         pendingRateLimits.remove(pending.youtubeId, pending)
+                    } else if (transientAttempts != pending.transientAttempts) {
+                        pendingRateLimits.replace(
+                            pending.youtubeId,
+                            pending,
+                            pending.copy(transientAttempts = transientAttempts),
+                        )
                     }
                 }
             } finally {

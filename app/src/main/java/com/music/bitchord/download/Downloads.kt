@@ -412,10 +412,15 @@ object Downloads {
             if (minimumTier != null) minimumTiers[id] = minimumTier
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
-        }
-        publishQueuedIfPending(id)
-        if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
-            DownloadSession.queued(song, from)
+            // Publish while the row is still ours: a worker can only claim it
+            // through [takeNext], which needs this same lock. Publishing after
+            // the lock is what let a claimed row finish first and then be
+            // overwritten back to Queued.
+            publishQueuedIfPending(
+                song = song,
+                from = from,
+                publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
+            )
         }
 
         val app = context.applicationContext
@@ -437,16 +442,43 @@ object Downloads {
     }
 
     /**
-     * Publish Queued only while [videoId] is still waiting.
+     * Publish Queued only while [song]'s id is still waiting or was claimed by
+     * the service.
      *
      * [onForeground] can take the row back after the enqueue inserted it but
      * before this publish; writing Queued then would overwrite the refusal
-     * while no pending row remains.
+     * while no pending row remains. Conversely, [takeNext] can claim the row
+     * for an already-running service before this publish; the session row must
+     * still be created, or the later running/done writes have nothing to
+     * update and the track silently disappears from the manager. Both the
+     * `active` row and the download manager's row are published under the same
+     * lock as the pending/running check, so a refusal that wins the race
+     * cannot be followed by a stray Queued in either place.
+     * [publishSession] is false for an automatic pass, whose rows are not
+     * shown in the manager.
      */
-    private fun publishQueuedIfPending(videoId: String) {
+    private fun publishQueuedIfPending(
+        song: Song,
+        from: String?,
+        publishSession: Boolean,
+    ) {
         synchronized(lock) {
-            if (videoId !in pending) return
-            _active.update { it + (videoId to DownloadState.Queued) }
+            val id = song.videoId
+            if (id !in pending && id !in running) return
+            // A worker that claimed this row may already have moved it past
+            // Queued — a cache copy that finishes at once, or a fast refusal.
+            // Writing Queued afterwards would move the manager's row backwards
+            // and leave it there, since nothing is left to advance it again.
+            // The same goes for the `active` map, which the worker writes
+            // before the session row.
+            val activeState = _active.value[id]
+            val sessionState = if (publishSession) DownloadSession.progressOf(id) else null
+            val alreadyAdvanced = activeState is DownloadState.Running ||
+                activeState is DownloadState.Failed ||
+                (sessionState != null && sessionState !is DownloadProgress.Queued)
+            if (alreadyAdvanced) return
+            _active.update { it + (id to DownloadState.Queued) }
+            if (publishSession) DownloadSession.queued(song, from)
         }
     }
 

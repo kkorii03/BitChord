@@ -605,17 +605,41 @@ object HqLibraryUpgrade {
         }
 
         prunePlan(context)
-        var target = synchronized(lock) { plan.firstOrNull() }
+        val selectionNow = System.currentTimeMillis()
+        val downloaded = Downloads.savedMetadataSnapshot()
+        var target = synchronized(lock) {
+            nextRunnableTargetLocked(selectionNow, downloaded)
+        }
         if (target == null) {
+            val parked = synchronized(lock) { plan.isNotEmpty() }
             val built = buildPlan(context)
             if (built.isEmpty()) {
-                finishRun()
+                // A parked plan is kept on disk until its cooldown ends. The
+                // next playback/foreground event checks it again; this worker
+                // must not clear it just because nothing is runnable right now.
+                if (!parked) {
+                    finishRun()
+                } else {
+                    val waitMs = synchronized(lock) {
+                        nextParkedWaitLocked(selectionNow)
+                    }
+                    if (waitMs != null && waitMs > 0L) {
+                        // WorkManager owns the wait; there is no timer here.
+                        enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, waitMs)
+                    }
+                }
                 return@withContext
             }
+            // buildPlan returns only targets that are runnable now, so setting
+            // the plan to it would silently drop entries that are merely
+            // resting inside the retry cooldown. Keep those: [nextRunnableTargetLocked]
+            // still skips them until they are eligible, and the parked wait
+            // below then owns their wake-up. A rebuilt target for the same song
+            // wins over the kept one.
             synchronized(lock) {
-                plan = built
+                plan = mergeParkedPlan(built, plan)
                 done = 0
-                total = built.size
+                total = plan.size
                 activeVideoId = null
                 persistLocked()
                 publishLocked()
@@ -685,6 +709,65 @@ object HqLibraryUpgrade {
     }
 
     /**
+     * Keep plan entries that [buildPlan] did not return.
+     *
+     * [buildPlan] filters on the same eligibility rules as
+     * [nextRunnableTargetLocked], so a resume whose old plan is entirely parked
+     * still yields the newly eligible targets. Dropping the parked ones there
+     * would lose their cooldown deadline; the rebuilt target for a song wins
+     * when both name it.
+     */
+    private fun mergeParkedPlan(
+        built: List<PendingTarget>,
+        kept: List<PendingTarget>,
+    ): List<PendingTarget> {
+        val runnableIds = built.mapTo(HashSet()) { it.target.videoId }
+        return built + kept.filterNot { it.target.videoId in runnableIds }
+    }
+
+    /**
+     * The first plan entry the automatic pass may actually ask for now.
+     *
+     * [prunePlanLocked] deliberately keeps a target that is only resting
+     * inside [AutomaticRetryPolicy]'s cooldown, so choosing `plan.first()` here
+     * would immediately re-download it after a restart and defeat the cooldown.
+     * All the same eligibility facts are applied as in [buildPlan].
+     */
+    private fun nextRunnableTargetLocked(
+        nowMs: Long,
+        downloaded: Map<String, SavedSongMetadata>,
+    ): PendingTarget? = plan.firstOrNull { pending ->
+        automaticTargetEligible(
+            pending.target.videoId,
+            pending.target.verifiedTier,
+            failures[failureKey(pending.target)],
+            nowMs,
+            downloaded,
+        )
+    }
+
+    /**
+     * The shortest wait until one kept target becomes runnable again.
+     *
+     * Only called when every remaining plan entry is parked. The failure
+     * cooldown is a wall-clock deadline, so the worker schedules itself with
+     * WorkManager instead of sleeping or polling here.
+     */
+    private fun nextParkedWaitLocked(nowMs: Long): Long? =
+        plan.mapNotNull { pending ->
+            val failure = failures[failureKey(pending.target)]
+            val cooldownUntil = if (failure != null &&
+                failure.attempts in 1 until AutomaticRetryPolicy.MAX_FAILURES
+            ) {
+                failure.lastFailureMs + AutomaticRetryPolicy.COOLDOWN_MS
+            } else {
+                0L
+            }
+            val until = maxOf(pending.notBeforeMs, cooldownUntil)
+            until.takeIf { it > nowMs }?.minus(nowMs)
+        }.minOrNull()
+
+    /**
      * Drops plan entries that can no longer run automatically: a complete
      * lossless copy has appeared, or the target's retries are exhausted.
      *
@@ -703,6 +786,7 @@ object HqLibraryUpgrade {
     }
 
     /** [prunePlan] with [lock] already held and the device facts read. */
+    @Suppress("UNUSED_PARAMETER")
     private fun prunePlanLocked(
         downloaded: Map<String, SavedSongMetadata>,
         nowMs: Long,
@@ -712,14 +796,20 @@ object HqLibraryUpgrade {
             // Pruning is permanent: a copy already at the rung, or retries
             // exhausted. A background event only parks the pass for now, and
             // must never erase the plan onBackground promised to keep on disk.
-            automaticTargetEligible(
+            //
+            // The retry cooldown is deliberately not consulted here. Forcing
+            // the window open (as this used to) still let [AutomaticRetryPolicy]
+            // reject a target that was merely resting for 24h, so a temporarily
+            // parked song was deleted as if it had exhausted its attempts.
+            // Permanence is the two facts below and nothing else.
+            val exhausted = (failures[failureKey(pending.target)]?.attempts ?: 0) >=
+                AutomaticRetryPolicy.MAX_FAILURES
+            val satisfied = hasCopyAtLeastAsGood(
                 pending.target.videoId,
+                downloaded[pending.target.videoId],
                 pending.target.verifiedTier,
-                failures[failureKey(pending.target)],
-                nowMs,
-                downloaded,
-                foreground = true,
             )
+            !exhausted && !satisfied
         }
         if (kept.size == plan.size) return
         plan = kept

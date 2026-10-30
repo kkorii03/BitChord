@@ -5769,8 +5769,20 @@ class PlaybackService : MediaLibraryService() {
         // mapped the new lossless copy through the wrong offset in exactly
         // that window. A snapshot without a source id has not spoken about the
         // source, so the recorded choice is the fallback rather than a null
-        // verdict that makes the current clock look unknown.
-        val choice = if (snapshot?.sourceConfigId == null) StreamChoice.of(mediaId) else null
+        // verdict that makes the current clock look unknown — unless the
+        // snapshot already names YouTube, where a stale substitute choice
+        // would invent a clock the direct copy does not have.
+        val snapshotKind = snapshot?.sourceConfigId?.let { SourceRegistry.config(it)?.kind }
+        val choice = if (HqVerificationStore.shouldFallBackToChoice(
+                snapshotSourceConfigId = snapshot?.sourceConfigId,
+                snapshotKind = snapshotKind,
+                snapshotSourceName = snapshot?.sourceName,
+            )
+        ) {
+            StreamChoice.of(mediaId)
+        } else {
+            null
+        }
         val identity = HqVerificationStore.sourceIdentity(
             snapshotSourceConfigId = snapshot?.sourceConfigId,
             snapshotTrackId = snapshot?.sourceTrackId,
@@ -6861,6 +6873,16 @@ class PlaybackService : MediaLibraryService() {
                 )
                 return SwapOutcome.NO_REFERENCE
             }
+            is HqAudioVerify.Outcome.Deferred -> {
+                // Not attempted because the host is resting. That is not a
+                // verdict on the candidate, so it is not counted against it.
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade deferred for $mediaId: the host is still resting",
+                    about = mediaId,
+                )
+                return SwapOutcome.NOT_PROVEN
+            }
             is HqAudioVerify.Outcome.Unavailable,
             is HqAudioVerify.Outcome.Abandoned -> {
                 TrackLog.d(
@@ -7495,7 +7517,7 @@ class PlaybackService : MediaLibraryService() {
             // a pin or an item that is no longer the upgraded one, so a revert
             // during the proof window ends the proof instead of being undone by
             // it.
-            awaitPlayerCondition(UPGRADE_PROVE_MS, activePlayer) {
+            val proven = awaitPlayerCondition(UPGRADE_PROVE_MS, activePlayer) {
                 val current = player ?: return@awaitPlayerCondition true
                 val item = current.currentMediaItem
                 current !== activePlayer ||
@@ -7524,7 +7546,19 @@ class PlaybackService : MediaLibraryService() {
             // rather than at the ceiling: a replacement that came up short does
             // not raise an error, it reaches the end of what it has and reports
             // the track as over. That is a decisive no.
-            if (now > 0 && abs(now - expectedDuration) <= upgradeLengthSlackMs) {
+            //
+            // A proof that never reached its condition is also a no: the old
+            // loop reverted when its window expired, and reading a duration
+            // that happened to land afterwards would let the timeout pass as a
+            // proof. The pin/URI bail-outs above are still checked first, so a
+            // revert the listener asked for is not mistaken for a bad stream.
+            if (HqSwapPolicy.provesDuration(
+                    proven = proven,
+                    durationMs = now,
+                    expectedDurationMs = expectedDuration,
+                    slackMs = upgradeLengthSlackMs,
+                )
+            ) {
                 onProven?.invoke()
                 return@launch
             }

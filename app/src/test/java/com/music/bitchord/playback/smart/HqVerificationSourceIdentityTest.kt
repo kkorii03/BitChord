@@ -1,7 +1,10 @@
 package com.music.bitchord.playback.smart
 
+import com.music.bitchord.data.sources.SourceKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -48,6 +51,46 @@ class HqVerificationSourceIdentityTest {
                 snapshotTrackId = null,
                 choiceSourceConfigId = null,
                 choiceTrackId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a silent snapshot may fall back to the recorded choice`() {
+        assertTrue(
+            HqVerificationStore.shouldFallBackToChoice(
+                snapshotSourceConfigId = null,
+                snapshotKind = null,
+                snapshotSourceName = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a snapshot that names YouTube never borrows a substitute choice`() {
+        assertFalse(
+            HqVerificationStore.shouldFallBackToChoice(
+                snapshotSourceConfigId = null,
+                snapshotKind = null,
+                snapshotSourceName = "YouTube",
+            ),
+        )
+        assertFalse(
+            HqVerificationStore.shouldFallBackToChoice(
+                snapshotSourceConfigId = null,
+                snapshotKind = SourceKind.YOUTUBE,
+                snapshotSourceName = "YouTube",
+            ),
+        )
+    }
+
+    @Test
+    fun `a snapshot with a source id has spoken and does not fall back`() {
+        assertFalse(
+            HqVerificationStore.shouldFallBackToChoice(
+                snapshotSourceConfigId = "qobuz",
+                snapshotKind = SourceKind.MODULE,
+                snapshotSourceName = "Qobuz",
             ),
         )
     }

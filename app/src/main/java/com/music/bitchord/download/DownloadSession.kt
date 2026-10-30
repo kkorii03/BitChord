@@ -162,6 +162,10 @@ object DownloadSession {
         }
     }
 
+    /** Where [videoId] is now, or null when the manager has no row for it. */
+    fun progressOf(videoId: String): DownloadProgress? =
+        _state.value.items.firstOrNull { it.videoId == videoId }?.progress
+
     fun running(videoId: String, fraction: Float) =
         set(videoId, DownloadProgress.Running(fraction))
 
