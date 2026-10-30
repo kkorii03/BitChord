@@ -31,6 +31,38 @@ class LogRedactorTest {
     }
 
     @Test
+    fun tokenAndBasicAuthorizationSchemesAreFullyRedacted() {
+        assertEquals(
+            "Authorization: [redacted]",
+            LogRedactor.redact("Authorization: Token 0123456789abcdef"),
+        )
+        assertEquals(
+            "Proxy-Authorization: [redacted]",
+            LogRedactor.redact("Proxy-Authorization: Basic dXNlcjpwYXNz"),
+        )
+    }
+
+    @Test
+    fun schemelessAuthorizationValueIsFullyRedacted() {
+        val out = LogRedactor.redact("Authorization: abcdef0123456789 trailing words")
+        assertEquals("Authorization: [redacted]", out)
+        assertFalse(out.contains("abcdef0123456789"))
+        assertFalse(out.contains("trailing"))
+    }
+
+    @Test
+    fun multiPartSapisidAuthorizationIsRedactedToEndOfLine() {
+        val out = LogRedactor.redact(
+            "Authorization: SAPISIDHASH 1700000000_deadbeef " +
+                "SAPISID1PHASH 1700000000_onepart SAPISID3PHASH 1700000000_threepart",
+        )
+        assertEquals("Authorization: [redacted]", out)
+        assertFalse(out.contains("deadbeef"))
+        assertFalse(out.contains("onepart"))
+        assertFalse(out.contains("threepart"))
+    }
+
+    @Test
     fun apiKeysAreRedacted() {
         val out = LogRedactor.redact("key AIzaSyA1234567890abcdefghij and sk-or-v1-abcdefghijklmnop")
         assertFalse(out.contains("AIzaSyA1234567890abcdefghij"))
@@ -60,6 +92,24 @@ class LogRedactorTest {
         assertFalse(out.contains("token=also-secret"))
         assertTrue(out.contains("https://aac.saavncdn.com/1/song.mp4"))
         assertTrue(out.contains("https://cdn.example.test/a.m4a"))
+    }
+
+    @Test
+    fun proxyCredentialsInUrlAreRedactedAndFragmentIsDropped() {
+        val out = LogRedactor.redact(
+            "proxy https://user:pass@proxy.example:8080/path?token=secret#fragment",
+        )
+        assertEquals("proxy https://[redacted]@proxy.example:8080/path", out)
+        assertFalse(out.contains("pass"))
+        assertFalse(out.contains("secret"))
+        assertFalse(out.contains("fragment"))
+    }
+
+    @Test
+    fun websocketQueryIsDroppedToo() {
+        val out = LogRedactor.redact("socket wss://party.example/ws?token=secret")
+        assertEquals("socket wss://party.example/ws", out)
+        assertFalse(out.contains("token=secret"))
     }
 
     @Test

@@ -62,4 +62,10 @@ class PrivateListeningTest {
             PrivateListening.allows(ListeningSink.SEARCH_HISTORY, privateListening = true),
         )
     }
+
+    @Test
+    fun `last chance scrobble stays silent in private listening`() {
+        assertFalse(PrivateListening.allowsLastChanceScrobble(privateListening = true))
+        assertTrue(PrivateListening.allowsLastChanceScrobble(privateListening = false))
+    }
 }

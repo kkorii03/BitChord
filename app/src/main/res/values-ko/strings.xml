@@ -1381,7 +1381,7 @@
     <string name="settings_transfer_send_subtitle">프록시·소스·음질·자동 믹스·가사를 하나의 파일로 보냅니다</string>
     <string name="settings_transfer_import">설정 가져오기</string>
     <string name="settings_transfer_import_subtitle">파일을 골라 바뀌는 항목을 확인한 뒤 적용합니다</string>
-    <string name="settings_transfer_send_warning">프록시 비밀번호가 포함됩니다. 신뢰하는 사람에게만 보내십시오.</string>
+    <string name="settings_transfer_send_warning">프록시 비밀번호와 소스 주소에 포함된 개인 토큰이 함께 전송됩니다. 신뢰하는 사람에게만 보내십시오.</string>
     <string name="settings_transfer_send_confirm">보내기</string>
     <string name="settings_transfer_share_opened">공유 시트를 열었습니다</string>
     <string name="settings_transfer_send_failed">설정을 보내지 못했습니다: %1$s</string>

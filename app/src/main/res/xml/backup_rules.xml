@@ -17,4 +17,8 @@
     <exclude domain="sharedpref" path="bitchord_last_played.xml" />
     <exclude domain="sharedpref" path="bitchord_bounded_context.xml" />
     <exclude domain="sharedpref" path="bitchord_party_queue_stash.xml" />
+    <!-- A party bearer token is a session credential, like the YouTube cookie. -->
+    <exclude domain="sharedpref" path="bitchord_listen_together.xml" />
+    <!-- Diagnostic trails are written before redaction, so they stay on this phone. -->
+    <exclude domain="file" path="logs" />
 </full-backup-content>

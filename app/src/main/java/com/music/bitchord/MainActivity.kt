@@ -132,6 +132,7 @@ import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.LogRedactor
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.partyQueueIndexOf
@@ -5232,7 +5233,11 @@ private fun BitChordApp(
                     {
                         songActions = null
                         scope.launch {
-                            val text = TrackLog.forTrack(song, NerdStats.current.value)
+                            val text = withContext(Dispatchers.Default) {
+                                LogRedactor.redact(
+                                    TrackLog.forTrack(song, NerdStats.current.value),
+                                )
+                            }
                             clipboard.setText(AnnotatedString(text))
                             // The line count, not just "copied": it is the
                             // one thing the system's own paste confirmation

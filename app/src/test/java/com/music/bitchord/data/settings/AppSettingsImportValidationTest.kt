@@ -23,6 +23,7 @@ class AppSettingsImportValidationTest {
 
     private lateinit var directory: File
     private lateinit var preferences: FakePreferences
+    private lateinit var authPreferences: FakePreferences
     private lateinit var context: Context
 
     private val prefsField = field("prefs")
@@ -33,9 +34,10 @@ class AppSettingsImportValidationTest {
     fun setUp() {
         directory = Files.createTempDirectory("bitchord-app-settings").toFile()
         preferences = FakePreferences()
+        authPreferences = FakePreferences()
         context = FakeContext.create(preferences, directory)
         appContextField.set(AppSettings, context)
-        authStoreField.set(AppSettings, fakeAuthStore(FakePreferences()))
+        authStoreField.set(AppSettings, fakeAuthStore(authPreferences))
         prefsField.set(AppSettings, preferences.prefs)
     }
 
@@ -134,6 +136,48 @@ class AppSettingsImportValidationTest {
         assertFalse(preferences.values.containsKey("audio_quality_wifi"))
         assertFalse(preferences.values.containsKey("equalizer_bands"))
         assertEquals(ThemeMode.DARK, AppSettings.themeMode.value)
+    }
+
+    @Test
+    fun `legacy secrets move from the plain settings file into the encrypted store`() {
+        preferences.values["gemini_api_key"] = "legacy-gemini"
+        preferences.values["listenbrainz_token"] = "legacy-listenbrainz"
+        preferences.values["theme_mode"] = "DARK"
+
+        AppSettings.migrateSecretsToAuthStore()
+
+        assertFalse(preferences.values.containsKey("gemini_api_key"))
+        assertFalse(preferences.values.containsKey("listenbrainz_token"))
+        assertEquals("legacy-gemini", authPreferences.values["gemini_api_key"])
+        assertEquals("legacy-listenbrainz", authPreferences.values["listenbrainz_token"])
+        assertEquals("DARK", preferences.values["theme_mode"])
+    }
+
+    @Test
+    fun `settings setters keep credentials out of the plain settings file`() {
+        val secrets = setOf(
+            "gemini_api_key",
+            "deepgram_api_key",
+            "paxsenix_api_key",
+            "listenbrainz_token",
+            "spotify_spdc_token",
+            "lastfm_session_key",
+        )
+
+        AppSettings.setGeminiApiKey("gemini-value")
+        AppSettings.setDeepgramApiKey("deepgram-value")
+        AppSettings.setPaxSenixApiKey("pax-value")
+        AppSettings.setListenBrainzToken("listenbrainz-value")
+        AppSettings.setSpotifySpdcToken("spotify-value")
+        AppSettings.setLastfmSessionKey("lastfm-value")
+
+        assertFalse(preferences.values.keys.any { it in secrets })
+        assertEquals("gemini-value", authPreferences.values["gemini_api_key"])
+        assertEquals("deepgram-value", authPreferences.values["deepgram_api_key"])
+        assertEquals("pax-value", authPreferences.values["paxsenix_api_key"])
+        assertEquals("listenbrainz-value", authPreferences.values["listenbrainz_token"])
+        assertEquals("spotify-value", authPreferences.values["spotify_spdc_token"])
+        assertEquals("lastfm-value", authPreferences.values["lastfm_session_key"])
     }
 
     @Test

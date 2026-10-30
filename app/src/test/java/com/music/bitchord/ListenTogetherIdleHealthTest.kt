@@ -1,6 +1,8 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.partyDisplayName
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,5 +47,13 @@ class ListenTogetherIdleHealthTest {
     @Test
     fun `a backwards clock does not re-enable the failure log`() {
         assertFalse(ListenTogether.healthFailureLogAllowed(day = 19_999L, lastLoggedDay = 20_000L))
+    }
+
+    @Test
+    fun `party name never falls back to the account email`() {
+        assertEquals("Listener", partyDisplayName("", null, null, ""))
+        assertEquals("Account", partyDisplayName("", null, null, "Account"))
+        assertEquals("handle", partyDisplayName("", null, "@handle", ""))
+        assertEquals("Nick", partyDisplayName(" Nick ", "Profile", "@handle", "Account"))
     }
 }

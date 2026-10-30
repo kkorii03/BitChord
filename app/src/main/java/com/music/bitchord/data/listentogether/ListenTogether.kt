@@ -111,6 +111,25 @@ val ServerConnectionState.health: ListenTogether.Health
     }
 
 /**
+ * The name a party shows for this device.
+ *
+ * The Google account's email is deliberately not a fallback: the local part is
+ * still account information, and a party server has no need for it. A public
+ * profile handle is the last identifying choice before the neutral label.
+ */
+internal fun partyDisplayName(
+    nickname: String,
+    profileName: String?,
+    profileHandle: String?,
+    accountName: String,
+): String =
+    nickname.trim().takeIf { it.isNotBlank() }
+        ?: profileName?.takeIf { it.isNotBlank() }
+        ?: accountName.takeIf { it.isNotBlank() }
+        ?: profileHandle?.removePrefix("@")?.takeIf { it.isNotBlank() }
+        ?: "Listener"
+
+/**
  * Listen together: one party, shared by up to five signed-in devices.
  *
  * This object is the whole client half of the feature — membership, the socket,
@@ -1532,11 +1551,12 @@ object ListenTogether {
         val account = store.activeSession ?: return null
         val profile = account.profiles.firstOrNull { it.profileId == account.activeProfileId }
             ?: account.profiles.firstOrNull()
-        val name = nickname.trim().takeIf { it.isNotBlank() }
-            ?: profile?.name?.takeIf { it.isNotBlank() }
-            ?: account.name.takeIf { it.isNotBlank() }
-            ?: account.email.substringBefore('@').takeIf { it.isNotBlank() }
-            ?: return null
+        val name = partyDisplayName(
+            nickname = nickname,
+            profileName = profile?.name,
+            profileHandle = profile?.handle,
+            accountName = account.name,
+        )
         return Identity(
             userId = sha256("${account.accountId}:${profile?.profileId.orEmpty()}").take(32),
             deviceId = deviceId(),

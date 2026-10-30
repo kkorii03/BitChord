@@ -1139,10 +1139,11 @@ object AppSettings {
         // Baked into this personal build after CI, like Gemini's — never committed.
         // Also only a default: a key typed in Settings (or removed there) wins.
         bundledDeepgramApiKey = context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
-        sanitizeStoredPreferences()
-        deepgramApiKey.value = prefs.getString(KEY_DEEPGRAM_API_KEY, null) ?: bundledDeepgramApiKey
-        com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
         this.authStore = authStore
+        migrateSecretsToAuthStore()
+        sanitizeStoredPreferences()
+        deepgramApiKey.value = authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
+        com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()
         watchConnection(context)
@@ -1314,9 +1315,9 @@ object AppSettings {
         syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, false)
         syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
         syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
-        paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
+        paxSenixApiKey.value = authStore.secret(KEY_PAXSENIX_API_KEY).orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
-        geminiApiKey.value = prefs.getString(KEY_GEMINI_API_KEY, null) ?: bundledGeminiApiKey
+        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
         geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
@@ -1344,9 +1345,9 @@ object AppSettings {
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
         lastfmUsername.value = prefs.getString(KEY_LASTFM_USERNAME, "").orEmpty()
-        lastfmSessionKey.value = prefs.getString(KEY_LASTFM_SESSION_KEY, "").orEmpty()
-        lastfmApiKey.value = prefs.getString(KEY_LASTFM_API_KEY, "").orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
-        lastfmSecret.value = prefs.getString(KEY_LASTFM_SECRET, "").orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
+        lastfmSessionKey.value = authStore.secret(KEY_LASTFM_SESSION_KEY).orEmpty()
+        lastfmApiKey.value = authStore.secret(KEY_LASTFM_API_KEY).orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
+        lastfmSecret.value = authStore.secret(KEY_LASTFM_SECRET).orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
         lastfmEndpoint.value = prefs.getString(KEY_LASTFM_ENDPOINT, "").orEmpty()
         lastfmScrobbleEnabled.value = prefs.getBoolean(KEY_LASTFM_SCROBBLE_ENABLED, false)
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
@@ -1357,9 +1358,9 @@ object AppSettings {
         )
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
-        listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
+        listenBrainzToken.value = authStore.secret(KEY_LISTENBRAINZ_TOKEN).orEmpty()
         listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
-        spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
+        spotifySpdcToken.value = authStore.secret(KEY_SPOTIFY_SPDC_TOKEN).orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
         filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
         localMusicSort.value = readLocalMusicSort(KEY_LOCAL_MUSIC_SORT)
@@ -2132,7 +2133,7 @@ object AppSettings {
     fun setPaxSenixApiKey(value: String) {
         val normalized = com.music.bitchord.data.lyrics.normalizePaxSenixApiKey(value)
         paxSenixApiKey.value = normalized
-        prefs.edit().putString(KEY_PAXSENIX_API_KEY, normalized).apply()
+        putSecret(KEY_PAXSENIX_API_KEY, normalized)
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(normalized)
     }
 
@@ -2275,14 +2276,14 @@ object AppSettings {
     fun setDeepgramApiKey(value: String) {
         val normalized = value.trim()
         deepgramApiKey.value = normalized
-        prefs.edit().putString(KEY_DEEPGRAM_API_KEY, normalized).apply()
+        putSecret(KEY_DEEPGRAM_API_KEY, normalized)
         com.music.bitchord.data.lyrics.Deepgram.apiKey = normalized
     }
 
     fun setGeminiApiKey(value: String) {
         val normalized = value.trim()
         geminiApiKey.value = normalized
-        prefs.edit().putString(KEY_GEMINI_API_KEY, normalized).apply()
+        putSecret(KEY_GEMINI_API_KEY, normalized)
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = normalized
     }
 
@@ -2381,12 +2382,12 @@ object AppSettings {
 
     fun setLastfmSessionKey(value: String) {
         lastfmSessionKey.value = value
-        prefs.edit().putString(KEY_LASTFM_SESSION_KEY, value).apply()
+        putSecret(KEY_LASTFM_SESSION_KEY, value)
     }
 
     fun setSpotifySpdcToken(value: String) {
         spotifySpdcToken.value = value
-        prefs.edit().putString(KEY_SPOTIFY_SPDC_TOKEN, value).apply()
+        putSecret(KEY_SPOTIFY_SPDC_TOKEN, value)
         SpotifyToken.invalidate()
     }
 
@@ -2458,7 +2459,7 @@ object AppSettings {
 
     fun setListenBrainzToken(value: String) {
         listenBrainzToken.value = value
-        prefs.edit().putString(KEY_LISTENBRAINZ_TOKEN, value).apply()
+        putSecret(KEY_LISTENBRAINZ_TOKEN, value)
     }
 
     fun setListenBrainzPrimaryArtistOnly(value: Boolean) {
@@ -2819,6 +2820,42 @@ object AppSettings {
     fun clearDiscordAccount() {
         setDiscordToken("")
         setDiscordAccount("", "", null)
+    }
+
+    // ── Secrets ─────────────────────────────────────────────────────────────
+
+    /**
+     * Writes one credential to the encrypted store, not the plain settings
+     * file. [authStore] is absent only in a unit test that installs a
+     * preference file directly; there the old plain write keeps the test
+     * fixture meaningful and never runs on a device.
+     */
+    private fun putSecret(key: String, value: String) {
+        if (this::authStore.isInitialized) authStore.setSecret(key, value)
+        else prefs.edit().putString(key, value).apply()
+    }
+
+    /**
+     * Moves credentials an older build left in [PREFS_NAME] into [AuthStore].
+     *
+     * Android auto-backup carries this plain file and excludes the encrypted
+     * one, so every key in [SECRETS] that stayed here was a credential in a
+     * cloud copy. The migration is idempotent: after the first launch the keys
+     * are gone from [PREFS_NAME], and [readAll] reads them from the encrypted
+     * store instead.
+     */
+    internal fun migrateSecretsToAuthStore() {
+        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
+        val present = SECRETS.filter { prefs.contains(it) }
+        if (present.isEmpty()) return
+        present.forEach { key ->
+            (prefs.all[key] as? String)?.takeIf { it.isNotEmpty() }?.let { value ->
+                authStore.setSecret(key, value)
+            }
+        }
+        prefs.edit().apply {
+            present.forEach { remove(it) }
+        }.apply()
     }
 
     // ── Backup ──────────────────────────────────────────────────────────────
@@ -3515,8 +3552,10 @@ object AppSettings {
     ).normalized()
 
     /**
-     * Preferences an export must not carry — credentials, not configuration.
-     * See [exportPrefs].
+     * Credentials, not configuration. They live in [AuthStore]'s encrypted
+     * file now, but the set still guards export/import of a backup written by
+     * an older build, where these names may appear in plain preferences.
+     * See [exportPrefs] and [migrateSecretsToAuthStore].
      */
     private val SECRETS = setOf(
         KEY_LASTFM_SESSION_KEY,
@@ -3526,10 +3565,9 @@ object AppSettings {
         KEY_SPOTIFY_SPDC_TOKEN,
         KEY_PAXSENIX_API_KEY,
         KEY_GEMINI_API_KEY,
-        // The AI timing key is a credential like the rest: it is written to
-        // ordinary preferences (not the encrypted store), so an export that
-        // did not filter it would carry the listener's Deepgram account key
-        // into a file they may share.
+        // The AI timing key is a credential like the rest and is kept in the
+        // encrypted store. It stays in this set so a backup from an older
+        // build cannot bring a plaintext copy back.
         KEY_DEEPGRAM_API_KEY,
     )
 
