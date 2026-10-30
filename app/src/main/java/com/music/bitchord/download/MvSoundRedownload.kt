@@ -7,12 +7,18 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.AutomaticRetryPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.startup.AppForeground
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Fetches the song versions of downloads that turned out to hold a music
@@ -110,6 +116,14 @@ object MvSoundRedownload {
      */
     internal val WORK_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 
+    private val pauseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Which pause is current. A pause that was queued before the app came back
+     * must not cancel the pass the foreground event has just enqueued.
+     */
+    private val pauseGeneration = AtomicInteger(0)
+
     fun scheduleIfEnabled(context: Context) {
         if (!AppSettings.autoRedownloadMvSound.value) return
         // The repair goes through the download service, which cannot be started
@@ -126,6 +140,9 @@ object MvSoundRedownload {
                     .build(),
             )
             .build()
+        // Invalidate any pause still querying: this work is for the window that
+        // is on screen now, not for the background it was queued in.
+        pauseGeneration.incrementAndGet()
         runCatching {
             WorkManager.getInstance(context.applicationContext)
                 .enqueueUniqueWork(WORK_NAME, WORK_POLICY, request)
@@ -133,6 +150,39 @@ object MvSoundRedownload {
             TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
         }
     }
+
+    /**
+     * Drops repair work that has not started, and lets a pass already running
+     * finish.
+     *
+     * [WorkManager.cancelUniqueWork] also cancels the worker that is scanning
+     * right now, so leaving the app with several suspects made the next
+     * foreground start the same scan again — the failure [APPEND_OR_REPLACE]
+     * fixed. Cancelling by id only the ENQUEUED/BLOCKED entries stops
+     * WorkManager waking the process for work that cannot start a service,
+     * while a pass in flight keeps the suspects it has already read.
+     */
+    fun pause(context: Context) {
+        val generation = pauseGeneration.incrementAndGet()
+        val appContext = context.applicationContext
+        pauseScope.launch {
+            runCatching {
+                val workManager = WorkManager.getInstance(appContext)
+                val infos = workManager.getWorkInfosForUniqueWork(WORK_NAME).get()
+                // The window may have come back while this query ran; that
+                // foreground pass is wanted, not this pause's target.
+                if (generation != pauseGeneration.get()) return@launch
+                infos.filter { cancelBeforeStart(it.state) }
+                    .forEach { workManager.cancelWorkById(it.id) }
+            }.onFailure {
+                TrackLog.w("BitChord", "could not pause MV-sound repair: ${it.message}")
+            }
+        }
+    }
+
+    /** A pass that is running is left alone; only work that cannot have started is dropped. */
+    internal fun cancelBeforeStart(state: WorkInfo.State): Boolean =
+        state == WorkInfo.State.ENQUEUED || state == WorkInfo.State.BLOCKED
 
     fun cancel(context: Context) {
         runCatching {
