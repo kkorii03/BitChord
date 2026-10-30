@@ -74,6 +74,8 @@ object TrackMatcher {
         val artistIds: List<String> = emptyList(),
         /** The release's browse id, when the queue row knew it. */
         val albumId: String? = null,
+        /** A soundtrack upload that printed no performer, so title/work is the only evidence. */
+        val noPerformer: Boolean = false,
     )
 
     fun targetOf(song: Song) = Target(
@@ -258,12 +260,13 @@ object TrackMatcher {
     fun bestSameArtist(candidates: List<Song>, target: Target): Song? =
         // A positive score only: artistScore answers 0 when either credit has
         // no comparable words ("f(x)" is all single letters), and "cannot tell"
-        // must not count as the same artist here. A target with no credit at
-        // all is different: a fan upload may name only its channel, and then
-        // there is no performer to require — the cleaned title/work is all the
-        // evidence there is.
+        // must not count as the same artist here. A soundtrack target
+        // explicitly flagged as having no performer is different: a fan upload
+        // may name only its channel, and then there is no performer to require
+        // — the cleaned title/work is all the evidence there is. A merely blank
+        // credit on any other target is not that case.
         ranked(candidates, target).firstOrNull { candidate ->
-            val uncredited = target.artist.isBlank()
+            val uncredited = target.noPerformer
             val sameName = (artistScore(target.artist, candidate.artist) ?: 0) > 0 &&
                 // The same person, not a name that merely contains them: "The
                 // Justin Bieber Cover Band" shares every word of "Justin
@@ -668,7 +671,7 @@ object TrackMatcher {
                 val artist = when {
                     // A soundtrack upload that named no performer has no credit
                     // to compare; its cleaned title/work is the whole target.
-                    target.artist.isBlank() -> credited ?: 0
+                    target.noPerformer -> credited ?: 0
                     namesTheSameArtist(target.artist, candidate.artist) -> credited ?: ARTIST_SHARED
                     sameArtistIdentity(target, candidate) -> ARTIST_SHARED
                     else -> return@mapNotNull null
@@ -961,17 +964,19 @@ object TrackMatcher {
         val base = targetOf(song)
         val identity = audioSwitchIdentity(base.title, base.artist)
         if (!identity.hasSoundtrackTail) return base
-        // A pipe/trailing OST label is the fan-upload shape, so its uploader
-        // is the channel, not a performer. With no printed performer there is
-        // no credit to require from the catalogue row; the cleaned title/work
-        // is matched instead. A "(From ...)" title can carry a real credit,
-        // which is kept unless it is itself a channel.
+        // A pipe/trailing OST label is the fan-upload shape, but a real
+        // performer in the row's credit is still the performer. Blank only
+        // when there is no credit or the credit is itself a channel.
         val artist = when {
             identity.artist.isNotBlank() -> identity.artist
-            identity.tailRemoved || isUploaderCredit(base.artist) -> ""
+            isUploaderCredit(base.artist) -> ""
             else -> base.artist
         }
-        return base.copy(title = identity.title, artist = artist)
+        return base.copy(
+            title = identity.title,
+            artist = artist,
+            noPerformer = artist.isBlank(),
+        )
     }
 
     /** The queries an audio switch runs, including its soundtrack work. */
@@ -1012,12 +1017,42 @@ object TrackMatcher {
         }
 
         TRAILING_SOUNDTRACK.find(text)?.let { match ->
-            present = true
-            tailRemoved = true
-            // Remove only the label itself. A take marker printed after it
-            // ("Song - Original Soundtrack (Live)") still has to reach the
-            // ordinary bracket pass, or the live take would match the studio.
-            text = text.removeRange(match.range)
+            val before = text.substring(0, match.range.first)
+            val after = text.substring(match.range.last + 1)
+            val suffix = after.trim()
+            val suffixWords = wordsOf(suffix)
+            when {
+                suffix.isEmpty() -> {
+                    present = true
+                    tailRemoved = true
+                    text = before
+                }
+                // A bracketed take after the label ("Song - Original
+                // Soundtrack (Live)") still reaches the ordinary bracket pass.
+                suffix.startsWith("(") || suffix.startsWith("[") -> {
+                    present = true
+                    tailRemoved = true
+                    text = before + " " + after
+                }
+                isNeutralSoundtrackSuffix(suffixWords) -> {
+                    present = true
+                    tailRemoved = true
+                    text = before
+                }
+                isPackagingOrTake(suffix) -> {
+                    present = true
+                    tailRemoved = true
+                    // Keep a recognized take as a bracketed marker, dropping
+                    // neutral packaging words ("Live Version" -> "(Live)").
+                    val kept = suffixWords.filter {
+                        it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS
+                    }
+                    text = if (kept.isEmpty()) before else before + " (" + kept.joinToString(" ") + ")"
+                }
+                // The label is in the middle of the title, not a tail:
+                // leave it and the words after it untouched.
+                else -> Unit
+            }
         }
 
         TRAILING_BARE_OST.find(text)?.let { match ->
@@ -1040,6 +1075,20 @@ object TrackMatcher {
         return text.isBlank() || SOUNDTRACK_WORD.containsMatchIn(text) ||
             text.endsWith("topic") || text.contains("various artists")
     }
+
+    private fun wordsOf(text: String): List<String> =
+        normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+
+    /** Packaging that follows a soundtrack label without naming a take. */
+    private fun isNeutralSoundtrackSuffix(words: List<String>): Boolean =
+        words.isNotEmpty() && (
+            words.joinToString("") in NEUTRAL_SEGMENTS ||
+                words.all {
+                    it in NEUTRAL_SUFFIX_WORDS || it in TRAILING_NOISE || it in NOISE_WORDS
+                }
+            )
 
     /**
      * Whether a dash/pipe tail names a take or upload packaging rather than
@@ -1865,6 +1914,9 @@ object TrackMatcher {
         "studioversion", "fullversion", "standardversion", "explicitversion",
         "deluxeversion", "originaltrack",
     )
+
+    /** Packaging words that follow a soundtrack label without naming a take. */
+    private val NEUTRAL_SUFFIX_WORDS = setOf("version", "edition")
 
     /** Packaging words, worth nothing as a tie-break because everything has them. */
     private val NOISE_WORDS = setOf(

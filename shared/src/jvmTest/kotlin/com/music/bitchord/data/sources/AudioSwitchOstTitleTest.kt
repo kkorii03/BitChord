@@ -2,6 +2,9 @@ package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.model.Song
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -208,4 +211,72 @@ class AudioSwitchOstTitleTest {
             TrackMatcher.queries(TrackMatcher.Target("3.여수밤바다 - Yeosu Night Sea", "장범준")),
         )
     }
+
+    @Test
+    fun `a real artist credit is kept when only an OST tail follows the title`() {
+        val song = Song(
+            videoId = "joker-song",
+            title = "Song | Joker OST",
+            artist = "Hildur Guðnadóttir",
+            thumbnailUrl = null,
+        )
+        val target = TrackMatcher.audioSwitchTargetOf(song)
+        assertEquals("song", target.title)
+        assertEquals("Hildur Guðnadóttir", target.artist)
+        assertFalse(target.noPerformer)
+        val right = Song(
+            videoId = "catalogue-song",
+            title = "Song",
+            artist = "Hildur Guðnadóttir",
+            thumbnailUrl = null,
+        )
+        val wrong = Song(
+            videoId = "wrong-song",
+            title = "Song",
+            artist = "Wrong Artist",
+            thumbnailUrl = null,
+        )
+        assertEquals(right, TrackMatcher.bestSameArtist(listOf(right), target))
+        assertNull(TrackMatcher.bestSameArtist(listOf(wrong), target))
+    }
+
+    @Test
+    fun `a missing artist only means no performer for the soundtrack shape`() {
+        val soundtrack = TrackMatcher.audioSwitchTargetOf(
+            Song(
+                videoId = "joker-following-sophie",
+                title = "Following Sophie | Joker OST",
+                artist = "Joker OST",
+                thumbnailUrl = null,
+            ),
+        )
+        assertTrue(soundtrack.noPerformer)
+        val row = Song(
+            videoId = "catalogue-following-sophie",
+            title = "Following Sophie",
+            artist = "Hildur Guðnadóttir",
+            thumbnailUrl = null,
+        )
+        assertEquals(row, TrackMatcher.bestSameArtist(listOf(row), soundtrack))
+
+        val missingArtist = TrackMatcher.Target("Following Sophie", "", isVideo = true)
+        assertFalse(missingArtist.noPerformer)
+        assertNull(TrackMatcher.bestSameArtist(listOf(row), missingArtist))
+        assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(row), missingArtist))
+    }
+
+    @Test
+    fun `a trailing soundtrack label does not eat the take or packaging after it`() {
+        val versioned = TrackMatcher.parseTitle("Song - Original Soundtrack Version")
+        assertEquals("song", versioned.core)
+        assertEquals(emptySet<String>(), versioned.versions)
+
+        val live = TrackMatcher.parseTitle("Song - Original Soundtrack Live")
+        assertEquals("song", live.core)
+        assertEquals(setOf("live"), live.versions)
+
+        val midTitle = TrackMatcher.parseTitle("Following Sophie - OST Something")
+        assertEquals("followingsophie", midTitle.core)
+    }
+
 }
