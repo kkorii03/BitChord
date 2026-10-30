@@ -164,6 +164,7 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.DownloadedBadge
+import com.music.bitchord.ui.components.EmptyState
 import com.music.bitchord.ui.components.HqLibraryProgressLine
 import com.music.bitchord.ui.components.HqLibraryUpgradeAllRow
 import com.music.bitchord.ui.components.ExplicitSongTitle
@@ -412,6 +413,10 @@ fun DetailScreen(
     // with a missing sleeve: the tall artwork header would push the title into
     // the middle of the screen and leave the explanation stranded below it.
     val smartEmpty = SmartPlaylist.of(page.browseId) != null && page.songs is UiState.Error
+    // A device folder with nothing in it is an empty shelf too: the tall sleeve
+    // header would show a placeholder square over an explanation, so the whole
+    // page becomes one centred empty state instead.
+    val folderEmpty = folder != null && page.songs is UiState.Error
     // Liked songs are the one smart list that lives on the account; a guest
     // opening it gets the way to sign in rather than only a retry-less message.
     val smartNeedsSignIn = smartEmpty && !signedIn &&
@@ -624,31 +629,31 @@ fun DetailScreen(
                     // a release header clears the bar itself, see [ReleaseHeader].
                     contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
                 ) {
-            item(key = "header") {
-                if (smartEmpty) {
-                    CompactReleaseHeader(page = page, palette = palette)
-                } else if (isArtist) {
-                    ArtistHeader(page = page, palette = palette, artHeight = artHeight, appleArt = appleArt, signature = signature)
-                } else {
-                    ReleaseHeader(
-                        page = page,
-                        palette = palette,
-                        sleeveSize = sleeveSize,
-                        canvas = canvas,
-                        songs = songs,
-                        albumSubtitle = albumSubtitle,
-                        onPlay = { onSongClick(songs, 0) },
-                        onShuffle = { onShuffle(songs) },
-                        shuffleLoading = shuffleLoading,
-                        // A folder's credit says where its tracks live, not who made them.
-                        onArtistClick = onArtistClick.takeIf { folder == null },
-                        onToggleLibrary = onToggleLibrary,
-                        onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
-                    )
+            if (!smartEmpty && !folderEmpty) {
+                item(key = "header") {
+                    if (isArtist) {
+                        ArtistHeader(page = page, palette = palette, artHeight = artHeight, appleArt = appleArt, signature = signature)
+                    } else {
+                        ReleaseHeader(
+                            page = page,
+                            palette = palette,
+                            sleeveSize = sleeveSize,
+                            canvas = canvas,
+                            songs = songs,
+                            albumSubtitle = albumSubtitle,
+                            onPlay = { onSongClick(songs, 0) },
+                            onShuffle = { onShuffle(songs) },
+                            shuffleLoading = shuffleLoading,
+                            // A folder's credit says where its tracks live, not who made them.
+                            onArtistClick = onArtistClick.takeIf { folder == null },
+                            onToggleLibrary = onToggleLibrary,
+                            onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
+                        )
+                    }
                 }
             }
 
-            if (page.browseId == "local:downloads") {
+            if (page.browseId == "local:downloads" && songs.isNotEmpty()) {
                 item(key = "hq-library-progress") {
                     HqLibraryProgressLine(
                         Modifier.padding(horizontal = HEADER_GUTTER, vertical = 6.dp),
@@ -791,17 +796,28 @@ fun DetailScreen(
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
-                is UiState.Error -> if (smartEmpty) {
-                    item(key = "smart-empty") {
-                        SmartPlaylistEmptyState(
-                            message = state.message,
-                            palette = palette,
-                            onSignIn = onSignIn.takeIf { smartNeedsSignIn },
-                            modifier = Modifier.fillParentMaxHeight(0.55f),
+                is UiState.Error -> when {
+                    folderEmpty -> item(key = "folder-empty") {
+                        EmptyState(
+                            icon = deviceFolderIcon(page.browseId) ?: BitChordIcons.MusicNote,
+                            title = page.title.ifBlank { state.message },
+                            message = state.message.takeIf { page.title.isNotBlank() },
+                            modifier = Modifier
+                                .fillParentMaxHeight(0.86f)
+                                .padding(top = topBarContentPadding()),
                         )
                     }
-                } else {
-                    item { MessageState(state.message) }
+                    smartEmpty -> item(key = "smart-empty") {
+                        SmartPlaylistEmptyState(
+                            title = page.title,
+                            message = state.message,
+                            onSignIn = onSignIn.takeIf { smartNeedsSignIn },
+                            modifier = Modifier
+                                .fillParentMaxHeight(0.86f)
+                                .padding(top = topBarContentPadding()),
+                        )
+                    }
+                    else -> item { MessageState(state.message) }
                 }
                 is UiState.Success -> if (folder != null && folderState != null) {
                     localFolderItems(
@@ -1025,81 +1041,26 @@ fun DetailScreen(
 }
 
 /**
- * A smart playlist's header when it has no songs: just its name and the line
- * that explains what the list is, at the top of the page where the title of a
- * list belongs. The artwork header is skipped entirely — there is no cover to
- * show and no track count to report.
+ * A smart playlist with no songs is a single centred answer, the way Apple
+ * Music draws an empty list: its name as the bold line and the reason below.
+ * The artwork header is skipped entirely — there is no cover to show and no
+ * track count to report.
  */
 @Composable
-private fun CompactReleaseHeader(page: DetailPage, palette: ArtworkPalette) {
-    val (credit, meta) = page.headerLines(trackCount = 0)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = HEADER_GUTTER, end = HEADER_GUTTER)
-            .padding(top = topBarContentPadding() + 4.dp, bottom = 8.dp),
-    ) {
-        Text(
-            text = page.title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = palette.onBackground,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (credit.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = credit,
-                style = MaterialTheme.typography.titleMedium,
-                color = palette.accent,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (meta.isNotBlank()) {
-            Spacer(Modifier.height(5.dp))
-            Text(
-                text = meta,
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = trackingFor(meta, 0.7.sp)),
-                color = palette.onBackgroundVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/** The empty state under that header: an icon and the one line that says why. */
-@Composable
 private fun SmartPlaylistEmptyState(
+    title: String,
     message: String,
-    palette: ArtworkPalette,
     onSignIn: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(horizontal = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Icon(
-                imageVector = BitChordIcons.MusicNote,
-                contentDescription = null,
-                tint = palette.onBackgroundVariant,
-                modifier = Modifier.size(42.dp),
-            )
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyLarge,
-                color = palette.onBackgroundVariant,
-                textAlign = TextAlign.Center,
-            )
-            if (onSignIn != null) {
-                Button(onClick = onSignIn) { Text(stringResource(R.string.sign_in)) }
-            }
-        }
-    }
+    EmptyState(
+        icon = BitChordIcons.MusicNote,
+        title = title.ifBlank { message },
+        message = message.takeIf { title.isNotBlank() },
+        actionLabel = if (onSignIn != null) stringResource(R.string.sign_in) else null,
+        onAction = onSignIn,
+        modifier = modifier,
+    )
 }
 
 /**

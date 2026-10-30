@@ -2,29 +2,22 @@ package com.music.bitchord.ui.screens
 
 import com.music.bitchord.R
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.playingRowMatcher
+import com.music.bitchord.ui.components.EmptyState
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -68,9 +61,10 @@ fun HistoryScreen(
         // lying about what the page is waiting for. Offer the way in instead.
         if (!signedIn) {
             item(key = "history:signed-out") {
-                HistorySignedOut(
+                HistoryEmpty(
                     message = stringResource(R.string.history_sign_in_required),
                     onSignIn = onSignIn,
+                    modifier = Modifier.fillParentMaxHeight(0.82f),
                 )
             }
             return@LazyColumn
@@ -80,7 +74,10 @@ fun HistoryScreen(
         // from a request that never came back.
         if (historyHasNoSongs(state, signedIn)) {
             item(key = "history:empty") {
-                MessageState(stringResource(R.string.history_empty))
+                HistoryEmpty(
+                    message = stringResource(R.string.history_empty),
+                    modifier = Modifier.fillParentMaxHeight(0.82f),
+                )
             }
             return@LazyColumn
         }
@@ -126,38 +123,26 @@ fun HistoryScreen(
 }
 
 /**
- * What a guest sees instead of the list: a still clock, the reason, and the
- * account button. Deliberately no progress indicator — nothing is loading, and
- * a spinner over a settled answer reads as a request that never finishes.
+ * What a guest sees instead of the list, and what a signed-in account with
+ * nothing played sees too: a small clock, the page's name, the reason and,
+ * for a guest, the account button. Deliberately no progress indicator —
+ * nothing is loading, and a spinner over a settled answer reads as a request
+ * that never finishes.
  */
 @Composable
-private fun HistorySignedOut(
+private fun HistoryEmpty(
     message: String,
-    onSignIn: (() -> Unit)?,
+    onSignIn: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp, vertical = 72.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Icon(
-            imageVector = BitChordIcons.Clock,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(42.dp),
-        )
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        if (onSignIn != null) {
-            Button(onClick = onSignIn) { Text(stringResource(R.string.sign_in)) }
-        }
-    }
+    EmptyState(
+        icon = BitChordIcons.Clock,
+        title = stringResource(R.string.listening_history),
+        message = message,
+        actionLabel = if (onSignIn != null) stringResource(R.string.sign_in) else null,
+        onAction = onSignIn,
+        modifier = modifier,
+    )
 }
 
 /** Keyed on both, for the reason given at the call site. */

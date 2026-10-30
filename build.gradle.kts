@@ -149,4 +149,19 @@ subprojects {
     configurations.configureEach {
         resolutionStrategy.force(*pinnedDependencies.toTypedArray())
     }
+    /*
+     * InnerTubeX cc74e737b6 is published as Java 21 bytecode, and the resolver
+     * touches it from its static initialiser. Running the JVM tests on the
+     * toolchain that compiled them (17) therefore fails with an
+     * UnsupportedClassVersionError before any assertion runs, even though the
+     * app itself is dexed for Android. Keep the code at 17 and run tests on 21.
+     */
+    afterEvaluate {
+        val testJdk = extensions.getByType(org.gradle.jvm.toolchain.JavaToolchainService::class.java).launcherFor {
+            languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(21))
+        }
+        tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+            javaLauncher.set(testJdk)
+        }
+    }
 }
