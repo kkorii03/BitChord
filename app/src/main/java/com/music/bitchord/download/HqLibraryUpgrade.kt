@@ -402,13 +402,19 @@ object HqLibraryUpgrade {
      * allowed to replace the file. A deliberate upgrade with no proved better
      * pair does nothing; a repair may fall back to a re-fetch only when the
      * served rendition is at least the rung of the file it replaces.
+     *
+     * @return false when the Wi-Fi-only rule blocked the request before any
+     *   search started. The caller must not record the request as handled in
+     *   that case: the file stays unchecked and the next allowed playback asks
+     *   again. True means the request was accepted (a verified pair was queued
+     *   at once, or the one search for this track is running).
      */
     fun requestUpgrade(
         context: Context,
         song: Song,
         allowEqual: Boolean = false,
         automatic: Boolean = false,
-    ) {
+    ): Boolean {
         ensureLoaded(context)
         if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
             TrackLog.i(
@@ -416,7 +422,7 @@ object HqLibraryUpgrade {
                 "download-check: waiting for an unmetered connection",
                 song.videoId,
             )
-            return
+            return false
         }
         val meta = Downloads.savedMetadataFor(song.videoId)
         val badge = song.downloadFormat ?: meta?.downloadFormat
@@ -457,7 +463,7 @@ object HqLibraryUpgrade {
                     song.videoId,
                 )
             }
-            return
+            return true
         }
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
@@ -480,6 +486,16 @@ object HqLibraryUpgrade {
                             HqLibraryPolicy.isBetter(currentTier, verified.tier)
                         }
                     if (verified != null && acceptable) {
+                        // The search above can take a while; the connection in
+                        // hand may have changed since the entry check.
+                        if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
+                            TrackLog.i(
+                                TAG,
+                                "download-check: waiting for an unmetered connection",
+                                song.videoId,
+                            )
+                            return@launch
+                        }
                         enqueueVerified(
                             context,
                             song,
@@ -505,10 +521,20 @@ object HqLibraryUpgrade {
             } else {
                 DownloadedQuality.qualityForUpgrade(badge, null)
             }
+            // The automatic repair is background work: it may not spend mobile
+            // data even when the search that led here started on Wi-Fi.
+            if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
+                TrackLog.i(
+                    TAG,
+                    "download-check: waiting for an unmetered connection",
+                    song.videoId,
+                )
+                return@launch
+            }
             Downloads.enqueue(
                 context = context,
                 song = song,
-                allowMetered = true,
+                allowMetered = hqUpgradeAllowsMetered(automatic),
                 quality = fallbackQuality,
                 avoidSourceConfigId = wrongSource,
                 forceReplace = true,
@@ -517,6 +543,7 @@ object HqLibraryUpgrade {
                 automatic = automatic,
             )
         }
+        return true
     }
 
     private fun enqueueVerified(

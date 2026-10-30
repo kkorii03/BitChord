@@ -240,6 +240,27 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // background without waiting for the Downloads page or another play.
         com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
         com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
+        // A repair parked by the Wi-Fi-only setting must resume when the
+        // connection changes. [AppSettings.meteredConnection] is already fed by
+        // the one default-network callback, so this is another reader of that
+        // event, not a second watcher or a poll. Without it, joining Wi-Fi with
+        // the app open left the repair dormant until the next start or track.
+        var mvRepairAllowed = AppSettings.downloadsAllowedNow
+        CoroutineScope(Dispatchers.Default).launch {
+            AppSettings.meteredConnection.collect {
+                val allowedNow = AppSettings.downloadsAllowedNow
+                if (com.music.bitchord.download.mvRepairShouldReschedule(
+                        wasAllowed = mvRepairAllowed,
+                        allowedNow = allowedNow,
+                    )
+                ) {
+                    com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(
+                        this@BitChordApplication,
+                    )
+                }
+                mvRepairAllowed = allowedNow
+            }
+        }
         // One-time cleanup of legacy HQ rejections that were written when an
         // unmeasurable candidate looked like a mismatch. On IO because it reads
         // the whole verdict file, and lazy because nothing needs it this frame.

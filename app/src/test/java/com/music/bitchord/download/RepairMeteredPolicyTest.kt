@@ -35,4 +35,44 @@ class RepairMeteredPolicyTest {
     fun `a banner started mv-sound repair may use the connection in hand`() {
         assertTrue(mvRepairAllowsMetered(manual = true, downloadsAllowedNow = false))
     }
+
+    @Test
+    fun `only a connection that becomes allowed wakes the parked mv repair`() {
+        assertTrue(mvRepairShouldReschedule(wasAllowed = false, allowedNow = true))
+        assertFalse(mvRepairShouldReschedule(wasAllowed = true, allowedNow = true))
+        assertFalse(mvRepairShouldReschedule(wasAllowed = true, allowedNow = false))
+        assertFalse(mvRepairShouldReschedule(wasAllowed = false, allowedNow = false))
+    }
+
+    @Test
+    fun `a refused upgrade leaves the file unchecked for the next allowed play`() {
+        assertFalse(
+            downloadHealthRecordsCheck(
+                heard = true,
+                needsUpgrade = true,
+                upgradeAccepted = false,
+            ),
+        )
+        assertTrue(
+            downloadHealthRecordsCheck(
+                heard = true,
+                needsUpgrade = true,
+                upgradeAccepted = true,
+            ),
+        )
+        assertTrue(
+            downloadHealthRecordsCheck(
+                heard = true,
+                needsUpgrade = false,
+                upgradeAccepted = false,
+            ),
+        )
+        assertFalse(
+            downloadHealthRecordsCheck(
+                heard = false,
+                needsUpgrade = false,
+                upgradeAccepted = true,
+            ),
+        )
+    }
 }

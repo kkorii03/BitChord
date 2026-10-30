@@ -32,6 +32,19 @@ import java.util.concurrent.ConcurrentHashMap
  * Event-driven only: called from a track transition, once for the file in
  * hand. There is no timer and no background sweep.
  */
+/**
+ * Whether a finished verdict may be recorded as "checked" for the file.
+ *
+ * A verdict that could not hear the file is not a completed check. Neither is
+ * an upgrade the Wi-Fi-only rule refused: the file must stay unchecked so the
+ * next allowed playback asks again instead of swallowing the verdict.
+ */
+internal fun downloadHealthRecordsCheck(
+    heard: Boolean,
+    needsUpgrade: Boolean,
+    upgradeAccepted: Boolean,
+): Boolean = heard && (!needsUpgrade || upgradeAccepted)
+
 object DownloadHealth {
 
     private const val TAG = "BitChord"
@@ -84,8 +97,19 @@ object DownloadHealth {
             if (Downloads.isWrongRecording(id)) {
                 val now = System.currentTimeMillis()
                 if (DownloadHealthPolicy.mayRequestRepair(lastRepairRequest(context, id), now)) {
-                    HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
-                    markRepairRequested(context, id, now)
+                    // Only start the cooldown when a repair was actually
+                    // accepted. On mobile data the Wi-Fi-only rule refuses it;
+                    // recording that as requested would park the repair for a
+                    // day even though nothing was queued.
+                    if (HqLibraryUpgrade.requestUpgrade(
+                            context,
+                            song,
+                            allowEqual = true,
+                            automatic = true,
+                        )
+                    ) {
+                        markRepairRequested(context, id, now)
+                    }
                 }
                 val action = if (online) {
                     DownloadHealthPolicy.Action.STREAM
@@ -145,13 +169,11 @@ object DownloadHealth {
             // A verdict that could not hear the file is not a completed check:
             // leave it unchecked so a later play with the screen on can still
             // answer. A decision made from length or names is complete.
-            if (sound !is HqAudioVerify.DownloadedSound.Unavailable ||
+            val heard = sound !is HqAudioVerify.DownloadedSound.Unavailable ||
                 decision.verdict != DownloadHealthPolicy.Verdict.OK
-            ) {
-                markChecked(context, id, signature)
-            }
             val outcome = Outcome(decision.verdict, decision.action, currentTier.name)
             log(id, outcome)
+            var upgradeQueued = true
             when (decision.action) {
                 DownloadHealthPolicy.Action.STREAM,
                 DownloadHealthPolicy.Action.REDOWNLOAD,
@@ -159,12 +181,31 @@ object DownloadHealth {
                     if (!Downloads.markWrongRecording(id, meta.uri, version)) {
                         return@withContext null
                     }
+                    // The file is condemned either way, so the branch above
+                    // retries on the next playback even if this request was
+                    // refused for now.
                     HqLibraryUpgrade.requestUpgrade(context, song, allowEqual = true, automatic = true)
                 }
                 DownloadHealthPolicy.Action.UPGRADE -> {
-                    HqLibraryUpgrade.requestUpgrade(context, song, automatic = true)
+                    upgradeQueued = HqLibraryUpgrade.requestUpgrade(
+                        context,
+                        song,
+                        automatic = true,
+                    )
                 }
                 DownloadHealthPolicy.Action.NONE -> Unit
+            }
+            // An upgrade the Wi-Fi-only rule refused is not a completed check:
+            // leaving the file unchecked is what makes the next allowed
+            // playback ask again instead of swallowing the verdict. The check
+            // stays event-driven (one per playback), not a timer.
+            if (downloadHealthRecordsCheck(
+                    heard = heard,
+                    needsUpgrade = decision.action == DownloadHealthPolicy.Action.UPGRADE,
+                    upgradeAccepted = upgradeQueued,
+                )
+            ) {
+                markChecked(context, id, signature)
             }
             outcome
         } finally {

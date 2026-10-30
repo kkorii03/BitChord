@@ -25,6 +25,18 @@ internal fun mvRepairAllowsMetered(manual: Boolean, downloadsAllowedNow: Boolean
     manual || downloadsAllowedNow
 
 /**
+ * Whether a connection change is the event that should wake a repair parked by
+ * the Wi-Fi-only setting.
+ *
+ * Only the change from "not allowed" to "allowed" is news: the repair was
+ * already waiting, and this is what lets it run when Wi-Fi comes back without
+ * waiting for the next app start or track. The reverse change needs nothing —
+ * [scheduleIfEnabled] refuses to start a new repair while metered.
+ */
+internal fun mvRepairShouldReschedule(wasAllowed: Boolean, allowedNow: Boolean): Boolean =
+    allowedNow && !wasAllowed
+
+/**
  * Fetches the song versions of downloads that turned out to hold a music
  * video's sound, when the listener has left the repair to the app.
  *
@@ -163,8 +175,11 @@ class MvSoundRedownloadWorker(
     override suspend fun doWork(): Result {
         if (!AppSettings.autoRedownloadMvSound.value) return Result.success()
         if (!mvRepairAllowsMetered(manual = false, AppSettings.downloadsAllowedNow)) {
+            // The connection changed after the request was scheduled. Retrying
+            // is how WorkManager waits for the rule to allow it again; returning
+            // success here would drop the repair with no one to reschedule it.
             TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
-            return Result.success()
+            return Result.retry()
         }
         // WorkManager can run a network-constrained request after the app has
         // gone away. Queueing downloads then would only leave rows waiting for
