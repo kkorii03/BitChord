@@ -7,9 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A cover seed's station is other covers. When the seed's own title carries no
- * marker, the marker filter used to empty the whole batch and AutoPlay found
- * nothing to add. The same-artist rows are the seed's own world and must stay.
+ * A cover seed's station is other covers. When the seed's own shown title
+ * carries no marker, the marker filter used to empty the whole batch and
+ * AutoPlay found nothing to add. The upload title kept in [Song.originalTitle]
+ * is what tells the ordinary covers apart from karaoke/tribute uploads.
  */
 class AutoplayCoverSeedTest {
 
@@ -28,7 +29,7 @@ class AutoplayCoverSeedTest {
     )
 
     @Test
-    fun `a cover seed without a marker keeps its own artist's covers`() {
+    fun `a cover seed keeps ordinary covers by any artist`() {
         val seed = song(
             title = "밤편지",
             artist = "가수",
@@ -40,7 +41,7 @@ class AutoplayCoverSeedTest {
             song("밤편지 (Cover)", "다른 이름"),
         )
         val kept = autoplayRowsAfterCoverFilter(rows, seed)
-        assertEquals(listOf("가수"), kept.map { it.artist })
+        assertEquals(setOf("가수", "다른 이름"), kept.map { it.artist }.toSet())
     }
 
     @Test
@@ -53,6 +54,22 @@ class AutoplayCoverSeedTest {
         )
         val kept = autoplayRowsAfterCoverFilter(rows, seed)
         assertEquals(listOf("Spice Girls"), kept.map { it.artist })
+    }
+
+    @Test
+    fun `a cover seed drops karaoke and tribute even from its own artist`() {
+        val seed = song(
+            title = "밤편지",
+            artist = "가수",
+            originalTitle = "밤편지 (Cover)",
+        )
+        val rows = listOf(
+            song("밤편지 (Cover)", "다른 이름"),
+            song("밤편지 (Karaoke Version)", "가수"),
+            song("밤편지", "Tribute Band"),
+        )
+        val kept = autoplayRowsAfterCoverFilter(rows, seed)
+        assertEquals(listOf("밤편지 (Cover)"), kept.map { it.title })
     }
 
     @Test

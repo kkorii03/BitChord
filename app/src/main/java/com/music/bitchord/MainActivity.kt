@@ -3303,7 +3303,10 @@ private fun BitChordApp(
                                 // nothing.
                                 onOpenGenre = { genre ->
                                     navigator.clear()
+                                    viewModel.closeMoodGenre()
                                     selectedTab = TAB_SEARCH
+                                    viewModel.onQueryChange("")
+                                    viewModel.setSearchSource(SearchSource.YOUTUBE)
                                     viewModel.searchFor(genre)
                                 },
                                 onShare = {

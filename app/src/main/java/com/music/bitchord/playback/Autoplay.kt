@@ -335,19 +335,21 @@ private fun videoRadioRows(
  * The station rows that may fill AutoPlay after the cover/karaoke filter.
  *
  * A seed that is itself a cover is served a station of other covers. When its
- * own title carries no marker, the marker filter drops every one of them and
- * AutoPlay finds nothing, so the same song repeats. In that case keep the rows
- * that share the seed's artist and drop only karaoke/tribute uploads from other
- * names. For an ordinary seed the filter is unchanged.
+ * own shown title carries no marker, the marker filter drops every one of them
+ * and AutoPlay finds nothing, so the same song repeats. A cover row keeps its
+ * upload title in [Song.originalTitle], so compare the batch against that title
+ * as well: ordinary covers by any artist stay, while karaoke/tribute/
+ * instrumental uploads the seed itself does not carry are still dropped. For an
+ * ordinary seed the filter is unchanged.
  */
 internal fun autoplayRowsAfterCoverFilter(rows: List<Song>, seed: Song): List<Song> {
     val kept = rows.filterNot { TrackMatcher.isCoverArrangement(it, seed) }
     if (kept.isNotEmpty() || rows.isEmpty()) return kept
-    val seedIsCover = seed.originalTitle != null || TrackMatcher.isCoverArrangement(seed)
+    val uploadTitle = seed.originalTitle?.takeIf { it.isNotBlank() }
+    val seedIsCover = uploadTitle != null || TrackMatcher.isCoverArrangement(seed)
     if (!seedIsCover) return kept
-    return rows.filter {
-        !TrackMatcher.isCoverArrangement(it) || TrackMatcher.sharesArtist(it.artist, seed.artist)
-    }
+    val markerSeed = if (uploadTitle != null) seed.copy(title = uploadTitle) else seed
+    return rows.filterNot { TrackMatcher.isCoverArrangement(it, markerSeed) }
 }
 
 /**

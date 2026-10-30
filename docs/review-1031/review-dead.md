@@ -4,7 +4,7 @@
 - 기준: 현재 워크스페이스 HEAD `faf6558` (얕은 클론이라 `7d956f21..HEAD` 이력은 없다. 업스트림/포크 구분은 기존 감사 문서와 현재 파일의 주석으로만 판단했다.)
 - 범위: `app/`, `shared/`, `sharedUi/`의 UI 진입점, 설정 플래그, 재생 준비·자동 재생·HQ·가사 경로.
 - 방법: `grep`으로 호출부를 확인하고 해당 함수만 읽었다. 코드 근거 없는 추측은 쓰지 않았다. 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는 수정하지 않았다.
-- 이번에 고친 것: `Autoplay` 커버 시드 0곡 폴백, `PlaybackService.onDestroy` 수면 타이머 정리, Replay 장르 차트 탭. 나머지는 문서만.
+- 이번에 고친 것: `Autoplay` 커버 시드 0곡 폴백(2차에서 일반 커버/카라오케 구분 수정), `PlaybackService.onDestroy` 수면 타이머 정리, Replay 장르 차트 탭(2차에서 검색 소스·mood 상태 정리 추가). 나머지는 문서만.
 
 ---
 
@@ -120,36 +120,41 @@
 
 ## 5. 이번 수정의 조건 진리표 (AutoPlay 커버 폴백)
 
-기존 항은 그대로 두고 폴백만 추가했다.
+기존 항은 그대로 두고 폴백만 고쳤다. 시드가 커버이고 필터 결과가 비었을 때, 시드의 업로드 제목(`originalTitle`)을 기준 텍스트에 포함해 다시 거른다. 1차의 `sharesArtist` 예외는 없앴다.
 
-기존: `drop = isCoverArrangement(candidate, seed)`
+기존 폴백(1차): `!isCoverArrangement(candidate) || sharesArtist(candidate.artist, seed.artist)`
 
-새 규칙: 위 `drop`을 먼저 적용한다. 결과가 비어 있지 않거나 입력이 비어 있으면 그대로 반환한다. 결과가 비었고 `seed.originalTitle != null || isCoverArrangement(seed)`이면, `!isCoverArrangement(candidate) || sharesArtist(candidate.artist, seed.artist)`인 행을 남긴다.
+새 폴백(2차): `!isCoverArrangement(candidate, markerSeed)`, `markerSeed = seed.copy(title = seed.originalTitle ?: seed.title)`
 
-| 시드가 커버인가 | 배치에 비커버 행이 있는가 | 이전 결과 | 새 결과 |
+| 시드가 커버인가 | 배치 | 1차 결과 | 2차 결과 |
 |---|---|---|---|
-| 아니오 | 예 | 비커버 행 | 같음 |
-| 아니오 | 아니오(전부 커버) | 빈 목록 | 빈 목록(안전 규칙 유지) |
-| 예 | 예 | 비커버 행 | 같음 |
-| 예 | 아니오, 같은 아티스트 커버 | 빈 목록(0곡) | 같은 아티스트 커버 |
-| 예 | 아니오, 다른 이름 카라오케/트리뷰트 | 빈 목록 | 빈 목록(안전 규칙 유지) |
+| 아니오 | 비커버 행 있음 | 비커버 행 | 같음 |
+| 아니오 | 전부 커버 | 빈 목록 | 빈 목록(안전 규칙 유지) |
+| 예 | 비커버 행 있음 | 비커버 행 | 같음 |
+| 예 | 다른 아티스트의 일반 커버만 | 빈 목록(0곡) | 일반 커버 유지 |
+| 예 | 같은 아티스트 일반 커버만 | 같은 아티스트 커버 | 일반 커버 유지(같은 결과) |
+| 예 | 같은 아티스트 카라오케/트리뷰트 | 유지(누수) | 제거 |
+| 예 | 카라오케/트리뷰트만 | 빈 목록 | 빈 목록(안전 규칙 유지) |
+
+핵심: 일반 커버는 아티스트와 무관하게 남고, 카라오케/트리뷰트/인스트루멘탈은 시드가 그 표식을 스스로 갖지 않는 한 아티스트와 무관하게 제거된다.
 
 ---
 
 ## 6. 이번에 바꾼 파일과 테스트
 
-- `app/src/main/java/com/music/bitchord/playback/Autoplay.kt` — 커버 시드 0곡 폴백 `autoplayRowsAfterCoverFilter` 추가, 방송국/세션 라디오/최종 게이트에 적용.
+- `app/src/main/java/com/music/bitchord/playback/Autoplay.kt` — 커버 시드 0곡 폴백 `autoplayRowsAfterCoverFilter`를 업로드 제목 기준으로 다시 거르게 수정. 방송국/세션 라디오/최종 게이트에 적용.
 - `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt` — `onDestroy`에서 `SleepTimer.cancel()`.
 - `app/src/main/java/com/music/bitchord/ui/replay/ReplayScreen.kt` — `onOpenGenre` 콜백, 장르 차트 탭 연결.
-- `app/src/main/java/com/music/bitchord/MainActivity.kt` — 장르 탭을 검색 탭 + `searchFor(genre)`로 연결.
-- `app/src/test/java/com/music/bitchord/AutoplayCoverSeedTest.kt` — 새 테스트 3건:
-  - `a cover seed without a marker keeps its own artist's covers`
+- `app/src/main/java/com/music/bitchord/MainActivity.kt` — 장르 탭을 검색 탭 + `searchFor(genre)`로 연결. 2차에서 `closeMoodGenre()`, `onQueryChange("")`, `setSearchSource(YOUTUBE)`를 `searchFor` 앞에 추가.
+- `app/src/test/java/com/music/bitchord/AutoplayCoverSeedTest.kt` — 새 테스트 4건:
+  - `a cover seed keeps ordinary covers by any artist`
   - `karaoke and tribute uploads from other names are still dropped`
+  - `a cover seed drops karaoke and tribute even from its own artist`
   - `a cover seed with only karaoke rows still yields nothing`
 
 검증:
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` — 통과.
-- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.AutoplayCoverSeedTest' --console=plain -q` — 통과(3건).
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.AutoplayCoverSeedTest' --console=plain -q` — 통과(4건).
 
 ---
 
@@ -161,3 +166,17 @@
 4. `DownloadedSyncCheck`가 답 없는 검사를 완료로 기록, `lyricsForPrep` override 무시, HQ offset/rate 미독.
 5. `ChunkedDataSource` 실패 전송 성공 기록, `hqOverrides` 잔존, HQ 영구 거절 TTL/수동 우회 미연결.
 6. 위 4번의 dead 정책 함수들을 연결할지 삭제할지 결정 필요.
+
+---
+
+## 8. 2차 검증 지적 처리 (r2)
+
+| 지적 | 처리 | 근거 |
+|---|---|---|
+| HIGH — `Autoplay.kt:349` 폴백에서 `!isCoverArrangement(it)` 분기가 도달 불가라 다른 아티스트의 일반 커버가 계속 버려져 커버 시드 방송국이 0곡이 된다 | **고침** | 폴백을 `seed.originalTitle`을 포함한 `markerSeed` 기준 `isCoverArrangement(it, markerSeed)`로 다시 거른다. 일반 커버는 아티스트와 무관하게 남는다. `Autoplay.kt` `autoplayRowsAfterCoverFilter`, 테스트 `a cover seed keeps ordinary covers by any artist`. |
+| MED — `Autoplay.kt:349` `|| sharesArtist(...)` 예외가 시드 아티스트 명의의 카라오케/트리뷰트까지 남겨 기존 가드를 무력화한다 | **고침** | `sharesArtist` 예외를 제거했다. 카라오케/트리뷰트 표식은 시드가 그 표식을 갖지 않는 한 아티스트와 무관하게 제거된다. 테스트 `a cover seed drops karaoke and tribute even from its own artist`. |
+| MED — `MainActivity.kt:3304-3307` 장르 콜백이 일반 탭 전환을 건너뛰어 LIBRARY/ADDONS 소스에서는 YouTube 검색이 돌지만 화면은 로컬/애드온 결과가 남고, `selectedMoodGenre`가 남아 제목/뒤로가기 상태가 틀어진다 | **고침** | `navigator.clear()` 뒤 `viewModel.closeMoodGenre()`, `selectedTab = TAB_SEARCH`, `viewModel.onQueryChange("")`, `viewModel.setSearchSource(SearchSource.YOUTUBE)`를 `viewModel.searchFor(genre)` 앞에 둔다. 빈 쿼리로 소스를 바꿔 `setSearchSource`가 옛 검색을 한 번 더 돌리지 않게 했다. |
+
+이번 라운드에서 삭제한 코드는 없다.
+
+남은 HIGH/MED 중 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)에 속하는 항목은 **실 검증 필요**: SyncSafety 3스위치 기본 off, `preferMusicOnly` 기본 off, NextPrep `rowId` 캐시·`bestTier` 메인 조회, `DownloadedSyncCheck` 완료 기록, `lyricsForPrep` override, HQ offset/rate, `ChunkedDataSource` 실패 전송 성공 기록. 코드/줄 근거는 1·2·7절과 이전 감사 문서에 있다.
