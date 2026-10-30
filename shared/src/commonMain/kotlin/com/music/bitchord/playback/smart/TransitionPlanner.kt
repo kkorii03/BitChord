@@ -461,13 +461,21 @@ fun latestIncomingCue(length: Double): Double =
  * passed over for the best one before it.
  */
  fun incomingCuePoint(analysis: TrackAnalysis, latest: Double = Double.POSITIVE_INFINITY): Double {
-    rankMixInCandidates(analysis).firstOrNull { it.time <= latest }?.let { return it.time }
-
     val interval = analysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (analysis.bpm.orZero() > 0) 60 / analysis.bpm else 0.0
     val downbeats = analysis.downbeats
     fun within(time: Double): Double =
         if (time <= latest) time else nearestAtOrBefore(downbeats, latest) ?: latest
+
+    // A ranked candidate is the arrangement's own idea of the drop, but it is
+    // not necessarily on the grid. Every fallback below snaps to a downbeat;
+    // the candidate path must too, or a beat-aligned entry lands a fraction of
+    // a beat off and the whole blend flams against it.
+    rankMixInCandidates(analysis).firstOrNull { it.time <= latest }?.let { candidate ->
+        val snapped = nearestTimedValue(downbeats, candidate.time, max(0.5, interval * 2))
+            ?: candidate.time
+        return within(snapped)
+    }
 
     val analyzedMixIn = analysis.mixInTime
     if (analyzedMixIn.isFinite() && analyzedMixIn > 0) {
@@ -607,7 +615,10 @@ private fun phraseBarPlan(
     val tempoFar = nextBpm > 0 && !beatMatchable(outgoingBpm, nextBpm)
     val mediaRatio =
         if (nextBpm > 0 && !tempoFar) roundRate(1.0 / normalizedTempoRatio(outgoingBpm, nextBpm)) else 1.0
-    val incomingPlaybackRate = incomingRateFor(mediaRatio, advanced)
+    // Only a beat-matched pair may be retimed. A DJ-assisted verdict means at
+    // least one grid is below MIN_BEATMATCH_CONFIDENCE, and stretching against
+    // a guess is exactly what the policy's confidence floor exists to forbid.
+    val incomingPlaybackRate = if (beatmatched) incomingRateFor(mediaRatio, advanced) else 1.0
     val outgoingPlaybackRate = outgoingRateFor(mediaRatio, advanced)
     val incomingBeatSeconds = if (alignedIncomingBpm > 0) 60.0 / alignedIncomingBpm else beatSeconds
 
@@ -1776,9 +1787,19 @@ private fun mixPlan(
         traits != null -> energyScale(analysis, nextAnalysis, traits, mixAnchor, gridBeatSeconds)
         else -> 1.0
     }
-    val (overlap, transitionBeats, incomingPlaybackRate) = adaptiveOverlap(
+    val adaptive = adaptiveOverlap(
         analysis, nextAnalysis, traits, energy, filterVariant, character,
     )
+    // A rate other than unity is a tempo stretch. Never apply one unless both
+    // grids clear the policy's beat-match floor; otherwise the renderer would
+    // speed or slow a track against a tempo the policy already called a guess.
+    val beatMatchTrusted = analysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE &&
+        nextAnalysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE
+    val incomingPlaybackRate = adaptive.incomingPlaybackRate.takeIf {
+        it == 1.0 || beatMatchTrusted
+    } ?: 1.0
+    val overlap = adaptive.overlap
+    val transitionBeats = adaptive.transitionBeats
     val handoffBpm = if (currentBpm > 0) currentBpm else nextBpm
     // Advanced also blends any pair a fine-tune matches on two trusted grids —
     // the 6% apart that used to be left to a filter ride, in either direction.
@@ -1790,8 +1811,13 @@ private fun mixPlan(
         )
     val confidentGrid = analysis.beatConfidence.orZero() >= 0.2 ||
         nextAnalysis.beatConfidence.orZero() >= 0.2
+    // When the two tempi need a stretch, only a pair whose *both* grids clear
+    // the beat-match floor may take the blend branch. Every old term stays:
+    // tempoBlendable, confidentGrid, and the advanced incoming-rate check.
+    val tempoNeedsStretch = abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) > 1e-6
     val sameBeatBlend = (traits == null || incomingPlaybackRate >= 1.0 - MAX_ALIGN_STRETCH) &&
-        ((tempoBlendable && confidentGrid) || traits?.phaseLockable == true)
+        (traits?.phaseLockable == true ||
+            (tempoBlendable && confidentGrid && (!tempoNeedsStretch || beatMatchTrusted)))
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
             min(ARRANGEMENT_OVERLAP_BEATS * 60 / currentBpm, MAX_DISCARDED_MUSIC_SECONDS)
@@ -1922,26 +1948,16 @@ private fun mixPlan(
         ) VOCAL_MASK_MISSING_PROTECTION else 0.0,
     )
     val vocalSafeFallback = !sameBeatBlend && vocalOverlap >= VOCAL_SAFE_FALLBACK_THRESHOLD
-    // One stable fallback personality trails the outgoing track on a beat.
-    // It is selected per track pair, not per playback attempt, so retrying a
-    // transition never changes the plan underneath the renderer.
-    val echoSeconds = if (
-        gridBeatSeconds > 0 &&
-        !sameBeatBlend &&
-        !vocalSafeFallback &&
-        filterVariant == FilterTransitionVariant.ECHO_RIDE
-    ) {
-        val echo = echoSecondsFor(gridBeatSeconds)
-        val echoPoint = transitionStart + FILTER_ECHO_AT * alignedOverlap
-        val room = echoPoint + 2 * gridBeatSeconds + echoTailSeconds(echo) + ECHO_ROOM_MARGIN_SECONDS <= length
-        if (room) echo else 0.0
-    } else {
-        0.0
-    }
+    // Echo rendering is deliberately off in CrossfadeController: its dry kill
+    // silenced the outgoing track at the midpoint, and its repeats extended the
+    // blend past the planned fade. Rather than re-enable those failures, the
+    // planner stops advertising the gesture. ECHO_RIDE resolves to the
+    // bass-handoff move the renderer does play, and no plan carries an echo
+    // time the renderer ignores.
+    val echoSeconds = 0.0
     val resolvedFilterVariant = when {
         vocalSafeFallback -> FilterTransitionVariant.SWEEP
-        filterVariant == FilterTransitionVariant.ECHO_RIDE && echoSeconds <= 0.0 ->
-            FilterTransitionVariant.BASS_HANDOFF
+        filterVariant == FilterTransitionVariant.ECHO_RIDE -> FilterTransitionVariant.BASS_HANDOFF
         else -> filterVariant
     }
     val plan = TransitionPlan(

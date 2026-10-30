@@ -92,27 +92,33 @@ class AdvancedAutomixPlannerTest {
             assertTrue(first.fadeSeconds <= 8.0)
             first.filterVariant
         }.toSet()
-        assertEquals(FilterTransitionVariant.entries.toSet(), variants)
+        assertEquals(
+            setOf(FilterTransitionVariant.SWEEP, FilterTransitionVariant.BASS_HANDOFF),
+            variants,
+            "only variants the renderer actually plays may be advertised",
+        )
     }
 
     @Test
-    fun anInstrumentalFilterExitEchoesOnTheBeatWithRoomForTheTail() {
-        // An instrumental exit ending well before the file does is safe to trail.
+    fun anInstrumentalFilterExitUsesTheRenderedBassHandoffNotAnEcho() {
+        // Echo rendering is off in the controller, so the planner must not
+        // advertise ECHO_RIDE or an echo tail the renderer will never play.
         val current = track("a", 120.0, "C major", vocal = 0.1).let {
             it.copy(contentEndTime = it.duration - 20, vocalActivityMask = it.energyCurve.map { 0.0 })
         }
-        val plan = (0 until 100).asSequence().map { index ->
+        val plans = (0 until 100).map { index ->
             val next = track("echo-$index", 97.0, "F♯ major", vocal = 0.1)
                 .let { it.copy(vocalActivityMask = it.energyCurve.map { 0.0 }) }
             plan(current, next, advanced = true)
         }
-            .first { it.filterVariant == FilterTransitionVariant.ECHO_RIDE }
-        assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
-        assertEquals(0.5, plan.echoSeconds, 1e-6, "a one-beat echo")
         assertTrue(
-            plan.transitionEnd + echoTailSeconds(plan.echoSeconds) <= current.duration,
-            "the tail would outlast the outgoing file",
+            plans.none { it.filterVariant == FilterTransitionVariant.ECHO_RIDE },
+            "ECHO_RIDE was advertised although the renderer keeps echo off",
         )
+        assertTrue(plans.none { it.echoSeconds > 0.0 }, "an echo tail was advertised")
+        val plan = plans.first { it.transitionStyle == TransitionStyle.DJ_FILTER }
+        assertEquals(FilterTransitionVariant.BASS_HANDOFF, plan.filterVariant)
+        assertEquals(0.0, plan.echoSeconds)
     }
 
     @Test

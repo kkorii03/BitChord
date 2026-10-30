@@ -64,6 +64,20 @@ internal object CrossfadeArmPolicy {
     fun armTimeoutMs(rampMs: Long = 0L): Long =
         (ARM_TIMEOUT_MS + rampMs.coerceAtLeast(0L)).coerceAtLeast(1L)
 
+    /**
+     * Whether a listener's skip must silence the armed incoming player before
+     * the service moves the session player on.
+     *
+     * Before the handoff the session player still holds the outgoing track, so
+     * the skip moves *it* onto the same queue row the standby is already
+     * playing. Leaving the standby at its blend gain would play that row twice
+     * at once, from two different positions, for the bail ramp. After the
+     * handoff the session already holds the incoming track and the standby is
+     * the old tail, so the ordinary short ramp is right.
+     */
+    fun skipSilencesIncoming(isFading: Boolean, handedOff: Boolean): Boolean =
+        isFading && !handedOff
+
     /** Whether the two decoded tracks can be rendered at the same time. */
     fun canMix(outgoing: CrossfadeTrackFormat?, incoming: CrossfadeTrackFormat?): Boolean {
         if (outgoing == null || incoming == null) return true
