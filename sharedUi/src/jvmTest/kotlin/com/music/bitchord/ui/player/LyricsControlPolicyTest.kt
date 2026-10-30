@@ -7,12 +7,30 @@ import kotlin.test.assertTrue
 class LyricsControlPolicyTest {
 
     @Test
-    fun aiTimingIsOfferedForAdjustableLyricsRegardlessOfGeminiSongMeaning() {
-        // Regression: the sync drawer gated AI timing on the Gemini song-meaning
-        // key even though AI timing runs on Deepgram. A listener with only a
-        // Deepgram key lost the action.
-        assertTrue(aiTimingActionEnabled(LyricsTimingUi(adjustable = true)))
-        assertFalse(aiTimingActionEnabled(LyricsTimingUi(adjustable = false)))
+    fun aiTimingNeedsAnAdjustableSongAndAUsableProvider() {
+        // Regression: removing the Gemini song-meaning guard left no provider
+        // guard at all, so the action was offered with no Deepgram or Gemini
+        // key and the press could only end in aiFailed.
+        assertTrue(
+            aiTimingActionEnabled(LyricsTimingUi(adjustable = true, aiAvailable = true)),
+        )
+        assertFalse(
+            aiTimingActionEnabled(LyricsTimingUi(adjustable = true, aiAvailable = false)),
+        )
+        assertFalse(
+            aiTimingActionEnabled(LyricsTimingUi(adjustable = false, aiAvailable = true)),
+        )
+    }
+
+    @Test
+    fun aiTimingStaysOfferedWhenTheShownAnswerCanBeTakenBack() {
+        // Taking a Gemini answer back needs no key, so the action remains even
+        // after the provider that made it is gone.
+        assertTrue(
+            aiTimingActionEnabled(
+                LyricsTimingUi(adjustable = true, byAi = true, aiAvailable = false),
+            ),
+        )
     }
 
     @Test

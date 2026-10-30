@@ -17,6 +17,12 @@ data class LyricsTimingUi(
     val aiRunning: Boolean = false,
     /** The last Gemini request came back with nothing usable. */
     val aiFailed: Boolean = false,
+    /**
+     * An AI timing provider is usable right now: Deepgram's key (with Whisper)
+     * or Gemini's. A hand-asked timing may spend either, so the action is not
+     * offered when neither is set up — the press could only end in `aiFailed`.
+     */
+    val aiAvailable: Boolean = false,
     /** Video seconds per record second, when the video runs at its own pace; null at the record's. */
     val rate: Double? = null,
     /** How much of the song agreed with the timing, 0–100; null when not known. */
@@ -42,11 +48,14 @@ data class LyricsTimingUi(
 /**
  * Whether the sync drawer can offer its AI timing action.
  *
- * AI timing runs on Deepgram. It used to be gated on the Gemini song-meaning
- * key, so a listener with Deepgram configured and no Gemini key never saw the
- * action even though the work it starts does not use Gemini.
+ * A hand-asked timing may spend Deepgram, Whisper or Gemini, so at least one
+ * of their keys must be usable. It used to be gated on the Gemini song-meaning
+ * key alone, which hid the action from a listener with only Deepgram set up.
+ * The shown answer can still be taken back without a key, so `byAi` keeps the
+ * action reachable even after a key is removed.
  */
-internal fun aiTimingActionEnabled(timing: LyricsTimingUi): Boolean = timing.adjustable
+internal fun aiTimingActionEnabled(timing: LyricsTimingUi): Boolean =
+    timing.adjustable && (timing.byAi || timing.aiAvailable)
 
 /**
  * Whether the romanization toggle belongs on the lyric controls.

@@ -5017,10 +5017,12 @@ private fun BitChordApp(
                 },
                 // The other direction: a device file going up to the
                 // server. Closed first, unlike a download — progress and
-                // the summary notice live outside the sheet.
+                // the summary notice live outside the sheet. A finished
+                // download is a device file too, so `isUploadable` (its
+                // content/file URI, not the YouTube id) decides, not
+                // `isLocalFile`.
                 onUploadToWebDav =
-                    if (songIsLocalFile &&
-                        com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
+                    if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
                         com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
                     ) {
                         {

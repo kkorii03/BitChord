@@ -661,6 +661,10 @@ class LyricsController(
             adjustable = adjustable,
             manualAvailable = timed,
             videoOwn = videoOwn,
+            // A hand-asked timing tries Deepgram/Whisper first and Gemini
+            // after, so either key makes the action meaningful.
+            aiAvailable = LyricsTranslation.geminiKeyUsable ||
+                com.music.bitchord.data.lyrics.Deepgram.usable,
         )
         if (!timed || request == null || lines == null) return
         val generation = lyricsGeneration
