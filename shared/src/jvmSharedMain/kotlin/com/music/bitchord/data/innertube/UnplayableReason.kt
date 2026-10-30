@@ -29,6 +29,7 @@ object UnplayableReason {
         "claimed content",
         "blocked due to the claimed",
         "copyright claim",
+        "copyright",
         "copyrighted",
         "private video",
         "private content",
@@ -43,6 +44,8 @@ object UnplayableReason {
         "삭제",
         "해지되었",
         "채널이 해지",
+        "소유권 주장",
+        "저작권",
         "연령 제한",
         "유료 콘텐츠",
     )
@@ -59,6 +62,7 @@ object UnplayableReason {
         "claimed content",
         "blocked due to the claimed",
         "copyright claim",
+        "copyright",
         "copyrighted",
         "private video",
         "private content",
@@ -71,6 +75,8 @@ object UnplayableReason {
         "삭제",
         "해지되었",
         "채널이 해지",
+        "소유권 주장",
+        "저작권",
     )
 
     /**
