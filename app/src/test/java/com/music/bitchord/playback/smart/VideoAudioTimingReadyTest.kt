@@ -48,6 +48,27 @@ class VideoAudioTimingReadyTest {
     }
 
     @Test
+    fun theSameTrackTurnsReadyWhenItsCopyCompletes() {
+        // The lyrics load while the stream is partial, then the cache commits
+        // the last span. The readiness rule must flip on that same track so
+        // the completion event can un-hide a Deepgram-only action.
+        assertFalse(
+            VideoAudio.timingAudioReady(
+                recentCached = false,
+                screenOn = true,
+                onDisk = listOf(rendition("video", contentLength = 10_000_000L, cachedPrefix = 2_000_000L)),
+            ),
+        )
+        assertTrue(
+            VideoAudio.timingAudioReady(
+                recentCached = false,
+                screenOn = true,
+                onDisk = listOf(rendition("video", contentLength = 10_000_000L, cachedPrefix = 10_000_000L)),
+            ),
+        )
+    }
+
+    @Test
     fun aCompleteSubstituteIsReadyWhenThereIsNoMeasurableSameSource() {
         assertTrue(
             VideoAudio.timingAudioReady(

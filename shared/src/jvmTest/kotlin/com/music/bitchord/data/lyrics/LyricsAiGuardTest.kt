@@ -205,6 +205,25 @@ class LyricsAiGuardTest {
     }
 
     @Test
+    fun aHandTimingTurnsAvailableWhenTheAudioFinishesCaching() {
+        // A Deepgram-only action is hidden while the stream is partial. The
+        // same song must become available once the copy is complete, which is
+        // what the cache's completion event recomputes.
+        val english = listOf("one two three", "four five six", "seven eight nine")
+        fun available(audioAvailable: Boolean) = LyricsAiGuard.manualTimingAvailable(
+            geminiUsable = false,
+            deepgramUsable = true,
+            audioAvailable = audioAvailable,
+            durationMs = 180_000L,
+            title = "Loved",
+            artist = "IU",
+            lyricsTexts = english,
+        )
+        assertFalse(available(audioAvailable = false))
+        assertTrue(available(audioAvailable = true))
+    }
+
+    @Test
     fun noEngineCanMoveFewerThanThreeSungLines() {
         // placeWithAi returns before asking any engine, so the action must not
         // be offered for a track with only one or two non-blank lines — even
