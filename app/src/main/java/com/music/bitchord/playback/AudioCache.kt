@@ -1953,62 +1953,66 @@ object AudioCache {
         val mediaId = mediaIdIn(uri)
         val job = coroutineContext.job
         mediaId?.let { wholeRenditionJobs[it] = job }
-        // [uri] is the virtual `bitchord://watch?…&q=hifi` item, so its own
-        // authority is not the server. The parked stream names the real host.
-        val stream = QualityUpgrade.forcedStream(uri)
-        val host = stream?.url?.let(HqHostTracker::hostOf)
-            ?: HqHostTracker.hostOf(uri.toString())
-        try {
-            var failure: String? = null
-            for (attempt in 0 until 2) {
-                awaitPlaybackRelease(key)
-                val upstream = upstreamFactory
-                    ?: return WholeRenditionResult(false, 0L, "no upstream")
-                val source = readAheadCacheFactory(upstream).createDataSource()
-                val spec = DataSpec.Builder().setUri(uri).build()
-                val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
-                failure = runCatching {
-                    withContext(Dispatchers.IO) {
+        // The cache index and its metadata are not main-thread data: callers
+        // reach this from playback on Main, and `getCachedSpans`, `isComplete`
+        // and the metadata write all take the cache's lock. The whole fetch
+        // and check therefore run on IO, whatever dispatcher asked.
+        return withContext(Dispatchers.IO) {
+            // [uri] is the virtual `bitchord://watch?…&q=hifi` item, so its own
+            // authority is not the server. The parked stream names the real host.
+            val stream = QualityUpgrade.forcedStream(uri)
+            val host = stream?.url?.let(HqHostTracker::hostOf)
+                ?: HqHostTracker.hostOf(uri.toString())
+            try {
+                var failure: String? = null
+                for (attempt in 0 until 2) {
+                    awaitPlaybackRelease(key)
+                    val upstream = upstreamFactory
+                        ?: return@withContext WholeRenditionResult(false, 0L, "no upstream")
+                    val source = readAheadCacheFactory(upstream).createDataSource()
+                    val spec = DataSpec.Builder().setUri(uri).build()
+                    val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
+                    failure = runCatching {
                         val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }
                         try {
                             writer.cache()
                         } finally {
                             handle.dispose()
                         }
+                    }.exceptionOrNull()?.let { error ->
+                        if (error is CancellationException) throw error
+                        error.message
                     }
-                }.exceptionOrNull()?.let { error ->
-                    if (error is CancellationException) throw error
-                    error.message
+                    if (failure == null) break
                 }
-                if (failure == null) break
-            }
-            val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
-            val complete = failure == null && isComplete(key)
-            if (complete && stream != null && HqQuality.isLosslessTier(stream.format)) {
-                runCatching {
-                    cache.applyContentMetadataMutations(
-                        key,
-                        ContentMetadataMutations().set(META_HQ_LOSSLESS, "1"),
-                    )
+                val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
+                val complete = failure == null && isComplete(key)
+                if (complete && stream != null && HqQuality.isLosslessTier(stream.format)) {
+                    runCatching {
+                        cache.applyContentMetadataMutations(
+                            key,
+                            ContentMetadataMutations().set(META_HQ_LOSSLESS, "1"),
+                        )
+                    }
                 }
-            }
-            val label = title?.takeIf { it.isNotBlank() } ?: mediaId ?: key
-            if (complete) {
-                mediaId?.let(renditionKeys::remove)
-                TrackLog.d(TAG, "hq-cache: $label fully cached ${formatBytes(bytes)}", about = mediaId)
-                return WholeRenditionResult(true, bytes, null)
-            }
-            val reason = failure ?: "incomplete"
-            TrackLog.d(
-                TAG,
-                "hq-cache: $label stopped short at ${formatBytes(bytes)}: $reason",
-                about = mediaId,
-            )
-            return WholeRenditionResult(false, bytes, reason)
-        } finally {
-            mediaId?.let {
-                wholeRenditionJobs.remove(it, job)
-                HqHostTracker.endDownload(it, host)
+                val label = title?.takeIf { it.isNotBlank() } ?: mediaId ?: key
+                if (complete) {
+                    mediaId?.let(renditionKeys::remove)
+                    TrackLog.d(TAG, "hq-cache: $label fully cached ${formatBytes(bytes)}", about = mediaId)
+                    return@withContext WholeRenditionResult(true, bytes, null)
+                }
+                val reason = failure ?: "incomplete"
+                TrackLog.d(
+                    TAG,
+                    "hq-cache: $label stopped short at ${formatBytes(bytes)}: $reason",
+                    about = mediaId,
+                )
+                WholeRenditionResult(false, bytes, reason)
+            } finally {
+                mediaId?.let {
+                    wholeRenditionJobs.remove(it, job)
+                    HqHostTracker.endDownload(it, host)
+                }
             }
         }
     }
@@ -2065,18 +2069,28 @@ object AudioCache {
         if (!HqQuality.isLosslessTier(stream.format)) return false
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         losslessPrefetchJob?.takeIf { it.isActive }?.join()
+        // Whether the `#hifi` entry already holds *this* stream's bytes, asked
+        // before [force] overwrites the record of what filled it. The key names
+        // a slot, not a file: a partial left by another candidate must be
+        // thrown away rather than resumed, or the two files are spliced into
+        // one entry. The same guard [PlaybackService.swapIn] uses.
+        val alreadyFilled = QualityUpgrade.forcedStream(uri)?.url == stream.url
         // Park the stream even when the bytes are already complete: the player
         // is about to open the marked URI and the resolving data source must
         // hand it this exact URL rather than searching for another one.
         upgradeKeyDeferred += mediaId
         QualityUpgrade.force(mediaId, stream)
-        if (isComplete(key)) {
-            losslessPrefetchAttempted.add(mediaId)
-            return true
+        return withContext(Dispatchers.IO) {
+            if (!alreadyFilled) discardRendition(uri)
+            if (isComplete(key)) {
+                losslessPrefetchAttempted.add(mediaId)
+                true
+            } else {
+                losslessPrefetchAttempted.add(mediaId)
+                val host = HqHostTracker.hostOf(stream.url)
+                fetchLosslessRendition(uri, title, stream, mediaId, host)
+            }
         }
-        losslessPrefetchAttempted.add(mediaId)
-        val host = HqHostTracker.hostOf(stream.url)
-        return fetchLosslessRendition(uri, title, stream, mediaId, host)
     }
 
     /**

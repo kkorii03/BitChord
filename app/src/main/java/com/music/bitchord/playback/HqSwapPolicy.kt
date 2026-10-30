@@ -22,11 +22,9 @@ internal object HqSwapPolicy {
 
     /** How long the spare player gets to open and buffer the replacement. */
     const val PREPARE_TIMEOUT_MS = 7_000L
-    const val PREPARE_STEP_MS = 20L
 
     /** How long the incoming side gets to actually start before the blend is abandoned. */
     const val START_TIMEOUT_MS = 600L
-    const val START_STEP_MS = 10L
 
     /** The blend is driven by the clock, in the same shape as the version swap. */
     const val FADE_STEP_MS = 16L
@@ -47,6 +45,9 @@ internal object HqSwapPolicy {
      * @param sameTrack whether the item the search was started for is still current.
      * @param offsetMs the verified `candidateTime - youtubeTime`, from [HqMatchPolicy].
      * @param rate the verified candidate seconds per YouTube second.
+     * @param pinned whether the listener has held this track on the original.
+     *   The revert can land while a search is already running, and that search
+     *   neither knows nor can be told; the pin has the last word.
      */
     fun decide(
         positionMs: Long,
@@ -57,8 +58,10 @@ internal object HqSwapPolicy {
         rate: Double,
         currentOffsetMs: Long = 0L,
         currentRate: Double = 1.0,
+        pinned: Boolean = false,
     ): Decision {
         if (!sameTrack) return Decision(false, "track-changed", 0L)
+        if (pinned) return Decision(false, "pinned", 0L)
         if (crossfadeActive) return Decision(false, "crossfade", 0L)
         val remaining = durationMs.takeIf { it > 0L }?.minus(positionMs)
         if (remaining != null && remaining < MIN_REMAINING_MS) {

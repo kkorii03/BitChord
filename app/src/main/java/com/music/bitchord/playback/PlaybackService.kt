@@ -5715,10 +5715,6 @@ class PlaybackService : MediaLibraryService() {
             return false
         }
         TrackLog.d("BitChord", "hq-swap: $mediaId done", about = mediaId)
-        AudioCache.dropLowerQualityAfterLosslessSwap(
-            mediaId,
-            AudioCache.cacheKeyOf(upgradedUri),
-        )
         return true
     }
 
@@ -5743,24 +5739,44 @@ class PlaybackService : MediaLibraryService() {
             rate = verified.rate,
             currentOffsetMs = current?.offsetMs ?: 0L,
             currentRate = current?.rate ?: 1.0,
+            pinned = OriginalVersion.isPinned(mediaId),
         )
     }
 
     /** The verified clock of the substitute playing [mediaId], or null for YouTube's own copy. */
     private fun currentPlayingVerification(mediaId: String): HqVerificationStore.Verified? {
-        val choice = StreamChoice.of(mediaId)
         val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId }
-        val sourceId = choice?.sourceConfigId ?: snapshot?.sourceConfigId ?: return null
+        // The decoder's own source identity wins when it has spoken: it names
+        // the stream actually being read, while [StreamChoice] can still hold
+        // the candidate an upgrade tried and lost. Reading the choice first
+        // mapped the new lossless copy through the wrong offset in exactly
+        // that window.
+        if (snapshot != null) {
+            val sourceId = snapshot.sourceConfigId ?: return null
+            if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
+            return HqVerificationStore.get(this, mediaId, sourceId, snapshot.sourceTrackId)
+        }
+        val choice = StreamChoice.of(mediaId) ?: return null
+        val sourceId = choice.sourceConfigId ?: return null
         if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
-        val trackId = choice?.trackId ?: snapshot?.sourceTrackId
-        return HqVerificationStore.get(this, mediaId, sourceId, trackId)
+        return HqVerificationStore.get(this, mediaId, sourceId, choice.trackId)
     }
 
     /** Whether what is playing came from a source standing in for YouTube. */
     private fun currentIsSubstitute(mediaId: String): Boolean {
+        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId }
+        if (snapshot != null) {
+            val kind = snapshot.sourceConfigId?.let { SourceRegistry.config(it)?.kind }
+            when {
+                kind == SourceKind.YOUTUBE -> return false
+                kind != null -> return true
+                snapshot.sourceName == "YouTube" -> return false
+                snapshot.sourceName != null -> return true
+            }
+        }
         if (StreamChoice.isSubstitute(mediaId)) return true
-        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId } ?: return false
-        val sourceId = snapshot.sourceConfigId ?: return false
+        val choice = StreamChoice.of(mediaId) ?: return false
+        val sourceId = choice.sourceConfigId ?: return false
         return SourceRegistry.config(sourceId)?.kind != SourceKind.YOUTUBE
     }
 
@@ -5820,6 +5836,23 @@ class PlaybackService : MediaLibraryService() {
             verified.offsetMs,
             verified.rate,
         )
+        // What the replacement has to prove itself against, captured before the
+        // swap overwrites the claims for this track. The candidate's own length
+        // is the old track's YouTube length carried through its verified
+        // offset and rate, not the outgoing copy's raw duration: a different
+        // intro would otherwise look like a short file and be reverted.
+        val previousUri = currentItem.localConfiguration?.uri?.toString()
+        val previousDuration = activePlayer.duration
+        val previousFormat = NerdStats.declaredFormat(mediaId)
+        val expectedDuration = if (previousDuration > 0L) {
+            HqSwapPolicy.targetPositionMs(
+                HqSwapPolicy.toYoutubeMs(previousDuration, currentOffsetMs, currentRate),
+                verified.offsetMs,
+                verified.rate,
+            )
+        } else {
+            previousDuration
+        }
 
         standbyPlayer.stop()
         standbyPlayer.clearMediaItems()
@@ -5833,28 +5866,24 @@ class PlaybackService : MediaLibraryService() {
         standbyPlayer.playWhenReady = false
         standbyPlayer.prepare()
 
-        val prepareDeadline = SystemClock.elapsedRealtime() + HqSwapPolicy.PREPARE_TIMEOUT_MS
-        var ready = false
-        while (isActive && SystemClock.elapsedRealtime() < prepareDeadline) {
-            if (player !== activePlayer ||
+        // Readiness is an event, not a clock: the standby tells the listener
+        // when it is ready, has started, or has failed. Polling these two
+        // properties every 10–20ms for seven seconds was pure battery cost.
+        val ready = awaitPlayerCondition(
+            HqSwapPolicy.PREPARE_TIMEOUT_MS,
+            activePlayer,
+            standbyPlayer,
+        ) {
+            player !== activePlayer ||
                 activePlayer.currentMediaItemIndex != index ||
-                activePlayer.currentMediaItem?.mediaId != mediaId
-            ) {
-                releaseStandby()
-                return@withContext false
-            }
-            if (standbyPlayer.playbackState == Player.STATE_READY) {
-                ready = true
-                break
-            }
-            if (standbyPlayer.playbackState == Player.STATE_IDLE &&
-                standbyPlayer.playerError != null
-            ) {
-                break
-            }
-            delay(HqSwapPolicy.PREPARE_STEP_MS)
+                activePlayer.currentMediaItem?.mediaId != mediaId ||
+                standbyPlayer.playbackState == Player.STATE_READY ||
+                (standbyPlayer.playbackState == Player.STATE_IDLE &&
+                    standbyPlayer.playerError != null)
         }
-        if (!ready) {
+        if (!ready || !isStillSwapping(activePlayer, index, mediaId) ||
+            standbyPlayer.playbackState != Player.STATE_READY
+        ) {
             releaseStandby()
             return@withContext false
         }
@@ -5869,13 +5898,20 @@ class PlaybackService : MediaLibraryService() {
                 ),
             )
             standbyPlayer.play()
-            val startDeadline = SystemClock.elapsedRealtime() + HqSwapPolicy.START_TIMEOUT_MS
-            while (isActive && !standbyPlayer.isPlaying &&
-                SystemClock.elapsedRealtime() < startDeadline
+            val started = awaitPlayerCondition(
+                HqSwapPolicy.START_TIMEOUT_MS,
+                activePlayer,
+                standbyPlayer,
             ) {
-                delay(HqSwapPolicy.START_STEP_MS)
+                !isStillSwapping(activePlayer, index, mediaId) ||
+                    standbyPlayer.isPlaying ||
+                    standbyPlayer.playbackState == Player.STATE_ENDED ||
+                    (standbyPlayer.playbackState == Player.STATE_IDLE &&
+                        standbyPlayer.playerError != null)
             }
-            if (standbyPlayer.isPlaying) {
+            if (started && isStillSwapping(activePlayer, index, mediaId) &&
+                standbyPlayer.isPlaying
+            ) {
                 standbyPlayer.seekTo(
                     index,
                     HqSwapPolicy.targetPositionMs(
@@ -5889,11 +5925,20 @@ class PlaybackService : MediaLibraryService() {
                 return@withContext false
             }
         } else {
-            val seekDeadline = SystemClock.elapsedRealtime() + HqSwapPolicy.START_TIMEOUT_MS
-            while (isActive && standbyPlayer.playbackState != Player.STATE_READY &&
-                SystemClock.elapsedRealtime() < seekDeadline
+            val seeked = awaitPlayerCondition(
+                HqSwapPolicy.START_TIMEOUT_MS,
+                activePlayer,
+                standbyPlayer,
             ) {
-                delay(HqSwapPolicy.START_STEP_MS)
+                !isStillSwapping(activePlayer, index, mediaId) ||
+                    standbyPlayer.playbackState == Player.STATE_READY ||
+                    standbyPlayer.playbackState == Player.STATE_ENDED ||
+                    (standbyPlayer.playbackState == Player.STATE_IDLE &&
+                        standbyPlayer.playerError != null)
+            }
+            if (!seeked || !isStillSwapping(activePlayer, index, mediaId)) {
+                releaseStandby()
+                return@withContext false
             }
         }
 
@@ -5934,6 +5979,7 @@ class PlaybackService : MediaLibraryService() {
                 releaseStandby()
                 return@withContext false
             }
+            val revertPosition = activePlayer.currentPosition.coerceAtLeast(0L)
             adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
             // The standby's decoder reported its format before the listener
             // was attached, so [onTrackBecameCurrent] clearing the old
@@ -5941,12 +5987,84 @@ class PlaybackService : MediaLibraryService() {
             // format event. Publish the new player's measured format now, so
             // the badge and the manual-upgrade verdict change with the audio.
             publishNerdStats()
+            // A replacement that is complete but the wrong length does not
+            // raise an error: it plays to its end and ExoPlayer advances the
+            // queue. The audition path has [watchUpgrade] for this; the
+            // mid-song swap has to give the new stream the same proof or a
+            // short file costs the listener the song.
+            val dropOldCopy = {
+                AudioCache.dropLowerQualityAfterLosslessSwap(
+                    mediaId,
+                    AudioCache.cacheKeyOf(Uri.parse(upgradedUri)),
+                )
+            }
+            if (previousUri == null) {
+                // Nothing to revert to, so there is nothing the proof could
+                // protect; the old copy goes as soon as the swap is adopted.
+                dropOldCopy()
+            } else {
+                watchUpgrade(
+                    mediaId = mediaId,
+                    previousUri = previousUri,
+                    position = revertPosition,
+                    previousDuration = previousDuration,
+                    previousFormat = previousFormat,
+                    expectedDuration = expectedDuration,
+                    onProven = dropOldCopy,
+                )
+            }
         } finally {
             hqSwappingMediaId = null
             loudnessA.setBlendTrim(1f)
             loudnessB.setBlendTrim(1f)
         }
         true
+    }
+
+    /** Whether the session still belongs to the track and player a swap started on. */
+    private fun isStillSwapping(
+        activePlayer: ExoPlayer,
+        index: Int,
+        mediaId: String,
+    ): Boolean =
+        player === activePlayer &&
+            activePlayer.currentMediaItemIndex == index &&
+            activePlayer.currentMediaItem?.mediaId == mediaId
+
+    /**
+     * Suspends until [condition] holds or [timeoutMs] passes, driven by the
+     * players' own callbacks rather than a polling loop.
+     *
+     * The mid-song swap used to ask `playbackState` and `isPlaying` every
+     * 10–20ms for up to seven seconds, which is pure battery cost for an
+     * answer the player already broadcasts. The initial check and the check
+     * after registering close the window between them, so an event that
+     * lands while the listener is being attached cannot be missed.
+     */
+    private suspend fun awaitPlayerCondition(
+        timeoutMs: Long,
+        vararg players: Player,
+        condition: () -> Boolean,
+    ): Boolean {
+        if (condition()) return true
+        val reached = CompletableDeferred<Boolean>()
+        val listener = object : Player.Listener {
+            fun check() {
+                if (!reached.isCompleted && condition()) reached.complete(true)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) = check()
+            override fun onIsPlayingChanged(isPlaying: Boolean) = check()
+            override fun onPlayerError(error: PlaybackException) = check()
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = check()
+        }
+        players.forEach { it.addListener(listener) }
+        if (condition()) reached.complete(true)
+        return try {
+            withTimeoutOrNull(timeoutMs) { reached.await() } == true
+        } finally {
+            players.forEach { it.removeListener(listener) }
+        }
     }
 
     /**
@@ -7316,15 +7434,20 @@ class PlaybackService : MediaLibraryService() {
         position: Long,
         previousDuration: Long,
         previousFormat: StreamFormat?,
+        expectedDuration: Long = previousDuration,
+        onProven: (() -> Unit)? = null,
     ) {
-        if (previousDuration <= 0) return
+        if (previousDuration <= 0) {
+            onProven?.invoke()
+            return
+        }
         scope.launch(TrackLog.about(mediaId)) {
             val agreed = withTimeoutOrNull(UPGRADE_PROVE_MS) {
                 while (true) {
                     val current = player?.takeIf { it.currentMediaItem?.mediaId == mediaId }
                         ?: return@withTimeoutOrNull false
                     val now = current.duration
-                    if (now > 0) return@withTimeoutOrNull abs(now - previousDuration) <= upgradeLengthSlackMs
+                    if (now > 0) return@withTimeoutOrNull abs(now - expectedDuration) <= upgradeLengthSlackMs
                     // The failure this whole check exists for, caught when it
                     // happens rather than at the ceiling: a replacement that
                     // came up short does not raise an error, it reaches the
@@ -7336,7 +7459,10 @@ class PlaybackService : MediaLibraryService() {
                 }
                 @Suppress("UNREACHABLE_CODE") false
             }
-            if (agreed == true) return@launch
+            if (agreed == true) {
+                onProven?.invoke()
+                return@launch
+            }
             val player = player ?: return@launch
             val item = player.currentMediaItem ?: return@launch
             if (item.mediaId != mediaId) return@launch
@@ -7347,7 +7473,7 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.w(
                 "BitChord",
                 "upgrade reverted: replacement reports ${player.duration}ms against " +
-                    "${previousDuration}ms (state=${player.playbackState}, " +
+                    "${expectedDuration}ms (old=${previousDuration}ms, state=${player.playbackState}, " +
                     "buffered=${player.bufferedPosition}ms)",
             )
             QualityUpgrade.forget(mediaId)

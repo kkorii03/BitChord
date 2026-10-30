@@ -76,6 +76,22 @@ class HqSwapPolicyTest {
     }
 
     @Test
+    fun `a track held on the original is never replaced by a search already running`() {
+        val decision = HqSwapPolicy.decide(
+            positionMs = 40_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 0L,
+            rate = 1.0,
+            pinned = true,
+        )
+
+        assertFalse(decision.allowed)
+        assertEquals("pinned", decision.reason)
+    }
+
+    @Test
     fun `a stale answer for a track the queue left is refused`() {
         val decision = HqSwapPolicy.decide(
             positionMs = 40_000L,
