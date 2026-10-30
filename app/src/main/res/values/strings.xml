@@ -200,6 +200,7 @@
     <string name="download_health_recheck">Re-check downloaded songs</string>
     <string name="download_health_recheck_subtitle">Checks each downloaded file once more the next time it plays, and repairs a wrong recording or a lower-quality copy. Nothing runs now.</string>
     <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version automatically. Wi-Fi only does not apply.</string>
+    <string name="settings_footer_downloads">Sets download quality and automatic downloads. Changes apply from the next download.</string>
     <string name="mv_sound_suspect_banner">%1$d downloaded song(s) have the music video\'s sound · Re-download as the song</string>
     <string name="convert_to_audio">Convert to audio</string>
     <string name="convert_to_video">Convert to video</string>
@@ -449,6 +450,7 @@
     <string name="video_radio_continue">Continue with video songs</string>
     <string name="video_radio_continue_subtitle">Keep a station seeded by a cover, live clip or self-uploaded song inside that video world</string>
     <string name="personalised_autoplay_subtitle">Orders YouTube’s radio by your likes, skips and recent listening\nMixes in similar tracks from worldwide listening data (ListenBrainz)</string>
+    <string name="settings_footer_playback">Sets playback, autoplay and Automix behaviour.</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>
     <string name="filter_non_music_audio_subtitle">Hides clips under 30 seconds, WAV files, voice notes, recordings and system sounds</string>
@@ -1155,6 +1157,7 @@
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
 
     <string name="advanced_options">Advanced &amp; experimental options</string>
+    <string name="settings_footer_advanced">Developer options and experiments. Leave these at their defaults unless asked to change them.</string>
 
     <string name="sync_safety_next_prep">Next-song lyrics preparation</string>
 
