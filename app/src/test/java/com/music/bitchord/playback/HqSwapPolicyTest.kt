@@ -61,6 +61,54 @@ class HqSwapPolicyTest {
     }
 
     @Test
+    fun `a version swap already using the standby refuses the lossless swap`() {
+        val decision = HqSwapPolicy.decide(
+            positionMs = 40_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 0L,
+            rate = 1.0,
+            versionSwapActive = true,
+        )
+
+        assertFalse(decision.allowed)
+        assertEquals("version-swap", decision.reason)
+    }
+
+    @Test
+    fun `a version swap may not take the standby while a lossless swap owns it`() {
+        assertFalse(HqSwapPolicy.versionSwapMayStart(crossfadeActive = false, losslessSwapActive = true))
+        assertFalse(HqSwapPolicy.versionSwapMayStart(crossfadeActive = true, losslessSwapActive = false))
+        assertTrue(HqSwapPolicy.versionSwapMayStart(crossfadeActive = false, losslessSwapActive = false))
+    }
+
+    @Test
+    fun `the silence monitor stands down for a lossless swap too`() {
+        assertTrue(
+            HqSwapPolicy.transitionOwnsPlayer(
+                crossfadeActive = false,
+                versionSwapActive = false,
+                losslessSwapActive = true,
+            ),
+        )
+        assertTrue(
+            HqSwapPolicy.transitionOwnsPlayer(
+                crossfadeActive = false,
+                versionSwapActive = true,
+                losslessSwapActive = false,
+            ),
+        )
+        assertFalse(
+            HqSwapPolicy.transitionOwnsPlayer(
+                crossfadeActive = false,
+                versionSwapActive = false,
+                losslessSwapActive = false,
+            ),
+        )
+    }
+
+    @Test
     fun `the verified offset moves the replacement onto the same audio`() {
         val decision = HqSwapPolicy.decide(
             positionMs = 30_000L,

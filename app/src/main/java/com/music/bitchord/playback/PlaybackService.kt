@@ -2681,13 +2681,23 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.d("BitChord", "version swap ignored: in a Listen Together party", about = currentItem.mediaId)
             return
         }
-        // Never while Automix is mid-blend: both fades share the same
-        // active/standby pair, and starting a version swap here would tear
-        // the standby player away from a transition already using it. The
-        // reverse — Automix arming while a version swap is running — is
-        // guarded symmetrically in [createCrossfadeController].
-        if (crossfade?.isTransitioning() == true) {
-            TrackLog.d("BitChord", "version swap deferred: Automix is mid-transition", about = currentItem.mediaId)
+        // Never while Automix is mid-blend or a lossless mid-song swap owns
+        // the standby: all three fades share the same active/standby pair, and
+        // starting this one would tear the standby player away from a
+        // transition already using it. The reverse — Automix arming while a
+        // version swap is running — is guarded symmetrically in
+        // [createCrossfadeController], and the lossless path now refuses while
+        // this job is active (see [hqSwapDecision]).
+        if (!HqSwapPolicy.versionSwapMayStart(
+                crossfadeActive = crossfade?.isTransitioning() == true,
+                losslessSwapActive = hqSwapOwnsStandby || hqSwappingMediaId != null,
+            )
+        ) {
+            TrackLog.d(
+                "BitChord",
+                "version swap deferred: another swap owns the standby",
+                about = currentItem.mediaId,
+            )
             return
         }
 
@@ -5708,7 +5718,18 @@ class PlaybackService : MediaLibraryService() {
         if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) return false
         pendingAutoplayAdvanceFor = mediaId
         pendingAutoplayAdvanceTarget = null
-        if (autoplayLoadJob?.isActive != true) {
+        // An active job may belong to the track that was current a moment
+        // ago: it exits on its own id check, but while it is still active it
+        // would keep this refill from ever starting. Only a load already
+        // running for this same track is the refill in flight.
+        if (autoplayRefillNeedsLoad(
+                loadActive = autoplayLoadJob?.isActive == true,
+                loadedSeed = autoplaySeed,
+                mediaId = mediaId,
+            )
+        ) {
+            autoplayLoadJob?.cancel()
+            autoplayLoadJob = null
             autoplaySeed = null
             loadAutoplayForCurrentTrack()
         }
@@ -6136,6 +6157,7 @@ class PlaybackService : MediaLibraryService() {
             currentOffsetMs = current?.offsetMs ?: 0L,
             currentRate = current?.rate ?: 1.0,
             pinned = OriginalVersion.isPinned(mediaId),
+            versionSwapActive = versionSwapJob?.isActive == true,
         )
     }
 
@@ -9234,8 +9256,11 @@ class PlaybackService : MediaLibraryService() {
         }
         if (!player.isPlaying ||
             player.playbackState != Player.STATE_READY ||
-            crossfade?.isTransitioning() == true ||
-            versionSwapJob?.isActive == true
+            HqSwapPolicy.transitionOwnsPlayer(
+                crossfadeActive = crossfade?.isTransitioning() == true,
+                versionSwapActive = versionSwapJob?.isActive == true,
+                losslessSwapActive = hqSwapOwnsStandby || hqSwappingMediaId != null,
+            )
         ) {
             silenceCheckFrames = -1L
             return

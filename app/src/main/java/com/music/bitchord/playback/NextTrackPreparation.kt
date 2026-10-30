@@ -694,11 +694,13 @@ internal class NextTrackPreparation(
             if (!mixWanted(song) || mixReady(song.videoId)) add(Step.MIX)
         }
 
-    private fun hqWanted(song: Song): Boolean {
-        if (song.isVideo || song.localUri != null) return false
-        if (SourceRegistry.parseTrackKey(song.videoId) != null) return false
-        return SourceResolver.canSubstituteForYouTube()
-    }
+    private fun hqWanted(song: Song): Boolean = NextPrepPolicy.hqStepWanted(
+        isVideo = song.isVideo,
+        videoRadio = song.videoRadio,
+        localFile = song.localUri != null,
+        sourceKey = SourceRegistry.parseTrackKey(song.videoId) != null,
+        canSubstitute = SourceResolver.canSubstituteForYouTube(),
+    )
 
     private fun existingHq(song: Song): HqTier? {
         val chosen = StreamChoice.of(song.videoId)

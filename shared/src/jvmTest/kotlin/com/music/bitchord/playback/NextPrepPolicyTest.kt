@@ -110,6 +110,37 @@ class NextPrepPolicyTest {
     }
 
     @Test
+    fun aVideoRadioRowIsNotAReplaceableLosslessCandidate() {
+        assertFalse(
+            NextPrepPolicy.hqStepWanted(
+                isVideo = false,
+                videoRadio = true,
+                localFile = false,
+                sourceKey = false,
+                canSubstitute = true,
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.hqStepWanted(
+                isVideo = false,
+                videoRadio = false,
+                localFile = false,
+                sourceKey = false,
+                canSubstitute = true,
+            ),
+        )
+        assertFalse(
+            NextPrepPolicy.hqStepWanted(
+                isVideo = true,
+                videoRadio = false,
+                localFile = false,
+                sourceKey = false,
+                canSubstitute = true,
+            ),
+        )
+    }
+
+    @Test
     fun aBlankRowIdMeansNoWorkAndNoRow() {
         val plan = NextPrepPolicy.plan(
             NextPrepPolicy.Request(

@@ -93,6 +93,24 @@ object NextPrepPolicy {
     fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS
 
     /**
+     * Whether the next row may be replaced by a lossless audio candidate.
+     *
+     * A video-radio row is a video upload even when a catalogue parser did not
+     * set [com.music.bitchord.data.model.Song.isVideo]: keeping the upload the
+     * listener chose is the whole point of that mode. The version step already
+     * refuses those rows; the lossless step has to use the same predicate or
+     * it can swap the upload's sound for a rejected-candidate FLAC.
+     */
+    fun hqStepWanted(
+        isVideo: Boolean,
+        videoRadio: Boolean,
+        localFile: Boolean,
+        sourceKey: Boolean,
+        canSubstitute: Boolean,
+    ): Boolean = !isVideo && !videoRadio && !localFile && !sourceKey && canSubstitute
+
+
+    /**
      * What the next row's sync can say about itself. [hasTiming] is the answer
      * after the existing measurement/AI/refine path has run; everything else
      * describes why that path could not produce one.
