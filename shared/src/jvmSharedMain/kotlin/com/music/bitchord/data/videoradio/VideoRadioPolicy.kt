@@ -453,17 +453,60 @@ enum class VideoRadioFallback(val wire: String) {
  * them, so the caller asks the same mode for more material first, then the
  * ordinary AutoPlay path, and only then gives up. This is pure so the order of
  * those stages is pinned by tests rather than by whichever branch ran.
+ *
+ * [partialAvailable] covers the case where the ordinary path cannot answer at
+ * all — a failed or empty radio request on a broken connection. One or two
+ * playable video rows are still better than silence, so they are kept rather
+ * than discarded because the replacement failed.
  */
 fun videoRadioFallbackStage(
     picked: Int,
     sameModeExhausted: Boolean,
     normalAvailable: Boolean,
     minimum: Int = MIN_VIDEO_RADIO_TRACKS,
+    partialAvailable: Boolean = false,
 ): VideoRadioFallback = when {
     picked >= minimum -> VideoRadioFallback.NONE
     !sameModeExhausted -> VideoRadioFallback.SAME_MODE
     normalAvailable -> VideoRadioFallback.NORMAL
+    partialAvailable && picked > 0 -> VideoRadioFallback.PARTIAL
     else -> VideoRadioFallback.EMPTY
+}
+
+/** The next step for a thin video pick. */
+enum class VideoRadioFallbackAction {
+    /** Run the ordinary (radio/ favourites / similar / session) path. */
+    USE_NORMAL,
+
+    /** Return the video rows already picked. */
+    KEEP_PICK,
+
+    /** There is neither a pick nor an ordinary answer: report the failure. */
+    FAIL,
+}
+
+/**
+ * What to do with a thin video pick, before and after the ordinary path.
+ *
+ * [normalRows] is null until that path has run. A successful but empty station
+ * still runs it, because the local sources it adds are exactly what an empty
+ * station lacks. Once it has run, zero rows mean the pick is the only playable
+ * material and must not be thrown away.
+ */
+fun videoRadioFallbackAction(
+    picked: Int,
+    fallbackFailed: Boolean,
+    normalRows: Int? = null,
+): VideoRadioFallbackAction = when {
+    fallbackFailed -> if (picked > 0) {
+        VideoRadioFallbackAction.KEEP_PICK
+    } else {
+        VideoRadioFallbackAction.FAIL
+    }
+    normalRows == null -> VideoRadioFallbackAction.USE_NORMAL
+    normalRows > 0 -> VideoRadioFallbackAction.USE_NORMAL
+    picked > 0 -> VideoRadioFallbackAction.KEEP_PICK
+    else -> VideoRadioFallbackAction.USE_NORMAL
 }
 
 /** One same-singer row for every two other-singer rows. */

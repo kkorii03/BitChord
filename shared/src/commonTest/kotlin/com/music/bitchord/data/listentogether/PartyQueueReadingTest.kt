@@ -2,6 +2,8 @@ package com.music.bitchord.data.listentogether
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Where the playing track stands in a party queue that keeps its history — and so can hold that
@@ -47,5 +49,68 @@ class PartyQueueReadingTest {
         assertEquals(-1, partyQueueIndexOf(q, PartyPlayback(), "z"))
         assertEquals(emptyList(), partyUpcomingAfter(q, PartyPlayback(), "z"))
         assertEquals(-1, partyQueueIndexOf(q, PartyPlayback(), null))
+    }
+
+    @Test
+    fun anIdAlreadyInTheHistoryIsNotProofThatATopUpLanded() {
+        // The queue keeps history, so the first suggestion may have been played
+        // long before. A refused add leaves the count unchanged and must not
+        // look accepted.
+        val before = listOf(PartyTrack("played"), PartyTrack("current"))
+        val after = before + PartyTrack("other")
+
+        assertFalse(partyTopUpEchoed(before, "played", after))
+    }
+
+    @Test
+    fun aSecondOccurrenceOfTheFirstSuggestionIsTheAcceptedAdd() {
+        val before = listOf(PartyTrack("played"), PartyTrack("current"))
+        val after = before + PartyTrack("played")
+
+        assertTrue(partyTopUpEchoed(before, "played", after))
+    }
+
+    @Test
+    fun aSuggestionNeverSeenBeforeLandsWithItsFirstOccurrence() {
+        val before = listOf(PartyTrack("current"))
+
+        assertTrue(partyTopUpEchoed(before, "new", before + PartyTrack("new")))
+    }
+
+    @Test
+    fun onlyTheRowsTheServerKeptAreReportedAsLanded() {
+        // The server truncates an add to the remaining slots, so the first
+        // suggestion landing is not proof that the rest did.
+        val before = listOf(PartyTrack("current"))
+        val after = before + PartyTrack("one")
+
+        assertEquals(
+            listOf("one"),
+            partyTopUpLanded(before, listOf("one", "two", "three"), after),
+        )
+    }
+
+    @Test
+    fun theLandedRowsCountNewOccurrencesNotHistory() {
+        val before = listOf(PartyTrack("played"), PartyTrack("current"))
+        val after = before + PartyTrack("played") + PartyTrack("new")
+
+        assertEquals(
+            listOf("played", "new"),
+            partyTopUpLanded(before, listOf("played", "new"), after),
+        )
+        // A refused add changes nothing, so nothing landed.
+        assertEquals(emptyList(), partyTopUpLanded(before, listOf("new"), before))
+    }
+
+    @Test
+    fun duplicateSuggestionIdsAreConsumedOnlyAsOftenAsTheyLanded() {
+        val before = listOf(PartyTrack("current"))
+        val after = before + PartyTrack("same")
+
+        assertEquals(
+            listOf("same"),
+            partyTopUpLanded(before, listOf("same", "same"), after),
+        )
     }
 }

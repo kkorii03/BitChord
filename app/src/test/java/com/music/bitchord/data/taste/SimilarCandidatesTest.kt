@@ -216,6 +216,16 @@ class SimilarCandidatesTest {
     }
 
     @Test
+    fun `an empty similar answer is not cached when a YouTube search failed`() {
+        // A transient fault must not empty this seed's similar source for a
+        // week. A real "nothing matched" answer and a partial success are fine
+        // to remember.
+        assertFalse(SimilarCandidates.shouldCacheSimilarAnswer(found = 0, failedSearches = 2))
+        assertTrue(SimilarCandidates.shouldCacheSimilarAnswer(found = 0, failedSearches = 0))
+        assertTrue(SimilarCandidates.shouldCacheSimilarAnswer(found = 1, failedSearches = 3))
+    }
+
+    @Test
     fun `similar is fetched at most once per fifteen minutes even as tracks change`() {
         val window = SimilarCandidates.SIMILAR_MIN_INTERVAL_MS
 

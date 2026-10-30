@@ -433,4 +433,68 @@ class VideoRadioPolicyTest {
         assertEquals("partial", VideoRadioFallback.PARTIAL.wire)
     }
 
+    @Test
+    fun `a thin video pick is kept when the normal fallback cannot answer`() {
+        // A broken or empty ordinary radio must not throw away the one or two
+        // video rows that are already playable.
+        assertEquals(
+            VideoRadioFallback.PARTIAL,
+            videoRadioFallbackStage(
+                picked = 2,
+                sameModeExhausted = true,
+                normalAvailable = false,
+                partialAvailable = true,
+            ),
+        )
+        assertEquals(
+            VideoRadioFallback.EMPTY,
+            videoRadioFallbackStage(
+                picked = 0,
+                sameModeExhausted = true,
+                normalAvailable = false,
+                partialAvailable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a successful empty station still runs the ordinary path`() {
+        // An empty answer is not a failure: local favourites, similar rows and
+        // the session radio are exactly what it lacks. Only a real failure may
+        // skip that path.
+        assertEquals(
+            VideoRadioFallbackAction.USE_NORMAL,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = false),
+        )
+        assertEquals(
+            VideoRadioFallbackAction.USE_NORMAL,
+            videoRadioFallbackAction(picked = 0, fallbackFailed = false),
+        )
+    }
+
+    @Test
+    fun `a thin video pick survives when the ordinary path filters every row`() {
+        // The station answered, but covers, missing metadata or duplicates left
+        // the ordinary path with nothing. The video rows are still playable.
+        assertEquals(
+            VideoRadioFallbackAction.KEEP_PICK,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = false, normalRows = 0),
+        )
+        // Ordinary local sources did produce rows; they are the better mix.
+        assertEquals(
+            VideoRadioFallbackAction.USE_NORMAL,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = false, normalRows = 3),
+        )
+        // A station that never answered keeps the pick outright.
+        assertEquals(
+            VideoRadioFallbackAction.KEEP_PICK,
+            videoRadioFallbackAction(picked = 2, fallbackFailed = true),
+        )
+        // With no video rows there is nothing to keep.
+        assertEquals(
+            VideoRadioFallbackAction.FAIL,
+            videoRadioFallbackAction(picked = 0, fallbackFailed = true),
+        )
+    }
+
 }
