@@ -149,6 +149,7 @@ import com.music.bitchord.data.stats.WriteThrottle
 import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.innertube.UnplayableReason
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
@@ -5420,7 +5421,12 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val alternate = if (allowAlternateRecording) {
                     withContext(Dispatchers.IO) {
-                        withTimeoutOrNull(ALTERNATE_LOOKUP_TIMEOUT_MS) {
+                        // A definitive verdict has already cost the listener
+                        // the whole resolver walk. The replacement search gets
+                        // one bounded attempt so a track with no other upload
+                        // moves on within the three-second target instead of
+                        // waiting out the read-ahead-sized budget.
+                        withTimeoutOrNull(DEFINITIVE_ALTERNATE_TIMEOUT_MS) {
                             YtMusicRepository.findAlternateRecording(song, setOf(mediaId))
                         }
                     }
@@ -5440,13 +5446,13 @@ class PlaybackService : MediaLibraryService() {
                         hasAlternate = alternate != null,
                     )
                     if (decision != UnplayableRecoveryAction.SWAP_ALTERNATE || alternate == null) {
-                        TrackLog.w("BitChord", "failure: $mediaId no alternate, skipping", about = mediaId)
+                        TrackLog.w("BitChord", "unplayable: $mediaId $reason -> skip", about = mediaId)
                         skipPastUnplayable(mediaId, reason)
                         return@withContext
                     }
                     TrackLog.w(
                         "BitChord",
-                        "failure: $mediaId unplayable -> alternate ${alternate.videoId} (${alternate.title})",
+                        "unplayable: $mediaId $reason -> alt ${alternate.videoId}",
                         about = mediaId,
                     )
                     val wasPlaying = live.playWhenReady
@@ -5543,6 +5549,11 @@ class PlaybackService : MediaLibraryService() {
             if (cause is StreamResolver.PermanentlyUnplayableException) {
                 return cause.message ?: "이 트랙은 재생할 수 없습니다"
             }
+            // A resolver that recorded the verdict but had to rethrow the
+            // layer's own exception still leaves the answer in the message:
+            // NewPipe files a copyright claim under ParsingException, and
+            // InnerTubeX only puts it in StreamResolveException's text.
+            UnplayableReason.fromMessage(cause.message)?.let { return it }
             cause = cause.cause?.takeIf { it !== cause }
         }
         return null
@@ -11713,6 +11724,14 @@ class PlaybackService : MediaLibraryService() {
          * video search to answer.
          */
         const val ALTERNATE_LOOKUP_TIMEOUT_MS = 12_000L
+
+        /**
+         * How long a definitive failure waits for another upload before moving
+         * to the next track. The reported takedown spent 26s on three walks of
+         * an id that could never play; the target after the verdict is three
+         * seconds, including [RECOVERY_DELAY_MS] and the discard.
+         */
+        const val DEFINITIVE_ALTERNATE_TIMEOUT_MS = 2_500L
 
         /** Avoid hammering the radio endpoint while an empty AutoPlay queue heals. */
         const val AUTOPLAY_EMPTY_REFRESH_DELAY_MS = 2_000L

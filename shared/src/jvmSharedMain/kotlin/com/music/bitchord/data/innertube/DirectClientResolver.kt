@@ -105,12 +105,14 @@ internal object DirectClientResolver {
      * than OK, which is how the Korea-IP gate reads here. It is a callback
      * rather than part of the return value because the sequence stops at the
      * first usable URL and the failure still has to be visible to the caller.
+     * The playability reason travels with it so the caller can tell a takedown
+     * from a region or Premium gate.
      */
     fun candidates(
         videoId: String,
         maxKbps: Int,
         viaProxy: Boolean = false,
-        onRefused: () -> Unit = {},
+        onRefused: (String?) -> Unit = {},
     ): Sequence<Found> = sequence {
         for (spec in SPECS) {
             val found = runCatching { ask(spec, videoId, maxKbps, viaProxy, onRefused) }
@@ -128,7 +130,7 @@ internal object DirectClientResolver {
         videoId: String,
         maxKbps: Int,
         viaProxy: Boolean,
-        onRefused: () -> Unit,
+        onRefused: (String?) -> Unit,
     ): Found? {
         val body = buildJsonObject {
             putJsonObject("context") {
@@ -172,14 +174,14 @@ internal object DirectClientResolver {
         maxKbps: Int,
         client: String,
         videoId: String = "",
-        onRefused: () -> Unit = {},
+        onRefused: (String?) -> Unit = {},
     ): Found? {
         val playability = root["playabilityStatus"] as? JsonObject
         val status = (playability?.get("status") as? JsonPrimitive)?.contentOrNull
         if (status != "OK") {
             val reason = (playability?.get("reason") as? JsonPrimitive)?.contentOrNull
             TrackLog.w(TAG, "direct $client $status for $videoId: ${reason.orEmpty().take(80)}")
-            onRefused()
+            onRefused(reason)
             return null
         }
         val formats = ((root["streamingData"] as? JsonObject)?.get("adaptiveFormats") as? JsonArray)

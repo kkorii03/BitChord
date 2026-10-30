@@ -10,6 +10,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.MixBlend
@@ -1008,6 +1009,17 @@ class CrossfadeController(
         // A different outgoing track is a fresh pair; forget the old verdict.
         if (skippedPair?.first != null && skippedPair?.first != currentItem.mediaId) {
             skippedPair = null
+        }
+
+        // Read-ahead has already settled that nobody can serve this upload.
+        // Arming would spend the standby decoder on it and hold the outgoing
+        // track's tail for a blend that can only end in the failure path.
+        // The ordinary advance still reaches it and skips it once.
+        if (StreamResolver.isUnplayable(nextItem.mediaId)) {
+            rememberSkipped(pair, CrossfadeSkipReason.UNPLAYABLE, currentItem, nextItem)
+            AppSettings.smartTransitionWindow.value = null
+            AppSettings.smartMixInProgress.value = false
+            return
         }
 
         if (!canMix(currentItem, nextItem)) {

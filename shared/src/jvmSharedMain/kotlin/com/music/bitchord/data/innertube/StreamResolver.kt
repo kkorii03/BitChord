@@ -363,7 +363,7 @@ object StreamResolver {
 
     private class Verdict(val reason: String, val at: Long)
 
-    private fun unplayableReason(videoId: String): String? {
+    fun unplayableReason(videoId: String): String? {
         val entry = unplayable[videoId] ?: return null
         if (MonotonicClock.nowMs() - entry.at < UNPLAYABLE_TTL_MS) return entry.reason
         unplayable.remove(videoId)
@@ -534,6 +534,7 @@ object StreamResolver {
         // about: a client said UNPLAYABLE/LOGIN_REQUIRED rather than merely
         // being slow. Read by the failure handler below.
         var directUnplayable = false
+        var directUnplayableReason: String? = null
 
         suspend fun tryDirect(): Stream? {
             if (directTried) return null
@@ -546,13 +547,26 @@ object StreamResolver {
                 return null
             }
             val found = timed("$videoId direct") {
-                directStream(videoId, onUnplayable = { directUnplayable = true }) { client ->
+                directStream(
+                    videoId,
+                    onUnplayable = { reason ->
+                        directUnplayable = true
+                        directUnplayableReason = reason
+                    },
+                ) { client ->
                     served(ResolutionOrder.DIRECT, "direct $client")
                 }
             }
             if (found == null) {
-                order.noteDirectRefused()
-                order.noteRefused(ResolutionOrder.DIRECT)
+                // A takedown, a claim or a deleted upload is a fact about this
+                // recording, not about the direct path. Counting it would
+                // bench that path for the next, perfectly playable track — the
+                // report shows exactly that: one blocked song and the
+                // following start lost its learned order.
+                if (!UnplayableReason.isTrackSpecific(directUnplayableReason)) {
+                    order.noteDirectRefused()
+                    order.noteRefused(ResolutionOrder.DIRECT)
+                }
             } else {
                 order.noteDirectServed()
             }
@@ -896,6 +910,15 @@ object StreamResolver {
                 // of the session from here; the media walk itself keeps the
                 // other clients in its own catalog.
                 MusicGateFallback.observePremiumFailure(e.message)
+                // A takedown, a claim or a deleted upload is not something the
+                // extraction failsafe can climb over. Reaching it anyway spent
+                // three watch-page attempts on an answer InnerTubeX had
+                // already settled. Thrown as-is so [resolveUncached]'s
+                // permanent-reason handler records it once.
+                if (UnplayableReason.isDefinitelyGone(e.message)) {
+                    TrackLog.w(TAG, "InnerTubeX will not succeed for $videoId: ${e.message}")
+                    throw e
+                }
                 if (MusicGateFallback.isActive() && "WEB_REMIX" !in skip) {
                     // One more walk, now with the gated web profile excluded.
                     skip += "WEB_REMIX"
@@ -938,7 +961,7 @@ object StreamResolver {
         videoId: String,
         maxKbps: Int = maxKbps(),
         viaProxy: Boolean = false,
-        onUnplayable: () -> Unit = {},
+        onUnplayable: (String?) -> Unit = {},
         onServed: (client: String) -> Unit = {},
     ): Stream? {
         for (found in DirectClientResolver.candidates(videoId, maxKbps, viaProxy, onUnplayable)) {
@@ -1776,8 +1799,12 @@ object StreamResolver {
         // ExoPlayer and the coroutine machinery both wrap freely, and the
         // classification has to survive being wrapped or it never fires: the
         // failure that reaches [resolveUncached] arrives as whatever the last
-        // layer chose to throw it as.
-        else -> e.cause?.takeIf { it !== e }?.let(::permanentReason)
+        // layer chose to throw it as. NewPipe files a claim and a truncated
+        // page under the same ancestry, and InnerTubeX's StreamResolveException
+        // only carries the answer in its message, so the text is classified
+        // here before the cause walk continues.
+        else -> UnplayableReason.fromMessage(e.message)
+            ?: e.cause?.takeIf { it !== e }?.let(::permanentReason)
     }
 
     /** How many times the watch page is worth asking for before giving up. */
