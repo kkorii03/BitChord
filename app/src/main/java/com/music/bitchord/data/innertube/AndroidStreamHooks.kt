@@ -9,6 +9,7 @@ import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.TrackLog
 import android.webkit.CookieManager
 import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
+import com.music.bitchord.data.innertube.potoken.PoTokenStore
 import com.music.bitchord.data.innertube.potoken.PoTokenWebView
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceResolver
@@ -76,7 +77,17 @@ object AndroidStreamHooks {
         val poTokens = PoTokenGenerator(
             createMinter = { PoTokenWebView.getNewPoTokenGenerator(app) },
             available = { webViewSupported },
+            cacheStore = object : PoTokenStore {
+                override fun getString(key: String): String? = prefs.getString(key, null)
+                override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+                override fun getLong(key: String): Long? = if (prefs.contains(key)) prefs.getLong(key, 0L) else null
+                override fun putLong(key: String, value: Long) = prefs.edit().putLong(key, value).apply()
+            },
         )
+        Innertube.initVisitorStore(object : Innertube.VisitorStore {
+            override fun getString(key: String): String? = prefs.getString(key, null)
+            override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+        })
         InnerTubeXResolver.init(
             filesDir = app.filesDir,
             store = object : InnerTubeXResolver.ConfigStore {

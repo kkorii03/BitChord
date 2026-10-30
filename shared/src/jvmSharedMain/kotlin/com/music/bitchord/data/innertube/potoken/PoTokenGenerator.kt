@@ -45,12 +45,16 @@ interface PoTokenMinter {
  *
  * @param createMinter loads a new BotGuard page; the platform's browser.
  * @param available whether this platform can host a page at all.
+ * @param cacheStore where a freshly minted pair is kept across process death.
  */
 class PoTokenGenerator(
     private val createMinter: suspend () -> PoTokenMinter,
     private val available: () -> Boolean = { true },
+    cacheStore: PoTokenStore? = null,
 ) {
     private val TAG = "PoTokenGenerator"
+
+    private val tokenCache = PoTokenResultCache(cacheStore)
 
     private var webViewBadImpl = false // whether the platform's browser turned out to be unusable
 
@@ -60,15 +64,29 @@ class PoTokenGenerator(
     private var webPoTokenGenerator: PoTokenMinter? = null
 
     suspend fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult? {
+        // A mint already bound to this visitor and video stays valid for as
+        // long as its integrity token does. A process reclaimed while the app
+        // was in the background used to come back and mint the same pair from
+        // a new WebView; reuse the answer while it is still fresh. Prewarm
+        // deliberately bypasses this: its job is to have a page standing by,
+        // not merely a token for its own fixed video.
+        if (videoId != PREWARM_VIDEO_ID) {
+            tokenCache.get(sessionId, videoId)?.let {
+                TrackLog.d(TAG, "potoken: reusing cached result")
+                return it
+            }
+        }
         val supported = available()
         if (!supported || webViewBadImpl) {
             TrackLog.d(TAG, "WebView not available: supported=$supported, badImpl=$webViewBadImpl")
             return null
         }
         return try {
-            withTimeout(POTOKEN_TIMEOUT_MS) {
+            val token = withTimeout(POTOKEN_TIMEOUT_MS) {
                 getWebClientPoToken(videoId, sessionId, forceRecreate = false)
             }
+            tokenCache.put(sessionId, videoId, token)
+            token
         } catch (e: TimeoutCancellationException) {
             TrackLog.w(TAG, "poToken generation timed out after ${POTOKEN_TIMEOUT_MS}ms; proceeding without PoToken")
             clearGenerator()
@@ -243,6 +261,64 @@ class PoTokenGenerator(
         override suspend fun close() {
             this@PoTokenGenerator.close()
         }
+    }
+}
+
+/**
+ * Where a minted PoToken pair is kept between process starts.
+ *
+ * Only a result cache: the BotGuard page itself cannot leave its WebView, but
+ * the tokens it produced can be reused for their visitor and video until they
+ * expire.
+ */
+interface PoTokenStore {
+    fun getString(key: String): String?
+    fun putString(key: String, value: String)
+    fun getLong(key: String): Long?
+    fun putLong(key: String, value: Long)
+}
+
+/**
+ * The most recent player/streaming token pair, keyed by visitor and video.
+ *
+ * Single-slot on purpose: the expensive case is the same track being resolved
+ * again by the player, its prefetch and a download, or after the process was
+ * reclaimed while that track was playing. The TTL is well inside the BotGuard
+ * integrity token's lifetime, so a hit never hands out a token the page would
+ * already have considered expired.
+ */
+internal class PoTokenResultCache(
+    private val store: PoTokenStore?,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) {
+    fun get(sessionId: String, videoId: String): PoTokenResult? {
+        val store = store ?: return null
+        if (store.getString(KEY_SESSION) != sessionId) return null
+        if (store.getString(KEY_VIDEO) != videoId) return null
+        val mintedAt = store.getLong(KEY_MINTED_AT) ?: return null
+        val age = nowMs() - mintedAt
+        if (age !in 0 until TTL_MS) return null
+        val request = store.getString(KEY_REQUEST) ?: return null
+        val streaming = store.getString(KEY_STREAMING) ?: return null
+        return PoTokenResult(playerRequestPoToken = request, streamingDataPoToken = streaming)
+    }
+
+    fun put(sessionId: String, videoId: String, token: PoTokenResult) {
+        val store = store ?: return
+        store.putString(KEY_SESSION, sessionId)
+        store.putString(KEY_VIDEO, videoId)
+        store.putString(KEY_REQUEST, token.playerRequestPoToken)
+        store.putString(KEY_STREAMING, token.streamingDataPoToken)
+        store.putLong(KEY_MINTED_AT, nowMs())
+    }
+
+    companion object {
+        const val TTL_MS = 30 * 60 * 1000L
+        private const val KEY_SESSION = "potoken_session"
+        private const val KEY_VIDEO = "potoken_video"
+        private const val KEY_REQUEST = "potoken_request"
+        private const val KEY_STREAMING = "potoken_streaming"
+        private const val KEY_MINTED_AT = "potoken_minted_at"
     }
 }
 

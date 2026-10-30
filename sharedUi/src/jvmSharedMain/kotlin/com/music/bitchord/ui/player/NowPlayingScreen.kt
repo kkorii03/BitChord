@@ -230,6 +230,19 @@ internal const val SEEK_SETTLE_TOLERANCE_MS = 1_500L
  */
 internal const val SEEK_SETTLE_TIMEOUT_MS = 4_000L
 
+/**
+ * The player surface to remember, from the two panels that can be open.
+ *
+ * Pure so the mapping is tested off-device; the screen writes it only when the
+ * app leaves the foreground or the player is disposed, not on every open and
+ * close of the queue (see the persistence effect in [NowPlayingScreen]).
+ */
+internal fun lastPlayerScreenOf(lyricsOpen: Boolean, queueOpen: Boolean): LastPlayerScreen = when {
+    lyricsOpen -> LastPlayerScreen.LYRICS
+    queueOpen -> LastPlayerScreen.QUEUE
+    else -> LastPlayerScreen.MAIN
+}
+
 private val THUMB_SIZE = 54.dp
 private val HEADER_HEIGHT = 60.dp
 private val ART_TITLE_GAP = 20.dp
@@ -1020,16 +1033,22 @@ fun NowPlayingScreen(
         derivedStateOf { playerDeckReveal.value >= 0.999f }
     }
     LaunchedEffect(lyricsOpen, queueOpen) {
-        PlayerSettings.setLastPlayerScreen(
-            when {
-                lyricsOpen -> LastPlayerScreen.LYRICS
-                queueOpen -> LastPlayerScreen.QUEUE
-                else -> LastPlayerScreen.MAIN
-            },
-        )
         // A fresh visit always starts with the half player present. Scrolling
         // the queue can then dismiss it without this effect firing again.
         if (queueOpen) queueControlsOpen = true
+    }
+    // The last screen is navigation state, not something every open/close of
+    // the queue needs on disk: a minute of browsing wrote it eight times, and
+    // the only moment that value is read is after this player is gone. Keep it
+    // in memory while the player is live and persist on the two events that
+    // end that life — the app leaving the foreground, or this composition
+    // being disposed. Event-driven; there is no timer here.
+    val currentLastScreen by rememberUpdatedState(lastPlayerScreenOf(lyricsOpen, queueOpen))
+    LaunchedEffect(foreground) {
+        if (!foreground) PlayerSettings.setLastPlayerScreen(currentLastScreen)
+    }
+    DisposableEffect(Unit) {
+        onDispose { PlayerSettings.setLastPlayerScreen(currentLastScreen) }
     }
     // Change the panel and its controls in the same snapshot. Driving the
     // controls from a LaunchedEffect left one composed frame where lyrics were

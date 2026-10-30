@@ -332,6 +332,45 @@ private fun videoRadioRows(
 }
 
 /**
+ * The radio rows with cover, karaoke and tribute uploads removed.
+ *
+ * A station answer is cached by [YtMusicRepository.radio], so the same list is
+ * handed back for every settings toggle that makes the service consider a
+ * top-up again. The scan itself is not free — every row is matched against the
+ * whole cover-marker table — and the "dropped N" line was written once per
+ * re-scan, which is how one station filled the log with the same 37 rows.
+ * The answer is therefore kept per seed and per exact radio list, and the log
+ * is written only when the scan actually happens.
+ */
+internal fun coverFilteredRadio(seedSong: Song, radio: List<Song>): List<Song> {
+    val key = CoverFilterKey(seedSong.videoId, seedSong.title, seedSong.artist, radio)
+    synchronized(coverFilterCache) { coverFilterCache[key] }?.let { return it }
+    val related = radio.filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
+    if (related.size != radio.size) {
+        TrackLog.d(
+            "BitChord",
+            "autoplay: dropped ${radio.size - related.size} cover/karaoke rows",
+            about = seedSong.videoId,
+        )
+    }
+    synchronized(coverFilterCache) { coverFilterCache[key] = related }
+    return related
+}
+
+private data class CoverFilterKey(
+    val seedId: String,
+    val seedTitle: String,
+    val seedArtist: String,
+    val radio: List<Song>,
+)
+
+/** Bounded so a long session cannot retain every station it has ever seen. */
+private val coverFilterCache = object : LinkedHashMap<CoverFilterKey, List<Song>>(8, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CoverFilterKey, List<Song>>) =
+        size > 8
+}
+
+/**
  * The original AutoPlay path, unchanged for normal mode and for the staged
  * replacement when a video batch is too thin. The caller supplies the already
  * fetched radio and is told whether rows were produced, so the video log can
@@ -352,14 +391,7 @@ private suspend fun loadNormalAutoplayTracks(
     // take them as they came. Filter at the front so the TASTE ranking below
     // only ever chooses between recordings, and so the non-personalised path
     // (queue exactly as YouTube returned it) is held to the same rule.
-    val related = radio.filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
-    if (related.size != radio.size) {
-        TrackLog.d(
-            "BitChord",
-            "autoplay: dropped ${radio.size - related.size} cover/karaoke rows",
-            about = seedSong.videoId,
-        )
-    }
+    val related = coverFilteredRadio(seedSong, radio)
     val extra = if (AppSettings.personalisedAutoplay.value) {
         rankedExtensions(existing, seedSong, sessionSong, related, limit, sessionIds)
     } else {
