@@ -142,6 +142,24 @@ class AuthStore(context: Context) {
         set(value) = prefs.edit().putString(KEY_PROXY_PASSWORD, value).apply()
 
     /**
+     * A named credential from the settings that used to live in plain
+     * preferences: API keys, scrobbler session keys and the Spotify cookie.
+     *
+     * They are here for the same reason as the proxy password. The plain
+     * settings file is carried by Android auto-backup, so a key written there
+     * leaves the phone in a cloud copy; this encrypted file is excluded from
+     * both backup rule sets. Empty removes the entry rather than storing a
+     * blank credential.
+     */
+    fun secret(name: String): String? = prefs.getString(name, null)
+
+    fun setSecret(name: String, value: String?) {
+        prefs.edit().apply {
+            if (value.isNullOrEmpty()) remove(name) else putString(name, value)
+        }.apply()
+    }
+
+    /**
      * The channel the listener chose to act as, if they chose one.
      *
      * Stored beside the cookie rather than in the plain settings because it is

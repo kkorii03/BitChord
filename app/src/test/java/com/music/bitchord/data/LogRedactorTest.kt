@@ -63,6 +63,17 @@ class LogRedactorTest {
     }
 
     @Test
+    fun proxyCredentialsInUrlAreRedactedAndFragmentIsDropped() {
+        val out = LogRedactor.redact(
+            "proxy https://user:pass@proxy.example:8080/path?token=secret#fragment",
+        )
+        assertEquals("proxy https://[redacted]@proxy.example:8080/path", out)
+        assertFalse(out.contains("pass"))
+        assertFalse(out.contains("secret"))
+        assertFalse(out.contains("fragment"))
+    }
+
+    @Test
     fun ordinaryLinesAreUnchanged() {
         val line = "12:00:00.000 D/BitChord resolved abc123 via direct IOS @ 256kbps"
         assertEquals(line, LogRedactor.redact(line))

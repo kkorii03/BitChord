@@ -45,7 +45,8 @@ object LogRedactor {
     private val GOOGLE_API_KEY = Regex("""AIza[0-9A-Za-z_\-]{20,}""")
     private val SK_KEY = Regex("""\bsk-[A-Za-z0-9_\-]{16,}""")
     private val EMAIL = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""")
-    private val URL_QUERY = Regex("""(?i)(https?://[^\s?#]+)\?[^\s#]*""")
+    private val URL_USERINFO = Regex("""(?i)\b(https?://)[^/\s@]+@""")
+    private val URL_QUERY = Regex("""(?i)(https?://[^\s?#]+)[?#][^\s]*""")
 
     fun redact(input: String): String {
         var out = COOKIE.replace(input, "\$1[redacted]")
@@ -53,8 +54,9 @@ object LogRedactor {
         out = SESSION_ID.replace(out, "\$1=[redacted]")
         out = GOOGLE_API_KEY.replace(out, "[redacted-key]")
         out = SK_KEY.replace(out, "[redacted-key]")
-        out = EMAIL.replace(out, "[redacted-email]")
         out = URL_QUERY.replace(out, "\$1")
+        out = URL_USERINFO.replace(out, "\$1[redacted]@")
+        out = EMAIL.replace(out, "[redacted-email]")
         return out
     }
 }
