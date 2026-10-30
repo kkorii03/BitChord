@@ -132,21 +132,66 @@ object Downloader {
                 }
                 val body = it.body ?: error("Download failed: empty response")
                 val source = body.byteStream()
-                var readForChunk = 0L
-                while (readForChunk < length) {
-                    coroutineContext.ensureActive()
-                    val wanted = minOf(buffer.size.toLong(), length - readForChunk).toInt()
-                    val read = source.read(buffer, 0, wanted)
-                    if (read == -1) break
-                    sink.write(buffer, 0, read)
-                    readForChunk += read
-                    position += read
-                    onProgress(position, total)
+                if (it.code == 200) {
+                    // A proxy or cache in front of googlevideo may answer a
+                    // ranged request with the whole file and a 200. Writing
+                    // only `length` bytes of that response and then asking for
+                    // the next range would put the opening of the file into
+                    // the middle of the output, exactly as [fetchDirect]'s
+                    // comment warns. The whole body is the answer, so skip the
+                    // bytes already written and take the rest.
+                    val declared = it.header("Content-Length")?.toLongOrNull()
+                    if (declared != null && declared != total) {
+                        error("Download server sent ${declared}B, expected ${total}B")
+                    }
+                    var skip = position
+                    while (skip > 0L) {
+                        coroutineContext.ensureActive()
+                        val wanted = minOf(buffer.size.toLong(), skip).toInt()
+                        val read = source.read(buffer, 0, wanted)
+                        if (read == -1) error("Download ended while skipping to ${position}B")
+                        skip -= read
+                    }
+                    // Never copy past the length that was measured. A
+                    // proxy is free to answer with more than the track (or a
+                    // chunked response that never ends), and writing all of
+                    // it would fill storage before the final length check
+                    // noticed. Stop at `total` and reject a stray byte.
+                    var remaining = total - position
+                    while (remaining > 0L) {
+                        coroutineContext.ensureActive()
+                        val wanted = minOf(buffer.size.toLong(), remaining).toInt()
+                        val read = source.read(buffer, 0, wanted)
+                        if (read == -1) error("Download ended at ${position}B of ${total}B")
+                        sink.write(buffer, 0, read)
+                        position += read
+                        remaining -= read
+                        onProgress(position, total)
+                    }
+                    if (source.read() != -1) error("Download server sent more than ${total}B")
+                } else {
+                    it.header("Content-Range")
+                        ?.substringAfter("bytes ", "")
+                        ?.substringBefore('-')
+                        ?.toLongOrNull()
+                        ?.takeIf { start -> start != position }
+                        ?.let { start -> error("Download range started at ${start}B, expected ${position}B") }
+                    var readForChunk = 0L
+                    while (readForChunk < length) {
+                        coroutineContext.ensureActive()
+                        val wanted = minOf(buffer.size.toLong(), length - readForChunk).toInt()
+                        val read = source.read(buffer, 0, wanted)
+                        if (read == -1) break
+                        sink.write(buffer, 0, read)
+                        readForChunk += read
+                        position += read
+                        onProgress(position, total)
+                    }
+                    // A range that stops short is not fatal on its own — the next
+                    // pass simply asks for what is left — but one that yields
+                    // nothing at all would loop here forever.
+                    if (readForChunk == 0L) error("Download stalled at ${position}B")
                 }
-                // A range that stops short is not fatal on its own — the next
-                // pass simply asks for what is left — but one that yields
-                // nothing at all would loop here forever.
-                if (readForChunk == 0L) error("Download stalled at ${position}B")
             }
         }
 
@@ -257,13 +302,55 @@ object Downloader {
 
         return runCatching {
             open(url, 0, 1).use { response ->
+                val ranged = response.header("Content-Range")
+                    ?.substringAfter('/', "")
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                if (ranged != null) return@use ranged
+                if (response.code != 200) return@use null
+                // A 200 means the server ignored Range. Its Content-Length is
+                // not safe to trust as the whole track: a caching proxy may
+                // answer the probe with a fixed slice (say 64KiB) and a
+                // matching length, which would become `total` and commit a
+                // truncated file as complete. Measure without a Range instead;
+                // only a response that states the whole length that way is
+                // accepted.
+                measureWhole(url)
+            }
+        }.onFailure { Log.w(TAG, "could not measure the track: ${it.message}") }.getOrNull()
+    }
+
+    /**
+     * The whole track's length, measured without a Range.
+     *
+     * Used whenever the one-byte probe came back as a 200, because that answer
+     * cannot distinguish the whole file from a fixed cache slice. The body is
+     * never read; the response is closed after its headers, so this costs a
+     * request and not a second copy of the track.
+     */
+    private fun measureWhole(url: String): Long? = runCatching {
+        ProxyPlayback.mediaClientFor(url)
+            .newCall(
+                Request.Builder()
+                    .url(url)
+                    .apply {
+                        StreamResolver.mediaHeadersFor(url)
+                            .forEach { (name, value) -> header(name, value) }
+                    }
+                    .build(),
+            )
+            .execute()
+            .use { response ->
+                if (response.code !in 200..299) return@use null
                 response.header("Content-Range")
                     ?.substringAfter('/', "")
                     ?.toLongOrNull()
                     ?.takeIf { it > 0 }
+                    ?: response.header("Content-Length")
+                        ?.toLongOrNull()
+                        ?.takeIf { it > 0 }
             }
-        }.onFailure { Log.w(TAG, "could not measure the track: ${it.message}") }.getOrNull()
-    }
+    }.onFailure { Log.w(TAG, "could not measure the whole track: ${it.message}") }.getOrNull()
 
     private val REFUSAL_CODES = setOf(403, 404, 410)
 }

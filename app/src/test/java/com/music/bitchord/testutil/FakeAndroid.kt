@@ -18,6 +18,9 @@ class FakePreferences(initial: Map<String, Any?> = emptyMap()) {
 
     val values = LinkedHashMap<String, Any?>(initial)
 
+    /** Makes the next `commit`/`apply` report the write did not reach disk. */
+    var failCommits: Boolean = false
+
     private val pending = LinkedHashMap<String, Any?>()
     private val removals = mutableSetOf<String>()
     private var clearRequested = false
@@ -46,13 +49,15 @@ class FakePreferences(initial: Map<String, Any?> = emptyMap()) {
                 proxy
             }
             "commit", "apply" -> {
-                if (clearRequested) values.clear()
-                removals.forEach { values.remove(it) }
-                values.putAll(pending)
+                if (!failCommits) {
+                    if (clearRequested) values.clear()
+                    removals.forEach { values.remove(it) }
+                    values.putAll(pending)
+                }
                 pending.clear()
                 removals.clear()
                 clearRequested = false
-                true
+                !failCommits
             }
             else -> null
         }

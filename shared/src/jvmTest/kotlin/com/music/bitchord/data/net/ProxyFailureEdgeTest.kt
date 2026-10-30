@@ -71,6 +71,18 @@ class ProxyFailureEdgeTest {
     }
 
     @Test
+    fun `a Ktor request timeout through the proxy is proxy down`() {
+        assertTrue(
+            ProxyFailure.isProxyDown(
+                IOException(
+                    "Request timeout has expired [url=https://music.youtube.com/youtubei/v1/browse, " +
+                        "request_timeout=30000 ms]",
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `only a successful direct retry proves the proxy is the broken part`() {
         assertTrue(ProxyFailure.directRetryProvesProxyDown(directRetrySucceeded = true))
         assertFalse(ProxyFailure.directRetryProvesProxyDown(directRetrySucceeded = false))

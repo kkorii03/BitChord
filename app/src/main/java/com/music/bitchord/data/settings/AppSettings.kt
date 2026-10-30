@@ -2894,10 +2894,10 @@ object AppSettings {
      * file being restored from, and clearing them would sign the user out of
      * services the backup has nothing to say about.
      */
-    fun importPrefs(values: Map<String, Any?>) {
-        if (!this::prefs.isInitialized) return
+    fun importPrefs(values: Map<String, Any?>): Boolean {
+        if (!this::prefs.isInitialized) return false
         val kept = prefs.all.filterKeys { it in SECRETS || it in DEVICE_LOCAL }
-        prefs.edit().apply {
+        val saved = prefs.edit().apply {
             clear()
             val incoming = values
                 .filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
@@ -2913,8 +2913,9 @@ object AppSettings {
             (kept + incoming).forEach { (key, value) ->
                 putSanitized(key, value)
             }
-        }.apply()
+        }.commit()
         reload()
+        return saved
     }
 
     private enum class PrefCarrier { BOOLEAN, INT, LONG, FLOAT, STRING, STRING_SET }
@@ -3043,6 +3044,9 @@ object AppSettings {
             KEY_DISCORD_BUTTON_1_VISIBLE,
             KEY_DISCORD_BUTTON_2_VISIBLE,
             KEY_DISCORD_INFO_DISMISSED,
+            KEY_SYNC_SAFETY_NEXT_PREP,
+            KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
+            KEY_SYNC_SAFETY_HQ_SYNC,
         )
         ints(
             KEY_UPGRADE_LENGTH_SLACK_SECONDS,

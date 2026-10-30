@@ -151,13 +151,17 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.detailBrowseType
+import com.music.bitchord.data.model.isTrackCard
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.data.model.SearchHistoryAction
 import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.data.model.historyAction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1295,12 +1299,16 @@ private fun BitChordApp(
     // the track already playing rather than only the next one.
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
+    val lyricsSourceOrder by AppSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
+    val prioritizeSyllableSync by AppSettings.prioritizeSyllableSync.collectAsStateWithLifecycle()
     LaunchedEffect(
         player.song?.videoId,
         player.song?.localUri,
         player.durationMs,
         syncedLyricsEnabled,
         lyricsSources,
+        lyricsSourceOrder,
+        prioritizeSyllableSync,
     ) {
         player.song?.let {
             // A cover is looked up as the song it covers — see CoverTitles.
@@ -2390,6 +2398,8 @@ private fun BitChordApp(
                 title = item.title,
                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
+                isVideoOrigin = item.isVideo,
             )
         }
     }
@@ -3093,6 +3103,7 @@ private fun BitChordApp(
             lyricsSource = lyricsSource,
             lyricsProviderStates = lyricsProviderStates,
             onSelectLyricsProvider = viewModel::selectLyricsProvider,
+            onLyricsOpen = viewModel::retryLyricsIfMissed,
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsTranscribing = displayedSong.videoId in lyricsTranscribingVideos,
             lyricsOffsetOpen = showLyricsOffset,
@@ -3725,17 +3736,37 @@ private fun BitChordApp(
                                 onShuffle = { songs -> shuffleDetailSongs(songs) },
                                 shuffleLoading = shuffleStarting,
                                 onSectionItemClick = { item ->
-                                    item.browseId?.let { id ->
-                                        viewModel.openDetail(
-                                            browseId = id,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                            type = BrowseType.ALBUM,
+                                    val song = shelfSong(item)
+                                    if (song != null && item.isTrackCard) {
+                                        // A shelf on this page can hold a track
+                                        // card (a video, most often) with no
+                                        // page behind it; tapping it starts the
+                                        // track instead of doing nothing.
+                                        playRadio(
+                                            song,
+                                            QueueSource(
+                                                page.title,
+                                                PlaybackSourceType.BROWSE,
+                                                page.browseId,
+                                            ),
                                         )
+                                    } else {
+                                        item.browseId?.let { id ->
+                                            viewModel.openDetail(
+                                                browseId = id,
+                                                title = item.title,
+                                                subtitle = item.subtitle,
+                                                thumbnailUrl = item.thumbnailUrl,
+                                                // An artist shelf can carry an
+                                                // artist card whose id is not
+                                                // `UC…`; the card says what it
+                                                // is, so it still opens as one.
+                                                type = item.detailBrowseType(),
+                                            )
+                                        }
                                     }
                                 },
-                                onSectionItemLongPress = onBrowseLongPress,
+                                onSectionItemLongPress = onShelfLongPress,
                                 // Only the page on its way in answers to the bar's
                                 // search button; one fading out keeps its list whole.
                                 searching = detailSearching && page.browseId == detail?.browseId,
@@ -4034,27 +4065,21 @@ private fun BitChordApp(
                                     // Tap a history entity: navigate to it or play it directly.
                                     // Do NOT recordEntity here — tapping an existing history item
                                     // must not update its timestamp and push it to the top.
-                                    when (entity.entityType) {
-                                        EntityType.TRACK -> {
-                                            // Play the track by its video id
-                                            playRadio(
-                                                com.music.bitchord.data.model.Song(
-                                                    videoId = entity.id,
-                                                    title = entity.title,
-                                                    artist = entity.subtitle,
-                                                    thumbnailUrl = entity.artworkUrl,
-                                                ),
-                                                QueueSource(entity.title, PlaybackSourceType.SEARCH),
-                                            )
-                                        }
-                                        EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST -> {
-                                            viewModel.openDetail(
-                                                browseId = entity.id,
-                                                title = entity.title,
-                                                subtitle = entity.subtitle,
-                                                thumbnailUrl = entity.artworkUrl,
-                                            )
-                                        }
+                                    when (val action = entity.historyAction()) {
+                                        is SearchHistoryAction.Play -> playRadio(
+                                            action.song,
+                                            QueueSource(entity.title, PlaybackSourceType.SEARCH),
+                                        )
+                                        is SearchHistoryAction.Open -> viewModel.openDetail(
+                                            browseId = action.browseId,
+                                            title = action.title,
+                                            subtitle = action.subtitle,
+                                            thumbnailUrl = action.artworkUrl,
+                                        )
+                                        // An old raw-query entry ("q:…") has no track behind
+                                        // it; run the words again instead of handing the player
+                                        // an id that cannot resolve.
+                                        is SearchHistoryAction.Search -> viewModel.searchFor(action.term)
                                     }
                                 },
                                 onHistoryRemove = viewModel::removeSearch,

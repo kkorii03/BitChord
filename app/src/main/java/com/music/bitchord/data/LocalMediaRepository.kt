@@ -40,6 +40,15 @@ object LocalMediaRepository {
 
     private val nonMusicExtensions = setOf("wav", "3gp", "3gpp")
 
+    /**
+     * Audio containers that still count when the non-music filter is off.
+     *
+     * WAV and 3GP are playable audio but the music filter hides them as
+     * recordings/clips; turning the filter off has to bring them back or the
+     * switch keeps hiding a whole format the subtitle says it hides.
+     */
+    private val localPlayableAudioExtensions = localMusicExtensions + setOf("wav", "3gp")
+
     private val nonMusicPathSegments = listOf(
         "/alarms/",
         "/notifications/",
@@ -312,7 +321,7 @@ object LocalMediaRepository {
 
                     if (filterNonMusic) {
                         if (!isEligibleLocalMusic(durationMs, displayName, path)) continue
-                    } else if (!hasLocalMusicExtension(displayName, path)) {
+                    } else if (!hasPlayableAudioExtension(displayName, path)) {
                         continue
                     }
                     if (!isInSelectedFolder(path, folderUri)) continue
@@ -415,6 +424,10 @@ object LocalMediaRepository {
      */
     internal fun hasLocalMusicExtension(displayName: String, path: String?): Boolean =
         localExtensionOf(displayName, path) in localMusicExtensions
+
+    /** The wider container gate used when the non-music filter is off. */
+    internal fun hasPlayableAudioExtension(displayName: String, path: String?): Boolean =
+        localExtensionOf(displayName, path) in localPlayableAudioExtensions
 
     private fun localExtensionOf(displayName: String, path: String?): String {
         val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }

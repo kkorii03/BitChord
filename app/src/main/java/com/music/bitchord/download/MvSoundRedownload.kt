@@ -22,17 +22,39 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
+ * Whether a music-video-sound repair may use the connection in hand.
+ *
+ * The banner tap is the listener asking for the repair now, so it may spend
+ * mobile data. The worker is background work and obeys the Wi-Fi-only download
+ * setting like every other automatic download.
+ */
+internal fun mvRepairAllowsMetered(manual: Boolean, downloadsAllowedNow: Boolean): Boolean =
+    manual || downloadsAllowedNow
+
+/**
+ * Whether a connection change is the event that should wake a repair parked by
+ * the Wi-Fi-only setting.
+ *
+ * Only the change from "not allowed" to "allowed" is news: the repair was
+ * already waiting, and this is what lets it run when Wi-Fi comes back without
+ * waiting for the next app start or track. The reverse change needs nothing —
+ * [scheduleIfEnabled] refuses to start a new repair while metered.
+ */
+internal fun mvRepairShouldReschedule(wasAllowed: Boolean, allowedNow: Boolean): Boolean =
+    allowedNow && !wasAllowed
+
+/**
  * Fetches the song versions of downloads that turned out to hold a music
  * video's sound, when the listener has left the repair to the app.
  *
  * One one-shot piece of work, not a poll: it is scheduled when a verdict is
  * first remembered, on app start and on playback. It runs as soon as a network
- * is available, whatever the charger is doing. Wi-Fi is deliberately not a
- * constraint — the setting exists because data and storage are not the scarce
- * thing here. The download itself goes through the ordinary [Downloads] queue
- * and [DownloadService], so it is the same work a tap would have started: one
- * file at a time, and the next app start or playback picks up whatever is still
- * remembered after an interruption.
+ * is available, whatever the charger is doing. The Wi-Fi-only download setting
+ * still applies to this automatic pass; a banner tap is the listener asking and
+ * may use the connection in hand. The download itself goes through the ordinary
+ * [Downloads] queue and [DownloadService], so it is the same work a tap would
+ * have started: one file at a time, and the next app start or playback picks up
+ * whatever is still remembered after an interruption.
  */
 object MvSoundRedownload {
 
@@ -113,7 +135,10 @@ object MvSoundRedownload {
      * library with several suspects could therefore never finish the queue it
      * had already started. Appending is what HqLibraryUpgrade does for the
      * same reason; if the chain has already finished or been cancelled,
-     * APPEND_OR_REPLACE starts a fresh one.
+     * APPEND_OR_REPLACE starts a fresh one. The allowed-connection transition
+     * is the one place that replaces the chain instead (see [scheduleIfEnabled]):
+     * it may have a worker parked in retry backoff that would otherwise delay
+     * the repair it just woke.
      */
     internal val WORK_POLICY = ExistingWorkPolicy.APPEND_OR_REPLACE
 
@@ -137,28 +162,44 @@ object MvSoundRedownload {
         hasSuspects: () -> Boolean,
     ): Boolean = enabled && foreground && hasSuspects()
 
-    fun scheduleIfEnabled(context: Context) {
+    fun scheduleIfEnabled(context: Context, replace: Boolean = false) {
+        if (!AppSettings.autoRedownloadMvSound.value) return
+        if (!AppSettings.downloadsAllowedNow) {
+            TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
+            return
+        }
         if (!shouldSchedule(
-                enabled = AppSettings.autoRedownloadMvSound.value,
+                enabled = true,
                 foreground = AppForeground.isForeground,
                 hasSuspects = {
                     Downloads.hasRepairableMvSuspects(context, System.currentTimeMillis())
                 },
             )
         ) return
+        // With Wi-Fi-only on, let WorkManager hold the work until an unmetered
+        // network exists instead of waking on cellular just to retry.
+        val network = if (AppSettings.wifiOnlyDownloads.value) {
+            NetworkType.UNMETERED
+        } else {
+            NetworkType.CONNECTED
+        }
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiredNetworkType(network)
                     .build(),
             )
             .build()
         // Invalidate any pause still querying: this work is for the window that
         // is on screen now, not for the background it was queued in.
         pauseGeneration.incrementAndGet()
+        // A connection that just became allowed must not wait behind a worker
+        // parked in retry backoff; REPLACE clears that stale request. Ordinary
+        // app-start and playback schedules still append.
+        val policy = if (replace) ExistingWorkPolicy.REPLACE else WORK_POLICY
         runCatching {
             WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(WORK_NAME, WORK_POLICY, request)
+                .enqueueUniqueWork(WORK_NAME, policy, request)
         }.onFailure {
             TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
         }
@@ -260,9 +301,18 @@ class MvSoundRedownloadWorker(
         }
         // WorkManager can run a network-constrained request after the app has
         // gone away. Queueing downloads then would only leave rows waiting for
-        // a service Android will not let this process start.
+        // a service Android will not let this process start. The foreground
+        // event schedules the repair again, so finishing here does not drop it.
         if (!AppForeground.isForeground) {
             TrackLog.d("BitChord", "mv-sound repair: skipped; app has no window")
+            return Result.success()
+        }
+        if (!mvRepairAllowsMetered(manual = false, AppSettings.downloadsAllowedNow)) {
+            // The connection changed after the request was scheduled. Retrying
+            // here would keep waking this worker on a connection it can never
+            // use. The allowed-connection and foreground events both schedule
+            // the repair again, so finishing is safe.
+            TrackLog.i("BitChord", "mv-sound: waiting for an unmetered connection")
             return Result.success()
         }
         val queued = Downloads.redownloadSuspected(applicationContext)

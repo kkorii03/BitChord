@@ -37,4 +37,19 @@ class BrowseTypeTest {
         assertEquals(BrowseType.ARTIST, MainViewModel.browseTypeOf("custom_source", fallback = BrowseType.ARTIST))
         assertEquals(BrowseType.OTHER, MainViewModel.browseTypeOf("unrecognized_prefix"))
     }
+
+    @Test
+    fun `an explicit artist hint wins over a release prefix`() {
+        assertEquals(BrowseType.ARTIST, MainViewModel.detailTypeFor("MPREb123", BrowseType.ARTIST))
+        assertEquals(BrowseType.ARTIST, MainViewModel.detailTypeFor("VLPL123", BrowseType.ARTIST))
+        assertEquals(BrowseType.ARTIST, MainViewModel.detailTypeFor("PL123", BrowseType.ARTIST))
+        assertEquals(BrowseType.ARTIST, MainViewModel.detailTypeFor("nonUcArtist", BrowseType.ARTIST))
+    }
+
+    @Test
+    fun `a release hint still follows the browse prefix`() {
+        assertEquals(BrowseType.ALBUM, MainViewModel.detailTypeFor("MPREb123", BrowseType.ALBUM))
+        assertEquals(BrowseType.PLAYLIST, MainViewModel.detailTypeFor("VLPL123", BrowseType.PLAYLIST))
+        assertEquals(BrowseType.ARTIST, MainViewModel.detailTypeFor("UC123", BrowseType.ALBUM))
+    }
 }

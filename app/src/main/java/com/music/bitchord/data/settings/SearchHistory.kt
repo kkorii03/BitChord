@@ -77,16 +77,38 @@ object SearchHistory {
     fun recordAddonQuery(query: String) {
         val text = query.trim()
         if (text.isEmpty()) return
-        saveAddon((listOf(text) + _addonRecent.value.filterNot { it.equals(text, ignoreCase = true) }).take(MAX_ENTRIES))
+        updateAddons { existing ->
+            listOf(text) + existing.filterNot { it.equals(text, ignoreCase = true) }
+        }
     }
 
-    fun removeAddonQuery(query: String) = saveAddon(_addonRecent.value.filterNot { it == query })
+    fun removeAddonQuery(query: String) = updateAddons { existing ->
+        existing.filterNot { it == query }
+    }
 
-    fun clearAddonQueries() = saveAddon(emptyList())
+    fun clearAddonQueries() = updateAddons { emptyList() }
 
-    private fun saveAddon(value: List<String>) {
-        _addonRecent.value = value
-        prefs.edit().putString(KEY_ADDON_HISTORY, json.encodeToString(addonSerializer, value)).apply()
+    /**
+     * Applies [transform] to the addon list after [open] has loaded it, on the
+     * writer thread.
+     *
+     * The list used to be read at the call site before [save] opened the store.
+     * The first Addons search after launch therefore started from the still
+     * empty in-memory value and wrote that over the stored one, so every
+     * restart lost the addon history — and removing the first entry could wipe
+     * all of it. Opening first on the single writer thread also keeps the
+     * decode off the main thread and leaves add/remove calls in order.
+     */
+    private fun updateAddons(transform: (List<String>) -> List<String>) {
+        writer.execute {
+            open()
+            val next = transform(_addonRecent.value).take(MAX_ENTRIES)
+            _addonRecent.value = next
+            if (!this::prefs.isInitialized) return@execute
+            prefs.edit()
+                .putString(KEY_ADDON_HISTORY, json.encodeToString(addonSerializer, next))
+                .apply()
+        }
     }
 
     fun init(context: Context) {
@@ -136,15 +158,25 @@ object SearchHistory {
      * queued write. Duplicate ids are collapsed and the list is capped the
      * same way [record] caps it.
      */
-    fun replace(entries: List<SearchHistoryEntity>) {
+    fun replace(entries: List<SearchHistoryEntity>): Boolean {
         open()
         val seen = HashSet<String>(entries.size)
         val trimmed = entries
             .filter { seen.add(it.id.lowercase()) }
             .take(MAX_ENTRIES)
-        _recent.value = trimmed
-        if (!this::prefs.isInitialized) return
-        prefs.edit().putString(KEY_HISTORY, json.encodeToString(serializer, trimmed)).apply()
+        if (!this::prefs.isInitialized) return false
+        // Same writer as [save]: a record queued just before the import must be
+        // written before this one, not after it. Waiting for the task is what
+        // keeps the restored list from being replaced by that older save.
+        val saved = runCatching {
+            writer.submit<Boolean> {
+                prefs.edit()
+                    .putString(KEY_HISTORY, json.encodeToString(serializer, trimmed))
+                    .commit()
+            }.get()
+        }.getOrDefault(false)
+        if (saved) _recent.value = trimmed
+        return saved
     }
 
     private fun load() {

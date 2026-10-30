@@ -823,8 +823,10 @@ fun DetailScreen(
                     // it pages sideways four at a time and stops at twenty. A page
                     // with no top songs still has its shelves below, so the empty
                     // heading is skipped rather than leaving a gap above them.
-                    if (state.data.isNotEmpty()) item {
-                        val top = state.data.take(MAX_ARTIST_SONGS)
+                    // The filter narrows this strip too: searching an artist used
+                    // to leave the popular songs untouched under the search box.
+                    val top = songs.artistTopSongs(query, MAX_ARTIST_SONGS)
+                    if (top.isNotEmpty()) item {
                         val isCurrentRow = playingRowMatcher(top, currentSong)
                         SectionHeading(
                             title = stringResource(R.string.top_songs),
@@ -856,6 +858,10 @@ fun DetailScreen(
                                     }
                                 }
                             }
+                        }
+                    } else if (query.isNotBlank() && state.data.isNotEmpty()) {
+                        item(key = "no-matches") {
+                            MessageState(stringResource(R.string.nothing_matches, query))
                         }
                     }
                 } else {
@@ -1473,6 +1479,17 @@ internal fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
     if (query.isBlank()) return all
     return all.filter { (_, song) -> song.matchesSearch(query) }
 }
+
+/**
+ * The artist page's popular-songs strip: the first [limit] rows left by the
+ * page's own filter, not the first [limit] rows of the unfiltered list.
+ *
+ * Searching an artist used to leave the strip whole, so the only thing the
+ * query narrowed was the empty space below it. The cap is applied after the
+ * filter for the same reason: a match at the end of a long list is a match.
+ */
+internal fun List<Song>.artistTopSongs(query: String, limit: Int = MAX_ARTIST_SONGS): List<Song> =
+    matching(query).take(limit).map { it.value }
 
 /**
  * An artist: their name across the foot of the photo [PageBackground] is

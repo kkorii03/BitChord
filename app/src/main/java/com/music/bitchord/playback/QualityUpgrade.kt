@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.net.LogUrl
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -13,6 +14,7 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.Deferred
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -723,6 +725,32 @@ object QualityUpgrade {
         handAsked -= mediaId
         NerdStats.onLosslessRaceEnd(mediaId)
     }
+
+    /**
+     * Drops the forced stream serving [url] when only the URL is known.
+     *
+     * A swapped-in lossless/module rendition has no YouTube videoId in its URL,
+     * so the resolver's rate-limit feedback cannot name the mediaId. Matching
+     * the opened URL against the parked stream is what keeps the next open from
+     * serving the URL the host just asked us to leave alone.
+     */
+    fun forgetUrl(url: String) {
+        val key = canonicalUrl(url)
+        val mediaId = forced.entries.firstOrNull { canonicalUrl(it.value.url) == key }?.key
+        if (mediaId == null) {
+            // Not silent: the resolver reported this URL as rate-limited and
+            // the forced stream is the only copy that would be served again. A
+            // no-match means the keys differ (encoding, redirect) and the pin
+            // survives, so the next open repeats the paused URL.
+            TrackLog.w(TAG, "no forced stream to forget for rate-limited URL: ${LogUrl.of(url)}")
+            return
+        }
+        forget(mediaId)
+        StreamChoice.forget(mediaId)
+    }
+
+    /** The same URL OkHttp opens, so `Uri` re-encoding cannot lose the match. */
+    private fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
 
     /**
      * Forgets a replacement that is being reverted, together with the choice

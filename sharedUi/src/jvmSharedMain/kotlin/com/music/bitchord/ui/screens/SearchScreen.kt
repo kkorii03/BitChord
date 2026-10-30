@@ -5,6 +5,7 @@ import com.music.bitchord.ui.components.SwipeToQueueBox
 import com.music.bitchord.ui.components.contextClick
 import androidx.compose.ui.unit.Dp
 import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -289,12 +290,12 @@ fun SearchScreen(
                     onAddonHistoryClick = onAddonHistoryClick,
                     onAddonHistoryRemove = onAddonHistoryRemove,
                     onAddonHistoryClear = onAddonHistoryClear,
+                    onRetry = onRetry,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                     onSongClick = onLibrarySongClick,
                     onSongLongPress = onSongLongPress,
                     onSongSwipe = onSongSwipe,
-                    onRetry = onRetry,
                 )
                 suggesting -> {
                     searchSuggestions(
@@ -315,6 +316,7 @@ fun SearchScreen(
                             onBrowseClick = { item ->
                                 onBrowseClick(item)
                             },
+                            onBrowseLongPress = onBrowseLongPress,
                             currentSong = currentSong,
                             isPlaying = isPlaying,
                         )
@@ -375,7 +377,7 @@ fun SearchScreen(
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
                 results is UiState.Error -> item(key = "search:error") {
                     MessageState(
-                        results.message,
+                        message = results.message,
                         actionLabel = stringResource(Res.string.retry),
                         onAction = onRetry,
                     )
@@ -539,12 +541,12 @@ private fun LazyListScope.librarySearchResults(
     onAddonHistoryClick: (String) -> Unit,
     onAddonHistoryRemove: (String) -> Unit,
     onAddonHistoryClear: () -> Unit,
+    onRetry: () -> Unit,
     currentSong: Song?,
     isPlaying: Boolean,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
-    onRetry: () -> Unit,
 ) {
     when (results) {
         null -> if (addons && query.isEmpty() && addonHistory.isNotEmpty()) {
@@ -557,7 +559,7 @@ private fun LazyListScope.librarySearchResults(
         UiState.Loading -> songListSkeleton(keyPrefix = "skeleton:search:library")
         is UiState.Error -> item(key = "library:error") {
             MessageState(
-                results.message,
+                message = results.message,
                 actionLabel = stringResource(Res.string.retry),
                 onAction = onRetry,
             )
@@ -699,18 +701,32 @@ private fun LazyListScope.searchSuggestions(
     // row. It keeps the gap under the field stable even when that row changes
     // its text or icon treatment.
     item(key = "suggestions:top-inset") { Spacer(Modifier.height(8.dp)) }
-    // Skip the echo of the typed text (element 0) — it's already visible in
-    // the search field itself — and cap at N so the list stays compact above
-    // the playable-media cards.
-    itemsIndexed(suggestions.drop(1).take(3), key = { _, term -> "suggest:$term" }) { _, term ->
+    // Element 0 is the text as typed. It must be drawn: the view model enters
+    // this mid-edit state from the keystroke itself, before any completion has
+    // arrived, so dropping it leaves an empty spacer in place of the results
+    // until the lookup lands (or forever, if it fails).
+    val rows = suggestionDisplayRows(suggestions)
+    itemsIndexed(rows, key = { _, row -> "suggest:${row.index}:${row.term}" }) { _, row ->
         SuggestionRow(
-            term = term,
-            isQueryAction = false,
-            onFill = { onFill(term) },
-            onClick = { onClick(term) },
+            term = row.term,
+            isQueryAction = row.isQueryAction,
+            onFill = if (row.isQueryAction) null else ({ onFill(row.term) }),
+            onClick = { onClick(row.term) },
         )
     }
 }
+
+/** One suggestion line: the typed query action first, then up to three completions. */
+internal data class SuggestionDisplayRow(
+    val term: String,
+    val isQueryAction: Boolean,
+    val index: Int,
+)
+
+internal fun suggestionDisplayRows(suggestions: List<String>): List<SuggestionDisplayRow> =
+    suggestions.take(4).mapIndexed { index, term ->
+        SuggestionDisplayRow(term = term, isQueryAction = index == 0, index = index)
+    }
 
 /**
  * One typeahead row: tap the text to search it, or the arrow to put it in the
@@ -789,6 +805,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
     onSongClick: (Song) -> Unit,
     onSongLongPress: ((Song) -> Unit)?,
     onBrowseClick: (BrowseItem) -> Unit,
+    onBrowseLongPress: ((BrowseItem) -> Unit)?,
     currentSong: Song?,
     isPlaying: Boolean,
 ) {
@@ -821,7 +838,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
             is SearchResult.Browse -> BrowseRow(
                 item = result.item,
                 onClick = { onBrowseClick(result.item) },
-                onLongPress = onSongLongPress?.let { { /* browse long-press not applicable */ } },
+                onLongPress = onBrowseLongPress?.let { { it(result.item) } },
             )
             is SearchResult.TopTrack -> TypeaheadSongRow(
                 song = result.song,
@@ -1155,7 +1172,7 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
                         // word is an internal enum, and showing it in Korean
                         // read as an untranslated leftover. A card with no
                         // subtitle gets the app's own noun for it instead.
-                        stringResource(Res.string.more)
+                        stringResource(browseFallbackLabel(item.type))
                     },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1164,6 +1181,20 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             )
         }
     }
+}
+
+/**
+ * The type noun a search row falls back to when YouTube gave it no subtitle.
+ *
+ * The row still has to name what it is in the app's language; using the enum
+ * name made every blank-subtitle album or playlist read "Album"/"Playlist"
+ * even in Korean. OTHER is a plain song/video card, so it takes the song noun.
+ */
+internal fun browseFallbackLabel(type: BrowseType): StringResource = when (type) {
+    BrowseType.ALBUM -> Res.string.album
+    BrowseType.ARTIST -> Res.string.artist
+    BrowseType.PLAYLIST -> Res.string.playlist
+    BrowseType.OTHER -> Res.string.song
 }
 
 /**
@@ -1201,7 +1232,7 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
                     .padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 Text(
-                    text = entry.label,
+                    text = entry.localizedLabel(),
                     style = MaterialTheme.typography.labelLarge,
                     color = if (selected) MaterialTheme.colorScheme.background
                     else MaterialTheme.colorScheme.onBackground,
@@ -1225,3 +1256,19 @@ private val FILTER_PILL_SHAPE = RoundedCornerShape(12.dp)
  */
 internal fun <T> UiState<List<T>>?.hasNoResults(): Boolean =
     this is UiState.Success && data.isEmpty()
+
+/**
+ * The tab names follow the app's language, not the enum's hardcoded Korean.
+ * The Korean wording is unchanged; other locales no longer see Korean pills.
+ */
+internal fun SearchFilter.labelResource(): StringResource = when (this) {
+    SearchFilter.ALL -> Res.string.search_filter_all
+    SearchFilter.SONGS -> Res.string.songs
+    SearchFilter.VIDEOS -> Res.string.search_filter_videos
+    SearchFilter.ALBUMS -> Res.string.albums
+    SearchFilter.ARTISTS -> Res.string.artists
+    SearchFilter.PLAYLISTS -> Res.string.playlists
+}
+
+@Composable
+private fun SearchFilter.localizedLabel(): String = stringResource(labelResource())

@@ -7,12 +7,12 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -164,18 +164,20 @@ object LyricsRepository {
             // Kept like any answer, so the next play — today or after a
             // restart — shows it without listening again.
             val key = questionKey(
-                videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
-                artistAliases,
+                videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
+                alternatives, order, sources, artistAliases,
             )
             answers.put(key, Answer(heard))
             kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, heard) }
         }
     }
 
-    private fun questionKey(
+    internal fun questionKey(
         videoId: String,
         title: String,
         artist: String,
+        durationMs: Long,
+        album: String?,
         prioritizeSyllableSync: Boolean,
         isrc: String?,
         isVideo: Boolean,
@@ -184,14 +186,83 @@ object LyricsRepository {
         order: List<LyricsSource>,
         sources: Set<LyricsSource>,
         artistAliases: List<String> = emptyList(),
+        bucketOverride: String? = null,
     ): String = buildString {
         append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
+        // A lookup made without a length may have settled on a different edit
+        // than one made with it. Keep the two apart, but round the known
+        // length to the nearest bucket so the next-track prefetch (catalogue
+        // length) and the player (decoder length, usually a second or two
+        // apart) still share it instead of falling either side of a boundary.
+        // Reads also probe the neighbouring buckets (see [durationBuckets]) so
+        // a pair straddling a rounded boundary still finds the same answer.
+        append('\u0005').append(bucketOverride ?: durationBucket(durationMs))
+        append('\u0006').append(album.orEmpty())
         append('\u0000').append(prioritizeSyllableSync).append('\u0000').append(isrc.orEmpty())
         append('\u0000').append(isVideo).append('\u0000').append(artistKnown)
         alternatives.forEach { (t, a) -> append('\u0001').append(t).append('\u0000').append(a) }
         artistAliases.forEach { append('\u0004').append(it) }
         order.forEach { append('\u0002').append(it.name) }
         sources.map { it.name }.sorted().forEach { append('\u0003').append(it) }
+    }
+
+    /**
+     * How coarsely a known length identifies the recording in cache keys.
+     *
+     * Ten seconds is far wider than the difference between a catalogue row's
+     * rounded length and the decoder's exact one, and far narrower than two
+     * edits of the same song. The length is rounded to the nearest bucket so a
+     * pair 1–2 s apart usually lands in the same one. An unknown length is
+     * never folded into a known one: a match made without a length is the one
+     * that can be the wrong edit.
+     */
+    private const val DURATION_BUCKET_MS = 10_000L
+
+    /**
+     * The rounded bucket and its two neighbours, in lookup order.
+     *
+     * Rounding alone still has boundaries: 294.999 s and 295.001 s are 2 ms
+     * apart but round to different buckets. Reading the neighbouring buckets
+     * as well makes any two lengths within a couple of seconds share an answer
+     * whichever side of a boundary they fall. Only the middle (canonical) entry
+     * is written, so a lookup stays one file; the neighbours are only probes.
+     */
+    internal fun durationBuckets(durationMs: Long): List<String> =
+        if (durationMs <= 0L) {
+            listOf("unknown")
+        } else {
+            val bucket = (durationMs + DURATION_BUCKET_MS / 2) / DURATION_BUCKET_MS
+            listOf(bucket - 1, bucket, bucket + 1).map { it.toString() }
+        }
+
+    private fun durationBucket(durationMs: Long): String {
+        val buckets = durationBuckets(durationMs)
+        return buckets[buckets.lastIndex / 2]
+    }
+
+    /**
+     * Every cache key a lookup with [durationMs] may reuse. The canonical key
+     * is [questionKey]; the rest are the neighbouring length buckets.
+     */
+    private fun questionKeys(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String?,
+        prioritizeSyllableSync: Boolean,
+        isrc: String?,
+        isVideo: Boolean,
+        artistKnown: Boolean,
+        alternatives: List<Pair<String, String>>,
+        order: List<LyricsSource>,
+        sources: Set<LyricsSource>,
+        artistAliases: List<String>,
+    ): List<String> = durationBuckets(durationMs).map { bucket ->
+        questionKey(
+            videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo,
+            artistKnown, alternatives, order, sources, artistAliases, bucketOverride = bucket,
+        )
     }
 
     private suspend fun lookUpAll(
@@ -218,24 +289,41 @@ object LyricsRepository {
         // walking the same chain of misses again. A lookup still running for
         // the same question is joined rather than started twice.
         val key = questionKey(
-            videoId, title, artist, prioritizeSyllableSync, isrc, isVideo, artistKnown, alternatives, order, sources,
-            artistAliases,
+            videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
+            alternatives, order, sources, artistAliases,
         )
-        answers.get(key)?.let { kept ->
-            kept.result?.let { onSourceResult?.invoke(it.source, it, null) }
-            return kept.result
+        // A hit is preferred over a remembered miss, and either may live under
+        // a neighbouring length bucket (see [durationBuckets]). The canonical
+        // key is still the one new answers are written under.
+        val readKeys = questionKeys(
+            videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
+            alternatives, order, sources, artistAliases,
+        )
+        val remembered = readKeys.firstNotNullOfOrNull { candidate ->
+            answers.get(candidate)?.takeIf { it.result != null }?.let { candidate to it }
+        } ?: readKeys.firstNotNullOfOrNull { candidate ->
+            answers.get(candidate)?.let { candidate to it }
+        }
+        if (remembered != null) {
+            remembered.second.result?.let { onSourceResult?.invoke(it.source, it, null) }
+            return remembered.second.result
         }
         // Heard before, on any earlier day: on the device already. Shown at
         // once, and looked for again in the background only while something
         // better than what is kept could still turn up.
         if (durationMs > 0L) {
-            val kept = kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.read(key) }
+            val keptEntry = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                readKeys.firstNotNullOfOrNull { candidate ->
+                    LyricsDiskCache.read(candidate)?.let { candidate to it }
+                }
+            }
+            val kept = keptEntry?.second
             val keptResult = kept?.result
-            if (kept != null && keptResult != null) {
+            if (keptEntry != null && keptResult != null) {
                 answers.put(key, Answer(keptResult))
                 onSourceResult?.invoke(keptResult.source, keptResult, null)
                 if (LyricsDiskCache.worthCheckingAgain(kept)) {
-                    checkAgain(key, videoId, keptResult) {
+                    checkAgain(keptEntry.first, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                             null, null, null, isVideo, alternatives, artistKnown, artistAliases,
@@ -660,15 +748,21 @@ object LyricsRepository {
         // The last few answers, so the next track's lyrics looked up ahead of
         // time (see LyricsPrefetch) are the very lines the player then shows —
         // the same text is what lets the translation fetched with them be found.
-        val memoKey = buildString {
+        fun memoKey(bucket: String) = buildString {
             append(videoId).append('\u0000').append(title).append('\u0000').append(artist)
+            append('\u0005').append(bucket)
+            append('\u0006').append(album.orEmpty())
             append('\u0000').append(prioritizeSyllableSync)
             append('\u0000').append(isrc.orEmpty())
             order.forEach { append('\u0000').append(it.name) }
             append('\u0001')
             sources.map { it.name }.sorted().forEach { append('\u0000').append(it) }
         }
-        synchronized(recent) { recent[memoKey] }?.let { hit ->
+        // Probe neighbouring length buckets as well: rounding alone can still
+        // split a catalogue/decoder pair that straddles a boundary.
+        val memoKeys = durationBuckets(durationMs).map(::memoKey)
+        val memoHit = synchronized(recent) { memoKeys.firstNotNullOfOrNull { recent[it] } }
+        memoHit?.let { hit ->
             onSourceResult?.invoke(hit.source, hit, null)
             return hit
         }
@@ -678,7 +772,9 @@ object LyricsRepository {
         )?.copy(searchedAs = title to artist)
         // Only an answer matched against a known length is worth reusing: one
         // made without it may be a looser match than the player would make.
-        if (found != null && durationMs > 0L) synchronized(recent) { recent[memoKey] = found }
+        if (found != null && durationMs > 0L) {
+            synchronized(recent) { recent[memoKeys[memoKeys.lastIndex / 2]] = found }
+        }
         return found
     }
 
@@ -701,9 +797,6 @@ object LyricsRepository {
 
     /** How long word-synced sources may keep a line-synced answer waiting. */
     private const val SYLLABLE_GRACE_MS = 8_000L
-
-    /** How often the grace period looks over the sources still running. */
-    private const val GRACE_POLL_MS = 80L
 
     private val recent = object : LinkedHashMap<String, Result>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: Map.Entry<String, Result>) = size > 32
@@ -826,29 +919,55 @@ object LyricsRepository {
      * most [graceMs] for it. A source higher in the order that is still
      * running is waited for before a lower one that has answered is taken;
      * once time is up, the best that has answered wins.
+     *
+     * Wakes on a provider finishing, never on a clock tick: the old loop slept
+     * 80 ms between looks, up to a hundred wake-ups per lookup on the battery.
      */
-    private suspend fun wordSyncedWithin(
+    internal suspend fun wordSyncedWithin(
         rest: List<Pair<LyricsSource, Deferred<Result?>>>,
         graceMs: Long,
     ): Result? {
         if (rest.isEmpty()) return null
-        val deadline = System.currentTimeMillis() + graceMs
-        while (true) {
-            val timeUp = System.currentTimeMillis() >= deadline
-            var waitingAbove = false
-            for ((_, job) in rest) {
-                if (!job.isCompleted) {
-                    waitingAbove = true
-                    if (!timeUp) break
+        val better = withTimeoutOrNull(graceMs) {
+            var pending = rest
+            while (pending.isNotEmpty()) {
+                // Answers are taken in priority order, not completion order:
+                // a lower-priority word-synced answer waits while a higher
+                // one is still being asked. Only the front of the list may be
+                // taken; when it is still running, wait for it to finish.
+                if (!pending.first().second.isCompleted) {
+                    // Only the ones still running: selecting on an already
+                    // finished job resumes at once, which would spin here.
+                    val joined = pending.mapNotNull { (_, job) ->
+                        job.takeIf { !it.isCompleted }
+                    }
+                    // Every job can finish between the check above and this
+                    // list. A select with no clauses would wait out the whole
+                    // grace; loop instead and read the now-complete answer.
+                    if (joined.isEmpty()) continue
+                    select<Unit> {
+                        joined.forEach { it.onJoin { } }
+                    }
                     continue
                 }
+                val (_, job) = pending.first()
                 val answer = if (job.isCancelled) null else runCatching { job.await() }.getOrNull()
                 if (answer != null && answer.lines.any { it.isWordSynced }) {
-                    if (!waitingAbove || timeUp) return answer
+                    return@withTimeoutOrNull answer
                 }
+                pending = pending.drop(1)
             }
-            if (!waitingAbove || timeUp) return null
-            delay(GRACE_POLL_MS)
+            null
+        }
+        if (better != null) return better
+        // Time is up: take the best that has answered, in priority order.
+        return rest.firstNotNullOfOrNull { (_, job) ->
+            if (!job.isCompleted || job.isCancelled) {
+                null
+            } else {
+                runCatching { job.await() }.getOrNull()
+                    ?.takeIf { answer -> answer.lines.any { it.isWordSynced } }
+            }
         }
     }
 

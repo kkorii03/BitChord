@@ -352,6 +352,7 @@ fun SettingsScreen(
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
 
     val replayGenres by AppSettings.replayGenres.collectAsStateWithLifecycle()
+    val lastfmApiKey by AppSettings.lastfmApiKey.collectAsStateWithLifecycle()
 
     // Read here so the row can say "In a party · ABC123" rather than making
     // somebody open the screen to find out whether they are still in one.
@@ -1785,18 +1786,23 @@ fun SettingsScreen(
             }
             val workOutGenresTitle = stringResource(R.string.work_out_genres)
             row(workOutGenresTitle, "genre", "replay") {
+                val genresSupported = lastfmApiKey.isNotBlank()
                 SettingsRow(
                     icon = Icons.Rounded.LocalOffer,
                     title = workOutGenresTitle,
-                    subtitle = if (replayGenres) {
-                        stringResource(R.string.replay_genres_enabled_subtitle)
-                    } else {
-                        stringResource(R.string.replay_genres_disabled_subtitle)
-                    },
+                    subtitle = stringResource(
+                        when {
+                            !genresSupported -> R.string.replay_genres_missing_key_subtitle
+                            replayGenres -> R.string.replay_genres_enabled_subtitle
+                            else -> R.string.replay_genres_disabled_subtitle
+                        },
+                    ),
+                    enabled = genresSupported,
                     trailing = {
                         Switch(
-                            checked = replayGenres,
+                            checked = replayGenres && genresSupported,
                             onCheckedChange = AppSettings::setReplayGenres,
+                            enabled = genresSupported,
                             colors = settingsSwitchColors(),
                         )
                     },

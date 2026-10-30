@@ -322,23 +322,25 @@ fun AccountAndScrobblingScreen(
                         },
                         onClick = { AppSettings.setLastfmPrimaryArtistOnly(!lastfmPrimaryArtistOnly) },
                     )
-                    RowDivider()
-                    SettingsRow(
-                        icon = Icons.Rounded.GraphicEq,
-                        title = stringResource(R.string.now_playing),
-                        subtitle = stringResource(R.string.lastfm_now_playing_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = lastfmNowPlayingEnabled,
-                                onCheckedChange = AppSettings::setLastfmNowPlaying,
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        },
-                        onClick = { AppSettings.setLastfmNowPlaying(!lastfmNowPlayingEnabled) },
-                    )
+                    if (lastfmScrobbleEnabled) {
+                        RowDivider()
+                        SettingsRow(
+                            icon = Icons.Rounded.GraphicEq,
+                            title = stringResource(R.string.now_playing),
+                            subtitle = stringResource(R.string.lastfm_now_playing_subtitle),
+                            trailing = {
+                                Switch(
+                                    checked = lastfmNowPlayingEnabled,
+                                    onCheckedChange = AppSettings::setLastfmNowPlaying,
+                                    colors = SwitchDefaults.colors(
+                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                    ),
+                                )
+                            },
+                            onClick = { AppSettings.setLastfmNowPlaying(!lastfmNowPlayingEnabled) },
+                        )
+                    }
                 }
             }
 

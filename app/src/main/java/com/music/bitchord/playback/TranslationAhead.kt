@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -127,7 +128,15 @@ internal object TranslationAhead {
         val source: LyricsSource?,
         val searchedAs: Pair<String, String>?,
         val fromFile: Boolean,
-    )
+        /**
+         * A re-check wrote these words and their sync for this file, so the
+         * file's own "already timed for it" rule must not reject that sync.
+         */
+        val recheckOverride: Boolean = false,
+    ) {
+        /** The older spelling used by callers/tests before the rename. */
+        val overrideRecheck: Boolean get() = recheckOverride
+    }
 
     /**
      * The cheap half of [nextTrack] on its own, for the next-song bundle: the
@@ -144,15 +153,20 @@ internal object TranslationAhead {
         allowHeavy: Boolean,
     ): AheadLyrics {
         // A per-song override is what the player will show, so the prep pass
-        // must use it too. Reading the file's tags first spent a provider
-        // lookup on a song whose displayed lyrics were already decided.
+        // must use it too — before the file's tags, whose lookup would be spent
+        // on a song whose displayed lyrics were already decided. A re-check
+        // writes its fresh sheet to the override store instead of rewriting the
+        // audio file, so the bundle reads it the same way the player does.
         LyricsOverrideStore.read(app, song.videoId)?.let { override ->
-            return AheadLyrics(
-                lines = override.lines,
-                source = override.source,
-                searchedAs = null,
-                fromFile = false,
-            )
+            if (override.lines.any { it.text.isNotBlank() }) {
+                return AheadLyrics(
+                    lines = override.lines,
+                    source = override.source,
+                    searchedAs = null,
+                    fromFile = true,
+                    recheckOverride = override.kind == LyricsOverrideFile.Kind.RECHECK,
+                )
+            }
         }
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.withSource(app, uri)

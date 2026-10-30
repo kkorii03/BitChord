@@ -41,8 +41,14 @@ object QueueShuffle {
     /** Whether the queue is currently held in shuffled order. */
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
     fun setEnabled(enabled: Boolean) {
+        // Both players are configured from the same setting at service start,
+        // so the second call used to repeat the first call's "mode: shuffle"
+        // line. Assign the state either way (a recreated service may still hold
+        // the previous instance's value) but only log a real transition.
+        val changed = _enabled.value != enabled
         _enabled.value = enabled
         DiagnosticsState.shuffle = enabled
+        if (!changed) return
         TrackLog.d("BitChord", "mode: shuffle=${if (enabled) "on" else "off"}")
     }
 

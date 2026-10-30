@@ -54,6 +54,60 @@ import java.util.concurrent.TimeUnit
 internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
 
 /**
+ * Whether an upgrade requested through [HqLibraryUpgrade.requestUpgrade] may
+ * use the connection in hand.
+ *
+ * A listener tapping "re-download at a better quality" is asking for that
+ * download now, so the Wi-Fi-only rule does not stand in the way. The download
+ * health check is background work like the automatic pass, so it must wait for
+ * an unmetered connection instead of spending mobile data.
+ */
+internal fun hqUpgradeAllowsMetered(automatic: Boolean): Boolean = !automatic
+
+/** Whether an upgrade may start at all on the connection in hand. */
+internal fun hqUpgradeAllowedNow(automatic: Boolean, downloadsAllowedNow: Boolean): Boolean =
+    !automatic || downloadsAllowedNow
+
+/**
+ * Whether a download's success is also proof that the pass's replacement
+ * landed.
+ *
+ * The queue refuses a second request for an id that is already queued or
+ * running, so a user download of the same song can finish while the pass is
+ * waiting on it. That download did not necessarily carry the verified pair;
+ * the record's own provenance is what says it did. A copy already at least as
+ * good as the verified rung is an answer too: replacing a hi-res file with the
+ * same hi-res file would be busywork, and the listener already has the quality
+ * the pass was trying to obtain.
+ */
+internal fun hqReplacementLanded(
+    downloadSucceeded: Boolean,
+    applied: Boolean,
+    atLeastAsGood: Boolean = false,
+): Boolean = downloadSucceeded && (applied || atLeastAsGood)
+
+/**
+ * Whether a saved download may answer [target] without its exact verified tier.
+ *
+ * "At least as good" is deliberately narrow. The fallback exists when the same
+ * verified recording was already saved on a higher rung, so its source and
+ * track still have to match the target. An ordinary download at the same badge
+ * does not prove which recording it is, a cache-only copy was never written to
+ * the library, and a file the health check marked [SavedSongMetadata.wrongRecording]
+ * must always be replaced. Anything else has to go back through the pass.
+ */
+internal fun hqSavedCopyAnswersTarget(
+    meta: SavedSongMetadata?,
+    target: HqLibraryTarget,
+): Boolean {
+    if (meta == null || meta.wrongRecording) return false
+    if (meta.hqSourceConfigId != target.sourceConfigId) return false
+    if (meta.hqTrackId != target.trackId) return false
+    val savedTier = DownloadedQuality.tierOf(meta.downloadFormat, meta.hqTier) ?: return false
+    return HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, target.verifiedTier)
+}
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -174,7 +228,9 @@ object HqLibraryUpgrade {
         meta: SavedSongMetadata?,
         verifiedTier: HqTier,
     ): Boolean {
-        val savedTier = meta?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
+        val savedTier = meta
+            ?.takeUnless { it.wrongRecording }
+            ?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
         if (HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, verifiedTier)) return true
         val cachedTier = if (AudioCache.hasCompleteLosslessCopy(videoId)) {
             HqTier.LOSSLESS_16
@@ -379,6 +435,24 @@ object HqLibraryUpgrade {
     }
 
     /**
+     * What became of a quality upgrade request.
+     *
+     * [QUEUED] and [SEARCHING] both mean the request was accepted: something
+     * is now running. [REFUSED] is the only outcome where nothing started, so
+     * only it may leave a caller's cooldown unrecorded.
+     */
+    enum class UpgradeRequest {
+        /** A verified pair was known and its download is already queued. */
+        QUEUED,
+
+        /** No proved pair was known, so one asynchronous search is running. */
+        SEARCHING,
+
+        /** The Wi-Fi-only rule refused the request before anything started. */
+        REFUSED,
+    }
+
+    /**
      * The song menu's quality upgrade for a file already on the device.
      *
      * A verified higher pair is fetched through the same pinned replacement as
@@ -387,14 +461,29 @@ object HqLibraryUpgrade {
      * allowed to replace the file. A deliberate upgrade with no proved better
      * pair does nothing; a repair may fall back to a re-fetch only when the
      * served rendition is at least the rung of the file it replaces.
+     *
+     * @return [UpgradeRequest.QUEUED] when a verified pair was queued at once,
+     *   [UpgradeRequest.SEARCHING] when one search for this track was started,
+     *   or [UpgradeRequest.REFUSED] when the Wi-Fi-only rule blocked the
+     *   request before anything started. A caller recording a cooldown must
+     *   treat SEARCHING as accepted: the search has already spent the network
+     *   even though the later download can still be refused.
      */
     fun requestUpgrade(
         context: Context,
         song: Song,
         allowEqual: Boolean = false,
         automatic: Boolean = false,
-    ) {
+    ): UpgradeRequest {
         ensureLoaded(context)
+        if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
+            TrackLog.i(
+                TAG,
+                "download-check: waiting for an unmetered connection",
+                song.videoId,
+            )
+            return UpgradeRequest.REFUSED
+        }
         val meta = Downloads.savedMetadataFor(song.videoId)
         val badge = song.downloadFormat ?: meta?.downloadFormat
         val currentTier = DownloadedQuality.tierOf(badge, meta?.hqTier)
@@ -419,7 +508,13 @@ object HqLibraryUpgrade {
                 HqLibraryPolicy.isBetter(currentTier, entry.verified.tier)
             }
         if (entry != null && entryUsable) {
-            enqueueVerified(context, song, entry, automatic = automatic)
+            enqueueVerified(
+                context,
+                song,
+                entry,
+                automatic = automatic,
+                allowMetered = hqUpgradeAllowsMetered(automatic),
+            )
             if (!allowEqual) {
                 TrackLog.i(
                     TAG,
@@ -428,7 +523,7 @@ object HqLibraryUpgrade {
                     song.videoId,
                 )
             }
-            return
+            return UpgradeRequest.QUEUED
         }
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
@@ -451,11 +546,22 @@ object HqLibraryUpgrade {
                             HqLibraryPolicy.isBetter(currentTier, verified.tier)
                         }
                     if (verified != null && acceptable) {
+                        // The search above can take a while; the connection in
+                        // hand may have changed since the entry check.
+                        if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
+                            TrackLog.i(
+                                TAG,
+                                "download-check: waiting for an unmetered connection",
+                                song.videoId,
+                            )
+                            return@launch
+                        }
                         enqueueVerified(
                             context,
                             song,
                             HqVerificationStore.Entry(song.videoId, sourceId, trackId, verified),
                             automatic = automatic,
+                            allowMetered = hqUpgradeAllowsMetered(automatic),
                         )
                         return@launch
                     }
@@ -475,10 +581,20 @@ object HqLibraryUpgrade {
             } else {
                 DownloadedQuality.qualityForUpgrade(badge, null)
             }
+            // The automatic repair is background work: it may not spend mobile
+            // data even when the search that led here started on Wi-Fi.
+            if (!hqUpgradeAllowedNow(automatic, AppSettings.downloadsAllowedNow)) {
+                TrackLog.i(
+                    TAG,
+                    "download-check: waiting for an unmetered connection",
+                    song.videoId,
+                )
+                return@launch
+            }
             Downloads.enqueue(
                 context = context,
                 song = song,
-                allowMetered = true,
+                allowMetered = hqUpgradeAllowsMetered(automatic),
                 quality = fallbackQuality,
                 avoidSourceConfigId = wrongSource,
                 forceReplace = true,
@@ -487,6 +603,11 @@ object HqLibraryUpgrade {
                 automatic = automatic,
             )
         }
+        // The search is asynchronous: it may finish on a connection that no
+        // longer allows the download. Reporting QUEUED here would make the
+        // caller record a verdict the download never accepted; SEARCHING says
+        // only that the request itself was accepted and has started.
+        return UpgradeRequest.SEARCHING
     }
 
     private fun enqueueVerified(
@@ -494,11 +615,12 @@ object HqLibraryUpgrade {
         song: Song,
         entry: HqVerificationStore.Entry,
         automatic: Boolean,
+        allowMetered: Boolean,
     ) {
         Downloads.enqueue(
             context = context,
             song = song,
-            allowMetered = true,
+            allowMetered = allowMetered,
             quality = DownloadedQuality.qualityFor(entry.verified.tier),
             hq = HqDownloadSource(
                 sourceConfigId = entry.sourceConfigId,
@@ -579,36 +701,78 @@ object HqLibraryUpgrade {
         failure: DownloadFailure? = null,
     ) {
         if (!ready) return
+        if (synchronized(lock) { activeVideoId } != videoId) return
+        if (!success) {
+            settle(context, videoId, success = false, failure = failure)
+            return
+        }
         val target = synchronized(lock) {
             if (activeVideoId != videoId) return
-            plan.firstOrNull { it.target.videoId == videoId }?.target
+            plan.firstOrNull { it.target.videoId == videoId }
         }
         if (target == null) {
             // The plan was rebuilt (a new verdict arrived) while this download
             // was in flight. There is no pinned pair left to compare against,
             // so take the download's own answer and clear the active target.
-            settle(context, videoId, success, failure = failure)
+            settle(context, videoId, success = true, failure = failure)
             return
         }
         // "A file exists" is not this target's answer. The target asked for a
         // specific verified pair, and an ordinary download (or an adopted old
         // file) for the same id can finish first. Only the provenance written
-        // by that pair may settle it as done; otherwise keep the target and
-        // let the pass try again.
-        val applied = success && Downloads.hqApplied(
+        // by that pair — or a copy already at least as good — may settle it as
+        // done; otherwise keep the target and let the pass try again.
+        val applied = Downloads.hqApplied(
             videoId,
             HqDownloadSource(
-                sourceConfigId = target.sourceConfigId,
-                trackId = target.trackId,
-                tier = target.verifiedTier,
+                sourceConfigId = target.target.sourceConfigId,
+                trackId = target.target.trackId,
+                tier = target.target.verifiedTier,
             ),
         )
-        settle(
-            context,
-            videoId,
-            applied,
-            failure = failure ?: if (success && !applied) DownloadFailure(transient = true) else null,
+        val atLeastAsGood = hqSavedCopyAnswersTarget(
+            Downloads.savedMetadataFor(videoId),
+            target.target,
         )
+        if (!hqReplacementLanded(success, applied, atLeastAsGood)) {
+            // The listener's own download took the queue slot before the pass
+            // could. That is not a failed replacement: keep the target in the
+            // plan and ask again now that the slot is free, rather than
+            // deleting it and spending its retry budget. Settling it as a
+            // failure would make the replacement never land.
+            TrackLog.w(
+                TAG,
+                "hq-library: $videoId finished without the verified pair; keeping it for another attempt",
+            )
+            retryActive(context, videoId)
+            return
+        }
+        settle(context, videoId, success = true, failure = failure)
+    }
+
+    /**
+     * Clear [videoId] as the active target while leaving it in the plan.
+     *
+     * Used when a successful download did not carry the pass's pair and is not
+     * already at the target rung — usually because a user download of the same
+     * id won the queue slot. Nothing failed, so no failure is recorded and no
+     * retry is spent; the next worker asks for the same target again.
+     *
+     * @return true when [videoId] is still planned and needs another attempt.
+     */
+    internal fun releaseActiveKeepingPlan(videoId: String): Boolean = synchronized(lock) {
+        if (activeVideoId != videoId) return@synchronized false
+        activeVideoId = null
+        persistLocked()
+        publishLocked()
+        plan.any { it.target.videoId == videoId }
+    }
+
+    private fun retryActive(context: Context, videoId: String) {
+        val stillPlanned = releaseActiveKeepingPlan(videoId)
+        if (stillPlanned && runAllowed()) {
+            enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
+        }
     }
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {

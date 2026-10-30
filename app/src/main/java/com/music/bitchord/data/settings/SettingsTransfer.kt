@@ -309,21 +309,47 @@ object SettingsTransfer {
     /** Applies a preview that the listener has already seen. */
     suspend fun apply(preview: Preview): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
-            val settings = AppSettings.applyTransferablePrefs(preview.settings)
-            val sources = if (preview.sources.isEmpty()) {
-                0
-            } else {
-                SourceRegistry.replaceFromTransfer(preview.sources)
+            // Applying is three writes to three stores. None of them is
+            // expected to fail after [preview] accepted its values, but the
+            // promise to the listener is all-or-nothing: if a later section
+            // does fail, the earlier ones are put back from these snapshots
+            // instead of leaving one phone's theme with another phone's proxy.
+            val previousSettings = AppSettings.transferablePrefs()
+            val previousSources = if (preview.sourcesChanged) SourceRegistry.transferSnapshot() else null
+            val previousProxy = if (preview.proxyChanged) AppSettings.currentProxyConfig() else null
+            try {
+                AppSettings.applyTransferablePrefs(preview.settings)
+                // Replacing an identical list would rebuild every source and
+                // throw away their warmed caches (and, since a replacement
+                // invalidates HQ verdicts, every measured pair) for a file that
+                // changed only a theme. Apply the sections the preview actually
+                // reported.
+                val sources = if (!preview.sourcesChanged) {
+                    0
+                } else {
+                    SourceRegistry.replaceFromTransfer(preview.sources)
+                }
+                if (preview.proxyChanged) {
+                    preview.proxy?.let(AppSettings::setProxyConfig)
+                }
+                Summary(
+                    settings = preview.changedSettings.size,
+                    sources = sources,
+                    proxy = preview.proxyChanged,
+                    // The preview already counted every bad setting, source and
+                    // proxy field; apply only sees the values it accepted.
+                    skipped = preview.skipped,
+                )
+            } catch (failure: Throwable) {
+                // Restore every section unconditionally rather than tracking
+                // which call returned: a store can mutate its state and then
+                // throw, and a flag set after the return would skip its
+                // rollback. Putting an unchanged snapshot back is a no-op.
+                runCatching { previousProxy?.let(AppSettings::setProxyConfig) }
+                runCatching { previousSources?.let(SourceRegistry::replaceFromTransfer) }
+                runCatching { AppSettings.applyTransferablePrefs(previousSettings) }
+                throw failure
             }
-            preview.proxy?.let(AppSettings::setProxyConfig)
-            Summary(
-                settings = preview.changedSettings.size,
-                sources = if (preview.sourcesChanged) sources else 0,
-                proxy = preview.proxyChanged,
-                // The preview already counted every bad setting, source and
-                // proxy field; apply only sees the values it accepted.
-                skipped = preview.skipped,
-            )
         }
     }
 

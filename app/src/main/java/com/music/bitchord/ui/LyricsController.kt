@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Loading, provider selection and timing for the lyrics of the playing track.
@@ -55,9 +56,6 @@ class LyricsController(
 
     /** Measurements of one video while its lyrics are showing, at most — see [startTiming]. */
     private val MAX_MEASURE_ATTEMPTS = 10
-
-    /** How often to look whether more of a video has arrived to measure on. */
-    private val REMEASURE_CHECK_MS = 8_000L
 
     /** How long to keep looking — longer than any video worth measuring takes to arrive. */
     private val MEASURE_WINDOW_MS = 15 * 60_000L
@@ -158,7 +156,7 @@ class LyricsController(
      * from its downloaded file to the song stream, and the check of the old
      * recording must not stand for the new one.
      */
-    private var lyricsFor: Triple<String, String?, Set<LyricsSource>>? = null
+    private var lyricsFor: LyricsLoadKey? = null
 
     init {
         // Kept lyrics a background check has since bettered (word timing where
@@ -204,10 +202,13 @@ class LyricsController(
         } else {
             emptySet()
         }
-        val key = Triple(
-            videoId,
-            if (isVideo) null else LyricsTiming.audioSourceKey(videoId, localUri != null),
-            sources,
+        val key = LyricsLoadKey.of(
+            videoId = videoId,
+            isVideo = isVideo,
+            localUri = localUri,
+            sources = sources,
+            order = AppSettings.lyricsSourceOrder.value,
+            prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
         if (lyricsFor == key) return
         // The duration lands a beat after the track, and a database match needs
@@ -271,7 +272,24 @@ class LyricsController(
         // answer rather than making a request. Off by default: the bundle's
         // lyrics path is a post-ko-101 addition and must not reach this frame.
         if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(videoId)?.let { prepared ->
+            val preparedAudioSource = if (isVideo) {
+                null
+            } else {
+                LyricsTiming.audioSourceKey(videoId, localUri != null)
+            }
+            val preparedSubstituted = !isVideo && StreamChoice.isSubstitute(videoId)
+            NextPrepCache.get(
+                videoId,
+                localFile = localUri != null,
+                isVideo = isVideo,
+                lyricsSettings = NextPrepCache.settingsKey(
+                    sources = sources,
+                    order = AppSettings.lyricsSourceOrder.value,
+                    prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
+                ),
+                audioSource = preparedAudioSource,
+                substituted = preparedSubstituted,
+            )?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -415,7 +433,41 @@ class LyricsController(
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)
             _lyricsChecked.value = true
+            // A miss is not a final answer: a source may have been down or the
+            // phone offline. Forget the claim so a later look at the same
+            // track (a settings change, reopening the panel) asks again,
+            // instead of being dropped as a duplicate for the whole session.
+            if (selected == null) lyricsFor = null
         }
+    }
+
+    /**
+     * Asks the providers once more when the player reopens the lyrics panel
+     * after a transient miss. A found answer or a lookup still running is left
+     * alone, so this is a no-op in the ordinary case and never a poll.
+     */
+    fun retryLyricsIfMissed() {
+        val request = currentLyricsRequest ?: return
+        if (!LyricsRetry.shouldRetry(
+                checked = _lyricsChecked.value,
+                hasLyrics = !_lyrics.value.isNullOrEmpty(),
+                lookupClaimed = lyricsFor != null,
+                hasRequest = true,
+            )
+        ) return
+        TrackLog.d("BitChord", "cmd: lyrics retry after miss", about = request.videoId)
+        loadLyrics(
+            videoId = request.videoId,
+            title = request.title,
+            artist = request.artist,
+            durationMs = request.durationMs,
+            album = request.album,
+            localUri = request.localUri,
+            isVideo = request.isVideo,
+            alternatives = request.alternatives,
+            artistKnown = request.artistKnown,
+            artistAliases = request.artistAliases,
+        )
     }
 
     /**
@@ -692,7 +744,16 @@ class LyricsController(
             // track too long or short to decode inline has no Deepgram sound.
             aiAvailable = request != null && aiTimingAvailable(request, lines),
         )
-        if (!timed || request == null || lines == null) return
+        val hasRequest = request != null
+        if (!timed || !hasRequest || lines == null) {
+            TrackLog.d(
+                "BitChord",
+                "lyrics-timing: no timing pass timed=$timed request=$hasRequest " +
+                    "lines=${lines != null}",
+                request?.videoId,
+            )
+            return
+        }
         val generation = lyricsGeneration
         val context = app
         lyricsTimingJob = scope.launch {
@@ -728,7 +789,15 @@ class LyricsController(
                 // Event-driven only: the check runs because this file started
                 // playing, once per playback and one file at a time. A version
                 // already recorded makes it a cheap no-op.
-                if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
+            if (!adjustable || videoOwn || !cancelAi || substituted) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song pass skipped adjustable=$adjustable videoOwn=$videoOwn " +
+                        "cancelAi=$cancelAi substituted=$substituted",
+                    request.videoId,
+                )
+                return@launch
+            }
                 if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches) ||
                     !AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
                     !com.music.bitchord.data.lyrics.Deepgram.usable
@@ -784,6 +853,12 @@ class LyricsController(
             }
             if (request.isVideo || request.fileTimingForeign) {
                 if (!LyricsTiming.videoTimingMayRun(adjustable, measure, measureNow, cancelAi, substituted)) {
+                    TrackLog.d(
+                        "BitChord",
+                        "lyrics-timing: video pass skipped adjustable=$adjustable measure=$measure " +
+                            "measureNow=$measureNow cancelAi=$cancelAi substituted=$substituted",
+                        request.videoId,
+                    )
                     return@launch
                 }
                 // AI after the free measurement, not alongside it: each request
@@ -832,22 +907,21 @@ class LyricsController(
                 )
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
-                while (lyricsMeasurementAllowed(
-                        attempts = attempts,
-                        maxAttempts = MAX_MEASURE_ATTEMPTS,
-                        nowMs = System.currentTimeMillis(),
-                        giveUpAt = giveUpAt,
-                        measured = LyricsTiming.measured(context, request.videoId),
-                    )
-                ) {
+                suspend fun measureOnce(): Boolean {
+                    if (!lyricsMeasurementAllowed(
+                            attempts = attempts,
+                            maxAttempts = MAX_MEASURE_ATTEMPTS,
+                            nowMs = System.currentTimeMillis(),
+                            giveUpAt = giveUpAt,
+                            measured = LyricsTiming.measured(context, request.videoId),
+                        )
+                    ) return false
                     // LyricsTiming refuses to decode with the screen off, so an
                     // 8 s check there only wakes the process for a null. Wait
                     // for the screen-on event instead of polling; the wall-clock
                     // window still bounds how long this may wait.
                     if (!PowerState.screenOn) {
                         PowerState.screen.first { it }
-                        // The wait may have outlived the window; do not start a
-                        // measurement the documented cap excludes.
                         if (!lyricsMeasurementAllowed(
                                 attempts = attempts,
                                 maxAttempts = MAX_MEASURE_ATTEMPTS,
@@ -855,16 +929,30 @@ class LyricsController(
                                 giveUpAt = giveUpAt,
                                 measured = LyricsTiming.measured(context, request.videoId),
                             )
-                        ) break
+                        ) return false
                     }
-                    if (LyricsTiming.worthMeasuring(context, request.videoId)) {
-                        attempts++
-                        LyricsTiming.measure(context, video, names, request.durationMs)
-                        refreshTiming(generation, lines)
-                        autoAiIfNeeded(generation, lines)
-                        if (LyricsTiming.measured(context, request.videoId)) break
+                    if (!LyricsTiming.worthMeasuring(context, request.videoId)) return true
+                    attempts++
+                    LyricsTiming.measure(context, video, names, request.durationMs)
+                    refreshTiming(generation, lines)
+                    autoAiIfNeeded(generation, lines)
+                    return !LyricsTiming.measured(context, request.videoId)
+                }
+                if (measureOnce() && LocalTimingPolicy.measureWaitsForStream(video.localUri)) {
+                    // Event-driven: a stream open is the point where more of the
+                    // video's opening reaches disk. Wake on that, never on a
+                    // timer; a new track cancels this job. A local file is
+                    // already whole and never fires this event, so it does not
+                    // wait here: the AI fallback runs at once instead of after
+                    // the whole measure window.
+                    while (true) {
+                        val remaining = giveUpAt - System.currentTimeMillis()
+                        if (remaining <= 0L) break
+                        withTimeoutOrNull(remaining) {
+                            AudioCache.served.first { it == request.videoId }
+                        } ?: break
+                        if (!measureOnce()) break
                     }
-                    delay(REMEASURE_CHECK_MS)
                 }
                 if (!calibration && !LyricsTiming.measuredTiming(context, request.videoId)) {
                     aiAhead(context, request.videoId, lines)
@@ -882,7 +970,15 @@ class LyricsController(
             // [cancelAi] false is the AI button taking its answer back: the
             // listener asked for it to go, so the automatic check must not
             // buy it again on the way out.
-            if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
+            if (!adjustable || videoOwn || !cancelAi || substituted) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song check skipped adjustable=$adjustable videoOwn=$videoOwn " +
+                        "cancelAi=$cancelAi substituted=$substituted",
+                    request.videoId,
+                )
+                return@launch
+            }
             val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
             if (!LyricsAiGuard.songTimingWanted(
                     isVideo = request.isVideo,
@@ -892,10 +988,26 @@ class LyricsController(
                     artist = request.artist,
                     texts = sung.map { it.value.text },
                 )
-            ) return@launch
+            ) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song check skipped by its guard " +
+                        "video=${request.isVideo} timed=$timed sung=${sung.size}",
+                    request.videoId,
+                )
+                return@launch
+            }
             if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
                 !com.music.bitchord.data.lyrics.Deepgram.usable
-            ) return@launch
+            ) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song check skipped heavy=${AppSettings.heavyWorkAllowed} " +
+                        "ahead=${AppSettings.aiTimingAhead.value} deepgram=${com.music.bitchord.data.lyrics.Deepgram.usable}",
+                    request.videoId,
+                )
+                return@launch
+            }
             // Missing audio is not kept on disk (the next playback may have
             // it), so this session keeps it to one try per audio source rather
             // than one per lyrics delivery. A file-to-stream swap is a new

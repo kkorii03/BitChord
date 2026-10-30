@@ -174,6 +174,8 @@
     <string name="saved_to_youtube_music">Saved to YouTube Music</string>
     <string name="search">Search</string>
     <string name="search_empty">Search millions of songs on YouTube Music.</string>
+    <string name="search_filter_all">All</string>
+    <string name="search_filter_videos">Videos</string>
     <string name="search_top_result">Top result</string>
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
     <string name="search_no_results">No results for “%1$s”</string>

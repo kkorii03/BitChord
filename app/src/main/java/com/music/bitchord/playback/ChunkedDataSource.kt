@@ -561,6 +561,12 @@ class ChunkedDataSource(
                 )
                 if (!decision.retry) {
                     HqHostTracker.noteFailure(host)
+                    // A long Retry-After, or the retry budget spent, must not
+                    // leave the same URL in the resolver's cache: the playback
+                    // recovery re-opens this item in 350ms and would otherwise
+                    // be handed the exact URL the host just asked us to leave
+                    // alone.
+                    StreamResolver.onRateLimited(spec.uri.toString())
                     throw e
                 }
                 runCatching { upstream.close() }

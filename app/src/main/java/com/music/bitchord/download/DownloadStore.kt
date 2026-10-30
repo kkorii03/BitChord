@@ -152,6 +152,37 @@ object DownloadStore {
     /** Long enough for anything real, short of the 255-byte filename ceiling. */
     private const val MAX_STEM_CHARS = 120
 
+    /**
+     * A `.part` file older than this cannot belong to a live transfer.
+     *
+     * A download interrupted by a process death leaves its part file behind.
+     * The next attempt for the same name removes it, but a track never asked
+     * for again would keep it forever. This is checked when a download starts,
+     * not on a timer, and the age is deliberately far longer than any real
+     * transfer so four concurrent workers cannot delete each other's bytes.
+     */
+    private const val STALE_PART_MS = 24L * 60L * 60L * 1000L
+
+    /**
+     * Part files in [folder] that no live transfer can still own.
+     *
+     * Pure and internal so the age rule can be exercised without Android.
+     */
+    internal fun staleParts(
+        folder: File,
+        nowMs: Long,
+        olderThanMs: Long = STALE_PART_MS,
+    ): List<File> = folder.listFiles()
+        .orEmpty()
+        .filter { file ->
+            file.isFile &&
+                file.name.endsWith(".part") &&
+                nowMs - file.lastModified() >= olderThanMs
+        }
+
+    /** Whether a MediaStore publish actually changed the row it names. */
+    internal fun publishApplied(rowsUpdated: Int): Boolean = rowsUpdated > 0
+
     /** What a file of some codec is called and what the store is told it is. */
     class Storable(val extension: String, val mimeType: String)
 
@@ -348,12 +379,16 @@ object DownloadStore {
                 )
                 return Uri.fromFile(target)
             }
-            context.contentResolver.update(
+            val published = context.contentResolver.update(
                 uri,
                 ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
                 null,
                 null,
             )
+            // A row removed from under the transfer (the user cleared the
+            // folder, or the store reclaimed it) makes update() a no-op. The
+            // record must not be told a file exists at a uri that does not.
+            if (!publishApplied(published)) error("Could not publish $name")
             return uri
         }
 
@@ -375,6 +410,7 @@ object DownloadStore {
             val target = privateFile(context, name)
             val folder = target.parentFile ?: error("다운로드 폴더 없음")
             if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
+            staleParts(folder, System.currentTimeMillis()).forEach { it.delete() }
             val part = File(folder, ".$name.part")
             part.delete()
             return Pending(context, Uri.fromFile(target), name, part = part, target = target)
@@ -405,6 +441,7 @@ object DownloadStore {
         val target = legacyFile(name)
         val folder = target.parentFile ?: error("이 기기에 음악 폴더가 없습니다")
         if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
+        staleParts(folder, System.currentTimeMillis()).forEach { it.delete() }
         val part = File(folder, "$name.part")
         part.delete()
         return Pending(context, Uri.fromFile(target), name, part = part, target = target)

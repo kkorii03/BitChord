@@ -214,6 +214,25 @@ class AppSettingsImportValidationTest {
         assertEquals(true, hqAutomationDefault(existingInstall = false))
     }
 
+    @Test
+    fun `the advanced sync safety switches are validated as booleans too`() {
+        AppSettings.importPrefs(
+            mapOf(
+                "ko_sync_safety_next_prep" to "yes",
+                "ko_sync_safety_download_recheck" to 1,
+                "ko_sync_safety_hq_sync" to "true",
+            ),
+        )
+
+        listOf(
+            "ko_sync_safety_next_prep",
+            "ko_sync_safety_download_recheck",
+            "ko_sync_safety_hq_sync",
+        ).forEach { key ->
+            assertFalse("$key should have been dropped", preferences.values.containsKey(key))
+        }
+    }
+
     private fun field(name: String) =
         AppSettings::class.java.getDeclaredField(name).apply { isAccessible = true }
 

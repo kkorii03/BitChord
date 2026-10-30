@@ -22,6 +22,7 @@ import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.net.TYPEAHEAD_CACHE_ENTRIES
 import com.music.bitchord.data.net.TYPEAHEAD_DEBOUNCE_MS
+import com.music.bitchord.data.net.suggestionRows
 import com.music.bitchord.data.net.typeaheadCacheKey
 import com.music.bitchord.data.net.typeaheadLookupTarget
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
@@ -43,6 +44,7 @@ import com.music.bitchord.data.model.GENERIC_ACCOUNT_NAME
 import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
+import com.music.bitchord.data.model.detailListingState
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
@@ -353,6 +355,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var lastSearchAnonymous = true
 
     /**
+     * Committed searches run independently: a newer one never waits for an
+     * older request's network timeout, and one that is already superseded when
+     * it gets to run is skipped before it spends a round trip.
+     */
+    private val searchRequestPipeline = SearchRequestPipeline(viewModelScope) { newestRequestId.get() }
+
+    /**
      * Results of recent searches, so a query searched before is answered
      * without asking again. That covers the two ways a query is repeated most:
      * a filter tab, which re-runs the same text against a different tab and
@@ -436,6 +445,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Selects a provider from the player drawer — see [LyricsController.selectLyricsProvider]. */
     fun selectLyricsProvider(source: LyricsSource) = lyricsController.selectLyricsProvider(source)
+
+    /**
+     * Reopens the panel after a transient miss — see
+     * [LyricsController.retryLyricsIfMissed].
+     */
+    fun retryLyricsIfMissed() = lyricsController.retryLyricsIfMissed()
 
     /** The AI timing button — see [LyricsController.toggleAiLyricsTiming]. */
     fun toggleAiLyricsTiming() = lyricsController.toggleAiLyricsTiming()
@@ -2275,6 +2290,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The Library source answers from the device on every keystroke (see
         // [libraryResults]); YouTube's completions have nothing to add to it.
         if (_searchSource.value != SearchSource.YOUTUBE) return
+        // The field has already moved past the old answer. Keeping the old
+        // suggestion/media rows up until the 300ms lookup returns showed
+        // completions and songs for a different prefix — and if the lookup
+        // failed, they stayed under the new text indefinitely. The typed line
+        // is enough to mark the page as mid-edit until the answer arrives.
+        _suggestions.value = listOf(newValue)
+        _typeaheadResults.value = emptyList()
         // While typing, surface text completions — the pipeline already feeds
         // them through [suggestRequests] and publishes results via typeahead.
         suggestRequests.tryEmit(newValue)
@@ -2493,47 +2515,75 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
-            .collectLatest { request ->
-                val key = cacheKey(request.query, request.filter)
-                // Something to look at immediately: the exact answer if this
-                // query has been run before, otherwise the closest earlier
-                // one. Only fall back to a spinner with neither.
-                val exact = searchCache.get(key)
-                // A retry starts from the spinner rather than the stale page
-                // it is replacing; a normal lookup keeps the cached/prefix
-                // answer up while the network call runs.
-                val cached = if (request.forceNetwork) {
-                    null
-                } else {
-                    exact?.rows ?: prefixMatch(request.query, request.filter)
-                }
-                _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
-                // An explicit submit still has to reach the server even when
-                // an anonymous lookup cached the same query: that call is what
-                // records it in the account's history. A retry also bypasses
-                // the cache, or an empty cached page made it a no-op.
-                if (reuseCachedSearchPage(request.anonymous, request.forceNetwork, exact != null) && exact != null) {
-                    searchSession = SearchSession(key, request.requestId, request.filter, exact.continuation)
-                    return@collectLatest
-                }
+            // The collector only hands each request to its own job. Collecting
+            // rather than collectLatest keeps an in-flight socket alive, but
+            // doing the network call inside this collector serialized every
+            // committed search: a newer filter or query sat behind the older
+            // request's 20–30s timeout, and stale queued requests still spent
+            // a round trip. [SearchRequestPipeline] launches them independently
+            // and skips the ones already superseded before they reach the
+            // network. Typing goes through the debounced pipelines instead.
+            .collect { request ->
+                searchRequestPipeline.submit(request.requestId) { isCurrent ->
+                    val key = cacheKey(request.query, request.filter)
+                    // Something to look at immediately: the exact answer if this
+                    // query has been run before, otherwise the closest earlier
+                    // one. Only fall back to a spinner with neither.
+                    val exact = searchCache.get(key)
+                    // A retry starts from the spinner rather than the stale page
+                    // it is replacing; a normal lookup keeps the cached/prefix
+                    // answer up while the network call runs.
+                    val cached = if (request.forceNetwork) {
+                        null
+                    } else {
+                        exact?.rows ?: prefixMatch(request.query, request.filter)
+                    }
+                    if (isCurrent()) {
+                        _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
+                    }
+                    // An explicit submit still has to reach the server even when
+                    // an anonymous lookup cached the same query: that call is what
+                    // records it in the account's history. A retry also bypasses
+                    // the cache, or an empty cached page made it a no-op.
+                    if (reuseCachedSearchPage(
+                            request.anonymous,
+                            request.forceNetwork,
+                            exact != null,
+                        ) && exact != null
+                    ) {
+                        if (isCurrent()) {
+                            searchSession = SearchSession(
+                                key,
+                                request.requestId,
+                                request.filter,
+                                exact.continuation,
+                            )
+                        }
+                        return@submit
+                    }
 
-                // Search is YouTube's alone. A module is a *substitution*
-                // layer, not a catalogue to browse: it never has cover art,
-                // radio, related tracks or an album page, so its rows arrived
-                // in the results list looking like YouTube's and then behaved
-                // nothing like them. Every track found here takes the ordinary
-                // YouTube path and is handed to the module at playback time —
-                // see [SourceResolver.substituteForYouTube] — which upgrades
-                // the ones it holds without any of them having to be a
-                // separate row to pick between.
-                val result = YtMusicRepository.searchPage(request.query, request.filter, request.anonymous)
-                // A search that has been superseded shouldn't land on screen,
-                // whether it succeeded or failed.
-                if (request.requestId != newestRequestId.get()) return@collectLatest
-                _results.value = result.fold(
-                    onSuccess = { page -> published(page, key, request.requestId) },
-                    onFailure = { failure -> UiState.Error(failure.friendly()) },
-                )
+                    // Search is YouTube's alone. A module is a *substitution*
+                    // layer, not a catalogue to browse: it never has cover art,
+                    // radio, related tracks or an album page, so its rows arrived
+                    // in the results list looking like YouTube's and then behaved
+                    // nothing like them. Every track found here takes the ordinary
+                    // YouTube path and is handed to the module at playback time —
+                    // see [SourceResolver.substituteForYouTube] — which upgrades
+                    // the ones it holds without any of them having to be a
+                    // separate row to pick between.
+                    val result = YtMusicRepository.searchPage(
+                        request.query,
+                        request.filter,
+                        request.anonymous,
+                    )
+                    // A search that has been superseded shouldn't land on screen,
+                    // whether it succeeded or failed.
+                    if (!isCurrent()) return@submit
+                    _results.value = result.fold(
+                        onSuccess = { page -> published(page, key, request.requestId) },
+                        onFailure = { failure -> UiState.Error(failure.friendly()) },
+                    )
+                }
             }
     }
 
@@ -2606,8 +2656,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
                     return@collectLatest
                 }
-                val rows = listOf(target) +
-                    fetched.filterNot { it.equals(target, ignoreCase = true) }
+                val rows = suggestionRows(target, fetched)
                 synchronized(suggestionCache) { suggestionCache[key] = rows }
                 _suggestions.value = rows
             }
@@ -2797,6 +2846,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
             else -> fallback
         }
+
+        /**
+         * What [openDetail] should load a page as.
+         *
+         * A card that already says it is an artist is stronger evidence than
+         * its id's prefix. YouTube's library feed hands some artists a non-`UC`
+         * id that happens to start with an album or playlist prefix, and the
+         * prefix alone would send the page to the wrong loader (an album page
+         * with no tracks instead of the artist's shelves).
+         */
+        fun detailTypeFor(browseId: String, hint: BrowseType): BrowseType =
+            if (hint == BrowseType.ARTIST) BrowseType.ARTIST else browseTypeOf(browseId, hint)
     }
 
     /**
@@ -2857,7 +2918,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             openSpotifyPage(browseId, title, subtitle, thumbnailUrl)
             return
         }
-        val resolved = browseTypeOf(browseId, type)
+        val resolved = detailTypeFor(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -2947,11 +3008,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             // "No top songs" is not an empty artist page: the
                             // albums and singles shelves below are the page.
                             // Only a page with neither has nothing to show.
-                            if (page.songs.isEmpty() && page.sections.isEmpty()) {
-                                UiState.Error(text(R.string.no_tracks_here))
-                            } else {
-                                UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
-                            }
+                            detailListingState(
+                                songs = page.songs.withArtwork(thumbnailUrl ?: artwork),
+                                hiddenSongs = emptyList(),
+                                emptyMessage = text(R.string.no_tracks_here),
+                                hasShelves = page.sections.isNotEmpty(),
+                            )
                         },
                         onFailure = { UiState.Error(it.friendly()) },
                     )
@@ -2981,15 +3043,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 if (thumbnailUrl == null) artwork = header.thumbnailUrl
                             }
                             description = page.description
-                            if (page.songs.isEmpty()) {
-                                UiState.Error(text(R.string.no_tracks_here))
-                            } else {
-                                more = page.continuation
-                                suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
-                                hidden = page.hiddenSongs.withArtwork(thumbnailUrl ?: artwork)
-                                library = page.library
-                                UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
-                            }
+                            // A page whose only rows are videos (Liked Music's
+                            // hidden ones) is not an empty page: keep those rows
+                            // and let its reveal row be the way to them. Only a
+                            // page with neither tracks nor hidden videos is out
+                            // of content.
+                            more = page.continuation
+                            suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
+                            hidden = page.hiddenSongs.withArtwork(thumbnailUrl ?: artwork)
+                            library = page.library
+                            detailListingState(
+                                songs = page.songs.withArtwork(thumbnailUrl ?: artwork),
+                                hiddenSongs = hidden,
+                                emptyMessage = text(R.string.no_tracks_here),
+                            )
                         },
                         onFailure = { UiState.Error(it.friendly()) },
                     )
@@ -3265,7 +3332,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             delay(150)
             var next: String? = token
             while (next != null) {
-                val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: return@launch
+                val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: run {
+                    // A continuation that fails silently leaves the page
+                    // looking complete while it stopped mid-list. Leave a
+                    // trail; the next visit or tap re-reads from the token.
+                    TrackLog.w("BitChord", "detail: continuation failed for $browseId")
+                    return@launch
+                }
                 // Repository calls may finish after cancellation. Do not let
                 // an in-flight UI page append after the playback service has
                 // taken the continuation over.
@@ -3279,34 +3352,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 var progressed = false
                 val updated = stack.map { current ->
                     if (current.browseId != browseId) return@map current
-                    val existing = (current.songs as? UiState.Success)?.data ?: return@map current
-                    val known = existing.mapTo(HashSet()) { it.contextEntryKey() }
-                    val added = fetched.songs
-                        .filter { known.add(it.contextEntryKey()) }
-                        .withArtwork(artworkFallback)
-                    val knownVideoIds = (existing + added).mapTo(HashSet()) { it.videoId }
-                    // Suggestions can arrive on a later page than the real
-                    // tracks, once the playlist's own continuation runs dry —
-                    // see parsePlaylistShelf — so they're tracked separately
-                    // rather than folded into [known].
-                    val knownSuggested = current.suggestedSongs.mapTo(HashSet()) { it.videoId }
-                    val addedSuggested = fetched.suggested
-                        .filter { it.videoId !in knownVideoIds && knownSuggested.add(it.videoId) }
-                        .withArtwork(artworkFallback)
-                    // Liked Music's video rows can arrive on any page; they are
-                    // counted and revealed together with the first page's.
-                    val knownHidden = current.hiddenSongs.mapTo(HashSet()) { it.videoId }
-                    val addedHidden = fetched.hiddenSongs
-                        .filter { it.videoId !in knownVideoIds && knownHidden.add(it.videoId) }
-                        .withArtwork(artworkFallback)
-                    if (added.isEmpty() && addedSuggested.isEmpty() && addedHidden.isEmpty()) return@map current
+                    val merged = current.mergeDetailContinuation(
+                        newSongs = fetched.songs,
+                        newSuggested = fetched.suggested,
+                        newHiddenSongs = fetched.hiddenSongs,
+                        nextContinuation = fetched.continuation,
+                        artworkFallback = artworkFallback,
+                    ) ?: return@map current
                     progressed = true
-                    current.copy(
-                        songs = UiState.Success(existing + added),
-                        suggestedSongs = current.suggestedSongs + addedSuggested,
-                        hiddenSongs = current.hiddenSongs + addedHidden,
-                        continuation = fetched.continuation,
-                    )
+                    merged
                 }
                 // A page with nothing new for any copy means the feed has looped
                 // back rather than run dry with a token still attached.
@@ -3981,3 +4035,57 @@ internal fun historyPageState(songs: List<Song>): UiState<List<Song>> =
  */
 internal fun localMusicLoadState(current: UiState<List<Song>>): UiState<List<Song>> =
     if (current is UiState.Success) current else UiState.Loading
+
+/**
+ * One continuation page folded into an open detail page, or null when it adds
+ * nothing new (the feed looped back) or the page is still loading.
+ *
+ * An empty listing is not a dead end: Liked Music can answer its first page
+ * with no songs and no hidden videos, putting the page in the error/empty
+ * state, while the only hidden videos arrive on a continuation. Such a page is
+ * promoted to Success as soon as the continuation contributes rows, so those
+ * rows are not fetched and then thrown away.
+ */
+internal fun DetailPage.mergeDetailContinuation(
+    newSongs: List<Song>,
+    newSuggested: List<Song>,
+    newHiddenSongs: List<Song>,
+    nextContinuation: String?,
+    artworkFallback: String?,
+): DetailPage? {
+    val existing = when (val state = songs) {
+        is UiState.Success -> state.data
+        is UiState.Error -> emptyList()
+        UiState.Loading -> return null
+    }
+    val known = existing.mapTo(HashSet()) { it.contextEntryKey() }
+    val added = newSongs
+        .filter { known.add(it.contextEntryKey()) }
+        .withArtworkFallback(artworkFallback)
+    val knownVideoIds = (existing + added).mapTo(HashSet()) { it.videoId }
+    // Suggestions can arrive on a later page than the real tracks, once the
+    // playlist's own continuation runs dry — see parsePlaylistShelf — so they
+    // are tracked separately rather than folded into [known].
+    val knownSuggested = suggestedSongs.mapTo(HashSet()) { it.videoId }
+    val addedSuggested = newSuggested
+        .filter { it.videoId !in knownVideoIds && knownSuggested.add(it.videoId) }
+        .withArtworkFallback(artworkFallback)
+    // Liked Music's video rows can arrive on any page; they are counted and
+    // revealed together with the first page's.
+    val knownHidden = hiddenSongs.mapTo(HashSet()) { it.videoId }
+    val addedHidden = newHiddenSongs
+        .filter { it.videoId !in knownVideoIds && knownHidden.add(it.videoId) }
+        .withArtworkFallback(artworkFallback)
+    if (added.isEmpty() && addedSuggested.isEmpty() && addedHidden.isEmpty()) return null
+    return copy(
+        songs = UiState.Success(existing + added),
+        suggestedSongs = suggestedSongs + addedSuggested,
+        hiddenSongs = hiddenSongs + addedHidden,
+        continuation = nextContinuation,
+    )
+}
+
+private fun List<Song>.withArtworkFallback(fallback: String?): List<Song> {
+    if (fallback == null) return this
+    return map { if (it.thumbnailUrl == null) it.copy(thumbnailUrl = fallback) else it }
+}

@@ -9,6 +9,7 @@ import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.TrackLog
 import android.webkit.CookieManager
 import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
+import com.music.bitchord.data.innertube.potoken.PoTokenStore
 import com.music.bitchord.data.innertube.potoken.PoTokenWebView
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceResolver
@@ -51,6 +52,18 @@ object AndroidStreamHooks {
             )
         }
         StreamResolver.maxKbps = { AppSettings.effectiveAudioQuality.maxKbps }
+        // A rate-limited URL must leave the playback layer's pins too, not only
+        // the resolver's URL cache: otherwise the next open is handed the same
+        // paused URL from StreamChoice/QualityUpgrade without asking again.
+        StreamResolver.rateLimitedListener = { videoId, url ->
+            if (videoId != null) {
+                com.music.bitchord.playback.StreamChoice.forget(videoId)
+                com.music.bitchord.playback.QualityUpgrade.forget(videoId)
+            }
+            // A forced module upgrade has no YouTube id; match its URL instead.
+            com.music.bitchord.playback.StreamChoice.forgetUrl(url)
+            com.music.bitchord.playback.QualityUpgrade.forgetUrl(url)
+        }
         InnerTubeXResolver.debugLogging = BuildConfig.DEBUG
     }
 
@@ -60,6 +73,9 @@ object AndroidStreamHooks {
         "CanvasRepository", "AppleMusicCanvas", "CanvasArtworkPlayer",
     )
     private const val RELEASE_LINE_CHARS = 1_000
+
+    /** The whole minted PoToken record, read and written atomically. */
+    private const val KEY_POTOKEN_RECORD = "potoken_record"
 
     /** What `InnerTubeXResolver.init(context)` did when it lived in the app. */
     fun initInnerTubeX(context: Context) {
@@ -76,7 +92,19 @@ object AndroidStreamHooks {
         val poTokens = PoTokenGenerator(
             createMinter = { PoTokenWebView.getNewPoTokenGenerator(app) },
             available = { webViewSupported },
+            cacheStore = object : PoTokenStore {
+                // One key and one editor call: a process kill can leave the old
+                // record or the new one, never a session/video from one mint
+                // paired with tokens from another.
+                override fun read(): String? = prefs.getString(KEY_POTOKEN_RECORD, null)
+                override fun write(record: String) =
+                    prefs.edit().putString(KEY_POTOKEN_RECORD, record).apply()
+            },
         )
+        Innertube.initVisitorStore(object : Innertube.VisitorStore {
+            override fun getString(key: String): String? = prefs.getString(key, null)
+            override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+        })
         InnerTubeXResolver.init(
             filesDir = app.filesDir,
             store = object : InnerTubeXResolver.ConfigStore {

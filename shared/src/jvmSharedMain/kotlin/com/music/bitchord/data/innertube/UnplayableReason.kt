@@ -127,7 +127,25 @@ object UnplayableReason {
         "premium이 필요",
         "premium is required",
         "soundcloud go+",
+    )
+
+    /**
+     * The "sign in to prove you are not a bot" answer.
+     *
+     * Deliberately *not* in [definitive]: it is a property of the network the
+     * request left from, not of the recording. Treating it as a per-track
+     * verdict made every track in the queue look broken at once and the player
+     * skip through them, while the same track plays again the moment the
+     * challenge clears. Callers that must stop rather than skip ask
+     * [isBotChallenge] directly.
+     */
+    private val botChallenge = listOf(
         "sign in to confirm you are not a bot",
+        "sign in to confirm you're not a bot",
+        "confirm you are not a bot",
+        "confirm you're not a bot",
+        "not a bot",
+        "봇이 아님",
         "봇 확인",
     )
 
@@ -190,6 +208,11 @@ object UnplayableReason {
     fun fromMessage(message: String?): String? {
         val text = message?.trim().orEmpty()
         if (text.isEmpty()) return null
+        // A bot challenge can arrive as LOGIN_REQUIRED, whose marker would
+        // otherwise make it a definitive verdict before the challenge is even
+        // considered. It is a property of the network, so it is never a
+        // verdict about this recording.
+        if (isBotChallenge(text)) return null
         val lower = text.lowercase()
         if (trackSpecific.any { it in lower }) return text
         if (transient.any { it in lower }) return null
@@ -205,6 +228,49 @@ object UnplayableReason {
 
     /** Whether [message] is a definitive verdict about the recording. */
     fun isDefinitive(message: String?): Boolean = fromMessage(message) != null
+
+    /**
+     * Markers of a refusal the proxy may fix: a country gate, the Korea
+     * no-Premium gate, or the bot challenge. Deliberately narrower than
+     * [isDefinitive] — a takedown or a private upload is not helped by leaving
+     * from another address.
+     */
+    private val regionGate = listOf(
+        "not available in your country",
+        "이 국가에서는 이용할 수 없",
+        "youtubemusicpremiumcontent",
+        "youtube music premium",
+        "music premium",
+        "프리미엄",
+        "premium이 필요",
+        "premium is required",
+    )
+
+    /**
+     * Whether [message] names a refusal a proxy walk may answer.
+     *
+     * The bot challenge is included because it is the same kind of
+     * network-level answer. Used by the download path, which otherwise only
+     * tried the proxy for a bot exception and left a gated download failing
+     * even when a proxy was configured.
+     */
+    fun isRegionGate(message: String?): Boolean {
+        val lower = message?.trim()?.lowercase().orEmpty()
+        if (lower.isEmpty()) return false
+        if (isBotChallenge(lower)) return true
+        return regionGate.any { it in lower }
+    }
+
+    /**
+     * Whether [message] is YouTube's bot challenge rather than a verdict about
+     * the recording. A challenge is network-wide: it must not be remembered
+     * per videoId and must stop playback rather than walk the queue.
+     */
+    fun isBotChallenge(message: String?): Boolean {
+        val lower = message?.trim()?.lowercase().orEmpty()
+        if (lower.isEmpty()) return false
+        return botChallenge.any { it in lower }
+    }
 
     /**
      * Whether [message] names a property of the recording itself, rather than
@@ -225,6 +291,27 @@ object UnplayableReason {
      */
     fun keepTrackSpecific(existing: String?, incoming: String?): String? =
         if (isTrackSpecific(existing) && !isTrackSpecific(incoming)) existing else incoming
+
+    /**
+     * The reason to keep across a walk for the *proxy* decision: a region,
+     * Premium or bot answer must survive a later timeout, or the download path
+     * loses the one signal that earns its single proxy walk and the bot stop.
+     *
+     * [keepTrackSpecific] deliberately keeps only the claim/takedown set, which
+     * means a region refusal followed by a timed-out client used to be replaced
+     * by the timeout. A track-specific verdict still wins over a network
+     * answer, because it is the stronger fact about the recording; everything
+     * else only survives if the incoming one is weaker.
+     */
+    fun keepProxyWorthy(existing: String?, incoming: String?): String? {
+        if (existing == null) return incoming
+        if (incoming == null) return existing
+        if (isTrackSpecific(incoming)) return incoming
+        if (isTrackSpecific(existing)) return existing
+        if (isRegionGate(existing) && !isRegionGate(incoming)) return existing
+        if (isBotChallenge(existing) && !isBotChallenge(incoming)) return existing
+        return incoming
+    }
 
     /**
      * Whether [message] says the upload itself no longer exists, as opposed to

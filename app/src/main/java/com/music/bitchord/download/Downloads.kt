@@ -288,6 +288,14 @@ object Downloads {
 
     private val lock = Any()
 
+    /** The current work generation; the same revision [workRevision] exposes. */
+    internal fun workVersion(): Long = workRevision.value
+
+    /** Wake every waiting worker after [pending] or [running] changes. */
+    internal fun signalWork() {
+        wakeWorkers()
+    }
+
     /**
      * The tracks taken off the queue and not yet finished, to the job fetching
      * each — null in the gap between a worker claiming a track and its job
@@ -398,9 +406,9 @@ object Downloads {
      * @param from what release this track was asked for as part of, when it was
      *   one of many. Carried no further than [DownloadSession], which is the
      *   only thing that has to say *why* forty tracks are in the queue.
-     * @param allowMetered a replacement the listener asked for, or one the
-     *   automatic repair is doing: data is not the constraint, so the
-     *   Wi-Fi-only rule does not apply.
+     * @param allowMetered a replacement the listener asked for: data is not
+     *   the constraint, so the Wi-Fi-only rule does not apply. Automatic
+     *   repairs pass false and wait for a connection that allows downloads.
      * @param quality the rung this particular replacement should fetch, when it
      *   is a deliberate upgrade rather than the standing download setting. It
      *   stays with the track across a failed retry and is dropped once the
@@ -1124,6 +1132,10 @@ object Downloads {
      * [manual] is the banner tap, which is allowed to try again immediately.
      */
     suspend fun redownloadSuspected(context: Context, manual: Boolean = false): Int {
+        if (!mvRepairAllowsMetered(manual, AppSettings.downloadsAllowedNow)) {
+            Log.i(TAG, "mv-sound: waiting for an unmetered connection")
+            return 0
+        }
         val all = suspectedSongs(context)
         // The scan already refuses covers, but a verdict persisted by an older
         // build can still name one. Check again right before downloading: a
@@ -1145,7 +1157,7 @@ object Downloads {
             MvSoundRedownload.mayAttempt(context, song.videoId, now, manual)
         }
         retryable.forEach {
-            enqueue(context, it, allowMetered = true, mvSoundRepair = true)
+            enqueue(context, it, allowMetered = manual, mvSoundRepair = true)
         }
         return retryable.size
     }
