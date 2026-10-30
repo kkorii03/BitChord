@@ -29,3 +29,24 @@ fun typeaheadLookupTarget(
 
 /** The cache key for one input: surrounding space is not part of the question. */
 fun typeaheadCacheKey(input: String): String = input.trim()
+
+/**
+ * The rows the suggestion dropdown shows: the text as typed, then YouTube's
+ * completions without a repeat of it.
+ *
+ * Duplicates are removed because the rows become LazyColumn keys; two equal
+ * completions from the server used to crash the list with "Key … was already
+ * used". The typed text always stays first, so submitting exactly what is in
+ * the field is the nearest action even when the server names it back.
+ */
+fun suggestionRows(input: String, fetched: List<String>): List<String> =
+    (listOf(input) + fetched.filterNot { it.equals(input, ignoreCase = true) })
+        .distinctBy { it.lowercase() }
+
+/**
+ * Whether an answer still belongs on screen. A late response from an older
+ * search must never replace the newer one, but the request before it must also
+ * be allowed to finish rather than being cancelled mid-socket.
+ */
+fun isCurrentSearchResponse(requestId: Long, newestRequestId: Long): Boolean =
+    requestId == newestRequestId

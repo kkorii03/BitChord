@@ -157,7 +157,9 @@ import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.data.model.SearchHistoryAction
 import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.data.model.historyAction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -4027,6 +4029,13 @@ private fun BitChordApp(
                                 suggestions = searchSuggestions,
                                 typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                                 onSubmit = viewModel::submitSearch,
+                                onRetry = {
+                                    if (searchSource == SearchSource.LIBRARY) {
+                                        viewModel.loadLibrarySongs()
+                                    } else {
+                                        viewModel.submitSearch()
+                                    }
+                                },
                                 // Suggestions land in search history via searchFor → recordSearch.
                                 // History items (onHistoryClick) navigate/play without re-logging.
                                 onSuggestionClick = viewModel::searchFor,
@@ -4034,27 +4043,21 @@ private fun BitChordApp(
                                     // Tap a history entity: navigate to it or play it directly.
                                     // Do NOT recordEntity here — tapping an existing history item
                                     // must not update its timestamp and push it to the top.
-                                    when (entity.entityType) {
-                                        EntityType.TRACK -> {
-                                            // Play the track by its video id
-                                            playRadio(
-                                                com.music.bitchord.data.model.Song(
-                                                    videoId = entity.id,
-                                                    title = entity.title,
-                                                    artist = entity.subtitle,
-                                                    thumbnailUrl = entity.artworkUrl,
-                                                ),
-                                                QueueSource(entity.title, PlaybackSourceType.SEARCH),
-                                            )
-                                        }
-                                        EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST -> {
-                                            viewModel.openDetail(
-                                                browseId = entity.id,
-                                                title = entity.title,
-                                                subtitle = entity.subtitle,
-                                                thumbnailUrl = entity.artworkUrl,
-                                            )
-                                        }
+                                    when (val action = entity.historyAction()) {
+                                        is SearchHistoryAction.Play -> playRadio(
+                                            action.song,
+                                            QueueSource(entity.title, PlaybackSourceType.SEARCH),
+                                        )
+                                        is SearchHistoryAction.Open -> viewModel.openDetail(
+                                            browseId = action.browseId,
+                                            title = action.title,
+                                            subtitle = action.subtitle,
+                                            thumbnailUrl = action.artworkUrl,
+                                        )
+                                        // An old raw-query entry ("q:…") has no track behind
+                                        // it; run the words again instead of handing the player
+                                        // an id that cannot resolve.
+                                        is SearchHistoryAction.Search -> viewModel.searchFor(action.term)
                                     }
                                 },
                                 onHistoryRemove = viewModel::removeSearch,
