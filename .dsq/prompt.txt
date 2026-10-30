@@ -1,0 +1,16 @@
+﻿BitChord 저장소. 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지 작업). 기준 브랜치 task/fix-1030. 앱 코드는 수정하지 말 것(이번은 PC 분석 스크립트만).
+목표: scripts/featurehealth.py — 사용자가 앱 설정에서 내보낸 진단 로그(텍스트, 줄 형식 '2026-10-28 19:34:39.620 I/BitChord <내용>', 머리에 'version:'·'git:' 줄)를 읽어 '존재하지만 제대로 작동 안 하는 기능'을 성공률로 잡아내는 표를 출력. 사용법: python scripts/featurehealth.py <로그> [--since 'YYYY-MM-DD HH:MM'] [--md out.md]. 표: 기능 · 시도 · 성공 · 성공률 · 기준 · PASS/FAIL · 대표 실패 예 2개(시각+곡 제목). 파이썬 표준 라이브러리만.
+측정 항목(로그 줄 형식은 앱 코드에서 grep 으로 실제 형식을 확인하고 맞출 것 — 아래는 실제 로그 예):
+D1 다음 곡 준비: 'next-prep: <제목> version=<id> lyrics=<제공처|none> hq=<id|none> sync=<applied|skipped(...)> mix=<ready|none> in <ms>ms' → 단계별 성공률, lyrics!=none 인데 sync=skipped 비율, 시간 평균·최대. 기준: 가사 있는 곡 sync applied ≥80%.
+D2 무손실: 'hq-verify: ... -> accepted' 또는 'upgrade ahead: '<제목>' ready at FLAC' 뒤 같은 곡이 실제로 FLAC 재생됐는지 — 크로스페이드·재생 줄의 '[player-a:flac]'/'[player-b:opus]' 표기, 'DECODE ... flac', 'hq-swap: <id> done', 'already playing audio/flac from cache' 로 판정. 'kept for next play; no mid-song swap' 와 'manual upgrade unnecessary' 수 따로. 기준 ≥90%.
+D3 자동 재생: 'autoplay: +radio N +similar N +fav N (...)' 를 성공(합 >0), 'autoplay: dropped N cover/karaoke rows' 뒤 같은 초 안에 +radio 줄이 없으면 0곡 보충. 'play: -> ... reason=REPEAT' 인데 직전 'mode: repeat=off' 상태면 원치 않는 반복. 'video-radio: seed=.. mode=.. picked=N from=.. fallback=..' 도 집계(D4: mode=video 일 때 picked 와 from 분포).
+D5 노래 버전: 'track-summary: <id> '<제목>' video=<y|n> source=... resolve=... firstAudio=<ms|-> played=<s> lyrics=<..> sync=<none|measured|ai|refine..> shift=.. match=.. manualOffset=.. ended=<natural|skipped|error>' 에서 video=y 비율(제목에 커버/cover/clip 등 비디오 노래 표시가 있는 곡은 따로), 'song version: <id> -> <id> via ..' vs 'kept (none)'·'kept (timeout)'.
+D6 가사·싱크: track-summary 의 lyrics!=none 비율, lyrics!=none 중 sync!=none 비율.
+D7 자동 믹스: 'crossfade: start' / 'crossfade: skipped ... reason=' / 'crossfade: abort' / 'crossfade: end ... overlap=' 집계.
+D8 재생 시작: firstAudio 분포(중앙값, 3초 초과 비율), ended=error 수, 'failed to start after N attempts' 와 그 곡 'play:' 시각부터 다음 'play:' 까지 시간.
+D9 다운로드: 'download failed for <id>', 'hq-library: <id> did not land' (같은 id 반복 수), 'could not start the download service'.
+D10 백그라운드: 'lifecycle: process start' 뒤 10초 안에 'lifecycle: foreground' 가 없는 시작 수, 그 구간의 'InnerTubeX warmed'·네트워크 줄 수.
+D11 품질 표시: 'manual upgrade unnecessary' 또는 되돌리기 관련 줄 시각에 실제 재생 형식이 opus 인 경우.
+추가: 로그 머리의 version/git 표시, 기간, 재생 곡 수.
+테스트: scripts/test_featurehealth.py (python -m unittest) — 각 항목을 위 형식의 합성 로그 줄로 검사(실제 사용자 로그는 저장소에 넣지 말 것).
+제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 항목별 판정 방법 한 줄씩 / 테스트 결과 / 미해결 문제(로그만으로 판정 못 하는 것).
