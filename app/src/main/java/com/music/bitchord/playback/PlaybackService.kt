@@ -5968,10 +5968,6 @@ class PlaybackService : MediaLibraryService() {
 
         swappingMediaId = mediaId
         swapCutAt = SystemClock.elapsedRealtime()
-        NerdStats.onSourceStream(mediaId, stream.format, sourceName)
-        NerdStats.recordSource(mediaId, sourceName)
-        StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
-        QualityUpgrade.unshelve(mediaId)
 
         val fadeStart = SystemClock.elapsedRealtime()
         hqSwappingMediaId = mediaId
@@ -6017,6 +6013,14 @@ class PlaybackService : MediaLibraryService() {
                 releaseStandby()
                 return@withContext false
             }
+            // Recorded only once the swap is certain: every abort above leaves
+            // the YouTube stream playing, and the badge, the stream choice and
+            // the upgrade state must keep naming that stream, not a lossless
+            // copy that never became audible.
+            NerdStats.onSourceStream(mediaId, stream.format, sourceName)
+            NerdStats.recordSource(mediaId, sourceName)
+            StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
+            QualityUpgrade.unshelve(mediaId)
             val revertPosition = activePlayer.currentPosition.coerceAtLeast(0L)
             adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
             // The standby's decoder reported its format before the listener
