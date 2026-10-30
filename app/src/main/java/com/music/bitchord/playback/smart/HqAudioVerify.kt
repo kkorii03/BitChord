@@ -285,6 +285,7 @@ object HqAudioVerify {
         stream: SourceStream,
         manual: Boolean,
         recordRateLimit: Boolean,
+        onRateLimited: (() -> Unit)? = null,
     ): Outcome = withContext(Dispatchers.IO) {
         val epoch = playbackEpoch.get()
         if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable
@@ -386,6 +387,7 @@ object HqAudioVerify {
                     val candidate = when (val fetched = candidateDeferred.await()) {
                         is CandidateFetch.Ready -> fetched.value
                         is CandidateFetch.RateLimited -> {
+                            onRateLimited?.invoke()
                             if (recordRateLimit) {
                                 notePendingRateLimit(
                                     context,
@@ -531,8 +533,11 @@ object HqAudioVerify {
      * Re-asks every pending song whose host has finished resting.
      *
      * Called only from playback events and verification requests, never from a
-     * timer. One retry per song: the entry is removed before the attempt, so a
-     * second 429 leaves the song unmeasured instead of scheduling forever.
+     * timer. The entry is kept until an attempt is definitive: a verified
+     * answer, a measured mismatch or a second 429 ends the retry, while an
+     * abandoned read or another non-measurement leaves it for the next event.
+     * The host's rest is re-checked before every attempt because the previous
+     * song in this loop may have just been refused and rested it.
      */
     private fun retryPendingRateLimits(exceptYoutubeId: String? = null) {
         val due = pendingRateLimits.values.filter {
@@ -544,13 +549,19 @@ object HqAudioVerify {
         pendingRetryScope.launch {
             try {
                 for (pending in due) {
-                    if (!pendingRateLimits.remove(pending.youtubeId, pending)) continue
+                    // The snapshot above is one moment in time. A retry earlier
+                    // in this loop can have just got 429 and extended the host's
+                    // rest, so check again before asking the same server.
+                    if (HqHostTracker.restRemainingMs(pending.host) > 0L) continue
+                    // A concurrent success may already have answered this song.
+                    if (pendingRateLimits[pending.youtubeId] !== pending) continue
                     TrackLog.d(
                         TAG,
                         "decode: hq-verify retrying '${pending.target.title}' after host rest",
                         pending.youtubeId,
                     )
-                    try {
+                    var rateLimited = false
+                    val outcome = try {
                         verifyOutcome(
                             pending.context,
                             pending.youtubeId,
@@ -558,6 +569,7 @@ object HqAudioVerify {
                             pending.stream,
                             pending.manual,
                             recordRateLimit = false,
+                            onRateLimited = { rateLimited = true },
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -567,6 +579,16 @@ object HqAudioVerify {
                             "decode: hq-verify retry failed for ${pending.youtubeId}: ${failed.message}",
                             pending.youtubeId,
                         )
+                        null
+                    }
+                    // Only a definitive attempt consumes the one retry. An
+                    // abandoned read (the track changed) or any other
+                    // non-measurement must still get its chance after the rest.
+                    if (rateLimited ||
+                        outcome is Outcome.Verified ||
+                        outcome is Outcome.Mismatch
+                    ) {
+                        pendingRateLimits.remove(pending.youtubeId, pending)
                     }
                 }
             } finally {

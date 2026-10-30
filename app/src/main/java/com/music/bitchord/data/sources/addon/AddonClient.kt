@@ -355,7 +355,13 @@ class AddonClient(rawBaseUrl: String) {
                     // candidate choice avoids it.
                     HqRetryPolicy.isRateLimited(response.code) -> {
                         val header = response.header("Retry-After")
-                        HqHostTracker.noteRateLimited(HqHostTracker.hostOf(url), header, response.code)
+                        val host = HqHostTracker.hostOf(url)
+                        // The gate returns the escalated rest, which is longer
+                        // than this attempt's decision once the host has
+                        // refused repeatedly. Keep that figure: using the
+                        // un-escalated one made the next request arrive at the
+                        // same host after the base minute and extend the burst.
+                        val restMs = HqHostTracker.noteRateLimited(host, header, response.code)
                         val decision =
                             HqRetryPolicy.decide(header, attempt, System.currentTimeMillis())
                         if (!decision.retry) {
@@ -365,7 +371,7 @@ class AddonClient(rawBaseUrl: String) {
                             // the next request has to wait out that same rest
                             // instead of turning one refusal into a stream of
                             // them.
-                            quietUntilMs = System.currentTimeMillis() + decision.restMs
+                            quietUntilMs = System.currentTimeMillis() + restMs
                             throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
                         }
                         decision.waitMs

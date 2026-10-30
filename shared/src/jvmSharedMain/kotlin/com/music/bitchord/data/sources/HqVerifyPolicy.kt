@@ -134,8 +134,12 @@ object HqVerifyPolicy {
         hosts: List<String?>,
         isResting: (String?) -> Boolean,
     ): List<Int> {
-        val healthy = hosts.indices.filterNot { isResting(hosts[it]) }
-        val resting = hosts.indices.filter { isResting(hosts[it]) }
+        // One clock read per host. Asking twice could see a rest expire between
+        // the two filters, leaving that index in neither list and silently
+        // dropping a candidate that had already been taken out of the race.
+        val restingFlags = hosts.map(isResting)
+        val healthy = hosts.indices.filter { !restingFlags[it] }
+        val resting = hosts.indices.filter { restingFlags[it] }
         return healthy + resting
     }
 

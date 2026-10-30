@@ -155,6 +155,24 @@ class HqVerifyPolicyTest {
     }
 
     @Test
+    fun `each host's rest is read once so a candidate cannot fall between the lists`() {
+        // A clock-based predicate can flip between two reads. Evaluating it
+        // twice per host used to drop an index from both halves (or put it in
+        // both) when a rest expired mid-sort.
+        val reads = mutableMapOf<String?, Int>()
+        val order = HqVerifyPolicy.candidateOrder(
+            hosts = listOf("a.example", "b.example", null),
+            isResting = { host ->
+                val seen = reads[host] ?: 0
+                reads[host] = seen + 1
+                seen == 0
+            },
+        )
+        assertEquals(listOf(0, 1, 2), order)
+        assertEquals(listOf(1, 1, 1), listOf("a.example", "b.example", null).map { reads[it] })
+    }
+
+    @Test
     fun `a second rate limit stays unmeasured and is never a rejection`() {
         assertFalse(
             HqVerifyPolicy.retryCandidateDownload("1", attempt = 1, nowMs = 0L).retry,

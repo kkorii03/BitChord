@@ -1799,12 +1799,15 @@ object Downloads {
                 }
             }
             val work = suspend { transfer(context, song, plan) }
-            if (automatic && host != null) {
+            val fetched = if (automatic && host != null) {
                 HqAudioVerify.withCandidateHost(host) { work() }
             } else {
                 work()
             }
-            host?.let(HqHostTracker::noteSuccess)
+            // An adopted file made no request; calling that a success would
+            // clear the host's 429 streak and send the next attempt straight
+            // back into the edge that was still refusing.
+            if (fetched) host?.let(HqHostTracker::noteSuccess)
             completed = true
         } catch (e: CancellationException) {
             cancelled = true
@@ -1813,12 +1816,16 @@ object Downloads {
         } catch (e: Exception) {
             // A 429 is back-pressure, not a stack worth printing on every
             // automatic target; the one line says which host and when the
-            // pass will try again.
+            // pass will try again. A deferred automatic download is the same
+            // kind of news: the host is resting, nothing failed.
+            val deferred = e as? AutoDownloadDeferred
             val rateLimit = e.rateLimitCode()
-            if (rateLimit != null) {
-                Log.w(TAG, "download rate limited for $id: HTTP $rateLimit")
-            } else {
-                Log.w(TAG, "download failed for $id: ${e.message}", e)
+            when {
+                deferred != null ->
+                    Log.w(TAG, "download deferred for $id: host resting ${deferred.waitMs}ms")
+                rateLimit != null ->
+                    Log.w(TAG, "download rate limited for $id: HTTP $rateLimit")
+                else -> Log.w(TAG, "download failed for $id: ${e.message}", e)
             }
             if (automatic) {
                 failure = e.automaticFailure()
@@ -2062,7 +2069,7 @@ object Downloads {
      * commits or aborts, so a caller is free to call it a second time with a
      * freshly resolved plan without the first attempt leaving anything behind.
      */
-    private suspend fun transfer(context: Context, song: Song, plan: Prepared) {
+    private suspend fun transfer(context: Context, song: Song, plan: Prepared): Boolean {
         val id = song.videoId
         val track = plan.track
 
@@ -2073,7 +2080,7 @@ object Downloads {
             TranslationAhead.downloaded(context, track, uri.toString())
             DownloadSession.done(id)
             clear(id)
-            return
+            return false
         }
         val route = plan.route ?: error("다운로드할 항목이 없습니다")
 
@@ -2081,7 +2088,7 @@ object Downloads {
         var reservedName: String? = null
         var lyrics: Deferred<LyricsTag.Embeddable?>? = null
         var artwork: Deferred<MediaTagger.Artwork?>? = null
-        try {
+        return try {
             coroutineScope {
                 // Started before the transfer rather than after it, so four lyric
                 // services are being raced while the bytes are already moving. Done
@@ -2117,7 +2124,7 @@ object Downloads {
                     TranslationAhead.downloaded(context, track, alreadyThere.toString())
                     DownloadSession.done(id)
                     clear(id)
-                    return@coroutineScope
+                    return@coroutineScope false
                 }
                 val name = synchronized(lock) {
                     var candidate = DownloadStore.downloadFileName(
@@ -2191,7 +2198,7 @@ object Downloads {
                     DownloadSession.done(id)
                     clear(id)
                     Log.d(TAG, "saved offline ${if (manifest.dash) "DASH" else "HLS"} package for $name")
-                    return@coroutineScope
+                    return@coroutineScope true
                 }
 
                 val destination = DownloadStore.begin(context, name, route.mimeType)
@@ -2225,6 +2232,7 @@ object Downloads {
                 DownloadSession.done(id)
                 clear(id)
                 Log.d(TAG, "saved $name")
+                true
             }
         } catch (e: Throwable) {
             pending?.abort()
@@ -2539,20 +2547,15 @@ object Downloads {
 
     /**
      * A failure a user can read. The technical text an exception carries is
-     * logged here and replaced with one Korean sentence for the screen —
-     * `Unsupported MIME type audio/webm` belongs in the log, not in a row next
-     * to the song it stopped.
+     * replaced with one Korean sentence for the screen — `Unsupported MIME type
+     * audio/webm` belongs in the log, not in a row next to the song it stopped.
+     *
+     * [run] already logged this failure exactly once (rate limits and deferred
+     * hosts as a single line), so this must not log it again.
      */
-    private fun Exception.friendly(): String {
-        val rateLimit = rateLimitCode()
-        if (rateLimit != null) {
-            Log.w(TAG, "download rate limited: HTTP $rateLimit")
-        } else {
-            Log.w(TAG, "download failed: ${message.orEmpty()}", this)
-        }
-        return appContext?.let { FriendlyError.message(it, this) }
+    private fun Exception.friendly(): String =
+        appContext?.let { FriendlyError.message(it, this) }
             ?: "다운로드 실패 — 연결 상태를 확인하십시오"
-    }
 
     /** The 429/503 status behind this failure, when it is the server asking for time. */
     private fun Throwable.rateLimitCode(): Int? {
