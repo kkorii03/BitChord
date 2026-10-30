@@ -2983,6 +2983,9 @@ object AppSettings {
             KEY_SYLLABLE_DEFAULT_MIGRATED,
             KEY_LOCK_SCREEN_LYRICS,
             KEY_HIDDEN_EXPLORE_SEEDED_V1,
+            KEY_SYNC_SAFETY_NEXT_PREP,
+            KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
+            KEY_SYNC_SAFETY_HQ_SYNC,
             KEY_RESUME_ON_HEADPHONES,
             KEY_REPLAY_GENRES,
             KEY_FILTER_NON_MUSIC_AUDIO,
@@ -3543,11 +3546,23 @@ object AppSettings {
      * folder full of tracks that are not here; clearing it on import would leave
      * the files on disk with nothing pointing at them, which is worse — the
      * Downloads page would read as empty while the space stayed used.
+     *
+     * The same rule covers the other stores that share this file but do not
+     * describe a setting: the wrong-recording marks, the parked liked-download
+     * queue, the lock-screen page and the update-check bookkeeping. None of
+     * them can be re-fetched from another device, and a restore that cleared
+     * them would either lose a repair that had already been decided or make the
+     * next read throw on a value another file wrote under the same name.
      */
     private val DEVICE_LOCAL = setOf(
         "downloaded_tracks",
         "downloaded_tracks_metadata",
         "downloaded_collections",
+        "downloaded_mv_sound_suspects",
+        "liked_download_pending",
+        "lock_screen_lyrics_page",
+        "ko_update_checked_at",
+        "ko_upstream_notified_version",
         KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
         KEY_ONBOARDING_COMPLETE,

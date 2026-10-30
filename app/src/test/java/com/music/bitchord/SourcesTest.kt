@@ -621,6 +621,40 @@ class SourcesTest {
     }
 
     @Test
+    fun `an HQ verdict is invalidated only when its source is removed or re-pointed`() {
+        val original = SourceConfig(
+            id = "src",
+            kind = SourceKind.ADDON,
+            label = "A",
+            baseUrl = "https://a.example",
+        )
+        val cosmetic = original.copy(label = "B", enabled = false)
+
+        assertEquals(
+            emptySet<String>(),
+            SourceRegistry.rePointedSourceIds(listOf(original), listOf(cosmetic)),
+        )
+        assertEquals(
+            setOf("src"),
+            SourceRegistry.rePointedSourceIds(
+                listOf(original),
+                listOf(original.copy(baseUrl = "https://b.example")),
+            ),
+        )
+        assertEquals(
+            setOf("src"),
+            SourceRegistry.rePointedSourceIds(
+                listOf(original),
+                listOf(original.copy(kind = SourceKind.CUSTOM_MODULE)),
+            ),
+        )
+        assertEquals(
+            setOf("src"),
+            SourceRegistry.rePointedSourceIds(listOf(original), emptyList()),
+        )
+    }
+
+    @Test
     fun `the opt-in migration disables JioSaavn once for existing installs`() {
         val previouslyEnabled = SourceConfig(kind = SourceKind.JIOSAAVN, enabled = true)
 

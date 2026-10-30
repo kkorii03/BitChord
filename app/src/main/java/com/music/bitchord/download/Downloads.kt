@@ -289,7 +289,13 @@ object Downloads {
         // Three JSON maps that grow with the listener's Downloads folder. None
         // of them is needed for the first frame, so they are parsed on the
         // startup thread; a caller that gets here first runs [open] itself.
-        StartupWork.background("downloads") { open() }
+        // The abandoned-destination sweep runs before the queue can start: a
+        // `.part` or pending row from a process that died mid-download is not
+        // a file anything still owns.
+        StartupWork.background("downloads") {
+            DownloadStore.cleanupAbandoned(context)
+            open()
+        }
     }
 
     /**

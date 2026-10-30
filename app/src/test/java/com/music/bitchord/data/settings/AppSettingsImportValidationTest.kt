@@ -117,6 +117,34 @@ class AppSettingsImportValidationTest {
     }
 
     @Test
+    fun `a settings restore keeps records that belong to this device`() {
+        val local = mapOf<String, Any>(
+            "downloaded_mv_sound_suspects" to "{\"yt\":12000}",
+            "liked_download_pending" to "v1\nv2",
+            "lock_screen_lyrics_page" to 1,
+            "ko_update_checked_at" to 1_700_000_000_000L,
+            "ko_upstream_notified_version" to "1.8.0",
+            "downloaded_tracks" to "{\"yt\":\"file:///music/a.flac\"}",
+        )
+        local.forEach { (key, value) -> preferences.values[key] = value }
+
+        AppSettings.importPrefs(mapOf("theme_mode" to "LIGHT"))
+
+        local.forEach { (key, value) ->
+            assertEquals("$key belongs to this device", value, preferences.values[key])
+        }
+        assertEquals("LIGHT", preferences.values["theme_mode"])
+    }
+
+    @Test
+    fun `wrongly typed sync safety switches are dropped`() {
+        AppSettings.importPrefs(mapOf("ko_sync_safety_next_prep" to "yes"))
+
+        assertFalse(preferences.values.containsKey("ko_sync_safety_next_prep"))
+        assertEquals(false, AppSettings.syncSafetyNextPrep.value)
+    }
+
+    @Test
     fun `non-finite floats and unknown enum rungs are dropped`() {
         AppSettings.importPrefs(
             mapOf(

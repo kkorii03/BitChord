@@ -218,6 +218,47 @@ object DownloadStore {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { true } == true
     }.getOrDefault(false)
 
+    /**
+     * Removes half-written destinations left by a process death.
+     *
+     * [Pending] keeps an unfinished file out of sight — an `IS_PENDING` row on
+     * API 29+, a `.part` beside the final name below it — but nothing owns it
+     * once the process that was writing it is gone. The bytes stay on disk and,
+     * on the media-store path, the row stays invisible forever; a few
+     * interrupted replacements can quietly consume the space the next download
+     * needs. Called once from [Downloads.init], before any download can start,
+     * so every match is abandoned by definition.
+     */
+    fun cleanupAbandoned(context: Context) {
+        deleteAbandonedParts(File(context.filesDir, "downloads"))
+        deleteAbandonedParts(legacyFolder())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) clearPendingRows(context)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun clearPendingRows(context: Context) {
+        runCatching {
+            context.contentResolver.delete(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
+                    "${MediaStore.MediaColumns.IS_PENDING} = 1",
+                arrayOf("%$FOLDER%"),
+            )
+        }.onFailure {
+            Log.w(TAG, "could not clear abandoned pending downloads: ${it.message}")
+        }
+    }
+
+    /** Deletes the `.part` files this app leaves in [folder]; returns how many went. */
+    internal fun deleteAbandonedParts(folder: File): Int {
+        val files = folder.listFiles() ?: return 0
+        var removed = 0
+        for (file in files) {
+            if (file.isFile && file.name.endsWith(".part") && file.delete()) removed++
+        }
+        return removed
+    }
+
     fun delete(context: Context, uri: Uri): Boolean = runCatching {
         if (uri.scheme == "file") {
             uri.path?.let { path ->
@@ -334,10 +375,13 @@ object DownloadStore {
     }
 
     @Suppress("DEPRECATION")
-    private fun legacyFile(name: String) = File(
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), FOLDER),
-        name,
+    private fun legacyFolder() = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+        FOLDER,
     )
+
+    @Suppress("DEPRECATION")
+    private fun legacyFile(name: String) = File(legacyFolder(), name)
 
     private fun privateFile(context: Context, name: String) =
         File(File(context.filesDir, "downloads"), name)
