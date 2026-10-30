@@ -523,7 +523,10 @@ object AppSettings {
      * first frame; downloaded files are not re-checked and stored overrides
      * are ignored; a saved HQ offset/rate is not re-applied to lyrics.
      */
-    val syncSafetyNextPrep = MutableStateFlow(false)
+    // On by default since 10-31: with it off, next-track preparation never
+    // measured lyrics sync (sync=skipped 154 of 173 in the user's log), which
+    // the user explicitly wants done before the next song starts.
+    val syncSafetyNextPrep = MutableStateFlow(true)
     val syncSafetyDownloadRecheck = MutableStateFlow(false)
     val syncSafetyHqSync = MutableStateFlow(false)
 
@@ -1312,7 +1315,7 @@ object AppSettings {
         autoLyricsTiming.value = prefs.getBoolean(KEY_AUTO_LYRICS_TIMING, false)
         aiLyrics.value = prefs.getBoolean(KEY_AI_LYRICS, true)
         aiTimingAhead.value = prefs.getBoolean(KEY_AI_TIMING_AHEAD, true)
-        syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, false)
+        syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, true)
         syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
         syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
         paxSenixApiKey.value = authStore.secret(KEY_PAXSENIX_API_KEY).orEmpty()
