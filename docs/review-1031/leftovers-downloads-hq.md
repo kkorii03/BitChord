@@ -73,4 +73,16 @@
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과.
 - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.download.*' --console=plain -q` 통과 (106 tests).
 - `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.playback.*' --console=plain -q`에서 648개 중 1개 실패: `BluetoothAudioTrackerTest`의 기존 로케일 문자열(`System Managed` vs `시스템 관리`) 불일치로 이번 변경과 무관.
-</content>
+
+## 2차 검토(현재 브랜치 r2) — VERDICT: ISSUES 3
+
+| # | 지적 | 판정 | 근거 | 처리 |
+|---|---|---|---|---|
+| 63 | [신규 HIGH] `resumeAfterCancellation`이 취소된 target을 다시 골라 취소/전체취소 직후 같은 다운로드를 재시작 | 여전함→고침 | `download/HqLibraryUpgrade.kt:859-875,1080-1098`; `app/src/test/.../HqLibraryUpgradeSelectionTest.kt` | 다음 target 선택에서 취소된 id를 제외하는 `nextRunnableTargetLocked(..., excludedVideoId)` 추가; 취소 id만 남으면 hand-off하지 않고 계획은 다음 foreground/playback까지 보존. 제외 선택 테스트 2개 추가 |
+| 64 | [신규 MED] `onSpanRemoved`가 다른 키가 아직 완료인데도 media id를 완료 집합에서 지워 AI timing이 이후 재생에서 숨음 | 여전함→고침 | `playback/AudioCache.kt:803-819,849-856`; `app/src/test/.../AudioCacheCompletionRemovalTest.kt` | 제거된 키를 제외한 나머지 rendition 중 완료된 키가 있으면 media id를 유지하도록 재계산; 순수 판정 helper와 테스트 3개 추가 |
+| 65 | [신규 MED] mid-play recovery 성공 후 `currentHost`가 거부된 원래 호스트라 `close()`가 교체 호스트의 성공/throughput을 죽은 호스트에 기록 | 여전함→고침 | `playback/ChunkedDataSource.kt:297,340,410-422`; `app/src/test/.../ChunkedDataSourceRecoveryHostTest.kt` | 성공한 replacement URL의 호스트로 `currentHost`를 교체하고 byte accounting을 새 호스트 기준으로 초기화; 필드 전환 테스트 추가 |
+
+### 검증 (2차)
+
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.download.HqLibraryUpgradeSelectionTest' --tests 'com.music.bitchord.playback.AudioCacheCompletionRemovalTest' --tests 'com.music.bitchord.playback.ChunkedDataSourceRecoveryHostTest' --console=plain -q` 통과 (11 tests, 0 failures).

@@ -804,7 +804,18 @@ object AudioCache {
                 // The entry (or one of its spans) is gone; a later rebuild of
                 // the same key must be allowed to report completion again.
                 completedKeys.remove(key)
-                _completedRenditions.update { it - key.substringBefore('#') }
+                // Other renditions of the same media (the plain key, the
+                // alternate, an older quality) may still hold the whole file.
+                // Removing the media id just because this one key lost a span
+                // hid AI timing on later plays, and nothing re-added it.
+                val mediaId = key.substringBefore('#')
+                val stillComplete = completionSurvivesSpanRemoval(
+                    removedKey = key,
+                    remainingKeys = renditionKeysFor(mediaId),
+                ) { otherKey -> renditionFor(otherKey)?.isComplete == true }
+                _completedRenditions.update { current ->
+                    if (stillComplete) current + mediaId else current - mediaId
+                }
             }
 
             override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
@@ -825,6 +836,21 @@ object AudioCache {
                 TrackLog.w(TAG, "could not watch cache completion for $key: ${it.message}")
             }
     }
+
+    /**
+     * Whether losing [removedKey] still leaves another complete rendition of
+     * the same media.
+     *
+     * A media id has several cache keys (plain, subtitle, alternate qualities).
+     * Completion is a property of the media, not of whichever key happened to
+     * fire the removal, so the id may only be forgotten when no other key
+     * remains whole.
+     */
+    internal fun completionSurvivesSpanRemoval(
+        removedKey: String,
+        remainingKeys: List<String>,
+        isComplete: (String) -> Boolean,
+    ): Boolean = remainingKeys.any { it != removedKey && isComplete(it) }
 
     /**
      * Fires the media id each time the player (or a read-ahead) opens a stream

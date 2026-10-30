@@ -851,6 +851,10 @@ object HqLibraryUpgrade {
      * The cancelled target stays where it was; no failure is recorded. If it
      * was the only target left, the pass is finished rather than left claiming
      * to run with an empty plan.
+     *
+     * The cancelled id itself is skipped for this hand-off: selecting it again
+     * here re-enqueued the very download the listener had just stopped. It
+     * remains in the plan for the next foreground/playback pass.
      */
     private fun resumeAfterCancellation(context: Context, videoId: String) {
         if (!clearActiveTarget(videoId)) return
@@ -860,7 +864,7 @@ object HqLibraryUpgrade {
         val wait = synchronized(lock) {
             when {
                 plan.isEmpty() -> null
-                nextRunnableTargetLocked(now, downloaded) != null -> 0L
+                nextRunnableTargetLocked(now, downloaded, videoId) != null -> 0L
                 else -> nextParkedWaitLocked(now)
             }
         }
@@ -1069,18 +1073,28 @@ object HqLibraryUpgrade {
      * inside [AutomaticRetryPolicy]'s cooldown, so choosing `plan.first()` here
      * would immediately re-download it after a restart and defeat the cooldown.
      * All the same eligibility facts are applied as in [buildPlan].
+     *
+     * [excludedVideoId] lets a cancellation hand off to the next target without
+     * immediately selecting the one that was just stopped.
      */
     private fun nextRunnableTargetLocked(
         nowMs: Long,
         downloaded: Map<String, SavedSongMetadata>,
+    ): PendingTarget? = nextRunnableTargetLocked(nowMs, downloaded, null)
+
+    private fun nextRunnableTargetLocked(
+        nowMs: Long,
+        downloaded: Map<String, SavedSongMetadata>,
+        excludedVideoId: String?,
     ): PendingTarget? = plan.firstOrNull { pending ->
-        automaticTargetEligible(
-            pending.target.videoId,
-            pending.target.verifiedTier,
-            failures[failureKey(pending.target)],
-            nowMs,
-            downloaded,
-        )
+        pending.target.videoId != excludedVideoId &&
+            automaticTargetEligible(
+                pending.target.videoId,
+                pending.target.verifiedTier,
+                failures[failureKey(pending.target)],
+                nowMs,
+                downloaded,
+            )
     }
 
     /**

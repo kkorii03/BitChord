@@ -294,6 +294,7 @@ class ChunkedDataSource(
                     rangeBytes = minOf(chunkBytes, PlayerClient.rangeBytesFor(replacement.url))
                     val opened = openReplacement()
                     if (opened != null) {
+                        adoptRecoveredHost(replacement.url)
                         StreamResolver.rememberServed(refused.videoId, replacement.url)
                         StreamChoice.remember(
                             refused.videoId,
@@ -336,6 +337,7 @@ class ChunkedDataSource(
                     runBlocking { delay(StreamRefusalRecovery.backoffMs(state.sameUrlRetries)) }
                     val opened = openReplacement()
                     if (opened != null) {
+                        adoptRecoveredHost(currentUrl)
                         StreamResolver.rememberServed(refused.videoId, currentUrl)
                         StreamChoice.remember(
                             refused.videoId,
@@ -395,6 +397,21 @@ class ChunkedDataSource(
 
     /** The last exception [openReplacement] saw, for the recovery loop above. */
     private var lastOpenFailure: Exception? = null
+
+    /**
+     * Credits the rest of this open to the host that actually served the
+     * replacement.
+     *
+     * The original URL was refused, so [close] must not hand its replacement's
+     * throughput to the dead host. The bytes already read before the refusal
+     * stay with the refused host (which earned a failure, not credit), so the
+     * replacement's accounting starts fresh.
+     */
+    private fun adoptRecoveredHost(url: String) {
+        currentHost = HqHostTracker.hostOf(url)
+        openedAtMs = System.currentTimeMillis()
+        bytesRead = 0L
+    }
 
     /** Opens the chunk currently described by [baseSpec], or null on failure. */
     private fun openReplacement(): Long? {

@@ -121,6 +121,36 @@ class HqLibraryUpgradeSelectionTest {
         assertEquals(listOf("video-new"), merged.map(::videoIdOf))
     }
 
+    @Test
+    fun `a cancelled target is skipped when handing off to the next one`() {
+        planField.set(
+            HqLibraryUpgrade,
+            listOf(
+                newPendingTarget("video-cancelled"),
+                newPendingTarget("video-next"),
+            ),
+        )
+
+        val selected = nextRunnableSkipping(
+            nowMs = 1_001_000L,
+            excludedVideoId = "video-cancelled",
+        )
+
+        assertEquals("video-next", videoIdOf(selected))
+    }
+
+    @Test
+    fun `a plan with only the cancelled target has no hand-off target`() {
+        planField.set(HqLibraryUpgrade, listOf(newPendingTarget("video-cancelled")))
+
+        val selected = nextRunnableSkipping(
+            nowMs = 1_001_000L,
+            excludedVideoId = "video-cancelled",
+        )
+
+        assertEquals(null, selected)
+    }
+
     private fun nextRunnable(nowMs: Long): Any? {
         val method = HqLibraryUpgrade::class.java.getDeclaredMethod(
             "nextRunnableTargetLocked",
@@ -128,6 +158,21 @@ class HqLibraryUpgradeSelectionTest {
             Map::class.java,
         ).apply { isAccessible = true }
         return method.invoke(HqLibraryUpgrade, nowMs, emptyMap<String, SavedSongMetadata>())
+    }
+
+    private fun nextRunnableSkipping(nowMs: Long, excludedVideoId: String?): Any? {
+        val method = HqLibraryUpgrade::class.java.getDeclaredMethod(
+            "nextRunnableTargetLocked",
+            Long::class.javaPrimitiveType,
+            Map::class.java,
+            String::class.java,
+        ).apply { isAccessible = true }
+        return method.invoke(
+            HqLibraryUpgrade,
+            nowMs,
+            emptyMap<String, SavedSongMetadata>(),
+            excludedVideoId,
+        )
     }
 
     private fun nextParkedWait(nowMs: Long): Long? {
