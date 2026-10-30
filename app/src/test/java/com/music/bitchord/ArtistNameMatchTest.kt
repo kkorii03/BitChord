@@ -142,14 +142,13 @@ class ArtistNameMatchTest {
     }
 
     @Test
-    fun `a name in a script the canvas matcher cannot read is still readable here`() {
-        // The reason this has its own folding rather than reusing the canvas
-        // matcher's. That one reduces everything outside a-z0-9 to a space, so
-        // all four of these fold to the same empty string, and an exact-name
-        // check built on it would accept any of them for any of the others.
-        val empty = ""
+    fun `a name in another script stays readable in the canvas matcher`() {
+        // The canvas matcher now keeps the letters of every script rather than
+        // reducing everything outside a-z0-9 to a space. These must still stay
+        // distinct, because an exact-name check built on a matcher that folded
+        // them all to one empty string would accept any of them for any other.
         for (name in listOf("Мата", "Мета", "中島美嘉", "माता")) {
-            assertEquals("$name folds to nothing there", empty, name.normalizeForMatch())
+            assertTrue("$name folds to nothing there", name.normalizeForMatch().isNotEmpty())
         }
 
         assertNotEquals(normalizedArtistName("Мата"), normalizedArtistName("Мета"))
