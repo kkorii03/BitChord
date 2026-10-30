@@ -3,8 +3,10 @@ package com.music.bitchord.data.stats
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 /**
  * The schema-2 file has to survive its own round trip, and a schema-1 file
@@ -104,5 +106,28 @@ class BackupLibraryRoundTripTest {
         )
 
         Backup.validate(file)
+    }
+
+    @Test
+    fun `a backup within the cap is read whole`() {
+        val text = """{"app":"bitchord","version":2}"""
+
+        val read = Backup.readBackupText(
+            ByteArrayInputStream(text.toByteArray()),
+            maxBytes = text.length,
+        )
+
+        assertEquals(text, read)
+    }
+
+    @Test
+    fun `a backup larger than the cap is refused before it is decoded`() {
+        val input = ByteArrayInputStream(ByteArray(17))
+
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            Backup.readBackupText(input, maxBytes = 16)
+        }
+
+        assertEquals("백업 파일이 너무 큽니다", failure.message)
     }
 }

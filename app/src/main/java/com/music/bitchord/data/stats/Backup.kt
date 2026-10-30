@@ -10,6 +10,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
+import com.music.bitchord.data.settings.SettingsTransfer
 import com.music.bitchord.data.spotify.LocalPlaylist
 import com.music.bitchord.data.spotify.LocalPlaylistStore
 import com.music.bitchord.data.spotify.PlaylistImportMode
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.InputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -121,7 +123,7 @@ object Backup {
     ): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
-                ?.use { it.readBytes().decodeToString() }
+                ?.use { readBackupText(it) }
                 ?: error("파일을 열 수 없습니다")
             val file = decode(text)
             validate(file)
@@ -167,6 +169,18 @@ object Backup {
         runCatching { json.decodeFromString(BackupFile.serializer(), text) }
             .getOrElse { error("BitChord 백업 파일이 아닙니다") }
 
+    /**
+     * Reads an imported document up to [maxBytes], refusing it rather than
+     * growing the buffer without bound. A backup is much larger than a settings
+     * share — months of listening and every local playlist ride in it — so the
+     * ceiling is generous, but it still keeps a wrongly shared multi-gigabyte
+     * file from being read into memory just to discover it is not ours.
+     */
+    internal fun readBackupText(input: InputStream, maxBytes: Int = MAX_BACKUP_BYTES): String =
+        with(SettingsTransfer) {
+            input.readTextBounded(maxBytes, tooLargeMessage = "백업 파일이 너무 큽니다")
+        }
+
     /** Everything that can be checked before the first write. */
     internal fun validate(file: BackupFile) {
         require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
@@ -195,6 +209,9 @@ object Backup {
     )
 
     private const val APP_TAG = "bitchord"
+
+    /** A backup carries months of listening, so it needs more room than a settings share. */
+    private const val MAX_BACKUP_BYTES = 32 * 1024 * 1024
 
     /**
      * Bump when the shape below stops being readable by an older build. A file
