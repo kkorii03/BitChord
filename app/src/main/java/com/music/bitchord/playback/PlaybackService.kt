@@ -807,6 +807,19 @@ class PlaybackService : MediaLibraryService() {
     private var consecutiveErrorSkips = 0
 
     /**
+     * How many tracks in a row [skipPastUnplayable] has moved past — either a
+     * definitive refusal or an ordinary retry budget that ran out — reset the
+     * moment anything actually plays.
+     *
+     * A run of age-gated rows is worth walking through, but an entire queue
+     * that a stale cache or a broken search result has poisoned would otherwise
+     * be walked forever. The same bound as [consecutiveErrorSkips] is enough to
+     * clear any ordinary run while leaving the queue parked with a message when
+     * the whole list is dead. See [skipPastUnplayable].
+     */
+    private var consecutiveUnplayableSkips = 0
+
+    /**
      * The track whose playback failure has already been shown to the listener.
      *
      * One failed track raises its error several times on the way to being
@@ -1216,6 +1229,7 @@ class PlaybackService : MediaLibraryService() {
                 // say the queue is not simply unplayable end to end.
                 audibleMediaId = exoPlayer.currentMediaItem?.mediaId
                 consecutiveErrorSkips = 0
+                consecutiveUnplayableSkips = 0
                 // Sound is out, so the rows after this one can be prepared
                 // without competing with the current row's own lookup.
                 scheduleUpcomingSongVersions(exoPlayer)
@@ -1956,7 +1970,22 @@ class PlaybackService : MediaLibraryService() {
             // the end of the cached bytes. Deciding afresh each time is how
             // the middle of an MP4 ended up appended to a WebM. See
             // [StreamChoice].
-            StreamChoice.of(videoId)?.let { serving ->
+            StreamChoice.of(videoId) { stale ->
+                // The pin was dropped because its proxy route changed, not
+                // because its bytes were finished. Whatever this track's cache
+                // entry holds was written by [stale]'s rendition, and the
+                // resolve below is now free to choose another one; appending it
+                // would corrupt the file. A complete entry is never appended to,
+                // so it is kept rather than re-downloaded. Runs on the loader
+                // thread, which is where [AudioCache.discard] wants to be
+                // called from anyway.
+                AudioCache.discard(dataSpec.uri, keepComplete = true)
+                TrackLog.w(
+                    "BitChord",
+                    "discarded unfinished cache bytes for $videoId after its proxy route went stale",
+                    about = videoId,
+                )
+            }?.let { serving ->
                 // What the stream claims to be, restated on every open rather
                 // than only on the one that chose it.
                 //
@@ -4365,6 +4394,7 @@ class PlaybackService : MediaLibraryService() {
             // advance would leave every track looking like it never started.
             audibleMediaId = mediaItem?.mediaId
             consecutiveErrorSkips = 0
+            consecutiveUnplayableSkips = 0
             // The crossfaded track never reports playing, so its look-ahead
             // is scheduled here instead.
             scheduleUpcomingSongVersions(exoPlayer)
@@ -5334,8 +5364,10 @@ class PlaybackService : MediaLibraryService() {
      * leaves the error on the player, which is what puts a message on screen,
      * and leaves the queue where it was. The count only resets when something
      * actually plays, so a working track anywhere in a bad patch restores the
-     * full allowance. Verdicts are exempt: they are a statement about one track
-     * rather than a guess, and their skipping is behaviour that already works.
+     * full allowance. A verdict is a statement about one track rather than a
+     * guess, so it passes here unconditionally; [skipPastUnplayable] applies the
+     * same bound to the running total of verdict skips, which is what stops a
+     * queue whose every row is refused from being walked forever.
      */
     private fun skipReason(
         verdict: String?,
@@ -5379,21 +5411,41 @@ class PlaybackService : MediaLibraryService() {
     private fun skipPastUnplayable(mediaId: String, reason: String) {
         val exoPlayer = player ?: return
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
-        // Repeat-one reports the current row as the next one, so
-        // seekToNextMediaItem() would stay on the track that just failed and
-        // the verdict would loop: prepare, fail, "skip" to itself. Pick a
-        // genuinely different row instead, and stop when there is none.
-        val target = SkipTargetPolicy.targetAfterFailure(
-            currentIndex = exoPlayer.currentMediaItemIndex,
-            nextIndex = exoPlayer.nextMediaItemIndex,
-            itemCount = exoPlayer.mediaItemCount,
-            repeatOne = exoPlayer.repeatMode == Player.REPEAT_MODE_ONE,
-        )
-        if (target == SkipTargetPolicy.NO_TARGET) {
-            TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
+        // A run of blocked rows is worth walking, but a queue whose every row
+        // is refused (a stale search result, or a tag that poisoned the whole
+        // list) must not be walked forever: each skip spends a prepare and a
+        // resolver walk. The same allowance as a plain error is enough for any
+        // real run and leaves the queue visible when the list itself is dead.
+        if (consecutiveUnplayableSkips >= MAX_CONSECUTIVE_SKIPS) {
+            TrackLog.w(
+                "BitChord",
+                "$MAX_CONSECUTIVE_SKIPS tracks in a row were unplayable; " +
+                    "this is the queue, not the track — stopping here",
+                about = mediaId,
+            )
             reportPlaybackFailure(mediaId, R.string.playback_error)
             return
         }
+        // Repeat-one reports the current row as the next one, so
+        // seekToNextMediaItem() would stay on the track that just failed and
+        // the verdict would loop: prepare, fail, "skip" to itself. Pick a
+        // genuinely different recording instead, step over rows the resolver
+        // has already refused, and stop when there is none.
+        val mediaIds = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).mediaId }
+        val unplayable = mediaIds.filterTo(mutableSetOf()) { StreamResolver.isUnplayable(it) }
+        val target = SkipTargetPolicy.targetAfterFailure(
+            currentIndex = exoPlayer.currentMediaItemIndex,
+            nextIndex = exoPlayer.nextMediaItemIndex,
+            mediaIds = mediaIds,
+            unplayable = unplayable,
+            repeatOne = exoPlayer.repeatMode == Player.REPEAT_MODE_ONE,
+        )
+        if (target == SkipTargetPolicy.NO_TARGET) {
+            TrackLog.w("BitChord", "$reason — and no other playable track in the queue", about = mediaId)
+            reportPlaybackFailure(mediaId, R.string.playback_error)
+            return
+        }
+        consecutiveUnplayableSkips++
         TrackLog.w("BitChord", "$reason — skipping to the next track", about = mediaId)
         TrackLog.d("BitChord", "cmd: next from failure", about = mediaId)
         if (summarySong?.videoId == mediaId) summaryEndedOverride = "error"

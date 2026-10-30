@@ -72,13 +72,21 @@ object StreamChoice {
      * The stream already serving [videoId], or null if this is the first read
      * for it — or the last one was long enough ago that its URL is no longer
      * worth trusting.
+     *
+     * [onStale] is called with the old stream just before an unusable pin is
+     * dropped. A caller that owns a partially filled cache entry must discard
+     * it there: the pixels on disk were written by the old rendition, and the
+     * next resolve is now free to pick a different one. Without the discard,
+     * the middle of an MP4 is appended to a WebM — the same corruption
+     * [StreamContainer.sameRendition] prevents on the 403 recovery path.
      */
-    fun of(videoId: String): SourceStream? {
+    fun of(videoId: String, onStale: ((SourceStream) -> Unit)? = null): SourceStream? {
         val choice = chosen[videoId] ?: return null
         if (SystemClock.elapsedRealtime() - choice.at > TTL_MS ||
             ProxyPlayback.isStaleProxiedUrl(choice.stream.url)
         ) {
             chosen.remove(videoId)
+            onStale?.invoke(choice.stream)
             return null
         }
         return choice.stream

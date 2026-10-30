@@ -66,6 +66,18 @@ class ChunkedDataSource(
     private var openedAtMs = 0L
     private var bytesRead = 0L
 
+    /**
+     * Whether anything in this open failed. [close] used to report every
+     * transfer as a success, which let a host that answered 403 or timed out
+     * keep its place at the front of the candidate order while healthy hosts
+     * fell behind it. A truncated read and a refused range are both failures,
+     * and both reach [close] without throwing past it.
+     */
+    private var transferFailed = false
+
+    /** Set when a failure path already incremented the host's failure count. */
+    private var failureNoted = false
+
     /** Set when the request can't be improved on, and is simply forwarded. */
     private var passthrough = false
 
@@ -84,6 +96,8 @@ class ChunkedDataSource(
         currentHost = HqHostTracker.hostOf(dataSpec.uri.toString())
         openedAtMs = System.currentTimeMillis()
         bytesRead = 0L
+        transferFailed = false
+        failureNoted = false
 
         val total = dataSpec.uri.getQueryParameter("clen")?.toLongOrNull()
         if (total == null) {
@@ -104,7 +118,9 @@ class ChunkedDataSource(
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
-                    HqHostTracker.noteFailure(currentHost)
+                    transferFailed = true
+                    if (!failureNoted) HqHostTracker.noteFailure(currentHost)
+                    failureNoted = true
                     report(dataSpec, e)
                 }
                 throw e
@@ -137,6 +153,7 @@ class ChunkedDataSource(
             // the time this surfaces as a playback error. A cancelled read-ahead
             // arrives here too and means nothing ??see [AudioCache.prefetchQueue].
             if (e !is InterruptedIOException) {
+                transferFailed = true
                 TrackLog.w(
                     TAG,
                     "range $position-${position + length - 1} refused for " +
@@ -407,6 +424,7 @@ class ChunkedDataSource(
         // track, because `clen` already said how many bytes there are.
         val message = "truncated stream at $position ($bytesRemaining bytes missing)"
         TrackLog.w(TAG, "hq-stream: $message")
+        transferFailed = true
         throw IOException(message)
     }
 
@@ -424,12 +442,19 @@ class ChunkedDataSource(
     override fun close() {
         closeChunk()
         if (openedAtMs != 0L) {
-            HqHostTracker.noteTransfer(
-                currentHost,
-                bytesRead,
-                System.currentTimeMillis() - openedAtMs,
-                ok = true,
+            val outcome = TransferAccounting.outcome(
+                failed = transferFailed,
+                failureAlreadyNoted = failureNoted,
             )
+            if (outcome.recordSuccess) {
+                HqHostTracker.noteTransfer(
+                    currentHost,
+                    bytesRead,
+                    System.currentTimeMillis() - openedAtMs,
+                    ok = true,
+                )
+            }
+            if (outcome.noteFailure) HqHostTracker.noteFailure(currentHost)
         }
         baseSpec = null
         bytesRemaining = 0L
@@ -437,6 +462,8 @@ class ChunkedDataSource(
         currentHost = null
         openedAtMs = 0L
         bytesRead = 0L
+        transferFailed = false
+        failureNoted = false
     }
 
     /**
@@ -471,7 +498,9 @@ class ChunkedDataSource(
                         },
                 )
                 if (!decision.retry) {
+                    transferFailed = true
                     HqHostTracker.noteFailure(host)
+                    failureNoted = true
                     throw e
                 }
                 runCatching { upstream.close() }

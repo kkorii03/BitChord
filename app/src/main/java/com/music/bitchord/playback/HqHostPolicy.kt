@@ -270,6 +270,25 @@ internal object HqHostTracker {
     internal fun resetForTest() = gate.resetForTest()
 }
 
+/**
+ * What [ChunkedDataSource.close] should tell [HqHostTracker] about the open it
+ * is ending.
+ *
+ * A transfer that failed must never be recorded as a success: [HqHostGate.penalty]
+ * orders candidates by successes, failures and throughput, so a host that
+ * answered 403 or timed out would otherwise keep its place at the front while
+ * healthy hosts fell behind. A failure path that already called
+ * [HqHostTracker.noteFailure] is not counted twice.
+ */
+internal object TransferAccounting {
+
+    data class Outcome(val recordSuccess: Boolean, val noteFailure: Boolean)
+
+    fun outcome(failed: Boolean, failureAlreadyNoted: Boolean): Outcome =
+        if (failed) Outcome(recordSuccess = false, noteFailure = !failureAlreadyNoted)
+        else Outcome(recordSuccess = true, noteFailure = false)
+}
+
 /** One already-resolved candidate for continuing a track after its host refused it. */
 internal data class HqResumeCandidate(
     val sourceConfigId: String?,

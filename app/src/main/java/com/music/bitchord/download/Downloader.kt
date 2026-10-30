@@ -112,13 +112,25 @@ object Downloader {
                 if (reresolved) error("Download refused after ${position}B (HTTP ${response.code})")
                 reresolved = true
                 Log.w(TAG, "re-resolving $videoId after HTTP ${response.code} at $position")
-                url = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a).url
+                val replacement = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a)
                 // Resolving again re-runs the whole client walk, and a
                 // different client can answer with a different format. Resuming
                 // one stream into the middle of another produces a file that is
-                // the right length and unplayable, so a length that has moved
-                // is a failure rather than something to work around.
-                if (contentLength(url) != total) error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
+                // the right length and unplayable, so the container must stay
+                // the same as the one the destination was named for. Compare
+                // against the original stream, not the last replacement: two
+                // successive re-resolves could otherwise cancel out.
+                if (!StreamResolver.downloadResumeAllowed(stream, replacement)) {
+                    error("다운로드 중 스트림 형식이 바뀌었습니다 — 다시 시도하십시오")
+                }
+                // A container match is not enough on its own: the same container
+                // can still be a different rung with a different length, and a
+                // length that has moved is a failure rather than something to
+                // work around.
+                if (contentLength(replacement.url) != total) {
+                    error("다운로드 중 스트림이 바뀌었습니다 — 다시 시도하십시오")
+                }
+                url = replacement.url
                 continue
             }
 

@@ -149,4 +149,37 @@ class StreamChoiceTest {
             YouTubeProxy.update(ProxyConfig())
         }
     }
+
+    /**
+     * Dropping a stale pin is not enough: the bytes already on disk were
+     * written by the old rendition, and the next resolve may pick another one.
+     * The caller that owns the cache entry gets the old stream so it can throw
+     * the unfinished bytes away before they are appended to.
+     */
+    @Test
+    fun `a stale pin hands its old stream to the cache discard hook`() {
+        val id = "track-proxy-stale"
+        val url = "https://rr1.googlevideo.com/videoplayback?proxied=$id"
+        var staleUrl: String? = null
+        try {
+            YouTubeProxy.update(
+                ProxyConfig(
+                    mode = ProxyMode.HTTP,
+                    host = "proxy.example",
+                    port = 8080,
+                    scope = ProxyScope.MUSIC_ONLY,
+                ),
+            )
+            ProxyPlayback.markResolved(id, url)
+            StreamChoice.remember(id, SourceStream(url), substituted = false)
+
+            YouTubeProxy.update(ProxyConfig())
+
+            assertNull(StreamChoice.of(id) { staleUrl = it.url })
+            assertEquals(url, staleUrl)
+        } finally {
+            StreamChoice.forget(id)
+            YouTubeProxy.update(ProxyConfig())
+        }
+    }
 }

@@ -190,7 +190,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // first would restore it into the value about to be wiped.
             restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
                 ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
-            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+            // The session shell is fetched on the first foreground or first
+            // play, not here. A process woken in the background — by a restored
+            // queue or a download pass — has no screen and no track to show for
+            // the request, and [InnerTubeXResolver.ensureWarm] already pays it
+            // before the first resolution. See [AppForeground].
         }
         AppSettings.init(this, authStore)
         // After AppSettings, whose flows it feeds: the power-save switch and
@@ -227,6 +231,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // was woken in the background. The queue and the high-quality pass are
         // event-driven: this is the event that lets them continue.
         AppForeground.onForeground {
+            // A screen is actually there now, so the shell is worth fetching
+            // even if the listener never starts a track. Idempotent once the
+            // scope is in hand. See the session restore above.
+            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
             Downloads.onForeground(this)
             com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
             com.music.bitchord.download.HqLibraryUpgrade.onForeground(this)

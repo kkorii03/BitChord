@@ -272,6 +272,14 @@ object StreamResolver {
      */
     suspend fun resolve(videoId: String): String {
         init
+        // A verdict, not a failure: asking again cannot change the answer, so
+        // every caller after the first is told so without a request being sent.
+        // Checked before [recent], not after it: a URL remembered before the
+        // verdict is still a URL everyone has refused, and handing it back made
+        // the track take one more load-fail cycle before the verdict was read.
+        // See [rememberUnplayable] for why this is the fix for "stuck loading".
+        unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
+
         // The first playback request is the event that pays the cold warm-up.
         InnerTubeXResolver.ensureWarm()
 
@@ -294,11 +302,6 @@ object StreamResolver {
             }
             recent.remove(videoId)
         }
-
-        // A verdict, not a failure: asking again cannot change the answer, so
-        // every caller after the first is told so without a request being sent.
-        // See [rememberUnplayable] for why this is the fix for "stuck loading".
-        unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
 
         val stream = coalescedResolve(videoId)
 
@@ -1333,7 +1336,8 @@ object StreamResolver {
     /**
      * As [resolve], but for a file being kept rather than a stream being heard:
      * the best format the *download* setting allows, and no connection has a
-     * say. Opus-in-WebM is preferred for app-private downloads; exported files
+     * say. Opus-in-WebM is the preferred copy for an app-private download; an
+     * AAC-in-MP4 answer is kept when no Opus rendition exists. Exported files
      * require AAC-in-MP4 because Android's Music collection rejects WebM.
      *
      * Every adaptive audio format YouTube offers is either AAC in MP4 or Opus
@@ -1341,15 +1345,19 @@ object StreamResolver {
      * `audio/webm` — measured on-device as
      * `IllegalArgumentException: Unsupported MIME type audio/webm` out of
      * `ContentResolver.insert`, thrown before a single byte has been fetched.
-     * App-private storage has no such restriction, so it keeps Opus; an export
-     * asks for MP4 from the start instead of discovering the restriction when
-     * it creates the destination.
+     * App-private storage has no such restriction, so it asks for Opus first but
+     * keeps a usable MP4 when the track has no Opus rendition. That fallback is
+     * logged rather than silent: an InnerTubeX or extraction answer that comes
+     * back as MP4 must not be thrown away just because Opus would have been
+     * preferred, since doing so sent the download on to extraction, asked for a
+     * rendition the track may not have, and failed a track whose perfectly
+     * usable MP4 was already in hand. An export asks for MP4 from the start
+     * instead of discovering the restriction when it creates the destination,
+     * and never accepts another container.
      *
-     * There is no "best available" fallback below. A walk that takes another
-     * container can no longer fulfil the destination already chosen: WebM
-     * cannot be exported through the Music collection, and silently replacing
-     * a requested private Opus download with AAC changes its codec. Running out
-     * of the required ladder is therefore a failure with a sentence attached.
+     * Nothing below changes container mid-fetch: [Downloader.fetch] re-checks
+     * it on a re-resolve after a refusal, because splicing the middle of an MP4
+     * into a WebM file leaves a file of the right length that cannot be played.
      *
      * The container is asked of InnerTubeX up front rather than filtered out
      * of whatever it picks, because it answers with one format per ask: MP4
@@ -1395,15 +1403,28 @@ object StreamResolver {
      * Whether a download may keep [extension].
      *
      * Only an export to the system Music collection insists on AAC-in-MP4.
-     * An app-private download has always accepted either container — see
-     * [downloadStream]'s own allowed set — so an InnerTubeX answer that came
-     * back as MP4 must not be thrown away just because Opus would have been
-     * preferred. Doing so sent the download on to extraction, which was then
-     * asked for a rendition the track may not have, and failed a track whose
-     * perfectly usable MP4 was already in hand.
+     * An app-private download prefers Opus-in-WebM but accepts either
+     * container: an InnerTubeX answer that came back as MP4 is a usable copy
+     * when the track has no Opus rendition, and discarding it used to send the
+     * download on to extraction for a rendition that did not exist. This is the
+     * one rule used by both the initial resolve and the proxy walk.
      */
     internal fun downloadContainerAllowed(extension: String, requireM4a: Boolean): Boolean =
         if (requireM4a) extension == "m4a" else extension == "m4a" || extension == "webm"
+
+    /**
+     * Whether a re-resolved download may continue into the bytes already
+     * written.
+     *
+     * A refused URL is replaced by asking the same videoId again, and a
+     * different client or ladder rung can answer in the other container. The
+     * length check alone cannot see that: two renditions of one track often
+     * have the same total length, and appending MP4 bytes to a WebM file
+     * produces a file of exactly the right size that no extractor can read.
+     * So the container must match, not just the length.
+     */
+    fun downloadResumeAllowed(original: Stream, replacement: Stream): Boolean =
+        replacement.downloadExtension == original.downloadExtension
 
     private suspend fun downloadStream(videoId: String, maxKbps: Int, requireM4a: Boolean): Stream =
         withContext(TrackLog.about(videoId)) {
@@ -1440,6 +1461,9 @@ object StreamResolver {
                 ?.takeIf { downloadContainerAllowed(it.downloadExtension, requireM4a) }
             if (found != null) {
                 offered = true
+                if (!requireM4a && found.downloadExtension == "m4a") {
+                    TrackLog.i(TAG, "download $videoId: no Opus answer; keeping AAC-in-MP4")
+                }
                 if (found.kbps <= maxKbps) return@withContext found
                 TrackLog.d(TAG, "InnerTubeX's ${found.kbps}kbps is over the ${maxKbps}kbps download ceiling for $videoId")
             }
@@ -1522,10 +1546,13 @@ object StreamResolver {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: no stream")
             return null
         }
-        val wantedExtension = if (requireM4a) "m4a" else "webm"
+        val wantedExtension = if (requireM4a) "m4a" else "m4a or webm"
         if (!downloadContainerAllowed(found.downloadExtension, requireM4a)) {
             TrackLog.w(TAG, "proxy-playback: $videoId failed: ${found.mimeType} is not $wantedExtension")
             return null
+        }
+        if (!requireM4a && found.downloadExtension == "m4a") {
+            TrackLog.i(TAG, "proxy-playback: $videoId has no Opus answer; keeping AAC-in-MP4")
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
         val first = ProxyPlayback.markResolved(videoId, found.url)
