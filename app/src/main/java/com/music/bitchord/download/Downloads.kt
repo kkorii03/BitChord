@@ -288,6 +288,14 @@ object Downloads {
 
     private val lock = Any()
 
+    /** The current work generation; the same revision [workRevision] exposes. */
+    internal fun workVersion(): Long = workRevision.value
+
+    /** Wake every waiting worker after [pending] or [running] changes. */
+    internal fun signalWork() {
+        wakeWorkers()
+    }
+
     /**
      * The tracks taken off the queue and not yet finished, to the job fetching
      * each — null in the gap between a worker claiming a track and its job

@@ -69,6 +69,45 @@ internal fun hqUpgradeAllowedNow(automatic: Boolean, downloadsAllowedNow: Boolea
     !automatic || downloadsAllowedNow
 
 /**
+ * Whether a download's success is also proof that the pass's replacement
+ * landed.
+ *
+ * The queue refuses a second request for an id that is already queued or
+ * running, so a user download of the same song can finish while the pass is
+ * waiting on it. That download did not necessarily carry the verified pair;
+ * the record's own provenance is what says it did. A copy already at least as
+ * good as the verified rung is an answer too: replacing a hi-res file with the
+ * same hi-res file would be busywork, and the listener already has the quality
+ * the pass was trying to obtain.
+ */
+internal fun hqReplacementLanded(
+    downloadSucceeded: Boolean,
+    applied: Boolean,
+    atLeastAsGood: Boolean = false,
+): Boolean = downloadSucceeded && (applied || atLeastAsGood)
+
+/**
+ * Whether a saved download may answer [target] without its exact verified tier.
+ *
+ * "At least as good" is deliberately narrow. The fallback exists when the same
+ * verified recording was already saved on a higher rung, so its source and
+ * track still have to match the target. An ordinary download at the same badge
+ * does not prove which recording it is, a cache-only copy was never written to
+ * the library, and a file the health check marked [SavedSongMetadata.wrongRecording]
+ * must always be replaced. Anything else has to go back through the pass.
+ */
+internal fun hqSavedCopyAnswersTarget(
+    meta: SavedSongMetadata?,
+    target: HqLibraryTarget,
+): Boolean {
+    if (meta == null || meta.wrongRecording) return false
+    if (meta.hqSourceConfigId != target.sourceConfigId) return false
+    if (meta.hqTrackId != target.trackId) return false
+    val savedTier = DownloadedQuality.tierOf(meta.downloadFormat, meta.hqTier) ?: return false
+    return HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, target.verifiedTier)
+}
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -189,7 +228,9 @@ object HqLibraryUpgrade {
         meta: SavedSongMetadata?,
         verifiedTier: HqTier,
     ): Boolean {
-        val savedTier = meta?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
+        val savedTier = meta
+            ?.takeUnless { it.wrongRecording }
+            ?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
         if (HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, verifiedTier)) return true
         val cachedTier = if (AudioCache.hasCompleteLosslessCopy(videoId)) {
             HqTier.LOSSLESS_16
@@ -660,36 +701,78 @@ object HqLibraryUpgrade {
         failure: DownloadFailure? = null,
     ) {
         if (!ready) return
+        if (synchronized(lock) { activeVideoId } != videoId) return
+        if (!success) {
+            settle(context, videoId, success = false, failure = failure)
+            return
+        }
         val target = synchronized(lock) {
             if (activeVideoId != videoId) return
-            plan.firstOrNull { it.target.videoId == videoId }?.target
+            plan.firstOrNull { it.target.videoId == videoId }
         }
         if (target == null) {
             // The plan was rebuilt (a new verdict arrived) while this download
             // was in flight. There is no pinned pair left to compare against,
             // so take the download's own answer and clear the active target.
-            settle(context, videoId, success, failure = failure)
+            settle(context, videoId, success = true, failure = failure)
             return
         }
         // "A file exists" is not this target's answer. The target asked for a
         // specific verified pair, and an ordinary download (or an adopted old
         // file) for the same id can finish first. Only the provenance written
-        // by that pair may settle it as done; otherwise keep the target and
-        // let the pass try again.
-        val applied = success && Downloads.hqApplied(
+        // by that pair — or a copy already at least as good — may settle it as
+        // done; otherwise keep the target and let the pass try again.
+        val applied = Downloads.hqApplied(
             videoId,
             HqDownloadSource(
-                sourceConfigId = target.sourceConfigId,
-                trackId = target.trackId,
-                tier = target.verifiedTier,
+                sourceConfigId = target.target.sourceConfigId,
+                trackId = target.target.trackId,
+                tier = target.target.verifiedTier,
             ),
         )
-        settle(
-            context,
-            videoId,
-            applied,
-            failure = failure ?: if (success && !applied) DownloadFailure(transient = true) else null,
+        val atLeastAsGood = hqSavedCopyAnswersTarget(
+            Downloads.savedMetadataFor(videoId),
+            target.target,
         )
+        if (!hqReplacementLanded(success, applied, atLeastAsGood)) {
+            // The listener's own download took the queue slot before the pass
+            // could. That is not a failed replacement: keep the target in the
+            // plan and ask again now that the slot is free, rather than
+            // deleting it and spending its retry budget. Settling it as a
+            // failure would make the replacement never land.
+            TrackLog.w(
+                TAG,
+                "hq-library: $videoId finished without the verified pair; keeping it for another attempt",
+            )
+            retryActive(context, videoId)
+            return
+        }
+        settle(context, videoId, success = true, failure = failure)
+    }
+
+    /**
+     * Clear [videoId] as the active target while leaving it in the plan.
+     *
+     * Used when a successful download did not carry the pass's pair and is not
+     * already at the target rung — usually because a user download of the same
+     * id won the queue slot. Nothing failed, so no failure is recorded and no
+     * retry is spent; the next worker asks for the same target again.
+     *
+     * @return true when [videoId] is still planned and needs another attempt.
+     */
+    internal fun releaseActiveKeepingPlan(videoId: String): Boolean = synchronized(lock) {
+        if (activeVideoId != videoId) return@synchronized false
+        activeVideoId = null
+        persistLocked()
+        publishLocked()
+        plan.any { it.target.videoId == videoId }
+    }
+
+    private fun retryActive(context: Context, videoId: String) {
+        val stillPlanned = releaseActiveKeepingPlan(videoId)
+        if (stillPlanned && runAllowed()) {
+            enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
+        }
     }
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {
