@@ -83,23 +83,53 @@ object LyricsAiGuard {
     ): Boolean = !isVideo && timed && sungLines >= 3 && wantsDeepgram(title, artist, texts)
 
     /**
+     * The least number of usable (non-blank) lines an AI timing answer may
+     * move: [LyricsTiming.placeWithAi] returns null below this before any
+     * engine is asked, so an action offered on fewer lines can only end in
+     * `aiFailed`. Kept in step with `LyricsTiming.MIN_AI_LINES`.
+     */
+    const val MIN_AI_LINES = 3
+
+    /**
+     * The window a song's audio must fit to be sent inline to the engines,
+     * mirroring [com.music.bitchord.playback.smart.VideoAudio]'s decode:
+     * an inline request is capped at seven minutes, and a decode shorter than
+     * ten seconds is not enough to hear. An unknown (non-positive) length is
+     * not refused here — the player often learns it a beat after the track.
+     */
+    const val MAX_TIMING_AUDIO_MS = 7L * 60 * 1000
+    const val MIN_TIMING_AUDIO_MS = 10_000L
+
+    /** Whether [durationMs] is a length the inline audio path can decode. */
+    fun audioFitsInline(durationMs: Long): Boolean =
+        durationMs <= 0L || durationMs in MIN_TIMING_AUDIO_MS..MAX_TIMING_AUDIO_MS
+
+    /**
      * Whether a hand-asked timing has an engine that can answer for this song.
      *
-     * Deepgram is skipped for Korean and instrumental titles and cannot run
-     * without the song's audio on disk; Gemini can still fetch the video. A
-     * Deepgram-only setup therefore has nothing to ask when either skip
-     * applies, and offering the action would only end in `aiFailed`.
+     * No engine can move fewer than [MIN_AI_LINES] lines. Deepgram is skipped
+     * for Korean and instrumental titles and cannot run without the song's
+     * audio, nor for a track too long or too short to decode inline; Gemini can
+     * still fetch the video. A Deepgram-only setup therefore has nothing to ask
+     * when any of those applies, and offering the action would only end in
+     * `aiFailed`.
      */
     fun manualTimingAvailable(
         geminiUsable: Boolean,
         deepgramUsable: Boolean,
         audioAvailable: Boolean,
+        durationMs: Long,
         title: String,
         artist: String,
         lyricsTexts: List<String>,
-    ): Boolean =
-        geminiUsable ||
-            (deepgramUsable && audioAvailable && wantsDeepgram(title, artist, lyricsTexts))
+    ): Boolean {
+        if (lyricsTexts.count { it.isNotBlank() } < MIN_AI_LINES) return false
+        if (geminiUsable) return true
+        return deepgramUsable &&
+            audioAvailable &&
+            audioFitsInline(durationMs) &&
+            wantsDeepgram(title, artist, lyricsTexts)
+    }
 
     /** Korean when the name is written in Hangul or the words themselves are. */
     fun isKoreanSong(title: String, artist: String, lyricsTexts: List<String>): Boolean =

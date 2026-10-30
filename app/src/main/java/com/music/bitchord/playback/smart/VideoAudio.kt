@@ -75,15 +75,24 @@ object VideoAudio {
     }
 
     /**
-     * Whether [wav] already holds, or could return without waiting, the
-     * song's sound for [videoId] — the same two checks [wav] makes before it
-     * decodes. The AI timing action uses this to stay off when Deepgram is
-     * the only engine set up and there is nothing for it to hear.
+     * Whether [wav] can get this song's sound for [videoId] — now, or by
+     * waiting for the stream the player is already filling. The AI timing
+     * action uses this to stay off when Deepgram is the only engine set up
+     * and there is nothing for it to hear.
+     *
+     * A freshly streamed track is not whole for a while yet, but [wav] waits
+     * for a complete copy before it decodes, so a rendition that is merely in
+     * progress (the listener is playing it) is ready enough to offer the
+     * action. The same holds for a substitute's `#alt` entry: [wav]'s wait
+     * accepts its prefix ([AudioCache.awaitAnalysisHead]) and
+     * [VersionAudioAligner.renditionToMeasure] opens it once whole. Only when
+     * the cache holds nothing at all is there no sound to wait for here.
      */
     fun audioReadyForTiming(videoId: String): Boolean {
         synchronized(recent) { recent[videoId] }?.let { return true }
         if (!PowerState.screenOn) return false
-        return VersionAudioAligner.renditionToMeasure(videoId)?.isComplete == true
+        val watch = Uri.parse("bitchord://watch?v=$videoId")
+        return AudioCache.renditionsOf(watch).isNotEmpty()
     }
 
     /**

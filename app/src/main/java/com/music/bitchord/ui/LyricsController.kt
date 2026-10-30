@@ -667,11 +667,13 @@ class LyricsController(
             // after. Deepgram is skipped for Korean/instrumental titles and
             // needs the song's audio on disk, so a Deepgram-only setup has no
             // engine for those cases — offering the action would only end in
-            // aiFailed.
+            // aiFailed. No engine can move fewer than three sung lines, and a
+            // track too long or short to decode inline has no Deepgram sound.
             aiAvailable = LyricsAiGuard.manualTimingAvailable(
                 geminiUsable = LyricsTranslation.geminiKeyUsable,
                 deepgramUsable = com.music.bitchord.data.lyrics.Deepgram.usable,
                 audioAvailable = audioReady,
+                durationMs = request?.durationMs ?: 0L,
                 title = request?.title.orEmpty(),
                 artist = request?.artist.orEmpty(),
                 lyricsTexts = lines.orEmpty().map { it.text },
