@@ -895,7 +895,7 @@ object TrackMatcher {
         // A playlist row prints its position in front of the name ("3.여수밤바다",
         // "03 Ditto", "Track 3 - Song"). It is the listing's, not the song's,
         // and every catalogue search for it misses.
-        var text = LEADING_TRACK_NUMBER.replace(normalize(raw), "")
+        var text = LEADING_TRACK_NUMBER.replace(normalize(raw), "").removeOstSuffix()
         val altTexts = mutableListOf<String>()
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
@@ -1546,6 +1546,38 @@ object TrackMatcher {
      * credit before identity is compared.
      */
     private val TOPIC_CHANNEL_SUFFIX = Regex("""\s+-\s+topic$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Removes an "OST / soundtrack" tail so the dash pipeline only sees the
+     * real title. Must run on the lowercased text *after* track-number strip
+     * but *before* bracket processing (bracket content is handled separately).
+     */
+    private fun String.removeOstSuffix(): String {
+        val sepRegex = Regex("""\s+[-–—|]\s*""")
+        var lastCut = -1
+        // Find ALL separators whose tails look like OST metadata, then take
+        // the last one (preserves most title content between earlier separators)
+        val METADATA_OST = Regex(
+            """^.*?(?:ost\b|original\s+\bsoundtrack)\s*$""",
+            RegexOption.IGNORE_CASE,
+        )
+        for (sep in sepRegex.findAll(this)) {
+            val tail = this.substring(sep.range.last + 1)
+            if (METADATA_OST.containsMatchIn(tail.lowercase(Locale.ROOT))) {
+                lastCut = maxOf(lastCut, sep.range.first)
+            }
+        }
+        return if (lastCut >= 0) {
+            val trimmed = substring(0, lastCut).trim()
+            // If trimming left a "- Word(s)" fragment (artist part), strip it:
+            // e.g. "Cream - White Room" → keep only "White Room"
+            val trailWordDash = """[^\s]+[-–—][^\s]+\s*$""".toRegex()
+            trailWordDash.replace(trimmed, "").trim().takeIf { it.isNotEmpty() }
+                ?: trimmed
+        } else {
+            this
+        }
+    }
 
     /**
      * What makes a listing a different recording rather than a different
