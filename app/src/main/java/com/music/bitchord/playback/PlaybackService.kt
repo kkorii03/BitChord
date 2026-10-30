@@ -5762,6 +5762,7 @@ class PlaybackService : MediaLibraryService() {
     ) {
         if (!alternateLookups.add(mediaId)) return
         scope.launch(TrackLog.about(mediaId)) {
+            val startedAt = SystemClock.elapsedRealtime()
             try {
                 // A 403 in the middle of a track is not a verdict about the
                 // videoId: the URL expired or its client was refused. Ask for
@@ -5851,10 +5852,16 @@ class PlaybackService : MediaLibraryService() {
                             downloaded = downloaded,
                             unplayable = cached?.let { StreamResolver.isUnplayable(it.videoId) } == true,
                         )
-                        fromCache ?: if (!UnplayableAlternate.allowsSongVersion(song, downloaded)) {
+                        val budget = UnplayableAlternate.searchBudgetMs(
+                            elapsedMs = SystemClock.elapsedRealtime() - startedAt,
+                            budgetMs = DEFINITIVE_ALTERNATE_TIMEOUT_MS,
+                        )
+                        fromCache ?: if (!UnplayableAlternate.allowsSongVersion(song, downloaded) ||
+                            budget <= 0L
+                        ) {
                             null
                         } else {
-                            withTimeoutOrNull(DEFINITIVE_ALTERNATE_TIMEOUT_MS) {
+                            withTimeoutOrNull(budget) {
                                 YtMusicRepository.songVersion(song, beforeAudio = true)?.let { found ->
                                     UnplayableAlternate.cachedSongVersion(
                                         row = song,
@@ -5873,18 +5880,29 @@ class PlaybackService : MediaLibraryService() {
                     val live = this@PlaybackService.player ?: return@withContext
                     val currentItem = live.currentMediaItem ?: return@withContext
                     if (currentItem.mediaId != mediaId) return@withContext
+                    val elapsedMs = SystemClock.elapsedRealtime() - startedAt
                     val decision = UnplayableRecovery.decide(
                         definitive = true,
                         hasAlternate = alternate != null,
                     )
                     if (decision != UnplayableRecoveryAction.SWAP_ALTERNATE || alternate == null) {
                         TrackLog.w("BitChord", "unplayable: $mediaId $reason -> skip", about = mediaId)
+                        TrackLog.i(
+                            "BitChord",
+                            "unplayable timing: $mediaId skip after ${elapsedMs}ms",
+                            about = mediaId,
+                        )
                         skipPastUnplayable(mediaId, reason)
                         return@withContext
                     }
                     TrackLog.w(
                         "BitChord",
                         "unplayable: $mediaId $reason -> alt ${alternate.videoId}",
+                        about = mediaId,
+                    )
+                    TrackLog.i(
+                        "BitChord",
+                        "unplayable timing: $mediaId alt ${alternate.videoId} after ${elapsedMs}ms",
                         about = mediaId,
                     )
                     val wasPlaying = live.playWhenReady

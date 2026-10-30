@@ -106,4 +106,13 @@ class UnplayableAlternateTest {
             ),
         )
     }
+
+    @Test
+    fun `the replacement search never waits past its budget`() {
+        assertEquals(2_500L, UnplayableAlternate.searchBudgetMs(elapsedMs = 0L, budgetMs = 2_500L))
+        assertEquals(1_000L, UnplayableAlternate.searchBudgetMs(elapsedMs = 1_500L, budgetMs = 2_500L))
+        assertEquals(0L, UnplayableAlternate.searchBudgetMs(elapsedMs = 2_500L, budgetMs = 2_500L))
+        assertEquals(0L, UnplayableAlternate.searchBudgetMs(elapsedMs = 9_000L, budgetMs = 2_500L))
+        assertEquals(0L, UnplayableAlternate.searchBudgetMs(elapsedMs = -10L, budgetMs = 0L))
+    }
 }
