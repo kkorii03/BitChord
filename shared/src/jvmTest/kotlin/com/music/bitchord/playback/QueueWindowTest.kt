@@ -185,4 +185,117 @@ class QueueWindowTest {
             assertTrue(window.upcoming(10_000).all { it.cycleId == 0L })
         }
     }
+
+    @Test
+    fun anExcludedUpcomingRowIsSkippedAndStaysExcludedAfterRestore() {
+        val window = QueueWindow(6).startAt(1)
+
+        assertTrue(window.exclude(2))
+        assertFalse(window.exclude(2))
+        assertEquals(listOf(3, 4, 5), window.upcoming().map { it.canonicalIndex })
+        assertEquals(listOf(3, 4, 5), window.slice(window.cursor + 1, 5).map { it.canonicalIndex })
+        assertEquals(3, window.advanceAutomatically()!!.canonicalIndex)
+
+        val restored = QueueWindow.restore(window.snapshot())
+        assertEquals(listOf(4, 5), restored.upcoming().map { it.canonicalIndex })
+        assertFalse(restored.exclude(2))
+    }
+
+    @Test
+    fun reorderingUpcomingChangesOnlyTheRowsAfterTheCursor() {
+        val window = QueueWindow(6).startAt(1)
+
+        assertTrue(window.reorderUpcoming(listOf(5, 3, 4, 2)))
+        assertEquals(listOf(0, 1, 5, 3, 4, 2), window.order)
+        assertEquals(1, window.cursor)
+        assertEquals(1, window.currentCanonicalIndex)
+        assertEquals(listOf(5, 3, 4, 2), window.upcoming().map { it.canonicalIndex })
+
+        val restored = QueueWindow.restore(window.snapshot())
+        assertEquals(listOf(5, 3, 4, 2), restored.upcoming().map { it.canonicalIndex })
+    }
+
+    @Test
+    fun togglingShuffleOffRestoresTheListenersDraggedOrder() {
+        val window = QueueWindow(6).startAt(1)
+        assertTrue(window.reorderUpcoming(listOf(5, 3, 4, 2)))
+
+        window.setShuffle(true, shuffleSeed = 7L)
+        val restored = QueueWindow.restore(window.snapshot())
+        restored.setShuffle(false)
+
+        assertEquals(listOf(0, 1, 5, 3, 4, 2), restored.order)
+        assertEquals(1, restored.currentCanonicalIndex)
+        assertEquals(listOf(5, 3, 4, 2), restored.upcoming().map { it.canonicalIndex })
+
+        val live = QueueWindow.restore(window.snapshot())
+        live.setShuffle(false)
+        assertEquals(listOf(0, 1, 5, 3, 4, 2), live.order)
+    }
+
+    @Test
+    fun reorderingThePlannedNextCycleKeepsThePhysicalBoundaryPrefix() {
+        val window = QueueWindow(6).startAt(0)
+        repeat(5) { assertTrue(window.advanceAutomatically() != null) }
+        val nextCycle = window.cycleId + 1L
+
+        assertTrue(window.reorderPlannedCycle(nextCycle, listOf(4, 5, 2, 3, 0, 1)))
+
+        assertEquals(
+            listOf(4, 5, 2, 3, 0, 1),
+            window.upcoming(6, repeatAll = true)
+                .filter { it.cycleId == nextCycle }
+                .map { it.canonicalIndex },
+        )
+        val restored = QueueWindow.restore(window.snapshot())
+        assertEquals(
+            listOf(4, 5, 2, 3, 0, 1),
+            restored.upcoming(6, repeatAll = true)
+                .filter { it.cycleId == nextCycle }
+                .map { it.canonicalIndex },
+        )
+    }
+
+    @Test
+    fun deletingThePlayingRowRejectsItsNextCycleDuplicate() {
+        val window = QueueWindow(3).startAt(2)
+        val duplicate = window.upcoming(10, repeatAll = true)
+            .first { it.cycleId == 1L && it.canonicalIndex == 2 }
+
+        assertTrue(window.exclude(2))
+        assertFalse(window.commit(duplicate))
+        assertEquals(2, window.currentCanonicalIndex)
+        assertEquals(0L, window.cycleId)
+    }
+
+    @Test
+    fun reorderingAPlannedCycleRecomputesLaterPlannedCycles() {
+        val window = QueueWindow(3, shuffleSeed = 0L).startAt(0, shuffle = true)
+        val planned = window.upcoming(20, repeatAll = true)
+        val firstCycle = planned.filter { it.cycleId == 1L }.map { it.canonicalIndex }
+        val secondCycleBefore = planned.filter { it.cycleId == 2L }.map { it.canonicalIndex }
+
+        assertTrue(window.reorderPlannedCycle(1L, firstCycle.reversed()))
+
+        val after = window.upcoming(20, repeatAll = true)
+        val firstAfter = after.filter { it.cycleId == 1L }.map { it.canonicalIndex }
+        val secondAfter = after.filter { it.cycleId == 2L }.map { it.canonicalIndex }
+        assertEquals(firstCycle.reversed(), firstAfter)
+        assertNotEquals(secondCycleBefore, secondAfter)
+        assertNotEquals(firstAfter.last(), secondAfter.first())
+    }
+
+    @Test
+    fun deletingThePlayingRowIsDeferredUntilTheCursorMoves() {
+        val window = QueueWindow(3).startAt(2)
+
+        assertTrue(window.exclude(2))
+        assertFalse(window.isExcluded(2))
+        assertEquals(2, window.currentCanonicalIndex)
+        assertEquals(2, QueueWindow.restore(window.snapshot()).currentCanonicalIndex)
+
+        assertEquals(0, window.advanceAutomatically(repeatAll = true)!!.canonicalIndex)
+        assertTrue(window.isExcluded(2))
+        assertEquals(listOf(1), window.upcoming().map { it.canonicalIndex })
+    }
 }

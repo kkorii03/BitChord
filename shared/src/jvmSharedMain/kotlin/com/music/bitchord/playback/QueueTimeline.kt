@@ -58,6 +58,21 @@ object QueueTimeline {
         queueEntryId = queueEntryId ?: UUID.randomUUID().toString(),
     )
 
+    /**
+     * Converts a [Song] into a *new* queue row belonging to [tier].
+     *
+     * "Play next" and "Add to queue" can be asked for a song that is already in
+     * the queue — most often the one playing, through the player's own menu.
+     * [asQueueEntry] keeps that row's id by design, so reusing it here made two
+     * different rows share one identity: queue snapshots reject duplicate ids
+     * and shuffle/persistence can no longer tell the copies apart. A row the
+     * listener is adding is a new occurrence and gets a new id.
+     */
+    fun Song.asNewQueueEntry(tier: QueueTier): Song = copy(
+        queueTier = tier,
+        queueEntryId = UUID.randomUUID().toString(),
+    )
+
     private fun upcomingUserQueue(timeline: List<Song>, currentIndex: Int): List<Song> =
         if (currentIndex in timeline.indices) {
             timeline.subList(currentIndex + 1, timeline.size)

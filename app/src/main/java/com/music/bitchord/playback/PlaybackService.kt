@@ -2377,6 +2377,8 @@ class PlaybackService : MediaLibraryService() {
         cast = speakers,
         getSubtitle = { lastPublishedSubtitle },
         onUserAdvance = ::noteTasteSkip,
+        onBoundedRowsRemoved = ::noteBoundedContextRowsRemoved,
+        onBoundedRowsMoved = ::noteBoundedContextRowsMoved,
     )
 
     /**
@@ -3506,7 +3508,13 @@ class PlaybackService : MediaLibraryService() {
         val canonicalIndex = QueueShuffle.getCanonicalIndex(mediaItem) ?: return
         val cycle = mediaItem.contextCycleId
         if (cycle != null) {
-            window.commit(QueueWindowEntry(canonicalIndex, cycle))
+            if (!window.commit(QueueWindowEntry(canonicalIndex, cycle))) {
+                TrackLog.d(
+                    "BitChord",
+                    "queue: bounded commit ignored canonical=$canonicalIndex cycle=$cycle " +
+                        "active=${window.cycleId}",
+                )
+            }
         } else if (window.currentCanonicalIndex != canonicalIndex) {
             window.jumpTo(canonicalIndex)
         }
@@ -8707,6 +8715,137 @@ class PlaybackService : MediaLibraryService() {
         if (immediately) BoundedContextPersistence.saveImmediately(state) else BoundedContextPersistence.save(state)
     }
 
+    /**
+     * Removes rows from the logical bounded window when the listener deletes
+     * upcoming context entries.
+     *
+     * Without this the physical queue lost the row but the window kept it, so
+     * the next top-up compared a physical prefix against a logical one that
+     * still contained it and refused to refill — playback stopped after the
+     * materialised window even though the playlist had hundreds of tracks
+     * left. Excluding them also keeps a restart or a shuffle toggle from
+     * bringing the deleted rows back.
+     */
+    private fun noteBoundedContextRowsRemoved(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        if (ListenTogether.state.value.inParty) return
+        val window = boundedContextWindow ?: return
+        var changed = false
+        for (item in items) {
+            if (item.queueTier != QueueTier.CONTEXT) continue
+            val canonicalIndex = QueueShuffle.getCanonicalIndex(item) ?: continue
+            if (window.exclude(canonicalIndex)) changed = true
+        }
+        val exoPlayer = player
+        val pruned = if (exoPlayer == null) 0 else pruneExcludedBoundedRows(exoPlayer, window)
+        if (!changed && pruned == 0) return
+        TrackLog.d(
+            "BitChord",
+            "queue: bounded exclude n=${items.size} size=${window.canonicalSize}" +
+                if (pruned > 0) " dropped=$pruned" else "",
+        )
+        exoPlayer?.let(::saveBoundedContextSnapshot)
+    }
+
+    /**
+     * Remove already materialised CONTEXT rows whose canonical track is now
+     * blocked. Deleting the playing row at a repeat-all boundary is why this
+     * exists: its identical row in the next cycle is already in the player, so
+     * blocking only future top-ups would let the deleted track play again and
+     * leave the logical window unable to commit the physical current.
+     *
+     * Scans from the end so indexes ahead stay valid, and re-scans when the
+     * current row itself has to go (the player then advances to its successor).
+     * Event-driven: only called while handling a queue removal.
+     */
+    private fun pruneExcludedBoundedRows(exoPlayer: ExoPlayer, window: QueueWindow): Int {
+        var removed = 0
+        var passes = exoPlayer.mediaItemCount + 1
+        while (passes-- > 0 && exoPlayer.currentMediaItemIndex in 0 until exoPlayer.mediaItemCount) {
+            val current = exoPlayer.currentMediaItemIndex
+            val upcoming = (current + 1 until exoPlayer.mediaItemCount).mapNotNull { index ->
+                val item = exoPlayer.getMediaItemAt(index)
+                if (item.queueTier != QueueTier.CONTEXT) return@mapNotNull null
+                val canonical = QueueShuffle.getCanonicalIndex(item) ?: return@mapNotNull null
+                index to QueueWindowEntry(canonical, item.contextCycleId ?: window.cycleId)
+            }
+            val blocked = BoundedQueuePlanner
+                .excludedUpcomingEntries(upcoming.map { it.second }, window)
+                .toSet()
+            if (blocked.isNotEmpty()) {
+                for ((index, entry) in upcoming.asReversed()) {
+                    if (entry !in blocked) continue
+                    exoPlayer.removeMediaItem(index)
+                    removed += 1
+                }
+                continue
+            }
+            val currentCanonical = exoPlayer.currentMediaItem
+                ?.takeIf { it.queueTier == QueueTier.CONTEXT }
+                ?.let(QueueShuffle::getCanonicalIndex)
+            if (currentCanonical != null && window.isBlocked(currentCanonical)) {
+                exoPlayer.removeMediaItem(current)
+                removed += 1
+                continue
+            }
+            break
+        }
+        return removed
+    }
+
+    /**
+     * Teaches the logical window the order the listener dragged the materialised
+     * context rows into.
+     *
+     * A bounded top-up only appends when the physical prefix still matches the
+     * logical window; a drag used to leave those two orders different, so the
+     * window never refilled again. The window follows the player here rather
+     * than the other way around, because the drag is the listener's decision.
+     */
+    private fun noteBoundedContextRowsMoved() {
+        if (ListenTogether.state.value.inParty) return
+        val window = boundedContextWindow ?: return
+        val exoPlayer = player ?: return
+        val current = exoPlayer.currentMediaItemIndex
+        if (current !in 0 until exoPlayer.mediaItemCount) return
+        val rows = (current + 1 until exoPlayer.mediaItemCount)
+            .asSequence()
+            .map { exoPlayer.getMediaItemAt(it) }
+            .filter { it.queueTier == QueueTier.CONTEXT }
+            .mapNotNull { item ->
+                val canonical = QueueShuffle.getCanonicalIndex(item) ?: return@mapNotNull null
+                QueueWindowEntry(canonical, item.contextCycleId ?: window.cycleId)
+            }
+            .toList()
+        if (rows.isEmpty()) return
+        var changed = false
+        // Active-cycle rows move inside the live permutation. At a repeat-all
+        // boundary the materialised rows already belong to the planned next
+        // cycle, so teaching only the active order silently dropped the drag
+        // and the next top-up stalled on a mismatched physical prefix.
+        val activeOrder = rows.filter { it.cycleId == window.cycleId }.map { it.canonicalIndex }
+        if (activeOrder.isNotEmpty() && window.reorderUpcoming(activeOrder)) changed = true
+        rows.filter { it.cycleId != window.cycleId }
+            .groupBy { it.cycleId }
+            .forEach { (cycle, entries) ->
+                val order = entries.map { it.canonicalIndex }
+                if (window.reorderPlannedCycle(cycle, order)) changed = true
+            }
+        if (!changed) {
+            TrackLog.d(
+                "BitChord",
+                "queue: bounded reorder ignored n=${rows.size} cycles=${rows.map { it.cycleId }.toSet()} " +
+                    "active=${window.cycleId}",
+            )
+            return
+        }
+        TrackLog.d(
+            "BitChord",
+            "queue: bounded reorder n=${rows.size} size=${window.canonicalSize}",
+        )
+        saveBoundedContextSnapshot(exoPlayer)
+    }
+
     /** Drop every service-side reference that could resurrect the former queue. */
     private fun beginRadioQueue() {
         crossfade?.onSkipRequested()
@@ -11019,6 +11158,10 @@ class PlaybackService : MediaLibraryService() {
         private val getSubtitle: () -> String?,
         /** The listener moved off the current track through this surface — see [noteTasteSkip]. */
         private val onUserAdvance: (Player) -> Unit,
+        /** Upcoming rows the listener removed, so a bounded context forgets them too. */
+        private val onBoundedRowsRemoved: (List<MediaItem>) -> Unit,
+        /** The listener changed the upcoming order, so a bounded context follows it. */
+        private val onBoundedRowsMoved: () -> Unit,
     ) : ForwardingPlayer(player), CastSink {
 
         // The listeners registered through this wrapper, kept so the receiver's
@@ -11405,8 +11548,27 @@ class PlaybackService : MediaLibraryService() {
                 "BitChord",
                 "queue: remove n=1 at=$index size=${(wrappedPlayer.mediaItemCount - 1).coerceAtLeast(0)} by=ui",
             )
+            val valid = index in 0 until wrappedPlayer.mediaItemCount
+            val currentIndex = wrappedPlayer.currentMediaItemIndex
+            val removed = if (valid && index > currentIndex) {
+                listOf(wrappedPlayer.getMediaItemAt(index))
+            } else {
+                emptyList()
+            }
+            // Deleting the playing row is different: the row cannot leave the
+            // logical window until the player has moved off it, and the same
+            // canonical track may already be materialised in the next repeat
+            // cycle. Report it after the removal so the bounded handler can
+            // park the exclusion and drop that already-built duplicate too.
+            val removesCurrent = valid && index == currentIndex
+            val removedCurrent = if (removesCurrent) {
+                listOf(wrappedPlayer.getMediaItemAt(index))
+            } else {
+                emptyList()
+            }
             onUserIntent()
             super.removeMediaItem(index)
+            onBoundedRowsRemoved(removedCurrent + removed)
         }
 
         override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
@@ -11417,8 +11579,26 @@ class PlaybackService : MediaLibraryService() {
                 "queue: remove n=$n at=$fromIndex " +
                     "size=${(wrappedPlayer.mediaItemCount - n).coerceAtLeast(0)} by=ui",
             )
+            val from = fromIndex.coerceIn(0, wrappedPlayer.mediaItemCount)
+            val to = toIndex.coerceIn(0, wrappedPlayer.mediaItemCount)
+            val currentIndex = wrappedPlayer.currentMediaItemIndex
+            // Include the playing row when the range covers it: its exclusion
+            // is deferred inside QueueWindow until the successor is current.
+            val removesCurrent = currentIndex in from until to
+            val removedCurrent = if (removesCurrent) {
+                listOf(wrappedPlayer.getMediaItemAt(currentIndex))
+            } else {
+                emptyList()
+            }
+            val firstUpcoming = maxOf(from, currentIndex + 1)
+            val removedUpcoming = if (to > firstUpcoming) {
+                (firstUpcoming until to).map { wrappedPlayer.getMediaItemAt(it) }
+            } else {
+                emptyList()
+            }
             onUserIntent()
             super.removeMediaItems(fromIndex, toIndex)
+            onBoundedRowsRemoved(removedCurrent + removedUpcoming)
         }
 
         override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
@@ -11429,6 +11609,7 @@ class PlaybackService : MediaLibraryService() {
             )
             onUserIntent()
             super.moveMediaItem(currentIndex, newIndex)
+            onBoundedRowsMoved()
         }
 
         override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
@@ -11440,6 +11621,7 @@ class PlaybackService : MediaLibraryService() {
             )
             onUserIntent()
             super.moveMediaItems(fromIndex, toIndex, newIndex)
+            onBoundedRowsMoved()
         }
 
         override fun replaceMediaItems(

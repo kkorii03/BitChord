@@ -239,6 +239,82 @@ class BoundedQueuePlannerTest {
         }
     }
 
+    @Test
+    fun `a removed upcoming context row does not stall the next top up`() {
+        val window = QueueWindow(80).startAt(0)
+        val desired = window.upcoming(WINDOW_AHEAD, repeatAll = false)
+        val removed = desired[4]
+
+        assertTrue(window.exclude(removed.canonicalIndex))
+        val materialized = desired
+            .filterNot { it.canonicalIndex == removed.canonicalIndex }
+            .take(LOW_WATER - 1)
+
+        val additions = BoundedQueuePlanner.topUpEntries(window, materialized, repeatAll = false)
+
+        assertEquals(
+            window.upcoming(WINDOW_AHEAD, repeatAll = false).drop(materialized.size),
+            additions,
+        )
+        assertFalse(additions.any { it.canonicalIndex == removed.canonicalIndex })
+    }
+
+    @Test
+    fun `deleting the playing row also drops its materialised next-cycle copy`() {
+        val window = QueueWindow(3).startAt(2)
+        val nextCycle = window.upcoming(10, repeatAll = true)
+            .filter { it.cycleId == 1L }
+        val duplicate = nextCycle.first { it.canonicalIndex == 2 }
+
+        assertTrue(window.exclude(2))
+
+        assertEquals(
+            listOf(duplicate),
+            BoundedQueuePlanner.excludedUpcomingEntries(nextCycle, window),
+        )
+    }
+
+    @Test
+    fun `a reordered upcoming context tail still tops up in its new order`() {
+        val window = QueueWindow(80).startAt(0)
+        val desired = window.upcoming(WINDOW_AHEAD, repeatAll = false)
+        val moved = desired.take(5).reversed()
+
+        assertTrue(window.reorderUpcoming(moved.map { it.canonicalIndex }))
+        val materialized = moved + desired.drop(5).take(LOW_WATER - 1 - moved.size)
+
+        val additions = BoundedQueuePlanner.topUpEntries(window, materialized, repeatAll = false)
+
+        assertEquals(
+            window.upcoming(WINDOW_AHEAD, repeatAll = false).drop(materialized.size),
+            additions,
+        )
+        assertTrue(additions.isNotEmpty())
+    }
+
+    @Test
+    fun `a reordered next repeat cycle still tops up at the boundary`() {
+        val window = QueueWindow(30).startAt(27)
+        repeat(2) { assertTrue(window.advanceAutomatically() != null) }
+        val nextCycle = window.cycleId + 1L
+        val planned = window.upcoming(30, repeatAll = true)
+            .filter { it.cycleId == nextCycle }
+        val moved = planned.take(5).reversed()
+
+        assertTrue(window.reorderPlannedCycle(nextCycle, moved.map { it.canonicalIndex }))
+
+        val desired = BoundedQueuePlanner.physicalUpcoming(window, repeatAll = true)
+        assertEquals(
+            moved.map { it.canonicalIndex },
+            desired.take(moved.size).map { it.canonicalIndex },
+        )
+        val materialized = desired.take(LOW_WATER - 1)
+        val additions = BoundedQueuePlanner.topUpEntries(window, materialized, repeatAll = true)
+
+        assertEquals(desired.drop(materialized.size), additions)
+        assertTrue(additions.isNotEmpty())
+    }
+
     private fun traverse(window: QueueWindow): List<QueueWindowEntry> = buildList {
         add(requireNotNull(window.current))
         while (true) add(window.advanceAutomatically(false) ?: break)
