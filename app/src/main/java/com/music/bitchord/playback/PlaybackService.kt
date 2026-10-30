@@ -1061,6 +1061,17 @@ class PlaybackService : MediaLibraryService() {
      */
     private var pendingAutoplayAdvanceFor: String? = null
 
+    /**
+     * The item this refill actually appended. The timeline callback only
+     * advances when this exact id becomes the next item, so an unrelated
+     * queue edit (or a refill that appends nothing) cannot silently skip the
+     * failed track.
+     */
+    private var pendingAutoplayAdvanceTarget: String? = null
+
+    /** Identifies the newest refill so a cancelled load cannot clear its marker. */
+    private var autoplayRefillGeneration = 0
+
     /** Index in the live queue represented by entry zero of the persisted window. */
     private var persistedQueueStart = 0
 
@@ -1567,15 +1578,36 @@ class PlaybackService : MediaLibraryService() {
             pendingAutoplayAdvanceFor?.let { pending ->
                 if (exoPlayer.currentMediaItem?.mediaId != pending) {
                     pendingAutoplayAdvanceFor = null
-                } else if (exoPlayer.hasNextMediaItem()) {
-                    pendingAutoplayAdvanceFor = null
-                    TrackLog.w(
-                        "BitChord",
-                        "autoplay: refilled after $pending could not play; continuing",
-                        about = pending,
-                    )
-                    exoPlayer.seekToNextMediaItem()
-                    exoPlayer.prepare()
+                    pendingAutoplayAdvanceTarget = null
+                } else {
+                    val nextId = if (exoPlayer.hasNextMediaItem()) {
+                        exoPlayer.getMediaItemAt(exoPlayer.currentMediaItemIndex + 1).mediaId
+                    } else {
+                        null
+                    }
+                    val target = pendingAutoplayAdvanceTarget
+                    when {
+                        // Only the item this refill appended may move the
+                        // queue off the failed track.
+                        target != null && nextId == target -> {
+                            pendingAutoplayAdvanceFor = null
+                            pendingAutoplayAdvanceTarget = null
+                            TrackLog.w(
+                                "BitChord",
+                                "autoplay: refilled after $pending could not play; continuing",
+                                about = pending,
+                            )
+                            exoPlayer.seekToNextMediaItem()
+                            exoPlayer.prepare()
+                        }
+                        // A queue edit put something else next. That is the
+                        // listener's item, not the refill, so disarm rather
+                        // than skip over it.
+                        target != null && nextId != null -> {
+                            pendingAutoplayAdvanceFor = null
+                            pendingAutoplayAdvanceTarget = null
+                        }
+                    }
                 }
             }
             DiagnosticsState.queueSize = exoPlayer.mediaItemCount
@@ -3614,6 +3646,9 @@ class PlaybackService : MediaLibraryService() {
         if (autoplaySeed == current.videoId) return
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
+            val generation = ++autoplayRefillGeneration
+            var appended = false
+            try {
             var remaining = needed
             var emptyRefreshesRemaining = MAX_AUTOPLAY_EMPTY_REFRESHES
             while (isActive) {
@@ -3677,6 +3712,18 @@ class PlaybackService : MediaLibraryService() {
                             return@launch
                         }
                         autoplaySessionIds += resolved.map { it.videoId }
+                        // The server echo names what is now queued; advance only
+                        // onto the item it actually put next.
+                        val armed = pendingAutoplayAdvanceFor == current.videoId
+                        val partyNext = if (armed) {
+                            val now = ListenTogether.state.value
+                            partyUpcomingAfter(now.queue, now.playback, current.videoId)
+                                .firstOrNull()?.videoId
+                        } else {
+                            null
+                        }
+                        if (armed) pendingAutoplayAdvanceTarget = partyNext
+                        appended = !armed || partyNext != null
                     } else {
                         // The queue may have changed while the radio request
                         // was out — a station landing behind it is the usual
@@ -3691,7 +3738,11 @@ class PlaybackService : MediaLibraryService() {
                             .filterNot { song -> queuedNow.any { QueueBuilder.isSameRecording(it, song) } }
                             .take(room.coerceAtLeast(0))
                         if (fresh.isNotEmpty()) {
+                            if (pendingAutoplayAdvanceFor == current.videoId) {
+                                pendingAutoplayAdvanceTarget = fresh.first().videoId
+                            }
                             latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
+                            appended = true
                             autoplaySessionIds += fresh.map { it.videoId }
                             TrackLog.i(
                                 "BitChord",
@@ -3716,6 +3767,19 @@ class PlaybackService : MediaLibraryService() {
                 if (emptyRefreshesRemaining-- <= 0) return@launch
                 delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
                 remaining = MAX_QUEUED_AUTOPLAY
+            }
+            } finally {
+                // A refill that appended nothing must not leave the failed
+                // track armed: any later queue edit would then look like the
+                // promised next item. Only the newest load may disarm it, so
+                // a cancelled one cannot clear a fresh refill's marker.
+                if (!appended &&
+                    generation == autoplayRefillGeneration &&
+                    pendingAutoplayAdvanceFor == current.videoId
+                ) {
+                    pendingAutoplayAdvanceFor = null
+                    pendingAutoplayAdvanceTarget = null
+                }
             }
         }
     }
@@ -4210,6 +4274,7 @@ class PlaybackService : MediaLibraryService() {
         // set, a later replay of the failed track with something queued after
         // it was silently auto-skipped by the timeline callback.
         pendingAutoplayAdvanceFor = null
+        pendingAutoplayAdvanceTarget = null
         // A lossless swap hands the same song to the other player. It must not
         // close the outgoing play, start a second one, or count the listen
         // twice; only the audio source changed.
@@ -5436,6 +5501,7 @@ class PlaybackService : MediaLibraryService() {
         if (party.inParty && autoplaySupplierId(party) != party.you?.memberId) return false
         if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) return false
         pendingAutoplayAdvanceFor = mediaId
+        pendingAutoplayAdvanceTarget = null
         if (autoplayLoadJob?.isActive != true) {
             autoplaySeed = null
             loadAutoplayForCurrentTrack()
