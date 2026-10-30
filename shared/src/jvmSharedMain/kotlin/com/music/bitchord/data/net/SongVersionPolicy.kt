@@ -160,6 +160,43 @@ object SongVersionPolicy {
         !CatalogSongMapper.isCover(row)
 
     /**
+     * Whether a song-version lookup has reached a verdict that may be cached
+     * for the rest of the run.
+     *
+     * A found recording is always definitive. "No catalogue release" is only
+     * definitive when the search actually answered and recorded that answer;
+     * a request that failed outright must stay retryable. The audio switch
+     * returns the original row for both shapes, so the caller cannot tell them
+     * apart from the return value alone — [answered] is the cache marker that
+     * separates "searched and found nothing" from "could not search".
+     */
+    fun songVersionVerdictIsDefinitive(
+        searchSucceeded: Boolean,
+        answered: Boolean,
+        found: Boolean,
+    ): Boolean = found || (searchSucceeded && answered)
+
+    /**
+     * Whether an audio-switch pass is complete enough to cache "no catalogue
+     * release" for the rest of the run.
+     *
+     * The pass runs several queries. One that succeeded does not make the
+     * verdict final when a later query failed: the failed query may have been
+     * the one that would have found the song. Caching the original row then
+     * would turn a transient network error into a permanent kept(none) for
+     * this launch. Only a pass where every query answered may be cached.
+     *
+     * The catalogue fallback is part of the pass. A failed album search after
+     * every query answered is the same transient miss, so it must block the
+     * cached verdict too ([catalogueFailed]).
+     */
+    fun audioSwitchSearchIsConclusive(
+        queriesRun: Int,
+        failedQueries: Int,
+        catalogueFailed: Boolean = false,
+    ): Boolean = queriesRun > 0 && failedQueries == 0 && !catalogueFailed
+
+    /**
      * How much longer than the catalogue track a downloaded song's file may be
      * before it is taken to be the music video's sound.
      *

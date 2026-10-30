@@ -764,13 +764,15 @@ object YtMusicRepository {
         // that drift is how the song version was written off.
         val target = TrackMatcher.audioSwitchTargetOf(song)
             .copy(isVideo = song.isVideo || song.typeUnknown)
-        var searched = false
+        var queriesRun = 0
+        var failedQueries = 0
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
         for (query in TrackMatcher.audioSwitchQueries(song)) {
+            queriesRun++
             Log.d(TAG, "audio switch: query=$query")
             val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
-            if (page.isSuccess) searched = true
+            if (page.isFailure) failedQueries++
             val rows = page.getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
@@ -815,9 +817,16 @@ object YtMusicRepository {
         // search. This is the same mapping the gated search uses, asked
         // directly for this one row. A downloaded video still qualifies: the
         // lookup reads album metadata only and never touches its file.
-        val catalogue = runCatching {
-            CatalogSongMapper.map(song, allowLocalVideo = true)?.toSong(song)
-        }.getOrNull()
+        val catalogueLookup = try {
+            CatalogSongMapper.mapResult(song, allowLocalVideo = true)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w(TAG, "audio switch: catalogue lookup failed for '${song.title}'", failure)
+            CatalogSongMapper.MapResult.Failed
+        }
+        val catalogue =
+            (catalogueLookup as? CatalogSongMapper.MapResult.Found)?.song?.toSong(song)
         if (catalogue != null && catalogue.videoId != song.videoId && !catalogue.isVideo) {
             Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
             audioVersionCache[song.videoId] = catalogue
@@ -830,7 +839,17 @@ object YtMusicRepository {
         )
         // A search that failed outright is no verdict: leave it retryable
         // instead of remembering the video as having no catalogue release.
-        if (searched) audioVersionCache[song.videoId] = song
+        // The same applies when only some of the queries answered — a later
+        // failure may have hidden the release an earlier query missed.
+        if (
+            SongVersionPolicy.audioSwitchSearchIsConclusive(
+                queriesRun,
+                failedQueries,
+                catalogueFailed = catalogueLookup is CatalogSongMapper.MapResult.Failed,
+            )
+        ) {
+            audioVersionCache[song.videoId] = song
+        }
         return song
     }
 
@@ -1134,8 +1153,15 @@ object YtMusicRepository {
         val found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
         val via = if (found != null) "search" else "none"
         // A completed search is the verdict, found or not. A failed request
-        // is not "no version" and must be retried later.
-        val definitive = found != null || search.isSuccess
+        // is not "no version" and must be retried later. resolveAudio returns
+        // the original row for both shapes, so its cache is what tells the
+        // definitive "no catalogue row" apart from a search that never ran.
+        val answered = audioVersionCache.containsKey(song.videoId)
+        val definitive = SongVersionPolicy.songVersionVerdictIsDefinitive(
+            searchSucceeded = search.isSuccess,
+            answered = answered,
+            found = found != null,
+        )
         if (definitive) {
             if (found == null) songVersionMissing.add(song.videoId)
             else songVersionCache[song.videoId] = found
