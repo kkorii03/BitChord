@@ -1055,25 +1055,43 @@ fun MessageState(
 const val PAGE_LOADING_TIMEOUT_MS = 15_000L
 
 /**
- * True once [loading] has stayed true for [PAGE_LOADING_TIMEOUT_MS].
+ * How long a pushed browse page may keep its skeleton.
+ *
+ * A category tap is a single deliberate action, not a cold feed build, so the
+ * listener expects the result (or a retry) within the same wait the top-level
+ * tabs allow. The fallback category path runs several sequential searches, so
+ * a blocked request can outlive the tour's five-second screenshot and look
+ * like a page that never loads. Four seconds surfaces the same quiet retry
+ * Home uses while the request keeps running underneath; a late answer still
+ * replaces the error with content.
+ */
+const val BROWSE_LOADING_TIMEOUT_MS = 4_000L
+
+/**
+ * True once [loading] has stayed true for [timeoutMs] (default
+ * [PAGE_LOADING_TIMEOUT_MS]).
  *
  * Event-driven: one delay per load, cancelled as soon as the state settles or
  * the page leaves composition. No polling.
  */
 @Composable
-fun rememberLoadingTimedOut(loading: Boolean, tag: String): Boolean {
+fun rememberLoadingTimedOut(
+    loading: Boolean,
+    tag: String,
+    timeoutMs: Long = PAGE_LOADING_TIMEOUT_MS,
+): Boolean {
     var timedOut by remember { mutableStateOf(false) }
-    LaunchedEffect(loading, tag) {
+    LaunchedEffect(loading, tag, timeoutMs) {
         if (!loading) {
             timedOut = false
             return@LaunchedEffect
         }
         timedOut = false
-        delay(PAGE_LOADING_TIMEOUT_MS)
+        delay(timeoutMs)
         timedOut = true
         TrackLog.w(
             "BitChord",
-            "ui: $tag still loading after ${PAGE_LOADING_TIMEOUT_MS}ms; showing retry",
+            "ui: $tag still loading after ${timeoutMs}ms; showing retry",
         )
     }
     return timedOut
