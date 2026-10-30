@@ -2,6 +2,7 @@ package com.music.bitchord.data.innertube
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class VisitorDataPersistenceTest {
@@ -23,7 +24,7 @@ class VisitorDataPersistenceTest {
         val store = FakeStore()
         try {
             Innertube.cookie = cookie
-            val key = visitorStorageKey(Innertube.sessionKey())
+            val key = visitorPersistenceKey(cookie)
             val stored = "Cg" + "A".repeat(60)
             store.values[key] = stored
             store.values["$key:bound"] = "0"
@@ -34,5 +35,17 @@ class VisitorDataPersistenceTest {
             Innertube.cookie = previous
             Innertube.initVisitorStore(null)
         }
+    }
+
+    @Test
+    fun `a rotated cookie for the same account gets a different visitor slot`() {
+        val firstCookies = "SID=first; SAPISID=first-secret; __Secure-1PSID=first"
+        val secondCookies = "SID=second; SAPISID=second-secret; __Secure-1PSID=second"
+
+        assertNotEquals(
+            "a visitor id is bound to the cookie that minted it, not to the account",
+            visitorPersistenceKey(firstCookies),
+            visitorPersistenceKey(secondCookies),
+        )
     }
 }

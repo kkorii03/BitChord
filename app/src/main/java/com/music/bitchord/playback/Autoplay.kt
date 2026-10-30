@@ -343,7 +343,13 @@ private fun videoRadioRows(
  * is written only when the scan actually happens.
  */
 internal fun coverFilteredRadio(seedSong: Song, radio: List<Song>): List<Song> {
-    val key = CoverFilterKey(seedSong.videoId, seedSong.title, seedSong.artist, radio)
+    val key = CoverFilterKey(
+        seedSong.videoId,
+        seedSong.title,
+        seedSong.artist,
+        seedSong.albumName,
+        radio,
+    )
     synchronized(coverFilterCache) { coverFilterCache[key] }?.let { return it }
     val related = radio.filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
     if (related.size != radio.size) {
@@ -361,6 +367,7 @@ private data class CoverFilterKey(
     val seedId: String,
     val seedTitle: String,
     val seedArtist: String,
+    val seedAlbum: String?,
     val radio: List<Song>,
 )
 

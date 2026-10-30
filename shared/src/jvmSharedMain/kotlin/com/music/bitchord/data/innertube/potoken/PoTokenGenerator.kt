@@ -272,10 +272,13 @@ class PoTokenGenerator(
  * expire.
  */
 interface PoTokenStore {
-    fun getString(key: String): String?
-    fun putString(key: String, value: String)
-    fun getLong(key: String): Long?
-    fun putLong(key: String, value: Long)
+    /**
+     * The whole record in one value. Reading and writing it as one record is
+     * what keeps a process kill between the previous session/video and the new
+     * tokens from pairing one video's token with another's.
+     */
+    fun read(): String?
+    fun write(record: String)
 }
 
 /**
@@ -291,34 +294,76 @@ internal class PoTokenResultCache(
     private val store: PoTokenStore?,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
-    fun get(sessionId: String, videoId: String): PoTokenResult? {
-        val store = store ?: return null
-        if (store.getString(KEY_SESSION) != sessionId) return null
-        if (store.getString(KEY_VIDEO) != videoId) return null
-        val mintedAt = store.getLong(KEY_MINTED_AT) ?: return null
-        val age = nowMs() - mintedAt
-        if (age !in 0 until TTL_MS) return null
-        val request = store.getString(KEY_REQUEST) ?: return null
-        val streaming = store.getString(KEY_STREAMING) ?: return null
-        return PoTokenResult(playerRequestPoToken = request, streamingDataPoToken = streaming)
+    // Player, prefetch and download can mint at the same time. The store is a
+    // single record, and this lock keeps the read-update-write sequence whole
+    // so an older mint cannot overwrite a newer one between its own steps.
+    private val lock = Any()
+
+    fun get(sessionId: String, videoId: String): PoTokenResult? = synchronized(lock) {
+        val s = store ?: return@synchronized null
+        val record = decode(s.read()) ?: return@synchronized null
+        if (record.sessionId != sessionId) return@synchronized null
+        if (record.videoId != videoId) return@synchronized null
+        val age = nowMs() - record.mintedAt
+        if (age !in 0 until TTL_MS) return@synchronized null
+        PoTokenResult(
+            playerRequestPoToken = record.requestPoToken,
+            streamingDataPoToken = record.streamingPoToken,
+        )
     }
 
     fun put(sessionId: String, videoId: String, token: PoTokenResult) {
-        val store = store ?: return
-        store.putString(KEY_SESSION, sessionId)
-        store.putString(KEY_VIDEO, videoId)
-        store.putString(KEY_REQUEST, token.playerRequestPoToken)
-        store.putString(KEY_STREAMING, token.streamingDataPoToken)
-        store.putLong(KEY_MINTED_AT, nowMs())
+        synchronized(lock) {
+            val s = store ?: return@synchronized
+            s.write(
+                encode(
+                    Record(
+                        sessionId = sessionId,
+                        videoId = videoId,
+                        requestPoToken = token.playerRequestPoToken,
+                        streamingPoToken = token.streamingDataPoToken,
+                        mintedAt = nowMs(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    private class Record(
+        val sessionId: String,
+        val videoId: String,
+        val requestPoToken: String,
+        val streamingPoToken: String,
+        val mintedAt: Long,
+    )
+
+    private fun encode(record: Record): String = listOf(
+        VERSION,
+        record.sessionId,
+        record.videoId,
+        record.requestPoToken,
+        record.streamingPoToken,
+        record.mintedAt.toString(),
+    ).joinToString(SEPARATOR)
+
+    private fun decode(raw: String?): Record? {
+        val parts = raw?.split(SEPARATOR) ?: return null
+        if (parts.size != 6 || parts[0] != VERSION) return null
+        val mintedAt = parts[5].toLongOrNull() ?: return null
+        return Record(
+            sessionId = parts[1],
+            videoId = parts[2],
+            requestPoToken = parts[3],
+            streamingPoToken = parts[4],
+            mintedAt = mintedAt,
+        )
     }
 
     companion object {
         const val TTL_MS = 30 * 60 * 1000L
-        private const val KEY_SESSION = "potoken_session"
-        private const val KEY_VIDEO = "potoken_video"
-        private const val KEY_REQUEST = "potoken_request"
-        private const val KEY_STREAMING = "potoken_streaming"
-        private const val KEY_MINTED_AT = "potoken_minted_at"
+        private const val VERSION = "v1"
+        // Tokens and visitor ids are URL-safe base64: they never contain a newline.
+        private const val SEPARATOR = "\n"
     }
 }
 

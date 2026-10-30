@@ -62,6 +62,9 @@ object AndroidStreamHooks {
     )
     private const val RELEASE_LINE_CHARS = 1_000
 
+    /** The whole minted PoToken record, read and written atomically. */
+    private const val KEY_POTOKEN_RECORD = "potoken_record"
+
     /** What `InnerTubeXResolver.init(context)` did when it lived in the app. */
     fun initInnerTubeX(context: Context) {
         val app = context.applicationContext
@@ -78,10 +81,12 @@ object AndroidStreamHooks {
             createMinter = { PoTokenWebView.getNewPoTokenGenerator(app) },
             available = { webViewSupported },
             cacheStore = object : PoTokenStore {
-                override fun getString(key: String): String? = prefs.getString(key, null)
-                override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
-                override fun getLong(key: String): Long? = if (prefs.contains(key)) prefs.getLong(key, 0L) else null
-                override fun putLong(key: String, value: Long) = prefs.edit().putLong(key, value).apply()
+                // One key and one editor call: a process kill can leave the old
+                // record or the new one, never a session/video from one mint
+                // paired with tokens from another.
+                override fun read(): String? = prefs.getString(KEY_POTOKEN_RECORD, null)
+                override fun write(record: String) =
+                    prefs.edit().putString(KEY_POTOKEN_RECORD, record).apply()
             },
         )
         Innertube.initVisitorStore(object : Innertube.VisitorStore {

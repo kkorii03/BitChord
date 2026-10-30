@@ -7,19 +7,19 @@ import org.junit.Test
 class PoTokenResultCacheTest {
 
     private class FakeStore : PoTokenStore {
-        val strings = HashMap<String, String>()
-        val longs = HashMap<String, Long>()
+        var record: String? = null
+        var writes = 0
+        var failNextWrite = false
 
-        override fun getString(key: String): String? = strings[key]
+        override fun read(): String? = record
 
-        override fun putString(key: String, value: String) {
-            strings[key] = value
-        }
-
-        override fun getLong(key: String): Long? = longs[key]
-
-        override fun putLong(key: String, value: Long) {
-            longs[key] = value
+        override fun write(record: String) {
+            if (failNextWrite) {
+                failNextWrite = false
+                throw IllegalStateException("write interrupted")
+            }
+            writes++
+            this.record = record
         }
     }
 
@@ -48,5 +48,28 @@ class PoTokenResultCacheTest {
 
         now += PoTokenResultCache.TTL_MS + 1
         assertNull(cache.get("visitor", "video"))
+    }
+
+    @Test
+    fun `a minted pair is persisted in one atomic write`() {
+        val store = FakeStore()
+        val cache = PoTokenResultCache(store) { 1_000L }
+
+        cache.put("visitor-a", "video-a", PoTokenResult("request-a", "stream-a"))
+
+        assertEquals("one editor call, or a process kill can split the pair", 1, store.writes)
+    }
+
+    @Test
+    fun `an interrupted write never pairs one video's tokens with another`() {
+        val store = FakeStore()
+        val cache = PoTokenResultCache(store) { 1_000L }
+        cache.put("visitor", "video-a", PoTokenResult("request-a", "stream-a"))
+
+        store.failNextWrite = true
+        runCatching { cache.put("visitor", "video-b", PoTokenResult("request-b", "stream-b")) }
+
+        assertNull("video-b must not borrow video-a's tokens", cache.get("visitor", "video-b"))
+        assertEquals("request-a", cache.get("visitor", "video-a")?.playerRequestPoToken)
     }
 }
