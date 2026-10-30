@@ -4,3 +4,20 @@
 할 일: 기존 자동 재생 흐름(autoplay 로그 찍는 곳, data/taste/AutoplayOrder·Recommender·SimilarCandidates·TastePool, AutoplayQueue, radio 요청)을 먼저 읽고 요약에 흐름 5줄 → 위 설계대로 연결 → 테스트.
 테스트: 모드 판단(오화요 커버·아카네 리제 팬 클립 = video, '- Topic' 곡·공식 MV = music), 비디오 모드 걸러내기·비율·연속 제한, 일반곡 모드 커버 제외, 0곡 대체 단계 — 순수 함수 단위 테스트. shared 테스트 클래스 이름과 app 테스트 이름을 요약에(CI 목록에 Opus가 추가).
 반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반), 요청 수 최소. 바꾼 함수의 모든 호출부와 타입 확인. 기존 코드 의도(주석)를 지우면 요약에 이유. 반복 '전체' 중 자동 재생 꺼짐 설계 유지. 업스트림 v1.8.1 코드 쪼개기·삭제 금지(한국 기능은 새 파일에, 업스트림 파일엔 연결 몇 줄만). 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제.
+
+
+== 2차 작업 (현재 브랜치 = 1차 결과) ==
+1차 결과를 독립 검토자가 검사한 지적을 전부 고칠 것(.github 관련 지적은 작업 도구 쪽 문제라 무시). 지적이 틀렸다고 판단하면 코드 근거와 함께 요약에 이유.
+Opus 추가 지시(중요): 사용자가 원하는 핵심은 '커버 영상을 틀면 다음 곡도 커버 영상'. 라디오 결과만 쓰면 일반곡이 많이 섞이므로 youtube.com 영상 믹스(list=RD<videoId>, 기존 youtube.com 다음 곡/재생목록 요청 코드 재사용)와 시드 채널의 노래 영상 가져오기를 실제로 구현할 것. 걸러내기는 가짜 'Music' 분류 대신 제목·채널의 실제 노래 표시로.
+검토 지적:
+VERDICT: ISSUES 10
+HIGH — `app/src/main/java/com/music/bitchord/MainActivity.kt:1820` — The fallback `LaunchedEffect` still auto-swaps any unconverted video row without checking `song.videoRadio`, so a queued video-radio cover can be replaced by the catalogue song before audio, defeating requirement ③; fix: add `!song.videoRadio`/`!videoRadioEnabledFor(song)` to the condition.
+HIGH — `app/src/main/java/com/music/bitchord/playback/VideoRadioAutoplay.kt:70` — Video candidates are rejected only for a blank videoId, so a radio row with blank title/artist can be queued, reintroducing the nameless-row failure the normal path guards against; fix: drop rows with blank title/artist (and log `no metadata`) before ordering.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/VideoRadioAutoplay.kt:88` — Every row is stamped with category `Music`, so `looksLikeSong` always passes and the required song-marker/music-category filter is bypassed; fix: carry the source's real categories or require an actual song marker instead of fabricating one.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/Autoplay.kt:161` — Only `YtMusicRepository.radio(seed)` is fetched; no seed-channel upload fetch exists, so the design's channel source is missing and `VideoSource.CHANNEL` merely relabels radio rows; fix: fetch the seed channel's song videos (or stop claiming/logging a channel source).
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/Autoplay.kt:145` — The offline branch calls `Downloads.savedMetadataSnapshot()` and does O(N) mapping/regex filtering on the Main dispatcher (the service and `startRadio` scopes are Main), risking main-thread disk I/O/ANR; fix: move snapshot reading and candidate building to `Dispatchers.IO`.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/Autoplay.kt:158` — When 1–2 downloaded video songs exist offline, the method returns an empty list instead of those playable rows, so requirement ⑦'s downloaded-only fallback yields silence; fix: return the available downloaded video rows when non-empty and only report empty at zero.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/PartyPersonalQueueStash.kt:133` — `StoredTrack` never persists the new `videoRadio` flag, so stashing/restoring the personal queue around a Listen Together party loses it and restored video-radio rows can be auto-converted; fix: add `videoRadio` to `StoredTrack.from`/`toSong` (and keep the default for old snapshots).
+LOW — `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3550` — `VIDEO_RADIO_MIN_QUEUED_AHEAD = 3` is passed to `autoplayTopUpNeeded`, which tops up only when `queuedAhead < minAhead`, so exactly 3 remaining does not fetch, contrary to "3곡 이하"; fix: pass 4 or change the comparison to `<=`.
+LOW — `app/src/main/java/com/music/bitchord/playback/Autoplay.kt:193` — The fallback log hardcodes `from=radio` and reports the normal fallback row count as `picked`, so requirement ⑧'s `video-radio:` line misstates source and video picks; fix: log `pick.from`/`pick.ordered.size` and a distinct fallback stage.
+마지막 요약에 지적 번호별 처리(고침/반박)를 한 줄씩.
