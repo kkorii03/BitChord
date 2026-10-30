@@ -2,16 +2,16 @@
 <resources>
     <string name="connecting">연결 중…</string>
     <string name="no_phone_title">휴대전화가 연결되지 않음</string>
-    <string name="no_phone_body">휴대전화에서 BitChord를 열고 시계 근처에 두세요.</string>
+    <string name="no_phone_body">휴대전화에서 BitChord를 열고 시계 근처에 두십시오.</string>
     <string name="retry">다시 시도</string>
     <string name="nothing_playing">재생 중 아님</string>
-    <string name="nothing_playing_body">휴대전화의 BitChord에서 무언가를 재생하세요.</string>
+    <string name="nothing_playing_body">휴대전화의 BitChord에서 무언가를 재생하십시오.</string>
     <string name="resume">이어서 재생</string>
-    <string name="up_next">다음 재생</string>
-    <string name="queue_empty">다음에 재생할 곡 없음</string>
+    <string name="up_next">다음 항목 재생</string>
+    <string name="queue_empty">다음 항목 없음</string>
     <string name="loading">불러오는 중…</string>
     <string name="playing_now">지금 재생 중</string>
-    <string name="more">더보기</string>
+    <string name="more">더 보기</string>
     <string name="shuffle">셔플</string>
     <string name="repeat">반복</string>
     <string name="repeat_off">끔</string>
@@ -21,10 +21,10 @@
     <string name="off">끔</string>
     <string name="love">좋아요</string>
     <string name="loved">좋아요함</string>
-    <string name="volume">볼륨</string>
+    <string name="volume">음량</string>
     <string name="on_phone">휴대전화에서</string>
     <string name="play">재생</string>
-    <string name="pause">일시정지</string>
+    <string name="pause">일시 정지</string>
     <string name="next">다음</string>
     <string name="previous">이전</string>
     <string name="output">출력</string>
@@ -39,5 +39,5 @@
     <string name="moving_to_watch">워치로 이동 중…</string>
     <string name="update_channel">업데이트</string>
     <string name="update_ready">BitChord 업데이트 준비됨</string>
-    <string name="update_tap">휴대전화에서 업데이트를 설치하려면 탭하세요.</string>
+    <string name="update_tap">휴대전화에서 업데이트를 설치하려면 탭하십시오.</string>
 </resources>

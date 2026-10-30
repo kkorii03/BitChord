@@ -1,6 +1,7 @@
 package com.music.bitchord.ui
 
 import android.content.ContextWrapper
+import com.music.bitchord.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -70,6 +71,19 @@ class FriendlyErrorTest {
     }
 
     @Test
+    fun notFoundAndBadRequestNameTheirCause() {
+        assertEquals(R.string.error_not_found, FriendlyError.resourceFor(RuntimeException("HTTP 404")))
+        assertEquals(
+            R.string.error_request_invalid,
+            FriendlyError.resourceFor(RuntimeException("HTTP 422")),
+        )
+        assertEquals(
+            R.string.error_content_unavailable,
+            FriendlyError.resourceFor(RuntimeException("Video unavailable")),
+        )
+    }
+
+    @Test
     fun everyFriendlyBranchHasAKoreanMessage() {
         val base = strings("values")
         val korean = strings("values-ko")
@@ -80,6 +94,9 @@ class FriendlyErrorTest {
             "proxy_unreachable",
             "server_busy",
             "youtube_request_rejected",
+            "error_not_found",
+            "error_request_invalid",
+            "error_content_unavailable",
             "connection_failed",
             "something_went_wrong",
         )

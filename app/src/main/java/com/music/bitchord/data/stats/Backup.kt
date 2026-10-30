@@ -204,7 +204,7 @@ object Backup {
         }
         if (file.version >= LIBRARY_SCHEMA_VERSION) {
             file.localPlaylists.forEach { playlist ->
-                require(playlist.id.isNotBlank()) { "백업의 로컬 재생목록에 id가 없습니다" }
+                require(playlist.id.isNotBlank()) { "백업의 로컬 플레이리스트에 id가 없습니다" }
                 playlist.songs.forEach { song ->
                     require(song.videoId.isNotBlank()) { "백업의 곡에 videoId가 없습니다" }
                 }
