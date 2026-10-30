@@ -127,6 +127,15 @@ internal data class MediaWidgetSnapshot(
                 .apply()
         }
 
+        /**
+         * Drops the persisted "liked" flag, for a sign-out or account switch.
+         * The rating belonged to the account that just left, and the service
+         * would otherwise re-save it and show the old account's heart.
+         */
+        fun clearLiked(context: Context) {
+            prefs(context).edit().putBoolean(KEY_LIKED, false).apply()
+        }
+
         /** The last state published by the live playback service. */
         fun load(context: Context): MediaWidgetSnapshot {
             val prefs = prefs(context)

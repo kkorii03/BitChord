@@ -64,12 +64,24 @@ internal object HqSwapPolicy {
         currentRate: Double = 1.0,
         pinned: Boolean = false,
         versionSwapActive: Boolean = false,
+        videoRadio: Boolean = false,
+        isVideo: Boolean = false,
     ): Decision {
         if (!sameTrack) return Decision(false, "track-changed", 0L)
         if (pinned) return Decision(false, "pinned", 0L)
         if (crossfadeActive) return Decision(false, "crossfade", 0L)
         if (versionSwapActive) return Decision(false, "version-swap", 0L)
+        // A video-radio row is kept as the upload the listener chose; the
+        // mid-song lossless path must refuse it just as the next-track step
+        // does, or a catalogue FLAC replaces the upload's own sound.
+        if (videoRadio || isVideo) return Decision(false, "video-radio", 0L)
         if (!rate.isFinite() || rate <= 0.0) return Decision(false, "bad-rate", 0L)
+        // The current substitute's clock has to be usable before it can be
+        // mapped back to YouTube time. A corrupt rate would otherwise let the
+        // raw position stand in and seek the replacement to the wrong offset.
+        if (!currentRate.isFinite() || currentRate <= 0.0) {
+            return Decision(false, "bad-current-rate", 0L)
+        }
         val remaining = durationMs.takeIf { it > 0L }?.minus(positionMs)
         if (remaining != null && remaining < MIN_REMAINING_MS) {
             return Decision(false, "too-late", 0L)

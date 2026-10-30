@@ -945,7 +945,13 @@ object TrackMatcher {
      */
     internal fun audioSwitchIdentity(rawTitle: String, rawArtist: String): AudioSwitchIdentity {
         val identity = soundtrackIdentity(rawTitle, rawArtist)
-        if (!identity.hasSoundtrackTail) {
+        // A bare "Soundtrack"/"OST" word at the end may be part of the song's
+        // own name ("Our Soundtrack", "My OST"). Only a named work or a
+        // dash/pipe-attached release label is packaging; anything else keeps
+        // the title exactly as uploaded. Same rule as the display path.
+        if (!identity.hasSoundtrackTail ||
+            (identity.work == null && !identity.labelPackaged)
+        ) {
             return AudioSwitchIdentity(rawTitle, rawArtist, null, false, false, false)
         }
         // The audio switch searches a catalogue, so its query is folded to the
@@ -987,8 +993,13 @@ object TrackMatcher {
                 }
                 // A take/packaging label after the dash ("Song - Live",
                 // "Song | Official Video") belongs to the title; inverting it
-                // would search for "live"/"official" instead of the song.
-                if (!isPackagingOrTake(tail) && !isArtistName(tail, rawArtist)) {
+                // would search for "live"/"official" instead of the song. The
+                // marker may sit inside a longer tail ("Live at Wembley"), so
+                // any take word rejects the inversion, not only a tail that is
+                // entirely packaging.
+                if (!isPackagingOrTake(tail) && !startsWithTakeMarker(tail) &&
+                    !isArtistName(tail, rawArtist)
+                ) {
                     return AudioSwitchIdentity(
                         tail,
                         head,
@@ -1130,7 +1141,10 @@ object TrackMatcher {
         }
 
         TRAILING_BARE_OST.find(text)?.let { match ->
-            if (match.range.first > 0) {
+            // A bare "Soundtrack"/"OST" tail may be the song's own name ("Our
+            // Soundtrack", "My OST"). Only strip it when a work was already
+            // named elsewhere; otherwise leave it for the ordinary title pass.
+            if (match.range.first > 0 && work != null) {
                 present = true
                 tailRemoved = true
                 text = text.substring(0, match.range.first)
@@ -1228,6 +1242,19 @@ object TrackMatcher {
             it in VERSION_WORDS || it in TRAILING_NOISE || it in NOISE_WORDS ||
                 it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
         }
+    }
+
+    /**
+     * Whether [text] opens with a recognized take/version word, even when the
+     * tail as a whole is not packaging ("Live at Wembley", "Remix by X"). A
+     * tail whose take marker only follows a real title ("White Room (Live)")
+     * still hands over from the performer as before.
+     */
+    private fun startsWithTakeMarker(text: String): Boolean {
+        val first = normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .firstOrNull { it.isNotEmpty() } ?: return false
+        return first in VERSION_WORDS || first in TRAILING_TAKES
     }
 
     private val PACKAGING_CONNECTORS = setOf(
@@ -1338,6 +1365,7 @@ object TrackMatcher {
                             text = tail
                         }
                         isPackagingOrTake(tail) -> Unit
+                        startsWithTakeMarker(tail) -> Unit
                         !isArtistName(head, artist) && !isArtistName(tail, artist) -> {
                             classify(head, versions, context)
                             text = tail
@@ -2007,7 +2035,7 @@ object TrackMatcher {
         RegexOption.IGNORE_CASE,
     )
     private val SOUNDTRACK_WORK_TAIL = Regex(
-        """(?:\s*[-–—|]\s*)?(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)\s*$""",
+        """(?:\s*[-–—|]\s*)?(?:(?<!\p{L})(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|(?<!\p{L})ost)\s*$""",
         RegexOption.IGNORE_CASE,
     )
     /**

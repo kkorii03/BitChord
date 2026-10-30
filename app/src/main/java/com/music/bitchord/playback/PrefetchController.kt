@@ -9,7 +9,6 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
-import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
@@ -235,12 +234,13 @@ internal class PrefetchController(
             // search is still running. A found alternate replaces the row
             // with its own id, which the mark does not cover.
             StreamResolver.markUnplayable(song.videoId, reason)
-            // The replacement budget belongs to the listener's silence, not to
-            // one request: resolving the id above comes out of the same 2.5 s.
-            val budget = UnplayableAlternate.searchBudgetMs(
-                elapsedMs = SystemClock.elapsedRealtime() - startedAt,
-                budgetMs = definitiveAlternateTimeoutMs,
-            )
+            // This is read-ahead, not the listener's audible path: the time
+            // spent resolving the unplayable id must not consume the budget
+            // for finding its replacement, or a slow resolve leaves no time to
+            // pre-find the alternate and the playback path has to search after
+            // the silence this is meant to avoid. The definitive verdict has
+            // just been reached, so start the search allowance here.
+            val budget = definitiveAlternateTimeoutMs
             val alternate = if (budget <= 0L) {
                 null
             } else {

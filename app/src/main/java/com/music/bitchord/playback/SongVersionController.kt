@@ -728,7 +728,11 @@ internal class SongVersionController(
             durationText = meta?.durationText ?: song.durationText,
             artistId = song.artistId,
             artists = song.artists,
-            channelId = song.channelId,
+            // The alias is a different upload; the original row's channel is
+            // not its uploader. Keep it only when the ids really are the same
+            // so Autoplay resolves the alias's own channel instead of fetching
+            // the seed's wrong one.
+            channelId = if (alias == song.videoId) song.channelId else null,
             albumId = song.albumId,
             albumName = meta?.albumName ?: song.albumName,
             setVideoId = song.setVideoId,

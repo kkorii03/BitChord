@@ -16,6 +16,7 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.widget.MediaWidgetSnapshot
 import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
@@ -3930,6 +3931,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _account.value = null
         likedSyncJob?.cancel()
         LikeState.clear()
+        MediaWidgetSnapshot.clearLiked(getApplication())
         _playlistsLoading.value = false
         _playlists.value = emptyList()
         _playlistOwned.value = emptyMap()
@@ -4011,6 +4013,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // them would show the next signed-in user someone else's hearts.
         likedSyncJob?.cancel()
         LikeState.clear()
+        MediaWidgetSnapshot.clearLiked(getApplication())
         _playlists.value = emptyList()
         _playlistOwned.value = emptyMap()
         ownershipInFlight.clear()

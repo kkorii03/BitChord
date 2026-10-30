@@ -1027,16 +1027,20 @@ def analyze(log: Log) -> Report:
         row for row in video_radios if row["fallback"] == "normal"
     ]
     d3_video_success = len(d3_video_success_rows)
+    # A fallback=normal video line and the ordinary +radio/append that follows
+    # it describe one refill. Pair the deferred video line with its append so
+    # the refill is counted once instead of twice.
+    d3_deferred_pairs = min(len(d3_video_deferred), len(autoplay_appends))
     d3_attempts = (
         len(autoplay_radios)
         + len(zero_refills)
-        + len(autoplay_appends)
+        + (len(autoplay_appends) - d3_deferred_pairs)
         + d3_video_success
         + len(d3_video_failure_rows)
     )
     d3_success = (
         sum(1 for row in autoplay_radios if row["total"] > 0)
-        + d3_append_success
+        + (d3_append_success - min(d3_deferred_pairs, d3_append_success))
         + d3_video_success
     )
     d3_failures = [
