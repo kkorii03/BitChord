@@ -90,12 +90,12 @@ class DownloadService : Service() {
      * letting the process be killed.
      */
     override fun onTimeout(startId: Int) {
-        shutdown(stopWork = true)
+        shutdown(stopWork = true, requeueInFlight = true)
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         if (fgsType == ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) {
-            shutdown(stopWork = true)
+            shutdown(stopWork = true, requeueInFlight = true)
         }
     }
 
@@ -165,7 +165,13 @@ class DownloadService : Service() {
         }
     }
 
-    private fun shutdown(stopWork: Boolean) {
+    private fun shutdown(stopWork: Boolean, requeueInFlight: Boolean = false) {
+        // Android's time limit stops this service whether or not the transfers
+        // are done. Put the claimed rows back before their jobs are cancelled,
+        // or up to four downloads vanish and their session rows stay "Running"
+        // forever. A listener's cancel-all does not come through here: that
+        // intent already removed those rows.
+        if (stopWork && requeueInFlight) Downloads.requeueInFlightForShutdown()
         if (stopWork) drain?.cancel()
         notifier?.cancel()
         drain = null

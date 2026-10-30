@@ -57,9 +57,16 @@ internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
  * Whether a verdict arriving now has a run that must rebuild after its current
  * target settles. The worker may have picked its target without storing it in
  * the active slot yet, so a non-empty plan counts as a run in flight too.
+ * [workerRunning] covers the remaining window: inside [HqLibraryUpgrade.buildPlan]
+ * the plan is still empty and the active slot is not written yet, but the
+ * worker is unquestionably in flight and the verdict it is holding must be
+ * rebuilt after it settles.
  */
-internal fun rebuildAfterVerdict(activeVideoId: String?, planSize: Int): Boolean =
-    activeVideoId != null || planSize > 0
+internal fun rebuildAfterVerdict(
+    activeVideoId: String?,
+    planSize: Int,
+    workerRunning: Boolean,
+): Boolean = activeVideoId != null || planSize > 0 || workerRunning
 
 /**
  * The automatic high-quality pass over the listener's library.
@@ -243,7 +250,10 @@ object HqLibraryUpgrade {
         // there. Later calls find it ready and stay synchronous.
         if (!ready) {
             val app = context.applicationContext
-            manualScope.launch { scheduleIfEnabled(app) }
+            manualScope.launch {
+                ensureLoaded(app)
+                scheduleIfEnabled(app)
+            }
             return
         }
         if (!runAllowed()) return
@@ -355,9 +365,10 @@ object HqLibraryUpgrade {
         if (!enabled()) return
         synchronized(lock) {
             // A worker may have picked its target and not yet stored it in
-            // [activeVideoId]; the plan being non-empty is what says that run
-            // still has to rebuild after the verdict it is holding finishes.
-            rebuildRequested = rebuildAfterVerdict(activeVideoId, plan.size)
+            // [activeVideoId]; a non-empty plan, or a worker still inside
+            // [buildPlan] with neither yet written, is what says that run still
+            // has to rebuild after the verdict it is holding finishes.
+            rebuildRequested = rebuildAfterVerdict(activeVideoId, plan.size, workerRunning)
             plan = emptyList()
             done = 0
             total = 0
