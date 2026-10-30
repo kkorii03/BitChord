@@ -35,6 +35,10 @@ object LastPlayed {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
+    internal fun initForTesting(testPrefs: SharedPreferences) {
+        prefs = testPrefs
+    }
+
     internal fun window(size: Int, index: Int): IntRange {
         if (size <= 0) return IntRange.EMPTY
         val safeIndex = index.coerceIn(0, size - 1)
@@ -43,7 +47,7 @@ object LastPlayed {
     }
 
     /** Persist at most 25 previous entries, the current one, and 50 upcoming entries. */
-    fun saveQueue(songs: List<Song>, index: Int) {
+    fun saveQueue(songs: List<Song>, index: Int, positionMs: Long) {
         if (songs.isEmpty()) {
             clear()
             return
@@ -61,6 +65,10 @@ object LastPlayed {
         prefs.edit()
             .putString(KEY_QUEUE, encoded)
             .putInt(KEY_INDEX, safeIndex - bounds.first)
+            // The queue and the playhead belong to the same moment. Leaving the
+            // old position here restored a freshly edited queue at wherever the
+            // previous one happened to be.
+            .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
             .apply()
     }
 

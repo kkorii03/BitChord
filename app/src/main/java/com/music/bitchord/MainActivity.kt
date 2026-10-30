@@ -213,6 +213,7 @@ import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import com.music.bitchord.playback.QueueEdit
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
+import com.music.bitchord.startup.LaunchReplay
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.playback.autoplayEnabledFor
@@ -386,6 +387,12 @@ class MainActivity : AppCompatActivity() {
      */
     private var playerMotion: PlayerSheetMotion? = null
 
+    /**
+     * The launch intent this task has already served, so a process recreation
+     * cannot serve it a second time. See [LaunchReplay].
+     */
+    private var handledLaunchFingerprint: String? = null
+
     override fun onStart() {
         super.onStart()
         noteForeground()
@@ -444,17 +451,36 @@ class MainActivity : AppCompatActivity() {
         // and coming back to the app must not raise the player again. A task
         // picked out of Recents is the other replay: it starts from the old
         // intent without saved state, so its history flag is checked too.
+        val launchedFromHistory = intent.isLaunchedFromHistory()
+        val launchFingerprint = LaunchReplay.fingerprint(intent)
+        val replayingLaunch = LaunchReplay.isReplay(
+            recreating = savedInstanceState != null,
+            launchedFromHistory = launchedFromHistory,
+            savedFingerprint = savedInstanceState?.getString(STATE_HANDLED_LAUNCH),
+            currentFingerprint = launchFingerprint,
+        )
         PlayerDeepLink.consume(
             intent,
             recreating = savedInstanceState != null,
-            launchedFromHistory = intent.isLaunchedFromHistory(),
+            launchedFromHistory = launchedFromHistory,
         )
-        JamInviteLink.consume(intent)
-        // A settings file shared from another device, which opens the import
-        // preview in Settings once the composition exists.
-        SettingsTransferInbox.consume(intent)
-        // Likewise for a link tapped or shared from another app — see [MusicLink].
-        MusicLink.consume(intent)
+        // The link relays write their consumed marker into the Intent itself,
+        // which a process death loses. Without this a restored task would start
+        // the shared song again, re-join a party, or reopen an import preview
+        // with no user action.
+        if (!replayingLaunch) {
+            JamInviteLink.consume(intent)
+            // A settings file shared from another device, which opens the import
+            // preview in Settings once the composition exists.
+            SettingsTransferInbox.consume(intent)
+            // Likewise for a link tapped or shared from another app — see [MusicLink].
+            MusicLink.consume(intent)
+        }
+        handledLaunchFingerprint = if (replayingLaunch) {
+            savedInstanceState?.getString(STATE_HANDLED_LAUNCH)
+        } else {
+            launchFingerprint
+        }
         applyDebugLaunchSwitches(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -522,6 +548,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Remembers which launch intent was served, so a process recreation can
+     * tell the task's replayed intent from a genuinely new one.
+     */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        handledLaunchFingerprint?.let { outState.putString(STATE_HANDLED_LAUNCH, it) }
+    }
+
+    /**
      * Requests a window refresh rate without forcing a display mode or
      * resolution. Android may still lower it for temperature, battery state or
      * hardware limits, which is why Settings describes this as a preference.
@@ -558,6 +593,7 @@ class MainActivity : AppCompatActivity() {
         JamInviteLink.consume(intent)
         SettingsTransferInbox.consume(intent)
         MusicLink.consume(intent)
+        handledLaunchFingerprint = LaunchReplay.fingerprint(intent)
         applyDebugLaunchSwitches(intent)
     }
 
@@ -602,6 +638,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private companion object {
+        const val STATE_HANDLED_LAUNCH = "bitchord.handledLaunch"
         const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
         const val EXTRA_SEED_HISTORY = "bitchord.debug.seedHistory"
         const val EXTRA_SKIP_ONBOARDING = "bitchord.debug.skipOnboarding"

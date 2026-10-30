@@ -949,7 +949,7 @@ class PlaybackService : MediaLibraryService() {
                 if (next.immediate) {
                     LastPlayed.saveQueueImmediately(songs, next.index, next.positionMs)
                 } else {
-                    LastPlayed.saveQueue(songs, next.index)
+                    LastPlayed.saveQueue(songs, next.index, next.positionMs)
                 }
             }
         }
