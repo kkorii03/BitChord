@@ -531,9 +531,9 @@ fun ListenTogetherScreen(
                 onShare = { sheet = PartySheet.Invite },
                 onShareLink = shareInvite,
                 onLeave = { scope.launch { ListenTogether.leaveParty() } },
-                onSetCapacity = ListenTogether::setMaxMembers,
-                onSetHostOnlyControl = ListenTogether::setHostOnlyControl,
-                onKick = ListenTogether::kick,
+                onSetCapacity = { ListenTogether.setMaxMembers(it) },
+                onSetHostOnlyControl = { ListenTogether.setHostOnlyControl(it) },
+                onKick = { ListenTogether.kick(it) },
             )
             // Inside the party branch on purpose. A log of who skipped what is
             // a thing to look back over while a party is running; on the page

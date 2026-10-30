@@ -3856,7 +3856,10 @@ class PlaybackService : MediaLibraryService() {
                 val room = MAX_QUEUED_AUTOPLAY - waiting.count { it.fromAutoplay }
                 val fresh = suggestions.filterNot { it.videoId in waitingIds }.take(room.coerceAtLeast(0))
                 if (fresh.isEmpty()) return@withContext true
-                ListenTogether.queueAdd(fresh.map { it.toPartyTrack(0L) })
+                // Not sent (no live socket) is not a request waiting on an
+                // echo: report failure at once rather than spending the whole
+                // echo timeout on a control that never left this device.
+                if (!ListenTogether.queueAdd(fresh.map { it.toPartyTrack(0L) })) return@withContext false
                 val added = fresh.first().videoId
                 withTimeoutOrNull(PARTY_QUEUE_ECHO_TIMEOUT_MS) {
                     ListenTogether.state.first { state -> state.queue.items.any { it.videoId == added } }

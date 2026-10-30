@@ -416,6 +416,25 @@ object ListenTogether {
     ): String = inviteServer ?: customServer.ifBlank { idleServer }
 
     /**
+     * What the custom-server preference should become after a switch lands on
+     * [targetServer].
+     *
+     * Blank when the target is the built-in server. That address is deliberately
+     * never published — not on screen, not in a log, and not stored as though a
+     * person had typed it — so a switch back to it has to clear the preference
+     * rather than copy the built-in host into the field the editor shows and
+     * the "remove server" button keys on. A custom target is kept verbatim.
+     */
+    internal fun serverPreferenceForSwitch(
+        targetServer: String,
+        builtInServer: String = defaultServer,
+    ): String {
+        val target = normalizeServerBase(targetServer)
+        if (target.isEmpty()) return ""
+        return if (target.equals(normalizeServerBase(builtInServer), ignoreCase = true)) "" else target
+    }
+
+    /**
      * The actual server hosting the active party session. Non-null while [State.inParty] is true.
      * Immutable during the party session and never mutated by idle health checks.
      */
@@ -742,9 +761,10 @@ object ListenTogether {
 
         val code = prefs.getString(KEY_CODE, null)
         val saved = prefs.getString(KEY_TOKEN, null)
-        prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
+        val savedServer = prefs.getString(KEY_PARTY_SERVER, null)
+        prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).remove(KEY_PARTY_SERVER).apply()
         if (!code.isNullOrBlank() && !saved.isNullOrBlank()) {
-            releaseStaleSlot(code, saved)
+            releaseStaleSlot(code, saved, savedServer)
         }
 
         val manager = context.getSystemService(ConnectivityManager::class.java)
@@ -804,10 +824,26 @@ object ListenTogether {
         }
     }
 
-    private fun releaseStaleSlot(code: String, held: String) {
-        val server = activePartyServerBase ?: resolveHttpBase(effectiveIdleServerBase())
+    private fun releaseStaleSlot(code: String, held: String, savedServer: String?) {
+        val server = staleSlotReleaseServer(savedServer, activePartyServerBase)
+            ?: resolveHttpBase(effectiveIdleServerBase())
         releaseStaleSlotOnServer(server, code, held)
     }
+
+    /**
+     * The server that held the party whose membership was just restored from
+     * storage, or null when this build never recorded one.
+     *
+     * The address has to come from the saved session, not from the idle routing
+     * preference: a party can have been hosted on the built-in server while a
+     * custom server is configured (the custom one was down, so creation fell
+     * back), and after a process death the idle preference alone would send the
+     * leave to the wrong host — leaving a ghost member behind on the real one
+     * for the whole disconnect grace period.
+     */
+    internal fun staleSlotReleaseServer(savedServer: String?, activeServer: String?): String? =
+        savedServer?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
+            ?: activeServer?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
 
     /** Points this install at another server, or back at the default one if blank. */
     suspend fun setCustomServerUrl(normalizedUrl: String): ServerConnectionState {
@@ -899,6 +935,7 @@ object ListenTogether {
             prefs.edit()
                 .putString(KEY_CODE, membership.code)
                 .putString(KEY_TOKEN, membership.token)
+                .putString(KEY_PARTY_SERVER, serverBase)
                 .apply()
             clock.reset()
             _state.value = State(
@@ -957,6 +994,7 @@ object ListenTogether {
             prefs.edit()
                 .putString(KEY_CODE, membership.code)
                 .putString(KEY_TOKEN, membership.token)
+                .putString(KEY_PARTY_SERVER, serverBase)
                 .apply()
             clock.reset()
             _state.value = State(
@@ -1086,14 +1124,16 @@ object ListenTogether {
                 // Commit active party server authority
                 activePartyServerBase = targetBase
 
-                // Commit new server URL setting
-                setCustomServerUrl(normTarget)
+                // Commit new server URL setting. The built-in server is never
+                // stored as a custom one; see [serverPreferenceForSwitch].
+                setCustomServerUrl(serverPreferenceForSwitch(normTarget))
 
                 // Commit new party session
                 token = membership.token
                 prefs.edit()
                     .putString(KEY_CODE, membership.code)
                     .putString(KEY_TOKEN, membership.token)
+                    .putString(KEY_PARTY_SERVER, targetBase)
                     .apply()
                 clock.reset()
                 _state.value = State(
@@ -1127,7 +1167,7 @@ object ListenTogether {
             clock.reset()
             token = null
             activePartyServerBase = null
-            prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
+            prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).remove(KEY_PARTY_SERVER).apply()
             _state.value = State()
             syncHealthMonitor()
             if (code != null && held != null) {
@@ -1192,21 +1232,37 @@ object ListenTogether {
     fun setHostOnlyControl(enabled: Boolean) =
         control("setHostOnlyControl") { put("enabled", enabled) }
 
-    private fun control(action: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
+    /**
+     * Sends one control, and says whether it was handed to a live socket.
+     *
+     * The return value matters to the caller that has already moved its own
+     * player: a control dropped because the socket is reconnecting is not an
+     * echo that is merely late, and waiting for one would hold the player off
+     * the party's truth for the whole intent window. [PartySync] uses this to
+     * decide whether there is anything to wait for at all.
+     */
+    private fun control(action: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): Boolean {
         val frame = buildJsonObject {
             put("type", "control")
             put("action", action)
             body()
         }
-        send(frame)
+        return send(frame)
     }
 
-    private fun send(frame: JsonObject) {
-        val live = session ?: return
+    private fun send(frame: JsonObject): Boolean {
+        val live = session
+        if (live == null) {
+            // Not silent: the user acted and the party will never hear it. The
+            // caller uses false to stop waiting for an echo that cannot come.
+            Log.w(TAG, "party control not sent: socket is not connected")
+            return false
+        }
         scope.launch {
             runCatching { live.send(Frame.Text(frame.toString())) }
                 .onFailure { Log.w(TAG, "control not sent: ${redact(it.message)}") }
         }
+        return true
     }
 
     /**
@@ -1785,6 +1841,8 @@ object ListenTogether {
     private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
     private const val KEY_CODE = "party_code"
     private const val KEY_TOKEN = "party_token"
+    /** Which server hosted the saved membership; see [staleSlotReleaseServer]. */
+    private const val KEY_PARTY_SERVER = "party_server"
     private const val KEY_DEVICE = "device_id"
     private const val KEY_NICKNAME = "party_nickname"
     private const val KEY_KICKED = "party_kicked_until"
