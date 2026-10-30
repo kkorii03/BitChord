@@ -19,6 +19,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqLibraryAction
+import com.music.bitchord.data.sources.HqLibraryAutoRetryPolicy
 import com.music.bitchord.data.sources.HqLibraryEntry
 import com.music.bitchord.data.sources.HqLibraryPolicy
 import com.music.bitchord.data.sources.HqLibraryTarget
@@ -27,9 +28,11 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.TrackEntry
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PlaybackActivity
 import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
+import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -64,8 +67,8 @@ internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
  * enqueues exactly one replacement and returns; [onDownloadSettled] — called
  * from the download itself — records the outcome and appends the next worker.
  * That is what keeps the pass sequential while still surviving a process
- * death: the remaining plan is on disk, and the next app start or playback
- * resumes it. There is no timer and no periodic poll.
+ * death: the remaining plan is on disk, and the next foreground event or
+ * playback resumes it. There is no timer and no periodic poll.
  *
  * The old file is never deleted first. A replacement is written under its own
  * pending destination and committed only after the bytes and tags are complete;
@@ -133,14 +136,39 @@ object HqLibraryUpgrade {
     private fun failureKey(videoId: String, sourceConfigId: String, trackId: String): String =
         "$videoId\u0002$sourceConfigId\u0002$trackId"
 
-    private fun mayRetry(failure: Failure?, nowMs: Long): Boolean =
-        failure == null ||
-            AutomaticRetryPolicy.mayRetry(
-                attempts = failure.attempts,
-                lastFailureMs = failure.lastFailureMs,
-                nowMs = nowMs,
-                manual = manualPass,
-            )
+    /**
+     * Whether the automatic pass may work on [videoId] now.
+     *
+     * The rules live in [HqLibraryAutoRetryPolicy]; this supplies the two
+     * device facts it cannot know: whether the app has a window, and whether a
+     * complete lossless copy is already on disk.
+     */
+    private fun automaticTargetEligible(
+        videoId: String,
+        failure: Failure?,
+        nowMs: Long,
+        downloaded: Map<String, SavedSongMetadata>,
+    ): Boolean = HqLibraryAutoRetryPolicy.shouldAttempt(
+        manual = manualPass,
+        foreground = AppForeground.isForeground,
+        hasCompleteLosslessCopy = hasCompleteLosslessCopy(videoId, downloaded[videoId]),
+        attempts = failure?.attempts ?: 0,
+        lastFailureMs = failure?.lastFailureMs ?: 0L,
+        nowMs = nowMs,
+    )
+
+    /**
+     * A complete lossless copy already answers the request: either the file
+     * this app saved, or a whole rendition the song cache holds.
+     */
+    private fun hasCompleteLosslessCopy(
+        videoId: String,
+        meta: SavedSongMetadata?,
+    ): Boolean {
+        val savedTier = meta?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
+        if (savedTier != null && savedTier.rank <= HqTier.LOSSLESS_16.rank) return true
+        return AudioCache.hasCompleteLosslessCopy(videoId)
+    }
 
     private val lock = Any()
     private val _progress = MutableStateFlow(Progress())
@@ -178,10 +206,14 @@ object HqLibraryUpgrade {
     /** Whether this run may proceed: either switch is on, or the listener asked. */
     internal fun runAllowed(): Boolean = enabled() || manualPass
 
-    /** Called at app start and on playback; safe to call repeatedly. */
+    /** Called at app start, on playback and on the foreground event; safe to call repeatedly. */
     fun scheduleIfEnabled(context: Context) {
         ensureLoaded(context)
-        if (!enabled()) return
+        if (!runAllowed()) return
+        // Android refuses a foreground service started without a window, so
+        // the pass waits for the next [onForeground] event instead of trying
+        // and failing on every process start.
+        if (!AppForeground.isForeground) return
         // Nothing is fetched while the player is using the same servers. The
         // pause (or buffer-idle) event calls [onPlaybackStopped], so this is
         // event-driven rather than a retry loop.
@@ -201,6 +233,27 @@ object HqLibraryUpgrade {
         }
     }
 
+    /** The app is on screen again: resume a pass that was parked in the background. */
+    fun onForeground(context: Context) {
+        lastScheduleRequestMs = 0L
+        scheduleIfEnabled(context)
+    }
+
+    /**
+     * The app no longer has a window.
+     *
+     * A delayed retry must not wake the process to start a service Android
+     * will refuse. Cancelling the unique work only stops the schedule; the
+     * plan and failure records stay on disk, and [onForeground] resumes them.
+     */
+    fun onBackground(context: Context) {
+        runCatching {
+            WorkManager.getInstance(context.applicationContext).cancelUniqueWork(WORK_NAME)
+        }.onFailure {
+            TrackLog.w(TAG, "could not pause the high-quality pass: ${it.message}")
+        }
+    }
+
     /**
      * Whether there is a target that has not failed out of the automatic pass.
      *
@@ -210,12 +263,25 @@ object HqLibraryUpgrade {
      */
     private fun hasRetryableWork(context: Context, nowMs: Long): Boolean {
         val entries = HqVerificationStore.entries(context)
+        val downloaded = Downloads.savedMetadataSnapshot()
         synchronized(lock) {
-            if (activeVideoId != null || plan.isNotEmpty()) return true
+            if (activeVideoId != null) return true
+            if (plan.isNotEmpty()) {
+                return plan.any { pending ->
+                    automaticTargetEligible(
+                        pending.target.videoId,
+                        failures[failureKey(pending.target)],
+                        nowMs,
+                        downloaded,
+                    )
+                }
+            }
             return entries.any { entry ->
-                mayRetry(
+                automaticTargetEligible(
+                    entry.youtubeId,
                     failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
                     nowMs,
+                    downloaded,
                 )
             }
         }
@@ -487,6 +553,9 @@ object HqLibraryUpgrade {
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {
         ensureLoaded(context)
+        // A worker woken with no window must not try to start the download
+        // service. The foreground event schedules the pass again.
+        if (!AppForeground.isForeground) return@withContext
         if (!runAllowed()) {
             finishRun()
             return@withContext
@@ -503,6 +572,7 @@ object HqLibraryUpgrade {
             return@withContext
         }
 
+        prunePlan(context)
         var target = synchronized(lock) { plan.firstOrNull() }
         if (target == null) {
             val built = buildPlan(context)
@@ -579,6 +649,40 @@ object HqLibraryUpgrade {
                 settle(context, pending.target.videoId, success = false)
             }
             else -> Unit
+        }
+    }
+
+    /**
+     * Drops plan entries that can no longer run automatically: a complete
+     * lossless copy has appeared, or the target's retries are exhausted.
+     *
+     * A manual pass keeps them by design. Nothing is logged here: the warning
+     * belongs to the failure that exhausted the target, not to every launch
+     * that finds the same parked plan on disk.
+     */
+    private fun prunePlan(context: Context) {
+        if (manualPass) return
+        val downloaded = Downloads.savedMetadataSnapshot()
+        val now = System.currentTimeMillis()
+        synchronized(lock) {
+            if (activeVideoId != null) return
+            val kept = plan.filter { pending ->
+                automaticTargetEligible(
+                    pending.target.videoId,
+                    failures[failureKey(pending.target)],
+                    now,
+                    downloaded,
+                )
+            }
+            if (kept.size == plan.size) return
+            plan = kept
+            if (plan.isEmpty()) {
+                done = 0
+                total = 0
+                rebuildRequested = false
+            }
+            persistLocked()
+            publishLocked()
         }
     }
 
@@ -750,9 +854,11 @@ object HqLibraryUpgrade {
         val entries = verified
             .filter { entry ->
                 synchronized(lock) {
-                    mayRetry(
+                    automaticTargetEligible(
+                        entry.youtubeId,
                         failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
                         now,
+                        downloaded,
                     )
                 }
             }
@@ -823,6 +929,9 @@ object HqLibraryUpgrade {
         delayMs: Long = 0L,
     ) {
         if (!runAllowed()) return
+        // A worker scheduled here would only be woken to start a service
+        // Android refuses. [onForeground] schedules the pass instead.
+        if (!AppForeground.isForeground) return
         val request = OneTimeWorkRequestBuilder<HqLibraryUpgradeWorker>()
             .setConstraints(
                 Constraints.Builder()

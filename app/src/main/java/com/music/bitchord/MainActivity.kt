@@ -140,6 +140,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.DiagnosticsState
+import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.BrowseType
@@ -387,6 +388,11 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         noteForeground()
+        // The first screen is an event that needs the player stack ready, but a
+        // process woken in the background does not. Starting it here keeps the
+        // cold warm-up off the background process and still ahead of the first
+        // tap; the first play calls the same no-op-once entry point.
+        InnerTubeXResolver.ensureWarm()
         // A private session outlives the process, so coming back to the app is
         // the other event that can find its six hours gone.
         AppSettings.checkPrivateListeningExpiry()

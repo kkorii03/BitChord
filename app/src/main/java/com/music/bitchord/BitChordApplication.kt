@@ -42,6 +42,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.startup.AppForeground
 import com.music.bitchord.startup.StartupTrace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +92,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         installCrashHandler()
         logProcessStart(logDirectory)
         registerActivityLifecycleCallbacks(activityLifecycle)
+        AppForeground.install(this)
         TrackLog.i("BitChord", "lifecycle: app created")
 
         // The player is drawn by the shared UI module; this is what it reads
@@ -221,6 +223,19 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
+        // Nothing may start a foreground download service from a process that
+        // was woken in the background. The queue and the high-quality pass are
+        // event-driven: this is the event that lets them continue.
+        AppForeground.onForeground {
+            Downloads.onForeground(this)
+            com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
+            com.music.bitchord.download.HqLibraryUpgrade.onForeground(this)
+        }
+        AppForeground.onBackground {
+            // A delayed retry must not wake the process with no window to show
+            // for it; the plan stays on disk and the next foreground resumes it.
+            com.music.bitchord.download.HqLibraryUpgrade.onBackground(this)
+        }
         // A verdict remembered by an earlier launch is repaired in the
         // background without waiting for the Downloads page or another play.
         com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)

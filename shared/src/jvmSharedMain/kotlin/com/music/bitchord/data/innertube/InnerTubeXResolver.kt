@@ -75,6 +75,9 @@ object InnerTubeXResolver {
     private var poTokens: TokenProvider? = null
     private var playerDir: File? = null
     private var warmup: Job? = null
+    private var cacheLink: Job? = null
+    private val warmLock = Any()
+    private var warmStarted: Boolean = false
     private var poTokenPrewarm: (suspend (String?) -> Unit)? = null
 
     /**
@@ -95,10 +98,28 @@ object InnerTubeXResolver {
         poTokens = poTokenProvider
         this.poTokenPrewarm = poTokenPrewarm
         playerDir = File(filesDir, "innertubex_players").apply { mkdirs() }
-        scope.launch {
+        cacheLink = scope.launch {
             cipherService.setPreprocessedPlayerCache(::readPlayer, ::writePlayer)
-            warm(WARM_DELAY_MS)
         }
+    }
+
+    /**
+     * Starts the cold warm-up once, on the first event that actually needs it:
+     * a playback request or the first screen.
+     *
+     * The warm-up used to start from [init] after a fixed delay, which meant a
+     * process woken in the background paid for the player config, the EJS
+     * solver and the BotGuard page without a screen or a track to show for it.
+     * The first play calls this before resolving, so first sound is not made
+     * slower by the move; every later call is a no-op.
+     */
+    fun ensureWarm() {
+        if (prefs == null) return
+        synchronized(warmLock) {
+            if (warmStarted) return
+            warmStarted = true
+        }
+        warm(0L)
     }
 
     /**
@@ -108,8 +129,10 @@ object InnerTubeXResolver {
      * age-restricted track 15-20s from first audio when paid on the play path.
      */
     private fun warm(delayMs: Long) {
+        synchronized(warmLock) { warmStarted = true }
         warmup?.cancel()
         warmup = scope.launch {
+            cacheLink?.join()
             delay(delayMs)
             // Settle the shell's visitor first: [ensureVisitorData] otherwise
             // mints an anonymous id that [ensureSessionScope] can replace a
@@ -422,7 +445,5 @@ object InnerTubeXResolver {
     private const val LOW_KBPS = 64
     private const val EXCLUDE_MS = 10 * 60 * 1000L
     private const val MAX_REMEMBERED = 64
-    /** Off the cold-start path; the first tap on a track is rarely sooner. */
-    private const val WARM_DELAY_MS = 2_000L
     private const val KEPT_PLAYERS = 3
 }

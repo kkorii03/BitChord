@@ -12,6 +12,7 @@ import androidx.work.WorkerParameters
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.AutomaticRetryPolicy
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.startup.AppForeground
 
 /**
  * Fetches the song versions of downloads that turned out to hold a music
@@ -111,6 +112,9 @@ object MvSoundRedownload {
 
     fun scheduleIfEnabled(context: Context) {
         if (!AppSettings.autoRedownloadMvSound.value) return
+        // The repair goes through the download service, which cannot be started
+        // without a window. The foreground event schedules it again.
+        if (!AppForeground.isForeground) return
         // Every suspect still cooling down is not work. Scheduling a worker
         // for it would run the same scan on every app start and playback
         // without ever changing anything.
@@ -144,6 +148,10 @@ class MvSoundRedownloadWorker(
 
     override suspend fun doWork(): Result {
         if (!AppSettings.autoRedownloadMvSound.value) return Result.success()
+        // WorkManager can run a network-constrained request after the app has
+        // gone away. Queueing downloads then would only leave rows waiting for
+        // a service Android will not let this process start.
+        if (!AppForeground.isForeground) return Result.success()
         val queued = Downloads.redownloadSuspected(applicationContext)
         if (queued > 0) {
             TrackLog.i("BitChord", "song version: repairing $queued downloaded file(s) in the background")
