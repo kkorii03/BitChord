@@ -413,10 +413,11 @@ object Downloads {
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
         }
-        publishQueuedIfPending(id)
-        if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
-            DownloadSession.queued(song, from)
-        }
+        publishQueuedIfPending(
+            song = song,
+            from = from,
+            publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
+        )
 
         val app = context.applicationContext
         // Android refuses a foreground service started from a background
@@ -437,16 +438,25 @@ object Downloads {
     }
 
     /**
-     * Publish Queued only while [videoId] is still waiting.
+     * Publish Queued only while [song]'s id is still waiting.
      *
      * [onForeground] can take the row back after the enqueue inserted it but
      * before this publish; writing Queued then would overwrite the refusal
-     * while no pending row remains.
+     * while no pending row remains. Both the `active` row and the download
+     * manager's row are published under the same lock as the pending check, so
+     * a refusal that wins the race cannot be followed by a stray Queued in
+     * either place. [publishSession] is false for an automatic pass, whose
+     * rows are not shown in the manager.
      */
-    private fun publishQueuedIfPending(videoId: String) {
+    private fun publishQueuedIfPending(
+        song: Song,
+        from: String?,
+        publishSession: Boolean,
+    ) {
         synchronized(lock) {
-            if (videoId !in pending) return
-            _active.update { it + (videoId to DownloadState.Queued) }
+            if (song.videoId !in pending) return
+            _active.update { it + (song.videoId to DownloadState.Queued) }
+            if (publishSession) DownloadSession.queued(song, from)
         }
     }
 

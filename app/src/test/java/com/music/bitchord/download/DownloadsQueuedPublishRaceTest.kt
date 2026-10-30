@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -13,7 +14,9 @@ import org.junit.Test
  *
  * [Downloads.onForeground] can take a row back and mark it failed after the
  * enqueue inserted it into `pending` but before it published `Queued`. The
- * publish is allowed only while the id is still pending.
+ * publish is allowed only while the id is still pending, and the pending check,
+ * the `active` row and the download manager's row must all be written under
+ * the same lock so neither can be left showing Queued with nothing draining it.
  */
 class DownloadsQueuedPublishRaceTest {
 
@@ -35,39 +38,50 @@ class DownloadsQueuedPublishRaceTest {
     fun setUp() {
         pending.clear()
         active.value = emptyMap()
+        DownloadSession.clear()
     }
 
     @After
     fun tearDown() {
         pending.clear()
         active.value = emptyMap()
+        DownloadSession.clear()
     }
 
     @Test
     fun `a queued publish does not overwrite a refusal after the row was taken back`() {
         val videoId = "video-1"
-        pending[videoId] = Song(
+        val song = Song(
             videoId = videoId,
             title = "Title",
             artist = "Artist",
             thumbnailUrl = null,
         )
+        pending[videoId] = song
 
-        publishQueued(videoId)
+        publishQueued(song)
         assertEquals(DownloadState.Queued, active.value[videoId])
+        assertEquals(DownloadProgress.Queued, progressOf(videoId))
 
         pending.remove(videoId)
         active.value = mapOf(videoId to DownloadState.Failed("refused"))
+        DownloadSession.failed(videoId, "refused")
 
-        publishQueued(videoId)
+        publishQueued(song)
         assertEquals(DownloadState.Failed("refused"), active.value[videoId])
+        assertTrue(progressOf(videoId) is DownloadProgress.Failed)
     }
 
-    private fun publishQueued(videoId: String) {
+    private fun progressOf(videoId: String): DownloadProgress? =
+        DownloadSession.state.value.items.firstOrNull { it.videoId == videoId }?.progress
+
+    private fun publishQueued(song: Song) {
         val method = Downloads::class.java.getDeclaredMethod(
             "publishQueuedIfPending",
+            Song::class.java,
             String::class.java,
+            Boolean::class.javaPrimitiveType,
         ).apply { isAccessible = true }
-        method.invoke(Downloads, videoId)
+        method.invoke(Downloads, song, null, true)
     }
 }

@@ -8,24 +8,48 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A 429 leaves a song pending for one retry after the host rests. The retry
- * must consume that entry for every definitive answer, including a permanent
- * missing reference or an unmeasurable candidate, so later playback events do
- * not download and decode the same song forever. Only an attempt abandoned
- * because the play changed keeps the entry for the next event.
+ * A 429 leaves a song pending for one retry after the host rests. Only an
+ * answer that actually settles the question may consume that entry: a measured
+ * verdict, a second 429, or a refusal that cannot fix itself. An abandoned
+ * play, a host still resting and the transient reference/decode failures the
+ * live paths produce must keep the entry, or the one retry is silently spent
+ * without the candidate ever being measured.
  */
 class HqAudioVerifyPendingRetryTest {
 
     @Test
-    fun `unavailable is definitive and consumes the pending retry`() {
-        assertTrue(with(HqAudioVerify) { Outcome.Unavailable.settlesPendingRetry() })
+    fun `a permanent unavailable answer consumes the pending retry`() {
+        assertTrue(with(HqAudioVerify) { Outcome.Unavailable().settlesPendingRetry() })
     }
 
     @Test
-    fun `no reference is definitive and consumes the pending retry`() {
+    fun `a transient unavailable answer keeps the pending retry`() {
+        assertFalse(
+            with(HqAudioVerify) {
+                Outcome.Unavailable(transient = true).settlesPendingRetry()
+            },
+        )
+    }
+
+    @Test
+    fun `a live transient no-reference keeps the pending retry`() {
+        for (reason in listOf(
+            NoReferenceReason.HEAD_TIMEOUT,
+            NoReferenceReason.DECODE_FAILED,
+            NoReferenceReason.CANCELLED,
+        )) {
+            assertFalse(
+                "reason=$reason must not consume the retry",
+                with(HqAudioVerify) { Outcome.NoReference(reason).settlesPendingRetry() },
+            )
+        }
+    }
+
+    @Test
+    fun `a missing source is permanent and consumes the pending retry`() {
         assertTrue(
             with(HqAudioVerify) {
-                Outcome.NoReference(NoReferenceReason.HEAD_TIMEOUT).settlesPendingRetry()
+                Outcome.NoReference(NoReferenceReason.NO_SOURCE).settlesPendingRetry()
             },
         )
     }
@@ -45,6 +69,11 @@ class HqAudioVerifyPendingRetryTest {
     @Test
     fun `an abandoned attempt keeps the pending retry`() {
         assertFalse(with(HqAudioVerify) { Outcome.Abandoned.settlesPendingRetry() })
+    }
+
+    @Test
+    fun `a host still resting keeps the pending retry`() {
+        assertFalse(with(HqAudioVerify) { Outcome.Deferred.settlesPendingRetry() })
     }
 
     @Test

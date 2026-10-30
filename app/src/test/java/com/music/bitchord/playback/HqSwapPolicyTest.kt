@@ -176,4 +176,40 @@ class HqSwapPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `a proof that timed out is not rescued by a late duration`() {
+        assertFalse(
+            HqSwapPolicy.provesDuration(
+                proven = false,
+                durationMs = 200_000L,
+                expectedDurationMs = 200_000L,
+                slackMs = 2_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a proved duration inside the slack keeps the replacement`() {
+        assertTrue(
+            HqSwapPolicy.provesDuration(
+                proven = true,
+                durationMs = 199_000L,
+                expectedDurationMs = 200_000L,
+                slackMs = 2_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a proved but short replacement is reverted`() {
+        assertFalse(
+            HqSwapPolicy.provesDuration(
+                proven = true,
+                durationMs = 8_000L,
+                expectedDurationMs = 200_000L,
+                slackMs = 2_000L,
+            ),
+        )
+    }
 }

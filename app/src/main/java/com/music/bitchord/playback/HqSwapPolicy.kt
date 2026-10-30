@@ -92,6 +92,26 @@ internal object HqSwapPolicy {
     ): Boolean = !pinned && currentUri == expectedUri
 
     /**
+     * Whether the replacement proved itself against the length the old copy
+     * already knew.
+     *
+     * [proven] is the event-driven wait's answer. A wait that expired without
+     * reaching its condition is a failure even if a duration happens to be
+     * readable afterwards: the old loop reverted on timeout, and treating a
+     * late-arriving duration as proof would drop that revert. The pin/URI
+     * bail-outs are checked before this, so a listener's own revert is never
+     * mistaken for a short stream.
+     */
+    fun provesDuration(
+        proven: Boolean,
+        durationMs: Long,
+        expectedDurationMs: Long,
+        slackMs: Long,
+    ): Boolean = proven &&
+        durationMs > 0L &&
+        kotlin.math.abs(durationMs - expectedDurationMs) <= slackMs
+
+    /**
      * The YouTube clock for a position on the copy that is playing now.
      *
      * A YouTube stream is already on that clock. A verified substitute is not:

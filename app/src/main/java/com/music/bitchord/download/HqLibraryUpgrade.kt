@@ -703,6 +703,7 @@ object HqLibraryUpgrade {
     }
 
     /** [prunePlan] with [lock] already held and the device facts read. */
+    @Suppress("UNUSED_PARAMETER")
     private fun prunePlanLocked(
         downloaded: Map<String, SavedSongMetadata>,
         nowMs: Long,
@@ -712,14 +713,20 @@ object HqLibraryUpgrade {
             // Pruning is permanent: a copy already at the rung, or retries
             // exhausted. A background event only parks the pass for now, and
             // must never erase the plan onBackground promised to keep on disk.
-            automaticTargetEligible(
+            //
+            // The retry cooldown is deliberately not consulted here. Forcing
+            // the window open (as this used to) still let [AutomaticRetryPolicy]
+            // reject a target that was merely resting for 24h, so a temporarily
+            // parked song was deleted as if it had exhausted its attempts.
+            // Permanence is the two facts below and nothing else.
+            val exhausted = (failures[failureKey(pending.target)]?.attempts ?: 0) >=
+                AutomaticRetryPolicy.MAX_FAILURES
+            val satisfied = hasCopyAtLeastAsGood(
                 pending.target.videoId,
+                downloaded[pending.target.videoId],
                 pending.target.verifiedTier,
-                failures[failureKey(pending.target)],
-                nowMs,
-                downloaded,
-                foreground = true,
             )
+            !exhausted && !satisfied
         }
         if (kept.size == plan.size) return
         plan = kept

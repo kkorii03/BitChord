@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart
 
 import android.content.Context
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.SourceKind
 
 /**
  * The device's memory of what the sound comparison already decided.
@@ -68,6 +69,27 @@ object HqVerificationStore {
         }
         val choiceId = choiceSourceConfigId ?: return null
         return SourceIdentity(choiceId, choiceTrackId)
+    }
+
+    /**
+     * Whether [com.music.bitchord.playback.StreamChoice] may stand in for a
+     * decoder snapshot that carries no source config id.
+     *
+     * A snapshot that already names YouTube has spoken: falling back to a stale
+     * substitute choice would invent a verified clock for a direct copy that
+     * does not have one, and map a seek through the wrong offset. Only a
+     * snapshot that is silent about its source (no id and no YouTube name) may
+     * borrow the recorded choice.
+     */
+    internal fun shouldFallBackToChoice(
+        snapshotSourceConfigId: String?,
+        snapshotKind: SourceKind?,
+        snapshotSourceName: String?,
+    ): Boolean {
+        if (snapshotSourceConfigId != null) return false
+        if (snapshotKind == SourceKind.YOUTUBE) return false
+        if (snapshotKind == null && snapshotSourceName == "YouTube") return false
+        return true
     }
 
     private const val PREFS = "hq_verification"
