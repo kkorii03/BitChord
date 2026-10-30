@@ -1,6 +1,7 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -199,5 +200,70 @@ class YouTubeDisplayCleanerTest {
             "Dynamite (Live)",
             YouTubeDisplayCleaner.clean("Dynamite (Live)", "BTS").title,
         )
+    }
+
+    @Test
+    fun `a soundtrack fan upload reads its artist, title and work label`() {
+        data class Case(val raw: String, val title: String, val artist: String)
+        val cases = listOf(
+            Case(
+                "Gary Glitter - Rock & Roll Part II | Joker OST - Original Soundtrack",
+                "Rock & Roll Part II",
+                "Gary Glitter",
+            ),
+            Case(
+                "The Guess Who - Laughing | Joker OST - Original Soundtrack",
+                "Laughing",
+                "The Guess Who",
+            ),
+            Case(
+                "Hildur Gu\u00F0nad\u00F3ttir - Bathroom Dance | Joker OST",
+                "Bathroom Dance",
+                "Hildur Gu\u00F0nad\u00F3ttir",
+            ),
+        )
+        for (case in cases) {
+            val cleaned = YouTubeDisplayCleaner.clean(case.raw, "Original Soundtrack")
+            assertEquals(case.title, cleaned.title, case.raw)
+            assertEquals(case.artist, cleaned.artist, case.raw)
+            assertEquals("Joker OST", cleaned.album, case.raw)
+        }
+    }
+
+    @Test
+    fun `a soundtrack title with no performer never credits the soundtrack label`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "Following Sophie | Joker OST",
+            "Original Soundtrack",
+        )
+        assertEquals("Following Sophie", cleaned.title)
+        assertEquals("", cleaned.artist)
+        assertEquals("Joker OST", cleaned.album)
+
+        val byComposer = YouTubeDisplayCleaner.clean(
+            "Following Sophie | Joker OST",
+            "Hildur Gu\u00F0nad\u00F3ttir",
+        )
+        assertEquals("Following Sophie", byComposer.title)
+        assertEquals("Hildur Gu\u00F0nad\u00F3ttir", byComposer.artist)
+        assertEquals("Joker OST", byComposer.album)
+
+        val labelled = YouTubeDisplayCleaner.clean(
+            "Original Soundtrack - Following Sophie | Joker OST",
+            "Joker OST",
+        )
+        assertEquals("Following Sophie", labelled.title)
+        assertEquals("", labelled.artist)
+        assertEquals("Joker OST", labelled.album)
+    }
+
+    @Test
+    fun `the display split matches the audio switch identity`() {
+        val raw = "Gary Glitter - Rock & Roll Part II | Joker OST - Original Soundtrack"
+        val display = YouTubeDisplayCleaner.clean(raw, "Original Soundtrack")
+        val identity = TrackMatcher.audioSwitchIdentity(raw, "Original Soundtrack")
+        assertEquals(identity.title, TrackMatcher.normalize(display.title))
+        assertEquals(identity.artist, TrackMatcher.normalize(display.artist))
+        assertEquals(identity.work, "joker")
     }
 }
