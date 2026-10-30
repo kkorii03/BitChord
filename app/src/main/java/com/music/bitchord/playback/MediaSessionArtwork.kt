@@ -35,6 +35,22 @@ internal object MediaSessionArtwork {
     /** The process that draws the lock screen, the notification and the media controls. */
     private const val SYSTEM_UI = "com.android.systemui"
 
+    /**
+     * The other surfaces that read the session's metadata from their own
+     * process. Android Auto (projection) and Android Automotive's media app do
+     * not inherit the lock screen's grant, so a downloaded sidecar handed out
+     * as a FileProvider `content://` URI was a `SecurityException` there and
+     * the car showed no cover.
+     */
+    private const val ANDROID_AUTO = "com.google.android.projection.gearhead"
+    private const val ANDROID_AUTOMOTIVE = "com.android.car.media"
+
+    private val READER_PACKAGES = listOf(SYSTEM_UI, ANDROID_AUTO, ANDROID_AUTOMOTIVE)
+
+    /** The packages a session cover must be readable by. */
+    internal fun readerPackages(): List<String> = READER_PACKAGES
+
+    /** One grant per URI *and reader* — a later car connection still needs its own. */
     private val granted = ConcurrentHashMap.newKeySet<String>()
 
     /**
@@ -42,7 +58,9 @@ internal object MediaSessionArtwork {
      *
      * Doing this when the item is built means the session's metadata already
      * holds the readable form, so the lyric-subtitle updates that rebuild
-     * metadata every second do not re-state the cover.
+     * metadata every second do not re-state the cover. Browser items reach
+     * Android Auto without passing through [apply], so the read grant is spent
+     * here as well.
      */
     fun uriFor(context: Context?, song: Song): String? {
         val recorded = song.thumbnailUrl
@@ -53,8 +71,11 @@ internal object MediaSessionArtwork {
         )
         return when (selection.source) {
             ArtworkSource.LOCAL ->
-                context?.let { readableContentUri(it, selection.value) }
-                    ?: videoThumbnailUrl(song.videoId)?.artworkAt(NOTIFICATION_ART_PX)
+                context?.let { ctx ->
+                    readableContentUri(ctx, selection.value)?.also {
+                        grantRead(ctx, Uri.parse(it))
+                    }
+                } ?: videoThumbnailUrl(song.videoId)?.artworkAt(NOTIFICATION_ART_PX)
             ArtworkSource.REMOTE -> selection.value?.artworkAt(NOTIFICATION_ART_PX)
             ArtworkSource.NONE -> null
         }
@@ -65,7 +86,9 @@ internal object MediaSessionArtwork {
         if (url.isNullOrBlank()) return null
         if (!isLocalArtworkUri(url)) return url.artworkAt(NOTIFICATION_ART_PX)
         if (!localArtworkExists(url)) return null
-        return context?.let { readableContentUri(it, url) }
+        return context?.let { ctx ->
+            readableContentUri(ctx, url)?.also { grantRead(ctx, Uri.parse(it)) }
+        }
     }
 
     fun apply(context: Context, metadata: MediaMetadata, videoId: String?): MediaMetadata {
@@ -81,8 +104,9 @@ internal object MediaSessionArtwork {
             ArtworkSource.REMOTE -> selection.value?.artworkAt(NOTIFICATION_ART_PX)
             ArtworkSource.NONE -> null
         }
-        // Only the playing track's metadata reaches another process, so the
-        // grant is spent here rather than on every item a queue builds.
+        // Also spent here for the playing item: an item built earlier may have
+        // been the first to carry this URI, and the grant has to exist before
+        // System UI, Auto or Automotive opens it.
         uri?.let(Uri::parse)?.let { grantRead(context, it) }
         if (uri == recorded) return metadata
         return metadata.buildUpon().setArtworkUri(uri?.let(Uri::parse)).build()
@@ -121,14 +145,16 @@ internal object MediaSessionArtwork {
     }
 
     /**
-     * Grants are per URI and package, so one pass per URI is enough. Only
+     * Grants are per URI and package, so one pass per pair is enough. Only
      * content URIs need one; an https still is readable by every process.
      */
     private fun grantRead(context: Context, uri: Uri) {
         if (!uri.scheme.equals("content", ignoreCase = true)) return
-        if (!granted.add(uri.toString())) return
-        runCatching {
-            context.grantUriPermission(SYSTEM_UI, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        for (reader in READER_PACKAGES) {
+            if (!granted.add("$reader|$uri")) continue
+            runCatching {
+                context.grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
     }
 }
