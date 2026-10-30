@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.BoundedMemo
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import kotlin.math.abs
@@ -134,6 +135,203 @@ object TrackMatcher {
         // with; this asks the other without spending a second artist pair.
         titles.drop(1).firstOrNull { it.isNotBlank() && it !in out }?.let { out += it }
         return out.distinct()
+    }
+
+    /**
+     * An upload title that names the work its song comes from.
+     *
+     * A soundtrack track uploaded by a fan carries three things in its title:
+     * the song, the credit the uploader gives it and the work it belongs to —
+     * "Cream - White Room | Joker OST", "Following Sophie | Joker OST -
+     * Original Soundtrack", "Hildur Guðnadóttir, Jóhann Jóhannsson - Following
+     * Sophie | Joker OST". A catalogue files the track under the song and the
+     * credit; the work says where the song is from, not what it is.
+     */
+    data class WorkTitle(
+        /** The song's own name, the listing's packaging removed. */
+        val title: String,
+        /** The credit the title states; empty when the title states none. */
+        val artist: String,
+        /** The work the song comes from; empty when the title names none. */
+        val work: String,
+        /**
+         * Whether the tail carried the OST label — `| Joker OST`, `- Original
+         * Soundtrack`, a bare `OST`.
+         *
+         * A plain `(From "Satyamev Jayate")` is a catalogue title's own shape:
+         * the credit there is the artist, not an uploader's channel, so it is
+         * not the same thing and the tail is only packaging.
+         */
+        val ostTail: Boolean = false,
+    ) {
+        /** Whether the title states a credit of its own. */
+        val statesArtist: Boolean get() = artist.isNotBlank()
+    }
+
+    /**
+     * The song an upload title names, with the work and the packaging removed.
+     *
+     * Null when the title names no work at all: an ordinary catalogue title is
+     * none of this parser's business, and [parseTitle] already handles it.
+     *
+     * The work tail is packaging in every shape it is printed — `| Joker OST`,
+     * `- Original Soundtrack`, `(From "Satyamev Jayate")`, a bare `OST` — and
+     * what is left is the song. When the head is printed the upload way,
+     * `Artist - Title`, the credit the uploader gives the song is the left
+     * side of the dash; a head with no dash states no credit at all.
+     */
+    fun parseWorkTitle(raw: String): WorkTitle? {
+        var head = raw.trim()
+        if (head.isEmpty()) return null
+        // null = no work tail seen yet, "" = a tail that names no work.
+        var work: String? = null
+        var ostTail = false
+
+        // "(From <work>)" states the work outright.
+        FROM_WORK.find(head)?.let { match ->
+            work = workName(match.groupValues[1])
+            // A work named with the OST label is a soundtrack tail; a plain
+            // film name is a catalogue title's own shape.
+            ostTail = BARE_OST.containsMatchIn(match.groupValues[1])
+            head = head.substring(0, match.range.first).trim()
+        }
+        // "- Original Soundtrack" and "| <work> OST" are one tail printed two
+        // ways, and the label can come first, so peel until nothing more comes
+        // off.
+        while (true) {
+            val label = ORIGINAL_SOUNDTRACK.find(head)
+            if (label != null) {
+                head = head.substring(0, label.range.first).trim()
+                if (work == null) work = ""
+                ostTail = true
+                continue
+            }
+            val named = WORK_OST.find(head)
+            if (named != null) {
+                val name = workName(named.groupValues[1])
+                head = head.substring(0, named.range.first).trim()
+                if (name.isNotBlank()) work = name else if (work == null) work = ""
+                ostTail = true
+                continue
+            }
+            break
+        }
+        // A bare "OST" tail: the work is not named, but the label still is
+        // packaging and does not belong in the song's name.
+        if (work == null) {
+            val bare = BARE_OST.find(head)
+            if (bare != null) {
+                head = head.substring(0, bare.range.first).trim()
+                work = ""
+                ostTail = true
+            }
+        }
+        if (work == null || head.isBlank()) return null
+
+        val split = CoverTitles.splitTopLevelDash(head)
+        val artist: String
+        val title: String
+        if (split != null && isCredit(split.first) && !isReleasePhrase(split.second)) {
+            artist = split.first.trim()
+            title = split.second.trim()
+        } else {
+            artist = ""
+            title = head
+        }
+        return WorkTitle(
+            title = title,
+            artist = artist,
+            work = work,
+            ostTail = ostTail,
+        )
+    }
+
+    /**
+     * The work without the label it was printed with: "Joker OST" is the work
+     * "Joker"; the label is packaging wherever it stands.
+     */
+    private fun workName(raw: String): String =
+        raw.trim().replace(BARE_OST, "").trim()
+
+    /**
+     * The queries the audio switch asks for [target], given what its title
+     * said about the work.
+     *
+     * A title that states a credit of its own is asked for by that credit,
+     * which is what a catalogue files the track under. A title that names the
+     * work and no credit — and says so with the OST label, which is how an
+     * upload of a soundtrack track is written — is asked for by the song and
+     * the work: "Following Sophie Joker soundtrack". The credit an upload
+     * shows is the channel that uploaded it, and a channel is nobody who
+     * recorded anything.
+     *
+     * Two queries either way, as [queries] asks: every query is a search on
+     * every source, and the lookup budget is sized off the count.
+     */
+    fun audioSwitchQueries(target: Target, upload: WorkTitle): List<String> {
+        val title = titleVariants(target.title, target.artist).firstOrNull().orEmpty()
+        if (title.isBlank()) return emptyList()
+        val artist = primaryArtist(target.artist)
+        val out = mutableListOf<String>()
+        when {
+            // The title states a credit of its own: that is what a catalogue
+            // files the track under.
+            upload.statesArtist -> {
+                if (artist.isNotBlank()) out += "$title $artist"
+                out += title
+            }
+            // The title names the work but no credit, and the tail carried the
+            // OST label: the row is an upload, and the credit an upload shows
+            // is the channel that uploaded it. A channel is nobody who
+            // recorded anything, so the work is asked for in its place.
+            upload.ostTail && upload.work.isNotBlank() -> {
+                out += "$title ${normalize(upload.work).trim()} soundtrack"
+                out += title
+            }
+            else -> {
+                if (artist.isNotBlank()) out += "$title $artist"
+                out += title
+            }
+        }
+        return out.distinct()
+    }
+
+    /** What the audio switch looks for in one row, and the queries that find it. */
+    data class AudioSwitchPlan(
+        /** The recording being looked for. */
+        val target: Target,
+        /** The queries to ask, best first. */
+        val queries: List<String>,
+    )
+
+    /**
+     * The recording the audio switch looks for in [song], and the queries that
+     * find it.
+     *
+     * A soundtrack upload is titled with the song, the credit the uploader
+     * gives it and the work it comes from ("Cream - White Room | Joker OST").
+     * A catalogue files the track under the song and the credit, and the
+     * uploader's channel is nobody who recorded anything — so the credit the
+     * title states is the one asked for, and a title that states none is
+     * asked for by the song and the work.
+     *
+     * A title with no work tail at all is left exactly as it was: the
+     * ordinary [queries] and the ordinary target.
+     */
+    fun audioSwitchPlan(song: Song): AudioSwitchPlan {
+        val base = targetOf(song)
+        val upload = parseWorkTitle(base.title)
+        val target = base.copy(
+            title = upload?.title ?: base.title,
+            artist = upload?.artist?.ifBlank { base.artist } ?: base.artist,
+            isVideo = song.isVideo || song.typeUnknown,
+        )
+        val queries = if (upload != null) {
+            audioSwitchQueries(target, upload)
+        } else {
+            queries(target)
+        }
+        return AudioSwitchPlan(target = target, queries = queries)
     }
 
     /**
@@ -1123,6 +1321,42 @@ object TrackMatcher {
     }
 
     /**
+     * Whether [left] reads as a credit rather than as part of the song's name.
+     *
+     * The upload convention is "Artist - Title", but a song's own name can
+     * hold a dash of its own ("The Moon Is a Silver Dollar - Instrumental").
+     * A credit is a name: a few words each, at most a handful of names, and
+     * never a phrase that names a release.
+     */
+    private fun isCredit(left: String): Boolean {
+        val parts = left.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty() || parts.size > 3) return false
+        if (parts.any { part -> part.split(WORD_SPLIT).count { it.isNotBlank() } > 4 }) return false
+        return parts.none { part -> mentionsRelease(part) }
+    }
+
+    /**
+     * Whether [text] names a take or a release rather than a song.
+     *
+     * "Special Edition", "Live", "Original Soundtrack": the words an upload
+     * hangs on a song, not the song. A credit is never one of them, and a
+     * title that is nothing else is not a song the dash split may take.
+     */
+    private fun mentionsRelease(text: String): Boolean =
+        normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .any { it in RELEASE_WORDS }
+
+    /** Whether every word of [text] names a take or a release. */
+    private fun isReleasePhrase(text: String): Boolean {
+        val words = normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (words.isEmpty()) return false
+        return words.all { it in RELEASE_WORDS }
+    }
+
+    /**
      * NFKC + lowercase: full-width alphanumerics fold to ASCII (`Ｄａｉ` to
      * `dai`, `０-９` to `0-9`, ideographic spaces to spaces) and CJK brackets
      * fold to ASCII parens so the bracket pass handles `「title」` like
@@ -1482,6 +1716,32 @@ object TrackMatcher {
 
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
+    /**
+     * `(From <work>)` at the end of a title: the work the song is from, stated
+     * outright — "(From "Satyamev Jayate")".
+     */
+    private val FROM_WORK = Regex(
+        """\s*\(\s*from\s+"?([^")]+)"?\s*\)\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+    /**
+     * `- Original Soundtrack` at the end of a title: the label of the work
+     * tail, which names no work of its own.
+     */
+    private val ORIGINAL_SOUNDTRACK = Regex(
+        """\s*[-–—|]\s*original\s+soundtrack\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+    /**
+     * `| <work> OST` at the end of a title: the work, named. The work itself
+     * may hold a dash ("Blade Runner 2049 OST"); only a bar ends it.
+     */
+    private val WORK_OST = Regex(
+        """\s*[-–—|]\s*([^|]*?)\s+OST\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** A bare `OST` at the end of a title: the label, with no work named. */
+    private val BARE_OST = Regex("""\s+OST\s*$""", RegexOption.IGNORE_CASE)
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
     /**
      * A listing's track number in front of the name: "3.", "03 ", "3) ",
@@ -1613,6 +1873,19 @@ object TrackMatcher {
         "featuring", "with", "new", "latest", "free", "download", "remaster",
         "remastered", "explicit", "clean", "bonus", "track", "deluxe", "original",
         "album", "single", "hd", "hq", "4k", "mp3",
+    )
+
+    /**
+     * Words that name a take or a release rather than a performer or a song.
+     * "Original Motion Picture Soundtrack" is where a song is from, not who
+     * recorded it, and "Special Edition" is not the name of a song.
+     */
+    private val RELEASE_WORDS = setOf(
+        "soundtrack", "original", "motion", "picture", "official", "audio",
+        "video", "theme", "score", "ost", "complete", "bonus", "deluxe",
+        "version", "collection", "edition", "special", "remaster", "remastered",
+        "live", "instrumental", "acoustic", "demo", "mix", "edit", "mono",
+        "stereo", "anniversary", "single", "album", "explicit", "session",
     )
 
     private val ALBUM_NOISE_WORDS = setOf(

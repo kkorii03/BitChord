@@ -758,16 +758,34 @@ object YtMusicRepository {
         }
     }
 
+    /**
+     * The line every audio-switch query writes.
+     *
+     * The search request itself logs only the *length* of a query (see
+     * [Innertube.searchLogLine]), which leaves a device log saying nothing
+     * about what was asked for — and a wrong query is the usual reason a
+     * soundtrack upload never finds its song. This says it: the title and the
+     * credit the query was built from, and nothing of the account.
+     */
+    internal fun audioSwitchQueryLine(query: String): String = "audio switch: query=$query"
+
     private suspend fun resolveAudioUncached(song: Song): Song {
         // A row whose type is still unknown is treated as a video for timing:
         // its runtime may already include a visual intro/outro, and refusing
         // that drift is how the song version was written off.
-        val target = TrackMatcher.targetOf(song)
-            .copy(isVideo = song.isVideo || song.typeUnknown)
+        //
+        // The plan reads the title the way a soundtrack upload is written —
+        // "Cream - White Room | Joker OST" — so the song and the credit the
+        // uploader gives it are what is asked for, and the channel that
+        // uploaded it is not.
+        val plan = TrackMatcher.audioSwitchPlan(song)
+        val target = plan.target
         var searched = false
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
-        for (query in TrackMatcher.queries(target)) {
+        for (query in plan.queries) {
+            // The query itself, so a device log can say what was asked for.
+            Log.d(TAG, audioSwitchQueryLine(query))
             val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
             if (page.isSuccess) searched = true
             val rows = page.getOrNull()
