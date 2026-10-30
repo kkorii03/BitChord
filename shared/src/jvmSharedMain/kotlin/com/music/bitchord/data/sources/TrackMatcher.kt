@@ -76,20 +76,50 @@ object TrackMatcher {
         val albumId: String? = null,
     )
 
-    fun targetOf(song: Song) = Target(
-        // A cover is matched as the upload it is — see CoverTitles.
-        song.originalTitle ?: song.title,
-        song.originalArtist ?: song.artist,
-        secondsOf(song.durationText),
-        song.albumName,
-        song.isExplicit,
-        song.isVideo,
-        song.artistId,
-        (song.artists.mapNotNull { it.browseId } + listOfNotNull(song.artistId))
-            .filter { it.isNotBlank() }
-            .distinct(),
-        song.albumId,
-    )
+    fun targetOf(song: Song): Target {
+        val title = song.originalTitle ?: song.title
+        val credit = song.originalArtist ?: song.artist
+        // A cover is matched as the upload it is — see CoverTitles — so a row
+        // that recorded the cover's own credit keeps it. A youtube.com fan
+        // upload records no such credit: its row names the uploader, while the
+        // title's own "Artist - Title | Work OST" shape names the singer the
+        // catalogue files the track under. That byline is the artist every
+        // same-artist check below must meet — but only when the credit does
+        // not already name it, because a credit that contains the head is the
+        // fuller spelling of the same singer and the better matcher input.
+        val byline = if (song.originalArtist == null) {
+            parseTitle(title, credit).byline
+        } else {
+            null
+        }
+        return Target(
+            title,
+            if (byline != null && !creditNamesByline(credit, byline)) byline else credit,
+            secondsOf(song.durationText),
+            song.albumName,
+            song.isExplicit,
+            song.isVideo,
+            song.artistId,
+            (song.artists.mapNotNull { it.browseId } + listOfNotNull(song.artistId))
+                .filter { it.isNotBlank() }
+                .distinct(),
+            song.albumId,
+        )
+    }
+
+    /** Whether [credit] already holds every word of [byline] — its fuller spelling. */
+    private fun creditNamesByline(credit: String, byline: String): Boolean {
+        if (credit.isBlank()) return false
+        val words = normalize(credit).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        if (words.isEmpty()) return false
+        return byline.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+            .all { it in words }
+    }
 
     // ── Asking ──────────────────────────────────────────────────────────────
 
@@ -115,7 +145,20 @@ object TrackMatcher {
         val titles = titleVariants(target.title, target.artist)
         val title = titles.firstOrNull().orEmpty()
         if (title.isBlank()) return emptyList()
-        val artist = primaryArtist(target.artist)
+        // The credit a query carries: the singer the title's own "Artist -
+        // Title" shape names when the row's credit does not already name that
+        // singer, else the row's credit — except when the title named no
+        // singer but named a work ("Song | Film OST"). There the row's credit
+        // is a fan upload's uploader, and "<title> <work> soundtrack" is the
+        // query that finds the release, not "<title> <uploader>".
+        val parts = parseTitle(target.title, target.artist)
+        val artist = when {
+            parts.byline != null && !creditNamesByline(target.artist, parts.byline) ->
+                primaryArtist(parts.byline)
+            parts.byline != null -> primaryArtist(target.artist)
+            parts.work != null -> "${parts.work} soundtrack"
+            else -> primaryArtist(target.artist)
+        }
         val out = if (artist.isBlank()) mutableListOf(title) else mutableListOf("$title $artist", title)
         // The other script, asked once and without the artist: a pure-katakana
         // title ("コイコガレ") never meets its romaji-filed row ("Koi Kogare")
@@ -881,6 +924,20 @@ object TrackMatcher {
         val altWords: List<List<String>> = emptyList(),
         /** [altWords] reduced the same way as [core]. */
         val altCores: List<String> = emptyList(),
+        /**
+         * The singer an upload's own "Artist - Title" head names, when the row's
+         * credit is not that singer. youtube.com fan playlists print
+         * "Cream - White Room | Joker OST" and credit the uploader; the head is
+         * the only place the real credit lives. Null when the title names none.
+         */
+        val byline: String? = null,
+        /**
+         * The work a packaging tail names ("Joker" of "| Joker OST - Original
+         * Soundtrack"), with the OST/soundtrack words themselves removed. Null
+         * when no tail named one. Used to build the query that finds a fan
+         * upload's release — never compared against a candidate.
+         */
+        val work: String? = null,
     ) {
         /** Every core this title is filed under, the primary one first. */
         fun cores(): List<String> = (listOf(core) + altCores).filter { it.isNotBlank() }.distinct()
@@ -892,6 +949,8 @@ object TrackMatcher {
     private fun parseTitleUncached(raw: String, artist: String = ""): TitleParts {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
+        var byline: String? = null
+        var work: String? = null
         // A playlist row prints its position in front of the name ("3.여수밤바다",
         // "03 Ditto", "Track 3 - Song"). It is the listing's, not the song's,
         // and every catalogue search for it misses.
@@ -914,6 +973,26 @@ object TrackMatcher {
             text = text.substring(0, open)
         }
 
+        // A youtube.com upload names the work its track belongs to after a
+        // pipe: "Cream - White Room | Joker OST - Original Soundtrack". The
+        // tail is packaging like a bracketed aside, and the work's name is
+        // kept for the search queries, because a fan upload credits the
+        // uploader as the artist and "<title> <work> soundtrack" is what
+        // finds the release. The head keeps the upload's "Artist - Title"
+        // shape, which the dash loop below reads with that convention in
+        // mind once a work tail has been seen.
+        PIPE.find(text)?.let { pipe ->
+            val head = text.substring(0, pipe.range.first)
+            // A pipe with nothing in front of it is a malformed title, not an
+            // upload shape; the dash loop reads it as it always did.
+            if (head.isNotBlank()) {
+                val tail = text.substring(pipe.range.last + 1)
+                if (hasWorkMarker(tail)) work = workName(tail)
+                classify(tail, versions, context)
+                text = head
+            }
+        }
+
         // Dash- and pipe-separated tails: "Paniyon Sa - Satyamev Jayate",
         // "Song | Official Video". The head is normally the title, but the
         // "Artist - Title" upload convention inverts that, so a head that is
@@ -931,6 +1010,7 @@ object TrackMatcher {
             text = when {
                 isArtistName(head, artist) -> {
                     classify(head, versions, context)
+                    byline = head
                     tail
                 }
                 isTranslationPair(head, tail, artist) -> {
@@ -947,8 +1027,21 @@ object TrackMatcher {
                     classify(head, versions, context)
                     tail
                 }
+                work != null && byline == null && readsAsBylineHead(head, tail) -> {
+                    // The pipe tail named a work, so the head is the upload
+                    // convention's "Artist - Title": the head is the singer
+                    // and the tail is the song. A tail that is all packaging
+                    // or take markers ("Remaster", "Live Version") stays with
+                    // the ordinary reading instead — the song keeps its name.
+                    byline = head
+                    classifyContextOnly(head, context)
+                    tail
+                }
                 else -> {
                     classify(tail, versions, context)
+                    if (byline == null && DASH.find(tail) == null && hasWorkMarker(tail)) {
+                        work = workName(tail)
+                    }
                     head
                 }
             }
@@ -1033,6 +1126,8 @@ object TrackMatcher {
             context = context,
             altWords = altWords,
             altCores = altCores,
+            byline = byline?.trim()?.takeIf { it.isNotBlank() },
+            work = work?.trim()?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -1120,6 +1215,55 @@ object TrackMatcher {
             .filter { it.isNotEmpty() }
             .toSet()
         return words.all { it in credited }
+    }
+
+    /**
+     * Whether [head] reads as the singer of an upload's "Artist - Title" shape
+     * and [tail] as the song. Only asked once a pipe tail has named a work —
+     * that is the fan-playlist convention the inversion exists for — and the
+     * tail must still read like a title once its packaging and take markers
+     * are set aside: "Remaster", "Live Version" and "Remastered 2011" are not
+     * what the upload named the song, so the ordinary reading stays.
+     */
+    private fun readsAsBylineHead(head: String, tail: String): Boolean {
+        val headWords = head.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (headWords.isEmpty()) return false
+        return titleWords(tail).isNotEmpty()
+    }
+
+    /** The words of [text] that read as a title rather than packaging. */
+    private fun titleWords(text: String): List<String> =
+        text.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter {
+                it.isNotEmpty() && it.any(Char::isLetter) &&
+                    it !in VERSION_WORDS && it !in NOISE_WORDS &&
+                    it !in TRAILING_NOISE && it !in JOINING_WORDS
+            }
+
+    /** Whether a packaging tail names the work a track belongs to. */
+    private fun hasWorkMarker(text: String): Boolean =
+        text.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .any { it in WORK_TAIL_WORDS }
+
+    /** The work a packaging tail names — "Joker" of "Joker OST - Original Soundtrack". */
+    private fun workName(text: String): String? =
+        titleWords(text).filter { it !in WORK_TAIL_WORDS }
+            .joinToString(" ")
+            .takeIf { it.isNotBlank() }
+
+    /**
+     * The packaging words of a segment that is a singer's name, kept as
+     * context only: a byline must never add a take marker to the song, since
+     * "Live - Song | Work OST" names a channel, not a live take.
+     */
+    private fun classifyContextOnly(segment: String, context: MutableSet<String>) {
+        context += segment.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() && it.length > 2 && it !in NOISE_WORDS }
     }
 
     /**
@@ -1482,6 +1626,8 @@ object TrackMatcher {
 
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
+    /** The pipe separator of a youtube.com upload's work tail, read before the dashes. */
+    private val PIPE = Regex("""\s+\|+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
     /**
      * A listing's track number in front of the name: "3.", "03 ", "3) ",
@@ -1627,6 +1773,16 @@ object TrackMatcher {
         // `Youngblood M/V` and `Youngblood MV` print the tag without brackets.
         // Normalisation drops the slash, so both arrive here as `mv`.
         "mv",
+    )
+
+    /**
+     * The words a youtube.com work tail carries — "Joker OST - Original
+     * Soundtrack", "사랑의 이해 OST". A tail holding one names the film or
+     * series the track belongs to, which is the packaging the fan-playlist
+     * reading of a title hangs off.
+     */
+    private val WORK_TAIL_WORDS = setOf(
+        "ost", "soundtrack", "score", "bgm", "사운드트랙",
     )
 
     /** Dropped from the core so that "Jack and Jill" and "Jack & Jill" are one title. */

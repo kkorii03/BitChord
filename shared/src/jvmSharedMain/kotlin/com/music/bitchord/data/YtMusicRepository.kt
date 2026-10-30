@@ -768,6 +768,12 @@ object YtMusicRepository {
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
         for (query in TrackMatcher.queries(target)) {
+            // What the search box is actually asked, so a device log pairs the
+            // rejected candidates with the query that produced them. The query
+            // is built from the row's title and credit alone — no account or
+            // session state ever reaches it (the `search:` request line keeps
+            // logging only its length for the same reason).
+            Log.d(TAG, "audio switch: query=$query")
             val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
             if (page.isSuccess) searched = true
             val rows = page.getOrNull()
