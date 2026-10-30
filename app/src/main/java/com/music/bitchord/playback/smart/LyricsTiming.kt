@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1080,6 +1081,12 @@ object LyricsTiming {
         // as before; a pass that never sees the opening simply gives up.
         return withTimeoutOrNull(VIDEO_TIMEOUT_MS) {
             AudioCache.served
+                // Subscribe first, then look at what is already on disk. The
+                // check used to run before subscribing, so bytes that landed
+                // in between were missed and the pass slept until the timeout.
+                // onSubscription runs once the subscription is live and wakes
+                // the collector for bytes that are already there.
+                .onSubscription { readyCopy()?.let { emit(video.videoId) } }
                 .filter { it == video.videoId }
                 .mapNotNull { readyCopy() }
                 .first()
@@ -1654,6 +1661,22 @@ object LyricsTiming {
      */
     private val songSyncGate = Mutex()
 
+    /**
+     * Bumped for a video whenever [resetSongCheck] drops the answer of the
+     * recording that was there. A re-check captures the value before it waits
+     * on [songSyncGate]; if it changed while it waited, the file it was about
+     * to answer for is gone and its result must not be written over the new
+     * one. Reset also clears [syncCheckVersion], so the old guard alone let a
+     * waiting check see "unverified" and re-apply the previous bytes' answer.
+     */
+    private val songSyncGenerations = ConcurrentHashMap<String, Long>()
+
+    private fun songSyncGenerationOf(videoId: String): Long = songSyncGenerations[videoId] ?: 0L
+
+    private fun bumpSongSyncGeneration(videoId: String) {
+        songSyncGenerations.merge(videoId, 1L, Long::plus)
+    }
+
     /** No song check may be sent before this, after a 429; 0 when clear. */
     @Volatile
     private var songQuietUntilMs = 0L
@@ -1906,6 +1929,7 @@ object LyricsTiming {
         // The file these lyrics came from is gone or has different bytes. An
         // automatic override still holds its old sheet and sync, so it has to
         // go with the answer; a listener's own override is left alone.
+        bumpSongSyncGeneration(videoId)
         LyricsOverrideStore.removeRecheck(context, videoId)
         store(context).update(videoId) {
             it.copy(
@@ -2018,6 +2042,9 @@ object LyricsTiming {
         artistKnown: Boolean,
         artistAliases: List<String>,
     ): LyricsRepository.Result? {
+        // Captured before any suspension: a reset that runs while this check
+        // waits for the gate changes it, and then this answer names old bytes.
+        val startedGeneration = songSyncGenerationOf(song.videoId)
         // Off by default: neither the check nor the override it writes may
         // change a downloaded file's lyrics on this build.
         if (!SyncSafetyPolicy.recheckAllowed(AppSettings.syncSafetySwitches)) {
@@ -2069,6 +2096,15 @@ object LyricsTiming {
         }
         recheckTokens[song.videoId] = reason.token
         return songSyncGate.withLock {
+            // A reset may have replaced this file while the check waited here.
+            // The version it cleared made it look unverified, but the captured
+            // song/lines still name the old recording: writing this answer or
+            // its override would put the new file back on the old sync.
+            if (songSyncGenerationOf(song.videoId) != startedGeneration) {
+                TrackLog.d(TAG, "lyrics-sync: download re-check dropped (file replaced)", song.videoId)
+                recheckTokens.remove(song.videoId)
+                return@withLock null
+            }
             // Another flight may have finished this file while this one waited.
             val entry = store(context).get(song.videoId)
             if (!DownloadedSyncCheck.isUnverified(entry?.syncCheckVersion)) {

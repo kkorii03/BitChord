@@ -1,11 +1,13 @@
 package com.music.bitchord.playback.smart
 
 import android.content.Context
+import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.DownloadedSyncCheck
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
@@ -57,6 +59,7 @@ class LyricsTimingResetSongCheckTest {
     @After
     fun tearDown() {
         AppSettings.syncSafetyDownloadRecheck.value = false
+        Deepgram.apiKey = ""
         storeField.set(LyricsTiming, null)
         directory.deleteRecursively()
     }
@@ -199,5 +202,69 @@ class LyricsTimingResetSongCheckTest {
             providerUnknown = false,
         ).second
         assertEquals(DownloadedSyncCheck.Recheck.UNVERIFIED.token, recheck)
+    }
+
+    @Test
+    fun `a check that waited through a reset does not write the old file answer`() = runBlocking {
+        // A stored low-match answer makes the pending check say WHY it runs;
+        // after the reset the token must be gone, not the old reason.
+        val audioSource = LyricsTiming.audioSourceKey("video", localFile = true)
+        val key = 31 * audioSource.hashCode() + lines.joinToString("\n") { it.text }.hashCode()
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """{"entries":{"video":{"aiTextKey":$key,"ai":{"match":40}}}}""",
+        )
+        Deepgram.apiKey = "test-key"
+        val gate = gateField.get(LyricsTiming) as Mutex
+        val held = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val holder = launch {
+            gate.withLock {
+                held.complete(Unit)
+                release.await()
+            }
+        }
+        held.await()
+
+        // The reset is queued first but cannot run while the gate is held. The
+        // re-check starts meanwhile and captures the generation of the old
+        // file; without that token it would see the reset's version 0 as
+        // "unverified" and spend a request on the old bytes.
+        val reset = async { LyricsTiming.resetSongCheck(context, "video") }
+        val recheck = async {
+            LyricsTiming.recheckDownloaded(
+                context = context,
+                song = Song(
+                    videoId = "video",
+                    title = "Test Song",
+                    artist = "Test Artist",
+                    thumbnailUrl = null,
+                    localUri = File(directory, "replaced.m4a").absolutePath,
+                ),
+                lines = lines,
+                providerUnknown = false,
+                title = "Test Song",
+                artist = "Test Artist",
+                durationMs = 180_000L,
+                album = null,
+                alternatives = emptyList(),
+                artistKnown = true,
+                artistAliases = emptyList(),
+            )
+        }
+        delay(100)
+        release.complete(Unit)
+        assertNull(recheck.await())
+        reset.await()
+        holder.join()
+
+        val recheckAfter = LyricsTiming.syncDiagnostics(
+            context = context,
+            videoId = "video",
+            lines = lines,
+            audioSource = null,
+            downloaded = true,
+            providerUnknown = false,
+        ).second
+        assertEquals(DownloadedSyncCheck.Recheck.UNVERIFIED.token, recheckAfter)
     }
 }

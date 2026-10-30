@@ -823,10 +823,13 @@ class LyricsController(
                     autoAiIfNeeded(generation, lines)
                     return !LyricsTiming.measured(context, request.videoId)
                 }
-                if (measureOnce()) {
+                if (measureOnce() && LocalTimingPolicy.measureWaitsForStream(video.localUri)) {
                     // Event-driven: a stream open is the point where more of the
                     // video's opening reaches disk. Wake on that, never on a
-                    // timer; a new track cancels this job.
+                    // timer; a new track cancels this job. A local file is
+                    // already whole and never fires this event, so it does not
+                    // wait here: the AI fallback runs at once instead of after
+                    // the whole measure window.
                     while (true) {
                         val remaining = giveUpAt - System.currentTimeMillis()
                         if (remaining <= 0L) break

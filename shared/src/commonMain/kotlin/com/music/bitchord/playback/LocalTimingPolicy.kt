@@ -41,6 +41,15 @@ object LocalTimingPolicy {
     ): Boolean = localUri.isNullOrBlank() || isVideo || timingForeign
 
     /**
+     * Whether a failed measurement should wait for the stream to open again.
+     * A stream's opening arrives over time, so `AudioCache.served` is the
+     * event to wake on. A local file is already whole: no stream-open event
+     * exists for it, and waiting for one parked the AI fallback for the whole
+     * measure window after the first attempt.
+     */
+    fun measureWaitsForStream(localUri: String?): Boolean = localUri.isNullOrBlank()
+
+    /**
      * Whether timed lines from a downloaded file may be moved onto the clock of
      * the sound that is playing. A file's own embedded timing is left alone, but
      * a video's file and a re-checked override are timed for the file's audio,

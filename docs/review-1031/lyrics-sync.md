@@ -157,3 +157,42 @@
 
 - 5절의 HIGH 2건(다음 곡 SYNC 기본 비활성, 한국어 노래 AI 제외)은 이번 범위에서 뒤집지 않았다. 스위치/정책을 켜면 기존 안전 규칙과 데이터 검증이 함께 필요하다.
 - 이벤트 기반 재측정은 `AudioCache.served`(스트림 open + 재생 256KB 진행)에 의존한다. 플레이어가 완전히 캐시된 곡을 재생해 새 open/진행이 없으면 첫 시도만 돌고 더 기다리지 않는다(주기 폴링 제거의 의도된 대가).
+
+## 11. 3차 수정 (1031 r3) — 지적 3건 재검
+
+이번 라운드는 2차 문서의 지적 3건을 코드로 다시 확인했다. MEDIUM 2건은 모두 실제 결함으로 확인해 고쳤고, LOW 1건도 같은 뿌리의 경합이라 함께 고쳤다. 정렬 수학과 기존 안전 상한은 건드리지 않았다.
+
+| # | 심각도 | 파일:줄 | 증거 | 사용자 영향 | 얼마나 흔한가 | 처리 |
+|---|---|---|---|---|---|---|
+| 1 | MEDIUM | `app/.../smart/LyricsTiming.kt:2103` (추가 1672-1678, 1932, 2047) | `resetSongCheck`가 `syncCheckVersion=0`으로 만들면, 리셋 전에 `song`/`lines`를 잡고 게이트를 기다리던 `recheckDownloaded`가 "미검사"로 보여 옛 녹음의 답/override를 새 파일에 다시 썼다. `songSyncGate`는 동시 쓰기만 막고 "기다리는 동안 파일이 바뀌었다"는 사실은 몰랐다. | 파일 교체·재다운로드 직후 옛 싱크가 새 파일에 덮여, 다음 재생도 틀린 싱크. 다운로드·고음질 실패(140회) 복구 뒤 잘못된 싱크로 이어진다. | 교체와 재검사가 겹치는 모든 다운로드 곡. | **고침.** 리셋마다 비디오별 세대를 올리고, 재검사는 시작 시 세대를 잡아 게이트 안에서 다시 확인한다. 다르면 요청 전에 로그 한 줄과 함께 버리고 토큰도 지운다. 회귀: `LyricsTimingResetSongCheckTest`의 `a check that waited through a reset does not write the old file answer`(수정 전 실패 확인). |
+| 2 | MEDIUM | `app/.../ui/LyricsController.kt:826`, `shared/.../playback/LocalTimingPolicy.kt:50` | `AudioCache.served`는 `bitchord://` 스트림 open/재생 진행에서만 발행된다. 로컬 파일 측정 실패 뒤 이 이벤트를 기다리면 아무 일도 없어 `MEASURE_WINDOW_MS`(15분)까지 잠들고 나서야 `aiAhead`가 돌았다. | 다운로드/비디오 로컬 곡이 첫 측정 실패 후 최대 15분 동안 AI 타이밍 없이 재생된다(이전 8초 루프 대비 악화). | 로컬 파일(다운로드 비디오·foreign 파일) 측정이 한 번 실패하는 모든 경우. | **고침.** `LocalTimingPolicy.measureWaitsForStream(localUri)`를 추가해 로컬 파일은 대기하지 않고 바로 AI 폴백으로 넘어간다. 스트림은 기존 이벤트 대기를 그대로 유지한다. 회귀: `LocalTimingPolicyTest`의 `a local file never waits for a stream opening`. |
+| 3 | LOW | `app/.../smart/LyricsTiming.kt:1089` | `awaitVideoOpening`이 `readyCopy()`를 먼저 보고 나서 구독했으므로, 그 사이 도착한 `served` 방출은 재생(replay) 없는 `SharedFlow`에서 유실됐다. 바이트는 이미 충분한데 `VIDEO_TIMEOUT_MS`(30초)를 기다린 뒤 `Measured.Retry`가 됐다. | 느린 망에서 첫 측정이 이유 없이 30초 늦어지고, 그 뒤 UI 루프가 다시 길게 쉰다. | 스트림 open과 대기 구독이 겹치는 모든 비디오 측정(특히 캐시가 빠르게 찰 때). | **고침.** `onSubscription`으로 구독이 살아난 뒤 현재 바이트를 확인하고, 그 시점에 이미 있으면 합성 이벤트로 즉시 깨운다. 기존 30초 상한과 이벤트 조건은 유지. (순수 타이밍/흐름 경합이라 단위 테스트 없음; 컴파일·기존 테스트로 확인.) |
+
+### 11.1 조건 변경 진리표
+
+- **재검사 실행 조건** (`recheckDownloaded`, 게이트 안)
+  - 기존: `isUnverified(storedVersion)`
+  - 새: `isUnverified(storedVersion) && generation == startedGeneration`
+  - 기존에 참이던 항(`isUnverified`)은 그대로다. 새로 거짓이 되는 경우는 기다리는 사이 `resetSongCheck`가 돈 경우뿐이며, 이때는 이전과 달리 옛 답을 쓰지 않고 다음 재생에서 새 파일로 다시 검사한다.
+- **측정 후 대기 조건** (`LyricsController`)
+  - 기존: `measureOnce()`가 참이면 항상 `AudioCache.served` 대기 루프 진입.
+  - 새: `measureOnce() && measureWaitsForStream(video.localUri)`.
+  - `localUri`가 비어 있는 스트림은 기존과 완전히 동일하다. 새로 대기를 건너뛰는 경우는 로컬 파일 하나뿐이며, 이 경로에는 원래 `served` 이벤트가 존재하지 않는다.
+- **비디오 opening 대기** (`awaitVideoOpening`)
+  - 기존: `readyCopy()` 선확인 → `served.filter(...).mapNotNull{readyCopy()}.first()`.
+  - 새: 구독(`onSubscription`) 후 `readyCopy()` 확인 → 같은 filter/mapNotNull. 기존 이벤트 조건과 상한은 유지하고, 확인 시점만 구독 뒤로 옮겨 유실 창을 없앴다.
+
+### 11.2 검증 (r3)
+
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.playback.LocalTimingPolicyTest' --console=plain -q` — 통과
+- `./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.smart.LyricsTimingResetSongCheckTest' --console=plain -q` — 통과(수정 전 조건을 잠시 무력화했을 때 새 테스트가 실패하는 것도 확인)
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` — 통과
+
+### 11.3 수정한 파일 (r3)
+
+- `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt`
+- `app/src/main/java/com/music/bitchord/ui/LyricsController.kt`
+- `shared/src/commonMain/kotlin/com/music/bitchord/playback/LocalTimingPolicy.kt`
+- `app/src/test/java/com/music/bitchord/playback/smart/LyricsTimingResetSongCheckTest.kt`
+- `shared/src/jvmTest/kotlin/com/music/bitchord/playback/LocalTimingPolicyTest.kt`
+- `docs/review-1031/lyrics-sync.md`

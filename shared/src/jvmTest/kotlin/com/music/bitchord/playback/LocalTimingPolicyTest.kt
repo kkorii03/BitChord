@@ -102,8 +102,7 @@ class LocalTimingPolicyTest {
     }
 
     @Test
-    fun `a substitute stream never applies or records an upload clock`() {
-        assertFalse(
+    fun `a substitute stream never applies or records an upload clock`() {        assertFalse(
             LocalTimingPolicy.streamTimingAllowed(
                 timeable = true,
                 isVideo = false,
@@ -132,5 +131,14 @@ class LocalTimingPolicyTest {
                 substituted = false,
             ),
         )
+    }
+
+    @Test
+    fun `a local file never waits for a stream opening`() {
+        // A local file is already whole: no AudioCache.served event exists for
+        // it, so waiting parked the AI fallback until the measure window ended.
+        assertFalse(LocalTimingPolicy.measureWaitsForStream(file))
+        assertTrue(LocalTimingPolicy.measureWaitsForStream(null))
+        assertTrue(LocalTimingPolicy.measureWaitsForStream("   "))
     }
 }
