@@ -130,4 +130,44 @@ class BackupLibraryRoundTripTest {
 
         assertEquals("백업 파일이 너무 큽니다", failure.message)
     }
+
+    @Test
+    fun `an export within the cap is written whole`() {
+        val file = Backup.BackupFile(
+            app = "bitchord",
+            version = 2,
+            localPlaylists = listOf(
+                Backup.BackupPlaylist(
+                    id = "sp_local_1",
+                    title = "Covers",
+                    songs = listOf(Backup.BackupSong(videoId = "v1", title = "Cover")),
+                ),
+            ),
+        )
+
+        val bytes = Backup.encodeBackupBytes(file)
+
+        assertEquals(file, Backup.decode(bytes.decodeToString()))
+    }
+
+    @Test
+    fun `an export larger than the cap is refused before it is written`() {
+        val file = Backup.BackupFile(
+            app = "bitchord",
+            version = 2,
+            localPlaylists = listOf(
+                Backup.BackupPlaylist(
+                    id = "sp_local_1",
+                    title = "Covers",
+                    songs = listOf(Backup.BackupSong(videoId = "v1", title = "Cover")),
+                ),
+            ),
+        )
+
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            Backup.encodeBackupBytes(file, maxBytes = 16)
+        }
+
+        assertEquals("백업 파일이 너무 큽니다", failure.message)
+    }
 }

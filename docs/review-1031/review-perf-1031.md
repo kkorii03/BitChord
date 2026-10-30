@@ -134,3 +134,34 @@
   폰 검증이 필요해 이번에 고치지 않았다. 위 표의 파일:줄이 다음 작업의 입력이다.
 - 기기 실측(첫 프레임, 프레임 드랍, 메모리)은 이 러너에서 할 수 없다. 이 문서의 수치는
   코드 경로와 상수에서 읽은 기대값이다.
+
+## 6. 2차 수정 (review-perf-1031-r2)
+
+이전 차수 결과에서 남은 지적 2건을 코드로 확인하고 고쳤다. 재생 핵심 경로는 건드리지 않았다.
+
+### N3. 백업 내보내기 크기 상한 — `Backup.kt`
+
+- 지적: 가져오기에만 32MB 상한이 있어, 내보내기는 그 상한을 넘는 파일을 만들 수 있었고
+  그 파일은 다시 가져올 수 없었다.
+- 확인: `exportTo`가 `encode(file).toByteArray()`를 상한 검사 없이 그대로 썼다.
+- 수정: `encodeBackupBytes(file, maxBytes = MAX_BACKUP_BYTES)`가 인코딩 직후
+  `MAX_BACKUP_BYTES`를 검사하고, 넘으면 `백업 파일이 너무 큽니다`로 거부한다.
+  `exportTo`는 이 바이트 배열을 그대로 쓰므로 내보낸 파일은 항상 가져오기 상한 안에 있다.
+- 테스트: `BackupLibraryRoundTripTest`에 `an export within the cap is written whole`,
+  `an export larger than the cap is refused before it is written`.
+
+### N4. warm 마커 타임스탬프 파싱 — `BitChordApplication.kt`
+
+- 지적: `process.txt`는 `pid now` 한 줄인데 `readLines().getOrNull(1)`을 읽어
+  `previousAt`이 항상 0이었고, 모든 실행이 cold로 기록됐다.
+- 확인: 쓰기는 `marker.writeText("${pid} $now")` 한 줄, 읽기는 두 번째 줄이었다.
+- 수정: `processMarkerLine(pid, now)`와 `processMarkerTimestamp(text)`로 분리했다.
+  파서는 첫 줄의 두 번째 토큰을 읽으므로 기존에 쓰인 한 줄 마커와도 호환된다.
+  `logProcessStart`는 `marker.readText()` → `processMarkerTimestamp` → `marker.writeText(line)`.
+- 테스트: `ProcessRestartWarmthTest`에 `the marker written for this process reads back its
+  timestamp`(실제 임시 파일 왕복), `a legacy marker still yields the timestamp on its first line`.
+
+### 테스트 결과 (2차)
+
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.ProcessRestartWarmthTest' --tests 'com.music.bitchord.data.stats.BackupLibraryRoundTripTest' --console=plain -q` 통과.

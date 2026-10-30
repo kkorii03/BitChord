@@ -412,14 +412,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         val marker = File(directory, "process.txt")
         val now = System.currentTimeMillis()
         val previousAt = runCatching {
-            marker.readLines().getOrNull(1)?.toLongOrNull()
-        }.getOrNull() ?: 0L
+            processMarkerTimestamp(marker.readText())
+        }.getOrDefault(0L)
         val warm = isWarmProcessRestart(now, previousAt, WARM_RESTART_MS)
         TrackLog.i(
             "BitChord",
             "lifecycle: process start pid=${android.os.Process.myPid()} ${if (warm) "warm" else "cold"}",
         )
-        runCatching { marker.writeText("${android.os.Process.myPid()} $now") }
+        runCatching { marker.writeText(processMarkerLine(android.os.Process.myPid(), now)) }
     }
 
     /**
@@ -498,3 +498,18 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
  */
 internal fun isWarmProcessRestart(nowMs: Long, previousAtMs: Long, windowMs: Long): Boolean =
     previousAtMs > 0L && nowMs - previousAtMs in 0..windowMs
+
+/** The warm-start marker is one line: `<pid> <epoch millis>`. */
+internal fun processMarkerLine(pid: Int, nowMs: Long): String = "$pid $nowMs"
+
+/**
+ * Reads the timestamp from the marker's first line. The pid and any later lines
+ * are ignored, so a file written by an older build still parses.
+ */
+internal fun processMarkerTimestamp(text: String): Long =
+    text.lineSequence().firstOrNull()
+        ?.trim()
+        ?.split(' ', limit = 2)
+        ?.getOrNull(1)
+        ?.toLongOrNull()
+        ?: 0L

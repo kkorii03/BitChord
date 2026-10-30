@@ -93,9 +93,9 @@ object Backup {
                 dislikedVideoIds = overrides.filterValues { it == LikeStatus.DISLIKE }.keys.sorted(),
                 searchHistory = SearchHistory.export(),
             )
-            val text = encode(file)
+            val bytes = encodeBackupBytes(file)
             context.contentResolver.openOutputStream(target, "wt")
-                ?.use { it.write(text.toByteArray()) }
+                ?.use { it.write(bytes) }
                 ?: error("Couldn't open that file for writing")
             buckets.size
         }
@@ -164,6 +164,21 @@ object Backup {
 
     internal fun encode(file: BackupFile): String =
         json.encodeToString(BackupFile.serializer(), file)
+
+    /**
+     * Encodes an export and refuses it up front if it would exceed the same
+     * [MAX_BACKUP_BYTES] ceiling [readBackupText] applies on import. Without
+     * this check the app could write a backup it would later refuse to restore,
+     * which is the one thing an export must never do.
+     */
+    internal fun encodeBackupBytes(
+        file: BackupFile,
+        maxBytes: Int = MAX_BACKUP_BYTES,
+    ): ByteArray {
+        val bytes = encode(file).toByteArray()
+        require(bytes.size <= maxBytes) { "백업 파일이 너무 큽니다" }
+        return bytes
+    }
 
     internal fun decode(text: String): BackupFile =
         runCatching { json.decodeFromString(BackupFile.serializer(), text) }
