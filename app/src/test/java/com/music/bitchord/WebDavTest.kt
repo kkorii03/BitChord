@@ -52,11 +52,30 @@ class WebDavTest {
         assertTrue(WebDavConfig.isAudioFile("Song.FLAC"))
         assertTrue(WebDavConfig.isAudioFile("take.opus"))
         assertTrue(WebDavConfig.isAudioFile("take.WAV"))
-        assertTrue(WebDavConfig.isAudioFile("clip.3gp"))
         assertTrue(WebDavConfig.isAudioFile("master.dsf"))
         assertTrue(WebDavConfig.isAudioFile("master.dff"))
+        // A bare listing has no content type, so a container that can hold
+        // video is not assumed to be an audio track.
+        assertFalse(WebDavConfig.isAudioFile("clip.3gp"))
+        assertFalse(WebDavConfig.isAudioFile("clip.3gpp"))
+        assertFalse(WebDavConfig.isAudioFile("movie.mp4"))
+        assertFalse(WebDavConfig.isAudioFile("clip.webm"))
+        // Media3 has no extractor for these.
+        assertFalse(WebDavConfig.isAudioFile("old.wma"))
+        assertFalse(WebDavConfig.isAudioFile("mix.aif"))
+        assertFalse(WebDavConfig.isAudioFile("master.aiff"))
         assertFalse(WebDavConfig.isAudioFile("cover.jpg"))
         assertFalse(WebDavConfig.isAudioFile("notes.txt"))
+    }
+
+    @Test
+    fun `content type decides ambiguous containers`() {
+        assertTrue(WebDavConfig.isAudioFile("album.mp4", "audio/mp4"))
+        assertFalse(WebDavConfig.isAudioFile("movie.mp4", "video/mp4"))
+        assertTrue(WebDavConfig.isAudioFile("take.webm", "audio/webm"))
+        assertFalse(WebDavConfig.isAudioFile("concert.webm", "video/webm"))
+        // A server that calls a normal audio file video is believed.
+        assertFalse(WebDavConfig.isAudioFile("song.mp3", "video/mp4"))
     }
 
     @Test
@@ -361,6 +380,7 @@ class WebDavTest {
                     multistatus(
                         file("Music/a.mp3", "audio/mpeg"),
                         file("Music/b.mp3", "audio/mpeg"),
+                        file("Music/cover.jpg", "image/jpeg"),
                         file("Music/c.mp3", "audio/mpeg"),
                     ),
                 ),
@@ -372,6 +392,33 @@ class WebDavTest {
                 maxFiles = 2,
             ).getOrThrow()
             assertEquals(2, listing.audio.size)
+            // Reaching the audio cap must not skip the cover filed beside the
+            // tracks that were collected.
+            assertEquals("cover.jpg", listing.images.single().displayName)
+        }
+    }
+
+    @Test
+    fun `listLibrary leaves video files out of the audio rows`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(
+                MockResponse().setResponseCode(207).setBody(
+                    multistatus(
+                        file("Music/song.flac", "audio/flac"),
+                        file("Music/movie.mp4", "video/mp4"),
+                        file("Music/clip.3gp", "video/3gpp"),
+                        file("Music/audio-only.mp4", "audio/mp4"),
+                        file("Music/cover.jpg", "image/jpeg"),
+                    ),
+                ),
+            )
+            val listing = WebDavClient.listLibrary(server.url("/Music").toString(), "", "").getOrThrow()
+            assertEquals(
+                listOf("song.flac", "audio-only.mp4"),
+                listing.audio.map { it.displayName },
+            )
+            assertEquals("cover.jpg", listing.images.single().displayName)
         }
     }
 

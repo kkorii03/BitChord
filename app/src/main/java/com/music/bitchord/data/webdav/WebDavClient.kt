@@ -90,13 +90,13 @@ object WebDavClient {
                 if (!visited.add(dir.lowercase())) continue
                 val entries = propfind(dir, username, password).getOrThrow()
                 for (entry in entries) {
-                    if (foundAudio.size >= maxFiles) break
                     if (entry.isCollection) {
                         if (!visited.contains(entry.url.lowercase())) dirs.add(entry.url)
                     } else {
                         val name = entry.displayName.ifBlank { entry.url }
                         when {
-                            WebDavConfig.isAudioFile(name) -> foundAudio.putIfAbsent(entry.url, entry)
+                            WebDavConfig.isAudioFile(name, entry.contentType) ->
+                                if (foundAudio.size < maxFiles) foundAudio.putIfAbsent(entry.url, entry)
                             isImageFile(name) -> foundImages.putIfAbsent(entry.url, entry)
                         }
                     }

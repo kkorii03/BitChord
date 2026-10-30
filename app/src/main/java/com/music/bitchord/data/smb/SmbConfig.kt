@@ -18,10 +18,22 @@ object SmbConfig {
     const val SCHEME = "smb"
     const val DEFAULT_PORT = 445
 
+    // Media3 1.11 can extract these containers (DSD through DsdExtractor).
+    // WMA/ASF and AIFF have no extractor and are left out: a row that cannot
+    // open is worse than a file the user has to find elsewhere.
     val audioExtensions = setOf(
-        "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "wav", "wma", "aif", "aiff",
-        "webm", "3gp", "3gpp", "dsf", "dff",
+        "mp3", "m4a", "mp4", "flac", "ogg", "opus", "aac", "wav", "webm",
+        "3gp", "3gpp", "dsf", "dff",
     )
+
+    /**
+     * Containers that can hold video as well as audio. Unlike MediaStore,
+     * a share directory has no Audio/Video split, so a `.mp4` or `.3gp` is a
+     * film far more often than an audio-only file; importing every one of
+     * them filled the library (and the `maxFiles` budget) with movies.
+     * Audio-only files on a share use `.m4a`/`.opus`/`.ogg`, which stay.
+     */
+    private val videoContainers = setOf("mp4", "webm", "3gp", "3gpp")
 
     val imageExtensions = setOf("jpg", "jpeg", "png", "webp")
 
@@ -39,6 +51,12 @@ object SmbConfig {
             val port = authority.substringAfter("]:", "").toIntOrNull()
             return host to validPort(port)
         }
+        // A bare IPv6 literal has more than one colon and no way to tell its
+        // last group from a port. Treat the whole authority as the host
+        // rather than silently turning "fe80::1" into host "fe80" and port 1.
+        if (authority.count { it == ':' } > 1) {
+            return authority.lowercase(Locale.ROOT).trim() to DEFAULT_PORT
+        }
         val port = authority.substringAfterLast(':', "").takeIf { ':' in authority }?.toIntOrNull()
         val host = authority.substringBeforeLast(':').lowercase(Locale.ROOT).trim()
         return host to validPort(port)
@@ -52,7 +70,7 @@ object SmbConfig {
 
     fun isAudioFile(name: String): Boolean {
         val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        return ext in audioExtensions
+        return ext in audioExtensions && ext !in videoContainers
     }
 
     fun isImageFile(name: String): Boolean {

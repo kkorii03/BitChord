@@ -75,6 +75,24 @@ class LocalMediaFilterTest {
     }
 
     @Test
+    fun `containers media3 has no extractor for stay out`() {
+        // Media3 1.11 ships no WMA/ASF or AIFF extractor, so these used to
+        // appear in Local Music and then fail on the first play.
+        for (name in listOf("song.wma", "mix.aif", "master.aiff")) {
+            assertFalse(name, LocalMediaRepository.hasLocalMusicExtension(name, "/storage/emulated/0/Music/$name"))
+            assertFalse(
+                name,
+                LocalMediaRepository.isEligibleLocalMusic(
+                    durationMs = 180_000,
+                    displayName = name,
+                    path = "/storage/emulated/0/Music/$name",
+                ),
+            )
+            assertFalse(name, LocalMediaRepository.isAudioFileName(name))
+        }
+    }
+
+    @Test
     fun `filter off shows wave and 3gp the music gate hides`() {
         for (name in listOf("Song.wav", "Clip.3gp", "Clip.3gpp")) {
             assertTrue(
