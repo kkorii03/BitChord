@@ -7,6 +7,60 @@
 
 ---
 
+## 2차 검토 (2026-10-30) — 이전 판정 4건 처리
+
+이전 판정의 HIGH·MEDIUM 3건은 이번에 모두 고쳤고, LOW 1건(테스트 공백)은 테스트 인프라 제약으로 남겼다.
+
+### A. [HIGH, 수정] 태스크 원본 인텐트가 새 인텐트처럼 다시 소비된다
+
+- 파일: `app/src/main/java/com/music/bitchord/MainActivity.kt:449-494`, `app/src/main/java/com/music/bitchord/startup/LaunchReplay.kt:24-45`
+- 증거: `onNewIntent`는 `setIntent(B)` 후 `handledLaunchFingerprint = B`로 **마지막 하나만** 저장했다. 프로세스가 죽으면 시스템은 태스크의 **원본 base intent A**로 액티비티를 재생성하므로 저장된 지문 B와 현재 A가 달라 `isReplay`가 false가 되고, 이미 처리한 공유 링크/파티 초대/가져오기가 다시 소비됐다.
+- 사용자 영향: 링크 A로 앱을 연 뒤 다른 링크 B를 열고, 백그라운드에서 프로세스가 회수되면 다음 실행에서 A가 다시 재생·파티 재참가·가져오기 미리보기로 이어진다.
+- 얼마나 흔한지: 링크/위젯으로 앱을 연 뒤 다른 인텐트를 한 번 더 받고 프로세스가 회수되는 경로. 이전 HIGH와 같은 Recents/프로세스 회수 조건이라 재현성이 높다.
+- 수정: `LaunchReplay.isReplay`가 단일 지문 대신 **처리한 모든 지문의 집합**을 받는다. `MainActivity`는 `onCreate`/`onNewIntent`마다 지문을 누적하고 `onSaveInstanceState`에 문자열 목록으로 저장한다. 재생성 시 현재 지문이 집합에 하나라도 있으면 재생으로 본다.
+- 테스트: `LaunchReplayTest.the task's original intent is still a replay after a newer one was served` (수정 전 단일 지문 B 비교로 실패).
+
+| 재생성 | history | 저장 집합 | 현재 지문 | 수정 전 | 수정 후 |
+|---|---|---|---|---|---|
+| F | F | 없음 | A | 소비 | 소비 |
+| F | T | 없음/임의 | A | 소비 안 함 | 소비 안 함 |
+| T | F | {A} | A | 소비 안 함 | 소비 안 함 |
+| T | F | {A, B} | A | **소비(재실행)** | 소비 안 함 |
+| T | F | {A, B} | C | 소비 | 소비 |
+| T | F | 없음 | A | 소비 안 함(안전 우선) | 소비 안 함(안전 우선) |
+
+### B. [MEDIUM, 수정] 큐 스냅샷 뒤에 도착한 옛 재생 위치 쓰기가 새 큐를 덮어쓴다
+
+- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:8353-8364`, `app/src/main/java/com/music/bitchord/playback/LastPlayed.kt:31-52`, `:103-137`
+- 증거: `savePlaybackState`는 샘플러 스레드에 그대로 게시되고, 큐 편집의 `drainQueueSnapshots`는 대기 중 스냅샷을 연속 소비한 뒤에야 스레드를 놓는다. 스냅샷 쓰기 후에 실행된 옛 상태 쓰기가 새 큐의 index/position을 이전 곡 값으로 되돌릴 수 있었다.
+- 사용자 영향: 큐를 편집한 직후 프로세스가 회수되면 새 큐가 이전 곡의 재생 위치에서 시작한다(곡 길이를 넘으면 끝에서 시작).
+- 얼마나 흔한지: 큐 편집 직후의 좁은 창이지만, 결과는 완전히 틀린 재생 위치라 MEDIUM.
+- 수정: `LastPlayed`가 큐 스냅샷마다 세대(generation)를 올리고, `savePlaybackState`는 캡처 시점 세대를 받아 현재 세대와 다르면 쓰지 않는다. `PlaybackService`는 게시 **전에** `LastPlayed.currentQueueGeneration()`을 읽어 전달한다. `clear`/`clearImmediately`도 세대를 올려 이전 상태 쓰기를 무효화한다.
+- 테스트: `LastPlayedRestoreTest.a playhead captured before a queue change cannot overwrite the new queue` (수정 전 API/동작으로 실패), `a playhead captured after a queue change still advances`(새 상태는 정상 반영).
+
+| 큐 쓰기 시점 | 상태 쓰기 시점 | 캡처 세대 | 쓰기 시 현재 세대 | 수정 전 | 수정 후 |
+|---|---|---|---|---|---|
+| 이전 큐(G) | 스냅샷 뒤 | G | G+1 | **덮어씀** | 무시 |
+| 새 큐(G+1) | 스냅샷 뒤 | G+1 | G+1 | 반영 | 반영 |
+| 큐 편집 없음 | 임의 | G | G | 반영 | 반영 |
+
+### C. [MEDIUM, 수정] 재생성된 액티비티에 온 진짜 새 위젯 인텐트가 억제된다
+
+- 파일: `app/src/main/java/com/music/bitchord/MainActivity.kt:464-468`
+- 증거: `PlayerDeepLink.consume`의 `recreating`에 `savedInstanceState != null`을 그대로 넘겼다. `LaunchReplay`는 새 지문을 정확히 새 인텐트로 판정했지만, 재생성 상태라는 이유만으로 위젯 아트워크 요청이 무시됐다.
+- 사용자 영향: 화면 회전/테마 변경/프로세스 재생성 중 들어온 위젯 아트워크 탭이 플레이어를 열지 않는다.
+- 얼마나 흔한지: 재생성은 흔하고 위젯 탭도 흔하지만 겹치는 순간은 좁다. 다만 사용자 입력을 조용히 버리므로 MEDIUM.
+- 수정: `PlayerDeepLink.consume(..., recreating = replayingLaunch, ...)`로 바꿔 실제 재생일 때만 억제한다. `launchedFromHistory`는 그대로 전달한다.
+- 테스트: 기존 `PlayerDeepLinkTest`(새 인텐트 허용/재생 억제 진리표)와 `LaunchReplayTest`의 새 지문 판정이 근거다. 액티비티 배선 자체는 단위 테스트 seam이 없어 코드 추적으로 검증했다.
+
+### D. [LOW, 남김] MV 백그라운드 취소의 실패-우선 테스트 없음
+
+- 파일: `app/src/test/java/com/music/bitchord/download/MvSoundRedownloadScheduleTest.kt:10`
+- 이유: 이 모듈에는 `androidx.work:work-testing` 의존성이 없어 `onBackground`가 고유 작업을 실제로 취소하는지 검증할 수 없다. 취소 함수를 주입하는 seam만 추가하면 "람다가 호출됐다"는 동어 반복 테스트가 되어 결함을 잡지 못한다.
+- 필요한 작업: `work-testing`/`TestListenableWorkerBuilder` 의존성 추가 후 `WorkManagerTestInitHelper`로 고유 작업을 enqueue하고 `onBackground` 뒤 상태가 CANCELLED인지, 포그라운드 복귀 시 다시 enqueue되는지 확인. 프로덕션 수정(`MvSoundRedownload.onBackground` → `cancelUniqueWork`)은 1차에서 완료됐고 코드 추적으로 확인했다.
+
+---
+
 ## 1. [HIGH, 수정] 프로세스 재시작 뒤 공유 링크가 다시 재생·파티 재참가·가져오기를 실행한다
 
 - 파일: `app/src/main/java/com/music/bitchord/MainActivity.kt:449-486`, `app/src/main/java/com/music/bitchord/playback/MusicLink.kt:65-81`, `app/src/main/java/com/music/bitchord/data/listentogether/JamInviteLink.kt:30-42`, `app/src/main/java/com/music/bitchord/data/settings/SettingsTransfer.kt:510-522`
@@ -146,3 +200,19 @@ schedule()
 - `:app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` 통과.
 - `:app:testProdReleaseUnitTest --tests 'com.music.bitchord.startup.LaunchReplayTest' --tests 'com.music.bitchord.download.MvSoundRedownloadScheduleTest' --tests 'com.music.bitchord.playback.LastPlayedRestoreTest'` 통과.
 - 전체 `:app:testProdReleaseUnitTest`는 1694개 중 22개가 실패한다. 모두 이번 변경과 무관한 기존 실패다(번역 키 누락 `LocaleStringsTest`, 러시아어 접기 `ArtistNameMatchTest`, provider 개수 `ProviderLyricsTest`, 소스 포맷 오류 메시지 `SourceFormatsTest`, Bluetooth 표시 문자열 `BluetoothAudioTrackerTest`).
+
+---
+
+## 2차 수정 파일
+
+- `app/src/main/java/com/music/bitchord/startup/LaunchReplay.kt`
+- `app/src/main/java/com/music/bitchord/MainActivity.kt`
+- `app/src/main/java/com/music/bitchord/playback/LastPlayed.kt`
+- `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt` (호출부 세대 캡처)
+- `app/src/test/java/com/music/bitchord/startup/LaunchReplayTest.kt`
+- `app/src/test/java/com/music/bitchord/playback/LastPlayedRestoreTest.kt`
+
+## 2차 테스트
+
+- `:app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` 통과.
+- `:app:testProdDebugUnitTest --tests 'com.music.bitchord.startup.LaunchReplayTest' --tests 'com.music.bitchord.playback.LastPlayedRestoreTest' --tests 'com.music.bitchord.playback.PlayerDeepLinkTest' --tests 'com.music.bitchord.playback.BoundedContextPersistenceTest' --tests 'com.music.bitchord.playback.PartyPersonalQueueStashTest'` 통과.

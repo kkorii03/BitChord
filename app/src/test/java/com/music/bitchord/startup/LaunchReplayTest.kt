@@ -12,7 +12,7 @@ class LaunchReplayTest {
             LaunchReplay.isReplay(
                 recreating = false,
                 launchedFromHistory = false,
-                savedFingerprint = null,
+                savedFingerprints = null,
                 currentFingerprint = "view:youtu.be/abc",
             ),
         )
@@ -24,7 +24,7 @@ class LaunchReplayTest {
             LaunchReplay.isReplay(
                 recreating = true,
                 launchedFromHistory = false,
-                savedFingerprint = "view:youtu.be/abc",
+                savedFingerprints = setOf("view:youtu.be/abc"),
                 currentFingerprint = "view:youtu.be/abc",
             ),
         )
@@ -36,7 +36,7 @@ class LaunchReplayTest {
             LaunchReplay.isReplay(
                 recreating = true,
                 launchedFromHistory = false,
-                savedFingerprint = "view:youtu.be/abc",
+                savedFingerprints = setOf("view:youtu.be/abc"),
                 currentFingerprint = "view:youtu.be/xyz",
             ),
         )
@@ -48,7 +48,7 @@ class LaunchReplayTest {
             LaunchReplay.isReplay(
                 recreating = false,
                 launchedFromHistory = true,
-                savedFingerprint = null,
+                savedFingerprints = null,
                 currentFingerprint = "view:youtu.be/abc",
             ),
         )
@@ -60,8 +60,23 @@ class LaunchReplayTest {
             LaunchReplay.isReplay(
                 recreating = true,
                 launchedFromHistory = false,
-                savedFingerprint = null,
+                savedFingerprints = null,
                 currentFingerprint = "view:youtu.be/abc",
+            ),
+        )
+    }
+
+    @Test
+    fun `the task's original intent is still a replay after a newer one was served`() {
+        // Task started with A, then onNewIntent delivered B and setIntent(B).
+        // Recreation restores the task's base intent A; keeping only the newest
+        // fingerprint (B) made A look like a fresh request and served it again.
+        assertTrue(
+            LaunchReplay.isReplay(
+                recreating = true,
+                launchedFromHistory = false,
+                savedFingerprints = setOf("view:youtu.be/a", "view:youtu.be/b"),
+                currentFingerprint = "view:youtu.be/a",
             ),
         )
     }

@@ -388,10 +388,13 @@ class MainActivity : AppCompatActivity() {
     private var playerMotion: PlayerSheetMotion? = null
 
     /**
-     * The launch intent this task has already served, so a process recreation
-     * cannot serve it a second time. See [LaunchReplay].
+     * Every launch intent this task has served, so a process recreation cannot
+     * serve any of them a second time. A task keeps its original base intent
+     * while `setIntent` only changes the live activity's copy, so the set — not
+     * just the latest fingerprint — is what survives recreation. See
+     * [LaunchReplay].
      */
-    private var handledLaunchFingerprint: String? = null
+    private val handledLaunchFingerprints = linkedSetOf<String>()
 
     override fun onStart() {
         super.onStart()
@@ -453,15 +456,18 @@ class MainActivity : AppCompatActivity() {
         // intent without saved state, so its history flag is checked too.
         val launchedFromHistory = intent.isLaunchedFromHistory()
         val launchFingerprint = LaunchReplay.fingerprint(intent)
+        val savedFingerprints = savedInstanceState
+            ?.getStringArrayList(STATE_HANDLED_LAUNCH)
+            ?.toSet()
         val replayingLaunch = LaunchReplay.isReplay(
             recreating = savedInstanceState != null,
             launchedFromHistory = launchedFromHistory,
-            savedFingerprint = savedInstanceState?.getString(STATE_HANDLED_LAUNCH),
+            savedFingerprints = savedFingerprints,
             currentFingerprint = launchFingerprint,
         )
         PlayerDeepLink.consume(
             intent,
-            recreating = savedInstanceState != null,
+            recreating = replayingLaunch,
             launchedFromHistory = launchedFromHistory,
         )
         // The link relays write their consumed marker into the Intent itself,
@@ -476,11 +482,9 @@ class MainActivity : AppCompatActivity() {
             // Likewise for a link tapped or shared from another app — see [MusicLink].
             MusicLink.consume(intent)
         }
-        handledLaunchFingerprint = if (replayingLaunch) {
-            savedInstanceState?.getString(STATE_HANDLED_LAUNCH)
-        } else {
-            launchFingerprint
-        }
+        handledLaunchFingerprints.clear()
+        handledLaunchFingerprints.addAll(savedFingerprints.orEmpty())
+        handledLaunchFingerprints.add(launchFingerprint)
         applyDebugLaunchSwitches(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -553,7 +557,12 @@ class MainActivity : AppCompatActivity() {
      */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        handledLaunchFingerprint?.let { outState.putString(STATE_HANDLED_LAUNCH, it) }
+        if (handledLaunchFingerprints.isNotEmpty()) {
+            outState.putStringArrayList(
+                STATE_HANDLED_LAUNCH,
+                ArrayList(handledLaunchFingerprints),
+            )
+        }
     }
 
     /**
@@ -593,7 +602,7 @@ class MainActivity : AppCompatActivity() {
         JamInviteLink.consume(intent)
         SettingsTransferInbox.consume(intent)
         MusicLink.consume(intent)
-        handledLaunchFingerprint = LaunchReplay.fingerprint(intent)
+        handledLaunchFingerprints += LaunchReplay.fingerprint(intent)
         applyDebugLaunchSwitches(intent)
     }
 

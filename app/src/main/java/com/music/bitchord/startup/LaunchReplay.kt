@@ -15,25 +15,32 @@ import android.net.Uri
  * shared song, re-joined a party, or reopened an import preview with no user
  * action at all.
  *
- * The saved fingerprint is what separates a restored launch from a genuinely
+ * The saved fingerprints are what separate a restored launch from a genuinely
  * new intent delivered to a recreated activity: the latter carries different
  * action/data/extras, so it is still served.
+ *
+ * Every intent this task has served is remembered, not just the most recent
+ * one. A `singleTask` activity replaces its intent with [MainActivity]'s
+ * `setIntent` on each new arrival, but Android recreates the task from the
+ * *original* base intent after a process death. Keeping only the newest
+ * fingerprint made that original look new again, so a shared link or party
+ * invite the user had already used was replayed on the next app start.
  */
 internal object LaunchReplay {
 
     fun isReplay(
         recreating: Boolean,
         launchedFromHistory: Boolean,
-        savedFingerprint: String?,
+        savedFingerprints: Set<String>?,
         currentFingerprint: String,
     ): Boolean {
         if (launchedFromHistory) return true
         if (!recreating) return false
-        // A recreation with no saved fingerprint is either the first launch
+        // A recreation with no saved fingerprints is either the first launch
         // after an upgrade or a state we cannot compare; serving it again is
         // the worse failure, so it is treated as a replay.
-        if (savedFingerprint == null) return true
-        return savedFingerprint == currentFingerprint
+        if (savedFingerprints.isNullOrEmpty()) return true
+        return currentFingerprint in savedFingerprints
     }
 
     /** The parts of an intent that decide what it asks the app to do. */

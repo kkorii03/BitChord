@@ -31,13 +31,33 @@ object LastPlayed {
     private lateinit var prefs: SharedPreferences
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Serializes the queue snapshot and the scalar playhead writes, and marks
+     * which queue generation the last snapshot describes.
+     *
+     * [savePlaybackState] is posted to the sampler thread while a queue edit's
+     * snapshot may still be draining. Without a generation the scalar write
+     * queued for the old queue could land *after* the new snapshot and replace
+     * its index/position with the previous track's. A state captured before the
+     * snapshot is dropped once that snapshot has been written; a state captured
+     * after it carries the new generation and applies normally.
+     */
+    private val stateLock = Any()
+
+    @Volatile
+    private var queueGeneration: Long = 0L
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     internal fun initForTesting(testPrefs: SharedPreferences) {
         prefs = testPrefs
+        synchronized(stateLock) { queueGeneration = 0L }
     }
+
+    /** The generation of the queue currently persisted, for staleness checks. */
+    fun currentQueueGeneration(): Long = queueGeneration
 
     internal fun window(size: Int, index: Int): IntRange {
         if (size <= 0) return IntRange.EMPTY
@@ -62,14 +82,17 @@ object LastPlayed {
         val encoded = runCatching {
             json.encodeToString(StoredQueue.serializer(), stored)
         }.getOrNull() ?: return
-        prefs.edit()
-            .putString(KEY_QUEUE, encoded)
-            .putInt(KEY_INDEX, safeIndex - bounds.first)
-            // The queue and the playhead belong to the same moment. Leaving the
-            // old position here restored a freshly edited queue at wherever the
-            // previous one happened to be.
-            .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
-            .apply()
+        synchronized(stateLock) {
+            prefs.edit()
+                .putString(KEY_QUEUE, encoded)
+                .putInt(KEY_INDEX, safeIndex - bounds.first)
+                // The queue and the playhead belong to the same moment. Leaving the
+                // old position here restored a freshly edited queue at wherever the
+                // previous one happened to be.
+                .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
+                .apply()
+            queueGeneration++
+        }
     }
 
     /**
@@ -92,20 +115,36 @@ object LastPlayed {
         val encoded = runCatching {
             json.encodeToString(StoredQueue.serializer(), stored)
         }.getOrNull() ?: return
-        prefs.edit()
-            .putString(KEY_QUEUE, encoded)
-            .putInt(KEY_INDEX, safeIndex - bounds.first)
-            .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
-            .commit()
+        synchronized(stateLock) {
+            prefs.edit()
+                .putString(KEY_QUEUE, encoded)
+                .putInt(KEY_INDEX, safeIndex - bounds.first)
+                .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
+                .commit()
+            queueGeneration++
+        }
     }
 
-    /** Update only cheap scalar state; this performs no queue conversion or JSON work. */
-    fun savePlaybackState(index: Int, positionMs: Long) {
-        if (!prefs.contains(KEY_QUEUE)) return
-        prefs.edit()
-            .putInt(KEY_INDEX, index.coerceAtLeast(0))
-            .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
-            .apply()
+    /**
+     * Update only cheap scalar state; this performs no queue conversion or JSON work.
+     *
+     * [generation] is the [currentQueueGeneration] read when the caller captured
+     * the player's state. If a newer queue snapshot has been written since, this
+     * write belongs to the queue that snapshot replaced and is skipped.
+     */
+    fun savePlaybackState(
+        index: Int,
+        positionMs: Long,
+        generation: Long = currentQueueGeneration(),
+    ) {
+        synchronized(stateLock) {
+            if (generation != queueGeneration) return
+            if (!prefs.contains(KEY_QUEUE)) return
+            prefs.edit()
+                .putInt(KEY_INDEX, index.coerceAtLeast(0))
+                .putLong(KEY_POSITION, positionMs.coerceAtLeast(0L))
+                .apply()
+        }
     }
 
     fun load(): Snapshot? {
@@ -136,12 +175,18 @@ object LastPlayed {
     }
 
     fun clear() {
-        prefs.edit().clear().apply()
+        synchronized(stateLock) {
+            prefs.edit().clear().apply()
+            queueGeneration++
+        }
     }
 
     /** Remove a stale queue before another one is installed. */
     fun clearImmediately() {
-        prefs.edit().clear().commit()
+        synchronized(stateLock) {
+            prefs.edit().clear().commit()
+            queueGeneration++
+        }
     }
 
     @Serializable
