@@ -41,6 +41,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.withContext
@@ -200,6 +201,17 @@ object Downloads {
      * [collectionsAmong], which is what turns it into something drawable.
      */
     val collections: StateFlow<Map<String, SavedCollection>> = _collections.asStateFlow()
+
+    /**
+     * Bumped whenever the queue may have changed, so idle workers sleep on a
+     * change instead of polling every 100 ms.
+     *
+     * A revision rather than a channel: every waiting worker has to see the
+     * same change, and a revision cannot be consumed by whichever worker woke
+     * first. A worker reads it before looking at the queue, so an enqueue that
+     * lands in between is not lost.
+     */
+    private val workRevision = MutableStateFlow(0L)
 
     /** Waiting, in the order asked for. Guarded by [lock]. */
     private val pending = LinkedHashMap<String, Song>()
@@ -413,6 +425,7 @@ object Downloads {
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
         }
+        wakeWorkers()
         publishQueuedIfPending(id)
         if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
             DownloadSession.queued(song, from)
@@ -486,6 +499,7 @@ object Downloads {
         minimumTiers.remove(videoId)
         automaticIds.remove(videoId)
         mvSoundRepairIds.remove(videoId)
+        wakeWorkers()
         true
     }
 
@@ -536,6 +550,7 @@ object Downloads {
             running.remove(videoId)
         }
         job?.cancel()
+        wakeWorkers()
         clear(videoId)
         // A download the user called off is not something they need reminding to
         // check on, so it leaves the manager rather than sitting in it as a
@@ -1774,7 +1789,24 @@ object Downloads {
     /** [videoId] is finished, one way or another, and no longer holds a worker. */
     internal fun onIdle(videoId: String) {
         synchronized(lock) { running.remove(videoId) }
+        wakeWorkers()
     }
+
+    /** The current queue revision; read it before [takeNext] when waiting. */
+    internal fun workRevision(): Long = workRevision.value
+
+    /** Tell every idle worker that the queue or its running set changed. */
+    internal fun wakeWorkers() {
+        workRevision.update { it + 1 }
+    }
+
+    /** Suspends until the queue changes, or [timeoutMs] passes. */
+    internal suspend fun awaitWorkChange(seen: Long) {
+        workRevision.first { it != seen }
+    }
+
+    internal suspend fun awaitWorkChange(seen: Long, timeoutMs: Long): Boolean =
+        withTimeoutOrNull(timeoutMs) { awaitWorkChange(seen) } != null
 
     /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
     internal fun busy(): Boolean = synchronized(lock) { pending.isNotEmpty() || running.isNotEmpty() }
@@ -1789,6 +1821,7 @@ object Downloads {
      */
     internal fun onStopped() {
         synchronized(lock) { running.clear() }
+        wakeWorkers()
     }
 
     /**

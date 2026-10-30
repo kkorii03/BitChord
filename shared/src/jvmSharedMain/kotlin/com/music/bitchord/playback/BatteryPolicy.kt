@@ -65,4 +65,25 @@ object BatteryPolicy {
      */
     fun cachePrefetchBytesAllowed(metered: Boolean, lowPower: Boolean): Boolean =
         !metered && !lowPower
+
+    /**
+     * Whether the background artist backfill may spend a request right now.
+     *
+     * The Replay is a page, so an answer nobody is looking at can wait. Running
+     * the lookups only with a window and out of power saving is the same
+     * event-driven rule as the download queue: the foreground/low-power flows
+     * wake the worker, not a timer.
+     */
+    fun artistBackfillActive(lowPower: Boolean, foreground: Boolean): Boolean =
+        !lowPower && foreground
+
+    /**
+     * Whether a download worker may leave.
+     *
+     * The grace window is the start-of-queue race: the first enqueue starts the
+     * service while the rest of a batch is still arriving. Only after that
+     * window, with nothing queued or in flight, is an empty queue finished.
+     */
+    fun downloadWorkerShouldStop(idleForMs: Long, graceMs: Long, busy: Boolean): Boolean =
+        idleForMs >= graceMs && !busy
 }
