@@ -772,8 +772,12 @@ class LyricsController(
             // completion cannot make a usable copy unusable.
             launch {
                 AudioCache.watchRenditionCompletion(request.videoId)
-                AudioCache.renditionCompleted.collect { videoId ->
-                    if (videoId != request.videoId) return@collect
+                // State, not only the completion event: a copy that finished
+                // before this collector subscribed must still turn the action
+                // on, and a burst that overflows the event buffer must not lose
+                // it for the rest of the playback.
+                AudioCache.completedRenditions.collect { completed ->
+                    if (request.videoId !in completed) return@collect
                     if (currentLyricsRequest?.videoId != request.videoId) return@collect
                     if (_lyricsTiming.value.aiAvailable) return@collect
                     if (!aiTimingAvailable(request, lines)) return@collect
@@ -781,7 +785,7 @@ class LyricsController(
                     TrackLog.d(
                         "BitChord",
                         "AI timing is available: the audio copy finished caching",
-                        videoId,
+                        request.videoId,
                     )
                 }
             }

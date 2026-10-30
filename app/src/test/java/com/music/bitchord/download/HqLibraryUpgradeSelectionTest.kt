@@ -101,12 +101,24 @@ class HqLibraryUpgradeSelectionTest {
         val built = listOf(newPendingTarget("video-new"))
         val kept = listOf(newPendingTarget("video-parked"), newPendingTarget("video-new"))
 
-        val merged = mergePlan(built, kept)
+        val merged = mergePlan(built, kept, resumable = kept)
 
         // The newly eligible target is first (it is the one the worker runs),
         // the parked one is kept so its cooldown deadline is not lost, and the
         // rebuilt entry replaces the stale copy for the same song.
         assertEquals(listOf("video-new", "video-parked"), merged.map(::videoIdOf))
+    }
+
+    @Test
+    fun `a kept entry the policy no longer selects is dropped`() {
+        val built = listOf(newPendingTarget("video-new"))
+        val kept = listOf(newPendingTarget("video-parked"), newPendingTarget("video-new"))
+        // Only the newly built target is still selected by the current
+        // settings/policy; the parked one was omitted for a reason other than
+        // its cooldown and must not be resurrected.
+        val merged = mergePlan(built, kept, resumable = built)
+
+        assertEquals(listOf("video-new"), merged.map(::videoIdOf))
     }
 
     private fun nextRunnable(nowMs: Long): Any? {
@@ -127,13 +139,14 @@ class HqLibraryUpgradeSelectionTest {
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun mergePlan(built: List<Any>, kept: List<Any>): List<Any> {
+    private fun mergePlan(built: List<Any>, kept: List<Any>, resumable: List<Any>): List<Any> {
         val method = HqLibraryUpgrade::class.java.getDeclaredMethod(
             "mergeParkedPlan",
             List::class.java,
             List::class.java,
+            List::class.java,
         ).apply { isAccessible = true }
-        return method.invoke(HqLibraryUpgrade, built, kept) as List<Any>
+        return method.invoke(HqLibraryUpgrade, built, kept, resumable) as List<Any>
     }
 
     private fun videoIdOf(pending: Any?): String? {

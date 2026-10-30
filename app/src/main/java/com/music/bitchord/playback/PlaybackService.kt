@@ -4882,7 +4882,8 @@ class PlaybackService : MediaLibraryService() {
             var depth = 0
             while (cause != null && depth++ < CAUSE_DEPTH) {
                 if (cause is HttpDataSource.InvalidResponseCodeException &&
-                    HqRetryPolicy.isRateLimited(cause.responseCode)
+                    (HqRetryPolicy.isRateLimited(cause.responseCode) ||
+                        HqRetryPolicy.isSleepingGateway(cause.responseCode))
                 ) {
                     return cause
                 }
@@ -4980,7 +4981,8 @@ class PlaybackService : MediaLibraryService() {
         var depth = 0
         while (cause != null && depth++ < 8) {
             if (cause is HttpDataSource.InvalidResponseCodeException &&
-                HqRetryPolicy.isRateLimited(cause.responseCode)
+                (HqRetryPolicy.isRateLimited(cause.responseCode) ||
+                    HqRetryPolicy.isSleepingGateway(cause.responseCode))
             ) {
                 return RateLimit(
                     cause.responseCode,

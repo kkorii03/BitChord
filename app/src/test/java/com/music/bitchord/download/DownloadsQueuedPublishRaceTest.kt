@@ -34,10 +34,28 @@ class DownloadsQueuedPublishRaceTest {
     @Suppress("UNCHECKED_CAST")
     private val active = activeField.get(Downloads) as MutableStateFlow<Map<String, DownloadState>>
 
+    private val enqueueGenerationsField = Downloads::class.java
+        .getDeclaredField("enqueueGenerations")
+        .apply { isAccessible = true }
+
+    private val claimedGenerationsField = Downloads::class.java
+        .getDeclaredField("claimedGenerations")
+        .apply { isAccessible = true }
+
+    @Suppress("UNCHECKED_CAST")
+    private val enqueueGenerations =
+        enqueueGenerationsField.get(Downloads) as MutableMap<String, Long>
+
+    @Suppress("UNCHECKED_CAST")
+    private val claimedGenerations =
+        claimedGenerationsField.get(Downloads) as MutableMap<String, Long>
+
     @Before
     fun setUp() {
         pending.clear()
         active.value = emptyMap()
+        enqueueGenerations.clear()
+        claimedGenerations.clear()
         DownloadSession.clear()
     }
 
@@ -46,6 +64,8 @@ class DownloadsQueuedPublishRaceTest {
         Downloads.onStopped()
         pending.clear()
         active.value = emptyMap()
+        enqueueGenerations.clear()
+        claimedGenerations.clear()
         DownloadSession.clear()
     }
 
@@ -139,6 +159,29 @@ class DownloadsQueuedPublishRaceTest {
         publishQueued(song)
         assertEquals(DownloadState.Failed("no such track"), active.value[videoId])
         assertTrue(progressOf(videoId) is DownloadProgress.Failed)
+    }
+
+    @Test
+    fun `retrying a failed row publishes queued for the new enqueue`() {
+        val videoId = "video-5"
+        val song = Song(
+            videoId = videoId,
+            title = "Title",
+            artist = "Artist",
+            thumbnailUrl = null,
+        )
+        // A finished attempt from before this enqueue. The new enqueue owns a
+        // fresh generation, so the old Failed row must not make the manager
+        // keep showing the failure until the worker happens to start.
+        pending[videoId] = song
+        enqueueGenerations[videoId] = 7L
+        active.value = mapOf(videoId to DownloadState.Failed("old failure"))
+        DownloadSession.failed(videoId, "old failure")
+
+        publishQueued(song)
+
+        assertEquals(DownloadState.Queued, active.value[videoId])
+        assertEquals(DownloadProgress.Queued, progressOf(videoId))
     }
 
     private fun progressOf(videoId: String): DownloadProgress? =

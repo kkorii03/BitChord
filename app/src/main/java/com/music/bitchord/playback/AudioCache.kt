@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -752,6 +753,18 @@ object AudioCache {
      */
     val renditionCompleted: SharedFlow<String> = _renditionCompleted.asSharedFlow()
 
+    /**
+     * Video ids whose rendition is complete on disk, as state rather than only
+     * an event.
+     *
+     * A SharedFlow with no replay loses a completion that happened before the
+     * lyrics panel subscribed, and can drop one when its buffer is full during
+     * a burst of cache writes. This holds the same answer for a late collector,
+     * so the AI timing action still appears after the copy finished.
+     */
+    private val _completedRenditions = MutableStateFlow<Set<String>>(emptySet())
+    val completedRenditions: StateFlow<Set<String>> = _completedRenditions.asStateFlow()
+
     /** Cache keys whose completion listener is installed, so each is watched once. */
     private val watchedCompletionKeys = ConcurrentHashMap.newKeySet<String>()
 
@@ -782,18 +795,31 @@ object AudioCache {
                 val rendition = renditionFor(key) ?: return
                 if (!rendition.isComplete) return
                 if (!completedKeys.add(key)) return
-                _renditionCompleted.tryEmit(key.substringBefore('#'))
+                val mediaId = key.substringBefore('#')
+                _completedRenditions.update { it + mediaId }
+                _renditionCompleted.tryEmit(mediaId)
             }
 
             override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
                 // The entry (or one of its spans) is gone; a later rebuild of
                 // the same key must be allowed to report completion again.
                 completedKeys.remove(key)
+                _completedRenditions.update { it - key.substringBefore('#') }
             }
 
             override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
         }
         runCatching { cache.addListener(key, listener) }
+            .onSuccess {
+                // The copy may already be complete from before this listener
+                // existed (lyrics arriving late). State must hold that answer:
+                // no span-added event will ever be delivered for it.
+                val rendition = renditionFor(key) ?: return@onSuccess
+                if (!rendition.isComplete || !completedKeys.add(key)) return@onSuccess
+                val mediaId = key.substringBefore('#')
+                _completedRenditions.update { it + mediaId }
+                _renditionCompleted.tryEmit(mediaId)
+            }
             .onFailure {
                 watchedCompletionKeys.remove(key)
                 TrackLog.w(TAG, "could not watch cache completion for $key: ${it.message}")
@@ -1462,7 +1488,10 @@ object AudioCache {
             override fun open(dataSpec: DataSpec): Long {
                 // A DataSource instance is normally closed before it is opened
                 // again, but the hold must not be counted twice if it is not.
-                releaseHeld()
+                // This is not a terminal release: the same source is about to
+                // re-retain the key, so it must not wake a head retry that would
+                // race the reopened playback reader.
+                releaseHeld(retryAnalysisHead = false)
                 val scheme = dataSpec.uri.scheme
                 activeDs = if (scheme == "file" || scheme == "content") {
                     upstreamDs
@@ -1506,7 +1535,7 @@ object AudioCache {
                 }
             }
 
-            private fun releaseHeld() {
+            private fun releaseHeld(retryAnalysisHead: Boolean = true) {
                 heldKey?.let { key ->
                     release(playbackKeysInUse, key)
                     if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
@@ -1514,8 +1543,11 @@ object AudioCache {
                 heldVideoId?.let { videoId ->
                     release(playbackVideoIdsInUse, videoId)
                     // The held analysis claim waits for this event rather than
-                    // for the next idle tick to discover the lock is gone.
-                    retryAnalysisHeadIfReaderReleased(videoId)
+                    // for the next idle tick to discover the lock is gone. Only
+                    // a terminal release counts: open() releases before it
+                    // re-retains the same key, and retrying there would race
+                    // the reader it just reopened.
+                    if (retryAnalysisHead) retryAnalysisHeadIfReaderReleased(videoId)
                 }
                 heldKey = null
                 heldVideoId = null
@@ -2227,6 +2259,10 @@ object AudioCache {
      */
     fun cancelLosslessPrefetchFor(mediaId: String?) {
         if (mediaId == null || losslessPrefetchFor != mediaId) return
+        // The row this fetch belongs to is now playing. A timed-out fetch was
+        // deliberately left running for it; cancelling here would abort the
+        // playing track's lossless copy when the next row is scheduled.
+        if (mediaId == currentMediaId) return
         val active = losslessPrefetchJob?.isActive == true
         if (active) losslessPrefetchJob?.cancel()
         losslessPrefetchJob = null

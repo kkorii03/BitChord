@@ -314,6 +314,13 @@ object DownloadHealth {
                             upgradeQueued = true
                         }
                         HqLibraryUpgrade.UpgradeRequest.SEARCHING -> {
+                            // The search has already spent the request. Record
+                            // its cooldown and attempt now, or the next playback
+                            // launches the same search again immediately and the
+                            // "max 3 attempts" cap actually permits a fourth.
+                            val now = System.currentTimeMillis()
+                            markRepairRequested(context, id, now)
+                            markUpgradeAttempt(context, id, upgradeAttempts(context, id) + 1)
                             upgradeQueued = false
                         }
                         HqLibraryUpgrade.UpgradeRequest.REFUSED -> {

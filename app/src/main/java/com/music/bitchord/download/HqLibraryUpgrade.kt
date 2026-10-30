@@ -214,6 +214,29 @@ object HqLibraryUpgrade {
     )
 
     /**
+     * The same eligibility with only the retry cooldown ignored.
+     *
+     * Used to tell a target that is merely waiting for its cooldown (and must
+     * stay in the plan) from one the listener's settings or [HqLibraryPolicy]
+     * no longer select at all (which must be dropped like any other omitted
+     * target).
+     */
+    private fun automaticTargetEligibleIgnoringCooldown(
+        videoId: String,
+        verifiedTier: HqTier,
+        nowMs: Long,
+        downloaded: Map<String, SavedSongMetadata>,
+        foreground: Boolean = AppForeground.isForeground,
+    ): Boolean = HqLibraryAutoRetryPolicy.shouldAttempt(
+        manual = manualPass,
+        foreground = foreground,
+        alreadyAtTargetTier = hasCopyAtLeastAsGood(videoId, downloaded[videoId], verifiedTier),
+        attempts = 0,
+        lastFailureMs = 0L,
+        nowMs = nowMs,
+    )
+
+    /**
      * A copy already on disk answers the target only when it is at least as
      * good as the verified rung. A saved LOSSLESS_16 does not answer a verified
      * hi-res or Atmos pair: [HqLibraryPolicy] must still be allowed to replace
@@ -393,6 +416,18 @@ object HqLibraryUpgrade {
     internal fun shouldResumePlan(planIsNotEmpty: Boolean, hasRunnableTarget: Boolean): Boolean =
         hasRunnableTarget || planIsNotEmpty
 
+    /**
+     * Whether a verdict arriving now must rebuild the plan after the current
+     * work.
+     *
+     * [activeVideoId] only names a replacement whose start has completed. A
+     * worker that is still inside [buildPlan] has claimed no id yet, but its
+     * plan is in flight; clearing [rebuildRequested] in that window made the
+     * appended worker return in [recoverActive] and lose the new verdict.
+     */
+    internal fun verdictNeedsRebuild(activeVideoId: String?, workerRunning: Boolean): Boolean =
+        activeVideoId != null || workerRunning
+
     /** Playback paused or its buffer went idle: this is the event the pass waits for. */
     fun onPlaybackStopped(context: Context) {
         if (PlaybackActivity.active) return
@@ -412,7 +447,7 @@ object HqLibraryUpgrade {
         ensureLoaded(context)
         if (!enabled()) return
         synchronized(lock) {
-            rebuildRequested = activeVideoId != null
+            rebuildRequested = verdictNeedsRebuild(activeVideoId, workerRunning)
             plan = emptyList()
             done = 0
             total = 0
@@ -728,7 +763,11 @@ object HqLibraryUpgrade {
     ) {
         if (!ready) return
         if (cancelled) {
-            clearActiveTarget(videoId)
+            // A cancellation is not a failed replacement, but it still ends
+            // this target's turn. Leave it in the plan and hand the next target
+            // (or its cooldown wake) to WorkManager; returning bare here stopped
+            // the whole remaining pass until some unrelated foreground event.
+            resumeAfterCancellation(context, videoId)
             return
         }
         if (synchronized(lock) { activeVideoId } != videoId) return
@@ -806,6 +845,33 @@ object HqLibraryUpgrade {
     }
 
     /**
+     * After a cancelled replacement, keep the plan moving with the next target
+     * or its cooldown wake.
+     *
+     * The cancelled target stays where it was; no failure is recorded. If it
+     * was the only target left, the pass is finished rather than left claiming
+     * to run with an empty plan.
+     */
+    private fun resumeAfterCancellation(context: Context, videoId: String) {
+        if (!clearActiveTarget(videoId)) return
+        if (!runAllowed()) return
+        val now = System.currentTimeMillis()
+        val downloaded = Downloads.savedMetadataSnapshot()
+        val wait = synchronized(lock) {
+            when {
+                plan.isEmpty() -> null
+                nextRunnableTargetLocked(now, downloaded) != null -> 0L
+                else -> nextParkedWaitLocked(now)
+            }
+        }
+        if (wait == null) {
+            if (synchronized(lock) { plan.isEmpty() }) finishRun()
+            return
+        }
+        enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, wait)
+    }
+
+    /**
      * The download for [videoId] stopped before it could answer.
      *
      * Keeps its plan entry and failure record untouched: a cancellation is a
@@ -845,8 +911,10 @@ object HqLibraryUpgrade {
             return@withContext
         }
         if (!hqPassAllowsMeteredData(manualPass) && !AppSettings.downloadsAllowedNow) {
+            // Background work on a connection the Wi-Fi-only rule refuses. The
+            // plan is what [onBackground] promised to keep; the foreground or
+            // the next playback event resumes it once a download is allowed.
             TrackLog.i(TAG, "hq-library: waiting for an unmetered connection")
-            finishRun()
             return@withContext
         }
 
@@ -859,20 +927,30 @@ object HqLibraryUpgrade {
         if (target == null) {
             val parked = synchronized(lock) { plan.isNotEmpty() }
             val built = buildPlan(context)
+            // The same selection with only the retry cooldown ignored. Entries
+            // that buildPlan omitted for any other reason (a disabled switch, a
+            // lowered prefetch cap, the arrangement check, a missing song) must
+            // not be resurrected by keeping the parked plan.
+            val resumable = if (parked) buildPlan(context, includeParked = true) else built
             if (built.isEmpty()) {
-                // A parked plan is kept on disk until its cooldown ends. The
-                // next playback/foreground event checks it again; this worker
-                // must not clear it just because nothing is runnable right now.
-                if (!parked) {
+                val waiting = synchronized(lock) {
+                    plan = mergeParkedPlan(built, plan, resumable)
+                    if (plan.isEmpty()) {
+                        done = 0
+                        total = 0
+                        activeVideoId = null
+                        persistLocked()
+                        publishLocked()
+                    }
+                    nextParkedWaitLocked(selectionNow)
+                }
+                if (synchronized(lock) { plan.isEmpty() }) {
                     finishRun()
-                } else {
-                    val waitMs = synchronized(lock) {
-                        nextParkedWaitLocked(selectionNow)
-                    }
-                    if (waitMs != null && waitMs > 0L) {
-                        // WorkManager owns the wait; there is no timer here.
-                        enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, waitMs)
-                    }
+                    return@withContext
+                }
+                if (waiting != null && waiting > 0L) {
+                    // WorkManager owns the wait; there is no timer here.
+                    enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE, waiting)
                 }
                 return@withContext
             }
@@ -883,7 +961,7 @@ object HqLibraryUpgrade {
             // below then owns their wake-up. A rebuilt target for the same song
             // wins over the kept one.
             synchronized(lock) {
-                plan = mergeParkedPlan(built, plan)
+                plan = mergeParkedPlan(built, plan, resumable)
                 done = 0
                 total = plan.size
                 activeVideoId = null
@@ -975,9 +1053,13 @@ object HqLibraryUpgrade {
     private fun mergeParkedPlan(
         built: List<PendingTarget>,
         kept: List<PendingTarget>,
+        resumable: List<PendingTarget>,
     ): List<PendingTarget> {
         val runnableIds = built.mapTo(HashSet()) { it.target.videoId }
-        return built + kept.filterNot { it.target.videoId in runnableIds }
+        val stillSelected = resumable.mapTo(HashSet()) { failureKey(it.target) }
+        return built + kept.filterNot {
+            it.target.videoId in runnableIds || failureKey(it.target) !in stillSelected
+        }
     }
 
     /**
@@ -1242,7 +1324,10 @@ object HqLibraryUpgrade {
         }
     }
 
-    private suspend fun buildPlan(context: Context): List<PendingTarget> {
+    private suspend fun buildPlan(
+        context: Context,
+        includeParked: Boolean = false,
+    ): List<PendingTarget> {
         val verified = HqVerificationStore.entries(context)
         if (verified.isEmpty()) return emptyList()
         val downloaded = Downloads.savedMetadataSnapshot()
@@ -1261,13 +1346,22 @@ object HqLibraryUpgrade {
         val entries = verified
             .filter { entry ->
                 synchronized(lock) {
-                    automaticTargetEligible(
-                        entry.youtubeId,
-                        entry.verified.tier,
-                        failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
-                        now,
-                        downloaded,
-                    )
+                    if (includeParked) {
+                        automaticTargetEligibleIgnoringCooldown(
+                            entry.youtubeId,
+                            entry.verified.tier,
+                            now,
+                            downloaded,
+                        )
+                    } else {
+                        automaticTargetEligible(
+                            entry.youtubeId,
+                            entry.verified.tier,
+                            failures[failureKey(entry.youtubeId, entry.sourceConfigId, entry.trackId)],
+                            now,
+                            downloaded,
+                        )
+                    }
                 }
             }
             .mapNotNull { entry ->

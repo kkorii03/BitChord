@@ -151,6 +151,14 @@ object MvSoundRedownload {
     private val pauseGeneration = AtomicInteger(0)
 
     /**
+     * Serialises "a foreground schedule is queued" with "a pause checks the
+     * generation and cancels". Without it a pause could read the chain just
+     * before a foreground schedule appended new work and then cancel that new
+     * work after its own generation check.
+     */
+    private val scheduleLock = Any()
+
+    /**
      * Whether a repair pass should be queued now.
      *
      * [hasSuspects] is a lambda rather than a Boolean so the scan is skipped
@@ -192,16 +200,18 @@ object MvSoundRedownload {
             .build()
         // Invalidate any pause still querying: this work is for the window that
         // is on screen now, not for the background it was queued in.
-        pauseGeneration.incrementAndGet()
-        // A connection that just became allowed must not wait behind a worker
-        // parked in retry backoff; REPLACE clears that stale request. Ordinary
-        // app-start and playback schedules still append.
-        val policy = if (replace) ExistingWorkPolicy.REPLACE else WORK_POLICY
-        runCatching {
-            WorkManager.getInstance(context.applicationContext)
-                .enqueueUniqueWork(WORK_NAME, policy, request)
-        }.onFailure {
-            TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
+        synchronized(scheduleLock) {
+            pauseGeneration.incrementAndGet()
+            // A connection that just became allowed must not wait behind a worker
+            // parked in retry backoff; REPLACE clears that stale request. Ordinary
+            // app-start and playback schedules still append.
+            val policy = if (replace) ExistingWorkPolicy.REPLACE else WORK_POLICY
+            runCatching {
+                WorkManager.getInstance(context.applicationContext)
+                    .enqueueUniqueWork(WORK_NAME, policy, request)
+            }.onFailure {
+                TrackLog.w("BitChord", "could not schedule MV-sound repair: ${it.message}")
+            }
         }
     }
 
@@ -252,7 +262,20 @@ object MvSoundRedownload {
                         workManager.getWorkInfoById(info.id).get()?.state
                     }.getOrNull()
                 }
-                cancelTargets(current).forEach { workManager.cancelWorkById(it) }
+                synchronized(scheduleLock) {
+                    // A foreground schedule may have incremented the generation
+                    // while the reads above ran; it owns the chain now.
+                    if (generation != pauseGeneration.get()) return@launch
+                    // Read each state again under the same lock that schedules
+                    // new work, so a queued worker that just turned RUNNING is
+                    // not cancelled out from under the pass.
+                    val latest = current.map { (id, _) ->
+                        id to runCatching {
+                            workManager.getWorkInfoById(id).get()?.state
+                        }.getOrNull()
+                    }
+                    cancelTargets(latest).forEach { workManager.cancelWorkById(it) }
+                }
             }.onFailure {
                 TrackLog.w("BitChord", "could not pause MV-sound repair: ${it.message}")
             }

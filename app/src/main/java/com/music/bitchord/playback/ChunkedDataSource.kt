@@ -132,7 +132,13 @@ class ChunkedDataSource(
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
-                    HqHostTracker.noteFailure(currentHost)
+                    // A 429/502/503/504 was already counted by the gate; a
+                    // second note here penalised the same host twice.
+                    val refusal = rateLimitedCause(e)
+                    val countedByGate = refusal != null &&
+                        (HqRetryPolicy.isRateLimited(refusal.responseCode) ||
+                            HqRetryPolicy.isSleepingGateway(refusal.responseCode))
+                    if (!countedByGate) HqHostTracker.noteFailure(currentHost)
                     failureNoted = true
                     report(dataSpec, e)
                 }
@@ -172,26 +178,34 @@ class ChunkedDataSource(
                     "range $position-${position + length - 1} refused for " +
                         "${spec.uri.getQueryParameter("c")}: ${e.message}",
                 )
+                if (e is HttpDataSource.InvalidResponseCodeException) {
+                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
+                    if (resumed != null) {
+                        // Recovered from the refusal: this open is not a host
+                        // failure. Crediting it as one made a successfully
+                        // re-resolved range close as failed and never earn the
+                        // success/throughput credit the replacement deserved.
+                        transferFailed = false
+                        chunkRemaining = resumed
+                        chunkOpen = true
+                        return
+                    }
+                }
                 // A 429/503 has already been counted (and the host rested) by
                 // openWithRateLimitRetry; adding another failure here would
                 // escalate the penalty twice for one refusal.
                 val refusal = rateLimitedCause(e)
-                val rateLimited = refusal != null &&
-                    HqRetryPolicy.isRateLimited(refusal.responseCode)
-                if (rateLimited) {
+                // 502/504 are sleeping-gateway refusals too: the gate already
+                // noted them when it gave up, so do not count them again.
+                val countedByGate = refusal != null &&
+                    (HqRetryPolicy.isRateLimited(refusal.responseCode) ||
+                        HqRetryPolicy.isSleepingGateway(refusal.responseCode))
+                if (countedByGate) {
                     // Recorded by [openWithRateLimitRetry] already.
                     failureNoted = true
                 } else {
                     HqHostTracker.noteFailure(currentHost)
                     failureNoted = true
-                }
-                if (e is HttpDataSource.InvalidResponseCodeException) {
-                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
-                    if (resumed != null) {
-                        chunkRemaining = resumed
-                        chunkOpen = true
-                        return
-                    }
                 }
                 // This is the only place a refusal of the *real* fetch is seen.
                 // Left here it is just a failed track; handed back, it is the
