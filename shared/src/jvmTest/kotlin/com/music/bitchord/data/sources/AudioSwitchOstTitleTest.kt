@@ -111,6 +111,79 @@ class AudioSwitchOstTitleTest {
     }
 
     @Test
+    fun `a title with no performer matches the catalogue row on its cleaned title`() {
+        val song = Song(
+            videoId = "joker-following-sophie",
+            title = "Following Sophie | Joker OST",
+            artist = "Joker OST",
+            thumbnailUrl = null,
+        )
+        val target = TrackMatcher.audioSwitchTargetOf(song)
+        assertEquals("following sophie", target.title)
+        assertEquals("", target.artist)
+        val row = Song(
+            videoId = "catalogue-following-sophie",
+            title = "Following Sophie",
+            artist = "Hildur Guðnadóttir",
+            thumbnailUrl = null,
+        )
+        assertEquals(row, TrackMatcher.bestSameArtist(listOf(row), target))
+        assertEquals(row, TrackMatcher.bestOfficialAudioForVideo(listOf(row), target))
+    }
+
+    @Test
+    fun `a channel label before the title is not a performer`() {
+        val raw = "Joker OST - Following Sophie | Joker OST"
+        val got = identity(raw)
+        assertEquals("following sophie", got.title)
+        assertEquals("", got.artist)
+        assertEquals("joker", got.work)
+        assertEquals(
+            listOf("following sophie joker soundtrack", "following sophie"),
+            TrackMatcher.queries(TrackMatcher.Target(raw, "Joker OST")),
+        )
+    }
+
+    @Test
+    fun `a take or packaging tail after the soundtrack is not inverted`() {
+        val live = TrackMatcher.parseTitle("Song - Live | Joker OST")
+        assertEquals("song", live.core)
+        assertEquals(setOf("live"), live.versions)
+
+        val remix = TrackMatcher.parseTitle("Song - Remix | Joker OST")
+        assertEquals("song", remix.core)
+        assertEquals(setOf("remix"), remix.versions)
+
+        val official = TrackMatcher.parseTitle("Song | Official Video | Joker OST")
+        assertEquals("song", official.core)
+        assertEquals(emptySet<String>(), official.versions)
+    }
+
+    @Test
+    fun `a take marker after a trailing soundtrack label is kept`() {
+        val parts = TrackMatcher.parseTitle("Song - Original Soundtrack (Live)")
+        assertEquals("song", parts.core)
+        assertEquals(setOf("live"), parts.versions)
+        assertEquals(
+            listOf("song live"),
+            TrackMatcher.queries(
+                TrackMatcher.Target("Song - Original Soundtrack (Live)", "Artist"),
+            ),
+        )
+    }
+
+    @Test
+    fun `an artist-title with a bracketed take keeps both`() {
+        val raw = "Cream - White Room (Live) | Joker OST"
+        val got = identity(raw)
+        assertEquals("white room (live)", got.title)
+        assertEquals("cream", got.artist)
+        val parts = TrackMatcher.parseTitle(raw)
+        assertEquals("whiteroom", parts.core)
+        assertEquals(setOf("live"), parts.versions)
+    }
+
+    @Test
     fun `official video tails and cover titles still parse as before`() {
         assertEquals(
             listOf("song artist", "song"),

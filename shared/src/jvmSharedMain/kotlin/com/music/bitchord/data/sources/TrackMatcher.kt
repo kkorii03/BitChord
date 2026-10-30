@@ -258,8 +258,12 @@ object TrackMatcher {
     fun bestSameArtist(candidates: List<Song>, target: Target): Song? =
         // A positive score only: artistScore answers 0 when either credit has
         // no comparable words ("f(x)" is all single letters), and "cannot tell"
-        // must not count as the same artist here.
+        // must not count as the same artist here. A target with no credit at
+        // all is different: a fan upload may name only its channel, and then
+        // there is no performer to require — the cleaned title/work is all the
+        // evidence there is.
         ranked(candidates, target).firstOrNull { candidate ->
+            val uncredited = target.artist.isBlank()
             val sameName = (artistScore(target.artist, candidate.artist) ?: 0) > 0 &&
                 // The same person, not a name that merely contains them: "The
                 // Justin Bieber Cover Band" shares every word of "Justin
@@ -267,7 +271,7 @@ object TrackMatcher {
                 namesTheSameArtist(target.artist, candidate.artist)
             // A different printed name is still the same act when the row's
             // own channel or release says so (a solo member and their group).
-            (sameName || sameArtistIdentity(target, candidate)) &&
+            (uncredited || sameName || sameArtistIdentity(target, candidate)) &&
                 !isCoverOf(candidate, target)
         }
 
@@ -662,6 +666,9 @@ object TrackMatcher {
                 }
                 val credited = artistScore(target.artist, candidate.artist)
                 val artist = when {
+                    // A soundtrack upload that named no performer has no credit
+                    // to compare; its cleaned title/work is the whole target.
+                    target.artist.isBlank() -> credited ?: 0
                     namesTheSameArtist(target.artist, candidate.artist) -> credited ?: ARTIST_SHARED
                     sameArtistIdentity(target, candidate) -> ARTIST_SHARED
                     else -> return@mapNotNull null
@@ -913,14 +920,31 @@ object TrackMatcher {
         DASH.find(soundtrack.text)?.let { dash ->
             val head = soundtrack.text.substring(0, dash.range.first).trim()
             val tail = soundtrack.text.substring(dash.range.last + 1).trim()
-            if (head.isNotBlank() && tail.isNotBlank() && !isArtistName(tail, rawArtist)) {
-                return AudioSwitchIdentity(
-                    tail,
-                    head,
-                    soundtrack.work,
-                    hasSoundtrackTail = true,
-                    tailRemoved = soundtrack.tailRemoved,
-                )
+            if (head.isNotBlank() && tail.isNotBlank()) {
+                // A channel/OST label before the song ("Joker OST - Following
+                // Sophie") is not a performer. Drop it and let the work query
+                // ask for "<title> <work> soundtrack".
+                if (isUploaderCredit(head)) {
+                    return AudioSwitchIdentity(
+                        tail,
+                        "",
+                        soundtrack.work,
+                        hasSoundtrackTail = true,
+                        tailRemoved = soundtrack.tailRemoved,
+                    )
+                }
+                // A take/packaging label after the dash ("Song - Live",
+                // "Song | Official Video") belongs to the title; inverting it
+                // would search for "live"/"official" instead of the song.
+                if (!isPackagingOrTake(tail) && !isArtistName(tail, rawArtist)) {
+                    return AudioSwitchIdentity(
+                        tail,
+                        head,
+                        soundtrack.work,
+                        hasSoundtrackTail = true,
+                        tailRemoved = soundtrack.tailRemoved,
+                    )
+                }
             }
         }
         return AudioSwitchIdentity(
@@ -937,10 +961,17 @@ object TrackMatcher {
         val base = targetOf(song)
         val identity = audioSwitchIdentity(base.title, base.artist)
         if (!identity.hasSoundtrackTail) return base
-        return base.copy(
-            title = identity.title,
-            artist = identity.artist.ifBlank { base.artist },
-        )
+        // A pipe/trailing OST label is the fan-upload shape, so its uploader
+        // is the channel, not a performer. With no printed performer there is
+        // no credit to require from the catalogue row; the cleaned title/work
+        // is matched instead. A "(From ...)" title can carry a real credit,
+        // which is kept unless it is itself a channel.
+        val artist = when {
+            identity.artist.isNotBlank() -> identity.artist
+            identity.tailRemoved || isUploaderCredit(base.artist) -> ""
+            else -> base.artist
+        }
+        return base.copy(title = identity.title, artist = artist)
     }
 
     /** The queries an audio switch runs, including its soundtrack work. */
@@ -983,7 +1014,10 @@ object TrackMatcher {
         TRAILING_SOUNDTRACK.find(text)?.let { match ->
             present = true
             tailRemoved = true
-            text = text.substring(0, match.range.first)
+            // Remove only the label itself. A take marker printed after it
+            // ("Song - Original Soundtrack (Live)") still has to reach the
+            // ordinary bracket pass, or the live take would match the studio.
+            text = text.removeRange(match.range)
         }
 
         TRAILING_BARE_OST.find(text)?.let { match ->
@@ -1006,6 +1040,28 @@ object TrackMatcher {
         return text.isBlank() || SOUNDTRACK_WORD.containsMatchIn(text) ||
             text.endsWith("topic") || text.contains("various artists")
     }
+
+    /**
+     * Whether a dash/pipe tail names a take or upload packaging rather than
+     * the song ("Live", "Remix", "Official Video"). Such a tail belongs to the
+     * title; inverting it would make the song "live" or "official". A tail
+     * that is a title *plus* a take marker ("White Room (Live)") is not a
+     * label and still hands over from the performer.
+     */
+    private fun isPackagingOrTake(text: String): Boolean {
+        val words = normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (words.isEmpty()) return true
+        return words.all {
+            it in VERSION_WORDS || it in TRAILING_NOISE || it in NOISE_WORDS ||
+                it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
+        }
+    }
+
+    private val PACKAGING_CONNECTORS = setOf(
+        "at", "in", "from", "on", "the", "a", "an", "for", "of", "and", "with", "to",
+    )
 
     private fun cleanSoundtrackWork(raw: String): String? =
         normalize(raw)
@@ -1075,15 +1131,25 @@ object TrackMatcher {
         // Room | Joker OST". Once the OST tail is gone the remaining dash is
         // the credit, not the title, so the tail becomes the identity. A tail
         // that is itself the credit keeps the ordinary title-first reading.
+        // A channel/OST label before the song is dropped, and a take or
+        // packaging tail ("Live", "Official Video") is left for the ordinary
+        // dash pass so it stays in versions instead of becoming the title.
         if (soundtrack.tailRemoved) {
             DASH.find(text)?.let { dash ->
                 val head = text.substring(0, dash.range.first)
                 val tail = text.substring(dash.range.last + 1)
-                if (head.isNotBlank() && tail.isNotBlank() &&
-                    !isArtistName(head, artist) && !isArtistName(tail, artist)
-                ) {
-                    classify(head, versions, context)
-                    text = tail
+                if (head.isNotBlank() && tail.isNotBlank()) {
+                    when {
+                        isUploaderCredit(head) -> {
+                            classify(head, versions, context)
+                            text = tail
+                        }
+                        isPackagingOrTake(tail) -> Unit
+                        !isArtistName(head, artist) && !isArtistName(tail, artist) -> {
+                            classify(head, versions, context)
+                            text = tail
+                        }
+                    }
                 }
             }
         }
@@ -1663,9 +1729,9 @@ object TrackMatcher {
     /** The last pipe-separated segment, where a fan upload puts "Joker OST". */
     private val PIPE_TAIL = Regex("""\s*\|\s*([^|]+)\s*$""")
     private val SOUNDTRACK_WORD = Regex("""(?<![a-z])ost(?![a-z])|\bsoundtracks?\b""")
-    /** " - Original Soundtrack", " - OST" at the end of a title. */
+    /** " - Original Soundtrack", " - OST" as a label, without eating a take marker after it. */
     private val TRAILING_SOUNDTRACK = Regex(
-        """\s+[-–—]\s+(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)(?:\s+.*)?$""",
+        """\s+[-–—]\s+(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)\b""",
         RegexOption.IGNORE_CASE,
     )
     /** A bare "OST"/"Soundtrack" label hung on the end without a dash. */
