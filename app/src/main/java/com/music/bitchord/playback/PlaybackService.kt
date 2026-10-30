@@ -7972,6 +7972,7 @@ class PlaybackService : MediaLibraryService() {
             scope = scope,
             currentPlayer = { player },
             alternateLookupTimeoutMs = ALTERNATE_LOOKUP_TIMEOUT_MS,
+            definitiveAlternateTimeoutMs = DEFINITIVE_ALTERNATE_TIMEOUT_MS,
             permanentReason = { permanentReason(it) },
             swapToAlternate = { item, alternate -> item.withAlternateRecording(alternate) },
         )

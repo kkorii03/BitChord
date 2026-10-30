@@ -30,12 +30,6 @@ object UnplayableReason {
         "blocked due to the claimed",
         "copyright claim",
         "copyrighted",
-        "this track is unavailable",
-        "track is unavailable",
-        "this video is unavailable",
-        "video unavailable",
-        "the video is unavailable",
-        "no longer available",
         "private video",
         "private content",
         "is private",
@@ -66,8 +60,6 @@ object UnplayableReason {
         "blocked due to the claimed",
         "copyright claim",
         "copyrighted",
-        "this track is unavailable",
-        "track is unavailable",
         "private video",
         "private content",
         "is private",
@@ -92,9 +84,7 @@ object UnplayableReason {
         "login required",
         "not available in your country",
         "이 국가에서는 이용할 수 없",
-        "재생할 수 없",
-        "사용할 수 없",
-        "이용할 수 없",
+        "no longer available",
         "premium이 필요",
         "premium is required",
         "soundcloud go+",
@@ -150,7 +140,11 @@ object UnplayableReason {
         if (trackSpecific.any { it in lower }) return text
         if (transient.any { it in lower }) return null
         if (definitive.any { it in lower }) return text
-        if ("unavailable" in lower || "not available" in lower) return text
+        // "This track is unavailable" is the generic text both resolvers use
+        // for a region gate as well as a takedown, so it is a verdict but not
+        // a track-specific one. A bare "not available" is deliberately not
+        // matched: it is also how unrelated module/addon errors read.
+        if ("unavailable" in lower) return text
         return null
     }
 

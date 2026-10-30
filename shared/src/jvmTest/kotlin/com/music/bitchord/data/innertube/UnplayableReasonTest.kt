@@ -17,10 +17,11 @@ class UnplayableReasonTest {
     }
 
     @Test
-    fun `an InnerTubeX unavailable track is definitive`() {
+    fun `the generic unavailable answer waits for the proxy retry`() {
         val message = "StreamResolveException: This track is unavailable"
         assertTrue(UnplayableReason.isDefinitive(message))
-        assertTrue(UnplayableReason.isDefinitelyGone(message))
+        assertFalse(UnplayableReason.isDefinitelyGone(message))
+        assertFalse(UnplayableReason.isTrackSpecific(message))
     }
 
     @Test
@@ -71,5 +72,20 @@ class UnplayableReasonTest {
         assertTrue(UnplayableReason.isDefinitive("not available in your country"))
         assertFalse(UnplayableReason.isTrackSpecific("not available in your country"))
         assertFalse(UnplayableReason.isDefinitelyGone("not available in your country"))
+    }
+
+    @Test
+    fun `unrelated addon and module errors are not track verdicts`() {
+        assertFalse(UnplayableReason.isDefinitive("AddonClient: 사용할 수 없는 주소입니다"))
+        assertFalse(UnplayableReason.isDefinitive("모듈을 이용할 수 없습니다"))
+        assertFalse(UnplayableReason.isDefinitive("not available"))
+        assertFalse(UnplayableReason.isTrackSpecific("AddonClient: 사용할 수 없는 주소입니다"))
+    }
+
+    @Test
+    fun `UNPLAYABLE is definitive but needs the explicit reason to be track specific`() {
+        assertTrue(UnplayableReason.isDefinitive("Got error UNPLAYABLE: This track is unavailable"))
+        assertFalse(UnplayableReason.isDefinitelyGone("Got error UNPLAYABLE: This track is unavailable"))
+        assertFalse(UnplayableReason.isTrackSpecific("Got error UNPLAYABLE: This track is unavailable"))
     }
 }

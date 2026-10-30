@@ -535,6 +535,16 @@ object StreamResolver {
         // being slow. Read by the failure handler below.
         var directUnplayable = false
         var directUnplayableReason: String? = null
+        var itxUnplayableReason: String? = null
+
+        // A claim, a takedown or a private upload names the recording itself.
+        // A generic "unavailable" is also how a region gate answers, so it is
+        // deliberately not in this set: it still has to reach the proxy retry.
+        fun trackSpecificReason(): String? =
+            directUnplayableReason?.takeIf { UnplayableReason.isTrackSpecific(it) }
+                ?: itxUnplayableReason?.takeIf { UnplayableReason.isTrackSpecific(it) }
+
+        fun trackSpecificRefusal(): Boolean = trackSpecificReason() != null
 
         suspend fun tryDirect(): Stream? {
             if (directTried) return null
@@ -577,11 +587,19 @@ object StreamResolver {
             if (itxWalked) return null
             itxWalked = true
             val found = timed("$videoId InnerTubeX") {
-                innerTubeXStreamAllowingUploads(videoId, preferredManifest = preferredManifest) { key, label ->
-                    served(key, label)
-                }
+                innerTubeXStreamAllowingUploads(
+                    videoId,
+                    preferredManifest = preferredManifest,
+                    onServed = { key, label -> served(key, label) },
+                    onFailure = { itxUnplayableReason = it },
+                )
             }
-            if (found == null && preferredManifest != null) {
+            // A claim or a deleted upload says nothing about the learned path:
+            // benching it would make the next, playable track start on the
+            // slower default order for a refusal that was never its fault.
+            if (found == null && preferredManifest != null &&
+                !UnplayableReason.isTrackSpecific(itxUnplayableReason)
+            ) {
                 order.noteRefused(ResolutionOrder.itx(preferredManifest))
             }
             return found
@@ -597,11 +615,21 @@ object StreamResolver {
                 preferDirect -> tryDirect()
                 else -> null
             }
+            if (first == null && trackSpecificRefusal()) {
+                // The recording itself is gone (claim, takedown, private or
+                // deleted). Extraction and a proxy walk answer the same on
+                // every client, so settle it once instead of spending the
+                // retry budget on an answer already in hand.
+                throw PermanentlyUnplayableException(
+                    trackSpecificReason() ?: "이 트랙은 재생할 수 없습니다",
+                )
+            }
             // Parenthesised so the extraction failsafe below applies to every
             // branch, the race included, not only to the last `else`.
             (if (first != null) {
                 first
-            } else if ((preferredItx != null || preferDirect) &&
+            } else if (!trackSpecificRefusal() &&
+                (preferredItx != null || preferDirect) &&
                 ProxyPlayback.canResolveViaProxy() && !proxyAttempted
             ) {
                 // The first ask was refused (with no first ask there is nothing
@@ -640,7 +668,11 @@ object StreamResolver {
                 // that is the first refusal: Blue Valentine then spent 10 s on
                 // InnerTubeX before the proxy was tried (14.3 s to first
                 // sound), so the proxy starts beside InnerTubeX from here.
-                tryDirect() ?: if (directUnplayable && ProxyPlayback.canResolveViaProxy() && !proxyAttempted) {
+                tryDirect() ?: if (trackSpecificRefusal()) {
+                    null
+                } else if (directUnplayable &&
+                    ProxyPlayback.canResolveViaProxy() && !proxyAttempted
+                ) {
                     proxyAttempted = true
                     TrackLog.i(
                         TAG,
@@ -668,7 +700,14 @@ object StreamResolver {
                 }
             } else {
                 tryInnerTubeX(null) ?: tryDirect()
-            }) ?: run {
+            }) ?: if (trackSpecificRefusal()) {
+                // The direct ladder may have been the one to name the claim or
+                // the deletion. Extraction reads the same watch page and would
+                // spend its attempts repeating that answer.
+                throw PermanentlyUnplayableException(
+                    trackSpecificReason() ?: "이 트랙은 재생할 수 없습니다",
+                )
+            } else run {
                 TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                 timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
                     .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
@@ -713,6 +752,7 @@ object StreamResolver {
             // proxy's address, which is why [ProxyPlayback] remembers the URL
             // and the media fetch follows it there.
             if (!proxyAttempted &&
+                !trackSpecificRefusal() &&
                 ProxyPlayback.canResolveViaProxy() &&
                 ProxyPlaybackPolicy.isRegionRefusal(
                     signInConfirmNotBot = e.isSignInConfirmNotBot(),
@@ -848,6 +888,7 @@ object StreamResolver {
         preferredManifest: String? = null,
         viaProxy: Boolean = false,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
+        onFailure: (String?) -> Unit = {},
     ): Stream? {
         val skip = mutableSetOf<String>()
         // In a gated region WEB_REMIX is the identity that answers UNPLAYABLE
@@ -873,6 +914,7 @@ object StreamResolver {
                 throw e
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX $preferredManifest preferred ask failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+                onFailure(e.message)
                 null
             }
             if (found != null) {
@@ -905,6 +947,7 @@ object StreamResolver {
                 throw e
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+                onFailure(e.message)
                 // A Premium refusal from a web client says this network is
                 // gated, not that this track is. The fallback decides the rest
                 // of the session from here; the media walk itself keeps the
@@ -1029,6 +1072,7 @@ object StreamResolver {
         preferredManifest: String? = null,
         viaProxy: Boolean = false,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
+        onFailure: (String?) -> Unit = {},
     ): Stream? {
         val known = UploadedTracks.contains(videoId)
         if (known) {
@@ -1041,6 +1085,7 @@ object StreamResolver {
                 preferredManifest = preferredManifest,
                 viaProxy = viaProxy,
                 onServed = onServed,
+                onFailure = onFailure,
             )
                 ?.let { return it }
             TrackLog.w(TAG, "$videoId is marked as an upload but did not resolve as one; trying an ordinary ask")
@@ -1053,6 +1098,7 @@ object StreamResolver {
                 preferredManifest = preferredManifest,
                 viaProxy = viaProxy,
                 onServed = onServed,
+                onFailure = onFailure,
             )
         }
         return innerTubeXStream(
@@ -1062,6 +1108,7 @@ object StreamResolver {
             preferredManifest = preferredManifest,
             viaProxy = viaProxy,
             onServed = onServed,
+            onFailure = onFailure,
         )
     }
 
