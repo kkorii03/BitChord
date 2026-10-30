@@ -27,9 +27,14 @@ mkdir -p "$OUT"
 PKG=com.dev.bitchord
 APP_DIR="/sdcard/Android/data/$PKG/files"
 SONGS_FILE=${SMOKE_SONGS_FILE:-scripts/smoke/songs.txt}
+SCENARIO_MODE=0
+case "${SMOKE_SCENARIO:-}" in review|REVIEW) SCENARIO_MODE=1 ;; esac
+case "${GITHUB_REF_NAME:-}" in *review*) SCENARIO_MODE=1 ;; esac
 # A smoke/*mv* branch runs only the version-decision list: GitHub's runners get
 # no YouTube audio, so only what is decided before audio can be judged there.
-case "${GITHUB_REF_NAME:-}" in *mv*) SONGS_FILE=scripts/smoke/songs-mv.txt ;; esac
+if [ "$SCENARIO_MODE" = 0 ]; then
+  case "${GITHUB_REF_NAME:-}" in *mv*) SONGS_FILE=scripts/smoke/songs-mv.txt ;; esac
+fi
 WAIT_PER_SONG=45
 HQ_WAIT_PER_SONG=90
 SYNC_WAIT_PER_SONG=75
@@ -37,7 +42,7 @@ START_TIMEOUT=20
 FALLBACK_TIMEOUT=15
 HQ_CONFIGURED=0
 
-[ -f "$SONGS_FILE" ] || {
+[ "$SCENARIO_MODE" = 1 ] || [ -f "$SONGS_FILE" ] || {
   echo "smoke: song list not found: $SONGS_FILE" >&2
   exit 2
 }
@@ -180,7 +185,7 @@ start_search() {
 }
 
 play_song() {
-  local key=$1 kind=$2 query="" started=0 before wait_seconds elapsed
+  local key=$1 kind=$2 wait_override=${3:-} query="" started=0 before wait_seconds elapsed
   case "$key" in
     search:*) query=${key#search:} ;;
   esac
@@ -216,13 +221,224 @@ play_song() {
   # The listening window starts when playback is detected, not when the VIEW
   # was sent, so a fallback-started song is not cut short.
   if [ "$started" -gt 0 ]; then
-    wait_seconds=$(wait_seconds_for "$kind")
+    wait_seconds=${wait_override:-$(wait_seconds_for "$kind")}
     elapsed=$((SECONDS - started))
     if [ "$elapsed" -lt "$wait_seconds" ]; then
       sleep $((wait_seconds - elapsed))
     fi
   fi
 }
+
+scenario_mark() {
+  adb shell log -t BitChord "smoke-scenario: $1" >/dev/null 2>&1 || true
+}
+
+scenario_begin() {
+  SCENARIO_NAME=$1
+  SCENARIO_START_LINE=$(wc -l < "$OUT/smoke-logcat.txt" 2>/dev/null || echo 0)
+  scenario_mark "$SCENARIO_NAME start"
+}
+
+scenario_end() {
+  local name=$1 end
+  sleep 1
+  scenario_mark "$name end"
+  sleep 1
+  end=$(wc -l < "$OUT/smoke-logcat.txt" 2>/dev/null || echo 0)
+  sed -n "${SCENARIO_START_LINE},${end}p" "$OUT/smoke-logcat.txt" \
+    > "$OUT/scenario/$name.txt" 2>/dev/null || true
+}
+
+scenario_since_start() {
+  sed -n "$((SCENARIO_START_LINE + 1)),\$p" "$OUT/smoke-logcat.txt" 2>/dev/null
+}
+
+scenario_wait_for() {
+  local pattern=$1 timeout=${2:-30} i
+  for ((i = 0; i < timeout; i++)); do
+    if scenario_since_start | grep -qE "$pattern"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+scenario_cmd() {
+  adb shell am broadcast -a com.music.bitchord.debug.SCENARIO \
+    -n "$PKG/com.music.bitchord.debug.DebugScenarioReceiver" "$@" \
+    </dev/null >/dev/null 2>&1 || true
+}
+
+run_scenario_a1() {
+  scenario_begin A1
+  play_song k4b7dnA8z0I scenario 60
+  scenario_end A1
+}
+
+run_scenario_a2() {
+  scenario_begin A2
+  play_song "search:오화요 Dance Monkey cover" scenario 60
+  scenario_end A2
+}
+
+run_scenario_a3() {
+  scenario_begin A3
+  play_song "search:Tones and I Dance Monkey Topic" scenario 60
+  scenario_end A3
+}
+
+run_scenario_a4() {
+  local i before
+  scenario_begin A4
+  for i in 1 2 3; do
+    before=$(play_count)
+    adb shell input keyevent 87 >/dev/null 2>&1 || true
+    wait_for_new_play "$before" 10 || true
+    sleep 1
+  done
+  scenario_end A4
+}
+
+run_scenario_a9() {
+  local dir="$OUT/scenario/audio" first="$OUT/scenario/audio/440.flac" second="$OUT/scenario/audio/660.flac"
+  local device_first=/sdcard/Music/bitchord-smoke-440.flac device_second=/sdcard/Music/bitchord-smoke-660.flac
+  local paths before
+  scenario_begin A9
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    scenario_mark "A9 skip: no ffmpeg"
+    scenario_end A9
+    return
+  fi
+  mkdir -p "$dir"
+  if ! ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "sine=frequency=440:duration=60:sample_rate=44100" \
+    -c:a flac "$first"; then
+    scenario_mark "A9 skip: ffmpeg failed"
+    scenario_end A9
+    return
+  fi
+  if ! ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "sine=frequency=660:duration=60:sample_rate=44100" \
+    -c:a flac "$second"; then
+    scenario_mark "A9 skip: ffmpeg failed"
+    scenario_end A9
+    return
+  fi
+  if ! adb push "$first" "$device_first" >/dev/null 2>&1 ||
+    ! adb push "$second" "$device_second" >/dev/null 2>&1; then
+    scenario_mark "A9 skip: push failed"
+    scenario_end A9
+    return
+  fi
+  adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+    -d "file://$device_first" >/dev/null 2>&1 || true
+  adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+    -d "file://$device_second" >/dev/null 2>&1 || true
+  sleep 3
+  scenario_cmd --es command crossfade --ei seconds 8
+  sleep 1
+  before=$(play_count)
+  paths="$device_first:$device_second"
+  scenario_cmd --es command play-local --es paths "$paths"
+  wait_for_new_play "$before" 20 || true
+  if scenario_wait_for 'crossfade: start' 90; then
+    sleep 12
+  fi
+  scenario_end A9
+}
+
+run_scenario_b3() {
+  scenario_begin B3
+  scenario_cmd --es command repeat --ei mode 0
+  sleep 2
+  scenario_cmd --es command repeat --ei mode 1
+  sleep 2
+  scenario_cmd --es command repeat --ei mode 2
+  sleep 2
+  scenario_cmd --es command repeat --ei mode 0
+  sleep 2
+  scenario_cmd --es command shuffle --ez enabled false
+  sleep 2
+  scenario_cmd --es command shuffle --ez enabled true
+  sleep 2
+  scenario_cmd --es command shuffle --ez enabled false
+  sleep 2
+  scenario_cmd --es command autoplay --ez enabled false
+  sleep 2
+  scenario_cmd --es command autoplay --ez enabled true
+  sleep 2
+  scenario_cmd --es command autoplay --ez enabled false
+  sleep 2
+  scenario_end B3
+}
+
+run_scenario_c2() {
+  scenario_begin C2
+  adb shell am force-stop "$PKG" >/dev/null 2>&1 || true
+  sleep "${SMOKE_C2_WAIT:-600}"
+  scenario_end C2
+  adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  sleep 20
+}
+
+run_scenario_c5() {
+  local i
+  scenario_begin C5
+  adb shell am start -a android.intent.action.VIEW \
+    -d "https://music.youtube.com/watch?v=7QihqRWMrz8" -p "$PKG" \
+    </dev/null >/dev/null 2>&1 || true
+  for ((i = 0; i < 30; i++)); do
+    if scenario_since_start | grep 'play: ->' | grep -qv '7QihqRWMrz8'; then
+      break
+    fi
+    sleep 1
+  done
+  sleep 2
+  scenario_end C5
+}
+
+run_scenario_c6() {
+  scenario_begin C6
+  adb shell svc wifi disable >/dev/null 2>&1 || true
+  adb shell svc data disable >/dev/null 2>&1 || true
+  sleep 30
+  adb shell svc wifi enable >/dev/null 2>&1 || true
+  adb shell svc data enable >/dev/null 2>&1 || true
+  sleep 5
+  scenario_end C6
+}
+
+run_review_scenarios() {
+  mkdir -p "$OUT/scenario"
+  run_scenario_a1
+  run_scenario_a4
+  run_scenario_a2
+  run_scenario_a3
+  run_scenario_a9
+  run_scenario_b3
+  run_scenario_c2
+  play_song "search:Tones and I Dance Monkey" plain 10
+  run_scenario_c5
+  run_scenario_c6
+  adb shell rm -f /sdcard/Music/bitchord-smoke-440.flac /sdcard/Music/bitchord-smoke-660.flac >/dev/null 2>&1 || true
+  python3 scripts/smoke/scenario.py \
+    --dir "$OUT/scenario" --report "$OUT/scenario-report.md"
+}
+
+if [ "$SCENARIO_MODE" = 1 ]; then
+  run_review_scenarios
+  SCENARIO_EXIT=$?
+  cleanup_logcat
+  trap - EXIT
+  if [ ! -s "$OUT/smoke-logcat.txt" ]; then
+    echo "smoke: logcat dump is empty; cannot judge the run" >&2
+    exit 2
+  fi
+  adb shell rm -f "$APP_DIR/sync-test.flag" >/dev/null 2>&1 || true
+  [ -f "$OUT/scenario-report.md" ] && cp "$OUT/scenario-report.md" "$OUT/smoke-report.md"
+  exit "$SCENARIO_EXIT"
+fi
 
 # fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
 # rest of the song list after the first song on the first run.
