@@ -1511,6 +1511,13 @@ class PlaybackService : MediaLibraryService() {
         override fun onRepeatModeChanged(repeatMode: Int) {
             val previous = lastRepeatMode
             lastRepeatMode = repeatMode
+            // The player button persists its own change in MainActivity, but
+            // the notification, Android Auto and a car's own controls set the
+            // mode on the session directly. Without this they worked for the
+            // current run and came back as the old mode after a restart.
+            if (PlaybackParametersMath.shouldPersistRepeatMode(AppSettings.repeatMode.value, repeatMode)) {
+                AppSettings.setRepeatMode(repeatMode)
+            }
             TrackLog.d(
                 "BitChord",
                 "mode: repeat=${DiagnosticsState.repeatLabel(repeatMode)} (was ${DiagnosticsState.repeatLabel(previous)})",

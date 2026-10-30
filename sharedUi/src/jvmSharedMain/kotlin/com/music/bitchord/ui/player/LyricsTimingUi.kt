@@ -38,3 +38,21 @@ data class LyricsTimingUi(
      */
     val heardWords: List<LyricsWordAlign.Heard> = emptyList(),
 )
+
+/**
+ * Whether the sync drawer can offer its AI timing action.
+ *
+ * AI timing runs on Deepgram. It used to be gated on the Gemini song-meaning
+ * key, so a listener with Deepgram configured and no Gemini key never saw the
+ * action even though the work it starts does not use Gemini.
+ */
+internal fun aiTimingActionEnabled(timing: LyricsTimingUi): Boolean = timing.adjustable
+
+/**
+ * Whether the romanization toggle belongs on the lyric controls.
+ *
+ * It is about the text on screen, not about timing. Leaving the slot empty
+ * whenever AI timing was offered made the toggle unreachable on Android,
+ * where the AI timing action is always offered to the player.
+ */
+internal fun romanizationActionEnabled(hasLyrics: Boolean): Boolean = hasLyrics

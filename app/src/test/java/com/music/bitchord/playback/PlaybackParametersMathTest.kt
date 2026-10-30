@@ -44,6 +44,17 @@ class PlaybackParametersMathTest {
     }
 
     @Test
+    fun repeatModeFromTheSessionIsPersistedOnlyWhenItChanged() {
+        // The notification/car path sets the mode on the player, not through
+        // MainActivity, so this is what makes it survive a restart.
+        assertTrue(PlaybackParametersMath.shouldPersistRepeatMode(stored = 0, incoming = 2))
+        assertTrue(PlaybackParametersMath.shouldPersistRepeatMode(stored = 2, incoming = 1))
+        assertFalse(PlaybackParametersMath.shouldPersistRepeatMode(stored = 2, incoming = 2))
+        // Nothing outside Media3's three modes is a listener choice.
+        assertFalse(PlaybackParametersMath.shouldPersistRepeatMode(stored = 0, incoming = 9))
+    }
+
+    @Test
     fun versionSwapRefusesCoverLevelConfidence() {
         // Field log: a cover measured 0.4557 and was swapped in anyway.
         assertFalse(VersionSwapPolicy.shouldSwap(0.4557))

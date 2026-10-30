@@ -1734,9 +1734,7 @@ fun NowPlayingScreen(
                     // still be off, and Gemini's answer, asked for here,
                     // then wins over it. When it is what shows, the button
                     // takes it back.
-                    onAiTiming = onAiLyricsTiming?.takeIf {
-                        songMeaningAvailable && lyricsTiming.adjustable
-                    },
+                    onAiTiming = onAiLyricsTiming?.takeIf { aiTimingActionEnabled(lyricsTiming) },
                     lines = lyrics,
                     lyricPositionMs = {
                         // The reading as of now, not as of the last report: a
@@ -2180,17 +2178,18 @@ fun NowPlayingScreen(
                                 )
                             },
                             romanizationToggle = {
-                                if (onAiLyricsTiming == null) {
-                                    RomanizationToggleButton(
-                                        state = lyricsTranslation.romanizationState,
-                                        showingRomanization = lyricsTranslation.showingRomanization,
-                                        enabled = !lyrics.isNullOrEmpty(),
-                                        onClick = lyricsTranslation.toggleRomanization,
-                                    )
-                                }
-                                // With AI timing on offer, the slot stays empty: the
-                                // control lives in the sync drawer, away from the
-                                // lines a near miss would have jumped to.
+                                // Romanization is independent of AI timing. The
+                                // slot used to be left empty whenever AI timing
+                                // was offered, on the claim that the control
+                                // lived in the sync drawer — but that drawer
+                                // only holds offset and AI timing, so the
+                                // toggle was unreachable on Android.
+                                RomanizationToggleButton(
+                                    state = lyricsTranslation.romanizationState,
+                                    showingRomanization = lyricsTranslation.showingRomanization,
+                                    enabled = romanizationActionEnabled(!lyrics.isNullOrEmpty()),
+                                    onClick = lyricsTranslation.toggleRomanization,
+                                )
                             },
                             translationToggle = {
                                 TranslationToggleButton(
@@ -3776,15 +3775,13 @@ fun NowPlayingScreen(
                                 onStatusClick = { showLyricsProviders = true },
                                 modifier = Modifier.weight(1f),
                             )
-                            if (onAiLyricsTiming == null) {
-                                RomanizationToggleButton(
-                                    state = lyricsTranslation.romanizationState,
-                                    showingRomanization = lyricsTranslation.showingRomanization,
-                                    enabled = !lyrics.isNullOrEmpty(),
-                                    onClick = lyricsTranslation.toggleRomanization,
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
+                            RomanizationToggleButton(
+                                state = lyricsTranslation.romanizationState,
+                                showingRomanization = lyricsTranslation.showingRomanization,
+                                enabled = romanizationActionEnabled(!lyrics.isNullOrEmpty()),
+                                onClick = lyricsTranslation.toggleRomanization,
+                            )
+                            Spacer(Modifier.width(8.dp))
                             if (songMeaningAvailable) {
                                 SongMeaningButton(
                                     enabled = !lyrics.isNullOrEmpty(),

@@ -28,6 +28,16 @@ internal object PlaybackParametersMath {
     fun clampRepeatMode(mode: Int): Int =
         mode.coerceIn(MIN_REPEAT_MODE, MAX_REPEAT_MODE)
 
+    /**
+     * Whether a repeat mode that arrived from the session should be written to
+     * the stored setting. Notification, Android Auto and car controls change
+     * the mode without going through the player's own button, so this is the
+     * only place that can make those changes survive a restart. An equal value
+     * is skipped to keep every mode callback from writing prefs.
+     */
+    fun shouldPersistRepeatMode(stored: Int, incoming: Int): Boolean =
+        incoming in MIN_REPEAT_MODE..MAX_REPEAT_MODE && incoming != stored
+
     fun pitchForSemitones(semitones: Int): Float =
         2.0.pow(clampPitchSemitones(semitones) / 12.0).toFloat()
 

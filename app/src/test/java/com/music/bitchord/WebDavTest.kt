@@ -7,6 +7,7 @@ import com.music.bitchord.data.webdav.WebDavClient
 import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.webdav.WebDavConfig
 import com.music.bitchord.data.webdav.WebDavRepository
+import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -174,6 +175,33 @@ class WebDavTest {
             "Album",
             WebDavRepository.parentFolderName("https://cloud.example.com/Music/Artist/Album/song.mp3"),
         )
+    }
+
+    @Test
+    fun `a refused listing is not reported as an empty library`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(401))
+            val previousUrl = AppSettings.webdavUrl.value
+            val previousUser = AppSettings.webdavUsername.value
+            val previousPassword = AppSettings.webdavPassword.value
+            try {
+                AppSettings.webdavUrl.value = server.url("/Music").toString().trimEnd('/')
+                AppSettings.webdavUsername.value = "user"
+                AppSettings.webdavPassword.value = "wrong"
+                var refused = false
+                try {
+                    WebDavRepository.getSongs()
+                } catch (error: WebDavClient.WebDavException) {
+                    refused = true
+                }
+                assertTrue("a 401 listing must not become an empty library", refused)
+            } finally {
+                AppSettings.webdavUrl.value = previousUrl
+                AppSettings.webdavUsername.value = previousUser
+                AppSettings.webdavPassword.value = previousPassword
+            }
+        }
     }
 
     @Test

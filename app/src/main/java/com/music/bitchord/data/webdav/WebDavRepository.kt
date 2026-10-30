@@ -22,11 +22,15 @@ object WebDavRepository {
     suspend fun getSongs(): List<Song> = withContext(Dispatchers.IO) {
         val url = AppSettings.webdavUrl.value
         if (!WebDavConfig.isConfigured(url)) return@withContext emptyList()
+        // A failed listing is not an empty library. Swallowing the failure
+        // here made bad credentials or a dead server read as "no audio files",
+        // so the page showed its empty state instead of the reason. Let it
+        // reach [RemoteListing], which draws the error and its cause.
         val listing = WebDavClient.listLibrary(
             baseUrl = url,
             username = AppSettings.webdavUsername.value,
             password = AppSettings.webdavPassword.value,
-        ).getOrNull() ?: return@withContext emptyList()
+        ).getOrThrow()
         val artByDir = listing.images.groupBy { dirKey(it.url) }
         listing.audio.map { entry ->
             entry.toSong(artworkFor(entry.url, artByDir[dirKey(entry.url)].orEmpty()))
