@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -206,8 +207,9 @@ internal fun MoodGenreRow(
 }
 
 /**
- * A category tile with its cover filling the card, and the title over the
- * dark fade at its foot — see [MoodGenreSleeve].
+ * A category tile in its own solid colour with one Korean label. The phone
+ * tiles never draw the server's cover: those artwork files have English titles
+ * painted into them, so overlaying our label put two lines of text on one tile.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -220,7 +222,9 @@ private fun MoodGenreCard(
 ) {
     // A LazyColumn composes a card only when it scrolls into view, which is the
     // right moment to ask for its cover. Once one has arrived the key changes
-    // and the second run does nothing.
+    // and the second run does nothing. The cover is no longer painted on the
+    // phone tile, but keeping the one-shot request leaves the shared cache
+    // warm for anything else that borrows it.
     LaunchedEffect(item.browseId, item.params, item.thumbnailUrl) {
         if (item.thumbnailUrl == null) onVisible()
     }
@@ -233,14 +237,15 @@ private fun MoodGenreCard(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
+        showArtwork = false,
     )
 }
 
 /**
- * A category tile: its photograph edge to edge, with the title over a dark
- * fade at the foot — Apple Music's browse tile. A category without a cover is
- * the same tile in its own solid colour, not the old split stripe-and-photo
- * band.
+ * A category tile in its own colour with the title at the foot — Apple Music's
+ * browse tile. Phone callers pass [showArtwork] = false and get the colour plus
+ * a single Korean label; the TV app keeps the photographic sleeve by leaving
+ * the default alone.
  *
  * Only the artwork: the caller sizes, clips and makes it clickable, which is
  * how the TV app wraps the same sleeve in its own focus treatment.
@@ -250,35 +255,38 @@ fun MoodGenreSleeve(
     item: MoodGenre,
     modifier: Modifier = Modifier,
     titleStyle: TextStyle = MaterialTheme.typography.titleMedium,
+    showArtwork: Boolean = true,
 ) {
     val base = remember(item.stripeColor, item.title) { moodBaseColor(item) }
     Box(modifier = modifier.background(base)) {
-        item.thumbnailUrl?.let { artwork ->
-            AsyncImage(
-                model = artwork,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+        if (showArtwork) {
+            item.thumbnailUrl?.let { artwork ->
+                AsyncImage(
+                    model = artwork,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            // The fade only at the foot, so the photograph keeps its own colour
+            // across the rest of the tile.
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.55f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = .82f),
+                        ),
+                    ),
             )
         }
-        // The fade only at the foot, so the photograph keeps its own colour
-        // across the rest of the tile.
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.55f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = .82f),
-                    ),
-                ),
-        )
         Text(
             text = ExploreCategoryNames.displayTitle(item.title, appLanguageTag()),
             style = titleStyle,
             fontWeight = FontWeight.Bold,
-            color = Color.White,
+            color = if (showArtwork) Color.White else readableOn(base),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
@@ -287,6 +295,10 @@ fun MoodGenreSleeve(
         )
     }
 }
+
+/** Black or white, whichever stays legible on the tile's own colour. */
+private fun readableOn(background: Color): Color =
+    if (background.luminance() > 0.36f) Color.Black else Color.White
 
 /** The category's own colour, or a muted stand-in when YouTube sent none. */
 private fun moodBaseColor(item: MoodGenre): Color =
