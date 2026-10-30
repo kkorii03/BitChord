@@ -332,6 +332,25 @@ private fun videoRadioRows(
 }
 
 /**
+ * The station rows that may fill AutoPlay after the cover/karaoke filter.
+ *
+ * A seed that is itself a cover is served a station of other covers. When its
+ * own title carries no marker, the marker filter drops every one of them and
+ * AutoPlay finds nothing, so the same song repeats. In that case keep the rows
+ * that share the seed's artist and drop only karaoke/tribute uploads from other
+ * names. For an ordinary seed the filter is unchanged.
+ */
+internal fun autoplayRowsAfterCoverFilter(rows: List<Song>, seed: Song): List<Song> {
+    val kept = rows.filterNot { TrackMatcher.isCoverArrangement(it, seed) }
+    if (kept.isNotEmpty() || rows.isEmpty()) return kept
+    val seedIsCover = seed.originalTitle != null || TrackMatcher.isCoverArrangement(seed)
+    if (!seedIsCover) return kept
+    return rows.filter {
+        !TrackMatcher.isCoverArrangement(it) || TrackMatcher.sharesArtist(it.artist, seed.artist)
+    }
+}
+
+/**
  * The original AutoPlay path, unchanged for normal mode and for the staged
  * replacement when a video batch is too thin. The caller supplies the already
  * fetched radio and is told whether rows were produced, so the video log can
@@ -352,7 +371,7 @@ private suspend fun loadNormalAutoplayTracks(
     // take them as they came. Filter at the front so the TASTE ranking below
     // only ever chooses between recordings, and so the non-personalised path
     // (queue exactly as YouTube returned it) is held to the same rule.
-    val related = radio.filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
+    val related = autoplayRowsAfterCoverFilter(radio, seedSong)
     if (related.size != radio.size) {
         TrackLog.d(
             "BitChord",
@@ -384,16 +403,15 @@ private suspend fun loadNormalAutoplayTracks(
     // final gate as well as at the source, and say which id it was. The cover
     // filter is repeated for the sources that did not pass through the radio
     // list above (similar rows and favourites), so every path is held to it.
-    val playable = extra.filter {
-        it.title.isNotBlank() && it.artist.isNotBlank() &&
-            !TrackMatcher.isCoverArrangement(it, seedSong)
+    val relatedExtra = autoplayRowsAfterCoverFilter(extra, seedSong)
+    val playable = relatedExtra.filter {
+        it.title.isNotBlank() && it.artist.isNotBlank()
     }
     extra.filterNot { it.title.isNotBlank() && it.artist.isNotBlank() }.forEach {
         TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (no metadata)", about = seedSong.videoId)
     }
     extra.filter {
-        it.title.isNotBlank() && it.artist.isNotBlank() &&
-            TrackMatcher.isCoverArrangement(it, seedSong)
+        it.title.isNotBlank() && it.artist.isNotBlank() && it !in relatedExtra
     }.forEach {
         TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (cover/karaoke)", about = seedSong.videoId)
     }
@@ -453,8 +471,10 @@ private suspend fun rankedExtensions(
     limit: Int,
     sessionIds: Set<String>,
 ): List<Song> {
-    val sessionRadio = sessionRadioFor(seedSong, sessionSong)
-        .filterNot { TrackMatcher.isCoverArrangement(it, seedSong) }
+    val sessionRadio = autoplayRowsAfterCoverFilter(
+        sessionRadioFor(seedSong, sessionSong),
+        seedSong,
+    )
     val now = System.currentTimeMillis()
     val taste = TasteSignals.taste(now)
     val local = localTracksWithMetadata(seedSong)
