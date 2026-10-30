@@ -1,0 +1,12 @@
+﻿BitChord 안드로이드 앱(Kotlin, Compose, Media3). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지). 기준 브랜치 task/fix-1030. 전체 앱 검토 작업(사용자 요청 10-30).
+주제: 나쁜 네트워크·오프라인. 볼 것: 비행기 모드·Wi-Fi↔셀룰러 전환·프록시 서버 다운·DNS 실패·느린 망(기숙사 망은 연결이 자주 끊김)에서 재생 중인 곡·다음 곡·가사·표지·검색이 어떻게 되는지, 무한 재시도·재시도 폭주, 오프라인일 때 다운로드한 곡만으로 재생이 되는지, 오류 안내 문구가 한국어로 맞게 뜨는지, 타임아웃 값.
+방식: ① 이전 감사 문서(docs/audit/*.md, docs/AUDIT_*.md)를 먼저 읽고, 거기 나온 문제가 지금 코드에서 고쳐졌는지 확인해 표로(고쳐짐/남음/해당 없음). ② 새로 찾은 문제는 docs/review-1031/<이 작업 이름>.md 에 표: 심각도(HIGH/MED/LOW) · 파일:줄 · 증거(코드 근거, 추측 금지) · 사용자 영향 · 수정안. ③ HIGH·MED 중 원인이 분명하고 한두 파일 안에서 고칠 수 있는 것만 이번에 직접 수정 + 단위 테스트(최대 8건). 나머지는 문서에만. 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는 수정하지 말고 문서에만(폰 검증 필요).
+반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 업스트림 v1.8.1(7d956f21)에 있던 코드는 삭제·쪼개기 금지 — 업스트림 쪽 문제는 문서에만. 기존 코드 의도(주석)를 지우면 요약에 이유. 새 app 테스트는 이름을 요약에. 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제(문서 경로 포함).
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 1
+MEDIUM app/src/main/java/com/music/bitchord/download/Downloads.kt:2603 — `fail()` now drops `hqOverrides` on every failure routed through it, including transient network failures, so a manual HQ upgrade loses a still-valid verified source/track pair; the DownloadManagerSheet retry (`hq=null`) then goes through `routeFor` and can adopt the existing lower-rung file at Downloads.kt:2024/2171 or fetch an unverified recording, reporting Done without the upgrade. Fix: clear the override only when the verified pair is permanently gone, or mark the fallback retry `forceReplace` so it cannot adopt the old file.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
