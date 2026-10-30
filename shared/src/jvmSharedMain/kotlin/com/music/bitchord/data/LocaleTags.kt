@@ -78,6 +78,24 @@ object LocaleTags {
     }
 
     /**
+     * The destination the translation button, the background prefetch and the
+     * lock screen all ask for: the explicit choice from Settings when there is
+     * one, otherwise the app language with Chinese kept on its script.
+     *
+     * One function rather than the same expression in three places: a prefetch
+     * that resolves "zh" while the player resolves "zh-TW" writes its answer
+     * to a cache key the player never reads, and a downloaded song then has no
+     * offline translation.
+     */
+    fun translationTarget(preferred: String, appTag: String): String {
+        val chosen = preferred.trim()
+        if (chosen.isNotEmpty()) return chosen
+        val tag = appTag.trim().replace('_', '-')
+        if (isChineseTag(tag)) return translationWireTarget(tag)
+        return Locale.forLanguageTag(tag).language.ifBlank { "en" }
+    }
+
+    /**
      * What the lyrics endpoint wants as `tl`. Google understands zh-TW /
      * zh-CN as scripts; sending bare "zh" always returns Simplified, and
      * sending "zh-Hant" is not reliably honoured — so map script to region.
