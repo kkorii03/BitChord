@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources.module
 
 import android.util.Log
+import com.music.bitchord.data.LogRedactor
 import com.music.bitchord.data.TrackLog
 import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.AsyncFunctionBinding
@@ -291,7 +292,11 @@ internal object QuickJsExecutor {
                 )
 
                 val rawResult = qjs.evaluate<String>("__spine_resolved_json")
-                TrackLog.d(TAG, "  callExport result (${rawResult.length} chars): ${rawResult.take(500)}")
+                TrackLog.d(
+                    TAG,
+                    "  callExport result (${rawResult.length} chars): " +
+                        LogRedactor.redact(rawResult.take(500)),
+                )
                 rawResult
             }.onFailure {
                 TrackLog.e(TAG, "  ✗ callExport FAILED for $moduleId.$functionName: ${it.message}", it)

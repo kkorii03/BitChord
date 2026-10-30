@@ -137,6 +137,58 @@ class NextPrepTests(unittest.TestCase):
         self.assertTrue(metric(report, "D1-sync").passed)
         self.assertEqual(0.8, metric(report, "D1-sync").rate)
 
+    def test_video_and_switched_off_rows_leave_the_sync_denominator(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "next-prep: Video version=v1 video=y lyrics=lrc hq=none "
+                "sync=skipped(video) mix=none in 100ms",
+            ),
+            line(
+                "19:01:00.000",
+                "next-prep: Off version=v2 video=n lyrics=lrc hq=none "
+                "sync=skipped(switch-off) mix=none in 100ms",
+            ),
+            line(
+                "19:02:00.000",
+                "next-prep: Timed version=v3 video=n lyrics=lrc hq=none "
+                "sync=applied mix=none in 100ms",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(1, sync.attempts)
+        self.assertEqual(1, sync.successes)
+        self.assertTrue(sync.passed)
+        self.assertEqual(2, report.stats["next_prep"]["not_attempted"])
+
+    def test_bare_skipped_without_a_reason_is_still_a_failure(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "next-prep: Old version=v1 lyrics=lrc hq=none "
+                "sync=skipped mix=none in 100ms",
+            )
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(1, sync.attempts)
+        self.assertEqual(0, sync.successes)
+        self.assertFalse(sync.passed)
+
+    def test_abandoned_and_no_next_row_are_counted_as_skips(self) -> None:
+        text = log_text(
+            line("19:00:00.000", "next-prep: skipped reason=no-next-row"),
+            line("19:01:00.000", "next-prep: abandoned Song reason=row-changed"),
+        )
+        report = analyze(text)
+        self.assertEqual(2, report.stats["next_prep"]["skipped"])
+        self.assertEqual(
+            {"no-next-row": 1, "row-changed": 1},
+            report.stats["next_prep"]["skip_reasons"],
+        )
+        self.assertEqual(2, metric(report, "D1-skipped").attempts)
+
 
 class LosslessTests(unittest.TestCase):
     def test_accepted_verify_needs_actual_flac_playback(self) -> None:
@@ -187,21 +239,59 @@ class LosslessTests(unittest.TestCase):
         report = analyze(text)
         self.assertEqual(1, metric(report, "D2-playback").successes)
 
+    def test_verify_id_matches_playback_even_when_titles_differ(self) -> None:
+        text = log_text(
+            play("19:00:00.000", "flac1", "Song (Official Video)"),
+            line(
+                "19:00:05.000",
+                "hq-verify: Song Qobuz match=95% offset=0 -> accepted id=flac1",
+            ),
+            line("19:00:10.000", "flac1 <- audio/flac 44.1kHz 900kbps 16-bit 2ch", tag="DECODE"),
+        )
+        report = analyze(text)
+        self.assertEqual(1, metric(report, "D2-playback").attempts)
+        self.assertEqual(1, metric(report, "D2-playback").successes)
+        self.assertTrue(metric(report, "D2-playback").passed)
+
+    def test_skipped_hq_swap_is_reported_with_its_reason(self) -> None:
+        text = log_text(
+            play("19:00:00.000", "id1", "Song"),
+            line("19:00:05.000", "hq-verify: Song Qobuz match=95% offset=0 -> accepted id=id1"),
+            line("19:00:06.000", "hq-swap: id1 skipped current-clock-unknown"),
+        )
+        report = analyze(text)
+        self.assertFalse(metric(report, "D2-playback").passed)
+        self.assertEqual(1, report.stats["lossless"]["swap_skipped"])
+        self.assertEqual({"id1": ["current-clock-unknown"]}, report.stats["lossless"]["swap_skip_ids"])
+
 
 class AutoplayTests(unittest.TestCase):
-    def test_refill_zero_refill_and_same_second_rescue(self) -> None:
+    def test_refill_waits_for_a_network_backed_radio_before_calling_it_zero(self) -> None:
         text = log_text(
             line("19:00:00.000", "autoplay: +radio 3 +similar 1 +fav 0 (A | B | C)"),
-            line("19:00:10.000", "autoplay: dropped 2 cover/karaoke rows"),
-            line("19:00:20.000", "autoplay: dropped 2 cover/karaoke rows"),
-            line("19:00:20.500", "autoplay: +radio 0 +similar 0 +fav 0 ()"),
+            line("19:00:10.000", "autoplay: dropped 2 cover/karaoke rows seed=seed1"),
+            # A personalised top-up fetches its radio before logging; thirty
+            # seconds is ordinary, and the old one-second window called this a
+            # zero-refill failure.
+            line("19:00:40.000", "autoplay: +radio 2 +similar 1 +fav 0 (D | E)"),
+            line("19:05:00.000", "autoplay: dropped 2 cover/karaoke rows seed=seed2"),
         )
         report = analyze(text)
         refill = metric(report, "D3-refill")
         self.assertEqual(3, refill.attempts)
-        self.assertEqual(1, refill.successes)
+        self.assertEqual(2, refill.successes)
         self.assertFalse(refill.passed)
         self.assertEqual(1, report.stats["autoplay"]["zero_refill"])
+
+    def test_explicit_skip_is_logged_and_counted(self) -> None:
+        text = log_text(
+            line("19:00:00.000", "autoplay: skipped reason=no-seed"),
+            line("19:01:00.000", "autoplay: +radio 0 +similar 0 +fav 0 ()"),
+        )
+        report = analyze(text)
+        self.assertEqual(1, report.stats["autoplay"]["skipped"])
+        self.assertEqual({"no-seed": 1}, report.stats["autoplay"]["skip_reasons"])
+        self.assertFalse(metric(report, "D3-refill").passed)
 
     def test_unwanted_repeat_only_when_repeat_is_off(self) -> None:
         text = log_text(
@@ -310,6 +400,25 @@ class DownloadLifecycleQualityTests(unittest.TestCase):
         self.assertEqual(1, report.stats["downloads"]["hq_missing_ids"]["id1"])
         self.assertEqual(1, report.stats["downloads"]["service_failed"])
         self.assertFalse(metric(report, "D9-download").passed)
+
+    def test_download_and_hq_library_successes_give_a_rate(self) -> None:
+        done = [line(f"19:00:0{i}.000", f"download: id{i} done") for i in range(9)]
+        landed = [line(f"19:00:1{i}.000", f"hq-library: id{i} landed") for i in range(9)]
+        text = log_text(
+            *done,
+            *landed,
+            line("19:00:20.000", "download failed for id9: HTTP 500"),
+            line("19:00:21.000", "hq-library: id9 did not land; it will be retried after the cooldown"),
+        )
+        report = analyze(text)
+        self.assertEqual(10, metric(report, "D9-download").attempts)
+        self.assertEqual(9, metric(report, "D9-download").successes)
+        self.assertTrue(metric(report, "D9-download").passed)
+        self.assertEqual(10, metric(report, "D9-hq-library").attempts)
+        self.assertEqual(9, metric(report, "D9-hq-library").successes)
+        self.assertTrue(metric(report, "D9-hq-library").passed)
+        self.assertEqual(9, report.stats["downloads"]["done"])
+        self.assertEqual(9, report.stats["downloads"]["hq_landed"])
 
     def test_lifecycle_orphan_window_counts_warm_and_network(self) -> None:
         text = log_text(

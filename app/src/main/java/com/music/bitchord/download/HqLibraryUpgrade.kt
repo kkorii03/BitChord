@@ -859,6 +859,8 @@ object HqLibraryUpgrade {
                     "hq-library: $videoId did not land; it will be retried after the cooldown",
                 )
             }
+        } else {
+            TrackLog.i(TAG, "hq-library: $videoId landed")
         }
         if (runAllowed() && (rebuild || (scheduleNext && remaining.isNotEmpty()))) {
             enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)

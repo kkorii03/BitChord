@@ -2133,6 +2133,7 @@ object Downloads {
             remember(song, track, uri, hq = plan.hq)
             TranslationAhead.downloaded(context, track, uri.toString())
             DownloadSession.done(id)
+            Log.i(TAG, "download: $id done")
             clear(id)
             return false
         }
@@ -2177,6 +2178,7 @@ object Downloads {
                     remember(song, track, alreadyThere)
                     TranslationAhead.downloaded(context, track, alreadyThere.toString())
                     DownloadSession.done(id)
+                    Log.i(TAG, "download: $id done")
                     clear(id)
                     return@coroutineScope false
                 }
@@ -2250,6 +2252,7 @@ object Downloads {
                     )
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
+                    Log.i(TAG, "download: $id done")
                     clear(id)
                     Log.d(TAG, "saved offline ${if (manifest.dash) "DASH" else "HLS"} package for $name")
                     return@coroutineScope true
@@ -2284,6 +2287,7 @@ object Downloads {
                 )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
+                Log.i(TAG, "download: $id done")
                 clear(id)
                 Log.d(TAG, "saved $name")
                 true

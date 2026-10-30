@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources.module
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.net.LogUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -315,7 +316,8 @@ class ModuleManager {
                 args = listOf(jsString(trackId), jsString(quality), contextArg),
             ).getOrThrow()
             json.decodeFromString<ModuleStreamResponse>(result).also {
-                TrackLog.d(TAG, "  ✓ streamUrl=${it.streamUrl?.take(100) ?: "<none>"} quality=${it.track?.audioQuality}")
+                val loggedUrl = it.streamUrl?.let(LogUrl::of) ?: "<none>"
+                TrackLog.d(TAG, "  ✓ streamUrl=$loggedUrl quality=${it.track?.audioQuality}")
             }
         }.onCancellation().onFailure {
             TrackLog.e(TAG, "  ✗ getStreamUrl FAILED for ${loaded.module.id} trackId=$trackId: ${it.message}", it)

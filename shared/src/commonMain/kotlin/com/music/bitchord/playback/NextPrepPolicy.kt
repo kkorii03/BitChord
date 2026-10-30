@@ -82,4 +82,32 @@ object NextPrepPolicy {
         if (currentRowId != startedRowId) return true
         return startedQueueKey != currentQueueKey
     }
+
+    /**
+     * The `sync=` value for the one-line next-prep log.
+     *
+     * A skip says *why*: "not applicable" (a video, or a switch the listener
+     * turned off) and "tried but found nothing" used to be the same bare
+     * `skipped`, so the diagnostic tool counted both as a timing failure and a
+     * 29% success rate could not be read. The tool now leaves the first group
+     * out of the denominator and keeps the second as a real miss.
+     */
+    fun syncValue(
+        isVideo: Boolean,
+        syncedLyrics: Boolean,
+        heavyWorkAllowed: Boolean,
+        aiTimingAhead: Boolean,
+        deepgramUsable: Boolean,
+        hasLyrics: Boolean,
+        hasTiming: Boolean,
+    ): String = when {
+        isVideo -> "skipped(video)"
+        hasTiming -> "applied"
+        !syncedLyrics -> "skipped(lyrics-off)"
+        !heavyWorkAllowed -> "skipped(heavy-off)"
+        !aiTimingAhead -> "skipped(ai-off)"
+        !deepgramUsable -> "skipped(deepgram-unavailable)"
+        !hasLyrics -> "skipped(no-lyrics)"
+        else -> "skipped(no-timing)"
+    }
 }

@@ -4,6 +4,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.jiosaavn.JioSaavnService
 import com.music.bitchord.data.jiosaavn.prioritizeExplicit
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.net.LogUrl
 
 private const val TAG = "BitChord"
 
@@ -85,7 +86,7 @@ class JioSaavnSource(
             )
             return null
         }
-        TrackLog.d(TAG, "  ✓ JioSaavn ${stream.kbps ?: "?"}kbps ${stream.url.take(96)}")
+        TrackLog.d(TAG, "  ✓ JioSaavn ${stream.kbps ?: "?"}kbps ${LogUrl.of(stream.url)}")
         return SourceStream(
             url = stream.url,
             // The rate the URL will really serve, not a flat 320 — see

@@ -25,6 +25,21 @@ class LogRedactorTest {
     }
 
     @Test
+    fun everyAccountCookieNameTheExportReportsIsAlsoRedacted() {
+        val out = LogRedactor.redact(
+            "LOGIN_INFO=login-secret SAPISIDHASH=hash-secret SIDCC=cc-secret LSID=lsid-secret",
+        )
+        assertFalse(out.contains("login-secret"))
+        assertFalse(out.contains("hash-secret"))
+        assertFalse(out.contains("cc-secret"))
+        assertFalse(out.contains("lsid-secret"))
+        assertTrue(out.contains("LOGIN_INFO=[redacted]"))
+        assertTrue(out.contains("SAPISIDHASH=[redacted]"))
+        assertTrue(out.contains("SIDCC=[redacted]"))
+        assertTrue(out.contains("LSID=[redacted]"))
+    }
+
+    @Test
     fun authorizationHeaderIsRedacted() {
         val out = LogRedactor.redact("Authorization: Bearer ya29.secret-token")
         assertEquals("Authorization: [redacted]", out)

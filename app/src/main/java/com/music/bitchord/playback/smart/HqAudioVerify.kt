@@ -773,6 +773,7 @@ object HqAudioVerify {
             TAG,
             "hq-verify: $title $sourceName match=$match% offset=$offset -> " +
                 (if (accepted) "accepted" else if (measured) "rejected" else "unmeasured") +
+                (about?.let { " id=$it" } ?: "") +
                 (reference?.let { " reference=$it" } ?: "") +
                 (candidate?.let { " candidate=$it" } ?: "") +
                 (bytes?.let { " bytes=$it" } ?: ""),

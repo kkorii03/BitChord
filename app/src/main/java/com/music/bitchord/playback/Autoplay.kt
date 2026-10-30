@@ -135,7 +135,14 @@ suspend fun loadAutoplayTracks(
     sessionSong: Song? = null,
     sessionIds: Set<String> = emptySet(),
 ): Result<List<Song>> {
-    val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
+    val seed = youtubeSeedFor(seedSong) ?: run {
+        TrackLog.i(
+            "BitChord",
+            "autoplay: skipped reason=no-seed seed=${seedSong.videoId}",
+            about = seedSong.videoId,
+        )
+        return Result.success(emptyList())
+    }
     val mode = videoRadioModeFor(seedSong)
     // A shared queue is one running order for everyone; a per-listener video
     // station would make that order depend on whose phone topped it up.
@@ -356,7 +363,8 @@ private suspend fun loadNormalAutoplayTracks(
     if (related.size != radio.size) {
         TrackLog.d(
             "BitChord",
-            "autoplay: dropped ${radio.size - related.size} cover/karaoke rows",
+            "autoplay: dropped ${radio.size - related.size} cover/karaoke rows " +
+                "seed=${seedSong.videoId}",
             about = seedSong.videoId,
         )
     }
@@ -369,7 +377,8 @@ private suspend fun loadNormalAutoplayTracks(
                 TrackLog.i(
                     "BitChord",
                     "autoplay: +radio ${songs.size} +similar 0 +fav 0 (" +
-                        songs.joinToString(" | ") { "${it.title} - ${it.artist}" } + ")",
+                        songs.joinToString(" | ") { "${it.title} - ${it.artist}" } + ") " +
+                        "seed=${seedSong.videoId}",
                     about = seedSong.videoId,
                 )
             }
@@ -507,7 +516,14 @@ private suspend fun rankedExtensions(
         excludedIds = sessionIds,
         limit = limit,
     )
-    if (ordered.isEmpty()) return emptyList()
+    if (ordered.isEmpty()) {
+        TrackLog.i(
+            "BitChord",
+            "autoplay: +radio 0 +similar 0 +fav 0 () seed=${seedSong.videoId}",
+            about = seedSong.videoId,
+        )
+        return emptyList()
+    }
 
     val byId = eligible.associateBy { it.videoId }
     val songs = ordered.mapNotNull { byId[it.videoId] }
@@ -526,7 +542,8 @@ private suspend fun rankedExtensions(
     }
     TrackLog.i(
         "BitChord",
-        "autoplay: +radio $radio +similar $similarCount +fav $favouriteCount ($titles)",
+        "autoplay: +radio $radio +similar $similarCount +fav $favouriteCount ($titles) " +
+            "seed=${seedSong.videoId}",
         about = seedSong.videoId,
     )
     return songs

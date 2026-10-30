@@ -95,6 +95,9 @@ internal class NextTrackPreparation(
     fun schedule(player: ExoPlayer) {
         val snapshot = snapshot(player)
         if (snapshot == null) {
+            if (rowId != null) {
+                TrackLog.d("BitChord", "next-prep: skipped reason=no-next-row")
+            }
             cancel()
             return
         }
@@ -123,6 +126,15 @@ internal class NextTrackPreparation(
         completedRowId = null
         completedQueueKey = null
         NextPrepCache.clear()
+    }
+
+    /** One line for a bundle that stops because its next row is no longer the next row. */
+    private fun abandon(song: Song, reason: String) {
+        TrackLog.d(
+            "BitChord",
+            "next-prep: abandoned ${song.title} reason=$reason",
+            about = song.videoId,
+        )
     }
 
     private fun snapshot(player: ExoPlayer): Snapshot? {
@@ -166,7 +178,7 @@ internal class NextTrackPreparation(
             }
             if (resolved != null) song = resolved
         }
-        if (!stillCurrent()) return
+        if (!stillCurrent()) return abandon(song, "row-changed")
 
         // (b) The lyrics for that recording, then (c) its high-quality copy.
         // The lyrics switch is off by default: the cache may hold lines from
@@ -203,7 +215,7 @@ internal class NextTrackPreparation(
 
         for (step in plan.steps) {
             if (step == Step.MIX) continue
-            if (!stillCurrent()) return
+            if (!stillCurrent()) return abandon(song, "row-changed")
             steps += step
             try {
                 when (step) {
@@ -243,7 +255,7 @@ internal class NextTrackPreparation(
             }
         }
 
-        if (!stillCurrent()) return
+        if (!stillCurrent()) return abandon(song, "row-changed")
 
         val found = lyrics
         val lines = found?.lines?.takeIf { it.any { line -> line.text.isNotBlank() } }
@@ -282,7 +294,7 @@ internal class NextTrackPreparation(
         // their correction are already in the cache above, so a track that
         // starts early still gets them on its first frame.
         if (Step.MIX in plan.steps) {
-            if (!stillCurrent()) return
+            if (!stillCurrent()) return abandon(song, "row-changed")
             steps += Step.MIX
             try {
                 val player = currentPlayer()
@@ -304,12 +316,22 @@ internal class NextTrackPreparation(
         completedRowId = snapshot.rowId
         completedQueueKey = expectedQueueKey
         val tookMs = SystemClock.elapsedRealtime() - startedAt
+        val sync = NextPrepPolicy.syncValue(
+            isVideo = song.isVideo,
+            syncedLyrics = AppSettings.syncedLyrics.value,
+            heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+            aiTimingAhead = AppSettings.aiTimingAhead.value,
+            deepgramUsable = Deepgram.usable,
+            hasLyrics = lines != null,
+            hasTiming = timing != null,
+        )
         TrackLog.i(
             "BitChord",
             "next-prep: ${song.title} version=${song.videoId} " +
+                "video=${if (song.isVideo) "y" else "n"} " +
                 "lyrics=${found?.source?.name?.lowercase(Locale.ROOT) ?: "none"} " +
                 "hq=${hq?.name?.lowercase(Locale.ROOT) ?: "none"} " +
-                "sync=${if (timing != null) "applied" else "skipped"} " +
+                "sync=$sync " +
                 "mix=${if (mix) "ready" else "none"} in ${tookMs}ms",
             about = song.videoId,
         )

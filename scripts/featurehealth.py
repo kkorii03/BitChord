@@ -49,9 +49,13 @@ HEADER_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 _-]*):\s*(?P<value>.*)$")
 
 NEXT_PREP_RE = re.compile(
     r"^next-prep:\s+(?P<title>.*?)\s+version=(?P<version>\S+)\s+"
+    r"(?:video=(?P<video>[yn])\s+)?"
     r"lyrics=(?P<lyrics>\S+)\s+hq=(?P<hq>\S+)\s+"
-    r"sync=(?P<sync>applied|skipped(?:\([^)]*\))?)\s+"
+    r"sync=(?P<sync>applied|skipped(?:\([^)]*\))?|n/a(?:\([^)]*\))?)\s+"
     r"mix=(?P<mix>\S+)\s+in\s+(?P<ms>\d+)ms"
+)
+NEXT_PREP_SKIP_RE = re.compile(
+    r"^next-prep:\s+(?:skipped|abandoned)\b.*?\breason=(?P<reason>\S+)"
 )
 TRACK_SUMMARY_RE = re.compile(
     r"^track-summary:\s+(?P<id>\S+)\s+'(?P<title>.*)'\s+"
@@ -70,11 +74,16 @@ HQ_VERIFY_RE = re.compile(
     r"^hq-verify:\s+(?P<title>.*?)\s+(?P<source>\S+)\s+"
     r"match=\d+%\s+offset=-?\d+\s+->\s+"
     r"(?P<verdict>accepted|rejected|unmeasured)\b"
+    r"(?:\s+id=(?P<id>\S+))?"
 )
 UPGRADE_AHEAD_RE = re.compile(
-    r"^upgrade ahead:\s+'(?P<title>.*)'\s+ready at\s+(?P<format>.*?)(?:\s+from\s+.*)?$"
+    r"^upgrade ahead:\s+'(?P<title>.*)'\s+ready at\s+(?P<format>.*?)"
+    r"(?:\s+from\s+.*?)?(?:\s+id=(?P<id>\S+))?$"
 )
 HQ_SWAP_DONE_RE = re.compile(r"^hq-swap:\s+(?P<id>\S+)\s+done$")
+HQ_SWAP_SKIP_RE = re.compile(
+    r"^hq-swap:\s+(?P<id>\S+)\s+skipped\s+(?P<reason>\S+)"
+)
 ALREADY_PLAYING_RE = re.compile(
     r"'(?P<title>.*)'\s+is already playing\s+(?P<mime>audio/\S+)\s+from cache"
 )
@@ -87,9 +96,15 @@ POWER_FORMAT_RE = re.compile(
 AUTOPLAY_RADIO_RE = re.compile(
     r"^autoplay:\s+\+radio\s+(?P<radio>\d+)\s+\+similar\s+(?P<similar>\d+)\s+"
     r"\+fav\s+(?P<fav>\d+)"
+    r"(?:.*?\s+seed=(?P<seed>\S+))?"
 )
 AUTOPLAY_DROP_RE = re.compile(
     r"^autoplay:\s+dropped\s+(?P<count>\d+)\s+cover/karaoke rows"
+    r"(?:\s+seed=(?P<seed>\S+))?"
+)
+AUTOPLAY_SKIP_RE = re.compile(
+    r"^autoplay:\s+skipped\s+reason=(?P<reason>\S+)"
+    r"(?:\s+seed=(?P<seed>\S+))?"
 )
 MODE_REPEAT_RE = re.compile(r"^mode:\s+repeat=(?P<mode>\S+)\s+\(was\s+")
 VIDEO_RADIO_RE = re.compile(
@@ -118,7 +133,9 @@ CROSSFADE_ABORT_RE = re.compile(r"^crossfade:\s+abort\b")
 
 FAILED_START_RE = re.compile(r"failed to start after\s+(?P<attempts>\d+)\s+attempts")
 DOWNLOAD_FAILED_RE = re.compile(r"download failed for\s+(?P<id>\S+?)(?::|\s|$)")
+DOWNLOAD_DONE_RE = re.compile(r"^download:\s+(?P<id>\S+)\s+done$")
 HQ_LIBRARY_MISSING_RE = re.compile(r"^hq-library:\s+(?P<id>\S+)\s+did not land")
+HQ_LIBRARY_LANDED_RE = re.compile(r"^hq-library:\s+(?P<id>\S+)\s+landed$")
 SERVICE_START_FAILED = "could not start the download service"
 
 PROCESS_START_RE = re.compile(r"^lifecycle:\s+process start\b")
@@ -142,8 +159,28 @@ COVER_TITLE_RE = re.compile(
 
 PASS_D1_SYNC = 0.80
 PASS_D2_PLAYBACK = 0.90
+PASS_D9_DOWNLOAD = 0.90
 FIRST_AUDIO_LIMIT_MS = 3000
 LIFECYCLE_WINDOW_SECONDS = 10.0
+
+# A top-up may fetch a radio station before it logs its +radio line, so a drop
+# line and its refill can be minutes apart. Matching them within one second
+# counted almost every network-backed refill as a zero-refill failure.
+AUTOPLAY_REFILL_WINDOW_SECONDS = 120.0
+
+# Skipped for a reason that is not a failure: the step was not applicable or
+# the listener switched it off. These stay out of D1-sync's denominator so the
+# rate measures timing work that was actually attempted.
+D1_SYNC_NOT_ATTEMPTED = (
+    "video",
+    "switch-off",
+    "lyrics-off",
+    "heavy-off",
+    "ai-off",
+    "deepgram-unavailable",
+    "not-wanted",
+    "no-lyrics",
+)
 
 
 @dataclass(frozen=True)
@@ -293,6 +330,16 @@ def _is_opus(value: str) -> bool:
     return "opus" in value.casefold()
 
 
+def _sync_not_attempted(value: str) -> bool:
+    """True when a sync skip is a configuration/applicability answer, not a miss."""
+    if value.startswith("n/a"):
+        return True
+    if not value.startswith("skipped(") or not value.endswith(")"):
+        return False
+    reason = value[len("skipped(") : -1].strip().casefold()
+    return reason in D1_SYNC_NOT_ATTEMPTED
+
+
 def _format_name(mime: str) -> str | None:
     lowered = mime.casefold()
     if "flac" in lowered:
@@ -365,6 +412,7 @@ def analyze(log: Log) -> Report:
     lines = log.lines
 
     next_preps: list[dict[str, Any]] = []
+    next_prep_skips: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
     plays: list[dict[str, Any]] = []
     hq_verifies: list[dict[str, Any]] = []
@@ -374,6 +422,7 @@ def analyze(log: Log) -> Report:
     already_playing: list[dict[str, Any]] = []
     autoplay_radios: list[dict[str, Any]] = []
     autoplay_drops: list[dict[str, Any]] = []
+    autoplay_skips: list[dict[str, Any]] = []
     repeat_modes: list[dict[str, Any]] = []
     video_radios: list[dict[str, Any]] = []
     song_swaps: list[dict[str, Any]] = []
@@ -384,7 +433,9 @@ def analyze(log: Log) -> Report:
     crossfade_aborts: list[dict[str, Any]] = []
     failed_starts: list[dict[str, Any]] = []
     download_failures: list[dict[str, Any]] = []
+    download_dones: list[dict[str, Any]] = []
     hq_library_missing: list[dict[str, Any]] = []
+    hq_library_landed: list[dict[str, Any]] = []
     service_failures: list[LogLine] = []
     process_starts: list[LogLine] = []
     foregrounds: list[LogLine] = []
@@ -395,6 +446,11 @@ def analyze(log: Log) -> Report:
         text = line.text
         at = line.at
 
+        match = NEXT_PREP_SKIP_RE.match(text)
+        if match:
+            next_prep_skips.append({"at": at, "reason": match.group("reason")})
+            continue
+
         match = NEXT_PREP_RE.match(text)
         if match:
             next_preps.append(
@@ -402,6 +458,11 @@ def analyze(log: Log) -> Report:
                     "at": at,
                     "title": match.group("title"),
                     "version": match.group("version"),
+                    "video": (
+                        None
+                        if match.group("video") is None
+                        else match.group("video") == "y"
+                    ),
                     "lyrics": match.group("lyrics"),
                     "hq": match.group("hq"),
                     "sync": match.group("sync"),
@@ -461,6 +522,7 @@ def analyze(log: Log) -> Report:
             hq_verifies.append(
                 {
                     "at": at,
+                    "id": match.group("id"),
                     "title": match.group("title"),
                     "source": match.group("source"),
                     "verdict": match.group("verdict"),
@@ -473,6 +535,7 @@ def analyze(log: Log) -> Report:
             upgrade_aheads.append(
                 {
                     "at": at,
+                    "id": match.group("id"),
                     "title": match.group("title"),
                     "format": match.group("format"),
                 }
@@ -482,6 +545,17 @@ def analyze(log: Log) -> Report:
         match = HQ_SWAP_DONE_RE.match(text)
         if match:
             hq_swaps.append({"at": at, "id": match.group("id")})
+            continue
+
+        match = HQ_SWAP_SKIP_RE.match(text)
+        if match:
+            hq_swaps.append(
+                {
+                    "at": at,
+                    "id": match.group("id"),
+                    "skipped": match.group("reason"),
+                }
+            )
             continue
 
         match = ALREADY_PLAYING_RE.match(text)
@@ -512,6 +586,7 @@ def analyze(log: Log) -> Report:
             autoplay_radios.append(
                 {
                     "at": at,
+                    "seed": match.groupdict().get("seed"),
                     "total": int(match.group("radio"))
                     + int(match.group("similar"))
                     + int(match.group("fav")),
@@ -524,7 +599,24 @@ def analyze(log: Log) -> Report:
 
         match = AUTOPLAY_DROP_RE.match(text)
         if match:
-            autoplay_drops.append({"at": at, "count": int(match.group("count"))})
+            autoplay_drops.append(
+                {
+                    "at": at,
+                    "count": int(match.group("count")),
+                    "seed": match.group("seed"),
+                }
+            )
+            continue
+
+        match = AUTOPLAY_SKIP_RE.match(text)
+        if match:
+            autoplay_skips.append(
+                {
+                    "at": at,
+                    "reason": match.group("reason"),
+                    "seed": match.group("seed"),
+                }
+            )
             continue
 
         match = MODE_REPEAT_RE.match(text)
@@ -626,9 +718,19 @@ def analyze(log: Log) -> Report:
             download_failures.append({"at": at, "id": match.group("id")})
             continue
 
+        match = DOWNLOAD_DONE_RE.match(text)
+        if match:
+            download_dones.append({"at": at, "id": match.group("id")})
+            continue
+
         match = HQ_LIBRARY_MISSING_RE.match(text)
         if match:
             hq_library_missing.append({"at": at, "id": match.group("id")})
+            continue
+
+        match = HQ_LIBRARY_LANDED_RE.match(text)
+        if match:
+            hq_library_landed.append({"at": at, "id": match.group("id")})
             continue
 
         if SERVICE_START_FAILED in text:
@@ -663,20 +765,26 @@ def analyze(log: Log) -> Report:
     d1_hq = sum(1 for row in next_preps if row["hq"] != "none")
     d1_mix = sum(1 for row in next_preps if row["mix"] == "ready")
     d1_with_lyrics = [row for row in next_preps if row["lyrics"] != "none"]
-    d1_sync = sum(1 for row in d1_with_lyrics if row["sync"].startswith("applied"))
+    d1_sync_eligible = [
+        row
+        for row in d1_with_lyrics
+        if row["video"] is not True and not _sync_not_attempted(row["sync"])
+    ]
+    d1_sync = sum(1 for row in d1_sync_eligible if row["sync"].startswith("applied"))
     d1_sync_failures = [
         _failure(row["at"], row["title"], f"sync={row['sync']}")
-        for row in d1_with_lyrics
+        for row in d1_sync_eligible
         if not row["sync"].startswith("applied")
     ]
     d1_ms = [row["ms"] for row in next_preps]
     d1_avg = round(statistics.mean(d1_ms)) if d1_ms else None
     d1_max = max(d1_ms) if d1_ms else None
     d1_skipped_ratio = (
-        (len(d1_with_lyrics) - d1_sync) / len(d1_with_lyrics)
-        if d1_with_lyrics
+        (len(d1_sync_eligible) - d1_sync) / len(d1_sync_eligible)
+        if d1_sync_eligible
         else None
     )
+    d1_not_attempted = len(d1_with_lyrics) - len(d1_sync_eligible)
     metrics.extend(
         [
             _info_metric(
@@ -696,12 +804,17 @@ def analyze(log: Log) -> Report:
             _rate_metric(
                 "D1-sync",
                 "D1 다음 곡 준비 · 가사 싱크",
-                len(d1_with_lyrics),
+                len(d1_sync_eligible),
                 d1_sync,
                 "가사 있는 곡 sync applied ≥80%"
                 + (
                     f" (skipped {d1_skipped_ratio:.0%})"
                     if d1_skipped_ratio is not None
+                    else ""
+                )
+                + (
+                    f" (not attempted {d1_not_attempted})"
+                    if d1_not_attempted
                     else ""
                 ),
                 PASS_D1_SYNC,
@@ -721,6 +834,25 @@ def analyze(log: Log) -> Report:
                 f"평균 {d1_avg if d1_avg is not None else '—'}ms · "
                 f"최대 {d1_max if d1_max is not None else '—'}ms",
             ),
+            _info_metric(
+                "D1-skipped",
+                "D1 다음 곡 준비 · 건너뜀",
+                len(next_prep_skips),
+                "reason 분포 "
+                + (
+                    ", ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(
+                            Counter(row["reason"] for row in next_prep_skips).items()
+                        )
+                    )
+                    or "없음"
+                ),
+                failures=[
+                    _failure(row["at"], "next-prep", f"skipped reason={row['reason']}")
+                    for row in next_prep_skips
+                ],
+            ),
         ]
     )
     stats["next_prep"] = {
@@ -729,9 +861,13 @@ def analyze(log: Log) -> Report:
         "hq": d1_hq,
         "sync": d1_sync,
         "with_lyrics": len(d1_with_lyrics),
+        "sync_eligible": len(d1_sync_eligible),
+        "not_attempted": d1_not_attempted,
         "mix": d1_mix,
         "avg_ms": d1_avg,
         "max_ms": d1_max,
+        "skipped": len(next_prep_skips),
+        "skip_reasons": dict(Counter(row["reason"] for row in next_prep_skips)),
     }
 
     # ---- D2: lossless actually played -----------------------------------
@@ -751,6 +887,8 @@ def analyze(log: Log) -> Report:
                 }
             )
     for row in hq_swaps:
+        if row.get("skipped") is not None:
+            continue
         flac_evidence.append(
             {
                 "at": row["at"],
@@ -777,19 +915,35 @@ def analyze(log: Log) -> Report:
     for row in hq_verifies:
         if row["verdict"] == "accepted":
             d2_events.append(
-                {"at": row["at"], "title": row["title"], "kind": "hq-verify"}
+                {
+                    "at": row["at"],
+                    "id": row["id"],
+                    "title": row["title"],
+                    "kind": "hq-verify",
+                }
             )
     for row in upgrade_aheads:
         if _is_flac(row["format"]):
             d2_events.append(
-                {"at": row["at"], "title": row["title"], "kind": "upgrade-ahead"}
+                {
+                    "at": row["at"],
+                    "id": row["id"],
+                    "title": row["title"],
+                    "kind": "upgrade-ahead",
+                }
             )
+
+    swap_skips_by_id: dict[str, list[str]] = defaultdict(list)
+    for row in hq_swaps:
+        reason = row.get("skipped")
+        if reason is not None:
+            swap_skips_by_id[row["id"]].append(reason)
 
     d2_success = 0
     d2_failures: list[Failure] = []
     for event in d2_events:
         wanted = _norm_title(event["title"])
-        ids = title_to_ids.get(wanted, set())
+        ids = {event["id"]} if event["id"] else title_to_ids.get(wanted, set())
         played = any(
             evidence["at"] >= event["at"]
             and (
@@ -801,7 +955,15 @@ def analyze(log: Log) -> Report:
         if played:
             d2_success += 1
         else:
-            d2_failures.append(_failure(event["at"], event["title"], event["kind"]))
+            skip_reason = next(
+                (
+                    reason
+                    for reason in swap_skips_by_id.get(event["id"] or "", ())
+                ),
+                None,
+            )
+            detail = event["kind"] + (f" swap-skipped={skip_reason}" if skip_reason else "")
+            d2_failures.append(_failure(event["at"], event["title"], detail))
 
     kept_for_next = sum(
         1 for line in lines if "kept for next play; no mid-song swap" in line.text
@@ -809,6 +971,7 @@ def analyze(log: Log) -> Report:
     manual_unnecessary = sum(
         1 for line in lines if "manual upgrade unnecessary" in line.text
     )
+    swap_skip_count = sum(len(reasons) for reasons in swap_skips_by_id.values())
     metrics.extend(
         [
             _rate_metric(
@@ -832,6 +995,30 @@ def analyze(log: Log) -> Report:
                 manual_unnecessary,
                 "manual upgrade unnecessary",
             ),
+            _info_metric(
+                "D2-swap-skipped",
+                "D2 무손실 · 교체 건너뜀",
+                swap_skip_count,
+                "hq-swap skipped reason 분포 "
+                + (
+                    ", ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(
+                            Counter(
+                                reason
+                                for reasons in swap_skips_by_id.values()
+                                for reason in reasons
+                            ).items()
+                        )
+                    )
+                    or "없음"
+                ),
+                failures=[
+                    _failure(row["at"], row["id"], row["skipped"])
+                    for row in hq_swaps
+                    if row.get("skipped") is not None
+                ],
+            ),
         ]
     )
     stats["lossless"] = {
@@ -839,13 +1026,21 @@ def analyze(log: Log) -> Report:
         "played": d2_success,
         "kept_for_next": kept_for_next,
         "manual_unnecessary": manual_unnecessary,
+        "swap_skipped": swap_skip_count,
+        "swap_skip_ids": dict(swap_skips_by_id),
     }
 
     # ---- D3: autoplay refill and unwanted repeat -------------------------
     zero_refills: list[dict[str, Any]] = []
     for drop in autoplay_drops:
         refilled = any(
-            0 <= (radio["at"] - drop["at"]).total_seconds() < 1.0
+            0 <= (radio["at"] - drop["at"]).total_seconds()
+            < AUTOPLAY_REFILL_WINDOW_SECONDS
+            and (
+                drop["seed"] is None
+                or radio["seed"] is None
+                or drop["seed"] == radio["seed"]
+            )
             for radio in autoplay_radios
         )
         if not refilled:
@@ -901,6 +1096,25 @@ def analyze(log: Log) -> Report:
                     for row in unwanted_repeats
                 ],
             ),
+            _info_metric(
+                "D3-skipped",
+                "D3 자동 재생 · 건너뜀",
+                len(autoplay_skips),
+                "reason 분포 "
+                + (
+                    ", ".join(
+                        f"{name}={count}"
+                        for name, count in sorted(
+                            Counter(row["reason"] for row in autoplay_skips).items()
+                        )
+                    )
+                    or "없음"
+                ),
+                failures=[
+                    _failure(row["at"], "autoplay", f"skipped reason={row['reason']}")
+                    for row in autoplay_skips
+                ],
+            ),
         ]
     )
     stats["autoplay"] = {
@@ -909,6 +1123,8 @@ def analyze(log: Log) -> Report:
         "radio_sums": [row["total"] for row in autoplay_radios],
         "repeat": len(repeat_plays),
         "unwanted_repeat": len(unwanted_repeats),
+        "skipped": len(autoplay_skips),
+        "skip_reasons": dict(Counter(row["reason"] for row in autoplay_skips)),
     }
 
     # ---- D4: video radio ------------------------------------------------
@@ -1150,16 +1366,20 @@ def analyze(log: Log) -> Report:
 
     # ---- D9: downloads --------------------------------------------------
     failed_ids = Counter(row["id"] for row in download_failures)
+    done_ids = Counter(row["id"] for row in download_dones)
     missing_ids = Counter(row["id"] for row in hq_library_missing)
+    landed_ids = Counter(row["id"] for row in hq_library_landed)
+    d9_download_attempts = len(download_dones) + len(download_failures)
+    d9_hq_attempts = len(hq_library_landed) + len(hq_library_missing)
     metrics.extend(
         [
-            Metric(
-                key="D9-download",
-                label="D9 다운로드 · 실패",
-                attempts=len(download_failures),
-                successes=0 if download_failures else None,
-                criterion="download failed 0건",
-                passed=None if not download_failures else False,
+            _rate_metric(
+                "D9-download",
+                "D9 다운로드 · 완료/실패",
+                d9_download_attempts,
+                len(download_dones),
+                "download done ≥90% · 실패 0건",
+                PASS_D9_DOWNLOAD,
                 failures=[
                     _failure(
                         row["at"],
@@ -1170,13 +1390,13 @@ def analyze(log: Log) -> Report:
                 ],
                 notes=", ".join(f"{key}={value}" for key, value in sorted(failed_ids.items())),
             ),
-            Metric(
-                key="D9-hq-library",
-                label="D9 다운로드 · HQ 미착지",
-                attempts=len(hq_library_missing),
-                successes=0 if hq_library_missing else None,
-                criterion="hq-library did not land 0건",
-                passed=None if not hq_library_missing else False,
+            _rate_metric(
+                "D9-hq-library",
+                "D9 다운로드 · HQ 착지/미착지",
+                d9_hq_attempts,
+                len(hq_library_landed),
+                "hq-library landed ≥90% · did not land 0건",
+                PASS_D9_DOWNLOAD,
                 failures=[
                     _failure(
                         row["at"],
@@ -1201,8 +1421,12 @@ def analyze(log: Log) -> Report:
     stats["downloads"] = {
         "failed": len(download_failures),
         "failed_ids": dict(failed_ids),
+        "done": len(download_dones),
+        "done_ids": dict(done_ids),
         "hq_missing": len(hq_library_missing),
         "hq_missing_ids": dict(missing_ids),
+        "hq_landed": len(hq_library_landed),
+        "hq_landed_ids": dict(landed_ids),
         "service_failed": len(service_failures),
     }
 

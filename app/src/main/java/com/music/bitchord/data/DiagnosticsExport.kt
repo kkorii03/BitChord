@@ -40,7 +40,7 @@ object LogRedactor {
     private val COOKIE = Regex("""(?i)((?:set-)?cookie\s*[:=]\s*)[^\r\n]+""")
     private val AUTHORIZATION = Regex("""(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+""")
     private val SESSION_ID = Regex(
-        """(?i)\b(SAPISID|APISID|HSID|SSID|SID|__Secure-[A-Za-z0-9_]+)\s*[=:]\s*[^\s;,]+""",
+        """(?i)\b(SAPISIDHASH|SAPISID|APISID|HSID|SSID|SIDCC|LSID|LOGIN_INFO|SID|__Secure-[A-Za-z0-9_]+)\s*[=:]\s*[^\s;,]+""",
     )
     private val GOOGLE_API_KEY = Regex("""AIza[0-9A-Za-z_\-]{20,}""")
     private val SK_KEY = Regex("""\bsk-[A-Za-z0-9_\-]{16,}""")
