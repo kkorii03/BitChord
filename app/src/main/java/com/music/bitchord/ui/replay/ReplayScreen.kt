@@ -107,6 +107,7 @@ fun ReplayScreen(
      */
     onOpenArtist: (String?, String) -> Unit,
     onOpenAlbum: (String?, String, String?, String?) -> Unit,
+    onOpenGenre: (String) -> Unit,
     onShare: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -235,7 +236,10 @@ fun ReplayScreen(
                             title = topGenres,
                             rows = summary.genreRows(CHART_LENGTH),
                             dark = dark,
-                            onClick = {},
+                            onClick = { index ->
+                                val genre = summary.genres.getOrNull(index) ?: return@chart
+                                onOpenGenre(genre.title)
+                            },
                         )
                     } else if (ArtistFacts.genresAvailable) {
                         item("genres-pending") {

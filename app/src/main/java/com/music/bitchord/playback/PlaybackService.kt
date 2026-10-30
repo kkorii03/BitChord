@@ -9949,6 +9949,10 @@ class PlaybackService : MediaLibraryService() {
         currentTranslationAheadJob?.cancel()
         currentTranslationAheadJob = null
         cancelNextPrep()
+        // The deadline lives on a process-wide object. Left behind, a service
+        // that is restarted in the same process inherits it and pauses the new
+        // playback as soon as the old deadline passes.
+        SleepTimer.cancel()
         serviceLyrics = null
         skipSegmentsJob?.cancel()
         skipSegmentsJob = null

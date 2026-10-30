@@ -47,6 +47,36 @@ object SyncSafetyPolicy {
     /** Whether [com.music.bitchord.data.lyrics.DownloadedSyncCheck] may run. */
     fun recheckAllowed(switches: Switches): Boolean = switches.downloadedRecheck
 
+    /**
+     * Why next-prep left the next row's sync unapplied, as one log token.
+     *
+     * The bundle used to publish only `sync=skipped`, which could not tell a
+     * disabled safety switch from a video row, a low-power deferral, a missing
+     * Deepgram key or lyrics that simply had no timed line. The conditions are
+     * checked in the same order the steps use, and null means sync was applied
+     * (or is not the reason this function exists to explain).
+     */
+    fun nextPrepSyncSkipReason(
+        switches: Switches,
+        syncedLyrics: Boolean,
+        isVideo: Boolean,
+        heavyWorkAllowed: Boolean,
+        aiTimingAhead: Boolean,
+        deepgramUsable: Boolean,
+        hasLyrics: Boolean,
+        hasTimedLines: Boolean,
+    ): String? {
+        if (!switches.nextPrepLyrics) return "next-prep-lyrics-off"
+        if (!syncedLyrics) return "lyrics-off"
+        if (isVideo) return "video"
+        if (!heavyWorkAllowed) return "low-power"
+        if (!aiTimingAhead) return "timing-ahead-off"
+        if (!deepgramUsable) return "deepgram-unavailable"
+        if (!hasLyrics) return "no-lyrics"
+        if (!hasTimedLines) return "no-timed-lines"
+        return null
+    }
+
     /** Whether a saved HQ offset/rate may be applied to lyrics. */
     fun hqAdjustmentAllowed(switches: Switches): Boolean = switches.hqReapply
 

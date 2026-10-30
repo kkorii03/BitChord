@@ -892,7 +892,7 @@ object HqAudioVerify {
         title: String,
         manual: Boolean,
     ): Reference {
-        if (manual) {
+        if (HqVerifyPolicy.shouldRetryMissingReference(manual)) {
             noReference.remove(youtubeId)
         } else {
             noReference[youtubeId]?.let { remembered ->

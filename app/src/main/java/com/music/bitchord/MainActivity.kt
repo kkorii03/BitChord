@@ -3297,6 +3297,18 @@ private fun BitChordApp(
                                 onOpenAlbum = { id, title, artist, art ->
                                     openByName(id, title, artist, BrowseType.ALBUM, art)
                                 },
+                                // A genre has no browse id in the summary, so its
+                                // chart row asks the search for it rather than
+                                // being a control that looks tappable and does
+                                // nothing.
+                                onOpenGenre = { genre ->
+                                    navigator.clear()
+                                    viewModel.closeMoodGenre()
+                                    selectedTab = TAB_SEARCH
+                                    viewModel.onQueryChange("")
+                                    viewModel.setSearchSource(SearchSource.YOUTUBE)
+                                    viewModel.searchFor(genre)
+                                },
                                 onShare = {
                                     replaySharePage = null
                                     showReplayShare = true

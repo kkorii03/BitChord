@@ -93,6 +93,39 @@ class SyncSafetyPolicyTest {
     }
 
     @Test
+    fun nextPrepSkipReasonNamesTheFirstBlockingCondition() {
+        fun reason(
+            switches: Switches = Switches(nextPrepLyrics = true),
+            syncedLyrics: Boolean = true,
+            isVideo: Boolean = false,
+            heavyWorkAllowed: Boolean = true,
+            aiTimingAhead: Boolean = true,
+            deepgramUsable: Boolean = true,
+            hasLyrics: Boolean = true,
+            hasTimedLines: Boolean = true,
+        ) = SyncSafetyPolicy.nextPrepSyncSkipReason(
+            switches = switches,
+            syncedLyrics = syncedLyrics,
+            isVideo = isVideo,
+            heavyWorkAllowed = heavyWorkAllowed,
+            aiTimingAhead = aiTimingAhead,
+            deepgramUsable = deepgramUsable,
+            hasLyrics = hasLyrics,
+            hasTimedLines = hasTimedLines,
+        )
+
+        assertEquals("next-prep-lyrics-off", reason(switches = off))
+        assertEquals("lyrics-off", reason(syncedLyrics = false))
+        assertEquals("video", reason(isVideo = true))
+        assertEquals("low-power", reason(heavyWorkAllowed = false))
+        assertEquals("timing-ahead-off", reason(aiTimingAhead = false))
+        assertEquals("deepgram-unavailable", reason(deepgramUsable = false))
+        assertEquals("no-lyrics", reason(hasLyrics = false))
+        assertEquals("no-timed-lines", reason(hasTimedLines = false))
+        assertEquals(null, reason())
+    }
+
+    @Test
     fun allSwitchesOnRunEveryPath() {
         val on = Switches(nextPrepLyrics = true, downloadedRecheck = true, hqReapply = true)
         Path.entries.forEach { path ->

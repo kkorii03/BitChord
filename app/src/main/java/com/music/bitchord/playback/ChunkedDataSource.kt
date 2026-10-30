@@ -66,6 +66,18 @@ class ChunkedDataSource(
     private var openedAtMs = 0L
     private var bytesRead = 0L
 
+    /**
+     * Set when any part of this open failed before the caller was done with it.
+     *
+     * [close] used to report every open as a successful transfer, so a host
+     * that answered 403 or truncated a range still gained throughput credit
+     * and sorted ahead of a host that had actually served the bytes.
+     */
+    private var transferFailed = false
+
+    /** True when [HqHostTracker.noteFailure] already recorded this failure. */
+    private var failureNoted = false
+
     /** Set when the request can't be improved on, and is simply forwarded. */
     private var passthrough = false
 
@@ -84,6 +96,8 @@ class ChunkedDataSource(
         currentHost = HqHostTracker.hostOf(dataSpec.uri.toString())
         openedAtMs = System.currentTimeMillis()
         bytesRead = 0L
+        transferFailed = false
+        failureNoted = false
 
         val total = dataSpec.uri.getQueryParameter("clen")?.toLongOrNull()
         if (total == null) {
@@ -99,12 +113,14 @@ class ChunkedDataSource(
                 return openWithRateLimitRetry(dataSpec) { upstream.open(dataSpec) }
             } catch (e: Exception) {
                 if (e !is InterruptedIOException) {
+                    transferFailed = true
                     // `host` is null exactly when the URL was too broken to
                     // parse, which is the case most in need of naming ??so fall
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
                     HqHostTracker.noteFailure(currentHost)
+                    failureNoted = true
                     report(dataSpec, e)
                 }
                 throw e
@@ -149,6 +165,13 @@ class ChunkedDataSource(
                         chunkOpen = true
                         return
                     }
+                }
+                transferFailed = true
+                // A rate-limited give-up was already recorded by
+                // [openWithRateLimitRetry]; anything else has not been yet.
+                val refusal = rateLimitedCause(e)
+                if (refusal != null && HqRetryPolicy.isRateLimited(refusal.responseCode)) {
+                    failureNoted = true
                 }
                 // This is the only place a refusal of the *real* fetch is seen.
                 // Left here it is just a failed track; handed back, it is the
@@ -375,7 +398,12 @@ class ChunkedDataSource(
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (passthrough) {
-            val read = upstream.read(buffer, offset, length)
+            val read = try {
+                upstream.read(buffer, offset, length)
+            } catch (e: Exception) {
+                if (e !is InterruptedIOException) transferFailed = true
+                throw e
+            }
             if (read > 0) bytesRead += read
             return read
         }
@@ -390,7 +418,12 @@ class ChunkedDataSource(
                 closeChunk()
                 openChunk()
             }
-            val read = upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt())
+            val read = try {
+                upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt())
+            } catch (e: Exception) {
+                if (e !is InterruptedIOException) transferFailed = true
+                throw e
+            }
             if (read != C.RESULT_END_OF_INPUT) {
                 position += read
                 chunkRemaining -= read
@@ -407,6 +440,7 @@ class ChunkedDataSource(
         // track, because `clen` already said how many bytes there are.
         val message = "truncated stream at $position ($bytesRemaining bytes missing)"
         TrackLog.w(TAG, "hq-stream: $message")
+        transferFailed = true
         throw IOException(message)
     }
 
@@ -424,12 +458,18 @@ class ChunkedDataSource(
     override fun close() {
         closeChunk()
         if (openedAtMs != 0L) {
-            HqHostTracker.noteTransfer(
-                currentHost,
-                bytesRead,
-                System.currentTimeMillis() - openedAtMs,
-                ok = true,
-            )
+            if (transferFailed) {
+                // A failed open has already been recorded where it happened; a
+                // truncated or aborted read has not. Record it once either way.
+                if (!failureNoted) HqHostTracker.noteFailure(currentHost)
+            } else {
+                HqHostTracker.noteTransfer(
+                    currentHost,
+                    bytesRead,
+                    System.currentTimeMillis() - openedAtMs,
+                    ok = true,
+                )
+            }
         }
         baseSpec = null
         bytesRemaining = 0L
@@ -437,6 +477,8 @@ class ChunkedDataSource(
         currentHost = null
         openedAtMs = 0L
         bytesRead = 0L
+        transferFailed = false
+        failureNoted = false
     }
 
     /**
