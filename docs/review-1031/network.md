@@ -168,3 +168,99 @@ PoToken WebView/Generator, visitor id, 요청 타임아웃·재시도, IPv4/IPv6
 - `shared/src/jvmTest/.../net/ProxyFailureEdgeTest.kt` — Ktor request timeout.
 - `app/src/test/.../playback/SkipSegmentsTest.kt` — bot은 skip 판정이 아님.
 - `app/src/test/.../innertube/potoken/PoTokenSlowCreationTest.kt` — 8초 넘는 페이지 생성.
+
+## 7. 2차 검토 (이전 리뷰 VERDICT: ISSUES 5 반영)
+
+`dsq/deep-network-1031-r2`. 이전 차수의 지적 5건을 실제 코드로 다시 따라가 처리했다.
+모든 판정은 수정 전 코드에서 실패하고 수정 후 통과하는 테스트로 고정했다.
+
+### MEDIUM 10 — 다운로드의 proxy/bot 판정 사유가 뒤의 timeout에 덮이던 문제 (수정)
+- 파일: `shared/.../innertube/UnplayableReason.kt:267`, `shared/.../innertube/StreamResolver.kt:1558,1603,1611`
+- 증거(수정 전): 다운로드의 `itxFailureReason`은 `keepTrackSpecific`만 거쳤다. 이 함수는
+  claim/takedown 계열만 보존하므로, 첫 client가 `not available in your country` 또는
+  `sign in to confirm you're not a bot`으로 거부되고 다음 client가 `Read timed out`이면
+  사유가 timeout으로 교체됐다. 그 결과 `isRegionGate`도 `isBotChallenge`도 false가 되어
+  프록시 walk와 봇 정지가 모두 사라졌다.
+- 사용자 영향: 프록시를 켠 사용자의 다운로드/고음질 보관함이 국가/Premium 게이트에서
+  실패하고, 봇 확인은 곡별 재시도 폭주로 이어질 수 있었다. 성적표의 다운로드·고음질 실패
+  140회와 직접 연결된다.
+- 흔한 정도: 느린 망에서 첫 client가 게이트로 거부되고 두 번째가 timeout이면 바로 발생.
+- 수정: `UnplayableReason.keepProxyWorthy`를 추가하고 다운로드가 별도 사유로 유지한다.
+  같은 실패가 claim/takedown이면 그쪽이 더 강한 판정이므로 그대로 이긴다.
+- 진리표(수정 전 → 수정 후):
+  - old: `keepTrackSpecific(region, timeout)` → `timeout` → proxy 미시도, bot 미정지
+  - new: `keepProxyWorthy(region, timeout)` → `region` → proxy 1회, bot이면 정지
+  - claim/takedown이 오면 old/new 모두 그 문구가 최종 사유.
+
+### MEDIUM 11 — ALL resolve의 URL stamp가 완료 시점 상태로 찍히던 문제 (수정)
+- 파일: `shared/.../innertube/StreamResolver.kt:308,316,2292`, `shared/.../net/ProxyPlayback.kt:93,120`
+- 증거(수정 전): `resolve()`는 `coalescedResolve()`가 끝난 뒤 `remember()`에서
+  `generationFor(url)`과 현재 scope를 읽었다. walk 도중 primary→backup 전환이나
+  MUSIC_ONLY→ALL 전환이 일어나면, 옛 서버가 발급한 URL이 새 세대로, 직접 발급한 URL이
+  ALL 발급으로 기록됐다. 다음 open이 새 route 프록시로 옛 URL을 요청해 403.
+- 사용자 영향: ALL 사용자가 프록시 서버를 바꾸거나 scope를 바꾼 직후 재생/탐색 403.
+- 흔한 정도: ALL + 느린 walk + route/scope 변경. 서버 장애 전환 시 재현.
+- 수정: `resolve()` 시작 시 `mintedGeneration`과 `mintedOnAllScope`를 캡처해
+  `remember()`에 전달한다. `ProxyPlaybackPolicy.stampFor`가 캡처값을 우선하고,
+  Music-only 프록시 URL은 `markResolved`의 등록 세대를 그대로 쓴다.
+- 진리표(수정 전 → 수정 후):
+  - old: completion의 `generationFor(url)`, completion의 scope
+  - new: 시작 시 캡처한 generation/scope. 값이 없으면(재시도가 URL을 돌려준 경우) 기존 live-read 유지.
+  - 캡처 ALL=true → 시작 세대 + `mintedOnAllScope=true`
+  - 캡처 ALL=false → 등록된 Music-only 세대만 인정, 없으면 `null/false`
+
+### MEDIUM 12 — PoToken outer timeout이 init 예산과 같던 문제 (수정)
+- 파일: `shared/.../potoken/PoTokenGenerator.kt:151`
+- 증거(수정 전): outer `POTOKEN_TIMEOUT_MS=45_000`이 WebView init 예산 45초와 같고,
+  최초 mint 15초를 더하면 60초가 필요했다. 45초에 outer가 먼저 취소되어 콜드 페이지가
+  token을 만들 기회를 잃었다.
+- 사용자 영향: 느린 망/콜드 스타트에서 PoToken이 영원히 없어 BotGuard client가 빠지고
+  재생·다운로드 성공률이 떨어진다.
+- 흔한 정도: 콜드 스타트 + 느린 망. prewarm이 늦으면 첫 곡마다.
+- 수정: outer를 `75_000ms`(45s init + 15s mint + 여유)로. 살아 있는 페이지의 mint는 여전히
+  내부 15초 timeout이 담당한다.
+- 진리표: old `outer==init` → new `outer>init+mint`.
+
+### MEDIUM 13 — rate limit 후 앱 레벨 pin이 남아 같은 URL을 다시 열던 문제 (수정)
+- 파일: `shared/.../innertube/StreamResolver.kt:1908,1921,1934`,
+  `app/.../data/innertube/AndroidStreamHooks.kt:57`
+- 증거(수정 전): `onRateLimited`는 `recent`/`lastRefused`만 지웠다. 재생 계층은
+  `StreamChoice.of(videoId)`와 `QualityUpgrade.forcedStream()`에서 URL을 다시 꺼내므로,
+  resolver가 새 URL을 mint해도 다음 open은 rate-limited URL을 그대로 재사용했다.
+  또한 URL에서 videoId를 찾지 못하면 아무 로그 없이 return했다(조용한 skip).
+- 사용자 영향: Retry-After가 긴 429/503에서 같은 URL을 반복해 재시도 예산을 소진하고
+  곡이 skip/정지. 다운로드·고음질 실패의 한 축.
+- 흔한 정도: 429/503을 받는 모든 스트림. HQ 전환 직후 특히.
+- 수정: `onRateLimited`가 항상 `rateLimitedListener(videoId?, url)`를 호출한다. 앱은
+  videoId가 있으면 `StreamChoice.forget`/`QualityUpgrade.forget`으로 pin을 버리고,
+  videoId가 없으면 URL로 `StreamChoice.forgetUrl`/`QualityUpgrade.forgetUrl`을 호출한다
+  (강제 모듈 업그레이드 URL에는 YouTube id가 없다). videoId를 못 찾아도 조용히 return하지
+  않고 로그를 남긴다.
+- 진리표:
+  - old: `recent.remove + lastRefused.remove`(videoId 없으면 즉시 return)
+  - new: 위 + `rateLimitedListener(videoId?,url)`; 앱이 id 또는 URL로 pin 제거; unknown이면 로그
+  - 기존 `recent`/`lastRefused` 삭제는 그대로 유지.
+
+### LOW 14 — ALL bypass 중 direct URL이 캐시 미스로 재해석되던 문제 (수정)
+- 파일: `shared/.../net/ProxyPlayback.kt:101`, `shared/.../innertube/StreamResolver.kt:292`
+- 증거(수정 전): `allScopeNow`가 `config.usable && scope==ALL`만 봤다. ALL 프록시가
+  bypass 중일 때 직접 mint한 URL은 `mintedOnAllScope=false`로 저장되고, 캐시 검사에서
+  ALL로 판정되어 매 open마다 버려졌다.
+- 사용자 영향: ALL 프록시 장애 중 매 재생/탐색이 불필요하게 다시 resolve되어 느려짐.
+- 흔한 정도: ALL + 프록시 장애/bypass.
+- 수정: `allScopeNow(configUsable, allScope, bypassing)`로 bypass를 항에 포함.
+- 진리표(수정 전 → 수정 후):
+  - old: `usable && all`
+  - new: `usable && all && !bypass`
+  - 기존 두 항은 삭제 없이 유지.
+
+### 2차 검증
+- `./gradlew :shared:jvmTest` — 전체 통과.
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true` — 통과.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.data.innertube.potoken.PoTokenSlowCreationTest'` — 통과.
+- 새/확장 테스트:
+  - `shared/.../innertube/UnplayableReasonTest.kt` — region/bot 사유가 timeout에 덮이지 않음.
+  - `shared/.../innertube/StreamResolverRateLimitTest.kt` — rate limit 시 playback listener 호출.
+  - `shared/.../net/ProxyRouteGenerationTest.kt` — 시작 시점 ALL 세대 stamp, scope 전환, bypass 캐시.
+  - `shared/.../potoken/PoTokenGeneratorTimeoutBudgetTest.kt` — outer 예산 > init+mint.
+  - `app/.../potoken/PoTokenSlowCreationTest.kt` — 46초 init 페이지도 mint.

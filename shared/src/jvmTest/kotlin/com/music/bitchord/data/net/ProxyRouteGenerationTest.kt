@@ -2,8 +2,10 @@ package com.music.bitchord.data.net
 
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -125,5 +127,94 @@ class ProxyRouteGenerationTest {
                 canResolveViaProxy = false,
             ),
         )
+    }
+
+    @Test
+    fun `an all-scope resolve is stamped with the route it started on`() {
+        YouTubeProxy.update(withBackup)
+        val startedOn = YouTubeProxy.routeGeneration
+        YouTubeProxy.switchRoute(ProxyRoute.BACKUP, "test")
+
+        val stamp = ProxyPlaybackPolicy.stampFor(
+            capturedGeneration = startedOn,
+            capturedOnAllScope = true,
+            registeredGeneration = null,
+            currentAllScope = true,
+        )
+
+        assertEquals(startedOn, stamp.proxyGeneration)
+        assertTrue(stamp.mintedOnAllScope)
+        assertFalse(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                proxyGeneration = stamp.proxyGeneration,
+                currentGeneration = ProxyPlayback.currentRouteGeneration,
+                canResolveViaProxy = ProxyPlayback.canUseCachedProxyUrl(),
+                allScopeNow = true,
+                mintedOnAllScope = stamp.mintedOnAllScope,
+            ),
+        )
+    }
+
+    @Test
+    fun `a resolve that started outside all-scope is not stamped as all-scope`() {
+        YouTubeProxy.update(withBackup.copy(scope = ProxyScope.ALL_YOUTUBE))
+
+        val stamp = ProxyPlaybackPolicy.stampFor(
+            capturedGeneration = YouTubeProxy.routeGeneration,
+            capturedOnAllScope = false,
+            registeredGeneration = null,
+            currentAllScope = true,
+        )
+
+        assertNull(stamp.proxyGeneration)
+        assertFalse(stamp.mintedOnAllScope)
+        assertFalse(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                proxyGeneration = stamp.proxyGeneration,
+                currentGeneration = ProxyPlayback.currentRouteGeneration,
+                canResolveViaProxy = ProxyPlayback.canUseCachedProxyUrl(),
+                allScopeNow = true,
+                mintedOnAllScope = stamp.mintedOnAllScope,
+            ),
+            "a URL minted directly must not be fetched through a proxy that was enabled mid-resolve",
+        )
+    }
+
+    @Test
+    fun `a music-only proxy stamp is kept even when all-scope started false`() {
+        YouTubeProxy.update(withBackup)
+        ProxyPlayback.markResolved("v-music", url)
+        val registered = ProxyPlayback.generationFor(url)
+
+        val stamp = ProxyPlaybackPolicy.stampFor(
+            capturedGeneration = YouTubeProxy.routeGeneration,
+            capturedOnAllScope = false,
+            registeredGeneration = registered,
+            currentAllScope = false,
+        )
+
+        assertEquals(registered, stamp.proxyGeneration)
+        assertFalse(stamp.mintedOnAllScope)
+    }
+
+    @Test
+    fun `an all-scope proxy outage does not make a direct url a cache miss`() {
+        assertFalse(
+            ProxyPlaybackPolicy.allScopeNow(
+                configUsable = true,
+                allScope = true,
+                bypassing = true,
+            ),
+            "while bypassing, the request went direct, so an all-scope stamp is not expected",
+        )
+        assertTrue(
+            ProxyPlaybackPolicy.allScopeNow(
+                configUsable = true,
+                allScope = true,
+                bypassing = false,
+            ),
+        )
+        assertFalse(ProxyPlaybackPolicy.allScopeNow(configUsable = false, allScope = true, bypassing = false))
+        assertFalse(ProxyPlaybackPolicy.allScopeNow(configUsable = true, allScope = false, bypassing = false))
     }
 }

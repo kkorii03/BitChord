@@ -83,6 +83,28 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `a region or bot answer survives a later timeout for the proxy decision`() {
+        val region = "This video is not available in your country"
+        val bot = "Sign in to confirm you're not a bot"
+        val timeout = "SocketTimeoutException: Read timed out"
+
+        assertEquals(region, UnplayableReason.keepProxyWorthy(region, timeout))
+        assertEquals(bot, UnplayableReason.keepProxyWorthy(bot, timeout))
+        assertEquals(region, UnplayableReason.keepProxyWorthy(region, null))
+        assertEquals(timeout, UnplayableReason.keepProxyWorthy(null, timeout))
+        assertEquals(
+            "a later region refusal still replaces an earlier timeout",
+            region,
+            UnplayableReason.keepProxyWorthy(timeout, region),
+        )
+        assertEquals(
+            "a takedown is the stronger verdict",
+            "This video has been removed by the uploader",
+            UnplayableReason.keepProxyWorthy(region, "This video has been removed by the uploader"),
+        )
+    }
+
+    @Test
     fun `age restricted and paid tracks are track specific but not gone`() {
         assertTrue(UnplayableReason.isTrackSpecific("This video is age-restricted"))
         assertFalse(UnplayableReason.isDefinitelyGone("This video is age-restricted"))

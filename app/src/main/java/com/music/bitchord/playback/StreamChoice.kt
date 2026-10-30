@@ -139,6 +139,18 @@ object StreamChoice {
     }
 
     /**
+     * Releases the choice serving [url] when the caller only has the URL.
+     *
+     * A forced module upgrade carries no YouTube videoId, so the rate-limit
+     * feedback from the resolver cannot name the track; the URL it was opened
+     * with is the only key both sides share.
+     */
+    fun forgetUrl(url: String) {
+        val videoId = chosen.entries.firstOrNull { it.value.stream.url == url }?.key ?: return
+        chosen.remove(videoId)
+    }
+
+    /**
      * Tracks whose substituted stream refused to serve its bytes, and when.
      *
      * [forget] alone is not enough to recover from one. The search behind a

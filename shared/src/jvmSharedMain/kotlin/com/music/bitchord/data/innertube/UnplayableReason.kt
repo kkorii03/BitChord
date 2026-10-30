@@ -254,6 +254,27 @@ object UnplayableReason {
         if (isTrackSpecific(existing) && !isTrackSpecific(incoming)) existing else incoming
 
     /**
+     * The reason to keep across a walk for the *proxy* decision: a region,
+     * Premium or bot answer must survive a later timeout, or the download path
+     * loses the one signal that earns its single proxy walk and the bot stop.
+     *
+     * [keepTrackSpecific] deliberately keeps only the claim/takedown set, which
+     * means a region refusal followed by a timed-out client used to be replaced
+     * by the timeout. A track-specific verdict still wins over a network
+     * answer, because it is the stronger fact about the recording; everything
+     * else only survives if the incoming one is weaker.
+     */
+    fun keepProxyWorthy(existing: String?, incoming: String?): String? {
+        if (existing == null) return incoming
+        if (incoming == null) return existing
+        if (isTrackSpecific(incoming)) return incoming
+        if (isTrackSpecific(existing)) return existing
+        if (isRegionGate(existing) && !isRegionGate(incoming)) return existing
+        if (isBotChallenge(existing) && !isBotChallenge(incoming)) return existing
+        return incoming
+    }
+
+    /**
      * Whether [message] says the upload itself no longer exists, as opposed to
      * a region/Premium gate that may still play through the proxy.
      */

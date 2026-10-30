@@ -51,6 +51,18 @@ object AndroidStreamHooks {
             )
         }
         StreamResolver.maxKbps = { AppSettings.effectiveAudioQuality.maxKbps }
+        // A rate-limited URL must leave the playback layer's pins too, not only
+        // the resolver's URL cache: otherwise the next open is handed the same
+        // paused URL from StreamChoice/QualityUpgrade without asking again.
+        StreamResolver.rateLimitedListener = { videoId, url ->
+            if (videoId != null) {
+                com.music.bitchord.playback.StreamChoice.forget(videoId)
+                com.music.bitchord.playback.QualityUpgrade.forget(videoId)
+            }
+            // A forced module upgrade has no YouTube id; match its URL instead.
+            com.music.bitchord.playback.StreamChoice.forgetUrl(url)
+            com.music.bitchord.playback.QualityUpgrade.forgetUrl(url)
+        }
         InnerTubeXResolver.debugLogging = BuildConfig.DEBUG
     }
 

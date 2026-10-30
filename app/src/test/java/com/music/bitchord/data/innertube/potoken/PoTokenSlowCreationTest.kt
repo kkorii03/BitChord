@@ -37,4 +37,21 @@ class PoTokenSlowCreationTest {
         assertNotNull(token)
         assertEquals(1, creates)
     }
+
+    @Test
+    fun `a page that uses its whole init budget still mints`() = runTest {
+        var creates = 0
+        val generator = PoTokenGenerator(createMinter = {
+            // The platform browser's own init ceiling is 45s; the outer timeout
+            // must not fire at the same instant and cancel the first mint.
+            delay(46_000)
+            creates++
+            FakeMinter()
+        })
+
+        val token = generator.getWebClientPoToken("track", "session")
+
+        assertNotNull(token)
+        assertEquals(1, creates)
+    }
 }

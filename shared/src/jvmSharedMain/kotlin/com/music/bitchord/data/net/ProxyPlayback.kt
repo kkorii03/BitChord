@@ -88,6 +88,52 @@ object ProxyPlaybackPolicy {
         return proxyGeneration == null ||
             (proxyGeneration == currentGeneration && canResolveViaProxy)
     }
+
+    /** How a resolved URL is stamped in the resolver's short-lived cache. */
+    data class ResolvedUrlStamp(val proxyGeneration: Long?, val mintedOnAllScope: Boolean)
+
+    /**
+     * Whether the cache is being read while ALL_YOUTUBE is the route actually
+     * in force. The bypass is part of the answer: after an ALL proxy outage the
+     * request goes direct, so a direct-minted URL is not a MISS merely because
+     * the setting still says ALL.
+     */
+    fun allScopeNow(configUsable: Boolean, allScope: Boolean, bypassing: Boolean): Boolean =
+        configUsable && allScope && !bypassing
+
+    /**
+     * The route stamp to record for a URL, from the state captured when its
+     * request *started*.
+     *
+     * Reading the route and scope at completion labels a slow ALL_YOUTUBE
+     * resolve with whatever the app is doing now: a primary-to-backup switch
+     * during the walk makes an old-server URL look current, and a switch into
+     * ALL makes a URL minted directly look proxy-minted. Both are the same 403
+     * on the next open. [capturedOnAllScope] is therefore passed in from the
+     * caller's start; null means "not captured" (a URL handed back by a retry)
+     * and keeps the previous live-read behaviour.
+     *
+     * [registeredGeneration] is the authoritative stamp for a Music-only URL
+     * that went through [ProxyPlayback.markResolved]; it is never replaced by
+     * the captured ALL value.
+     */
+    fun stampFor(
+        capturedGeneration: Long?,
+        capturedOnAllScope: Boolean?,
+        registeredGeneration: Long?,
+        currentAllScope: Boolean,
+    ): ResolvedUrlStamp {
+        if (capturedOnAllScope == true) {
+            return ResolvedUrlStamp(capturedGeneration, true)
+        }
+        if (capturedOnAllScope == false) {
+            return ResolvedUrlStamp(registeredGeneration, false)
+        }
+        return ResolvedUrlStamp(
+            proxyGeneration = registeredGeneration,
+            mintedOnAllScope = registeredGeneration != null && currentAllScope,
+        )
+    }
 }
 
 /**

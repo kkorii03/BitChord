@@ -27,4 +27,34 @@ class StreamResolverRateLimitTest {
     fun `an unknown url is left alone`() {
         StreamResolver.onRateLimited("https://example.com/not-a-stream")
     }
+
+    @Test
+    fun `the playback layer is told to drop its pinned copy`() {
+        val id = "rate-limit-pinned-${System.nanoTime()}"
+        val url = "https://rr5.googlevideo.com/videoplayback?pinned=$id"
+        StreamResolver.rememberServed(id, url)
+        val told = mutableListOf<Pair<String?, String>>()
+        StreamResolver.rateLimitedListener = { videoId, refused -> told += videoId to refused }
+        try {
+            StreamResolver.onRateLimited(url)
+        } finally {
+            StreamResolver.rateLimitedListener = null
+        }
+
+        assertEquals(listOf(id to url), told)
+    }
+
+    @Test
+    fun `an unknown url still reaches the playback listener by url`() {
+        val url = "https://module.example/audio/${System.nanoTime()}"
+        val told = mutableListOf<Pair<String?, String>>()
+        StreamResolver.rateLimitedListener = { videoId, refused -> told += videoId to refused }
+        try {
+            StreamResolver.onRateLimited(url)
+        } finally {
+            StreamResolver.rateLimitedListener = null
+        }
+
+        assertEquals(listOf(null to url), told)
+    }
 }

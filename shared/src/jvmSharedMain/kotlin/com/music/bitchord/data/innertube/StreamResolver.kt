@@ -289,9 +289,12 @@ object StreamResolver {
                     proxyGeneration = cached.proxyGeneration,
                     currentGeneration = ProxyPlayback.currentRouteGeneration,
                     canResolveViaProxy = ProxyPlayback.canUseCachedProxyUrl(),
-                    allScopeNow = com.music.bitchord.data.net.YouTubeProxy.config.usable &&
-                        com.music.bitchord.data.net.YouTubeProxy.config.scope ==
-                        com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
+                    allScopeNow = ProxyPlaybackPolicy.allScopeNow(
+                        configUsable = com.music.bitchord.data.net.YouTubeProxy.config.usable,
+                        allScope = com.music.bitchord.data.net.YouTubeProxy.config.scope ==
+                            com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
+                        bypassing = ProxyHealthMonitor.shouldBypassProxy(),
+                    ),
                     mintedOnAllScope = cached.mintedOnAllScope,
                 )
             ) {
@@ -305,13 +308,22 @@ object StreamResolver {
         // See [rememberUnplayable] for why this is the fix for "stuck loading".
         unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
 
+        // Stamped from the state at the *start* of the walk. An ALL_YOUTUBE
+        // route or scope change during a slow resolve used to make the finished
+        // URL look as though it had been minted on the new route, and the next
+        // open was then sent through a server that never issued it (403).
+        val mintedGeneration = YouTubeProxy.routeGeneration
+        val mintedOnAllScope = YouTubeProxy.config.usable &&
+            YouTubeProxy.config.scope == com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE &&
+            !ProxyHealthMonitor.shouldBypassProxy()
+
         val stream = coalescedResolve(videoId)
 
         // The container carries no bitrate field, so this is the only place the
         // real figure is ever known.
         NerdStats.onStreamPicked(videoId, stream.kbps)
         stream.loudnessDb?.let { loudness[videoId] = it }
-        remember(videoId, stream.url)
+        remember(videoId, stream.url, mintedGeneration, mintedOnAllScope)
         return stream.url
     }
 
@@ -1540,12 +1552,17 @@ object StreamResolver {
             // answer; above it (best Opus over Standard's 128kbps) extraction
             // below can pick the lower rung, and this is kept as the fallback.
             var itxFailureReason: String? = null
+            // The proxy decision needs the first region/Premium/bot answer even
+            // when a later client only times out; [keepTrackSpecific] would
+            // replace it, losing both the proxy walk and the bot stop.
+            var itxProxyReason: String? = null
             val found = innerTubeXStreamAllowingUploads(
                 videoId,
                 maxKbps,
                 requireM4a,
                 onFailure = { reason ->
                     itxFailureReason = UnplayableReason.keepTrackSpecific(itxFailureReason, reason)
+                    itxProxyReason = UnplayableReason.keepProxyWorthy(itxProxyReason, reason)
                 },
             )
                 ?.takeIf { if (requireM4a) it.downloadExtension == "m4a" else it.downloadExtension == "webm" }
@@ -1583,7 +1600,7 @@ object StreamResolver {
             // catalog), and only a bot exception was treated as proxy-worthy.
             // Both signals now earn the same single proxy walk playback gets.
             val proxyWorthy = extractionFailure?.isProxyWorthyRefusal() == true ||
-                itxFailureReason?.let(UnplayableReason::isRegionGate) == true
+                itxProxyReason?.let(UnplayableReason::isRegionGate) == true
             if (!proxyTried && canProxy && proxyWorthy) {
                 proxyTried = true
                 TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy (download)")
@@ -1591,7 +1608,7 @@ object StreamResolver {
                     ?.let { return@withContext it }
             }
             if (extractionFailure?.isSignInConfirmNotBot() == true ||
-                itxFailureReason?.let(UnplayableReason::isBotChallenge) == true
+                itxProxyReason?.let(UnplayableReason::isBotChallenge) == true
             ) {
                 noteBotChallenge(videoId)
                 throw BotChallengeException(BOT_CHALLENGE_REASON)
@@ -1879,19 +1896,47 @@ object StreamResolver {
      * the track is skipped. Forgetting it lets the next open mint a fresh URL
      * (another host, another client) instead of repeating a pause nobody
      * waited for.
+     *
+     * Forgetting [recent] is only half of it. The playback layer pins the URL
+     * it chose — [StreamChoice] for every resolved stream and
+     * [QualityUpgrade] for a swapped-in rendition — and those pins live above
+     * this module and are reopened without asking the resolver again. The app
+     * registers [rateLimitedListener] to drop them for the track, so the next
+     * open resolves afresh instead of serving the URL that just asked for a
+     * pause.
      */
     fun onRateLimited(url: String) {
         val videoId = InnerTubeXResolver.extractedFor(url)?.videoId
             ?: recent.entries.firstOrNull { it.value.url == url }?.key
-            ?: return
-        recent.remove(videoId)
-        lastRefused.remove(videoId)
+        if (videoId != null) {
+            recent.remove(videoId)
+            lastRefused.remove(videoId)
+        }
+        // The URL is passed even without a videoId: a forced module upgrade has
+        // no YouTube id, and the playback layer can still match the URL to the
+        // pin it is serving.
+        rateLimitedListener?.invoke(videoId, url)
+        if (videoId == null) {
+            // Not silent: a URL with no track behind it can still have been
+            // pinned by the playback layer, and an unexplained no-op here is
+            // the difference between "nothing to forget" and "the cache key
+            // did not match".
+            TrackLog.w(TAG, "rate-limited URL has no known track: ${LogUrl.of(url)}")
+            return
+        }
         TrackLog.w(
             TAG,
             "rate-limited URL forgotten for $videoId; the next open will re-resolve",
             about = videoId,
         )
     }
+
+    /**
+     * Told the videoId (may be null) and URL of a rate-limited stream so the
+     * playback layer can drop its pinned copy. Installed once by the app.
+     */
+    @Volatile
+    var rateLimitedListener: ((videoId: String?, url: String) -> Unit)? = null
 
     // ---- Failsafe -----------------------------------------------------------
 
@@ -2249,23 +2294,35 @@ object StreamResolver {
     /** Enough for the queue in hand; this is a latency cache, not a store. */
     private const val MAX_REMEMBERED = 32
 
-    private fun remember(videoId: String, url: String) {
+    private fun remember(
+        videoId: String,
+        url: String,
+        capturedGeneration: Long? = null,
+        capturedOnAllScope: Boolean? = null,
+    ) {
         if (recent.size >= MAX_REMEMBERED) {
             val cutoff = MonotonicClock.nowMs() - URL_TTL_MS
             recent.entries.removeAll { it.value.at < cutoff }
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
-        val proxyGeneration = ProxyPlayback.generationFor(url)
+        // A Music-only proxy URL is registered by [ProxyPlayback.markResolved]
+        // and that stamp is authoritative. An ALL_YOUTUBE URL is not registered
+        // there, so it uses whatever the caller captured before the walk; when
+        // the caller captured nothing (a retry handing the same URL back), the
+        // live route is the only available answer.
+        val registered = if (ProxyPlayback.isProxiedUrl(url)) ProxyPlayback.generationFor(url) else null
+        val stamp = ProxyPlaybackPolicy.stampFor(
+            capturedGeneration = capturedGeneration,
+            capturedOnAllScope = capturedOnAllScope,
+            registeredGeneration = registered,
+            currentAllScope = com.music.bitchord.data.net.YouTubeProxy.config.scope ==
+                com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
+        )
         recent[videoId] = Resolved(
             url = url,
             at = MonotonicClock.nowMs(),
-            proxyGeneration = proxyGeneration,
-            // A stamp only exists when the request really went through the
-            // proxy, so this is false for a direct URL and for one minted while
-            // the ALL_YOUTUBE route was in its unreachable bypass.
-            mintedOnAllScope = proxyGeneration != null &&
-                com.music.bitchord.data.net.YouTubeProxy.config.scope ==
-                com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
+            proxyGeneration = stamp.proxyGeneration,
+            mintedOnAllScope = stamp.mintedOnAllScope,
         )
         // A URL that resolved or answered a retry is no longer described by the
         // refusal that preceded it.

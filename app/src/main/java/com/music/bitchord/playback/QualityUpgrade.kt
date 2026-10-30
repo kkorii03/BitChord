@@ -725,6 +725,20 @@ object QualityUpgrade {
     }
 
     /**
+     * Drops the forced stream serving [url] when only the URL is known.
+     *
+     * A swapped-in lossless/module rendition has no YouTube videoId in its URL,
+     * so the resolver's rate-limit feedback cannot name the mediaId. Matching
+     * the opened URL against the parked stream is what keeps the next open from
+     * serving the URL the host just asked us to leave alone.
+     */
+    fun forgetUrl(url: String) {
+        val mediaId = forced.entries.firstOrNull { it.value.url == url }?.key ?: return
+        forget(mediaId)
+        StreamChoice.forget(mediaId)
+    }
+
+    /**
      * Forgets a replacement that is being reverted, together with the choice
      * that still names it.
      *

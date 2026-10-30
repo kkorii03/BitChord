@@ -135,18 +135,20 @@ class PoTokenGenerator(
         }
     }
 
-    private companion object {
+    internal companion object {
         /**
-         * The whole page-creation path, not one mint.
+         * Longer than the page's own worst case, not equal to it.
          *
-         * It used to be eight seconds, which is shorter than the WebView's own
-         * forty-five-second init budget and shorter than a cold BotGuard
-         * Create/GenerateIT round trip on a slow connection. The outer timeout
-         * then fired first on every attempt, cleared the page, and no PoToken
-         * was ever minted — the inner mint timeout (fifteen seconds) is what
-         * bounds a live page.
+         * The desktop and phone browsers each allow forty-five seconds to
+         * create the page (BotGuard Create/GenerateIT plus JavaScript), and a
+         * live page is then allowed fifteen seconds for its first mint. An
+         * outer limit of forty-five seconds sat exactly on the init budget, so
+         * a page that took its full allowance — or had to be recreated — was
+         * cancelled from outside before a PoToken could ever be minted. The
+         * outer limit is only a backstop for a page that ignores its own
+         * timeouts; it must not decide the ordinary cold-start race.
          */
-        const val POTOKEN_TIMEOUT_MS = 45_000L
+        const val POTOKEN_TIMEOUT_MS = 75_000L
         const val PREWARM_VIDEO_ID = "dQw4w9WgXcQ"
     }
 
