@@ -595,6 +595,16 @@ class CrossfadeController(
      */
     private var bailFromGain = 0f
 
+    /**
+     * A skip before the handoff has to take the armed incoming player down
+     * before the session player lands on the same queue row. It used to do that
+     * by assigning `0f`, a step from a blend gain of up to full scale that is
+     * exactly the click the bail ramp exists to avoid. This flag lets
+     * [driveBail] run that one side down over [SKIP_SILENCE_MS] instead while
+     * the survivor keeps its normal ramp.
+     */
+    private var bailSilenceLeaving = false
+
     /** The session-side player during a bail, and the faded gain it starts from. */
     private var bailSurvivor: ExoPlayer? = null
     private var bailSurvivorFromGain = 1f
@@ -954,9 +964,10 @@ class CrossfadeController(
         if (silenceIncoming && phase == Phase.BAILING) {
             // The session player is about to be moved onto the very row the
             // standby is playing, so let the standby go silent now instead of
-            // playing that row twice for the length of the bail ramp.
-            incoming?.volume = 0f
-            bailFromGain = 0f
+            // playing that row twice for the length of the bail ramp. Ramped
+            // over a few milliseconds rather than snapped: it is still audible
+            // at its blend gain here, and `volume = 0f` clicks.
+            bailSilenceLeaving = true
         }
         wakeTicker()
     }
@@ -2300,11 +2311,18 @@ class CrossfadeController(
             finish()
             return
         }
-        val progress = (SystemClock.elapsedRealtime() - bailStartedAt).toFloat() / BAIL_MS
+        val now = SystemClock.elapsedRealtime()
+        val progress = (now - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
             val survivorGain = CrossfadeGain.bailSurvivor(bailSurvivorFromGain, progress)
             bailSurvivor?.volume = survivorGain
-            val fall = if (leaving === outgoing && ranOn(leaving)) 0f else bailFromGain * fallGain(progress)
+            val fall = when {
+                leaving === outgoing && ranOn(leaving) -> 0f
+                // Long enough to be a ramp, short enough that the same queue row
+                // the session just moved onto does not play twice underneath it.
+                bailSilenceLeaving -> CrossfadeGain.skipSilence(bailFromGain, now - bailStartedAt, SKIP_SILENCE_MS)
+                else -> bailFromGain * fallGain(progress)
+            }
             leaving.volume = fall
             onBlendHeadroom(headroomFor(survivorGain, fall))
             return
@@ -2368,6 +2386,7 @@ class CrossfadeController(
         bailSurvivor = survivor
         bailSurvivorFromGain = survivor?.volume ?: 1f
         bailFromGain = leavingOnBail()?.volume ?: 0f
+        bailSilenceLeaving = false
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
     }
@@ -2441,6 +2460,7 @@ class CrossfadeController(
         bailSurvivor = null
         bailSurvivorFromGain = 1f
         bailFromGain = 0f
+        bailSilenceLeaving = false
         outgoingItemIndex = C.INDEX_UNSET
         incomingItemIndex = C.INDEX_UNSET
         incomingWrapsToStart = false
@@ -3246,6 +3266,13 @@ class CrossfadeController(
         const val BAIL_MS = 120L
 
         /**
+         * Ramp for the armed incoming player when a skip before the handoff
+         * moves the session onto the same row. A few milliseconds is a ramp
+         * rather than a step, and short enough not to double-play.
+         */
+        const val SKIP_SILENCE_MS = 8L
+
+        /**
          * The earliest, in wall-clock ms before the next item starts, that
          * Media3 1.11 lets a player's renderers move on to reading it:
          * `ExoPlayerImplInternal.DURATION_TO_ADVANCE_READING_THRESHOLD_US`,
@@ -3686,6 +3713,18 @@ internal object CrossfadeGain {
     fun bailSurvivor(fromGain: Float, progress: Float): Float {
         val from = fromGain.coerceIn(0f, 1f)
         return (from + (1f - from) * rise(progress)).coerceIn(0f, 1f)
+    }
+
+    /**
+     * The armed incoming player's gain on a skip before the handoff: it has to
+     * reach zero before the session plays the same queue row, but from a blend
+     * gain that may be close to full scale. A `0f` assignment there was a step
+     * discontinuity on every such skip; this returns the same shape of short
+     * ramp the bail uses instead.
+     */
+    fun skipSilence(fromGain: Float, elapsedMs: Long, spanMs: Long): Float {
+        val from = fromGain.coerceIn(0f, 1f)
+        return (from * fall(progress(elapsedMs, spanMs))).coerceIn(0f, 1f)
     }
 
     fun progress(elapsedMs: Long, spanMs: Long): Float {

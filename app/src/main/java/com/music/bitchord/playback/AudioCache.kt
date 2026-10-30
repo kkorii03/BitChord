@@ -2552,6 +2552,7 @@ object AudioCache {
         if (!analysisHeadMayClaim(
                 alreadyRequested = analysisHeads.containsKey(videoId),
                 anotherWriterHas = anotherWriter,
+                inFlight = videoId in analysisHeadsInFlight,
             )
         ) {
             if (anotherWriter && analysisHeadDeferredLogged.add(videoId)) {
@@ -2567,7 +2568,13 @@ object AudioCache {
         // Checked before the round is claimed, so the playback thread pays a set
         // lookup per tick rather than queueing coroutines four times a second on
         // top of a fetch that is still running.
-        if (!analysisHeadsInFlight.add(videoId)) return
+        if (!analysisHeadsInFlight.add(videoId)) {
+            // A round slipped in between the claim check and here. Never leave
+            // the claim without a round behind it: that is a permanent "asked"
+            // mark that no later tick can retry.
+            analysisHeads.remove(videoId)
+            return
+        }
         scope.launch {
             try {
                 val total = runCatching { StreamResolver.contentLength(videoId) }
@@ -2587,9 +2594,22 @@ object AudioCache {
                 // the same request against the same refusal and is not worth
                 // starting again in this session.
                 val before = alignmentPrefixBytes(videoId)
-                if (!clearPartialHead(videoId, want)) {
-                    TrackLog.w(TAG, "analysis head round for $videoId skipped: partial is held elsewhere", videoId)
-                    return@launch
+                when (clearPartialHead(videoId, want)) {
+                    AnalysisHeadClear.Proceed -> Unit
+                    AnalysisHeadClear.AlreadyComplete -> return@launch
+                    AnalysisHeadClear.HeldElsewhere -> {
+                        TrackLog.w(
+                            TAG,
+                            "analysis head round for $videoId skipped: partial is held elsewhere",
+                            videoId,
+                        )
+                        // The claim must not outlive a round that never fetched:
+                        // a partial entry held below `want` is exactly the
+                        // permanent `mix=none` dead-end. Release it so the next
+                        // tick can retry once the reader lets go.
+                        analysisHeads.remove(videoId)
+                        return@launch
+                    }
                 }
                 fetch(
                     cacheKey = videoId,
@@ -2678,15 +2698,15 @@ object AudioCache {
      * filling the gap would splice a second encoding onto it. Cheaper to throw
      * the prefix away and pull one clean copy.
      *
-     * @return false when the caller should not fetch: either the entry is
-     *   already complete enough, or it is held by a live reader and cannot be
-     *   cleared, in which case writing would create the very seam this avoids.
+     * @return [AnalysisHeadClear.Proceed] when the caller may fetch, or why it
+     *   must not: the entry is already complete enough, or it is held by a live
+     *   reader and a partial write would create the very seam this avoids.
      */
-    private fun clearPartialHead(videoId: String, want: Long): Boolean {
+    private fun clearPartialHead(videoId: String, want: Long): AnalysisHeadClear {
         val held = cache.getCachedBytes(videoId, 0, want)
-        if (held <= 0L) return true
-        if (held >= want) return false
-        return runCatching { cache.removeResource(videoId) }
+        if (held <= 0L) return AnalysisHeadClear.Proceed
+        if (held >= want) return AnalysisHeadClear.AlreadyComplete
+        val removed = runCatching { cache.removeResource(videoId) }
             .onSuccess {
                 forgetPurgeCandidate(videoId)
                 TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)", about = videoId)
@@ -2695,6 +2715,7 @@ object AudioCache {
                 TrackLog.d(TAG, "partial head for $videoId is in use: ${it.message}", about = videoId)
             }
             .isSuccess
+        return analysisHeadClearOutcome(held = held, want = want, removalSucceeded = removed)
     }
 
     /**

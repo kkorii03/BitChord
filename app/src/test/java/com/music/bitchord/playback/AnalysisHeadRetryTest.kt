@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,9 +41,48 @@ class AnalysisHeadRetryTest {
 
     @Test
     fun aHeadDeferredToAnotherWriterDoesNotConsumeTheClaim() {
-        assertFalse(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = true))
-        assertTrue(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = false))
-        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = false))
-        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = true))
+        assertFalse(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = true, inFlight = false))
+        assertTrue(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = false, inFlight = false))
+        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = false, inFlight = false))
+        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = true, inFlight = false))
+    }
+
+    @Test
+    fun aHeadWhoseRoundIsStillInFlightIsNotReclaimedAfterItsClaimWasCleared() {
+        // discardBadRendition/remove/purge clear analysisHeads but not the
+        // in-flight set. Re-claiming here used to fail the in-flight add and
+        // leave a claim with no round, so the analyzer never retried.
+        assertFalse(analysisHeadMayClaim(alreadyRequested = false, anotherWriterHas = false, inFlight = true))
+        assertFalse(analysisHeadMayClaim(alreadyRequested = true, anotherWriterHas = false, inFlight = true))
+    }
+
+    @Test
+    fun aCompleteHeadNeedsNoRoundEvenWhenTheClaimWasReleased() {
+        assertEquals(
+            AnalysisHeadClear.AlreadyComplete,
+            analysisHeadClearOutcome(held = 2_000_000, want = 1_000_000, removalSucceeded = false),
+        )
+    }
+
+    @Test
+    fun aPartialHeadHeldByAReaderIsDistinguishedFromACompleteOne() {
+        // Both used to return false. Only the held case must release the claim;
+        // the complete case is genuinely done.
+        assertEquals(
+            AnalysisHeadClear.HeldElsewhere,
+            analysisHeadClearOutcome(held = 400_000, want = 1_000_000, removalSucceeded = false),
+        )
+        assertEquals(
+            AnalysisHeadClear.Proceed,
+            analysisHeadClearOutcome(held = 400_000, want = 1_000_000, removalSucceeded = true),
+        )
+    }
+
+    @Test
+    fun anEmptyHeadAlwaysProceeds() {
+        assertEquals(
+            AnalysisHeadClear.Proceed,
+            analysisHeadClearOutcome(held = 0, want = 1_000_000, removalSucceeded = false),
+        )
     }
 }

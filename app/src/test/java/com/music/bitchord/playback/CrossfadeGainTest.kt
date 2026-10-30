@@ -85,4 +85,25 @@ class CrossfadeGainTest {
             progress += 0.05f
         }
     }
+
+    @Test
+    fun aSkipBeforeTheHandoffRampsTheArmedIncomingToSilenceInsteadOfSnapping() {
+        // The old skip path assigned `volume = 0f` from whatever the blend
+        // gain was. This is the ramp that replaces it: it starts at the real
+        // gain and reaches zero in a few milliseconds, never stepping.
+        val from = CrossfadeGain.mixRise(0.35f)
+        assertEquals(from, CrossfadeGain.skipSilence(from, elapsedMs = 0L, spanMs = 8L), 0.0001f)
+        val quarter = CrossfadeGain.skipSilence(from, elapsedMs = 2L, spanMs = 8L)
+        assertTrue("skip silence snapped instead of ramping", quarter > 0f && quarter < from)
+        assertEquals(0f, CrossfadeGain.skipSilence(from, elapsedMs = 8L, spanMs = 8L), 0.0001f)
+        assertEquals(0f, CrossfadeGain.skipSilence(from, elapsedMs = 100L, spanMs = 8L), 0.0001f)
+        var last = CrossfadeGain.skipSilence(from, elapsedMs = 0L, spanMs = 8L)
+        var elapsed = 1L
+        while (elapsed <= 8L) {
+            val gain = CrossfadeGain.skipSilence(from, elapsedMs = elapsed, spanMs = 8L)
+            assertTrue("skip silence went forwards at $elapsed", gain <= last)
+            last = gain
+            elapsed++
+        }
+    }
 }
