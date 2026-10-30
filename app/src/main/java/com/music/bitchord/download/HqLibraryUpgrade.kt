@@ -149,9 +149,10 @@ object HqLibraryUpgrade {
         failure: Failure?,
         nowMs: Long,
         downloaded: Map<String, SavedSongMetadata>,
+        foreground: Boolean = AppForeground.isForeground,
     ): Boolean = HqLibraryAutoRetryPolicy.shouldAttempt(
         manual = manualPass,
-        foreground = AppForeground.isForeground,
+        foreground = foreground,
         alreadyAtTargetTier = hasCopyAtLeastAsGood(videoId, downloaded[videoId], verifiedTier),
         attempts = failure?.attempts ?: 0,
         lastFailureMs = failure?.lastFailureMs ?: 0L,
@@ -708,12 +709,16 @@ object HqLibraryUpgrade {
     ) {
         if (manualPass) return
         val kept = plan.filter { pending ->
+            // Pruning is permanent: a copy already at the rung, or retries
+            // exhausted. A background event only parks the pass for now, and
+            // must never erase the plan onBackground promised to keep on disk.
             automaticTargetEligible(
                 pending.target.videoId,
                 pending.target.verifiedTier,
                 failures[failureKey(pending.target)],
                 nowMs,
                 downloaded,
+                foreground = true,
             )
         }
         if (kept.size == plan.size) return

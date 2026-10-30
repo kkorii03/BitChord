@@ -412,7 +412,7 @@ object Downloads {
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
         }
-        _active.update { it + (id to DownloadState.Queued) }
+        publishQueuedIfPending(id)
         if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
             DownloadSession.queued(song, from)
         }
@@ -432,6 +432,20 @@ object Downloads {
                     fail(id, "지금은 다운로드를 시작할 수 없습니다")
                 }
             }
+        }
+    }
+
+    /**
+     * Publish Queued only while [videoId] is still waiting.
+     *
+     * [onForeground] can take the row back after the enqueue inserted it but
+     * before this publish; writing Queued then would overwrite the refusal
+     * while no pending row remains.
+     */
+    private fun publishQueuedIfPending(videoId: String) {
+        synchronized(lock) {
+            if (videoId !in pending) return
+            _active.update { it + (videoId to DownloadState.Queued) }
         }
     }
 
@@ -462,7 +476,7 @@ object Downloads {
      * be turned back into a failure row.
      */
     private fun abandonPending(videoId: String): Boolean = synchronized(lock) {
-        val wasPending = pending.remove(videoId) != null
+        if (pending.remove(videoId) == null) return@synchronized false
         qualityOverrides.remove(videoId)
         hqOverrides.remove(videoId)
         avoidSources.remove(videoId)
@@ -471,7 +485,7 @@ object Downloads {
         minimumTiers.remove(videoId)
         automaticIds.remove(videoId)
         mvSoundRepairIds.remove(videoId)
-        wasPending
+        true
     }
 
     private fun startService(context: Context): Throwable? =
