@@ -215,12 +215,35 @@ class DownloadService : Service() {
         if (stopWork) {
             drain?.cancel()
             drainGate.reset()
+            notifier?.cancel()
+            drain = null
+            notifier = null
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        if (stopId == null) {
+            notifier?.cancel()
+            drain = null
+            notifier = null
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        // stopSelf(id) refuses when a newer start arrived after
+        // stopIdAfter() chose this id. Tearing the notification down before
+        // learning that left the new drain running with no foreground
+        // notification. Wait for the stop to be confirmed; a refusal means
+        // the newer start owns the service, so keep the notifier and hand it
+        // a drain instead.
+        if (!startIds.stopConfirmed(stopId, ::stopSelfResult)) {
+            ensureDrain()
+            return
         }
         notifier?.cancel()
         drain = null
         notifier = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        if (stopWork || stopId == null) stopSelf() else stopSelf(stopId)
     }
 
     override fun onDestroy() {
@@ -422,4 +445,19 @@ internal class StartIdLedger {
     @Synchronized
     fun stopIdAfter(drainStartId: Int): Int? =
         if (latest > drainStartId) null else latest
+
+    /**
+     * Whether a stop request will actually stop the service.
+     *
+     * [requestStop] is the service's `stopSelfResult`: it returns false when a
+     * newer start has arrived since [candidate] was chosen. That window is
+     * real — the drain reads [stopIdAfter], then a start lands, then it asks
+     * Android to stop — so a false answer must leave the notifier and drain
+     * alone and hand the service to the newer generation.
+     */
+    @Synchronized
+    fun stopConfirmed(candidate: Int, requestStop: (Int) -> Boolean): Boolean {
+        if (latest > candidate) return false
+        return requestStop(latest)
+    }
 }

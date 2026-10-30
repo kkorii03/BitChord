@@ -162,4 +162,50 @@ class DownloaderRangeTest {
         assertEquals(body.size.toLong(), written)
         assertArrayEquals(body, out.toByteArray())
     }
+
+    @Test
+    fun `a partial 200 probe is measured again without a range`() = runBlocking {
+        val fragment = ByteArray(64 * 1024) { index -> (index * 7).toByte() }
+        val body = ByteArray(fragment.size + 5_000) { index -> (index * 11).toByte() }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val range = request.getHeader("Range")
+                if (range == null) {
+                    // The un-ranged measuring request gets the whole file.
+                    return MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Length", body.size.toString())
+                        .setBody(Buffer().write(body))
+                }
+                if (range == "bytes=0-0") {
+                    // A caching proxy answers the probe with a fixed 64KiB
+                    // slice and a 200 length that is not the whole track.
+                    return MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Length", fragment.size.toString())
+                        .setBody(Buffer().write(fragment))
+                }
+                val start = range.substringAfter("bytes=").substringBefore('-').toInt()
+                val requestedEnd = range.substringAfter('-').toInt().coerceAtMost(body.size - 1)
+                val slice = body.copyOfRange(start, requestedEnd + 1)
+                return MockResponse()
+                    .setResponseCode(206)
+                    .setHeader("Content-Range", "bytes $start-$requestedEnd/${body.size}")
+                    .setBody(Buffer().write(slice))
+            }
+        }
+
+        val out = ByteArrayOutputStream()
+        val written = Downloader.fetch(
+            videoId = "video",
+            stream = stream(server.url("/audio").toString()),
+            maxKbps = 128,
+            requireM4a = false,
+            sink = out,
+            onProgress = { _, _ -> },
+        )
+
+        assertEquals(body.size.toLong(), written)
+        assertArrayEquals(body, out.toByteArray())
+    }
 }

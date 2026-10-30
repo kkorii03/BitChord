@@ -308,17 +308,13 @@ object Downloader {
                     ?.takeIf { it > 0 }
                 if (ranged != null) return@use ranged
                 if (response.code != 200) return@use null
-                val declared = response.header("Content-Length")
-                    ?.toLongOrNull()
-                    ?.takeIf { it > 0 }
-                // A server or proxy that ignores Range answers 200 with the
-                // whole file, and its Content-Length is the total. But one
-                // that echoes just the one byte asked for also answers 200
-                // with Content-Length 1, and trusting that would measure the
-                // track as one byte and commit a truncated file. A length no
-                // larger than the probe is ambiguous, so ask again without a
-                // Range and read only the headers.
-                if (declared != null && declared > PROBE_BYTES) return@use declared
+                // A 200 means the server ignored Range. Its Content-Length is
+                // not safe to trust as the whole track: a caching proxy may
+                // answer the probe with a fixed slice (say 64KiB) and a
+                // matching length, which would become `total` and commit a
+                // truncated file as complete. Measure without a Range instead;
+                // only a response that states the whole length that way is
+                // accepted.
                 measureWhole(url)
             }
         }.onFailure { Log.w(TAG, "could not measure the track: ${it.message}") }.getOrNull()
@@ -327,10 +323,10 @@ object Downloader {
     /**
      * The whole track's length, measured without a Range.
      *
-     * Only used when the one-byte probe came back as a 200 whose length could
-     * be the probe itself rather than the file. The body is never read; the
-     * response is closed after its headers, so this costs a request and not a
-     * second copy of the track.
+     * Used whenever the one-byte probe came back as a 200, because that answer
+     * cannot distinguish the whole file from a fixed cache slice. The body is
+     * never read; the response is closed after its headers, so this costs a
+     * request and not a second copy of the track.
      */
     private fun measureWhole(url: String): Long? = runCatching {
         ProxyPlayback.mediaClientFor(url)
@@ -355,8 +351,6 @@ object Downloader {
                         ?.takeIf { it > 0 }
             }
     }.onFailure { Log.w(TAG, "could not measure the whole track: ${it.message}") }.getOrNull()
-
-    private const val PROBE_BYTES = 1L
 
     private val REFUSAL_CODES = setOf(403, 404, 410)
 }

@@ -72,6 +72,27 @@ internal fun hqReplacementLanded(
 ): Boolean = downloadSucceeded && (applied || atLeastAsGood)
 
 /**
+ * Whether a saved download may answer [target] without its exact verified tier.
+ *
+ * "At least as good" is deliberately narrow. The fallback exists when the same
+ * verified recording was already saved on a higher rung, so its source and
+ * track still have to match the target. An ordinary download at the same badge
+ * does not prove which recording it is, a cache-only copy was never written to
+ * the library, and a file the health check marked [SavedSongMetadata.wrongRecording]
+ * must always be replaced. Anything else has to go back through the pass.
+ */
+internal fun hqSavedCopyAnswersTarget(
+    meta: SavedSongMetadata?,
+    target: HqLibraryTarget,
+): Boolean {
+    if (meta == null || meta.wrongRecording) return false
+    if (meta.hqSourceConfigId != target.sourceConfigId) return false
+    if (meta.hqTrackId != target.trackId) return false
+    val savedTier = DownloadedQuality.tierOf(meta.downloadFormat, meta.hqTier) ?: return false
+    return HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, target.verifiedTier)
+}
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -192,7 +213,9 @@ object HqLibraryUpgrade {
         meta: SavedSongMetadata?,
         verifiedTier: HqTier,
     ): Boolean {
-        val savedTier = meta?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
+        val savedTier = meta
+            ?.takeUnless { it.wrongRecording }
+            ?.let { DownloadedQuality.tierOf(it.downloadFormat, it.hqTier) }
         if (HqLibraryPolicy.hasCopyAtLeastAsGood(savedTier, verifiedTier)) return true
         val cachedTier = if (AudioCache.hasCompleteLosslessCopy(videoId)) {
             HqTier.LOSSLESS_16
@@ -622,10 +645,9 @@ object HqLibraryUpgrade {
                 tier = target.target.verifiedTier,
             ),
         )
-        val atLeastAsGood = hasCopyAtLeastAsGood(
-            videoId,
+        val atLeastAsGood = hqSavedCopyAnswersTarget(
             Downloads.savedMetadataFor(videoId),
-            target.target.verifiedTier,
+            target.target,
         )
         if (!hqReplacementLanded(success, applied, atLeastAsGood)) {
             // The listener's own download took the queue slot before the pass
@@ -650,15 +672,19 @@ object HqLibraryUpgrade {
      * already at the target rung — usually because a user download of the same
      * id won the queue slot. Nothing failed, so no failure is recorded and no
      * retry is spent; the next worker asks for the same target again.
+     *
+     * @return true when [videoId] is still planned and needs another attempt.
      */
+    internal fun releaseActiveKeepingPlan(videoId: String): Boolean = synchronized(lock) {
+        if (activeVideoId != videoId) return@synchronized false
+        activeVideoId = null
+        persistLocked()
+        publishLocked()
+        plan.any { it.target.videoId == videoId }
+    }
+
     private fun retryActive(context: Context, videoId: String) {
-        val stillPlanned = synchronized(lock) {
-            if (activeVideoId != videoId) return@synchronized false
-            activeVideoId = null
-            persistLocked()
-            publishLocked()
-            plan.any { it.target.videoId == videoId }
-        }
+        val stillPlanned = releaseActiveKeepingPlan(videoId)
         if (stillPlanned && runAllowed()) {
             enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
         }

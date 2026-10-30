@@ -1,7 +1,9 @@
 package com.music.bitchord.download
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -38,5 +40,41 @@ class DownloadServiceStartIdTest {
 
         assertNull(ledger.stopIdAfter(drainStartId))
         assertEquals(4, ledger.latest())
+    }
+
+    @Test
+    fun `a stop with no newer start is confirmed before teardown`() {
+        val ledger = StartIdLedger()
+        ledger.record(5)
+
+        assertTrue(ledger.stopConfirmed(5) { id -> id == 5 })
+    }
+
+    @Test
+    fun `a start that arrives after the stop id is chosen cancels the stop`() {
+        val ledger = StartIdLedger()
+        val drainStartId = ledger.record(5)
+        val stopId = ledger.stopIdAfter(drainStartId)
+        assertEquals(5, stopId)
+
+        // This lands in the window between choosing the id and stopping.
+        ledger.record(6)
+        var requestedStop = false
+
+        assertFalse(
+            ledger.stopConfirmed(stopId!!) {
+                requestedStop = true
+                false
+            },
+        )
+        assertFalse(requestedStop)
+    }
+
+    @Test
+    fun `a refused stopSelfResult keeps the service alive`() {
+        val ledger = StartIdLedger()
+        ledger.record(5)
+
+        assertFalse(ledger.stopConfirmed(5) { false })
     }
 }
