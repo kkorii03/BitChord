@@ -336,20 +336,24 @@ private fun videoRadioRows(
  *
  * A seed that is itself a cover is served a station of other covers. When its
  * own shown title carries no marker, the marker filter drops every one of them
- * and AutoPlay finds nothing, so the same song repeats. A cover row keeps its
- * upload title in [Song.originalTitle], so compare the batch against that title
- * as well: ordinary covers by any artist stay, while karaoke/tribute/
- * instrumental uploads the seed itself does not carry are still dropped. For an
- * ordinary seed the filter is unchanged.
+ * and AutoPlay finds nothing, so the same song repeats. Re-filtering by the
+ * upload title in [Song.originalTitle] still dropped ordinary covers whose
+ * upload title is markerless or uses the other cover word ("(Cover)" against
+ * "커버"). The fallback therefore ignores the marker text altogether: ordinary
+ * covers by any artist stay, while karaoke/tribute/instrumental uploads are
+ * still dropped. For an ordinary seed the filter is unchanged.
  */
 internal fun autoplayRowsAfterCoverFilter(rows: List<Song>, seed: Song): List<Song> {
-    val kept = rows.filterNot { TrackMatcher.isCoverArrangement(it, seed) }
-    if (kept.isNotEmpty() || rows.isEmpty()) return kept
     val uploadTitle = seed.originalTitle?.takeIf { it.isNotBlank() }
     val seedIsCover = uploadTitle != null || TrackMatcher.isCoverArrangement(seed)
-    if (!seedIsCover) return kept
-    val markerSeed = if (uploadTitle != null) seed.copy(title = uploadTitle) else seed
-    return rows.filterNot { TrackMatcher.isCoverArrangement(it, markerSeed) }
+    if (seedIsCover) {
+        // A cover seed's station is other covers, and its own shown title may
+        // carry no marker at all. Keep ordinary covers by any artist; drop
+        // only the karaoke/tribute/instrumental arrangements the seed itself
+        // does not carry.
+        return rows.filterNot { TrackMatcher.isKaraokeOrTributeArrangement(it, seed) }
+    }
+    return rows.filterNot { TrackMatcher.isCoverArrangement(it, seed) }
 }
 
 /**

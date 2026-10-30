@@ -45,6 +45,29 @@ class AutoplayCoverSeedTest {
     }
 
     @Test
+    fun `a production cover seed with a markerless upload title keeps English covers`() {
+        // What CoverTitles.applyTo leaves on a queue row: the shown title is
+        // the song, the byline names the original and the singer with 커버,
+        // and originalTitle is the upload's own markerless title.
+        val seed = song(
+            title = "밤편지",
+            artist = "아이유 · 싱어 커버",
+            originalTitle = "밤편지 - 싱어",
+            originalArtist = "싱어",
+        )
+        val rows = listOf(
+            song("밤편지 (Cover)", "다른 이름"),
+            song("밤편지 (커버)", "또 다른 이름"),
+            song("밤편지 (Karaoke Version)", "노래방"),
+        )
+        val kept = autoplayRowsAfterCoverFilter(rows, seed)
+        assertEquals(
+            listOf("밤편지 (Cover)", "밤편지 (커버)"),
+            kept.map { it.title },
+        )
+    }
+
+    @Test
     fun `karaoke and tribute uploads from other names are still dropped`() {
         val seed = song("Wannabe", "Spice Girls")
         val rows = listOf(

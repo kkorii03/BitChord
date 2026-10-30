@@ -4,7 +4,7 @@
 - 기준: 현재 워크스페이스 HEAD `faf6558` (얕은 클론이라 `7d956f21..HEAD` 이력은 없다. 업스트림/포크 구분은 기존 감사 문서와 현재 파일의 주석으로만 판단했다.)
 - 범위: `app/`, `shared/`, `sharedUi/`의 UI 진입점, 설정 플래그, 재생 준비·자동 재생·HQ·가사 경로.
 - 방법: `grep`으로 호출부를 확인하고 해당 함수만 읽었다. 코드 근거 없는 추측은 쓰지 않았다. 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)는 수정하지 않았다.
-- 이번에 고친 것: `Autoplay` 커버 시드 0곡 폴백(2차에서 일반 커버/카라오케 구분 수정), `PlaybackService.onDestroy` 수면 타이머 정리, Replay 장르 차트 탭(2차에서 검색 소스·mood 상태 정리 추가). 나머지는 문서만.
+- 이번에 고친 것: `Autoplay` 커버 시드 0곡 폴백(3차에서 마커 텍스트 대신 배열 표식 기준으로 수정), `PlaybackService.onDestroy` 수면 타이머 정리, Replay 장르 차트 탭(2차에서 검색 소스·mood 상태 정리 추가). 나머지는 문서만.
 
 ---
 
@@ -72,7 +72,7 @@
 | MED | `shared/.../sources/HqVerifyPolicy.kt:63,94` | `cooldownRemaining`·`shouldRetryMissingReference` 호출부가 테스트뿐 | 수동 “고음질로 다시 받기”가 자동 경로의 쿨다운/기억된 거절에 막혀도 우회하지 못한다. 정책은 있는데 연결이 없다. | `HqAudioVerify`/`HqLibraryUpgrade` 수동 경로에 연결하거나 함수를 삭제. HQ 경로라 문서만. |
 | MED | `shared/.../net/HqAutoDownloadPolicy.kt:85` | `shouldStartNow` 호출부 0 | “재생 중·호스트 사용 중·동시 1개” 정책이 자동 HQ 다운로드에 적용되지 않는다. `HqLibraryUpgrade.scheduleIfEnabled`는 예약 시점만 보고, worker 실행 중 재생이 시작되면 막지 않는다 | `HqLibraryUpgrade.runOne`에서 이 정책을 확인하거나 dead 함수를 삭제. 다운로드 경로라 문서만. |
 | MED | `app/.../ui/replay/ReplayScreen.kt:232-243` (수정 전 `onClick = {}`) | 장르 차트 행은 `ReplayChartRow`의 `clickable`을 타는데 콜백이 빈 람다였다 | Replay 장르 행을 눌러도 아무 일이 없다. 다른 세 차트(곡·아티스트·앨범)는 이동/재생한다 | **고침**: `onOpenGenre`를 추가해 검색 탭에서 장르명을 검색한다. |
-| MED | `app/.../playback/Autoplay.kt:343-354` (수정 전 `:355,389,457`) | 커버 시드의 제목에 마커가 없으면 `isCoverArrangement`가 방송국의 커버 행을 전부 제거해 배치가 0이 된다 | 커버 곡을 시드로 AutoPlay를 켜면 새 곡을 못 채우고 같은 곡이 반복된다. 사용자가 지적한 “커버 곡에서 0곡” 경로 | **고침**: 필터가 배치를 전부 비우고 시드가 커버면, 시드와 같은 아티스트의 행은 남긴다. 카라오케/트리뷰트(다른 이름)는 계속 제거. |
+| MED | `app/.../playback/Autoplay.kt:343-354` (수정 전 `:355,389,457`) | 커버 시드의 제목에 마커가 없으면 `isCoverArrangement`가 방송국의 커버 행을 전부 제거해 배치가 0이 된다 | 커버 곡을 시드로 AutoPlay를 켜면 새 곡을 못 채우고 같은 곡이 반복된다. 사용자가 지적한 “커버 곡에서 0곡” 경로 | **고침**: 필터가 배치를 전부 비우고 시드가 커버면, 카라오케/트리뷰트/인스트루멘탈 표식이 없는 행을 아티스트와 무관하게 남긴다. 일반 커버는 유지하고 이형 배열은 계속 제거. |
 | MED | `app/.../playback/PlaybackService.kt:9955` (수정 전 없음) | `SleepTimer`는 프로세스 전역 객체인데 `onDestroy`가 취소하지 않았다 | 수면 타이머를 켠 채 서비스를 스와이프하면 같은 프로세스의 다음 재생이 옛 deadline에 일시정지될 수 있다 | **고침**: `onDestroy`에서 `SleepTimer.cancel()`. |
 | LOW | `shared/.../playback/HandoffQueuePolicy.kt:58` | `tailAfterIncoming` 호출부가 테스트뿐. `CrossfadeController.reconcileQueue`가 같은 계산을 직접 한다(`:1985-2000`) | 같은 규칙의 두 구현이 있다. 지금은 Crossfade 쪽만 돈다 | 한쪽으로 통합. 크로스페이드 경로라 문서만. |
 | LOW | `shared/.../videoradio/VideoRadioPolicy.kt:457` | `videoRadioFallbackStage` 호출부 0. `Autoplay`가 분기를 직접 구현 | 폴백 단계 규칙이 테스트에만 있고 실제 경로는 다른 코드 | 정책을 실제 분기에 사용하거나 삭제. |
@@ -92,7 +92,7 @@
 | 다운로드 가사 재검증 | `syncSafetyDownloadRecheck` (`LyricsTiming.kt:1952-1956`) | **기본값 off** | 없음(null 반환) |
 | HQ offset/rate 재적용 | `syncSafetyHqSync` + `StreamChoice.isSubstitute` (`LyricsTiming.kt:385-392`) | **기본값 off**; 로컬 파일 재생에는 `StreamChoice`가 없음 | 없음(null 반환) |
 | 자동 HQ 다운로드 | `autoReplaceHqDownloads || autoPrefetchHq`, 포그라운드, `!PlaybackActivity.active` (`HqLibraryUpgrade.kt:244-260`) | 백그라운드, 재생 중, 예약 디바운스 15초 | 일부 로그 있음(예약 거절은 무로그) |
-| AutoPlay 커버 필터 | `isCoverArrangement(candidate, seed)` (`Autoplay.kt`) | 시드가 커버인데 제목에 마커가 없으면 전부 제거 → 0곡 | 제거 개수는 로그, “왜 0인지”는 없음 → **이번에 폴백 추가** |
+| AutoPlay 커버 필터 | `isCoverArrangement(candidate, seed)` (`Autoplay.kt`) | 시드가 커버인데 제목에 마커가 없으면 전부 제거 → 0곡. 폴백은 `isKaraokeOrTributeArrangement`로 일반 커버를 구제 | 제거 개수는 로그, “왜 0인지”는 없음 → **이번에 폴백을 마커 무관 조건으로 수정** |
 | 노래 버전 조회(서비스) | `preferMusicOnly` (`SongVersionController.kt:81,116`) | 기본값 off | `music only off` 사유 로그 있음(`:424`) |
 | Replay 장르 차트 | `summary.genres`가 비어 있지 않음 (`ReplayScreen.kt:232`) | 장르 데이터 없으면 차트 자체가 안 보임 | 해당 없음 → **탭 콜백 연결** |
 
@@ -118,36 +118,42 @@
 
 ---
 
-## 5. 이번 수정의 조건 진리표 (AutoPlay 커버 폴백)
+## 5. 이번 수정의 조건 진리표 (AutoPlay 커버 폴백, 3차)
 
-기존 항은 그대로 두고 폴백만 고쳤다. 시드가 커버이고 필터 결과가 비었을 때, 시드의 업로드 제목(`originalTitle`)을 기준 텍스트에 포함해 다시 거른다. 1차의 `sharesArtist` 예외는 없앴다.
+기존 항은 그대로 두고 커버 시드 분기만 고쳤다. 2차의 `seed.originalTitle` 기준 재필터는 업로드 제목 자체에 마커가 없거나 다른 표기("(Cover)" vs "커버")면 일반 커버를 다시 버렸고, 게다가 폴백이 원래 필터 결과가 빈 경우에만 돌아 한국어 커버 행 하나가 살아남으면 영어 `(Cover)` 행은 계속 버려졌다. 3차는 시드가 커버이면 처음부터 마커 텍스트 대신 배열 표식으로 거른다.
 
 기존 폴백(1차): `!isCoverArrangement(candidate) || sharesArtist(candidate.artist, seed.artist)`
 
-새 폴백(2차): `!isCoverArrangement(candidate, markerSeed)`, `markerSeed = seed.copy(title = seed.originalTitle ?: seed.title)`
+2차 폴백(배치가 빈 경우만): `!isCoverArrangement(candidate, markerSeed)`, `markerSeed = seed.copy(title = seed.originalTitle ?: seed.title)`
 
-| 시드가 커버인가 | 배치 | 1차 결과 | 2차 결과 |
-|---|---|---|---|
-| 아니오 | 비커버 행 있음 | 비커버 행 | 같음 |
-| 아니오 | 전부 커버 | 빈 목록 | 빈 목록(안전 규칙 유지) |
-| 예 | 비커버 행 있음 | 비커버 행 | 같음 |
-| 예 | 다른 아티스트의 일반 커버만 | 빈 목록(0곡) | 일반 커버 유지 |
-| 예 | 같은 아티스트 일반 커버만 | 같은 아티스트 커버 | 일반 커버 유지(같은 결과) |
-| 예 | 같은 아티스트 카라오케/트리뷰트 | 유지(누수) | 제거 |
-| 예 | 카라오케/트리뷰트만 | 빈 목록 | 빈 목록(안전 규칙 유지) |
+새 규칙(3차): 시드가 커버(`originalTitle != null` 또는 `isCoverArrangement(seed)`)이면 `!isKaraokeOrTributeArrangement(candidate, seed)` — 후보 제목·아티스트·앨범에 시드가 갖지 않은 `KARAOKE_TRIBUTE_MARKERS`가 하나도 없으면 유지. 일반 커버 표식(`cover`, `covers`, `커버`)은 이 목록에 없다. 일반 시드는 기존 `!isCoverArrangement(candidate, seed)` 그대로다.
 
-핵심: 일반 커버는 아티스트와 무관하게 남고, 카라오케/트리뷰트/인스트루멘탈은 시드가 그 표식을 스스로 갖지 않는 한 아티스트와 무관하게 제거된다.
+| 시드가 커버인가 | 배치 | 1차 결과 | 2차 결과 | 3차 결과 |
+|---|---|---|---|---|
+| 아니오 | 비커버 행 있음 | 비커버 행 | 같음 | 같음 |
+| 아니오 | 전부 커버 | 빈 목록 | 빈 목록(안전 규칙 유지) | 빈 목록(일반 시드 규칙 유지) |
+| 예 | 비커버 행 있음 | 비커버 행 | 같음 | 비커버 행 + 일반 커버(하드 배열 제외) |
+| 예 | 다른 아티스트의 일반 커버만 | 빈 목록(0곡) | 업로드 제목에 마커가 있을 때만 유지 | 일반 커버 유지 |
+| 예 | 같은 아티스트 일반 커버만 | 같은 아티스트 커버 | 업로드 제목에 마커가 있을 때만 유지 | 일반 커버 유지 |
+| 예 | 업로드 제목이 무표식/다른 표기인 일반 커버 | 빈 목록(0곡) | 빈 목록(0곡) | 일반 커버 유지 |
+| 예 | 한국어 `커버` 행 + 영어 `(Cover)` 행 | 영어 행 제거 | 한국어 행만 유지 | 둘 다 유지 |
+| 예 | 같은 아티스트 카라오케/트리뷰트 | 유지(누수) | 제거 | 제거 |
+| 예 | 카라오케/트리뷰트만 | 빈 목록 | 빈 목록 | 빈 목록(안전 규칙 유지) |
+
+핵심: 일반 커버는 마커 표기와 아티스트에 무관하게 남고, 카라오케/트리뷰트/인스트루멘탈은 시드가 같은 표식을 갖지 않는 한 아티스트와 무관하게 제거된다. 일반 시드(비커버)의 동작은 바뀌지 않는다.
 
 ---
 
 ## 6. 이번에 바꾼 파일과 테스트
 
-- `app/src/main/java/com/music/bitchord/playback/Autoplay.kt` — 커버 시드 0곡 폴백 `autoplayRowsAfterCoverFilter`를 업로드 제목 기준으로 다시 거르게 수정. 방송국/세션 라디오/최종 게이트에 적용.
+- `app/src/main/java/com/music/bitchord/playback/Autoplay.kt` — 커버 시드 0곡 폴백 `autoplayRowsAfterCoverFilter`를 마커 텍스트가 아닌 `isKaraokeOrTributeArrangement` 기준으로 수정. 방송국/세션 라디오/최종 게이트에 적용.
+- `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt` — `COVER_MARKERS`를 `KARAOKE_TRIBUTE_MARKERS` + 일반 커버 표식으로 분리하고 `isKaraokeOrTributeArrangement`를 추가(기존 `isCoverArrangement` 판정은 동일).
 - `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt` — `onDestroy`에서 `SleepTimer.cancel()`.
 - `app/src/main/java/com/music/bitchord/ui/replay/ReplayScreen.kt` — `onOpenGenre` 콜백, 장르 차트 탭 연결.
 - `app/src/main/java/com/music/bitchord/MainActivity.kt` — 장르 탭을 검색 탭 + `searchFor(genre)`로 연결. 2차에서 `closeMoodGenre()`, `onQueryChange("")`, `setSearchSource(YOUTUBE)`를 `searchFor` 앞에 추가.
 - `app/src/test/java/com/music/bitchord/AutoplayCoverSeedTest.kt` — 새 테스트 4건:
   - `a cover seed keeps ordinary covers by any artist`
+  - `a production cover seed with a markerless upload title keeps English covers`
   - `karaoke and tribute uploads from other names are still dropped`
   - `a cover seed drops karaoke and tribute even from its own artist`
   - `a cover seed with only karaoke rows still yields nothing`
@@ -171,12 +177,24 @@
 
 ## 8. 2차 검증 지적 처리 (r2)
 
+> 3차에서 `markerSeed` 조건은 폐기됐다. 아래 r2 항목 중 “일반 커버는 아티스트와 무관하게 남는다”는 서술은 3차 코드에서만 참이다. 최종 조건은 5절과 9절을 따른다.
+
 | 지적 | 처리 | 근거 |
 |---|---|---|
-| HIGH — `Autoplay.kt:349` 폴백에서 `!isCoverArrangement(it)` 분기가 도달 불가라 다른 아티스트의 일반 커버가 계속 버려져 커버 시드 방송국이 0곡이 된다 | **고침** | 폴백을 `seed.originalTitle`을 포함한 `markerSeed` 기준 `isCoverArrangement(it, markerSeed)`로 다시 거른다. 일반 커버는 아티스트와 무관하게 남는다. `Autoplay.kt` `autoplayRowsAfterCoverFilter`, 테스트 `a cover seed keeps ordinary covers by any artist`. |
+| HIGH — `Autoplay.kt:349` 폴백에서 `!isCoverArrangement(it)` 분기가 도달 불가라 다른 아티스트의 일반 커버가 계속 버려져 커버 시드 방송국이 0곡이 된다 | **고침** | 폴백을 `seed.originalTitle`을 포함한 `markerSeed` 기준 `isCoverArrangement(it, markerSeed)`로 다시 걸렀다(2차). 3차에서 `markerSeed`를 폐기하고 `isKaraokeOrTributeArrangement`로 바꿔 일반 커버가 실제로 아티스트와 무관하게 남는다 — 5·9절. 테스트 `a cover seed keeps ordinary covers by any artist`. |
 | MED — `Autoplay.kt:349` `|| sharesArtist(...)` 예외가 시드 아티스트 명의의 카라오케/트리뷰트까지 남겨 기존 가드를 무력화한다 | **고침** | `sharesArtist` 예외를 제거했다. 카라오케/트리뷰트 표식은 시드가 그 표식을 갖지 않는 한 아티스트와 무관하게 제거된다. 테스트 `a cover seed drops karaoke and tribute even from its own artist`. |
 | MED — `MainActivity.kt:3304-3307` 장르 콜백이 일반 탭 전환을 건너뛰어 LIBRARY/ADDONS 소스에서는 YouTube 검색이 돌지만 화면은 로컬/애드온 결과가 남고, `selectedMoodGenre`가 남아 제목/뒤로가기 상태가 틀어진다 | **고침** | `navigator.clear()` 뒤 `viewModel.closeMoodGenre()`, `selectedTab = TAB_SEARCH`, `viewModel.onQueryChange("")`, `viewModel.setSearchSource(SearchSource.YOUTUBE)`를 `viewModel.searchFor(genre)` 앞에 둔다. 빈 쿼리로 소스를 바꿔 `setSearchSource`가 옛 검색을 한 번 더 돌리지 않게 했다. |
 
 이번 라운드에서 삭제한 코드는 없다.
 
 남은 HIGH/MED 중 재생 핵심 경로(곡 해석·노래 버전·가사 싱크 계산·크로스페이드)에 속하는 항목은 **실 검증 필요**: SyncSafety 3스위치 기본 off, `preferMusicOnly` 기본 off, NextPrep `rowId` 캐시·`bestTier` 메인 조회, `DownloadedSyncCheck` 완료 기록, `lyricsForPrep` override, HQ offset/rate, `ChunkedDataSource` 실패 전송 성공 기록. 코드/줄 근거는 1·2·7절과 이전 감사 문서에 있다.
+
+---
+
+## 9. 3차 검증 지적 처리 (r3)
+
+| 지적 | 처리 | 근거 |
+|---|---|---|
+| HIGH — `Autoplay.kt:348-352` `markerSeed`가 `originalTitle`의 마커 단어를 기준으로 다시 걸러, 업로드 제목이 무표식이거나 `(Cover)`/`커버` 표기가 다르면 일반 커버가 여전히 전부 버려진다 | **고침** | 시드가 커버이면 `isKaraokeOrTributeArrangement` 기준으로 마커 텍스트 대신 배열 표식만 본다. 폴백이 배치가 빈 경우에만 돌던 조건도 없애 한국어 `커버` 행이 하나 남아도 영어 `(Cover)` 행을 유지한다. 일반 커버는 아티스트와 무관하게 남고 카라오케/트리뷰트/인스트루멘탈은 제거된다. `TrackMatcher.kt`에 `isKaraokeOrTributeArrangement` 추가, `Autoplay.kt autoplayRowsAfterCoverFilter`에 적용. |
+| MED — `AutoplayCoverSeedTest.kt:31-45` 테스트가 실제 커버 행 모양(바이라인 `원곡자 · 싱어 커버`, 무표식 업로드 제목)이 아니다 | **고침** | `a production cover seed with a markerless upload title keeps English covers` 추가: `artist = "아이유 · 싱어 커버"`, `originalTitle = "밤편지 - 싱어"`, 행은 `(Cover)`/`(커버)`/`(Karaoke Version)`. |
+| MED — `docs/review-1031/review-dead.md:134-139`(및 `:75`, `:176`) 진리표·요약이 "일반 커버는 아티스트와 무관하게 유지"라고 하지만 2차 코드는 `seed.originalTitle`의 마커 일치를 요구해 근거가 없었다 | **고침** | 5절 진리표를 1·2·3차 결과로 다시 쓰고, 2절·8절 문구를 실제 3차 조건(`isKaraokeOrTributeArrangement`)으로 고쳤다. |

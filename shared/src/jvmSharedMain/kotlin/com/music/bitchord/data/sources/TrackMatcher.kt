@@ -477,15 +477,32 @@ object TrackMatcher {
      * artists, and guessing would discard legitimate suggestions.
      */
     fun isCoverArrangement(candidate: Song, seed: Song? = null): Boolean {
-        val got = (candidate.title + " " + candidate.artist + " " + candidate.albumName.orEmpty())
-            .lowercase(Locale.ROOT)
-        val wanted = seed?.let {
-            (it.title + " " + it.artist + " " + it.albumName.orEmpty()).lowercase(Locale.ROOT)
-        }.orEmpty()
+        val got = arrangementText(candidate)
+        val wanted = seed?.let { arrangementText(it) }.orEmpty()
         return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
     }
 
-    private val COVER_MARKERS = listOf(
+    /**
+     * Whether [candidate] is a karaoke, tribute, instrumental or other
+     * non-performance arrangement rather than an ordinary cover.
+     *
+     * AutoPlay's cover-seed fallback is the caller: a seed that is itself a
+     * cover gets a station of ordinary covers, and those are kept by any
+     * artist, while the karaoke/tribute/instrumental uploads stay out. The
+     * plain "cover"/"커버" markers are deliberately not part of this list —
+     * an ordinary cover is exactly what the fallback is meant to rescue.
+     */
+    fun isKaraokeOrTributeArrangement(candidate: Song, seed: Song? = null): Boolean {
+        val got = arrangementText(candidate)
+        val wanted = seed?.let { arrangementText(it) }.orEmpty()
+        return KARAOKE_TRIBUTE_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
+    }
+
+    private fun arrangementText(song: Song): String =
+        (song.title + " " + song.artist + " " + song.albumName.orEmpty())
+            .lowercase(Locale.ROOT)
+
+    private val KARAOKE_TRIBUTE_MARKERS = listOf(
         Regex("""originally performed"""),
         Regex("""in the style of"""),
         Regex("""made famous"""),
@@ -497,8 +514,6 @@ object TrackMatcher {
         Regex("""\bparty tyme\b"""),
         Regex("""\bkaraoke\b"""),
         Regex("""\btribute\b"""),
-        Regex("""\bcover\b"""),
-        Regex("""\bcovers\b"""),
         Regex("""\binstrumental\b"""),
         Regex("""\bbacking (track|band|vocals?)\b"""),
         Regex("""\b(piano|guitar)\s+(version|cover|instrumental|arrangement)\b"""),
@@ -510,9 +525,15 @@ object TrackMatcher {
         Regex("""\bemulat(ion|ed|or)\b"""),
         Regex("""\b(video )?game (version|music|cover)\b"""),
         Regex("""\barcade player\b"""),
-        Regex("""커버"""),
         Regex("""반주"""),
         Regex("""노래방"""),
+    )
+
+    /** The ordinary-cover markers, kept apart so an arrangement can be excluded. */
+    private val COVER_MARKERS = KARAOKE_TRIBUTE_MARKERS + listOf(
+        Regex("""\bcover\b"""),
+        Regex("""\bcovers\b"""),
+        Regex("""커버"""),
     )
 
     /**
