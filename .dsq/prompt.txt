@@ -1,0 +1,5 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 현재 브랜치 = task/fix-1030(통합판).
+할 일: 아래 브랜치를 순서대로 하나씩 합친다. 각 브랜치마다 'git fetch origin <브랜치>' → 'git merge --no-ff --no-edit FETCH_HEAD -m "merge <브랜치>"'. 충돌이 나면 충돌 파일마다 양쪽 변경 의도를 모두 살려 해결(양쪽 커밋 메시지·diff 를 읽을 것, 한쪽을 통째로 버리지 말 것), .github/ 와 .dsq/ 는 항상 현재 브랜치(HEAD) 것으로 되돌린 뒤 'git add -A && git commit --no-edit'. 한 브랜치를 끝내고 다음으로.
+브랜치(순서): cloud/fix-small-perf-1031-r2 cloud/deep-search-1031-r2 cloud/deep-artist-album-1031-r2 cloud/deep-backup-1031-r3 cloud/deep-lyrics-1031-r3 cloud/deep-network-1031-r3 cloud/review-settings-1031-r4b cloud/deep-downloads-1031-r3 cloud/deep-sync-1031-r3b
+모두 합친 뒤 ':app:compileProdReleaseKotlin -Pbitchord.arm64Only=true' 와 각 브랜치가 추가한 테스트를 돌려 통과시킬 것(실패하면 합치기 과정의 실수를 고침, 테스트를 지우지 말 것). 새 기능·리팩터링 금지.
+마지막에 10줄 이내로 요약: 브랜치별 충돌 파일과 해결 방식 / 컴파일·테스트 결과 / 합치지 못한 브랜치와 이유.
