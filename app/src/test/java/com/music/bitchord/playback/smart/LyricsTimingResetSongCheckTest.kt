@@ -11,7 +11,13 @@ import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,6 +35,9 @@ class LyricsTimingResetSongCheckTest {
     private lateinit var directory: File
     private lateinit var context: Context
     private val storeField = LyricsTiming::class.java.getDeclaredField("store").apply {
+        isAccessible = true
+    }
+    private val gateField = LyricsTiming::class.java.getDeclaredField("songSyncGate").apply {
         isAccessible = true
     }
     private val lines = listOf(
@@ -155,5 +164,40 @@ class LyricsTimingResetSongCheckTest {
                 LyricsTiming.Timing(base = null, manualMs = 0L),
             ),
         )
+    }
+
+    @Test
+    fun `a reset waits for an in-flight song check before clearing`() = runBlocking {
+        writeCheckedEntry("video")
+        val gate = gateField.get(LyricsTiming) as Mutex
+        val held = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val holder = launch {
+            gate.withLock {
+                held.complete(Unit)
+                release.await()
+            }
+        }
+        held.await()
+
+        val reset = async { LyricsTiming.resetSongCheck(context, "video") }
+        delay(200)
+        // Before the gate was shared with recheckDownloaded this returned at
+        // once, so an in-flight check could write the old answer afterwards.
+        assertFalse(reset.isCompleted)
+
+        release.complete(Unit)
+        reset.await()
+        holder.join()
+
+        val recheck = LyricsTiming.syncDiagnostics(
+            context = context,
+            videoId = "video",
+            lines = lines,
+            audioSource = null,
+            downloaded = true,
+            providerUnknown = false,
+        ).second
+        assertEquals(DownloadedSyncCheck.Recheck.UNVERIFIED.token, recheck)
     }
 }

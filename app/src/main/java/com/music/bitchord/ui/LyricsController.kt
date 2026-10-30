@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LocalTimingPolicy
 import com.music.bitchord.playback.NextPrepCache
 import com.music.bitchord.playback.StreamChoice
@@ -28,8 +29,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Loading, provider selection and timing for the lyrics of the playing track.
@@ -51,9 +54,6 @@ class LyricsController(
 
     /** Measurements of one video while its lyrics are showing, at most — see [startTiming]. */
     private val MAX_MEASURE_ATTEMPTS = 10
-
-    /** How often to look whether more of a video has arrived to measure on. */
-    private val REMEASURE_CHECK_MS = 8_000L
 
     /** How long to keep looking — longer than any video worth measuring takes to arrive. */
     private val MEASURE_WINDOW_MS = 15 * 60_000L
@@ -272,7 +272,8 @@ class LyricsController(
             } else {
                 LyricsTiming.audioSourceKey(videoId, localUri != null)
             }
-            NextPrepCache.get(videoId, preparedAudioSource, isVideo)?.let { prepared ->
+            val preparedSubstituted = !isVideo && StreamChoice.isSubstitute(videoId)
+            NextPrepCache.get(videoId, preparedAudioSource, isVideo, preparedSubstituted)?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -667,7 +668,16 @@ class LyricsController(
             manualAvailable = timed,
             videoOwn = videoOwn,
         )
-        if (!timed || request == null || lines == null) return
+        val hasRequest = request != null
+        if (!timed || !hasRequest || lines == null) {
+            TrackLog.d(
+                "BitChord",
+                "lyrics-timing: no timing pass timed=$timed request=$hasRequest " +
+                    "lines=${lines != null}",
+                request?.videoId,
+            )
+            return
+        }
         val generation = lyricsGeneration
         val context = app
         lyricsTimingJob = scope.launch {
@@ -801,17 +811,30 @@ class LyricsController(
                 )
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
-                while (attempts < MAX_MEASURE_ATTEMPTS && System.currentTimeMillis() < giveUpAt &&
-                    !LyricsTiming.measured(context, request.videoId)
-                ) {
-                    if (LyricsTiming.worthMeasuring(context, request.videoId)) {
-                        attempts++
-                        LyricsTiming.measure(context, video, names, request.durationMs)
-                        refreshTiming(generation, lines)
-                        autoAiIfNeeded(generation, lines)
-                        if (LyricsTiming.measured(context, request.videoId)) break
+                suspend fun measureOnce(): Boolean {
+                    if (attempts >= MAX_MEASURE_ATTEMPTS ||
+                        System.currentTimeMillis() >= giveUpAt
+                    ) return false
+                    if (LyricsTiming.measured(context, request.videoId)) return false
+                    if (!LyricsTiming.worthMeasuring(context, request.videoId)) return true
+                    attempts++
+                    LyricsTiming.measure(context, video, names, request.durationMs)
+                    refreshTiming(generation, lines)
+                    autoAiIfNeeded(generation, lines)
+                    return !LyricsTiming.measured(context, request.videoId)
+                }
+                if (measureOnce()) {
+                    // Event-driven: a stream open is the point where more of the
+                    // video's opening reaches disk. Wake on that, never on a
+                    // timer; a new track cancels this job.
+                    while (true) {
+                        val remaining = giveUpAt - System.currentTimeMillis()
+                        if (remaining <= 0L) break
+                        withTimeoutOrNull(remaining) {
+                            AudioCache.served.first { it == request.videoId }
+                        } ?: break
+                        if (!measureOnce()) break
                     }
-                    delay(REMEASURE_CHECK_MS)
                 }
                 if (!calibration && !LyricsTiming.measuredTiming(context, request.videoId)) {
                     aiAhead(context, request.videoId, lines)
@@ -829,7 +852,15 @@ class LyricsController(
             // [cancelAi] false is the AI button taking its answer back: the
             // listener asked for it to go, so the automatic check must not
             // buy it again on the way out.
-            if (!adjustable || videoOwn || !cancelAi || substituted) return@launch
+            if (!adjustable || videoOwn || !cancelAi || substituted) {
+                TrackLog.d(
+                    "BitChord",
+                    "lyrics-timing: song check skipped adjustable=$adjustable videoOwn=$videoOwn " +
+                        "cancelAi=$cancelAi substituted=$substituted",
+                    request.videoId,
+                )
+                return@launch
+            }
             val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
             if (!LyricsAiGuard.songTimingWanted(
                     isVideo = request.isVideo,

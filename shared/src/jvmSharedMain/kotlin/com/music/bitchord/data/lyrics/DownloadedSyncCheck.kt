@@ -109,14 +109,22 @@ object DownloadedSyncCheck {
         ownMatchPercent: Int?,
         freshMatchPercent: Int?,
         freshKey: Int,
+        /**
+         * Whether the file's own answer was actually applied. A match percent
+         * is reported even for a refusal (`refused-match`/`refused-shift`),
+         * where no fitted sync was produced: that is not a verification, so it
+         * must not count as an answer or be stored.
+         */
+        ownApplied: Boolean = true,
     ): Replacement {
         // A check that heard nothing (no audio, a refusal, no fit) has not
         // verified the file with these rules. Recording the version would make
         // the next play answer NONE and keep an old wrong sync for ever.
-        val answered = ownMatchPercent != null || freshMatchPercent != null
+        val ownMatch = ownMatchPercent.takeIf { ownApplied }
+        val answered = ownMatch != null || freshMatchPercent != null
         val freshWins = freshMatchPercent != null &&
-            freshMatchPercent > (ownMatchPercent ?: 0)
-        val bestMatch = if (freshWins) freshMatchPercent else ownMatchPercent
+            freshMatchPercent > (ownMatch ?: 0)
+        val bestMatch = if (freshWins) freshMatchPercent else ownMatch
         if (!shouldReplace(storedVersion, existingMatchPercent, bestMatch)) {
             return Replacement(replace = false, winner = null, key = null, recordVersion = answered)
         }

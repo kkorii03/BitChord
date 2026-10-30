@@ -57,4 +57,17 @@ object LocalTimingPolicy {
         recheckOverride: Boolean,
         sourceTimedToVideo: Boolean,
     ): Boolean = timed && (!fromFile || isVideo || (recheckOverride && !sourceTimedToVideo))
+
+    /**
+     * Whether a stored measurement or AI answer may be applied or recorded for
+     * what is playing. A substitute stream is a different recording under the
+     * same video id, so its clock is not the YouTube upload's: neither apply
+     * an answer made for the upload nor spend an engine on the substitute.
+     * A video's own upload is never treated as substituted here.
+     */
+    fun streamTimingAllowed(
+        timeable: Boolean,
+        isVideo: Boolean,
+        substituted: Boolean,
+    ): Boolean = timeable && !(substituted && !isVideo)
 }

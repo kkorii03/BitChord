@@ -296,6 +296,7 @@ internal class NextTrackPreparation(
                     } else {
                         LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
                     },
+                    substituted = !query.isVideo && StreamChoice.isSubstitute(song.videoId),
                 ),
             )
         }
@@ -560,6 +561,13 @@ internal object NextPrepCache {
         val fromFile: Boolean,
         /** The file/stream clock these lines were timed for; null for a video's own upload. */
         val audioSource: String?,
+        /**
+         * Whether the sound was a substitute stream when these lines were
+         * timed. A substitute has a different clock from the YouTube upload a
+         * stored measurement or AI answer was made against, so its cache entry
+         * must not be served after the choice changes.
+         */
+        val substituted: Boolean,
     )
 
     @Volatile
@@ -569,9 +577,15 @@ internal object NextPrepCache {
         ready = value
     }
 
-    fun get(videoId: String, audioSource: String?, isVideo: Boolean): Ready? =
+    fun get(
+        videoId: String,
+        audioSource: String?,
+        isVideo: Boolean,
+        substituted: Boolean,
+    ): Ready? =
         ready?.takeIf {
-            it.videoId == videoId && it.audioSource == audioSource && it.isVideo == isVideo
+            it.videoId == videoId && it.audioSource == audioSource &&
+                it.isVideo == isVideo && it.substituted == substituted
         }
 
     fun clear() {

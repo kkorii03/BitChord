@@ -100,4 +100,37 @@ class LocalTimingPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `a substitute stream never applies or records an upload clock`() {
+        assertFalse(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = true,
+                isVideo = false,
+                substituted = true,
+            ),
+        )
+        // A video's own upload is not a substitute file, and a normal stream is unchanged.
+        assertTrue(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = true,
+                isVideo = true,
+                substituted = true,
+            ),
+        )
+        assertTrue(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = true,
+                isVideo = false,
+                substituted = false,
+            ),
+        )
+        assertFalse(
+            LocalTimingPolicy.streamTimingAllowed(
+                timeable = false,
+                isVideo = false,
+                substituted = false,
+            ),
+        )
+    }
 }

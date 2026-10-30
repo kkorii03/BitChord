@@ -10184,7 +10184,12 @@ class PlaybackService : MediaLibraryService() {
                 .audioSourceKey(currentSong.videoId, currentSong.localUri != null)
         }
         val prepared = if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
-            NextPrepCache.get(currentSong.videoId, preparedAudioSource, coverQuery.isVideo)
+            NextPrepCache.get(
+                currentSong.videoId,
+                preparedAudioSource,
+                coverQuery.isVideo,
+                !coverQuery.isVideo && StreamChoice.isSubstitute(currentSong.videoId),
+            )
         } else {
             null
         }
@@ -10262,16 +10267,30 @@ class PlaybackService : MediaLibraryService() {
             // and car subtitle get the same correction as the lyrics screen.
             val sourceTimedToVideo = com.music.bitchord.playback.smart.LyricsTiming
                 .timedToVideo(foundSource)
+            // A substituted stream is a different recording under the same
+            // video id, so an upload's measurement/AI answer must not move its
+            // lyrics or be recorded against it. Same guard as the lyrics screen.
+            val substituted = !coverQuery.isVideo &&
+                StreamChoice.isSubstitute(currentSong.videoId)
             val timeable = com.music.bitchord.playback.LocalTimingPolicy
-                .downloadedTimingTimeable(
-                    timed = timed,
-                    fromFile = fromFile,
+                .streamTimingAllowed(
+                    com.music.bitchord.playback.LocalTimingPolicy.downloadedTimingTimeable(
+                        timed = timed,
+                        fromFile = fromFile,
+                        isVideo = coverQuery.isVideo,
+                        recheckOverride = recheckOverride,
+                        sourceTimedToVideo = sourceTimedToVideo,
+                    ),
                     isVideo = coverQuery.isVideo,
-                    recheckOverride = recheckOverride,
-                    sourceTimedToVideo = sourceTimedToVideo,
+                    substituted = substituted,
                 )
-            val recordTimed = timeable && (!fromFile || foundSource != null) &&
-                !sourceTimedToVideo
+            val recordTimed = com.music.bitchord.playback.LocalTimingPolicy
+                .streamTimingAllowed(
+                    timeable && (!fromFile || foundSource != null) &&
+                        !sourceTimedToVideo,
+                    isVideo = coverQuery.isVideo,
+                    substituted = substituted,
+                )
             suspend fun publish() {
                 val shown = if (timed && raw != null) {
                     com.music.bitchord.playback.smart.LyricsTiming

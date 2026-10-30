@@ -133,3 +133,27 @@
 - `shared/src/jvmTest/kotlin/com/music/bitchord/playback/LocalTimingPolicyTest.kt`
 - `shared/src/jvmTest/kotlin/com/music/bitchord/playback/NextPrepPolicyTest.kt`
 - `docs/review-1031/lyrics-sync.md`
+
+## 10. 2차 수정 (1031 r2) — 지적 6건 재검
+
+이번 라운드는 5절에 남겨 둔 항목과 새로 지적된 6건을 코드로 확인하고, HIGH 2건과 MEDIUM 4건을 모두 고쳤다.
+
+| 심각도 | 파일:줄 | 증거 | 사용자 영향 | 얼마나 흔한가 | 수정 |
+|---|---|---|---|---|---|
+| HIGH | `shared/.../DownloadedSyncCheck.kt:118-125`, `app/.../smart/LyricsTiming.kt:2122` | `runSongCheck`는 `refused-match`/`refused-shift`에서도 `match`를 채우지만 `fitted == null`이다. `decide`가 이를 답으로 세어 `recordVersion=true`를 돌려주고, 실제 싱크는 저장되지 않은 채 `syncCheckVersion`만 기록됐다(`resetSongCheck` 뒤 영구 미검사). | 거절된 검사 한 번으로 다운로드 곡이 다시는 검사되지 않고 옛 싱크가 남는다. | 느린/끊긴 망, 일시적 5xx, 임계값 근처 곡. | `decide(ownApplied=...)`를 추가해 `own.fitted != null`일 때만 답으로 센다. 회귀: `DownloadedSyncCheckDecideTest`의 `aRefusedOwnMatch...` 2건. |
+| HIGH | `app/.../PlaybackService.kt:10273-10295` | 잠금화면/알림/차량 경로가 화면과 달리 `StreamChoice.isSubstitute`를 보지 않아 대체 스트림에 YouTube 클럭 측정/AI 답을 적용·기록했다. | HQ 대체 곡의 가사가 화면과 잠금화면에서 다르게, 초 단위로 밀린다. | HQ/대체 스트림이 켜진 곡. 성적표 무손실 4%와 연결. | `LocalTimingPolicy.streamTimingAllowed(timeable, isVideo, substituted)`를 추가하고 `timeable`/`recordTimed` 양쪽에 AND. 회귀: `LocalTimingPolicyTest`의 `a substitute stream never...`. |
+| MEDIUM | `app/.../NextTrackPreparation.kt:299,580-589` | `NextPrepCache` 키가 videoId/audioSource/isVideo만 봐서 대체 스트림 선택 전에 준비한 옛 클럭 캐시가 대체 스트림 첫 프레임에 적용될 수 있었다. | 다음 곡이 대체 스트림으로 시작할 때 첫 프레임 가사가 어긋난다. | 첫 프레임 캐시가 켜지고 substitute가 늦게 확정되는 곡. | `Ready.substituted`를 키에 추가하고 화면/서비스 조회에도 같은 값을 넘긴다. 회귀: `NextPrepCacheKeyTest`의 substitute 2건. |
+| MEDIUM | `app/.../smart/LyricsTiming.kt:1902` | `resetSongCheck`가 `songSyncGate`를 잡지 않아 진행 중인 `recheckDownloaded`가 리셋 뒤에 옛 파일의 override/답을 쓸 수 있었다. | 파일 교체 직후 옛 녹음 기준 싱크가 다시 저장된다. | 다운로드 교체/재시도와 재검사가 겹칠 때. | 리셋 전체를 `songSyncGate.withLock` 안에서 수행. 회귀: `LyricsTimingResetSongCheckTest`의 `a reset waits...`. |
+| MEDIUM | `app/.../AudioCache.kt:731-733,847`, `app/.../smart/LyricsTiming.kt:1066-1087`, `app/.../ui/LyricsController.kt:820-840` | 8초 `delay` 재측정 루프와 250ms `awaitVideoOpening` 폴링을 제거했다. 캐시가 스트림을 열 때와 재생이 256KB를 더 읽을 때마다 `AudioCache.served`를 발행하고, 대기/재측정은 그 이벤트에서만 깨어난다. | 화면이 꺼져 있거나 배터리를 아끼는 동안의 불필요한 주기 기상이 사라진다. | 모든 비디오 측정. | 이벤트 기반으로 교체. `REMEASURE_CHECK_MS` 상수 삭제. (UI/Media3 경로라 단위 테스트 없음; 컴파일·기존 테스트로 확인.) |
+| MEDIUM | `app/.../ui/LyricsController.kt:670-682,832-840`, `app/.../smart/LyricsTiming.kt:1591-1630,2022-2068` | 조용히 return하던 스킵 경로(무타이밍/요청 없음/가드 탈락/recheck 스위치·파일·가사·Deepgram·이미 검사됨)에 `lyrics-sync:` 이유 로그가 없었다. | 왜 싱크가 안 됐는지 로그로 알 수 없다. | 모든 스킵. | 가사 텍스트 없이 이유 한 줄씩 추가. |
+
+### 10.1 검증 (r2)
+
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.DownloadedSyncCheckDecideTest' --tests 'com.music.bitchord.playback.LocalTimingPolicyTest' --console=plain` — 통과
+- `./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.playback.NextPrepCacheKeyTest' --tests 'com.music.bitchord.playback.smart.LyricsTimingResetSongCheckTest' --console=plain` — 통과
+- `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` — 통과
+
+### 10.2 남긴 결함
+
+- 5절의 HIGH 2건(다음 곡 SYNC 기본 비활성, 한국어 노래 AI 제외)은 이번 범위에서 뒤집지 않았다. 스위치/정책을 켜면 기존 안전 규칙과 데이터 검증이 함께 필요하다.
+- 이벤트 기반 재측정은 `AudioCache.served`(스트림 open + 재생 256KB 진행)에 의존한다. 플레이어가 완전히 캐시된 곡을 재생해 새 open/진행이 없으면 첫 시도만 돌고 더 기다리지 않는다(주기 폴링 제거의 의도된 대가).

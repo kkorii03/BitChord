@@ -16,7 +16,11 @@ class NextPrepCacheKeyTest {
 
     private val lines = listOf(LyricLine(1_000L, "one"))
 
-    private fun ready(audioSource: String?, isVideo: Boolean) = NextPrepCache.Ready(
+    private fun ready(
+        audioSource: String?,
+        isVideo: Boolean,
+        substituted: Boolean = false,
+    ) = NextPrepCache.Ready(
         videoId = "video",
         raw = lines,
         shown = lines,
@@ -25,6 +29,7 @@ class NextPrepCacheKeyTest {
         isVideo = isVideo,
         fromFile = audioSource != null,
         audioSource = audioSource,
+        substituted = substituted,
     )
 
     @After
@@ -37,23 +42,75 @@ class NextPrepCacheKeyTest {
         val file = LyricsTimingAudioSource.file
         NextPrepCache.put(ready(file, isVideo = false))
 
-        assertEquals("video", NextPrepCache.get("video", file, isVideo = false)?.videoId)
-        assertNull(NextPrepCache.get("video", LyricsTimingAudioSource.stream, isVideo = false))
+        assertEquals("video", NextPrepCache.get("video", file, isVideo = false, substituted = false)?.videoId)
+        assertNull(
+            NextPrepCache.get("video", LyricsTimingAudioSource.stream, isVideo = false, substituted = false),
+        )
     }
 
     @Test
     fun `a video's own clock is not the song clock`() {
         NextPrepCache.put(ready(null, isVideo = true))
 
-        assertEquals("video", NextPrepCache.get("video", null, isVideo = true)?.videoId)
-        assertNull(NextPrepCache.get("video", LyricsTimingAudioSource.stream, isVideo = false))
+        assertEquals("video", NextPrepCache.get("video", null, isVideo = true, substituted = false)?.videoId)
+        assertNull(
+            NextPrepCache.get("video", LyricsTimingAudioSource.stream, isVideo = false, substituted = false),
+        )
     }
 
     @Test
     fun `another video is never returned`() {
         NextPrepCache.put(ready(LyricsTimingAudioSource.stream, isVideo = false))
 
-        assertNull(NextPrepCache.get("other", LyricsTimingAudioSource.stream, isVideo = false))
+        assertNull(
+            NextPrepCache.get("other", LyricsTimingAudioSource.stream, isVideo = false, substituted = false),
+        )
+    }
+
+    @Test
+    fun `a cache prepared before substitution is not served on the substitute`() {
+        NextPrepCache.put(ready(LyricsTimingAudioSource.stream, isVideo = false, substituted = false))
+
+        assertEquals(
+            "video",
+            NextPrepCache.get(
+                "video",
+                LyricsTimingAudioSource.stream,
+                isVideo = false,
+                substituted = false,
+            )?.videoId,
+        )
+        assertNull(
+            NextPrepCache.get(
+                "video",
+                LyricsTimingAudioSource.stream,
+                isVideo = false,
+                substituted = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a cache prepared on a substitute is only served on that substitute`() {
+        NextPrepCache.put(ready(LyricsTimingAudioSource.stream, isVideo = false, substituted = true))
+
+        assertNull(
+            NextPrepCache.get(
+                "video",
+                LyricsTimingAudioSource.stream,
+                isVideo = false,
+                substituted = false,
+            ),
+        )
+        assertEquals(
+            "video",
+            NextPrepCache.get(
+                "video",
+                LyricsTimingAudioSource.stream,
+                isVideo = false,
+                substituted = true,
+            )?.videoId,
+        )
     }
 
     private object LyricsTimingAudioSource {

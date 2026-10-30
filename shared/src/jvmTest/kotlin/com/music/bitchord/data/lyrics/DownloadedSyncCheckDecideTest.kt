@@ -275,4 +275,41 @@ class DownloadedSyncCheckDecideTest {
         assertFalse(decision.replace)
         assertTrue(decision.recordVersion)
     }
+
+    @Test
+    fun aRefusedOwnMatchIsNotAnAnswerAndIsNotRecorded() {
+        // runSongCheck reports refused-match/refused-shift with a match percent
+        // but no fitted sync. Counting that as answered records the version,
+        // makes the next play a NONE, and leaves the old sync in place for ever.
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = 82,
+            freshMatchPercent = null,
+            freshKey = 20,
+            ownApplied = false,
+        )
+        assertFalse(decision.replace)
+        assertNull(decision.winner)
+        assertNull(decision.key)
+        assertFalse(decision.recordVersion)
+    }
+
+    @Test
+    fun aRefusedOwnMatchStillLetsAFreshAppliedAnswerWin() {
+        val decision = DownloadedSyncCheck.decide(
+            storedVersion = null,
+            existingMatchPercent = null,
+            existingKey = 10,
+            ownMatchPercent = 82,
+            freshMatchPercent = 75,
+            freshKey = 20,
+            ownApplied = false,
+        )
+        assertTrue(decision.replace)
+        assertEquals(Winner.FRESH, decision.winner)
+        assertEquals(20, decision.key)
+        assertTrue(decision.recordVersion)
+    }
 }
