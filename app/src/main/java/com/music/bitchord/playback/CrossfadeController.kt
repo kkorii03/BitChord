@@ -24,7 +24,6 @@ import com.music.bitchord.playback.smart.FilterTransitionVariant
 import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
-import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.planTransition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -33,12 +32,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlin.math.sin
 import java.util.Locale
 
 /**
@@ -436,12 +438,18 @@ class CrossfadeController(
         private val grid = if (advanced && beats >= 2.0) beats else 0.0
         val clash = vocalOverlap.coerceIn(0.0, 1.0)
 
-        /** Echo the outgoing track out rather than fading or filtering it away. Needs the grid it repeats on. */
-        val echo = grid > 0 && echoSeconds > 0.0
+        /**
+         * Echo out is deliberately off. Its dry kill silenced the outgoing
+         * track at the midpoint instead of letting the fader carry it down,
+         * and its repeats made [finish] wait past the planned fade (the phone
+         * log's ~18 s overlap). The equal-power pair is now the whole audible
+         * fade; the plan's echo is still logged, but no tail extends the blend.
+         */
+        val echo = false
         val echoSecondsF = echoSeconds.toFloat()
 
-        /** How long the repeats ring after the dry signal goes, in ms. */
-        val echoTailMs = (echoTailSeconds(echoSeconds) * 1000).toFloat()
+        /** No echo tail is rendered, so it can never extend the overlap. */
+        val echoTailMs = 0f
 
         /** Hold the two beats in phase by nudging the incoming track's speed. */
         val phaseLock = advanced && lockPhase
@@ -513,6 +521,9 @@ class CrossfadeController(
 
     private var fadeStartedAt = 0L
 
+    /** When [driveFade] first reached progress 1, so overlap excludes any later tail. */
+    private var fadeCompletedAt = 0L
+    private var lastFadeProgress = 0f
     private var lastFadeQuarter = 0
     private val fadeQuarterGains = arrayOfNulls<String>(3)
 
@@ -1766,6 +1777,8 @@ class CrossfadeController(
         into.volume = 0f
         into.playWhenReady = true
         fadeStartedAt = SystemClock.elapsedRealtime()
+        fadeCompletedAt = 0L
+        lastFadeProgress = 0f
         lastFadeQuarter = 0
         fadeQuarterGains.fill(null)
         nudgeUntil = 0L
@@ -1971,17 +1984,15 @@ class CrossfadeController(
         val incomingAt = ((elapsed + tracks.incomingLeadMs()) / wallSpan).coerceIn(0f, 1f)
         val outgoingAt = (progress + tracks.outgoingLeadMs() / span.toFloat()).coerceIn(0f, 1f)
 
-        val rise = mixRise(progress)
-        val fall = mixFall(progress)
+        val gains = fadeGainsAt(progress)
         // The match is eased back to unity over the last third of the blend so
         // the incoming player is at its own gain before [finish] hands it over,
         // rather than stepping up at the boundary.
-        val matchWeight = ((1f - progress) / LOUDNESS_MATCH_RELEASE).coerceIn(0f, 1f).toDouble()
-        val incomingGain = (1.0 + (render.incomingGain - 1.0) * matchWeight).toFloat().coerceIn(0f, 1f)
-        val outgoingGain = (1.0 + (render.outgoingGain - 1.0) * matchWeight).toFloat().coerceIn(0f, 1f)
-        player.volume = (rise * incomingGain).coerceIn(0f, 1f)
-        out.volume = if (ranOn(out)) 0f else (fall * outgoingGain).coerceIn(0f, 1f)
-        logFadeGains(progress, player.volume, out.volume)
+        val incomingGain = matchGain(render.incomingGain, progress)
+        val outgoingGain = matchGain(render.outgoingGain, progress)
+        player.volume = gains.incoming
+        out.volume = if (ranOn(out)) 0f else gains.outgoing
+        logFadeGains(progress)
         onBlendHeadroom(
             headroomFor(
                 mixRise(outgoingAt) * incomingGain,
@@ -2008,11 +2019,12 @@ class CrossfadeController(
         // [configuredFadeMs] at zero, and reading that as "turned off" would
         // end every Automix on its first tick.
         val settingSwitchedOff = !fadeSettingOn()
-        // An echo out rings past the end of the blend, carried by the outgoing
-        // player's own silenced audio, so that player is kept until its tail
-        // has been heard out.
-        val tailDone = !render.echo || elapsed / wallSpan >= render.echoAt + render.echoTailMs / wallSpan
-        val done = (progress >= 1f && tailDone) || settingSwitchedOff
+        // The blend ends on its planned length. Nothing — not an echo tail or a
+        // fader hold — may keep the outgoing player alive past progress 1.
+        if (progress >= 1f && fadeCompletedAt == 0L) {
+            fadeCompletedAt = SystemClock.elapsedRealtime()
+        }
+        val done = progress >= 1f || settingSwitchedOff
         if (done) {
             logFadeEnd(out, player, progress)
             // A blend cut short before its midpoint still ends on the incoming
@@ -2022,34 +2034,42 @@ class CrossfadeController(
         }
     }
 
-    private fun logFadeGains(progress: Float, incomingGain: Float, outgoingGain: Float) {
-        val quarter = when {
-            progress >= 0.75f -> 3
-            progress >= 0.5f -> 2
-            progress >= 0.25f -> 1
-            else -> 0
+    /** The production fader pair plus the transition-only loudness match, at [progress]. */
+    private fun fadeGainsAt(progress: Float): CrossfadeGain.Gains = CrossfadeGain.Gains(
+        incoming = (mixRise(progress) * matchGain(render.incomingGain, progress)).coerceIn(0f, 1f),
+        outgoing = (mixFall(progress) * matchGain(render.outgoingGain, progress)).coerceIn(0f, 1f),
+    )
+
+    private fun matchGain(planned: Double, progress: Float): Float {
+        val weight = ((1f - progress) / LOUDNESS_MATCH_RELEASE).coerceIn(0f, 1f).toDouble()
+        return (1.0 + (planned - 1.0) * weight).toFloat().coerceIn(0f, 1f)
+    }
+
+    /**
+     * Records each quarter at the moment the fade crosses it, using the same
+     * fader functions playback uses. A skipped tick therefore still reports
+     * the gain at 25/50/75 rather than whatever the next tick happened to be.
+     */
+    private fun logFadeGains(progress: Float) {
+        if (progress <= lastFadeProgress) return
+        lastFadeProgress = progress
+        while (lastFadeQuarter < 3 && progress >= (lastFadeQuarter + 1) * 0.25f) {
+            val quarter = lastFadeQuarter + 1
+            val gains = fadeGainsAt(quarter * 0.25f)
+            fadeQuarterGains[quarter - 1] =
+                "${quarter * 25}%=${gainText(gains.incoming)}/${gainText(gains.outgoing)}"
+            lastFadeQuarter = quarter
         }
-        if (quarter <= lastFadeQuarter) return
-        for (q in lastFadeQuarter + 1..quarter) {
-            fadeQuarterGains[q - 1] = "${q * 25}%=${gainText(incomingGain)}/${gainText(outgoingGain)}"
-        }
-        lastFadeQuarter = quarter
-        if (quarter < 3) return
-        TrackLog.d(
-            "BitChord",
-            "crossfade: gains 25/50/75 ${fadeQuarterGains.joinToString(" ")} " +
-                "at=${SystemClock.elapsedRealtime() - fadeStartedAt}ms",
-            about = incoming?.currentMediaItem?.mediaId,
-        )
     }
 
     private fun logFadeEnd(out: ExoPlayer, into: ExoPlayer, progress: Float) {
         val quarters = fadeQuarterGains.filterNotNull()
         val quarterText = if (quarters.isEmpty()) "" else " ${quarters.joinToString(" ")}"
+        val completedAt = fadeCompletedAt.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
         TrackLog.d(
             "BitChord",
             "crossfade: end out=${out.currentMediaItem?.mediaId} in=${into.currentMediaItem?.mediaId} " +
-                "fade=${fadeMs}ms overlap=${SystemClock.elapsedRealtime() - fadeStartedAt}ms " +
+                "fade=${fadeMs}ms overlap=${completedAt - fadeStartedAt}ms tail=${render.echoTailMs.toLong()}ms " +
                 "progress=${gainText(progress)}$quarterText " +
                 "gains end=${gainText(into.volume)}/${gainText(out.volume)}",
             about = into.currentMediaItem?.mediaId,
@@ -2812,67 +2832,20 @@ class CrossfadeController(
     private fun fallGain(progress: Float): Float = CrossfadeGain.fall(progress)
 
     /**
-     * The incoming fader for the blend in flight. Classic Automix — and every
-     * non-DJ style — is the equal-power [riseGain]. Advanced, each style gets
-     * the curve a DJ would ride it on, with the filters doing the separating:
-     *  - a bass-swap blend has the incoming fader fully up by the swap
-     *    ("both faders up"), backed off toward equal power as far as the two
-     *    vocals collide;
-     *  - a filter ride brings it up a little early, behind its high-pass.
+     * The incoming fader for the blend in flight.
+     *
+     * Every style uses the same equal-power pair. The per-style DJ curves
+     * (bass-swap hold, filter-ride shapes, vocal-safe shaping) moved the
+     * midpoint away from -3 dB and held the outgoing deck up for most of the
+     * blend, which is exactly the near-silent / too-quiet mix the phone logs
+     * showed. Style still lives in the filters; the faders stay equal-power.
      *
      * [headroomFor] keeps two faders at full from summing past full scale.
      */
-    private fun mixRise(progress: Float): Float {
-        if (!render.advanced) return riseGain(progress)
-        val styled = when (render.style) {
-            TransitionStyle.DJ_BLEND ->
-                if (render.bassSwap) held(riseGain(progress), riseGain(progress / render.swapAtF)) else riseGain(progress)
-            TransitionStyle.DJ_FILTER -> when (render.filterVariant) {
-                FilterTransitionVariant.BASS_HANDOFF -> riseGain(progress / render.filterSwapAtF)
-                FilterTransitionVariant.ECHO_RIDE -> riseGain(progress.pow(ECHO_RIDE_RISE_SHAPE))
-                FilterTransitionVariant.SWEEP -> riseGain(progress.pow(FILTER_RISE_SHAPE))
-            }
-            else -> riseGain(progress)
-        }
-        val vocalSafe = riseGain(progress.pow(VOCAL_SAFE_RISE_SHAPE))
-        return styled + (vocalSafe - styled) * render.clash.toFloat()
-    }
+    private fun mixRise(progress: Float): Float = CrossfadeGain.mixRise(progress)
 
-    /**
-     * The outgoing fader, [mixRise]'s partner: held at full until the bass
-     * swap in a blend and pulled after it, held longer in a filter ride where
-     * the closing low-pass is already taking it away.
-     */
-    private fun mixFall(progress: Float): Float {
-        if (!render.advanced) return fallGain(progress)
-        // The fader carries the repeats too, so an echo out leaves it up and
-        // fades the dry signal in the chain instead — see [rideEchoOut].
-        if (render.echo) return 1f
-        val styled = when (render.style) {
-            TransitionStyle.DJ_BLEND -> {
-                if (!render.bassSwap) {
-                    fallGain(progress)
-                } else {
-                    val swap = render.swapAtF
-                    held(fallGain(progress), if (progress <= swap) 1f else fallGain((progress - swap) / (1f - swap)))
-                }
-            }
-            TransitionStyle.DJ_FILTER -> when (render.filterVariant) {
-                FilterTransitionVariant.BASS_HANDOFF -> {
-                    val swap = render.filterSwapAtF
-                    if (progress <= swap) 1f else fallGain((progress - swap) / (1f - swap))
-                }
-                FilterTransitionVariant.ECHO_RIDE -> fallGain(progress.pow(ECHO_RIDE_FALL_SHAPE))
-                FilterTransitionVariant.SWEEP -> fallGain(progress.pow(FILTER_FALL_SHAPE))
-            }
-            else -> fallGain(progress)
-        }
-        val vocalSafe = fallGain(progress.pow(VOCAL_SAFE_FALL_SHAPE))
-        return styled + (vocalSafe - styled) * render.clash.toFloat()
-    }
-
-    /** [dj] as far as [Render.holdFaders] allows, the rest of the way back toward [plain]. */
-    private fun held(plain: Float, dj: Float): Float = plain + (dj - plain) * render.holdFaders
+    /** [mixRise]'s partner: the outgoing fader falls over the same planned span. */
+    private fun mixFall(progress: Float): Float = CrossfadeGain.mixFall(progress)
 
     // ---- Phase lock ---------------------------------------------------------
 
@@ -3574,5 +3547,42 @@ class CrossfadeController(
         /** Never run a stalled player's position on further than its loop could plausibly sleep. */
         const val MAX_EXTRAPOLATION_NANOS = 600_000_000L
         const val BAIL_STEP_MS = 15L
+    }
+}
+
+/**
+ * The equal-power fade pair used by [CrossfadeController.mixRise] and
+ * [CrossfadeController.mixFall], kept beside the controller rather than in a
+ * new file so the production timing and gain stay in one place.
+ */
+internal object CrossfadeGain {
+
+    data class Gains(val incoming: Float, val outgoing: Float)
+
+    fun gains(progress: Float): Gains {
+        val p = progress.coerceIn(0f, 1f)
+        return Gains(incoming = rise(p), outgoing = fall(p))
+    }
+
+    fun rise(progress: Float): Float =
+        sin(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
+
+    fun fall(progress: Float): Float =
+        cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
+
+    /** The production incoming fader: every Automix style uses this pair. */
+    fun mixRise(progress: Float): Float = rise(progress)
+
+    /** The production outgoing fader: every Automix style uses this pair. */
+    fun mixFall(progress: Float): Float = fall(progress)
+
+    fun progress(elapsedMs: Long, spanMs: Long): Float {
+        if (spanMs <= 0L) return 1f
+        return (elapsedMs.toDouble() / spanMs).toFloat().coerceIn(0f, 1f)
+    }
+
+    fun spanMs(plannedFadeMs: Long, incomingRemainingMs: Long?): Long {
+        val incomingCap = incomingRemainingMs?.div(3) ?: Long.MAX_VALUE
+        return minOf(plannedFadeMs, incomingCap).coerceAtLeast(1L)
     }
 }

@@ -13,6 +13,22 @@ class CrossfadeGainTest {
     }
 
     @Test
+    fun productionMixFadersAreTheEqualPowerPairAtEveryPoint() {
+        assertEquals(0f, CrossfadeGain.mixRise(0f), 0.0001f)
+        assertEquals(1f, CrossfadeGain.mixFall(0f), 0.0001f)
+        assertEquals(0.7071f, CrossfadeGain.mixRise(0.5f), 0.0001f)
+        assertEquals(0.7071f, CrossfadeGain.mixFall(0.5f), 0.0001f)
+        assertEquals(1f, CrossfadeGain.mixRise(1f), 0.0001f)
+        assertEquals(0f, CrossfadeGain.mixFall(1f), 0.0001f)
+        var progress = 0f
+        while (progress <= 1f) {
+            assertEquals(CrossfadeGain.rise(progress), CrossfadeGain.mixRise(progress), 0f)
+            assertEquals(CrossfadeGain.fall(progress), CrossfadeGain.mixFall(progress), 0f)
+            progress += 0.05f
+        }
+    }
+
+    @Test
     fun midpointIsMinusThreeDbOnBothSides() {
         val gains = CrossfadeGain.gains(0.5f)
         assertEquals(0.7071f, gains.incoming, 0.0001f)
