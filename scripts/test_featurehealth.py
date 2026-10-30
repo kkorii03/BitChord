@@ -214,6 +214,23 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(1, report.stats["lossless"]["kept_for_next"])
         self.assertEqual(1, report.stats["lossless"]["manual_unnecessary"])
 
+    def test_verify_id_must_match_flac_evidence_not_just_title(self) -> None:
+        text = log_text(
+            play("19:00:00.000", "id1", "Same Title"),
+            play("19:00:30.000", "id2", "Same Title"),
+            line(
+                "19:00:05.000",
+                "hq-verify: Same Title Qobuz match=95% offset=0 -> accepted id=id2",
+            ),
+            line("19:00:10.000", "id1 <- audio/flac 44.1kHz 900kbps 16-bit 2ch", tag="DECODE"),
+            line("19:00:40.000", "id2 <- audio/opus 48kHz 160kbps ?-bit 2ch", tag="DECODE"),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(0, playback.successes)
+        self.assertFalse(playback.passed)
+
     def test_upgrade_ahead_ready_at_flac_counts_as_event(self) -> None:
         text = log_text(
             play("19:00:00.000", "id1", "Ahead Song"),
@@ -330,8 +347,8 @@ class AutoplayTests(unittest.TestCase):
         )
         report = analyze(text)
         refill = metric(report, "D3-refill")
-        self.assertEqual(4, refill.attempts)
-        self.assertEqual(3, refill.successes)
+        self.assertEqual(3, refill.attempts)
+        self.assertEqual(2, refill.successes)
         self.assertFalse(refill.passed)
         self.assertEqual(1, report.stats["autoplay"]["video_deferred"])
         self.assertEqual(2, report.stats["autoplay"]["video_refills"])
@@ -339,6 +356,18 @@ class AutoplayTests(unittest.TestCase):
             {"empty": 1, "normal": 1, "partial": 1},
             report.stats["autoplay"]["video_fallback"],
         )
+
+    def test_radio_and_append_for_one_refill_count_once(self) -> None:
+        text = log_text(
+            line("19:00:00.000", "autoplay: +radio 2 +similar 1 +fav 0 (A | B | C)"),
+            line("19:00:01.000", "queue: autoplay-append n=3 at=5 size=8 by=autoplay"),
+        )
+        report = analyze(text)
+        refill = metric(report, "D3-refill")
+        self.assertEqual(1, refill.attempts)
+        self.assertEqual(1, refill.successes)
+        self.assertTrue(refill.passed)
+        self.assertEqual(1, report.stats["autoplay"]["refill_pairs"])
 
     def test_video_radio_append_refill_and_mode_distribution(self) -> None:
         text = log_text(
@@ -518,6 +547,8 @@ class DownloadLifecycleQualityTests(unittest.TestCase):
         self.assertEqual({"id1": 2}, report.stats["downloads"]["failed_ids"])
         self.assertEqual(1, report.stats["downloads"]["hq_missing_ids"]["id1"])
         self.assertEqual(1, report.stats["downloads"]["service_failed"])
+        self.assertEqual(1, metric(report, "D9-download").attempts)
+        self.assertEqual(2, metric(report, "D9-hq-library").attempts)
         self.assertFalse(metric(report, "D9-download").passed)
 
     def test_lifecycle_orphan_window_counts_warm_and_network(self) -> None:
