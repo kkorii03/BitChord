@@ -198,7 +198,7 @@ class PartySync(
                 // A new state, or leaving/joining. Not every field: this exists
                 // to react promptly to a control, and the round-trip counter
                 // changing is not one.
-                .map { ReconcileKey(it.playback.seq, it.queue.seq, it.code, it.clockSynced) }
+                .map(::partyReconcileKey)
                 .distinctUntilChanged()
                 .collect { key ->
                     if (key.code != lastPartyCode) {
@@ -251,8 +251,46 @@ class PartySync(
     fun stop() {
         jobs.forEach(Job::cancel)
         jobs.clear()
-        publishJob?.cancel()
+        // The service can be torn down mid-wait — most easily while a deferred
+        // resume is still waiting on the party's instant. Nothing will answer
+        // that wait after this, and the flag it is stored in is what the player
+        // screen draws as a spinner, so it has to be put down here as well as
+        // on every ordinary reconcile path.
+        resetTransientState()
+    }
+
+    /**
+     * Drops everything that only makes sense while a particular party session
+     * is live.
+     *
+     * A deferred play or a queue drag is keyed to a party that is about to stop
+     * existing. Left set across a leave, a switch or a service teardown, the
+     * deferred fallback starts the restored *personal* queue by itself, and a
+     * drag flag that never saw its release parks every later publish — so the
+     * next party this device joins never hears its queue or track changes.
+     */
+    private fun resetTransientState() {
+        deferredPlayPending = false
+        queueDragActive = false
+        queueDragDirty = false
+        loadingVideoId = null
+        focusLost = false
+        rejoining = false
+        locallyPaused = false
+        driftStrikes = 0
+        driftCooldownUntilMs = 0L
+        alignedSeq = -1L
+        reconcileQuietUntilMs = 0L
+        awaitPlaybackSeq = Long.MAX_VALUE
+        awaitQueueSeq = Long.MAX_VALUE
+        lastAnchorMs = 0L
+        lastPositionMs = 0L
+        lastTrackId = null
+        lastIsPlaying = false
         startJob?.cancel()
+        startJob = null
+        publishJob?.cancel()
+        publishJob = null
     }
 
     /**
@@ -471,7 +509,10 @@ class PartySync(
             // left to start. This flag is what the transport draws as "the
             // party is about to start" — a wait that is over by any route at
             // all has to end here, not only the route this fallback exists for.
-            if (!deferredPlayPending) return@launch
+            if (!deferredPlayAllowed(ListenTogether.state.value.inParty, deferredPlayPending)) {
+                deferredPlayPending = false
+                return@launch
+            }
             deferredPlayPending = false
             val exo = player() ?: return@launch
             if (!exo.playWhenReady) {
@@ -819,8 +860,7 @@ class PartySync(
                 exo.addMediaItems(toPreserve.map { it.toSong().toMediaItem() })
             }
             val queue = listOf(track) + toPreserve
-            ListenTogether.setQueue(queue, 0)
-            queueControls++
+            if (ListenTogether.setQueue(queue, 0)) queueControls++
         } else if (clampedIds != partyIds) {
             val singleMove = if (partyIds.size == clampedIds.size && trackIndex >= 0 && trackIndex < partyIds.size && partyIds[trackIndex] == clampedIds[trackIndex]) {
                 detectSingleMove(partyIds, clampedIds)
@@ -829,16 +869,16 @@ class PartySync(
             }
 
             if (singleMove != null && singleMove.fromIndex > trackIndex && singleMove.toIndex > trackIndex) {
-                ListenTogether.queueMove(singleMove.fromIndex, singleMove.toIndex, singleMove.videoId)
-                queueControls++
+                if (ListenTogether.queueMove(singleMove.fromIndex, singleMove.toIndex, singleMove.videoId)) {
+                    queueControls++
+                }
             } else {
                 val countToTake = clampedIds.size
                 val queue = (0 until countToTake)
                     .map { localItems[it].toSong() }
                     .filterNot(Song::isDeviceFile)
                     .map { it.toPartyTrack(0L) }
-                ListenTogether.setQueue(queue, trackIndex)
-                queueControls++
+                if (ListenTogether.setQueue(queue, trackIndex)) queueControls++
             }
         }
 
@@ -847,12 +887,15 @@ class PartySync(
                 // After the queue, never before: a track change that arrives
                 // pointing into a running order nobody has yet is the bug that
                 // played the wrong song.
-                ListenTogether.setTrack(track, position, wantsPlaying)
-                playbackControls++
+                if (ListenTogether.setTrack(track, position, wantsPlaying)) playbackControls++
             }
             party.playback.isPlaying != wantsPlaying -> {
-                if (wantsPlaying) ListenTogether.play(position) else ListenTogether.pause(position)
-                playbackControls++
+                val sent = if (wantsPlaying) {
+                    ListenTogether.play(position)
+                } else {
+                    ListenTogether.pause(position)
+                }
+                if (sent) playbackControls++
             }
             // Same track, same playing state — so what the user did was move
             // the playhead. Unless it did not move far, in which case this is
@@ -866,8 +909,7 @@ class PartySync(
             else -> {
                 val partyPosition = ListenTogether.partyPositionMs()
                 if (partyPosition == null || abs(position - partyPosition) > SEEK_REPORT_FLOOR_MS) {
-                    ListenTogether.seek(position)
-                    playbackControls++
+                    if (ListenTogether.seek(position)) playbackControls++
                 }
             }
         }
@@ -930,9 +972,7 @@ class PartySync(
 
     private fun onLeftParty() {
         Log.i(TAG, "left party, restoring personal queue if stashed")
-        loadingVideoId = null
-        focusLost = false
-        rejoining = false
+        resetTransientState()
         val stashed = PartyPersonalQueueStash.load()
         if (stashed != null) {
             val exo = player() ?: return
@@ -1014,14 +1054,16 @@ class PartySync(
      * joined a playing party seek and start, and without it here that moment
      * raises no state this collector can see — leaving the blind [TICK_MS] poll
      * to notice, up to a tick late.
+     *
+     * [connection] earns its place for the same reason and one more: an empty
+     * party has no track, so [seedEmptyParty] cannot run until the socket is
+     * live, and an empty party is exactly the case the 700ms ticker never
+     * covers ([BatteryPolicy.partyTickerActive] is only true while the party
+     * is *playing*). Without this field the CONNECTING → LIVE transition that
+     * makes seeding possible raised no key change at all, so a host who
+     * created a party while listening sat in front of an empty party until
+     * they touched the transport.
      */
-    private data class ReconcileKey(
-        val seq: Long,
-        val queueSeq: Long,
-        val code: String?,
-        val clockSynced: Boolean,
-    )
-
     private companion object {
         const val TAG = "PartySync"
 
@@ -1144,6 +1186,40 @@ internal fun PartyTrack.toSong(): Song = Song(
     },
     queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.USER_QUEUE,
 )
+
+/**
+ * Whether the deferred-play fallback may still start the player.
+ *
+ * A play deferred to the party's scheduled instant is only meaningful while
+ * this device is still in that party. After leaving, the player is showing the
+ * listener's own restored queue, and starting it because an old party never
+ * answered would be the app pressing play on their behalf.
+ */
+internal fun deferredPlayAllowed(inParty: Boolean, pending: Boolean): Boolean = inParty && pending
+
+/**
+ * The state fields a reconcile turns on — see [PartySync.start].
+ *
+ * [connection] is included because a party with no track has nothing for the
+ * playback ticker to chase, so the moment its socket becomes live is the only
+ * moment at which the host's already-playing track may be seeded into it.
+ */
+internal data class PartyReconcileKey(
+    val seq: Long,
+    val queueSeq: Long,
+    val code: String?,
+    val clockSynced: Boolean,
+    val connection: ListenTogether.Connection,
+)
+
+internal fun partyReconcileKey(state: ListenTogether.State): PartyReconcileKey =
+    PartyReconcileKey(
+        seq = state.playback.seq,
+        queueSeq = state.queue.seq,
+        code = state.code,
+        clockSynced = state.clockSynced,
+        connection = state.connection,
+    )
 
 internal data class QueueMoveDelta(
     val fromIndex: Int,
