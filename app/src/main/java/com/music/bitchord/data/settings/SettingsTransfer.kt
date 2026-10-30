@@ -289,7 +289,10 @@ object SettingsTransfer {
      * Reads at most [MAX_IMPORT_BYTES] of UTF-8 text, refusing the document
      * rather than growing the buffer without bound.
      */
-    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String {
+    internal fun InputStream.readTextBounded(
+        maxBytes: Int = MAX_IMPORT_BYTES,
+        tooLargeMessage: String = "설정 파일이 너무 큽니다",
+    ): String {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(8_192)
         var total = 0
@@ -297,7 +300,7 @@ object SettingsTransfer {
             val read = read(buffer)
             if (read < 0) break
             total += read
-            require(total <= maxBytes) { "설정 파일이 너무 큽니다" }
+            require(total <= maxBytes) { tooLargeMessage }
             output.write(buffer, 0, read)
         }
         return output.toByteArray().decodeToString()

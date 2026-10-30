@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
+import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,10 +67,27 @@ object LocalPlaylistStore {
     private val _playlists = MutableStateFlow<List<LocalPlaylist>>(emptyList())
     val playlists = _playlists.asStateFlow()
 
+    /**
+     * Set once [load] has finished reading the stored JSON.
+     *
+     * The read moved off the main thread, so a write can arrive before it has
+     * run. [LoadOnce] makes the read and that first write a single step: the
+     * writer waits for the rows on disk instead of persisting the empty list it
+     * started with and losing them.
+     */
+    private val loadGate = LoadOnce(::load)
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        load()
+        loadGate.reset()
+        // A large playlist file is a full JSON parse; it used to run in
+        // Application.onCreate ahead of the first frame. The startup thread
+        // opens it, and any read or write that arrives first falls back to the
+        // sync path in [ensureLoaded].
+        StartupWork.background("local-playlists") { loadGate.ensureLoaded() }
     }
+
+    private fun ensureLoaded() = loadGate.ensureLoaded()
 
     private fun load() {
         if (!this::prefs.isInitialized) return
@@ -110,6 +128,7 @@ object LocalPlaylistStore {
     }
 
     fun savePlaylist(title: String, songs: List<Song>): LocalPlaylist {
+        ensureLoaded()
         val id = "sp_local_" + System.currentTimeMillis()
         val playlist = LocalPlaylist(id = id, title = title, songs = songs)
         val updated = listOf(playlist) + _playlists.value.filterNot { it.id == id }
@@ -119,12 +138,14 @@ object LocalPlaylistStore {
     }
 
     fun deletePlaylist(id: String) {
+        ensureLoaded()
         val updated = _playlists.value.filterNot { it.id == id || it.browseId == id || it.id == id.removePrefix("local:playlist:") }
         _playlists.value = updated
         persistAsync(updated)
     }
 
     fun renamePlaylist(id: String, newTitle: String) {
+        ensureLoaded()
         val cleanId = id.removePrefix("local:playlist:").removePrefix("VL")
         val updated = _playlists.value.map {
             if (it.id == cleanId || it.id == id || it.browseId == id) {
@@ -136,12 +157,16 @@ object LocalPlaylistStore {
     }
 
     fun getPlaylist(id: String): LocalPlaylist? {
+        ensureLoaded()
         val cleanId = id.removePrefix("local:playlist:").removePrefix("VL")
         return _playlists.value.firstOrNull { it.id == cleanId || it.id == id || it.browseId == id }
     }
 
     /** The rows a backup should carry. */
-    fun exportAll(): List<LocalPlaylist> = _playlists.value
+    fun exportAll(): List<LocalPlaylist> {
+        ensureLoaded()
+        return _playlists.value
+    }
 
     /**
      * Applies restored [incoming] rows with [mode], returning how many rows the
@@ -152,6 +177,7 @@ object LocalPlaylistStore {
      * mode: every row already present is recognised instead of appended again.
      */
     fun importAll(incoming: List<LocalPlaylist>, mode: PlaylistImportMode): Int {
+        ensureLoaded()
         val next = when (mode) {
             PlaylistImportMode.REPLACE -> replacePlaylists(incoming)
             PlaylistImportMode.MERGE -> mergePlaylists(_playlists.value, incoming)
@@ -202,6 +228,31 @@ object LocalPlaylistStore {
         }.onFailure {
             Log.w(TAG, "saving local playlists threw: ${it.message}")
         }
+    }
+}
+
+/**
+ * Runs [load] once, on whichever caller arrives first.
+ *
+ * Used by [LocalPlaylistStore] to keep its background open and the first write
+ * from interleaving: a write that arrives before the background open has
+ * finished performs the load itself instead of persisting the empty list.
+ */
+internal class LoadOnce(private val load: () -> Unit) {
+    @Volatile private var loaded = false
+    private val lock = Any()
+
+    fun ensureLoaded() {
+        if (loaded) return
+        synchronized(lock) {
+            if (loaded) return
+            load()
+            loaded = true
+        }
+    }
+
+    fun reset() {
+        synchronized(lock) { loaded = false }
     }
 }
 

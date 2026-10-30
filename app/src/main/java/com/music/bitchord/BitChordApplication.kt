@@ -90,7 +90,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         val logDirectory = File(filesDir, "logs")
         TrackLog.initPersistence(logDirectory)
         installCrashHandler()
-        logProcessStart(logDirectory)
+        // Reading and rewriting the warm-start marker is disk I/O on the launch
+        // path. The line it emits is diagnostic, so it can land a moment later
+        // without holding up the first frame.
+        CoroutineScope(Dispatchers.IO).launch { logProcessStart(logDirectory) }
         registerActivityLifecycleCallbacks(activityLifecycle)
         AppForeground.install(this)
         TrackLog.i("BitChord", "lifecycle: app created")
@@ -409,14 +412,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         val marker = File(directory, "process.txt")
         val now = System.currentTimeMillis()
         val previousAt = runCatching {
-            marker.readLines().getOrNull(1)?.toLongOrNull()
-        }.getOrNull() ?: 0L
-        val warm = previousAt > 0L && now - previousAt in 0..WARM_RESTART_MS
+            processMarkerTimestamp(marker.readText())
+        }.getOrDefault(0L)
+        val warm = isWarmProcessRestart(now, previousAt, WARM_RESTART_MS)
         TrackLog.i(
             "BitChord",
             "lifecycle: process start pid=${android.os.Process.myPid()} ${if (warm) "warm" else "cold"}",
         )
-        runCatching { marker.writeText("${android.os.Process.myPid()} $now") }
+        runCatching { marker.writeText(processMarkerLine(android.os.Process.myPid(), now)) }
     }
 
     /**
@@ -488,3 +491,25 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         }
     }
 }
+
+/**
+ * Whether a previous process this recent is a warm restart rather than a cold
+ * launch. Pulled out so the marker arithmetic can be checked without a file.
+ */
+internal fun isWarmProcessRestart(nowMs: Long, previousAtMs: Long, windowMs: Long): Boolean =
+    previousAtMs > 0L && nowMs - previousAtMs in 0..windowMs
+
+/** The warm-start marker is one line: `<pid> <epoch millis>`. */
+internal fun processMarkerLine(pid: Int, nowMs: Long): String = "$pid $nowMs"
+
+/**
+ * Reads the timestamp from the marker's first line. The pid and any later lines
+ * are ignored, so a file written by an older build still parses.
+ */
+internal fun processMarkerTimestamp(text: String): Long =
+    text.lineSequence().firstOrNull()
+        ?.trim()
+        ?.split(' ', limit = 2)
+        ?.getOrNull(1)
+        ?.toLongOrNull()
+        ?: 0L
