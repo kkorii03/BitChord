@@ -120,6 +120,39 @@ object LyricsOverrideFile {
         }.getOrDefault(false)
     }
 
+    /** Whether [text] is a readable override file, without touching any file. */
+    fun readText(text: String): Boolean = runCatching {
+        json.decodeFromString(Data.serializer(), text)
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Replaces the whole file with a device-migration backup's copy inside the
+     * same lock as [write] and [remove].
+     *
+     * Parsing before the swap keeps a malformed section from costing the device
+     * the overrides it already had, and sharing the lock means a concurrent
+     * re-check write cannot land its `.tmp` rename over the restored file.
+     * A null [text] removes the file.
+     */
+    fun restore(file: File, text: String?): Boolean = synchronized(lock) {
+        runCatching {
+            if (text == null) {
+                file.delete()
+            } else {
+                if (!readText(text)) return@synchronized false
+                file.parentFile?.mkdirs()
+                val temporary = File(file.parentFile, ".${file.name}.tmp")
+                temporary.writeText(text)
+                if (!temporary.renameTo(file)) {
+                    temporary.copyTo(file, overwrite = true)
+                    temporary.delete()
+                }
+            }
+            true
+        }.getOrDefault(false)
+    }
+
     private fun readFile(file: File): Data = runCatching {
         if (!file.isFile) return Data()
         val data = json.decodeFromString(Data.serializer(), file.readText())

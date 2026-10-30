@@ -131,4 +131,40 @@ class LyricsOverrideFileTest {
         assertEquals("online", LyricsOverrideFile.choose(null, null, "online"))
         assertNull(LyricsOverrideFile.choose(null, null, null))
     }
+
+    @Test
+    fun `restore replaces the whole file under the writer lock`() {
+        val source = tempFile()
+        LyricsOverrideFile.write(source, "backup", LrcLib.parseLrc("[00:03.00]from backup"), LyricsSource.LRCLIB)
+        val text = source.readText()
+
+        val target = tempFile()
+        LyricsOverrideFile.write(target, "old", LrcLib.parseLrc("[00:01.00]old"), LyricsSource.LRCLIB)
+
+        assertTrue(LyricsOverrideFile.restore(target, text))
+
+        assertNull("the pre-import override must be gone", LyricsOverrideFile.read(target, "old"))
+        assertEquals("from backup", LyricsOverrideFile.read(target, "backup")?.lines?.single()?.text)
+    }
+
+    @Test
+    fun `a malformed restore does not destroy the existing file`() {
+        val file = tempFile()
+        LyricsOverrideFile.write(file, "kept", LrcLib.parseLrc("[00:01.00]kept"), LyricsSource.LRCLIB)
+
+        assertFalse(LyricsOverrideFile.restore(file, "{not json"))
+
+        assertEquals("kept", LyricsOverrideFile.read(file, "kept")?.lines?.single()?.text)
+    }
+
+    @Test
+    fun `restoring null removes the file`() {
+        val file = tempFile()
+        LyricsOverrideFile.write(file, "gone", LrcLib.parseLrc("[00:01.00]gone"), LyricsSource.LRCLIB)
+
+        assertTrue(LyricsOverrideFile.restore(file, null))
+
+        assertFalse(file.exists())
+        assertNull(LyricsOverrideFile.read(file, "gone"))
+    }
 }

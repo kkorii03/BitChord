@@ -213,7 +213,7 @@ class BackupSecretsAndPrefsTest {
     @Test
     fun `a backup from a newer build is refused before any write`() {
         val result = runCatching {
-            Backup.validate(Backup.BackupFile(app = "bitchord", version = 3))
+            Backup.validate(Backup.BackupFile(app = "bitchord", version = 4))
         }
 
         assertTrue(result.isFailure)

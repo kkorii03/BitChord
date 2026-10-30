@@ -288,7 +288,7 @@ class LyricsController(
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
                     syncedLyrics = AppSettings.syncedLyrics.value,
-                    nextPrepLyrics = AppSettings.syncSafetyNextPrep.value,
+                    nextPrepEnabled = AppSettings.syncSafetyNextPrep.value,
                 ),
                 audioSource = preparedAudioSource,
                 substituted = preparedSubstituted,
