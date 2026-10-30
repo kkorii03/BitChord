@@ -73,6 +73,47 @@ class ProxyRouteGenerationTest {
     }
 
     @Test
+    fun `an ALL_YOUTUBE url is stamped and invalidated by a route change`() {
+        val all = withBackup.copy(scope = ProxyScope.ALL_YOUTUBE)
+        YouTubeProxy.update(all)
+        val allUrl = "https://rr2.googlevideo.com/videoplayback?all=1"
+        val generation = ProxyPlayback.generationFor(allUrl)
+        assertNotNull(generation)
+        assertTrue(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                generation,
+                ProxyPlayback.currentRouteGeneration,
+                canResolveViaProxy = ProxyPlayback.canUseCachedProxyUrl(),
+            ),
+        )
+
+        YouTubeProxy.switchRoute(ProxyRoute.BACKUP, "test")
+
+        assertFalse(ProxyPlayback.isCurrentRoute(generation))
+        assertFalse(
+            ProxyPlaybackPolicy.cachedUrlUsable(
+                generation,
+                ProxyPlayback.currentRouteGeneration,
+                canResolveViaProxy = ProxyPlayback.canUseCachedProxyUrl(),
+            ),
+        )
+    }
+
+    @Test
+    fun `an explicit generation stamp keeps a url on the route that minted it`() {
+        YouTubeProxy.update(withBackup)
+        val minted = YouTubeProxy.routeGeneration
+        YouTubeProxy.switchRoute(ProxyRoute.BACKUP, "test")
+        val id = "v-explicit-${System.nanoTime()}"
+        val explicitUrl = "https://rr3.googlevideo.com/videoplayback?explicit=$id"
+
+        ProxyPlayback.markResolved(id, explicitUrl, minted)
+
+        assertFalse(ProxyPlayback.isCurrentRoute(minted))
+        assertFalse(ProxyPlayback.usesProxyFor(explicitUrl))
+    }
+
+    @Test
     fun `a direct url survives a route change`() {
         YouTubeProxy.update(withBackup)
         YouTubeProxy.switchRoute(ProxyRoute.BACKUP, "test")

@@ -75,8 +75,19 @@ object ProxyPlaybackPolicy {
         proxyGeneration: Long?,
         currentGeneration: Long,
         canResolveViaProxy: Boolean,
-    ): Boolean = proxyGeneration == null ||
-        (proxyGeneration == currentGeneration && canResolveViaProxy)
+        allScopeNow: Boolean = false,
+        mintedOnAllScope: Boolean = true,
+    ): Boolean {
+        // Switching to ALL_YOUTUBE changes how the *media* fetch is routed,
+        // not only how the player request is. A URL resolved while the scope
+        // was Music-only was minted on the phone's own address, so fetching it
+        // through the proxy after the switch is a 403. It has no proxy
+        // generation to invalidate it, which is why the scope is part of the
+        // test rather than inferred from the stamp.
+        if (allScopeNow && !mintedOnAllScope) return false
+        return proxyGeneration == null ||
+            (proxyGeneration == currentGeneration && canResolveViaProxy)
+    }
 }
 
 /**
@@ -142,12 +153,16 @@ object ProxyPlayback {
      *   the caller can say so once rather than on every re-open.
      */
     @Synchronized
-    fun markResolved(videoId: String, url: String): Boolean {
+    fun markResolved(
+        videoId: String,
+        url: String,
+        generation: Long = YouTubeProxy.routeGeneration,
+    ): Boolean {
         val key = canonical(url)
         val first = !remembered.containsKey(videoId)
         remembered.remove(videoId)?.let { proxiedUrls.remove(it) }
         remembered[videoId] = key
-        proxiedUrls[key] = ProxiedUrl(videoId, YouTubeProxy.routeGeneration)
+        proxiedUrls[key] = ProxiedUrl(videoId, generation)
         rememberedTimestamps[videoId] = System.currentTimeMillis()
         trimToCap()
         scheduleSave()
@@ -214,8 +229,29 @@ object ProxyPlayback {
 
     fun isProxiedUrl(url: String): Boolean = proxiedUrls.containsKey(canonical(url))
 
-    /** The route generation that minted [url], or null when it was not proxied. */
-    fun generationFor(url: String): Long? = proxiedUrls[canonical(url)]?.generation
+    /**
+     * The route generation that minted [url], or null when it was not proxied.
+     *
+     * Under [ProxyScope.ALL_YOUTUBE] every YouTube host — the player request
+     * included — goes through the proxy, so a URL resolved on that scope is
+     * bound to the route even though it never passes through the Music-only
+     * fallback that calls [markResolved]. It still needs a stamp: a route
+     * switch or a settings edit makes it a 403 exactly as it does for a
+     * Music-only URL. While the proxy is in its unreachable bypass the request
+     * went direct, so no stamp is given and the URL is allowed to survive.
+     */
+    fun generationFor(url: String): Long? {
+        val key = canonical(url)
+        proxiedUrls[key]?.let { return it.generation }
+        val config = YouTubeProxy.config
+        if (!config.usable || config.scope != ProxyScope.ALL_YOUTUBE) return null
+        if (ProxyHealthMonitor.shouldBypassProxy()) return null
+        val parsed = key.toHttpUrlOrNull() ?: return null
+        if (!ProxyScopeMatcher.matches(parsed.host, parsed.encodedPath, ProxyScope.ALL_YOUTUBE)) {
+            return null
+        }
+        return YouTubeProxy.routeGeneration
+    }
 
     /** The route generation in force now. */
     val currentRouteGeneration: Long get() = YouTubeProxy.routeGeneration
@@ -228,6 +264,23 @@ object ProxyPlayback {
         val config = YouTubeProxy.config
         if (!config.usable || config.scope != ProxyScope.MUSIC_ONLY) return false
         return ProxyPlaybackPolicy.canProxyPlayback(config, ProxyHealthMonitor.shouldBypassProxy())
+    }
+
+    /**
+     * Whether a cached URL may be reused on the current route.
+     *
+     * Wider than [canResolveViaProxy] on purpose: an ALL_YOUTUBE URL is also
+     * bound to the route that minted it, even though that scope never uses the
+     * Music-only playback fallback. Both scopes need the same answer here, or
+     * an ALL_YOUTUBE URL survives a primary-to-backup switch and 403s.
+     */
+    fun canUseCachedProxyUrl(): Boolean {
+        val config = YouTubeProxy.config
+        if (!config.usable) return false
+        if (config.scope != ProxyScope.MUSIC_ONLY && config.scope != ProxyScope.ALL_YOUTUBE) {
+            return false
+        }
+        return !ProxyHealthMonitor.shouldBypassProxy()
     }
 
     /**

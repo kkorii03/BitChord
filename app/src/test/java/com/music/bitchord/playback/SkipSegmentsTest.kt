@@ -210,6 +210,22 @@ class SkipSegmentsTest {
     }
 
     @Test
+    fun `a bot check is a network challenge, not a definitive track refusal`() {
+        assertFalse(
+            UnplayableRecovery.isDefinitive(
+                "YouTube가 이 네트워크에서 봇 확인을 요구합니다",
+                alreadyMarkedUnplayable = false,
+            ),
+        )
+        assertFalse(
+            UnplayableRecovery.isDefinitive(
+                "Sign in to confirm you're not a bot",
+                alreadyMarkedUnplayable = false,
+            ),
+        )
+    }
+
+    @Test
     fun `a permanent reason or the unplayable cache marks the failure definitive`() {
         assertTrue(UnplayableRecovery.isDefinitive("StreamResolveException: unavailable", false))
         assertTrue(UnplayableRecovery.isDefinitive(null, alreadyMarkedUnplayable = true))

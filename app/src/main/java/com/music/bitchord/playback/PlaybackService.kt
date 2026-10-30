@@ -4612,6 +4612,11 @@ class PlaybackService : MediaLibraryService() {
             var depth = 0
             while (cause != null && depth++ < CAUSE_DEPTH) {
                 if (cause is StreamResolver.PermanentlyUnplayableException) return true
+                // The bot challenge is network-wide, not a verdict about this
+                // track, so Media3 must not spend its own retries on it; the
+                // service stops instead of skipping.
+                if (cause is StreamResolver.BotChallengeException) return true
+                if (UnplayableReason.isBotChallenge(cause.message)) return true
                 cause = cause.cause?.takeIf { it !== cause }
             }
             return false
@@ -4664,6 +4669,7 @@ class PlaybackService : MediaLibraryService() {
         error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+            isBotChallenge(error) ||
             AudioCache.isOffline()
 
     /**
@@ -4799,7 +4805,12 @@ class PlaybackService : MediaLibraryService() {
         // more full walks for an answer already in hand — and in the report they
         // were exactly that, at roughly seventeen youtubei requests each.
         val verdict = permanentReason(error)
-        val givingUp = verdict != null || attempts > MAX_RECOVERIES
+        // A bot challenge is about the network, not the track. It must not be
+        // remembered as an unplayable verdict, and it must not walk the queue:
+        // one stop with the reason on screen is the honest answer, and the
+        // same track plays as soon as the challenge clears.
+        val botChallenge = isBotChallenge(error)
+        val givingUp = verdict != null || attempts > MAX_RECOVERIES || botChallenge
         // A track that has never made a sound has *failed to start*, whatever
         // the error was, and the queue should move past it once the attempts are
         // spent — see [skipReason]. Read here rather than after the delay below,
@@ -5324,6 +5335,13 @@ class PlaybackService : MediaLibraryService() {
         attempts: Int,
     ): String? {
         if (verdict != null) return verdict
+        if (isBotChallenge(error)) {
+            TrackLog.w(
+                "BitChord",
+                "YouTube's bot check blocked playback; stopping here instead of skipping the queue",
+            )
+            return null
+        }
         if (!neverStarted) return null
         if (consecutiveErrorSkips >= MAX_CONSECUTIVE_SKIPS) {
             TrackLog.w(
@@ -5596,6 +5614,17 @@ class PlaybackService : MediaLibraryService() {
      * what the resolver actually threw. A shallow `is` check sees only the
      * outermost of those three.
      */
+    private fun isBotChallenge(error: Throwable?): Boolean {
+        var cause = error
+        var depth = 0
+        while (cause != null && depth++ < PERMANENT_CAUSE_DEPTH) {
+            if (cause is StreamResolver.BotChallengeException) return true
+            if (UnplayableReason.isBotChallenge(cause.message)) return true
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        return false
+    }
+
     private fun permanentReason(error: Throwable?): String? {
         var cause = error
         var depth = 0

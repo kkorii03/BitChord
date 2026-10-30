@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -287,7 +288,11 @@ object StreamResolver {
             if (ProxyPlaybackPolicy.cachedUrlUsable(
                     proxyGeneration = cached.proxyGeneration,
                     currentGeneration = ProxyPlayback.currentRouteGeneration,
-                    canResolveViaProxy = ProxyPlayback.canResolveViaProxy(),
+                    canResolveViaProxy = ProxyPlayback.canUseCachedProxyUrl(),
+                    allScopeNow = com.music.bitchord.data.net.YouTubeProxy.config.usable &&
+                        com.music.bitchord.data.net.YouTubeProxy.config.scope ==
+                        com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
+                    mintedOnAllScope = cached.mintedOnAllScope,
                 )
             ) {
                 return cached.url
@@ -340,6 +345,16 @@ object StreamResolver {
     class PermanentlyUnplayableException(reason: String) : IOException(reason)
 
     /**
+     * YouTube's "sign in to prove you are not a bot" challenge.
+     *
+     * A separate type from [PermanentlyUnplayableException] on purpose: the
+     * challenge belongs to the network, not to the recording, so playback must
+     * stop and report it instead of treating the track as gone and walking the
+     * queue. The message is still the listener-facing reason.
+     */
+    class BotChallengeException(reason: String) : IOException(reason)
+
+    /**
      * Tracks that have already failed for a reason retrying cannot fix, and
      * until when.
      *
@@ -356,14 +371,71 @@ object StreamResolver {
      * Entries expire rather than being permanent, because the reasons behind
      * them do: an age gate stops mattering the moment the listener signs in
      * (see [forgetUnplayable], called from the login flow), and Google's region
-     * and bot verdicts are measured in hours, not sessions. Ten minutes is the
-     * same budget [STAND_DOWN_MS] uses, for the same reason — long enough that
-     * the storm cannot re-form, short enough that a listener who fixes the
-     * cause does not have to restart the app.
+     * verdicts are measured in hours, not sessions. A bot challenge is
+     * deliberately *not* stored here at all — it belongs to the network, not
+     * the track, and is reported through [BotChallengeException] instead. Ten
+     * minutes is the same budget [STAND_DOWN_MS] uses, for the same reason —
+     * long enough that the storm cannot re-form, short enough that a listener
+     * who fixes the cause does not have to restart the app.
      */
     private val unplayable = ConcurrentHashMap<String, Verdict>()
 
     private class Verdict(val reason: String, val at: Long)
+
+    /**
+     * When the visitor id was last refreshed for a bot challenge.
+     *
+     * A burned visitor id is worth replacing exactly once per window: every
+     * track doing it would spend a network round trip on an answer that is
+     * usually still the same, and the next challenge is better served by the
+     * fresh id than by another refresh. The window is the same as the
+     * unplayable verdict's, for the same reason — long enough to break a
+     * storm, short enough that a listener who changes network does not have to
+     * restart.
+     */
+    @Volatile
+    private var lastBotRefreshAtMs = 0L
+
+    private const val BOT_REFRESH_COOLDOWN_MS = 10 * 60 * 1000L
+
+    private const val BOT_CHALLENGE_REASON = "YouTube가 이 네트워크에서 봇 확인을 요구합니다"
+
+    /**
+     * Records a network-wide bot challenge and refreshes the burned visitor id
+     * at most once per [BOT_REFRESH_COOLDOWN_MS].
+     *
+     * Deliberately does not touch [unplayable]: a challenge says nothing about
+     * this videoId, and remembering it per track is what used to turn one
+     * network refusal into a queue-wide skip.
+     */
+    private fun noteBotChallenge(videoId: String) {
+        val now = System.currentTimeMillis()
+        val refresh = synchronized(this) {
+            if (now - lastBotRefreshAtMs >= BOT_REFRESH_COOLDOWN_MS) {
+                lastBotRefreshAtMs = now
+                true
+            } else {
+                false
+            }
+        }
+        TrackLog.w(
+            TAG,
+            "$videoId hit YouTube's bot check; this is the network, not the track",
+            about = videoId,
+        )
+        if (refresh) {
+            // Off the failure path: the listener is waiting for the error, not
+            // for a replacement identity. The next resolve will use it if it
+            // lands in time, and a failure here is only a log line.
+            resolverScope.launch {
+                runCatching { Innertube.ensureVisitorData(refresh = true) }
+                    .onFailure {
+                        if (it is CancellationException) throw it
+                        TrackLog.w(TAG, "could not refresh the visitor id after a bot check: ${it.message}")
+                    }
+            }
+        }
+    }
 
     fun unplayableReason(videoId: String): String? {
         val entry = unplayable[videoId] ?: return null
@@ -778,12 +850,25 @@ object StreamResolver {
                     // track: undo the health window and let the usual retry
                     // path try the direct route again once it has cleared.
                     if (ProxyFailure.isProxyDown(proxyFailure)) throw proxyFailure
+                    if (proxyFailure.isSignInConfirmNotBot()) {
+                        noteBotChallenge(videoId)
+                        throw BotChallengeException(BOT_CHALLENGE_REASON)
+                    }
                     val reason = permanentReason(proxyFailure)
                         ?: "이 국가에서는 이용할 수 없는 트랙입니다"
                     rememberUnplayable(videoId, reason)
                     TrackLog.w(TAG, "$videoId is not playable: $reason; not asking again for 10 minutes")
                     throw PermanentlyUnplayableException(reason)
                 }
+            }
+            // The bot challenge is a fact about this network, not this
+            // recording. Remembering it per videoId made every queued track
+            // look broken and the player skip through them; refreshing the
+            // visitor id once gives the next request a chance with an identity
+            // that has not been accused.
+            if (e.isSignInConfirmNotBot()) {
+                noteBotChallenge(videoId)
+                throw BotChallengeException(BOT_CHALLENGE_REASON)
             }
             // Recorded before it is rethrown, so the retries stacked above this
             // — ExoPlayer's, the service's, read-ahead's — are answered from
@@ -827,6 +912,10 @@ object StreamResolver {
         allowBackupRetry: Boolean = true,
     ): Stream {
         val start = MonotonicClock.nowMs()
+        // Stamped before the request, not after it: a browse success can move
+        // the route while this player walk is in flight, and stamping at the
+        // end would label the URL with a server that never minted it.
+        val mintedGeneration = YouTubeProxy.routeGeneration
         val found = try {
             timed("$videoId proxy InnerTubeX") {
                 innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
@@ -858,7 +947,7 @@ object StreamResolver {
             throw IOException("stream resolution found no stream for $videoId")
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
-        val first = ProxyPlayback.markResolved(videoId, found.url)
+        val first = ProxyPlayback.markResolved(videoId, found.url, mintedGeneration)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
@@ -874,7 +963,34 @@ object StreamResolver {
         val seen = Collections.newSetFromMap(IdentityHashMap<Throwable, Boolean>())
         while (current != null) {
             if (!seen.add(current)) return false
-            if (current is SignInConfirmNotBotException) return true
+            if (current is SignInConfirmNotBotException ||
+                UnplayableReason.isBotChallenge(current.message)
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    /**
+     * Whether [this] is a refusal a proxy walk may answer — a country or
+     * Premium gate, or the bot challenge — as opposed to a takedown or a
+     * transport failure.
+     */
+    private fun Throwable.isProxyWorthyRefusal(): Boolean {
+        var current: Throwable? = this
+        val seen = Collections.newSetFromMap(IdentityHashMap<Throwable, Boolean>())
+        while (current != null) {
+            if (!seen.add(current)) return false
+            if (current is SignInConfirmNotBotException ||
+                current is GeographicRestrictionException ||
+                current is UnsupportedContentInCountryException ||
+                current is YoutubeMusicPremiumContentException ||
+                UnplayableReason.isRegionGate(current.message)
+            ) {
+                return true
+            }
             current = current.cause
         }
         return false
@@ -1423,7 +1539,15 @@ object StreamResolver {
             // has no ceiling of its own. Within the setting's ceiling it is the
             // answer; above it (best Opus over Standard's 128kbps) extraction
             // below can pick the lower rung, and this is kept as the fallback.
-            val found = innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a)
+            var itxFailureReason: String? = null
+            val found = innerTubeXStreamAllowingUploads(
+                videoId,
+                maxKbps,
+                requireM4a,
+                onFailure = { reason ->
+                    itxFailureReason = UnplayableReason.keepTrackSpecific(itxFailureReason, reason)
+                },
+            )
                 ?.takeIf { if (requireM4a) it.downloadExtension == "m4a" else it.downloadExtension == "webm" }
             if (found != null) {
                 offered = true
@@ -1452,17 +1576,25 @@ object StreamResolver {
             if (extractionFailure is CancellationException) throw extractionFailure
             if (extractionFailure != null) {
                 TrackLog.w(TAG, "extraction found no $format for $videoId: ${extractionFailure.message}")
-                if (!proxyTried && canProxy &&
-                    ProxyPlaybackPolicy.isRegionRefusal(
-                        signInConfirmNotBot = extractionFailure.isSignInConfirmNotBot(),
-                        directUnplayable = false,
-                    )
-                ) {
-                    proxyTried = true
-                    TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy")
-                    proxyDownloadStream(videoId, maxKbps, requireM4a)
-                        ?.let { return@withContext it }
-                }
+            }
+            // A download is the one place a country/Premium gate used to leave
+            // a proxy-configured listener with no file: the direct walk threw
+            // YoutubeMusicPremiumContentException (or InnerTubeX exhausted its
+            // catalog), and only a bot exception was treated as proxy-worthy.
+            // Both signals now earn the same single proxy walk playback gets.
+            val proxyWorthy = extractionFailure?.isProxyWorthyRefusal() == true ||
+                itxFailureReason?.let(UnplayableReason::isRegionGate) == true
+            if (!proxyTried && canProxy && proxyWorthy) {
+                proxyTried = true
+                TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy (download)")
+                proxyDownloadStream(videoId, maxKbps, requireM4a)
+                    ?.let { return@withContext it }
+            }
+            if (extractionFailure?.isSignInConfirmNotBot() == true ||
+                itxFailureReason?.let(UnplayableReason::isBotChallenge) == true
+            ) {
+                noteBotChallenge(videoId)
+                throw BotChallengeException(BOT_CHALLENGE_REASON)
             }
 
             // A rung above the ceiling beats no download at all; extraction does the same.
@@ -1487,6 +1619,7 @@ object StreamResolver {
         allowBackupRetry: Boolean = true,
     ): Stream? {
         val start = MonotonicClock.nowMs()
+        val mintedGeneration = YouTubeProxy.routeGeneration
         val found = try {
             innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
         } catch (e: CancellationException) {
@@ -1515,7 +1648,7 @@ object StreamResolver {
             return null
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
-        val first = ProxyPlayback.markResolved(videoId, found.url)
+        val first = ProxyPlayback.markResolved(videoId, found.url, mintedGeneration)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
@@ -1733,6 +1866,33 @@ object StreamResolver {
         refuseMidPlay(url, responseCode)
     }
 
+    /**
+     * Forgets a URL whose host asked for a longer pause than a loader thread
+     * may take.
+     *
+     * [onPlaybackRefused] deliberately only handles 403/404/410: those are
+     * refusals of the client, and a 429/503 is the host asking for time. But
+     * leaving the URL in [recent] is the other half of that decision. The
+     * playback path retries the same item after 350ms, the resolving factory
+     * asks [resolve] again, and a cached entry hands back the exact URL the
+     * host just rate-limited — three times, until the retry budget is gone and
+     * the track is skipped. Forgetting it lets the next open mint a fresh URL
+     * (another host, another client) instead of repeating a pause nobody
+     * waited for.
+     */
+    fun onRateLimited(url: String) {
+        val videoId = InnerTubeXResolver.extractedFor(url)?.videoId
+            ?: recent.entries.firstOrNull { it.value.url == url }?.key
+            ?: return
+        recent.remove(videoId)
+        lastRefused.remove(videoId)
+        TrackLog.w(
+            TAG,
+            "rate-limited URL forgotten for $videoId; the next open will re-resolve",
+            about = videoId,
+        )
+    }
+
     // ---- Failsafe -----------------------------------------------------------
 
     /**
@@ -1783,6 +1943,14 @@ object StreamResolver {
                 // static method ...") reads like nothing.
                 throw IOException("Extractor cannot run on this device: $e", e)
             } catch (e: Exception) {
+                // A bot challenge is not worth three watch-page attempts: it
+                // reads the same on every extraction and belongs to the
+                // network. Handed straight to the caller, which stops instead
+                // of walking the queue.
+                if (e.isSignInConfirmNotBot()) {
+                    TrackLog.w(TAG, "extraction hit YouTube's bot check for $videoId")
+                    throw e
+                }
                 // A verdict about the content, not about this minute. There was
                 // no classification here at all, so the most expensive retry in
                 // the app was spent on the one class of failure that cannot
@@ -2048,7 +2216,13 @@ object StreamResolver {
      * A cached URL, its age, and the proxy route generation that minted it.
      * [proxyGeneration] is null for a direct URL, which survives route changes.
      */
-    private class Resolved(val url: String, val at: Long, val proxyGeneration: Long?)
+    private class Resolved(
+        val url: String,
+        val at: Long,
+        val proxyGeneration: Long?,
+        /** Whether the media fetch for this URL was minted on the ALL_YOUTUBE route. */
+        val mintedOnAllScope: Boolean,
+    )
 
     /**
      * Stream URLs already resolved, by videoId — and, since [resolve] only ever
@@ -2081,10 +2255,17 @@ object StreamResolver {
             recent.entries.removeAll { it.value.at < cutoff }
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
+        val proxyGeneration = ProxyPlayback.generationFor(url)
         recent[videoId] = Resolved(
             url = url,
             at = MonotonicClock.nowMs(),
-            proxyGeneration = ProxyPlayback.generationFor(url),
+            proxyGeneration = proxyGeneration,
+            // A stamp only exists when the request really went through the
+            // proxy, so this is false for a direct URL and for one minted while
+            // the ALL_YOUTUBE route was in its unreachable bypass.
+            mintedOnAllScope = proxyGeneration != null &&
+                com.music.bitchord.data.net.YouTubeProxy.config.scope ==
+                com.music.bitchord.data.net.ProxyScope.ALL_YOUTUBE,
         )
         // A URL that resolved or answered a retry is no longer described by the
         // refusal that preceded it.

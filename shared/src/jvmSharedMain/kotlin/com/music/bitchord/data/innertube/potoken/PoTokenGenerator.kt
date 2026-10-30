@@ -136,7 +136,17 @@ class PoTokenGenerator(
     }
 
     private companion object {
-        const val POTOKEN_TIMEOUT_MS = 8_000L
+        /**
+         * The whole page-creation path, not one mint.
+         *
+         * It used to be eight seconds, which is shorter than the WebView's own
+         * forty-five-second init budget and shorter than a cold BotGuard
+         * Create/GenerateIT round trip on a slow connection. The outer timeout
+         * then fired first on every attempt, cleared the page, and no PoToken
+         * was ever minted — the inner mint timeout (fifteen seconds) is what
+         * bounds a live page.
+         */
+        const val POTOKEN_TIMEOUT_MS = 45_000L
         const val PREWARM_VIDEO_ID = "dQw4w9WgXcQ"
     }
 
@@ -200,6 +210,11 @@ class PoTokenGenerator(
             }
         val playerPot = try {
             page.minter.generatePoToken(videoId)
+        } catch (cancelled: CancellationException) {
+            // The caller moved on (the queue advanced, a search was replaced).
+            // Treating this as a broken page rebuilt the WebView and paid for
+            // another BotGuard load after the work had already been abandoned.
+            throw cancelled
         } catch (throwable: Throwable) {
             if (page.recreated) {
                 throw throwable
