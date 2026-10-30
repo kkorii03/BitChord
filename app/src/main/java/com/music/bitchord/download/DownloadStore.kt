@@ -55,6 +55,17 @@ object DownloadStore {
 
     private const val TAG = "BitChord"
 
+    /**
+     * The wall clock when this process first touched the download store.
+     *
+     * Nothing this process writes can be older than this, so a sweep may treat
+     * an older `.part`, pending row or offline package as abandoned even while
+     * a download is starting beside it. Without the cutoff, the startup sweep
+     * and a download started by the foreground or liked events can race, and
+     * the sweep would delete the active destination.
+     */
+    private val processStartedAtMs = System.currentTimeMillis()
+
     /** The subfolder of Music that everything lands in. */
     const val FOLDER = "BitChord"
 
@@ -218,6 +229,72 @@ object DownloadStore {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { true } == true
     }.getOrDefault(false)
 
+    /**
+     * Removes half-written destinations left by a process death.
+     *
+     * [Pending] keeps an unfinished file out of sight — an `IS_PENDING` row on
+     * API 29+, a `.part` beside the final name below it — but nothing owns it
+     * once the process that was writing it is gone. The bytes stay on disk and,
+     * on the media-store path, the row stays invisible forever; a few
+     * interrupted replacements can quietly consume the space the next download
+     * needs. Called once from [Downloads.init].
+     *
+     * Only entries older than [processStartedAtMs] are touched: the startup
+     * sweep runs off the main thread and a download started by the foreground
+     * or liked event may already be writing. An offline package is kept when
+     * [keepOfflinePackages] names its directory, so a finished package is not
+     * mistaken for an abandoned one before its record is written. A null
+     * [keepOfflinePackages] means the records could not be read, so no offline
+     * package is swept.
+     */
+    fun cleanupAbandoned(
+        context: Context,
+        keepOfflinePackages: Set<String>? = null,
+    ) {
+        deleteAbandonedParts(File(context.filesDir, "downloads"), processStartedAtMs)
+        deleteAbandonedParts(legacyFolder(), processStartedAtMs)
+        if (keepOfflinePackages != null) {
+            OfflinePackage.sweepUnreferenced(
+                parent = File(context.filesDir, "offline-hls"),
+                referencedRoots = keepOfflinePackages,
+                olderThanMs = processStartedAtMs,
+            )
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) clearPendingRows(context)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun clearPendingRows(context: Context) {
+        runCatching {
+            context.contentResolver.delete(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
+                    "${MediaStore.MediaColumns.IS_PENDING} = 1 AND " +
+                    "${MediaStore.MediaColumns.DATE_ADDED} < ?",
+                arrayOf("%$FOLDER%", (processStartedAtMs / 1_000).toString()),
+            )
+        }.onFailure {
+            Log.w(TAG, "could not clear abandoned pending downloads: ${it.message}")
+        }
+    }
+
+    /** Deletes the `.part` files this app leaves in [folder]; returns how many went. */
+    internal fun deleteAbandonedParts(
+        folder: File,
+        olderThanMs: Long = Long.MAX_VALUE,
+    ): Int {
+        val files = folder.listFiles() ?: return 0
+        var removed = 0
+        for (file in files) {
+            if (file.isFile && file.name.endsWith(".part") &&
+                file.lastModified() < olderThanMs && file.delete()
+            ) {
+                removed++
+            }
+        }
+        return removed
+    }
+
     fun delete(context: Context, uri: Uri): Boolean = runCatching {
         if (uri.scheme == "file") {
             uri.path?.let { path ->
@@ -334,10 +411,13 @@ object DownloadStore {
     }
 
     @Suppress("DEPRECATION")
-    private fun legacyFile(name: String) = File(
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), FOLDER),
-        name,
+    private fun legacyFolder() = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+        FOLDER,
     )
+
+    @Suppress("DEPRECATION")
+    private fun legacyFile(name: String) = File(legacyFolder(), name)
 
     private fun privateFile(context: Context, name: String) =
         File(File(context.filesDir, "downloads"), name)

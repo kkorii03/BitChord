@@ -182,6 +182,36 @@ object HqVerificationStore {
         }
     }
 
+    /**
+     * Forgets every verdict that belongs to one of [sourceConfigIds].
+     *
+     * A verdict is keyed by the source's config id and its track id, not by the
+     * address the config pointed at. Editing an addon URL or importing a source
+     * list can therefore leave a measurement under an id that now names a
+     * different server, and the automatic pass would ask that server for the
+     * old track id. Removed sources are the same case with nothing left to ask.
+     * Called by [com.music.bitchord.data.sources.SourceRegistry.publish] only
+     * when the address actually changed, so a label edit or a reorder keeps the
+     * expensive measurements.
+     */
+    fun invalidateSources(context: Context, sourceConfigIds: Set<String>) {
+        if (sourceConfigIds.isEmpty()) return
+        synchronized(lock) {
+            val data = data(context)
+            val verifiedBefore = data.verified.size
+            val rejectedBefore = data.rejected.size
+            data.verified.entries.removeAll { (key, _) ->
+                key.sourceConfigIdOf() in sourceConfigIds
+            }
+            data.rejected.removeAll { key -> key.sourceConfigIdOf() in sourceConfigIds }
+            if (data.verified.size != verifiedBefore || data.rejected.size != rejectedBefore) {
+                save(context, data)
+            }
+        }
+    }
+
+    private fun String.sourceConfigIdOf(): String? = split('\u0001').getOrNull(1)
+
     /** The best rung already verified for [youtubeId], for the tier-change log. */
     fun bestTier(context: Context, youtubeId: String): HqTier? = synchronized(lock) {
         data(context).verified.entries

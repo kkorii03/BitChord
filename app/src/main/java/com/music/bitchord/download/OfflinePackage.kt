@@ -18,6 +18,16 @@ internal object OfflinePackage {
     private val sequence = AtomicLong()
 
     /**
+     * Directories a save is writing into right now, guarded by [activeLock].
+     *
+     * The sweep holds the same lock while it creates or removes a directory, so
+     * a package cannot become active between the sweep's decision and its
+     * delete.
+     */
+    private val activeLock = Any()
+    private val activeRoots = HashSet<String>()
+
+    /**
      * Build a package in a new directory, keeping any earlier one intact.
      *
      * The body owns [root] only. If it throws — a dropped segment, a cancelled
@@ -25,13 +35,46 @@ internal object OfflinePackage {
      * it is touched.
      */
     fun <T> writeNew(parent: File, id: String, body: (File) -> T): T {
-        val root = newDirectory(parent, id)
+        val root = synchronized(activeLock) {
+            newDirectory(parent, id).also { activeRoots.add(it.absolutePath) }
+        }
         return try {
             body(root)
         } catch (e: Throwable) {
             root.deleteRecursively()
             throw e
+        } finally {
+            synchronized(activeLock) { activeRoots.remove(root.absolutePath) }
         }
+    }
+
+    /**
+     * Removes package directories left behind by a process death.
+     *
+     * A save builds its package under a fresh directory and only writes
+     * `playlist.m3u8` at the end, so a process killed mid-save leaves a
+     * directory no record names. [referencedRoots] are the directories the
+     * download records still point at; those are kept even when they look
+     * incomplete. Only directories older than [olderThanMs] are removed, so a
+     * package just completed by this process is never swept before its record
+     * is written.
+     */
+    internal fun sweepUnreferenced(
+        parent: File,
+        referencedRoots: Set<String>,
+        olderThanMs: Long,
+    ): Int {
+        val directories = parent.listFiles()?.filter { it.isDirectory } ?: return 0
+        var removed = 0
+        synchronized(activeLock) {
+            for (directory in directories) {
+                val path = directory.absolutePath
+                if (path in activeRoots || path in referencedRoots) continue
+                if (directory.lastModified() >= olderThanMs) continue
+                if (directory.deleteRecursively()) removed++
+            }
+        }
+        return removed
     }
 
     internal fun newDirectory(parent: File, id: String): File {

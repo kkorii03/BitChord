@@ -172,4 +172,24 @@ class HqVerificationStoreFormatTest {
 
         assertTrue(HqVerificationStore.isRejected(context, "yt", "src", "track"))
     }
+
+    @Test
+    fun `invalidating a source drops only that source's verdicts`() {
+        HqVerificationStore.put(context, "yt1", "src1", "track1", verified())
+        HqVerificationStore.reject(context, "yt2", "src1", "track2")
+        HqVerificationStore.put(context, "yt3", "src2", "track3", verified())
+
+        HqVerificationStore.invalidateSources(context, setOf("src1"))
+
+        assertNull(HqVerificationStore.get(context, "yt1", "src1", "track1"))
+        assertFalse(HqVerificationStore.isRejected(context, "yt2", "src1", "track2"))
+        assertEquals(verified(), HqVerificationStore.get(context, "yt3", "src2", "track3"))
+        assertEquals(1, HqVerificationStore.entries(context).size)
+
+        cachedField.set(HqVerificationStore, null)
+
+        assertNull(HqVerificationStore.get(context, "yt1", "src1", "track1"))
+        assertFalse(HqVerificationStore.isRejected(context, "yt2", "src1", "track2"))
+        assertEquals(verified(), HqVerificationStore.get(context, "yt3", "src2", "track3"))
+    }
 }

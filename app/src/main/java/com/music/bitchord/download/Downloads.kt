@@ -130,6 +130,14 @@ object Downloads {
     @Volatile
     private var opened = false
 
+    /**
+     * Whether both download records were decoded rather than replaced by an
+     * empty map after a parse failure. A corrupt record must not make the
+     * offline-package sweep treat every package as unreferenced.
+     */
+    @Volatile
+    private var recordsReadable = false
+
     private val openLock = Any()
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -289,7 +297,32 @@ object Downloads {
         // Three JSON maps that grow with the listener's Downloads folder. None
         // of them is needed for the first frame, so they are parsed on the
         // startup thread; a caller that gets here first runs [open] itself.
-        StartupWork.background("downloads") { open() }
+        // The abandoned-destination sweep needs the records to know which
+        // offline packages are still referenced, so it runs after [open]. It
+        // only touches entries older than this process, which is what keeps a
+        // download started by the foreground or liked event safe beside it.
+        StartupWork.background("downloads") {
+            open()
+            DownloadStore.cleanupAbandoned(context, offlinePackageRoots())
+        }
+    }
+
+    /**
+     * Directories the recorded offline packages still point at.
+     *
+     * Null when the records could not be decoded: an empty answer then would
+     * make every old package look unreferenced and delete files a corrupt
+     * record still owns.
+     */
+    private fun offlinePackageRoots(): Set<String>? {
+        if (!recordsReadable) return null
+        return buildSet {
+            for (raw in _saved.value.values + _savedMetadata.value.values.map { it.uri }) {
+                val path = runCatching { Uri.parse(raw).path }.getOrNull() ?: continue
+                val root = File(path).parentFile ?: continue
+                if (root.parentFile?.name == "offline-hls") add(root.absolutePath)
+            }
+        }
     }
 
     /**
@@ -315,12 +348,15 @@ object Downloads {
             if (opened) return
             val context = appContext ?: return
             prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
-            _saved.value = runCatching {
+            val saved = runCatching {
                 json.decodeFromString(serializer, prefs.getString(KEY_SAVED, null) ?: "{}")
-            }.getOrDefault(emptyMap())
-            _savedMetadata.value = runCatching {
+            }
+            val metadata = runCatching {
                 json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
-            }.getOrDefault(emptyMap())
+            }
+            _saved.value = saved.getOrDefault(emptyMap())
+            _savedMetadata.value = metadata.getOrDefault(emptyMap())
+            recordsReadable = saved.isSuccess && metadata.isSuccess
             _mvSoundSuspects.value = runCatching {
                 json.decodeFromString(suspectSerializer, prefs.getString(KEY_MV_SOUND_SUSPECTS, null) ?: "{}")
             }.getOrDefault(emptyMap())

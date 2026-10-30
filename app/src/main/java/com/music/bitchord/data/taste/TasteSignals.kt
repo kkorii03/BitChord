@@ -252,6 +252,66 @@ object TasteSignals {
     }
 
     /**
+     * The explicit ratings this device has stored, for the backup file.
+     *
+     * [com.music.bitchord.data.LikeState] only knows what this process has
+     * seen; this is the durable half, written by [onRated] and read back on the
+     * next launch.
+     */
+    fun ratings(): Map<String, LikeStatus> = synchronized(lock) {
+        if (!ready()) return@synchronized emptyMap()
+        buildMap {
+            tracks.forEach { (id, track) ->
+                when (track.rating) {
+                    RATING_LIKE -> put(id, LikeStatus.LIKE)
+                    RATING_DISLIKE -> put(id, LikeStatus.DISLIKE)
+                }
+            }
+        }
+    }
+
+    /**
+     * Puts ratings from a backup back into the durable store.
+     *
+     * This is a user-requested restore of ratings that were already stored on
+     * the source device, so unlike [onRated] it does not consult private
+     * listening. Only a changed rating adds a counter, which keeps a repeated
+     * import from inflating the taste totals.
+     */
+    fun restoreRatings(ratings: Map<String, LikeStatus>) {
+        if (!this::file.isInitialized || ratings.isEmpty()) return
+        val now = System.currentTimeMillis()
+        synchronized(lock) {
+            var changed = false
+            ratings.forEach { (videoId, status) ->
+                if (videoId.isBlank()) return@forEach
+                val rating = ratingOf(status)
+                if (rating == RATING_NONE) return@forEach
+                val track = tracks.getOrPut(videoId) { StoredTrack(id = videoId) }
+                if (track.rating == rating) return@forEach
+                track.rating = rating
+                val artist = track.artist.takeIf { it.isNotBlank() }
+                val singer = track.coverSinger
+                when (rating) {
+                    RATING_LIKE -> {
+                        track.likes.add(1.0, now)
+                        artist?.let { artistFor(it).likes.add(1.0, now) }
+                        singer?.let { singerFor(it).likes.add(1.0, now) }
+                    }
+                    RATING_DISLIKE -> {
+                        track.dislikes.add(1.0, now)
+                        artist?.let { artistFor(it).dislikes.add(1.0, now) }
+                        singer?.let { singerFor(it).dislikes.add(1.0, now) }
+                    }
+                    else -> Unit
+                }
+                changed = true
+            }
+            if (changed) markDirtyLocked()
+        }
+    }
+
+    /**
      * Records that AutoPlay offered [videoIds] from the listener's own library.
      *
      * Persisted for the same reason a play is: without it, a favourite heard

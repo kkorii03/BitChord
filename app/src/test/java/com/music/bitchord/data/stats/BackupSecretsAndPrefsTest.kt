@@ -3,6 +3,7 @@ package com.music.bitchord.data.stats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.testutil.FakePreferences
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayInputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,6 +46,11 @@ class BackupSecretsAndPrefsTest {
         "downloaded_tracks",
         "downloaded_tracks_metadata",
         "downloaded_collections",
+        "downloaded_mv_sound_suspects",
+        "liked_download_pending",
+        "lock_screen_lyrics_page",
+        "ko_update_checked_at",
+        "ko_upstream_notified_version",
         "local_music_folder_uri",
         "last_version_code",
         "onboarding_complete",
@@ -212,6 +218,16 @@ class BackupSecretsAndPrefsTest {
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("최신"))
+    }
+
+    @Test
+    fun `an oversized backup is refused instead of being read whole`() {
+        val stream = ByteArrayInputStream(ByteArray(Backup.MAX_IMPORT_BYTES + 1))
+
+        val result = runCatching { with(Backup) { stream.readBackupText() } }
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("큽니다"))
     }
 
     @Test

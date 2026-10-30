@@ -11,6 +11,8 @@ import com.music.bitchord.download.SavedSongMetadata
 import com.music.bitchord.download.resolvedDownloadDates
 import com.music.bitchord.download.youtubeDownloadBadge
 import kotlinx.serialization.json.Json
+import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -68,6 +70,49 @@ class DownloadStoreTest {
 
         assertEquals(1_700_000_000L, added)
         assertEquals(1_725_000_123L, modified)
+    }
+
+    @Test
+    fun `an interrupted download's part files are swept but finished files stay`() {
+        val dir = Files.createTempDirectory("bitchord-downloads").toFile()
+        try {
+            val finished = File(dir, "song.flac").apply { writeText("done") }
+            val legacyPart = File(dir, "song.flac.part").apply { writeText("half") }
+            val privatePart = File(dir, ".song.flac.part").apply { writeText("half") }
+            val other = File(dir, "notes.txt").apply { writeText("keep") }
+
+            assertEquals(2, DownloadStore.deleteAbandonedParts(dir))
+
+            assertTrue(finished.exists())
+            assertTrue(other.exists())
+            assertFalse(legacyPart.exists())
+            assertFalse(privatePart.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a part file started by this process survives the abandoned sweep`() {
+        val dir = Files.createTempDirectory("bitchord-downloads").toFile()
+        try {
+            val cutoff = 1_000_000L
+            val abandoned = File(dir, "old.flac.part").apply {
+                writeText("half")
+                setLastModified(cutoff - 1_000L)
+            }
+            val active = File(dir, "new.flac.part").apply {
+                writeText("half")
+                setLastModified(cutoff + 1_000L)
+            }
+
+            assertEquals(1, DownloadStore.deleteAbandonedParts(dir, cutoff))
+
+            assertFalse(abandoned.exists())
+            assertTrue(active.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     // ---- What Android will store -------------------------------------------

@@ -14,6 +14,7 @@ import com.music.bitchord.data.sources.addon.DetectedFormat
 import com.music.bitchord.data.sources.addon.SourceFormats
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.audio.LosslessOutput
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -419,12 +420,38 @@ object SourceRegistry {
         return next.size
     }
 
+    /**
+     * The source ids whose stored HQ verdicts no longer describe what the id
+     * names: removed, or re-pointed at another kind/address. Label, enabled and
+     * order are deliberately not terms — those change no catalogue.
+     */
+    internal fun rePointedSourceIds(
+        before: List<SourceConfig>,
+        next: List<SourceConfig>,
+    ): Set<String> = before.mapNotNull { old ->
+        val current = next.firstOrNull { it.id == old.id }
+        if (current == null || current.kind != old.kind || current.baseUrl != old.baseUrl) {
+            old.id
+        } else {
+            null
+        }
+    }.toSet()
+
     private fun publish(next: List<SourceConfig>, persist: Boolean = true) {
+        val before = configs.value
+        // A verdict is keyed by config id and track id, not by the address the
+        // config pointed at. Keep it only while that id still names the same
+        // server; a removed or re-pointed source must not keep an answer that
+        // would send the next automatic pass to the old catalogue.
+        val rePointed = rePointedSourceIds(before, next)
         configs.value = next
         // Search answers and verified originals describe the source list they
         // were found with. An addon that was edited, removed or switched off
         // must not keep serving a cached answer under the same config id.
         SourceResolver.clearSearchAnswers()
+        if (rePointed.isNotEmpty()) {
+            appContext?.let { HqVerificationStore.invalidateSources(it, rePointed) }
+        }
         // Rebuilt against the previous map so that an untouched source keeps
         // the instance it already had, rather than being replaced by an
         // identical-but-cold one every time an unrelated row is toggled.
