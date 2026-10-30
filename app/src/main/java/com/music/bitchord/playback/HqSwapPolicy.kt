@@ -42,6 +42,10 @@ internal object HqSwapPolicy {
      * @param durationMs the outgoing track's length, or a non-positive value
      *   when the player has not reported one yet.
      * @param crossfadeActive whether a transition currently owns the spare player.
+     * @param versionSwapActive whether a song-version swap is already driving the
+     *   same spare player. Both fades rebuild the standby from the session
+     *   player's queue, so starting one while the other is running would have
+     *   the loser prepare the spare and then have it torn down underneath it.
      * @param sameTrack whether the item the search was started for is still current.
      * @param offsetMs the verified `candidateTime - youtubeTime`, from [HqMatchPolicy].
      * @param rate the verified candidate seconds per YouTube second.
@@ -59,10 +63,12 @@ internal object HqSwapPolicy {
         currentOffsetMs: Long = 0L,
         currentRate: Double = 1.0,
         pinned: Boolean = false,
+        versionSwapActive: Boolean = false,
     ): Decision {
         if (!sameTrack) return Decision(false, "track-changed", 0L)
         if (pinned) return Decision(false, "pinned", 0L)
         if (crossfadeActive) return Decision(false, "crossfade", 0L)
+        if (versionSwapActive) return Decision(false, "version-swap", 0L)
         if (!rate.isFinite() || rate <= 0.0) return Decision(false, "bad-rate", 0L)
         val remaining = durationMs.takeIf { it > 0L }?.minus(positionMs)
         if (remaining != null && remaining < MIN_REMAINING_MS) {
@@ -75,6 +81,35 @@ internal object HqSwapPolicy {
         }
         return Decision(true, "", target)
     }
+
+    /**
+     * Whether a song-version swap may take the spare player.
+     *
+     * The crossfade term is the long-standing rule. The lossless term is the
+     * same rule for the newer mid-song swap: it owns the spare from the moment
+     * it starts preparing until it lands or gives up, so a version swap that
+     * ran beside it used to stop/clear that standby mid-swap.
+     */
+    fun versionSwapMayStart(
+        crossfadeActive: Boolean,
+        losslessSwapActive: Boolean,
+    ): Boolean = !crossfadeActive && !losslessSwapActive
+
+    /**
+     * Whether any transition currently owns the active/standby pair.
+     *
+     * The output-silence monitor must stand down while this is true: a crossfade
+     * or either swap deliberately fades one side to near zero, and judging that
+     * mid-fade gain as a fault made [PlaybackService.recoverAudibleGains] raise
+     * it again, so the two fades played over each other. The lossless term has
+     * to cover the whole prepare+blend window ([hqSwapOwnsStandby]), not only
+     * the instant the new media id is published.
+     */
+    fun transitionOwnsPlayer(
+        crossfadeActive: Boolean,
+        versionSwapActive: Boolean,
+        losslessSwapActive: Boolean,
+    ): Boolean = crossfadeActive || versionSwapActive || losslessSwapActive
 
     /**
      * Whether the item a swap was started for is still the one in the player.

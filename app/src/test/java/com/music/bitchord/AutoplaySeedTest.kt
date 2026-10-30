@@ -1,6 +1,7 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.autoplayRefillNeedsLoad
 import com.music.bitchord.playback.needsYoutubeSeedLookup
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,6 +24,14 @@ class AutoplaySeedTest {
         assertTrue(needsYoutubeSeedLookup(song("file:///storage/emulated/0/Music/a.flac", "file:///storage/emulated/0/Music/a.flac")))
         assertTrue(needsYoutubeSeedLookup(song("smb:nas/Music/a.flac", "smb://nas/Music/a.flac")))
         assertTrue(needsYoutubeSeedLookup(song("webdav:https://nas/Music/a.flac", "https://nas/Music/a.flac")))
+    }
+
+    @Test
+    fun `a refill starts a load unless one is already running for this track`() {
+        assertTrue(autoplayRefillNeedsLoad(loadActive = false, loadedSeed = null, mediaId = "current"))
+        assertTrue(autoplayRefillNeedsLoad(loadActive = true, loadedSeed = "previous", mediaId = "current"))
+        assertFalse(autoplayRefillNeedsLoad(loadActive = true, loadedSeed = "current", mediaId = "current"))
+        assertTrue(autoplayRefillNeedsLoad(loadActive = true, loadedSeed = null, mediaId = "current"))
     }
 
     @Test

@@ -120,6 +120,21 @@ internal fun repeatOneSeedShouldClear(previousMode: Int, currentMode: Int): Bool
     previousMode == Player.REPEAT_MODE_ONE && currentMode != Player.REPEAT_MODE_ONE
 
 /**
+ * Whether a refill needs to start a load of its own.
+ *
+ * [autoplayLoadJob] is only a handle to the newest load, and a load started
+ * for the previous track can still be active when the last row fails. That
+ * job will exit on its own media-id check, but treating it as "the refill is
+ * already in flight" left this track with no load at all. A load only counts
+ * when it was started for the same media id.
+ */
+internal fun autoplayRefillNeedsLoad(
+    loadActive: Boolean,
+    loadedSeed: String?,
+    mediaId: String,
+): Boolean = !loadActive || loadedSeed != mediaId
+
+/**
  * Finds the YouTube id that should seed AutoPlay for a song. Module tracks do not
  * carry YouTube ids, so they are matched on YouTube before the radio request.
  */
