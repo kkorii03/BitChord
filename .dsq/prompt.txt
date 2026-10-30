@@ -1,8 +1,17 @@
-(공통 주의 10-26 10시: 이 PC 셸에는 rg(ripgrep)가 없다 — 검색은 OpenCode 내장 grep/glob 도구나 PowerShell Select-String/Get-ChildItem 을 쓴다. 도구 하나가 실패해도 멈추지 말고 다른 방법으로 계속해 작업을 끝까지 하고, 마지막 요약을 반드시 출력한다.)
-(10-26 06:55 Opus: 원래 '12 화면 정리' — 15 자리에서 빈 응답 nochange, 재투입.)
-작업 폴더: C:\Users\jang\Desktop\BitChord\BitChord-lane2 (브랜치 task/lane2 의 지금 HEAD 에서 작업. ko-101 태그는 비교 기준점일 뿐 되돌리지 말 것). 커밋·push 금지(자동 진행이 함). 로컬 Gradle 빌드 금지(컴파일은 CI). .github/, keys\, 서명 설정, .ds-ctx/ 수정 금지.
-검사 범위(사용자 지시, 필수): ko-101 이후 오늘·밤사이 추가·수정된 모든 기능과 코드(git log ko-101..HEAD, git diff ko-101..HEAD — 예: 노래 검증, 가사 제목 정규화, 크로스페이드·자동 믹스, 싱크 채점 모드, 다운로드 곡 메뉴·사진, 고음질 소스·등급·다음 곡 준비, 설정 공유, 커버 가수 이동, 충전 조건 제거 등)를 기존 코드와 똑같이 이 작업의 대상에 포함한다. 새로 들어온 코드일수록 먼저 본다. 이 작업 전에 끝난 대기열 작업의 결과도 포함.
-공통 원칙: 사용자 기능·동작·설정·저장 데이터 형식은 바꾸지 않는다(이 작업이 명시한 것 제외). 한 번에 너무 많이 바꾸지 말고 이 지시의 범위만. 바꾼 함수·클래스의 모든 호출부와 타입을 다시 읽고 확인(널 안전·스마트캐스트 주의, 과거 Song? 스마트캐스트 컴파일 오류 있었음). 기존 주석의 의도를 지울 때는 요약에 이유. 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 사용자 폰은 저장공간 1TB·데이터 무제한이라 데이터/용량보다 배터리를 우선한다. 새 순수 로직은 shared com.music.bitchord.data... 패키지 테스트(자동 실행)로 검증. 결과 기록은 C:\Users\jang\Desktop\BitChord\BitChord-lane2\docs\cleanup\ 아래 해당 md 파일(새로 만들 수 있음)에 남긴다.
-마지막에 10줄 이내로 요약: 수정 파일 수 / 핵심 변경 / 테스트 / 다음 단계에 남긴 것.
-작업:
-[UI/UX 3차: 애플뮤직다움 전수] C:\Users\jang\Desktop\BitChord\ship\UI-AUDIT.md(.ds-ctx\UI-AUDIT.md) 1·2차 이후 남은 부분을 전 화면에서 찾아 고친다: (1) 말투 — 모든 한국어 문자열(values-ko)을 애플뮤직 한국어 톤으로 통일: 짧은 해요체, 명사형 메뉴(예: 보관함에 추가, 다음에 재생), 느낌표·이모지·기술 용어 지양, 같은 개념은 같은 단어(재생목록/플레이리스트 혼용 금지 등). 바꾼 문자열 전후 표를 docs\cleanup\tone.md 에. (2) 글꼴·크기·굵기 — 큰 제목(34sp 굵게), 섹션 제목(22sp 굵게), 본문(17sp), 보조(15/13sp 회색) 체계를 공통 Typography로 정리하고 화면별 하드코딩 글자 크기를 공통 값으로 교체. 한글과 영문 글꼴이 섞여 어색한 곳 정리. (3) 간격 — 좌우 여백 20dp, 섹션 간격, 목록 줄 높이를 공통 값으로 통일. (4) 남은 머티리얼 요소(리플, 원형 프로그레스, 토스트 모양, 다이얼로그)를 iOS 느낌으로. 기능 삭제 금지.
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 저장소 전체 목록 출력 금지(큰 출력 뒤 멈추지 말고 끝까지 작업). 기준 브랜치 task/hq-prefetch(사용자 폰 vc85).
+버그(폰 로그로 증명, ship\FIXLIST.md 62번): 자동 믹스(크로스페이드)에서 'crossfade: start ... fade=6000ms' 부터 다음 곡 'play: ... reason=AUTO' 까지 실제 겹침이 계획 fade 와 상관없이 매번 약 18초(46회 중 대부분 17~19초, fade=120ms 인 곡도 15초). 사용자 체감: 섞이는 동안 원래 곡은 거의 음소거, 다음 곡은 아주 작게 들림. vc84(10-27) 표본 1건은 fade 11.3초에 9.8초였음 → 최근 커밋 회귀 의심(git log 로 크로스페이드·automix·ARMING·handoff 관련 최근 변경 확인).
+할 일: ① 크로스페이드 시작~손넘김(handoff)~이전 곡 정지까지 상태 흐름과 음량(gain) 곡선을 읽고, 왜 겹침이 18초 고정인지 원인을 코드로 특정해 요약에 적기(추측 금지, 줄 근거). ② 수정 기준: 겹침 = 계획 fade 길이, 나가는 곡은 fade 시작 전까지 원래 음량, 동일 파워 곡선(중간 지점 각 -3dB, 합친 크기 일정), 들어오는 곡은 fade 끝에 반드시 원래 음량(1.0, 음량 맞춤 값 반영) 도달. ③ 로그: 시작·25·50·75%·끝 시점 두 곡 gain 과 실제 겹침 ms 를 한 곡당 2~3줄 이내로.
+테스트: gain 곡선 계산 순수 함수(시작 1/0, 중간 ≈0.707/0.707, 끝 0/1, fade 길이 지키기) 단위 테스트.
+반드시: 배터리 우선(주기 폴링·타이머 금지, 이벤트 기반). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 기존 코드 의도(주석)를 지우면 요약에 이유. 다운로드된 곡·커버 곡·MV/노래 버전 판정 경로는 이 작업과 무관하면 건드리지 말 것. 업스트림 v1.8.1 코드 정리·파일 쪼개기 금지. 새 app 테스트는 이름을 요약에 적을 것(CI 목록에 Opus가 추가). 제약: .github/, keys, 서명 수정 금지. 마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제.
+
+
+== 2차 작업 (현재 브랜치 = 1차 결과) ==
+1차 결과를 독립 검토자가 검사한 지적을 전부 고칠 것. 지적이 틀렸다고 판단하면 코드 근거와 함께 요약에 이유를 적고 넘어감.
+Opus 추가 지시(중요): 1차 결과는 로그만 추가하고 실제 동작은 그대로였음(반려). 실제 재생은 CrossfadeController 의 mixRise/mixFall 과 고급 Automix 분기(fader hold·shape), 그리고 finish 가 기다리는 tailDone(에코 꼬리)을 씀. 겹침이 계획 fade 와 무관하게 약 18초(fade=120ms 곡도 15초)인 원인은 이 에코 꼬리·hold 구간일 가능성이 큼 — 코드 줄 근거로 확정하고 고칠 것: 에코 꼬리가 있더라도 들어오는 곡은 fade 끝에 원래 음량, 나가는 곡은 fade 동안만 내려가고 꼬리는 짧게(최대 2초) 또는 끔. 테스트는 실제 재생이 쓰는 함수(mixRise/mixFall 등)로.
+검토 지적:
+VERDICT: ISSUES 4
+HIGH — `app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1942` / `CrossfadeGain.kt:27`: The production changes are instrumentation only; `spanMs` is behaviorally identical to the removed `minOf(fadeMs, incomingCap).coerceAtLeast(1L)` and `rise`/`fall` are unchanged, so no overlap or gain behavior is fixed and the reported near-silent blend is untouched. Fix: change the actual fade timing/gain path (or prove the runtime overlap and fix the audible gain path), not just the log labels.
+MEDIUM — `app/src/test/java/com/music/bitchord/playback/CrossfadeGainTest.kt:11` / `CrossfadeController.kt:1974`: The test validates `CrossfadeGain.gains`, but playback calls `mixRise`/`mixFall`, whose advanced Automix branches hold/shape the faders and do not give the required -3 dB midpoint, so the test does not cover the curve actually used. Fix: test the production fader functions for the real styles or route the fade through the tested equal-power pair.
+MEDIUM — `CrossfadeController.kt:2033`: The quarter logger back-fills skipped quarters with the current gain, so after a tick or span change the "25/50/75" values are not the gains at those points; additionally `overlap` at line 2052 includes the echo tail because `finish` waits on `tailDone` (line 2014). Fix: record each quarter at its crossing and capture overlap when progress reaches 1, logging the echo tail separately.
+LOW — `app/src/main/java/com/music/bitchord/playback/CrossfadeGain.kt:1`: The task forbids file splitting, but the production gain/span logic was moved into a new file. Fix: keep the helpers in the existing controller or an existing shared file and add only the test.
+마지막 요약에 지적 번호별 처리(고침/반박)를 한 줄씩.
