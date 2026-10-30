@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,6 +49,7 @@ import com.music.bitchord.data.spotify.SpotifyLibrary
 import com.music.bitchord.data.spotify.SpotifyPlaylist
 import com.music.bitchord.data.spotify.SpotifyTrack
 import com.music.bitchord.ui.FriendlyError
+import kotlinx.coroutines.CancellationException
 
 /**
  * The signed-in Spotify account's playlists. A tap opens one as an ordinary
@@ -66,8 +68,11 @@ fun SpotifyLibraryScreen(
     var playlists by remember { mutableStateOf<List<SpotifyPlaylist>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Bumped by the retry button so the one loader runs again without
+    // duplicating the request logic outside the effect.
+    var reload by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(cookie) {
+    LaunchedEffect(cookie, reload) {
         if (cookie.isBlank()) {
             playlists = emptyList()
             error = null
@@ -75,9 +80,16 @@ fun SpotifyLibraryScreen(
         }
         loading = true
         error = null
-        runCatching { SpotifyLibrary.playlists() }
-            .onSuccess { playlists = it }
-            .onFailure { error = FriendlyError.message(context, it) }
+        try {
+            playlists = SpotifyLibrary.playlists()
+        } catch (cancelled: CancellationException) {
+            // Changing the cookie or tapping retry replaces this effect; the
+            // cancelled one must not write its error/loaded flags over the new
+            // load's state.
+            throw cancelled
+        } catch (failure: Throwable) {
+            error = FriendlyError.message(context, failure)
+        }
         loading = false
     }
 
@@ -132,13 +144,20 @@ fun SpotifyLibraryScreen(
             }
             error?.let { message ->
                 item {
-                    Text(
-                        text = message,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    )
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = { reload++ }) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
                 }
             }
+            // No separate "no playlists" row: SpotifyLibrary always offers
+            // Liked Songs first, so a connected account is never empty here.
             items(playlists, key = { it.id }) { item ->
                 LibraryRow(
                     title = item.name,

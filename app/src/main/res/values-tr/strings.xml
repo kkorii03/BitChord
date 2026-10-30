@@ -1350,4 +1350,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">PCM veri hızı</string>
+    <string name="pipeline_route">Yol</string>
+    <string name="pipeline_bit_exact_yes">Evet</string>
+    <string name="pipeline_bit_exact_dsd">Hayır — DSD PCM\'ye dönüştürüldü</string>
+    <string name="pipeline_bit_exact_loudness">Hayır — ses düzeyi düzeltmesi</string>
+    <string name="pipeline_bit_exact_eq">Hayır — EQ</string>
+    <string name="pipeline_bit_exact_spatial">Hayır — uzamsal ses</string>
+    <string name="pipeline_bit_exact_downstream">Hayır — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">sonraki aşamada dönüştürüldü</string>
+    <string name="route_phone">Telefon hoparlörü</string>
+    <string name="route_wired">Kablolu kulaklık</string>
+    <string name="route_usb">USB ses</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Diğer çıkış</string>
+    <string name="spotify_import_language_preference">Dil tercihi</string>
+    <string name="spotify_import_language_hint">ör. Pencapça, Marathice, Korece…</string>
 </resources>

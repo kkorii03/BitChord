@@ -75,6 +75,15 @@ fun HistoryScreen(
             }
             return@LazyColumn
         }
+        // A signed-in account that has not played anything yet used to get the
+        // page's heading and then nothing at all. That is indistinguishable
+        // from a request that never came back.
+        if (historyHasNoSongs(state, signedIn)) {
+            item(key = "history:empty") {
+                MessageState(stringResource(R.string.history_empty))
+            }
+            return@LazyColumn
+        }
         when (state) {
             is UiState.Loading -> songListSkeleton(count = 10, keyPrefix = "skeleton:history")
 
@@ -159,3 +168,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexed(
     count = songs.size,
     key = { "${songs[it].videoId}:$it" },
 ) { index -> row(index, songs[index]) }
+
+/** Whether a completed, signed-in history has nothing to list. */
+internal fun historyHasNoSongs(state: UiState<List<Song>>, signedIn: Boolean): Boolean =
+    signedIn && state is UiState.Success && state.data.isEmpty()

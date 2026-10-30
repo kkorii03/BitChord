@@ -99,7 +99,6 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
-import java.util.Locale
 
 @Composable
 fun SearchScreen(
@@ -112,6 +111,8 @@ fun SearchScreen(
     results: UiState<List<SearchResult>>?,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
+    /** Re-runs the search that failed, in whichever source answered it. */
+    onRetry: () -> Unit = {},
     listState: LazyListState,
     scrollResetTrigger: Int,
     focusRequested: Boolean,
@@ -293,6 +294,7 @@ fun SearchScreen(
                     onSongClick = onLibrarySongClick,
                     onSongLongPress = onSongLongPress,
                     onSongSwipe = onSongSwipe,
+                    onRetry = onRetry,
                 )
                 suggesting -> {
                     searchSuggestions(
@@ -371,7 +373,13 @@ fun SearchScreen(
                     }
                 }
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
-                results is UiState.Error -> item { MessageState(results.message) }
+                results is UiState.Error -> item(key = "search:error") {
+                    MessageState(
+                        results.message,
+                        actionLabel = stringResource(Res.string.retry),
+                        onAction = onRetry,
+                    )
+                }
                 results is UiState.Success -> {
                     val tracks = results.data
                         .mapNotNull { row -> when (row) {
@@ -397,7 +405,7 @@ fun SearchScreen(
                             }
                         }
                     }
-                    searchSections(
+                    val sections = searchSections(
                         rows = results.data,
                         filter = filter,
                         songsLabel = songsLabel,
@@ -405,7 +413,23 @@ fun SearchScreen(
                         albumsLabel = albumsLabel,
                         playlistsLabel = playlistsLabel,
                         moreLabel = moreLabel,
-                    ).forEach { section ->
+                    )
+                    // A submitted search that came back with nothing used to
+                    // draw an empty list under the filter pills: no rows, no
+                    // explanation and no way to tell a dead connection from a
+                    // genuinely missing song. Apple answers this with one line;
+                    // the top-result card, when there is one, already says the
+                    // search found something.
+                    if (results.hasNoResults() && topResult == null) {
+                        item(key = "search:no-results") {
+                            MessageState(
+                                stringResource(Res.string.search_no_results, query.trim()),
+                                actionLabel = stringResource(Res.string.retry),
+                                onAction = onRetry,
+                            )
+                        }
+                    }
+                    sections.forEach { section ->
                         section.title?.let { title ->
                             item(key = "search-section:$title") {
                                 Text(
@@ -520,6 +544,7 @@ private fun LazyListScope.librarySearchResults(
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
+    onRetry: () -> Unit,
 ) {
     when (results) {
         null -> if (addons && query.isEmpty() && addonHistory.isNotEmpty()) {
@@ -530,7 +555,13 @@ private fun LazyListScope.librarySearchResults(
             )
         }
         UiState.Loading -> songListSkeleton(keyPrefix = "skeleton:search:library")
-        is UiState.Error -> item(key = "library:error") { MessageState(results.message) }
+        is UiState.Error -> item(key = "library:error") {
+            MessageState(
+                results.message,
+                actionLabel = stringResource(Res.string.retry),
+                onAction = onRetry,
+            )
+        }
         is UiState.Success -> if (results.data.isEmpty()) {
             item(key = "library:no-match") {
                 MessageState(
@@ -1120,7 +1151,11 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             Text(
                 text = appleCardKind(item.type)?.let { appleSubtitleText(item.subtitle, it) }
                     ?: item.subtitle.ifBlank {
-                        item.type.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) }
+                        // A hit the ids cannot classify is not an "Other"; the
+                        // word is an internal enum, and showing it in Korean
+                        // read as an untranslated leftover. A card with no
+                        // subtitle gets the app's own noun for it instead.
+                        stringResource(Res.string.more)
                     },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1179,3 +1214,14 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
 
 /** Rounded, but well short of a capsule — the corner reads as a cut, not a curve. */
 private val FILTER_PILL_SHAPE = RoundedCornerShape(12.dp)
+
+/**
+ * Whether a completed search holds no rows at all.
+ *
+ * `UiState.Success(emptyList())` is a real answer — YouTube, an addon or the
+ * device folder all say "nothing matched" that way — and it must not render as
+ * the same blank page as a request that never finished. Null and Loading are
+ * "still asking"; Error has its own message.
+ */
+internal fun <T> UiState<List<T>>?.hasNoResults(): Boolean =
+    this is UiState.Success && data.isEmpty()

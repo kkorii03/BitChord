@@ -1310,4 +1310,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">Tốc độ dữ liệu PCM</string>
+    <string name="pipeline_route">Đường dẫn</string>
+    <string name="pipeline_bit_exact_yes">Có</string>
+    <string name="pipeline_bit_exact_dsd">Không — DSD được chuyển sang PCM</string>
+    <string name="pipeline_bit_exact_loudness">Không — hiệu chỉnh độ to</string>
+    <string name="pipeline_bit_exact_eq">Không — EQ</string>
+    <string name="pipeline_bit_exact_spatial">Không — âm thanh không gian</string>
+    <string name="pipeline_bit_exact_downstream">Không — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">được chuyển ở bước sau</string>
+    <string name="route_phone">Loa điện thoại</string>
+    <string name="route_wired">Tai nghe có dây</string>
+    <string name="route_usb">Âm thanh USB</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Đầu ra khác</string>
+    <string name="spotify_import_language_preference">Tùy chọn ngôn ngữ</string>
+    <string name="spotify_import_language_hint">ví dụ: Punjabi, Marathi, Hàn Quốc…</string>
 </resources>

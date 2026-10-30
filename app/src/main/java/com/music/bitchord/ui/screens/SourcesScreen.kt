@@ -77,6 +77,7 @@ import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceHealth
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.ui.components.AddonEditorAlert
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
@@ -153,7 +154,7 @@ fun SourcesScreen(
             val source = SourceRegistry.instance(config.id) ?: return@forEach
             health[config.id] = withContext(Dispatchers.IO) {
                 runCatching { source.health() }
-                    .getOrElse { SourceHealth.Unreachable(it.message ?: failed) }
+                    .getOrElse { SourceHealth.Unreachable(FriendlyError.message(context, it)) }
             }
             // An addon names itself, so the row takes that name rather than a
             // hostname — and rather than a field asking the user to make one up.
@@ -428,7 +429,7 @@ private fun RemoteLibrarySection(
                             onFailure = {
                                 testResult = context.getString(
                                     testFailedRes,
-                                    it.message ?: context.getString(R.string.failed),
+                                    FriendlyError.message(context, it),
                                 )
                             },
                         )
@@ -928,6 +929,7 @@ internal fun SourceEditorAlert(
     onDelete: () -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
 ) {
+    val context = LocalContext.current
     val isNew = SourceRegistry.config(config.id) == null
     var baseUrl by remember { mutableStateOf(config.baseUrl) }
     var busy by remember { mutableStateOf(false) }
@@ -958,7 +960,7 @@ internal fun SourceEditorAlert(
             val found = identified.getOrNull()
             if (found == null) {
                 statusIsGood = false
-                status = identified.exceptionOrNull()?.message ?: unreadable
+                status = identified.exceptionOrNull()?.let { FriendlyError.message(context, it) } ?: unreadable
                 busy = false
                 return@launch
             }
@@ -983,7 +985,7 @@ internal fun SourceEditorAlert(
             // its server still be refusing every search.
             val health = withContext(Dispatchers.IO) {
                 runCatching { SourceRegistry.probeCandidate(found) }
-                    .getOrElse { SourceHealth.Unreachable(it.message ?: failed) }
+                    .getOrElse { SourceHealth.Unreachable(FriendlyError.message(context, it)) }
             }
             statusIsGood = health.isOk
             status = when (health) {

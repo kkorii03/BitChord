@@ -3882,6 +3882,7 @@ private fun BitChordApp(
                                 results = results,
                                 loadingMore = searchLoadingMore,
                                 onLoadMore = viewModel::loadMoreSearchResults,
+                                onRetry = viewModel::retrySearch,
                                 listState = searchListState,
                                 scrollResetTrigger = searchScrollReset,
                                 focusRequested = searchFocusRequested,

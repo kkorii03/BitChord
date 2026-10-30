@@ -1394,4 +1394,22 @@
     <string name="pitch">Pitch</string>
     <string name="pitch_lower">Lower pitch</string>
     <string name="pitch_upper">Raise pitch</string>
+    <!-- Audio pipeline labels (bit-exact verdict, output route). -->
+    <string name="pipeline_pcm_data_rate">Débit PCM</string>
+    <string name="pipeline_route">Chemin</string>
+    <string name="pipeline_bit_exact_yes">Oui</string>
+    <string name="pipeline_bit_exact_dsd">Non — DSD converti en PCM</string>
+    <string name="pipeline_bit_exact_loudness">Non — correction de sonie</string>
+    <string name="pipeline_bit_exact_eq">Non — EQ</string>
+    <string name="pipeline_bit_exact_spatial">Non — audio spatial</string>
+    <string name="pipeline_bit_exact_downstream">Non — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">converti en aval</string>
+    <string name="route_phone">Haut-parleur du téléphone</string>
+    <string name="route_wired">Casque filaire</string>
+    <string name="route_usb">Audio USB</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Autre sortie</string>
+    <string name="spotify_import_language_preference">Préférence de langue</string>
+    <string name="spotify_import_language_hint">ex. : pendjabi, marathi, coréen…</string>
 </resources>

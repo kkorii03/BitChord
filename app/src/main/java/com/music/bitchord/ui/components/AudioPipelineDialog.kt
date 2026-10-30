@@ -69,6 +69,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.ui.screens.localizedLabel
 import com.music.bitchord.playback.dsd.DsdFilter
 import com.music.bitchord.playback.dsd.DsdFormat
 import com.music.bitchord.playback.smart.HqVerificationStore
@@ -108,23 +109,56 @@ import kotlin.math.min
  * precision preference — but the readout is not, because "is it exact right
  * now" is worth answering whether or not there is a switch that forces it.
  */
-private fun bitExactVerdict(
+internal enum class BitExactVerdict {
+    DsdToPcm,
+    Loudness,
+    Equalizer,
+    Spatial,
+    Exact,
+    Downstream,
+}
+
+/**
+ * Which stage breaks bit-exactness, in signal-chain order.
+ *
+ * Kept as a value rather than a finished sentence so the screen can render it
+ * in the app's language: this used to return "Yes" in the middle of an
+ * otherwise Korean dialog, and the Korean branches could not be translated at
+ * all. The ordering is unchanged — DSD first, then each DSP stage, then the
+ * sink's own verdict.
+ */
+internal fun bitExactVerdict(
     dsd: Boolean,
     outputExact: Boolean,
-    outputExactDetail: String?,
     loudnessActive: Boolean,
     eqActive: Boolean,
     spatialActive: Boolean,
-): String = when {
+): BitExactVerdict = when {
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
-    dsd -> "아니요 — DSD를 PCM으로 변환"
-    loudnessActive -> "아니요 — 사운드 보정"
-    eqActive -> "아니요 — EQ"
-    spatialActive -> "아니요 — 공간 음향"
-    outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
-    else -> "아니요 — ${outputExactDetail ?: "하위 단계에서 변환됨"}"
+    dsd -> BitExactVerdict.DsdToPcm
+    loudnessActive -> BitExactVerdict.Loudness
+    eqActive -> BitExactVerdict.Equalizer
+    spatialActive -> BitExactVerdict.Spatial
+    outputExact -> BitExactVerdict.Exact
+    else -> BitExactVerdict.Downstream
+}
+
+@Composable
+private fun BitExactVerdict.label(outputExactDetail: String?): String = when (this) {
+    BitExactVerdict.DsdToPcm -> stringResource(R.string.pipeline_bit_exact_dsd)
+    BitExactVerdict.Loudness -> stringResource(R.string.pipeline_bit_exact_loudness)
+    BitExactVerdict.Equalizer -> stringResource(R.string.pipeline_bit_exact_eq)
+    BitExactVerdict.Spatial -> stringResource(R.string.pipeline_bit_exact_spatial)
+    BitExactVerdict.Exact -> {
+        val yes = stringResource(R.string.pipeline_bit_exact_yes)
+        if (outputExactDetail.isNullOrBlank()) yes else "$yes ($outputExactDetail)"
+    }
+    BitExactVerdict.Downstream -> stringResource(
+        R.string.pipeline_bit_exact_downstream,
+        outputExactDetail ?: stringResource(R.string.pipeline_bit_exact_downstream_unknown),
+    )
 }
 
 /**
@@ -414,9 +448,9 @@ fun AudioPipelineDialog(
             val dspRate = outputStatus.actualSampleRateHz ?: pcmRateHz
             val dspRateText = dspRate?.let(::rateText) ?: "—"
             val eqPresetText = if (eqEnabled) {
-                eqPreset.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
+                eqPreset.localizedLabel()
             } else {
-                "Flat"
+                stringResource(R.string.eq_preset_flat)
             }
             val stereoExpandText = if (spatialAudio) "250%" else "100%"
             val buffersText = outputStatus.bufferSize?.let { size ->
@@ -479,11 +513,10 @@ fun AudioPipelineDialog(
                     bitExactVerdict(
                         dsd = dsdRateHz != null,
                         outputExact = outputStatus.outputExact,
-                        outputExactDetail = outputStatus.outputExactDetail,
                         loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                         eqActive = eqEnabled,
                         spatialActive = spatialAudio,
-                    ),
+                    ).label(outputStatus.outputExactDetail),
                 )
             }
 
@@ -515,7 +548,17 @@ fun AudioPipelineDialog(
                 onStageIconPositioned = onStageIconPositioned,
             ) {
                 PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
-                PipelineRow("경로", outputStatus.routeKind.name)
+                PipelineRow(
+                    stringResource(R.string.pipeline_route),
+                    when (outputStatus.routeKind) {
+                        com.music.bitchord.playback.AudioRouting.Kind.PHONE -> stringResource(R.string.route_phone)
+                        com.music.bitchord.playback.AudioRouting.Kind.WIRED -> stringResource(R.string.route_wired)
+                        com.music.bitchord.playback.AudioRouting.Kind.USB -> stringResource(R.string.route_usb)
+                        com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH -> stringResource(R.string.route_bluetooth)
+                        com.music.bitchord.playback.AudioRouting.Kind.HDMI -> stringResource(R.string.route_hdmi)
+                        com.music.bitchord.playback.AudioRouting.Kind.OTHER -> stringResource(R.string.route_other)
+                    },
+                )
                 PipelineRow("전송 방식", outputStatus.transportType.label)
 
                 val directStatusText = when {
