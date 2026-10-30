@@ -2595,6 +2595,12 @@ object Downloads {
     }
 
     private fun fail(videoId: String, reason: String) {
+        // A failed replacement leaves the old file in place, and the next tap
+        // must be free to try an ordinary download. Keeping the pinned
+        // source/track pair made every retry re-read the same dead pair, even
+        // when the caller passed `hq = null`; the row failed again before it
+        // could fall back to YouTube.
+        synchronized(lock) { hqOverrides.remove(videoId) }
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)
     }

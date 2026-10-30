@@ -43,6 +43,32 @@ class HqAutoDownloadPolicyTest {
     }
 
     @Test
+    fun `a lost connection is transient rather than a verdict about the file`() {
+        val networkFailures = listOf(
+            "Unable to resolve host \"cdn.example.com\": No address associated with hostname",
+            "Failed to connect to /127.0.0.1:8080",
+            "Connection refused",
+            "Software caused connection abort",
+            "Network is unreachable",
+            "No route to host",
+            "java.net.ConnectException: ECONNREFUSED",
+        )
+
+        for (message in networkFailures) {
+            assertTrue(
+                "$message must be retried, not parked",
+                HqAutoDownloadPolicy.isTransientFailure(code = null, message = message),
+            )
+        }
+    }
+
+    @Test
+    fun `a missing recording is still a permanent failure`() {
+        assertFalse(HqAutoDownloadPolicy.isTransientFailure(null, "트랙을 찾을 수 없습니다"))
+        assertFalse(HqAutoDownloadPolicy.isTransientFailure(410, "Download failed (HTTP 410)"))
+    }
+
+    @Test
     fun `automatic failures are never counted as user failures`() {
         assertFalse(HqAutoDownloadPolicy.countsAsUserFailure(automatic = true))
         assertTrue(HqAutoDownloadPolicy.countsAsUserFailure(automatic = false))

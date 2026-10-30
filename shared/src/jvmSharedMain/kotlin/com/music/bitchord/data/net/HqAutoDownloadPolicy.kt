@@ -37,6 +37,21 @@ object HqAutoDownloadPolicy {
         "broken pipe",
         "timed out",
         "timeout",
+        // The connection itself, rather than the recording: airplane mode, a
+        // Wi-Fi/cellular handover, a dead proxy or a DNS outage all surface
+        // as one of these. None of them is a verdict about the file, so an
+        // automatic target must wait and try again instead of being parked
+        // for the long failure cooldown.
+        "unable to resolve host",
+        "no address associated with hostname",
+        "failed to connect",
+        "connection refused",
+        "connection abort",
+        "network is unreachable",
+        "no route to host",
+        "econnrefused",
+        "ehostunreach",
+        "enetunreach",
     )
 
     /** 1m, 2m, 4m … capped at [MAX_RETRY_MS]. */
@@ -64,8 +79,8 @@ object HqAutoDownloadPolicy {
 
     /**
      * Whether a failure is the server asking for a pause rather than a verdict
-     * about the file. A reset stream is included: the bytes did not arrive, but
-     * nothing about the recording was proved wrong.
+     * about the file. A reset stream or a lost connection is included: the
+     * bytes did not arrive, but nothing about the recording was proved wrong.
      */
     fun isTransientFailure(code: Int?, message: String?): Boolean {
         if (code != null && HqRetryPolicy.isRateLimited(code)) return true
