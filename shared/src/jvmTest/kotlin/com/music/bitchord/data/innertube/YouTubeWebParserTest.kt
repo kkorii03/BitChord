@@ -294,6 +294,38 @@ class YouTubeWebParserTest {
         )
     }
 
+    @Test
+    fun `a video lockup without an image keeps the video still`() {
+        val song = YouTubeWebParser.parsePlaylist(
+            json(
+                """
+                {
+                  "contents": {
+                    "twoColumnBrowseResultsRenderer": {
+                      "secondaryContents": {
+                        "playlistVideoListRenderer": {
+                          "contents": [
+                            {"lockupViewModel": {
+                              "contentId": "videoOnly01",
+                              "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+                              "metadata": {"lockupMetadataViewModel": {
+                                "title": {"content": "야화 - 안예은 · 오화요 커버"}
+                              }}
+                            }}
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+                """,
+            ),
+        ).songs.single()
+
+        assertEquals("야화 - 안예은 · 오화요 커버", song.title)
+        assertEquals("https://i.ytimg.com/vi/videoOnly01/hqdefault.jpg", song.thumbnailUrl)
+    }
+
     private fun parseShelf(vararg lockups: String): List<ShelfItem> {
         val items = lockups.joinToString(",") { """{"richItemRenderer":{"content":$it}}""" }
         val root = json(

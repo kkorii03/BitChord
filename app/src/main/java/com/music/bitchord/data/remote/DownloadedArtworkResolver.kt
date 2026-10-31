@@ -55,7 +55,13 @@ object DownloadedArtworkResolver {
         if (claimed.add(key)) {
             try {
                 val value = resolveNow(context.applicationContext, song) ?: ""
-                resolved.getOrPut(key) { value }
+                // A real URI replaces an earlier "none" for the same key. The
+                // first attempt can fail before the download has finished
+                // writing its sidecar; keeping that empty answer with getOrPut
+                // forever left the row, header and player blank even after the
+                // cover existed. Failures stay cached so a dead path is still
+                // not re-opened on every recomposition.
+                if (value.isEmpty()) resolved.getOrPut(key) { value } else resolved.put(key, value)
                 job.complete(value)
             } catch (cancelled: CancellationException) {
                 job.complete("")

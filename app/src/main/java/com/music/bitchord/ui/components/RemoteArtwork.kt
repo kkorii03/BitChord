@@ -46,7 +46,11 @@ fun rememberRemoteArtworkUrl(song: Song?): String? {
     LaunchedEffect(key) {
         if (song == null) return@LaunchedEffect
         resolved = when {
-            downloaded -> DownloadedArtworkResolver.resolve(context, song)
+            // A downloaded cover ladder can still end in "no picture" (a video
+            // file with no embedded art and a sidecar that was deleted). The
+            // YouTube still is the same last rung the player and notification
+            // already use, so a video song never falls through to a blank tile.
+            downloaded -> DownloadedArtworkResolver.resolve(context, song) ?: still
             song.thumbnailUrl == null &&
                 (song.videoId.startsWith("webdav:") || song.videoId.startsWith("smb:")) ->
                 RemoteArtworkStore.resolveArt(context, song)
