@@ -1,0 +1,15 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin). Branch = upstream v1.9 (git tag v1.9) merged into a Korean fork. Priority 1 of the app: always play the RIGHT song (never a cover, remix, live, instrumental, karaoke or tribute version).
+Task: write ONE new test file shared/src/jvmTest/kotlin/com/music/bitchord/data/sources/TrackMatcherTrapCasesTest.kt. Do NOT change production code.
+1) First find how v1.9's quality upgrade / Direct Source decides a candidate is the same recording: git show v1.9:app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt (bestAcross, directStream) and which TrackMatcher functions it calls (score / ranked / isMatch / isOriginalRecording etc.). Also read shared/.../TrackMatcher.kt around CREDITS_DISAGREE / CREDIT_OVERRIDE_SEC (artist in another script accepted only if length within 2 s). Look at TrackMatcherArtistScriptTest.kt for how tests build Target and Song.
+2) Test through exactly the functions that path uses. Cases (target = the original studio track):
+ MUST REJECT (same title, length within 2 s of the target):
+  - target 'Cruel Summer' / Taylor Swift 178 s; candidates: 'Cruel Summer' / Midnite String Quartet; 'Cruel Summer [Originally Performed by Taylor Swift] (Instrumental Version)' / Maxi Leave; 'Cruel Summer (LP Giobbi Remix)' / Taylor Swift, LP Giobbi; 'Cruel Summer (Live from TS | The Eras Tour)' / Taylor Swift.
+  - target 'Uptown Funk' / Mark Ronson, Bruno Mars 270 s; candidate 'Uptown Funk - Tribute to Mark Ronson and Bruno Mars' / Billboard Shakers.
+  - also: an artist written in another script (e.g. katakana テイラー・スウィフト) WITH a cover/remix/live/instrumental/tribute title must still be rejected.
+ MUST ACCEPT:
+  - target 'Flowers' / Miley Cyrus 200 s; candidate 'Flowers' / マイリー・サイラス 200 s.
+  - target 'Dynamite' / BTS 199 s; candidate 'Dynamite' / 'BTS (防弾少年団)' 199 s.
+3) Run: ./gradlew :shared:jvmTest --tests '*TrackMatcherTrapCasesTest' (if gradle available). If a case fails, do NOT weaken or delete it and do NOT change production code: mark it with @Ignore('BUG: <one line>') and list it in the summary.
+Use grep / Select-String, not rg. Touch no other file.
+At the end, summary in 10 lines or fewer: changed files / which TrackMatcher function the v1.9 path uses / each case pass or FAIL / unresolved problems.
