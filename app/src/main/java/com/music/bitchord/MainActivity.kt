@@ -1155,8 +1155,16 @@ private fun BitChordApp(
     // shelf. Read off both records: the collection record is what says a
     // release was downloaded whole, and what is on disk is what says it still
     // has anything left to open.
-    val downloadedReleases = remember(savedCollections, savedDownloads) {
-        Downloads.savedReleases()
+    // savedReleases() opens the download record itself, and that is a
+    // SharedPreferences read plus a JSON parse of every recorded download —
+    // disk work that must not sit in composition on the way to Home or
+    // Explore. Read it on IO whenever either record changes.
+    val downloadedReleases by produceState(
+        initialValue = emptyList<com.music.bitchord.download.SavedCollection>(),
+        savedCollections,
+        savedDownloads,
+    ) {
+        value = withContext(Dispatchers.IO) { Downloads.savedReleases() }
     }
     // What a browse id is recorded under in Downloads.collections, when it names
     // a release downloaded whole — see BrowseTarget.downloadId. A downloaded
