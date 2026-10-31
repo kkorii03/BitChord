@@ -20,6 +20,9 @@ import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ko.preferMusicOnlyKo
+import com.music.bitchord.ko.skipNonMusicPartsKo
+import com.music.bitchord.ko.skipSponsorPartsKo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -132,7 +135,7 @@ object DiagnosticsExport {
                                 ""
                             },
                     )
-                    appendLine("music only: ${if (AppSettings.preferMusicOnly.value) "on" else "off"}")
+                    appendLine("music only: ${if (AppSettings.preferMusicOnlyKo) "on" else "off"}")
                     appendLine(
                         "playback settings: " +
                             "autoplay=${onOff(AppSettings.autoplay.value)} " +
@@ -145,8 +148,8 @@ object DiagnosticsExport {
                             "canvas=${onOff(AppSettings.animatedCanvas.value)}" +
                             "/video=${onOff(AppSettings.videoCanvas.value)} " +
                             "skipSilence=${onOff(AppSettings.skipSilence.value)} " +
-                            "skipNonMusic=${onOff(AppSettings.skipNonMusicParts.value)} " +
-                            "skipSponsor=${onOff(AppSettings.skipSponsorParts.value)}",
+                            "skipNonMusic=${onOff(AppSettings.skipNonMusicPartsKo)} " +
+                            "skipSponsor=${onOff(AppSettings.skipSponsorPartsKo)}",
                     )
                     appendLine(
                         "lyrics settings: synced=${onOff(AppSettings.syncedLyrics.value)} " +
