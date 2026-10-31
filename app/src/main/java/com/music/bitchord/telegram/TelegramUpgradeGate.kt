@@ -26,16 +26,24 @@ object TelegramUpgradeGate {
         stage: TelegramAuthStage,
         selectedChats: Int,
         enabled: Boolean,
+        validatedSession: Boolean,
     ): String? = when {
         !enabled -> DISABLED
-        // Before a login there is no chat to select. Once there is one, CLOSED
-        // and STARTING mean only that the client is resting or reopening —
-        // stage one keeps the session on disk and opens it for the next
-        // request — so the account is still signed in.
+        // CLOSED is also the state before any login, and STARTING is how a
+        // session reopens. Persisted chat ids alone are not evidence that an
+        // account exists, so those two states only count once a login has
+        // actually reached READY (see TelegramSessionMarker).
+        stage == TelegramAuthStage.CLOSED ||
+            stage == TelegramAuthStage.STARTING ->
+            when {
+                !validatedSession -> SIGNED_OUT
+                selectedChats <= 0 -> SIGNED_OUT
+                else -> null
+            }
+        // Before a login there is no chat to select. Once there is one, READY
+        // means the session is live and the client may rest between requests.
         selectedChats <= 0 -> if (stage == TelegramAuthStage.READY) NO_CHATS else SIGNED_OUT
-        stage == TelegramAuthStage.READY ||
-            stage == TelegramAuthStage.STARTING ||
-            stage == TelegramAuthStage.CLOSED -> null
+        stage == TelegramAuthStage.READY -> null
         else -> SIGNED_OUT
     }
 
@@ -43,7 +51,8 @@ object TelegramUpgradeGate {
         stage: TelegramAuthStage,
         selectedChats: Int,
         enabled: Boolean,
-    ): Boolean = ineligibleReason(stage, selectedChats, enabled) == null
+        validatedSession: Boolean,
+    ): Boolean = ineligibleReason(stage, selectedChats, enabled, validatedSession) == null
 
     /** Internal reasons; only [SIGNED_OUT] is written to the hq-search log. */
     const val DISABLED = "disabled"

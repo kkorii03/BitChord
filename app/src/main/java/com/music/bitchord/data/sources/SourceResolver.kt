@@ -453,7 +453,12 @@ object SourceResolver {
         if (!picked && request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
             for (source in rankedAbove(configId, active, target)) {
                 if (!source.kind.canServeLossless) continue
-                val upgraded = matchAndStream(source, target, request, strictOriginal = true).stream ?: continue
+                val upgraded = matchAndStreamWithin(
+                    source,
+                    target,
+                    request,
+                    strictOriginal = true,
+                )?.stream ?: continue
                 // Only a genuinely lossless answer is an upgrade. A source that
                 // *can* serve lossless but settled for a transcode of this
                 // particular track has not beaten the pinned source at anything
@@ -980,7 +985,7 @@ object SourceResolver {
         // the only record of it there will be once it is on disk.
         var best: Pair<MusicSource, SourceStream>? = null
         for (source in bitExact) {
-            val stream = matchAndStream(
+            val stream = matchAndStreamWithin(
                 source,
                 target,
                 // The request the guard above already narrowed, rather than a
@@ -989,7 +994,8 @@ object SourceResolver {
                 waitForAll = true,
                 strictLength = strictLength,
                 strictOriginal = true,
-            ).stream ?: continue
+                baseTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
+            )?.stream ?: continue
             // Dolby Atmos is not bit-exact PCM, but it is the native premium
             // rendition that playback already prefers.  Keep it on the same
             // first-class download path instead of throwing it away and
@@ -1506,6 +1512,49 @@ object SourceResolver {
         val wanted = target.durationSec ?: return 0
         val got = stream.durationSec ?: return 0
         return kotlin.math.abs(wanted - got)
+    }
+
+    /**
+     * [matchAndStream] under the same per-source deadline the races use.
+     *
+     * The sequential walks — the stream upgrade in [resolve] and the bit-exact
+     * download ladder in [forDownload] — call [matchAndStream] directly rather
+     * than through [bestAcross]. A cold TDLib session can spend its whole
+     * search window just opening, so without this bound those walks would hold
+     * the client lease and the first note for as long as TDLib takes to open.
+     * Null means this source ran out of time and the caller steps over it
+     * exactly as it would a miss.
+     */
+    private suspend fun matchAndStreamWithin(
+        source: MusicSource,
+        target: TrackMatcher.Target,
+        request: StreamRequest,
+        waitForAll: Boolean = false,
+        strictLength: Boolean = false,
+        strictOriginal: Boolean = false,
+        baseTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+    ): SearchOutcome? {
+        val timeoutMs = sourceLookupTimeoutMsFor(source, baseTimeoutMs)
+        val answer = withTimeoutOrNull(timeoutMs) {
+            matchAndStream(
+                source,
+                target,
+                request,
+                waitForAll = waitForAll,
+                strictLength = strictLength,
+                strictOriginal = strictOriginal,
+            )
+        }
+        if (answer == null) {
+            // A timeout while the device is offline is the connection, not the
+            // source — the same rule [bestAcross] follows.
+            if (!offlineCheck()) SourceCooldown.failed(source.configId)
+            TrackLog.d(TAG, "${source.displayName} timed out after ${timeoutMs}ms; skipping for this track")
+            TrackLog.d(TAG, hqSearchLine(target, source, SearchOutcome(verdict = "timeout", conclusive = false)))
+        } else if (answer.stream != null) {
+            SourceCooldown.succeeded(source.configId)
+        }
+        return answer
     }
 
     /**

@@ -53,6 +53,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.READY,
                 selectedChats = 2,
                 enabled = true,
+                validatedSession = true,
             ),
         )
         assertEquals(
@@ -61,6 +62,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.READY,
                 selectedChats = 0,
                 enabled = true,
+                validatedSession = true,
             ),
         )
         assertEquals(
@@ -69,6 +71,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.WAIT_CODE,
                 selectedChats = 2,
                 enabled = true,
+                validatedSession = true,
             ),
         )
         assertEquals(
@@ -77,6 +80,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.WAIT_PHONE,
                 selectedChats = 2,
                 enabled = true,
+                validatedSession = true,
             ),
         )
         assertTrue(
@@ -85,6 +89,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.CLOSED,
                 selectedChats = 2,
                 enabled = true,
+                validatedSession = true,
             ),
         )
         assertEquals(
@@ -93,6 +98,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.CLOSED,
                 selectedChats = 0,
                 enabled = true,
+                validatedSession = true,
             ),
         )
         assertEquals(
@@ -101,6 +107,7 @@ class TelegramSourceStageThreeTest {
                 stage = TelegramAuthStage.READY,
                 selectedChats = 2,
                 enabled = false,
+                validatedSession = true,
             ),
         )
     }

@@ -16,13 +16,27 @@ internal object TelegramFileNames {
 
     private val SEPARATOR = Regex("""\s+[-\u2013\u2014]\s+""")
     private val TRACK_NUMBER = Regex("""^\s*\d{1,3}\s*[.\-\u2013\u2014]\s*""")
+    private val AUDIO_EXTENSION = Regex(
+        """\.(flac|mp3|m4a|aac|ogg|opus|wav|wave|alac|aiff|aif|ac3|eac3|ec3|ac4|mka)$""",
+        RegexOption.IGNORE_CASE,
+    )
 
     data class Parsed(val artist: String, val title: String)
 
     fun parse(fileName: String): Parsed? {
-        val stem = fileName.substringBeforeLast('.', fileName).trim()
+        // Only a known audio suffix is an extension. A dot inside the title or
+        // artist ("Mr. Brightside") is part of the name, not something to cut.
+        val stem = fileName.trim().replace(AUDIO_EXTENSION, "").trim()
         if (stem.isEmpty()) return null
-        val cleaned = stem.replace(TRACK_NUMBER, "").trim()
+        // A leading number is a track number only when removing it still leaves
+        // the spaced-dash separator. Otherwise it is the artist itself, as in
+        // "112 - Peaches & Cream".
+        val withoutTrack = stem.replace(TRACK_NUMBER, "").trim()
+        val cleaned = if (withoutTrack != stem && SEPARATOR.containsMatchIn(withoutTrack)) {
+            withoutTrack
+        } else {
+            stem
+        }
         val separator = SEPARATOR.find(cleaned) ?: return null
         val artist = cleaned.substring(0, separator.range.first).trim()
         val title = cleaned.substring(separator.range.last + 1).trim()

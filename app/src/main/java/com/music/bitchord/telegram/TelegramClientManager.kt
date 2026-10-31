@@ -58,8 +58,13 @@ object TelegramClientManager {
     private var credentialStore: TelegramCredentialStore? = null
     private var databaseKeyStore: TelegramDatabaseKeyStore? = null
     private var chatSelection: TelegramChatSelection? = null
+    private var sessionMarker: TelegramSessionMarker? = null
     @Volatile
     private var selectionLoaded = false
+    @Volatile
+    private var markerLoaded = false
+    @Volatile
+    private var validatedSession = false
     private val selectionLock = Any()
     private var home: File? = null
 
@@ -92,7 +97,10 @@ object TelegramClientManager {
         // The selected chats decide whether an automatic upgrade has anything
         // to search. Reading them at start is a small encrypted-prefs read, not
         // a TDLib connection: the client still opens only for a request.
-        StartupWork.background("telegram-chats") { ensureChatSelectionLoaded() }
+        StartupWork.background("telegram-chats") {
+            ensureChatSelectionLoaded()
+            ensureSessionMarkerLoaded()
+        }
         gate.onForeground(AppForeground.isForeground)
         AppForeground.onForeground { sync("foreground") }
         AppForeground.onBackground { sync("background") }
@@ -202,6 +210,40 @@ object TelegramClientManager {
             _selectedChats.value = runCatching { selection.load() }.getOrNull().orEmpty()
             selectionLoaded = true
         }
+    }
+
+    /**
+     * Whether a login has reached `Ready` in this account, persisted across
+     * launches. Read by [TelegramUpgradeGate] so a resting `CLOSED` client is
+     * not mistaken for a signed-in one before the first login.
+     */
+    fun hasValidatedSession(): Boolean = validatedSession
+
+    /** Reads the validated-session marker off disk once, without opening TDLib. */
+    private fun ensureSessionMarkerLoaded() {
+        if (markerLoaded) return
+        synchronized(selectionLock) {
+            if (markerLoaded) return
+            val app = context ?: return
+            val marker = sessionMarker ?: TelegramSessionMarker(app).also { sessionMarker = it }
+            validatedSession = runCatching { marker.load() }.getOrDefault(false)
+            markerLoaded = true
+        }
+    }
+
+    /** Records that TDLib reported `Ready` for this account. */
+    private fun markSessionValidated() {
+        ensureSessionMarkerLoaded()
+        validatedSession = true
+        markerLoaded = true
+        runCatching { sessionMarker?.markValidated() }
+    }
+
+    /** Forgets the login: logout, session reset, or a session that fell back to phone login. */
+    private fun clearValidatedSession() {
+        validatedSession = false
+        markerLoaded = true
+        runCatching { sessionMarker?.clear() }
     }
 
     /**
@@ -755,20 +797,24 @@ object TelegramClientManager {
 
             is TdApi.AuthorizationStateWaitPhoneNumber -> {
                 interactiveLogin = true
+                clearValidatedSession()
                 update { it.copy(stage = TelegramAuthStage.WAIT_PHONE, error = null) }
             }
 
             is TdApi.AuthorizationStateWaitCode -> {
                 interactiveLogin = true
+                clearValidatedSession()
                 update { it.copy(stage = TelegramAuthStage.WAIT_CODE, error = null) }
             }
 
             is TdApi.AuthorizationStateWaitPassword -> {
                 interactiveLogin = true
+                clearValidatedSession()
                 update { it.copy(stage = TelegramAuthStage.WAIT_PASSWORD, error = null) }
             }
 
             is TdApi.AuthorizationStateReady -> {
+                markSessionValidated()
                 update {
                     it.copy(stage = TelegramAuthStage.READY, error = null)
                 }
@@ -896,6 +942,7 @@ object TelegramClientManager {
             _selectedChats.value = emptySet()
             runCatching { chatSelection?.clear() }
         }
+        clearValidatedSession()
         // With no session the source has nothing to answer, so leave it off
         // until the next interactive login turns it back on.
         telegramConfig()?.takeIf { it.enabled }?.let { SourceRegistry.setEnabled(it.id, false) }

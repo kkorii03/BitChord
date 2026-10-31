@@ -35,6 +35,7 @@ class TelegramSource(
             stage = TelegramClientManager.state.value.stage,
             selectedChats = TelegramClientManager.selectedChats.value.size,
             enabled = config.enabled,
+            validatedSession = TelegramClientManager.hasValidatedSession(),
         )
 
     override val automaticUpgradeEligible: Boolean
