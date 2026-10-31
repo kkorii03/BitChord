@@ -226,7 +226,6 @@ fun SettingsScreen(
 
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
-    val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val automixVideos by AppSettings.automixVideos.collectAsStateWithLifecycle()
@@ -654,7 +653,8 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Wifi,
                     title = onWifiTitle,
-                    badge = stringResource(R.string.in_use).takeIf { metered == false },
+                    // No "in use" badge: Apple Music's settings carry none, and
+                    // beside a long quality value it was clipped mid-word.
                     value = wifiQuality.localizedLabel(),
                     onClick = { picking = QualityTarget.WIFI },
                 )
@@ -664,7 +664,6 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.SignalCellularAlt,
                     title = onMobileDataTitle,
-                    badge = stringResource(R.string.in_use).takeIf { metered == true },
                     value = cellularQuality.localizedLabel(),
                     onClick = { picking = QualityTarget.CELLULAR },
                 )
@@ -734,7 +733,6 @@ fun SettingsScreen(
                     title = downloadWifiOnlyTitle,
                     checked = wifiOnlyDownloads,
                     onCheckedChange = AppSettings::setWifiOnlyDownloads,
-                    badge = stringResource(R.string.blocking).takeIf { wifiOnlyDownloads && metered == true },
                 )
             }
             val autoRedownloadMvSoundTitle = stringResource(R.string.auto_redownload_mv_sound)
@@ -951,7 +949,6 @@ fun SettingsScreen(
                     title = preferUsbDacTitle,
                     checked = preferUsbDac,
                     onCheckedChange = AppSettings::setPreferUsbDac,
-                    badge = stringResource(R.string.connected).takeIf { outputStatus.isUsb },
                 )
             }
             val loudnessTitle = stringResource(R.string.loudness_normalization)
