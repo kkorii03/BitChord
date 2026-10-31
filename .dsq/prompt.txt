@@ -1,0 +1,32 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 로그 10-31): 공식 곡 '(It Goes Like) Nanana - 페기 구'(sCz5y84dwuA)가 재생목록에서 뮤직비디오 판(video=y)으로 들어옴. 노래 버전(오디오 전용 ATV 판) 찾기 결과:
+ 10:26:59.014 'song version: sCz5y84dwuA kept (timeout)'  (MainActivity.playRadio, withTimeout(BEFORE_AUDIO_TIMEOUT_MS))
+ 10:26:59.082 'song version: sCz5y84dwuA kept (none)'      (SongVersionController, 68ms 뒤)
+ 10:27:53.115 'song version: sCz5y84dwuA -> none via cache' 이후 계속 none.
+→ 시간 초과/취소된 조회가 '오디오 판 없음'으로 캐시되어 이후 영영 뮤직비디오 판으로 재생되고, 그 결과 품질 업그레이드(m=1 거절)·가사 싱크도 비디오 기준이 됨. 사용자는 '일반 노래인데 왜 비디오로 취급하냐'고 함.
+할 일:
+① YtMusicRepository.songVersion / SongVersionController / 관련 캐시 경로를 조사해 timeout·취소·네트워크 오류가 'none'(확정 없음)으로 저장되는 경로를 모두 찾아 막기. 확정 없음은 실제 검색이 끝까지 돌아 후보 0개일 때만 저장. 68ms 만의 'kept (none)'이 어디서 왔는지 요약에 정확히(파일:줄).
+② before-audio 조회가 시간 초과로 비디오 판을 먼저 틀었으면, 첫 소리 뒤 백그라운드에서 한 번 더 찾아(이벤트 기반 1회, 폴링 금지) 오디오 판을 찾으면 기존 정책대로(다음 재생부터 또는 기존 곡 중간 교체 경로가 있으면 그 경로) 반영하고 'song version: <id> -> <new> via retry' 로그.
+③ 커버·라이브·유튜버 업로드는 기존 판정 그대로(오디오 판으로 바꾸면 안 됨) — 회귀 테스트로 보장.
+④ 이미 'none'으로 잘못 저장된 기존 캐시 항목이 앱 업데이트 후 다시 조회되도록(예: 확정 여부 표시가 없는 기존 none 항목은 1회 재검증).
+테스트: timeout/취소는 캐시 안 됨, 진짜 0후보는 캐시됨, 재시도 1회 동작, 커버는 바뀌지 않음 — 단위 테스트.
+반드시: 요청 수·배터리(재시도는 곡당 1회), 바꾼 함수 모든 호출부 재확인. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+HIGH — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1263`
+The retry clears `songVersionWaived` before awaiting the still-in-flight lookup, so that lookup can read `waitedOut=false` at line 1387, cache the timed-out miss in `songVersionMissing`, and the retry then returns it without the intended fresh search, freezing the video again.
+Fix: keep the waiver until the awaited lookup finishes, or make the retry path force a fresh `resolveSongVersion` after the join instead of trusting `answer.definitive`.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/SongVersionController.kt:113`
+The retry rebuilds the row from the raw MediaItem, losing `lookupSong`'s synthetic `typeUnknown=true`, stripped `localUri`, and stored upload type, so for legacy/unknown downloaded video rows `wantsSongVersion`/`keepsLocalFile` makes the retry return null immediately while still spending the one retry.
+Fix: store the exact lookup `Song` (or its verify/stored flags) with the pending retry and pass that to `songVersion` instead of re-deriving it from the current item.
+LOW — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/SongVersionPolicy.kt:197`
+`shouldRetrySongVersionAfterAudio` is never called by production code, so the added "retry once" test at `SongVersionPolicyTest.kt:613` does not exercise the controller's real `versionRetried` cap, and no repository test proves a timed-out/cancelled answer is not cached.
+Fix: use this policy in `retryTimedOutVersion` (or delete it) and add repository/controller tests for the cached-miss suppression and the once-per-track behavior.
+LOW — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/CatalogSongMapper.kt:137`
+Bumping `STORE_KEY` to v4 discards every v3 verdict including valid "found" mappings, so after the update the app re-issues one catalogue lookup for each previously resolved hit, wasting requests/battery beyond the required one-time revalidation of NONE entries.
+Fix: migrate v3 entries by keeping hits and revalidating only stored `NONE` values (or add an explicit definitive marker) instead of invalidating the whole store.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
