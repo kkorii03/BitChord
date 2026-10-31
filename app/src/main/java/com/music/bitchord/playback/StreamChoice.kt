@@ -163,9 +163,6 @@ object StreamChoice {
      */
     fun isSubstitute(videoId: String): Boolean = chosen[videoId]?.substituted == true
 
-    /** Whether [videoId] has been settled on YouTube's own copy; false when nothing has been chosen. */
-    fun isYouTube(videoId: String): Boolean = chosen[videoId]?.substituted == false
-
     /**
      * Releases [videoId] to be resolved afresh.
      *
@@ -179,16 +176,27 @@ object StreamChoice {
     }
 
     /**
-     * Releases every choice [drop] says no longer stands — a lowered quality
-     * ceiling, which an addon pinned under the old one must not outlive.
+     * Releases the choice serving [url] when the caller only has the URL.
      *
-     * Only safe for tracks nothing is reading yet. A track already being read
-     * has a half-filled cache entry that only its own stream may finish, which
-     * is why the caller passes the tracks around the playhead in [keep].
+     * A forced module upgrade carries no YouTube videoId, so the rate-limit
+     * feedback from the resolver cannot name the track; the URL it was opened
+     * with is the only key both sides share.
      */
-    fun forgetWhere(keep: Set<String>, drop: (SourceStream) -> Boolean) {
-        chosen.entries.removeIf { (videoId, choice) -> videoId !in keep && drop(choice.stream) }
+    fun forgetUrl(url: String) {
+        val key = canonicalUrl(url)
+        val match = chosen.entries.firstOrNull { canonicalUrl(it.value.stream.url) == key }
+        if (match == null) {
+            // Not silent: the resolver told us this URL was rate-limited and the
+            // pin above is the only copy that would be served again. A no-match
+            // means the keys differ (encoding, redirect) and the pin survives.
+            TrackLog.w(TAG, "no stream choice to forget for rate-limited URL: ${LogUrl.of(url)}")
+            return
+        }
+        chosen.remove(match.key)
     }
+
+    /** The same URL OkHttp opens, so `Uri` re-encoding cannot lose the match. */
+    private fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
 
     /**
      * Tracks whose substituted stream refused to serve its bytes, and when.

@@ -64,7 +64,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1169,6 +1168,7 @@ private fun RecentSearchEntityRow(
                     EntityType.ALBUM -> com.music.bitchord.data.model.AppleCardKind.ALBUM
                     EntityType.ARTIST -> com.music.bitchord.data.model.AppleCardKind.ARTIST
                     EntityType.PLAYLIST -> com.music.bitchord.data.model.AppleCardKind.PLAYLIST
+                    EntityType.OTHER -> com.music.bitchord.data.model.AppleCardKind.SONG
                 }
                 Text(
                     text = appleSubtitleText(entity.subtitle, kind),
@@ -1258,6 +1258,31 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
         }
     }
 }
+
+/**
+ * The type noun a search row falls back to when YouTube gave it no subtitle.
+ *
+ * The row still has to name what it is in the app's language; using the enum
+ * name made every blank-subtitle album or playlist read "Album"/"Playlist"
+ * even in Korean. OTHER is a plain song/video card, so it takes the song noun.
+ */
+internal fun browseFallbackLabel(type: BrowseType): StringResource = when (type) {
+    BrowseType.ALBUM -> Res.string.album
+    BrowseType.ARTIST -> Res.string.artist
+    BrowseType.PLAYLIST -> Res.string.playlist
+    BrowseType.OTHER -> Res.string.song
+}
+
+/**
+ * Whether a completed search holds no rows at all.
+ *
+ * `UiState.Success(emptyList())` is a real answer — YouTube, an addon or the
+ * device folder all say "nothing matched" that way — and it must not render as
+ * the same blank page as a request that never finished. Null and Loading are
+ * "still asking"; Error has its own message.
+ */
+internal fun <T> UiState<List<T>>?.hasNoResults(): Boolean =
+    this is UiState.Success && data.isEmpty()
 
 /** How far an addon row the quality setting won't play is dimmed; Material's disabled level. */
 private const val BLOCKED_ROW_ALPHA = 0.38f

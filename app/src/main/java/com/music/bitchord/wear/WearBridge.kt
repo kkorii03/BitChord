@@ -48,7 +48,6 @@ import com.google.android.gms.wearable.ChannelClient
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.AudioRouting
-import com.music.bitchord.playback.DirectSourceGate
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toSong
 import android.os.SystemClock
@@ -401,10 +400,7 @@ object WearBridge {
                 val opened = factory?.let { f ->
                     val ds = f.createDataSource().also { source = it }
                     runCatching {
-                        // The watch reads what *it* is playing, which the
-                        // phone's paused player knows nothing about; holding it
-                        // for the phone's read-ahead window would stall it.
-                        DirectSourceGate.ungated { ds.open(
+                        ds.open(
                             DataSpec.Builder()
                                 .setUri(
                                     // An addon track's cache entry is named by
@@ -424,7 +420,7 @@ object WearBridge {
                                 .setPosition(position)
                                 .setLength(if (length < 0) C.LENGTH_UNSET.toLong() else length)
                                 .build(),
-                        ) }
+                        )
                     }.onFailure { Log.w(TAG, "stream open failed: ${it.message}") }.getOrNull()
                 }
                 val ds = source

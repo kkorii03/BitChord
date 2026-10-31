@@ -27,9 +27,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Velocity
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
@@ -64,10 +62,6 @@ private class IosOverscrollEffect : OverscrollEffect {
     private var containerWidthPx = 0f
     private var containerHeightPx = 0f
 
-    // The release bounce runs outside the scrollable's scroll mutex, so a new drag
-    // doesn't cancel it on its own. Tracked here so a touch can catch the content.
-    private var settleJobs: List<Job> = emptyList()
-
     override val isInProgress: Boolean
         get() = rawPullX.floatValue != 0f || rawPullY.floatValue != 0f
 
@@ -76,10 +70,6 @@ private class IosOverscrollEffect : OverscrollEffect {
         source: NestedScrollSource,
         performScroll: (Offset) -> Offset,
     ): Offset {
-        // A finger landing mid-bounce takes over from wherever the content is, like
-        // UIScrollView; otherwise the spring keeps overwriting the drag each frame.
-        if (source == NestedScrollSource.UserInput) stopSettling()
-
         // When pulling back from an existing stretch, settle the stretch before
         // allowing the list itself to scroll. This keeps the motion continuous.
         val paidX = payDown(rawPullX, delta.x)
@@ -111,24 +101,12 @@ private class IosOverscrollEffect : OverscrollEffect {
     ) {
         val consumed = performFling(velocity)
         val leftover = velocity - consumed
-        stopSettling()
         if (!isInProgress && leftover == Velocity.Zero) return
 
         coroutineScope {
-            val jobs = listOf(
-                launch { settle(rawPullX, leftover.x) },
-                launch { settle(rawPullY, leftover.y) },
-            )
-            settleJobs = jobs
-            jobs.forEach { it.join() }
-            if (settleJobs === jobs) settleJobs = emptyList()
+            launch { settle(rawPullX, leftover.x) }
+            launch { settle(rawPullY, leftover.y) }
         }
-    }
-
-    private fun stopSettling() {
-        if (settleJobs.isEmpty()) return
-        settleJobs.forEach { it.cancel() }
-        settleJobs = emptyList()
     }
 
     private fun payDown(pull: MutableFloatState, delta: Float): Float {
@@ -143,7 +121,6 @@ private class IosOverscrollEffect : OverscrollEffect {
     private suspend fun settle(pull: MutableFloatState, leftoverVelocity: Float) {
         if (pull.floatValue == 0f && leftoverVelocity == 0f) return
         val velocity = leftoverVelocity.coerceIn(-maxBounceVelocity, maxBounceVelocity)
-        val job = currentCoroutineContext()[Job]
         animate(
             initialValue = pull.floatValue,
             targetValue = 0f,
@@ -156,10 +133,7 @@ private class IosOverscrollEffect : OverscrollEffect {
                     normalBounceStiffness
                 },
             ),
-        ) { value, _ ->
-            // A frame already in flight when a drag cancels us must not stomp the drag.
-            if (job?.isActive != false) pull.floatValue = value
-        }
+        ) { value, _ -> pull.floatValue = value }
     }
 
     override val node: DelegatableNode = IosOverscrollNode(

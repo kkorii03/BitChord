@@ -32,8 +32,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.utils.containSheetGestures
-import com.music.bitchord.ui.player.LocalPlayerFrost
 import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.materials.HazeMaterials
 
 private val POPUP_CARD_SHAPE = RoundedCornerShape(ALERT_CORNER)
 private val POPUP_SCRIM_COLOR = Color.Black.copy(alpha = 0.4f)
@@ -54,6 +55,7 @@ private val POPUP_CONTENT_MAX_HEIGHT = 420.dp
  * [content] is the scrolling body, handed a [BoxScope] so a body can lay
  * something behind its rows — the pipeline draws its signal line there.
  */
+@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 internal fun AudioPopupCard(
     hazeState: HazeState,
@@ -65,7 +67,6 @@ internal fun AudioPopupCard(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val frost = LocalPlayerFrost.current
 
     Box(
         modifier = modifier
@@ -84,14 +85,15 @@ internal fun AudioPopupCard(
                 .width(POPUP_WIDTH)
                 .clip(POPUP_CARD_SHAPE)
                 .then(
-                    // The ⋯ menu's frost — see [PlayerDrawer], whose drawers
-                    // these popups open from.
-                    when {
-                        reduceDynamicBlur -> Modifier.background(MenuFrostDark)
-                        frost != null -> with(frost) {
-                            Modifier.frostPanel(POPUP_CARD_SHAPE, MenuFrostDark.copy(alpha = MENU_FROST_ALPHA))
-                        }
-                        else -> Modifier.liveMenuFrost(hazeState, MenuFrostDark)
+                    if (reduceDynamicBlur) {
+                        Modifier.background(Color(0xFF121212))
+                    } else {
+                        Modifier
+                            .optimizedHazeEffect(
+                                state = hazeState,
+                                style = HazeMaterials.regular(Color(0xFF141414)),
+                            )
+                            .background(Color(0xFF121212).copy(alpha = 0.9f))
                     }
                 )
                 // Swallows the tap before it reaches the scrim behind, so

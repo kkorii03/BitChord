@@ -8,7 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import com.music.bitchord.ui.icons.SfIcons
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -16,8 +17,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import com.music.bitchord.ui.components.IosSwitch
-import com.music.bitchord.ui.theme.stableStatusBarInsets
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -50,13 +50,11 @@ fun SpotifyCanvasAuthScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateUp) {
                         Icon(
-                            SfIcons.ArrowBack,
+                            Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = stringResource(R.string.back),
                         )
                     }
-                },
-                // Kept clear of the status bar even while the player has it hidden.
-                windowInsets = stableStatusBarInsets(),
+                }
             )
         }
     ) { padding ->
@@ -143,7 +141,7 @@ private fun SpotifyCanvasSettingToggle(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IosSwitch(
+        Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
         )

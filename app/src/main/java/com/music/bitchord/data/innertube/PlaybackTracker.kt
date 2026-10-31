@@ -82,7 +82,7 @@ object PlaybackTracker {
     private val VIDEO_ID = Regex("""[A-Za-z0-9_-]{11}""")
 
     private class Session(
-        var videoId: String,
+        val videoId: String,
         val cpn: String,
         val tracking: Innertube.PlaybackTracking,
     ) {
@@ -196,16 +196,6 @@ object PlaybackTracker {
                 if (opening == videoId) opening = null
             }
         }
-    }
-
-    /**
-     * The playing track became its other video/audio version mid-play. It is
-     * the same listen, so the session already open (or opening) carries over
-     * to [toVideoId] instead of a second history entry being registered.
-     */
-    fun onVersionSwapped(fromVideoId: String, toVideoId: String) {
-        session?.takeIf { it.videoId == fromVideoId }?.videoId = toVideoId
-        if (opening == fromVideoId) opening = toVideoId
     }
 
     /**

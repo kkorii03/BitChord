@@ -80,6 +80,8 @@ import dev.chrisbanes.haze.HazeState
 import java.util.Locale
 import kotlin.math.roundToInt
 
+internal typealias SongLyricsSync = com.music.bitchord.ko.ui.SongLyricsSync // [KO] lyrics-sync
+
 private val DrawerShape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
 private val ControlShape = RoundedCornerShape(16.dp)
 private val ScrimColor = Color.Black.copy(alpha = 0.5f)
