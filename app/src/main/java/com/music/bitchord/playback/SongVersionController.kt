@@ -74,22 +74,14 @@ internal class SongVersionController(
 
     /**
      * Tracks whose before-audio lookup timed out or was cancelled, so the one
-     * retry after the first sound is still due. Guarded by [versionRetryLock],
+     * retry after the first sound is still due. The gate is thread-safe,
      * because the timeout and the player callback can land on different
      * threads.
      */
-    private val versionRetryPending = LinkedHashMap<String, Boolean>()
-    private val versionRetried = object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) =
-            size > 64
-    }
-    private val versionRetryLock = Any()
+    private val versionRetryGate = SongVersionRetryGate()
 
-    private fun markVersionRetryPending(videoId: String) {
-        if (videoId.isBlank()) return
-        synchronized(versionRetryLock) {
-            if (videoId !in versionRetried) versionRetryPending[videoId] = true
-        }
+    private fun markVersionRetryPending(song: Song) {
+        versionRetryGate.markPending(song)
     }
 
     /**
@@ -105,13 +97,11 @@ internal class SongVersionController(
     private fun retryTimedOutVersion(exoPlayer: ExoPlayer) {
         val item = exoPlayer.currentMediaItem ?: return
         val id = item.mediaId
-        synchronized(versionRetryLock) {
-            if (id !in versionRetryPending) return
-            versionRetryPending.remove(id)
-            if (versionRetried.put(id, true) != null) return
-        }
-        val song = item.toSong()
-        if (item.mediaId != song.videoId) return
+        // The pending row is the exact lookup row the before-audio pass used,
+        // so a synthetic typeUnknown / stripped local file / stored upload type
+        // is not lost by rebuilding it from the raw MediaItem.
+        val song = versionRetryGate.takePending(id) ?: return
+        if (song.videoId != id) return
         if (song.videoRadio) return
         if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) return
         if (!SongVersionPolicy.mayInstallSongVersion(song)) return
@@ -629,7 +619,7 @@ internal class SongVersionController(
         // A miss that a caller's deadline cut short is not a verdict. It keeps
         // its own id for now and schedules the single post-audio retry.
         if (YtMusicRepository.isSongVersionRetrySuggested(lookupSong.videoId)) {
-            markVersionRetryPending(lookupSong.videoId)
+            markVersionRetryPending(lookupSong)
         }
         // A hold a transition interrupted keeps the listener's play intent, so
         // a skip made during the wait does not leave the player paused.
@@ -659,7 +649,7 @@ internal class SongVersionController(
                 // A timeout is not "no version": one retry is due after the
                 // first sound. If the track is already sounding, run it now,
                 // otherwise the first-sound callback starts it.
-                markVersionRetryPending(lookupSong.videoId)
+                markVersionRetryPending(lookupSong)
                 if (SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId())) {
                     retryTimedOutVersion(exoPlayer)
                 }
@@ -725,7 +715,7 @@ internal class SongVersionController(
                 ) {
                     // Another caller timed out on this lookup while this one
                     // waited; the answer is provisional, so owe the retry.
-                    markVersionRetryPending(lookupSong.videoId)
+                    markVersionRetryPending(lookupSong)
                     if (SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId())) {
                         retryTimedOutVersion(exoPlayer)
                     }

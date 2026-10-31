@@ -16,6 +16,7 @@ import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.SharedLookups
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.SongVersionVerdictStore
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
@@ -1133,22 +1134,12 @@ object YtMusicRepository {
     suspend fun officialVideo(videoId: String): String? =
         counterpartAudio(videoId)?.videoId
 
-    /** Song-version answers by music-video id, with "no version" cached too. */
-    private val songVersionCache = ConcurrentHashMap<String, Song>()
-    private val songVersionMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
     /**
-     * Ids whose song-version lookup a caller stopped waiting for — its own
-     * deadline fired, or it was cancelled. A miss that lands after that is not
-     * a verdict: it stays retryable instead of freezing the video for the run.
+     * Song-version answers by music-video id, with "no version" cached too.
+     * A miss left by a cut-short lookup is never stored as a verdict; see
+     * [SongVersionVerdictStore].
      */
-    private val songVersionWaived: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    /** Ids whose before-audio lookup timed out, so the post-audio retry is due. */
-    private val songVersionRetrySuggested: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    /** Serialises the verdict/waiver writes; lookups themselves stay concurrent. */
-    private val songVersionVerdictLock = Any()
+    private val songVersionVerdicts = SongVersionVerdictStore()
 
     /** Distinct rows whose "not a video" skip has already been logged this run. */
     private const val SONG_VERSION_SKIP_LOG_SIZE = 256
@@ -1189,18 +1180,19 @@ object YtMusicRepository {
      * queue fields are taken from [song], so the answer belongs to this row.
      */
     fun cachedSongVersionFor(song: Song): Song? =
-        songVersionCache[song.videoId]?.withQueueFieldsOf(song)
+        songVersionVerdicts.cached(song.videoId)?.withQueueFieldsOf(song)
 
     /** True when this run has already established that [videoId] has no song version. */
     fun isSongVersionMissing(videoId: String): Boolean =
-        videoId in songVersionMissing && videoId !in songVersionWaived
+        songVersionVerdicts.isMissing(videoId)
 
     /**
      * True when a before-audio lookup on [videoId] timed out or was cancelled
      * and the one post-audio retry has not been spent yet. See
      * [SongVersionPolicy.shouldRetrySongVersionAfterAudio].
      */
-    fun isSongVersionRetrySuggested(videoId: String): Boolean = videoId in songVersionRetrySuggested
+    fun isSongVersionRetrySuggested(videoId: String): Boolean =
+        songVersionVerdicts.isRetrySuggested(videoId)
 
     /**
      * The song version of a music-video row, resolved before it reaches the
@@ -1253,39 +1245,35 @@ object YtMusicRepository {
             } else {
                 TrackLog.i(TAG, "song version: ${song.videoId} -> none via none (cover)", about = song.videoId)
             }
-            songVersionMissing.add(song.videoId)
+            songVersionVerdicts.markMissing(song.videoId)
             return null
         }
-        songVersionCache[song.videoId]?.let {
+        songVersionVerdicts.cached(song.videoId)?.let {
             logSongVersion(song.videoId, it, "cache", beforeAudio)
             return it.withQueueFieldsOf(song)
         }
         if (retryTimedOut) {
             // The retry exists precisely because the first answer was cut
-            // short; forget its provisional miss and search again once.
-            synchronized(songVersionVerdictLock) {
-                songVersionMissing.remove(song.videoId)
-                songVersionWaived.remove(song.videoId)
-                songVersionRetrySuggested.remove(song.videoId)
-                if (audioVersionCache[song.videoId]?.videoId == song.videoId) {
-                    audioVersionCache.remove(song.videoId)
-                }
+            // short; forget its provisional miss but keep the waiver until the
+            // in-flight lookup that produced it has finished. Clearing the
+            // waiver now would let that lookup cache its cut-short miss as a
+            // verdict before the fresh search below even starts.
+            songVersionVerdicts.beginRetry(song.videoId)
+            if (audioVersionCache[song.videoId]?.videoId == song.videoId) {
+                audioVersionCache.remove(song.videoId)
             }
-        } else if (song.videoId in songVersionMissing) {
-            // A miss that a timed-out waiter left behind is revalidated once
-            // (the same rule the persistent catalogue cache follows) instead
-            // of freezing this video for the rest of the run.
-            if (song.videoId in songVersionWaived) {
-                synchronized(songVersionVerdictLock) {
-                    songVersionMissing.remove(song.videoId)
-                    songVersionWaived.remove(song.videoId)
+        } else {
+            when (songVersionVerdicts.settleMiss(song.videoId)) {
+                SongVersionVerdictStore.Miss.SETTLED -> {
+                    logSongVersion(song.videoId, null, "cache", beforeAudio)
+                    return null
+                }
+                SongVersionVerdictStore.Miss.RETRY -> {
                     if (audioVersionCache[song.videoId]?.videoId == song.videoId) {
                         audioVersionCache.remove(song.videoId)
                     }
                 }
-            } else {
-                logSongVersion(song.videoId, null, "cache", beforeAudio)
-                return null
+                SongVersionVerdictStore.Miss.NONE -> Unit
             }
         }
         // Waiting is what the caller's 1.5 s budget bounds; the lookup itself
@@ -1295,30 +1283,26 @@ object YtMusicRepository {
         var answer = try {
             lookup.result.await()
         } catch (cancelled: CancellationException) {
-            synchronized(songVersionVerdictLock) {
-                if (lookup.result.isCompleted) {
-                    // The answer landed while this caller's deadline was
-                    // firing, so it was cached before the waiver was known.
-                    // Reopen a miss; a found recording is already useful.
-                    if (songVersionCache[song.videoId] == null &&
-                        songVersionMissing.remove(song.videoId)
-                    ) {
-                        if (audioVersionCache[song.videoId]?.videoId == song.videoId) {
-                            audioVersionCache.remove(song.videoId)
-                        }
-                    }
-                } else {
-                    songVersionWaived.add(song.videoId)
-                }
+            // The answer landed while this caller's deadline was firing, so it
+            // was cached before the waiver was known. Reopen a miss; a found
+            // recording is already useful.
+            if (songVersionVerdicts.onWaiterCancelled(song.videoId, lookup.result.isCompleted) &&
+                audioVersionCache[song.videoId]?.videoId == song.videoId
+            ) {
+                audioVersionCache.remove(song.videoId)
             }
             throw cancelled
         }
         recordSongVersionAnswer(song, answer)
-        if (retryTimedOut && answer.song == null && !answer.definitive) {
-            // The timed-out lookup was still in flight, so this retry joined it
-            // and got the same provisional miss. Now that it has finished, the
-            // one retry is spent on a fresh search rather than returning that
-            // cut-short answer unchanged.
+        if (retryTimedOut && answer.song == null) {
+            // The timed-out lookup may still have been in flight, so this
+            // retry joined it and got either the same provisional miss or a
+            // stale verdict recorded before the waiver was known. Do not trust
+            // it: spend the one retry on a fresh search after the join.
+            songVersionVerdicts.beginFreshSearch(song.videoId)
+            if (audioVersionCache[song.videoId]?.videoId == song.videoId) {
+                audioVersionCache.remove(song.videoId)
+            }
             answer = try {
                 resolveSongVersion(song)
             } catch (cancelled: CancellationException) {
@@ -1344,14 +1328,7 @@ object YtMusicRepository {
 
     /** Keeps the retry marker in step with one answer, definitive or not. */
     private fun recordSongVersionAnswer(song: Song, answer: SongVersionAnswer) {
-        synchronized(songVersionVerdictLock) {
-            if (answer.definitive || answer.song != null) {
-                songVersionRetrySuggested.remove(song.videoId)
-            } else {
-                songVersionWaived.remove(song.videoId)
-                songVersionRetrySuggested.add(song.videoId)
-            }
-        }
+        songVersionVerdicts.recordAnswer(song.videoId, answer.song, answer.definitive)
     }
 
     /**
@@ -1383,28 +1360,20 @@ object YtMusicRepository {
         // the original row for both shapes, so its cache is what tells the
         // definitive "no catalogue row" apart from a search that never ran.
         val answered = audioVersionCache.containsKey(song.videoId)
-        val waitedOut = synchronized(songVersionVerdictLock) {
-            song.videoId in songVersionWaived
-        }
+        val waitedOut = songVersionVerdicts.waitedOut(song.videoId)
         val definitive = SongVersionPolicy.songVersionVerdictIsDefinitive(
             searchSucceeded = search.isSuccess,
             answered = answered,
             found = found != null,
             waitedOut = waitedOut,
         )
-        synchronized(songVersionVerdictLock) {
-            if (waitedOut) songVersionWaived.remove(song.videoId)
-            if (definitive) {
-                if (found == null) songVersionMissing.add(song.videoId)
-                else songVersionCache[song.videoId] = found
-            } else if (found == null) {
-                // resolveAudio may have recorded "searched, nothing" through
-                // its own cache. That provisional answer is not a verdict, so
-                // drop it and let the post-audio retry really search again.
-                if (audioVersionCache[song.videoId]?.videoId == song.videoId) {
-                    audioVersionCache.remove(song.videoId)
-                }
-            }
+        // A provisional miss is never stored. If resolveAudio recorded one
+        // through its own cache, drop it so the post-audio retry really
+        // searches again.
+        if (songVersionVerdicts.store(song.videoId, found, definitive) &&
+            audioVersionCache[song.videoId]?.videoId == song.videoId
+        ) {
+            audioVersionCache.remove(song.videoId)
         }
         return SongVersionAnswer(found, via, definitive)
     }
