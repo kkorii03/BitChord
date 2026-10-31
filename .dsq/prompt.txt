@@ -1,0 +1,94 @@
+﻿You are fixing compile errors after merging upstream BitChord v1.9 into our Korean fork. Branch base = task/upstream-19. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. So our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist (or upstream renamed/changed signatures).
+Reference versions (fetch them first):
+  git fetch origin task/fix-1030            -> origin/task/fix-1030 = our fork BEFORE the merge
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   -> pure upstream v1.9 (read only, never push there)
+Use `git show origin/task/fix-1030:<path>` and `git show v1.9:<path>` to see what each side had.
+
+Policy (user order): adopt v1.9 maximally. Where v1.9 has its own implementation of the same feature, USE v1.9's and delete our now-dead caller code instead of restoring ours: quality upgrade / hq-swap / HQ prefetch -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings, menus, video playback, tab bar, mini player -> v1.9.
+KEEP (restore if lost) only Korean-fork features v1.9 does not have: lyrics sync correction, song-version verdict / no music-video / audio instead of MV / cover-piano rejection, Korea-blocked song fallback + proxy playback + alternate ATV copy, video radio, Korean strings, diagnostic log lines (DiagLog / featurehealth lines).
+
+Separation rule (read docs/ko-fork-layout.md): when you restore a lost Korean declaration, put it in a NEW file under package com.music.bitchord.ko (shared: shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/<LaneName>Restored*.kt; use commonMain/ko only if commonMain code needs it), NOT back inside an upstream file. Inside an upstream file (one that exists in v1.9) add only one-line calls marked with a trailing comment // [KO] <feature>. Prefer extension functions / top-level functions over editing upstream classes. Never split or delete upstream v1.9 code. When an upstream signature changed, adapt OUR code to the new upstream signature, not the other way round.
+
+Scope: fix the errors in YOUR files only (list below). Other lanes fix the other shared files in parallel, so the full build will still show errors in files outside your list - ignore those, do not edit files outside your list except new files under .../ko/. Check with: ./gradlew :shared:compileKotlinJvm --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' ; your goal is ZERO errors in your files. Do not edit .github/, keys/, signing, gradle files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change. If you delete our code because v1.9 replaces it, list it in the summary with the reason.
+If you delete a test of a removed feature, list it in the summary.
+
+At the end, summarize in 10 lines or less: modified files / new ko files / what was restored (Korean features) / what was dropped in favour of v1.9 / remaining errors in your files / unresolved questions.
+
+YOUR FILES: shared/.../data/YtMusicRepository.kt, playback/QueueBuilder.kt, data/model/SearchHistoryEntity.kt, data/net/UnplayableAlternate.kt, data/videoradio/VideoRadioSources.kt, commonMain data/model/DetailTarget.kt, data/canvas/CanvasArtwork.kt (LaneName=Repo)
+
+Current compile errors in your files (from CI):
+shared/src/commonMain/kotlin/com/music/bitchord/data/model/DetailTarget.kt:13:5 Unresolved reference 'isArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:174:46 Unresolved reference 'isMusicGateSignal'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:272:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:286:13 Unresolved reference 'fallbackActive'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:414:13 Unresolved reference 'fallbackActive'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:535:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:540:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:564:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:660:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:669:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:692:21 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:692:51 Unresolved reference 'fallbackActive'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:753:83 No parameter with name 'kind' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:903:17 Conflicting declarations:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:908:17 Conflicting declarations:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:908:30 Unresolved reference 'rows'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:908:47 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:909:17 Unresolved reference 'rows'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:909:60 Unresolved reference 'videoRowsOnly'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:932:31 Method 'iterator()' is ambiguous for this expression. Applicable candidates:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:932:31 Unresolved reference 'rows'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:933:22 Unresolved reference 'loggedRejects'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:966:21 Unresolved reference 'videoRowsOnly'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:974:17 Unresolved reference 'queriesRun'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:975:17 Unresolved reference 'failedQueries'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1067:13 Conflicting overloads:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1088:25 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1088:44 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1089:47 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1090:48 Unresolved reference 'countCounterpartWrappers'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1091:44 Unresolved reference 'parseCounterpartSong'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1091:75 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1094:36 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1095:29 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1098:21 Unresolved reference 'counterpartEmptyRun'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1099:66 Unresolved reference 'counterpartEmptyRun'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1107:19 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1107:31 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1108:35 Unresolved reference 'counterpartMissing'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1108:58 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1108:72 Unresolved reference 'counterpartAudioCache'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1108:94 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1111:13 Unresolved reference 'mine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1114:13 Unresolved reference 'mine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1117:13 Unresolved reference 'counterpartLookups'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1117:32 Cannot infer type for type parameter 'K'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1117:32 Cannot infer type for type parameter 'V'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1117:39 Unresolved reference 'videoId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1117:48 Unresolved reference 'mine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1128:9 Unresolved reference 'counterpartAudio'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1440:25 Unresolved reference 'withTimeout'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1440:50 Suspension functions can only be called within coroutine body.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1534:13 Conflicting overloads:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1692:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1801:55 No parameter with name 'kind' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1872:13 Unresolved reference 'isYouTubePlaylistId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1872:46 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:2072:55 Unresolved reference 'shown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:2121:13 Unresolved reference 'isYouTubePlaylistId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:2121:46 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:2244:17 Unresolved reference 'fallbackActive'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:2282:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:2292:13 Unresolved reference 'ensureGateKnown'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/canvas/CanvasArtwork.kt:41:36 Unresolved reference 'clipStartMs'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/model/SearchHistoryEntity.kt:83:64 'when' expression must be exhaustive. Add the 'OTHER' branch or an 'else' branch.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/UnplayableAlternate.kt:26:14 Unresolved reference 'videoRadio'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/videoradio/VideoRadioSources.kt:216:25 Unresolved reference 'videoChannelId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/videoradio/VideoRadioSources.kt:241:29 Unresolved reference 'videoChannelId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueBuilder.kt:52:28 Unresolved reference 'seedArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueBuilder.kt:52:40 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/playback/QueueBuilder.kt:52:47 Cannot infer type for type parameter 'T'. Specify it explicitly.
+
