@@ -187,19 +187,19 @@ object YouTubeProxy {
     ): ProxySelector = object : ProxySelector() {
         override fun select(uri: URI): List<Proxy> {
             val config = current
-            if (!config.usable) return listOf(Proxy.NO_PROXY)
-            if (!ignoreHealth && ProxyHealthMonitor.shouldBypassProxy()) return listOf(Proxy.NO_PROXY)
+            if (!config.usable) return normalConnection(uri)
+            if (!ignoreHealth && ProxyHealthMonitor.shouldBypassProxy()) return normalConnection(uri)
             if (forceYouTubeHosts) {
                 if (!ProxyScopeMatcher.matches(uri.host, uri.path, ProxyScope.ALL_YOUTUBE)) {
-                    return listOf(Proxy.NO_PROXY)
+                    return normalConnection(uri)
                 }
             } else if (!ProxyScopeMatcher.matches(uri.host, uri.path, config.scope)) {
-                return listOf(Proxy.NO_PROXY)
+                return normalConnection(uri)
             }
             val type = when (config.mode) {
                 ProxyMode.SOCKS5 -> Proxy.Type.SOCKS
                 ProxyMode.HTTP -> Proxy.Type.HTTP
-                ProxyMode.OFF -> return listOf(Proxy.NO_PROXY)
+                ProxyMode.OFF -> return normalConnection(uri)
             }
             // The selector is the one place the active route becomes an
             // address, so a switch needs no client rebuild: the next request
@@ -224,6 +224,17 @@ object YouTubeProxy {
             // deliberately not written to a log here.
         }
     }
+
+    /**
+     * What a request outside the app's own proxy does: whatever the device is
+     * set up for, which on most phones is a direct connection. Answering
+     * [Proxy.NO_PROXY] outright overrode a device-wide proxy too, so traffic the
+     * user (or a test device) routed through one left on the raw network.
+     */
+    private fun normalConnection(uri: URI): List<Proxy> =
+        runCatching { ProxySelector.getDefault()?.select(uri) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?: listOf(Proxy.NO_PROXY)
 
     /**
      * Answers an HTTP proxy's 407 with the saved Basic credentials.

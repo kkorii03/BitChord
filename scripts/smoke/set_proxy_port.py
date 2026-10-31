@@ -38,8 +38,10 @@ if emulator:
         with open(env_file, "a", encoding="utf-8") as f:
             f.write(f"SMOKE_UPSTREAM_PROXY={proxy['host']}:{port}\n")
             f.write(f"SMOKE_UPSTREAM_AUTH={auth}\n")
-    proxy["mode"] = "OFF"
-    print(f"smoke: device-wide proxy via authfwd to port {port}; app proxy off")
+    # The app's own proxy stays on for YouTube: with it off the app's client
+    # answered NO_PROXY and ignored the device proxy (run 41166431685, no
+    # audio). Both now end at the same home route.
+    print(f"smoke: app proxy and device-wide proxy (authfwd) on port {port}")
 else:
     print(f"smoke: proxy port -> {port}")
 with open(path, "w", encoding="utf-8") as f:
