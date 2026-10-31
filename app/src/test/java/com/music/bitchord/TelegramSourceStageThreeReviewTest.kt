@@ -94,4 +94,16 @@ class TelegramSourceStageThreeReviewTest {
         assertEquals("Mr. Brightside.demo", parsed?.title)
         assertNull(TelegramFileNames.parse("Mr. Brightside.flac"))
     }
+
+    @Test
+    fun `every suffix the format probe accepts is stripped from the title`() {
+        // These suffixes were missing from an earlier parser-only whitelist,
+        // while TelegramFormatProbe already treated the files as audio.
+        for (extension in listOf("ape", "wv", "dsf", "dff", "oga", "mp4", "webm")) {
+            val parsed = TelegramFileNames.parse("The Killers - Mr. Brightside.$extension")
+
+            assertEquals(extension, "The Killers", parsed?.artist)
+            assertEquals(extension, "Mr. Brightside", parsed?.title)
+        }
+    }
 }

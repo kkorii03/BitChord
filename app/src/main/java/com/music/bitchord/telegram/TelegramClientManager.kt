@@ -62,9 +62,7 @@ object TelegramClientManager {
     @Volatile
     private var selectionLoaded = false
     @Volatile
-    private var markerLoaded = false
-    @Volatile
-    private var validatedSession = false
+    private var sessionState: TelegramSessionMarkerState? = null
     private val selectionLock = Any()
     private var home: File? = null
 
@@ -217,33 +215,46 @@ object TelegramClientManager {
      * launches. Read by [TelegramUpgradeGate] so a resting `CLOSED` client is
      * not mistaken for a signed-in one before the first login.
      */
-    fun hasValidatedSession(): Boolean = validatedSession
+    fun hasValidatedSession(): Boolean {
+        ensureSessionMarkerLoaded()
+        return synchronized(selectionLock) {
+            sessionState?.isValidated() ?: false
+        }
+    }
 
-    /** Reads the validated-session marker off disk once, without opening TDLib. */
+    /**
+     * Prepares the validated-session marker view without opening TDLib. The
+     * first read or write loads it off disk; every later one reuses that value.
+     */
     private fun ensureSessionMarkerLoaded() {
-        if (markerLoaded) return
+        if (sessionState != null) return
         synchronized(selectionLock) {
-            if (markerLoaded) return
+            if (sessionState != null) return
             val app = context ?: return
             val marker = sessionMarker ?: TelegramSessionMarker(app).also { sessionMarker = it }
-            validatedSession = runCatching { marker.load() }.getOrDefault(false)
-            markerLoaded = true
+            sessionState = TelegramSessionMarkerState(
+                lock = selectionLock,
+                load = { runCatching { marker.load() }.getOrDefault(false) },
+                mark = { runCatching { marker.markValidated() } },
+                clearPersisted = { runCatching { marker.clear() } },
+            )
         }
     }
 
     /** Records that TDLib reported `Ready` for this account. */
     private fun markSessionValidated() {
         ensureSessionMarkerLoaded()
-        validatedSession = true
-        markerLoaded = true
-        runCatching { sessionMarker?.markValidated() }
+        synchronized(selectionLock) {
+            sessionState?.markValidated()
+        }
     }
 
     /** Forgets the login: logout, session reset, or a session that fell back to phone login. */
     private fun clearValidatedSession() {
-        validatedSession = false
-        markerLoaded = true
-        runCatching { sessionMarker?.clear() }
+        ensureSessionMarkerLoaded()
+        synchronized(selectionLock) {
+            sessionState?.clear()
+        }
     }
 
     /**

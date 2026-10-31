@@ -50,6 +50,13 @@ object TelegramFormatProbe {
     private val LOSSLESS = setOf("flac", "wav", "wave", "aiff", "aif", "alac", "ape", "wv", "dsf", "dff")
     private val LOSSY = setOf("mp3", "m4a", "mp4", "aac", "ogg", "oga", "opus", "mka", "ac3", "eac3", "ec3", "ac4", "webm")
 
+    /**
+     * Every suffix this probe understands. File-name parsing strips the same
+     * set instead of keeping a second, narrower list that would leave formats
+     * like `.ape` or `.webm` stuck to the title.
+     */
+    internal val AUDIO_EXTENSIONS: Set<String> = LOSSLESS + LOSSY
+
     fun of(fileName: String, mimeType: String): TelegramFormat {
         val codec = codecOf(fileName, mimeType)
         return when {

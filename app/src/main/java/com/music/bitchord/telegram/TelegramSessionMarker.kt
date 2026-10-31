@@ -31,3 +31,45 @@ internal class TelegramSessionMarker(context: Context) {
         const val KEY_VALIDATED = "session_validated"
     }
 }
+
+/**
+ * In-memory view of [TelegramSessionMarker] that loads before every read or
+ * write.
+ *
+ * A login can reach `Ready` before the startup read runs, and a logout can
+ * happen while the marker has never been read. Doing the load first means the
+ * completed login is persisted and the logout clears the marker that was
+ * actually on disk, rather than only flipping a default in memory.
+ */
+internal class TelegramSessionMarkerState(
+    private val lock: Any = Any(),
+    private val load: () -> Boolean,
+    private val mark: () -> Unit,
+    private val clearPersisted: () -> Unit,
+) {
+    private var loaded = false
+    private var validated = false
+
+    fun isValidated(): Boolean = synchronized(lock) {
+        ensureLoaded()
+        validated
+    }
+
+    fun markValidated() = synchronized(lock) {
+        ensureLoaded()
+        validated = true
+        mark()
+    }
+
+    fun clear() = synchronized(lock) {
+        ensureLoaded()
+        validated = false
+        clearPersisted()
+    }
+
+    private fun ensureLoaded() {
+        if (loaded) return
+        validated = load()
+        loaded = true
+    }
+}

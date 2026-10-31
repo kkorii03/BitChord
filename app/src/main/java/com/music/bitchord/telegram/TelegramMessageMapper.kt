@@ -12,12 +12,18 @@ import java.util.Locale
  * stays whole; leading track numbers are packaging, like the ones the title
  * parser already drops.
  */
+// One list for parsing and message filtering, taken from the format probe so
+// a suffix the player accepts can never be left on the parsed title.
+private val AUDIO_EXTENSION_PATTERN = TelegramFormatProbe.AUDIO_EXTENSIONS
+    .sorted()
+    .joinToString("|") { Regex.escape(it) }
+
 internal object TelegramFileNames {
 
     private val SEPARATOR = Regex("""\s+[-\u2013\u2014]\s+""")
     private val TRACK_NUMBER = Regex("""^\s*\d{1,3}\s*[.\-\u2013\u2014]\s*""")
     private val AUDIO_EXTENSION = Regex(
-        """\.(flac|mp3|m4a|aac|ogg|opus|wav|wave|alac|aiff|aif|ac3|eac3|ec3|ac4|mka)$""",
+        """\.($AUDIO_EXTENSION_PATTERN)$""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -56,7 +62,7 @@ internal object TelegramFileNames {
 object TelegramMessageMapper {
 
     private val FILE_NAME = Regex(
-        ".*\\.(flac|mp3|m4a|aac|ogg|opus|wav|wave|alac|aiff|aif|ac3|eac3|ec3|ac4|mka)$",
+        """.*\.($AUDIO_EXTENSION_PATTERN)$""",
         RegexOption.IGNORE_CASE,
     )
 
