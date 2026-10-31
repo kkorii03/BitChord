@@ -109,8 +109,11 @@ if [ -n "${SMOKE_SETTINGS_FILE:-}" ]; then
 fi
 
 # First launch without an account: skip onboarding once, then start normally.
+# Direct connections follow the device proxy so the emulator reaches the same
+# home route the listener's phone uses for player/audio requests.
 adb shell am start -n "$PKG/com.music.bitchord.MainActivity" \
-  --ez bitchord.debug.skipOnboarding true >/dev/null 2>&1 || true
+  --ez bitchord.debug.skipOnboarding true \
+  --ez bitchord.debug.directViaSystemProxy true >/dev/null 2>&1 || true
 sleep 20
 adb shell am force-stop "$PKG" || true
 sleep 2

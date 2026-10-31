@@ -1140,6 +1140,11 @@ object AppSettings {
         prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         this.authStore = authStore
         readProxy()
+        // Debug-only, and the shared switch ignores it unless Application has
+        // already allowed debug overrides (BuildConfig.DEBUG).
+        com.music.bitchord.data.net.YouTubeProxy.setDirectViaSystemProxy(
+            prefs.getBoolean(KEY_DEBUG_DIRECT_VIA_SYSTEM_PROXY, false),
+        )
     }
 
     /**
@@ -2798,6 +2803,19 @@ object AppSettings {
         publishProxy()
     }
 
+    /**
+     * Persists the debug-only switch that makes direct connections follow the
+     * device proxy, and publishes it to the network layer.
+     *
+     * Written even in a release build so a value left by a debug install can
+     * be read back, but [com.music.bitchord.data.net.YouTubeProxy] ignores
+     * turning it on unless Application allowed debug overrides.
+     */
+    fun setDebugDirectViaSystemProxy(on: Boolean) {
+        prefs.edit().putBoolean(KEY_DEBUG_DIRECT_VIA_SYSTEM_PROXY, on).apply()
+        com.music.bitchord.data.net.YouTubeProxy.setDirectViaSystemProxy(on)
+    }
+
     /** Reads the proxy fields and publishes them; shared by [init] and [initProxy]. */
     private fun readProxy() {
         proxyMode.value = runCatching {
@@ -3048,6 +3066,7 @@ object AppSettings {
 
         bools(
             KEY_ONBOARDING_COMPLETE,
+            KEY_DEBUG_DIRECT_VIA_SYSTEM_PROXY,
             KEY_WIFI_ONLY_DOWNLOADS,
             KEY_AUTO_REDOWNLOAD_MV_SOUND,
             KEY_AUTO_REPLACE_HQ_DOWNLOADS,
@@ -3853,6 +3872,7 @@ object AppSettings {
     private const val KEY_PROXY_BACKUP_PORT = "proxy_backup_port"
     private const val KEY_PROXY_USERNAME = "proxy_username"
     private const val KEY_PROXY_SCOPE = "proxy_scope"
+    private const val KEY_DEBUG_DIRECT_VIA_SYSTEM_PROXY = "debug_direct_via_system_proxy"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"

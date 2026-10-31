@@ -170,6 +170,10 @@ object Http {
             if (withProxy) {
                 proxySelector(com.music.bitchord.data.net.YouTubeProxy.proxySelector)
                 proxyAuthenticator(com.music.bitchord.data.net.YouTubeProxy.proxyAuthenticator)
+            } else {
+                // Direct: the debug switch decides between Proxy.NO_PROXY and
+                // the device proxy; release keeps the device proxy it had.
+                proxySelector(com.music.bitchord.data.net.YouTubeProxy.directSelector)
             }
         }
         .addInterceptor(webDavInterceptor)
@@ -179,8 +183,10 @@ object Http {
     val client: OkHttpClient = buildClient(withProxy = true)
 
     /**
-     * The same stack without any proxy, for the one direct retry a request
-     * makes when the proxy route is found dead.
+     * The same stack without the app's proxy, for the one direct retry a
+     * request makes when the proxy route is found dead. Its selector follows
+     * the device proxy (or `NO_PROXY` under the debug switch), never the
+     * app's own scope.
      */
     internal val directClient: OkHttpClient = buildClient(withProxy = false)
 

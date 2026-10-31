@@ -141,6 +141,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
+        // The debug switch for direct connections is a debug-build tool; tell
+        // the shared proxy before initProxy applies any persisted value so a
+        // release build ignores one left behind by a debug install.
+        com.music.bitchord.data.net.YouTubeProxy.setDebugDirectSwitchAllowed(BuildConfig.DEBUG)
         // The proxy route has to be in YouTubeProxy before this process makes
         // its first YouTube request. Everything below can start such a request
         // — a source open or the session-scope lookup a few lines down — while

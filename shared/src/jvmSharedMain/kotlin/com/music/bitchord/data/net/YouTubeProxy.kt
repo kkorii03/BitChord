@@ -52,6 +52,23 @@ object YouTubeProxy {
     private var routeChangedAtMs = 0L
 
     /**
+     * The debug-only switch that makes direct connections follow the device's
+     * proxy (the emulator's global http_proxy) instead of going out raw.
+     *
+     * Off by default: only the emulator test needs the device proxy, and the
+     * listener's phone reaches the same audio directly. See
+     * [setDebugDirectSwitchAllowed] for the release guard.
+     */
+    @Volatile
+    private var directViaSystemProxy = false
+
+    @Volatile
+    private var directSwitchAllowed = true
+
+    /** For tests: whether the debug switch is actually on. */
+    internal val directViaSystemProxyEnabled: Boolean get() = directViaSystemProxy
+
+    /**
      * Bumped whenever the proxy route or configuration changes.
      *
      * A stream URL is bound to the server (and address) that minted it, so a
@@ -122,6 +139,49 @@ object YouTubeProxy {
         ProxyHealthMonitor.clear()
         evictPools()
     }
+
+    /**
+     * Whether the debug switch may take effect.
+     *
+     * The application sets this to `BuildConfig.DEBUG` before `AppSettings`
+     * applies the persisted value, so a release build can neither turn the
+     * switch on nor inherit a `true` left behind by a debug build.
+     */
+    fun setDebugDirectSwitchAllowed(allowed: Boolean) {
+        directSwitchAllowed = allowed
+        if (!allowed) directViaSystemProxy = false
+    }
+
+    /**
+     * Turns direct connections onto the device proxy, or back to `NO_PROXY`.
+     *
+     * A debug-build tool for the emulator: its global proxy is the only route
+     * to the listener's home network, where the player response carries a
+     * stream. Requests inside the app's own proxy scope are unaffected — they
+     * still use [proxySelector]. Nothing is persisted here; `AppSettings` owns
+     * that, exactly as it does for the proxy route.
+     */
+    fun setDirectViaSystemProxy(on: Boolean) {
+        if (on && !directSwitchAllowed) return
+        if (on && !directViaSystemProxy) {
+            Log.d(TAG, "debug: direct connections follow the device proxy")
+        }
+        if (directViaSystemProxy == on) return
+        directViaSystemProxy = on
+        // A socket opened on the old route must not carry the next request.
+        evictPools()
+    }
+
+    /**
+     * Whether a direct connection (outside the app's proxy) should ask the
+     * device's [ProxySelector] rather than answer `NO_PROXY`.
+     *
+     * A release build keeps the direct route it has always had — the device
+     * proxy — so the debug switch is inert there. In a debug build the switch
+     * alone decides.
+     */
+    internal fun directFollowsSystemProxy(): Boolean =
+        if (!directSwitchAllowed) true else directViaSystemProxy
 
     /**
      * Off the caller's thread: closing a pooled TLS socket writes its
@@ -226,15 +286,40 @@ object YouTubeProxy {
     }
 
     /**
-     * What a request outside the app's own proxy does: whatever the device is
-     * set up for, which on most phones is a direct connection. Answering
-     * [Proxy.NO_PROXY] outright overrode a device-wide proxy too, so traffic the
-     * user (or a test device) routed through one left on the raw network.
+     * The selector for a client that is deliberately outside the app's proxy
+     * (the direct retry and the base of the proxy-pinned media client). It
+     * follows [directFollowsSystemProxy] instead of the app's scope.
      */
-    private fun normalConnection(uri: URI): List<Proxy> =
-        runCatching { ProxySelector.getDefault()?.select(uri) }.getOrNull()
+    internal val directSelector: ProxySelector = object : ProxySelector() {
+        override fun select(uri: URI): List<Proxy> = directConnection(uri)
+
+        override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) {
+            // As [proxySelector]: the URI may carry a session-bearing query.
+        }
+    }
+
+    private fun normalConnection(uri: URI): List<Proxy> = directConnection(uri)
+
+    /**
+     * What a request outside the app's own proxy does.
+     *
+     * The debug build's switch decides: off answers [Proxy.NO_PROXY], on asks
+     * the device's [ProxySelector] (the emulator's global http_proxy). A
+     * release build keeps its existing route — the device proxy — so the
+     * switch cannot change release behaviour. Answering [Proxy.NO_PROXY]
+     * outright instead would override a device-wide proxy too, so traffic the
+     * user (or a test device) routed through one would leave on the raw
+     * network.
+     */
+    internal fun directConnection(
+        uri: URI,
+        system: ProxySelector? = ProxySelector.getDefault(),
+    ): List<Proxy> {
+        if (!directFollowsSystemProxy()) return listOf(Proxy.NO_PROXY)
+        return runCatching { system?.select(uri) }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
             ?: listOf(Proxy.NO_PROXY)
+    }
 
     /**
      * Answers an HTTP proxy's 407 with the saved Basic credentials.

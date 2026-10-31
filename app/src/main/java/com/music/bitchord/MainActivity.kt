@@ -616,11 +616,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * The emulator tour's two switches, read only by a debug build.
+     * The emulator tour's switches, read only by a debug build.
      *
      * `forceMusicGate` reproduces the Korea-without-Premium Home on a network
      * that would answer YouTube Music normally; `seedHistory` gives that Home
-     * a local listening record on a fresh install. Both are no-ops in release.
+     * a local listening record on a fresh install; `directViaSystemProxy` makes
+     * the app's direct connections use the emulator's device proxy, the route
+     * the listener's phone takes. All are no-ops in release.
      */
     private fun applyDebugLaunchSwitches(intent: Intent) {
         if (!BuildConfig.DEBUG) return
@@ -641,6 +643,11 @@ class MainActivity : AppCompatActivity() {
             AppSettings.setOnboardingComplete()
             Log.d(DEBUG_TAG, "debug: onboarding skipped")
         }
+        if (intent.hasExtra(EXTRA_DIRECT_VIA_SYSTEM_PROXY)) {
+            AppSettings.setDebugDirectViaSystemProxy(
+                intent.getBooleanExtra(EXTRA_DIRECT_VIA_SYSTEM_PROXY, false),
+            )
+        }
         if (intent.hasExtra(EXTRA_PROXY)) {
             val config = ProxyUrlParser.parse(intent.getStringExtra(EXTRA_PROXY))
             if (config != null) {
@@ -660,6 +667,7 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
         const val EXTRA_SEED_HISTORY = "bitchord.debug.seedHistory"
         const val EXTRA_SKIP_ONBOARDING = "bitchord.debug.skipOnboarding"
+        const val EXTRA_DIRECT_VIA_SYSTEM_PROXY = "bitchord.debug.directViaSystemProxy"
         const val EXTRA_PROXY = "bitchord.debug.proxy"
         const val DEBUG_TAG = "BitChord"
     }
