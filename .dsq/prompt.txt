@@ -1,0 +1,29 @@
+﻿BitChord 안드로이드 앱(Kotlin, Media3 ExoPlayer 2대 크로스페이드). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰, 시험판 test19, 로그 10-31): 'Radioactive - Imagine Dragons'(_aFue-KtYsU, YouTube AAC 44.1k) 재생 중 노래 중간이 무음. 사용자가 70초 지점에서 표시(MARK by user pos=70394).
+타임라인:
+ 11:06:17.756 crossfade start out=Kx7B-XvmFtE in=_aFue-KtYsU fade=3845ms (smart=true)
+ 11:06:19.764 play: -> Radioactive idx=8/13 reason=AUTO, 'TIMING first audio: 0ms, the crossfade covered it'
+ 11:06:20.976 decoders active=3 [player-a opus, player-b aac, video-wav]
+ 11:06:21.668 crossfade end ... overlap=3912ms gains end=1.000/0.000 ; 11:06:25.820 automix 분석 디코더 시작/종료 반복
+ 11:06:44.271 'AUDIO_OUT AudioTrack 44100Hz encoding=2' — 곡 25초 지점에서 AudioTrack 새로 생성(디코더 초기화 줄 없음, 화면 꺼짐 상태, 이유 로그 없음)
+ 11:06:56.464 lifecycle foreground ; 11:06:56.573 decoders [player-b aac, video-wav]
+ 11:06:57.154 'W/AUDIO_OUT silence detected id=_aFue-KtYsU stalled=false silent=true frames=1647616 sinceBuffer=25ms; rebuilding' — 그러나 소리 복구 안 됨
+ 11:07:03.609 ERROR_CODE_IO_UNSPECIFIED at 72840ms → 캐시 버리고 72840ms부터 재시도(opus 48k) → 11:07:05 소리 복구.
+ 다른 사례: 10:53:36 'silence detected id=pjMZXHjEZQc ... sinceBuffer=61648ms; rebuilding'(크로스페이드로 들어온 FLAC, 화면 꺼짐/켜짐 반복 중).
+할 일:
+① 11:06:44 AudioTrack 재생성의 원인 코드 경로를 찾기(오디오 출력 정책·오프로드·화면 꺼짐·샘플레이트 전환·크로스페이드 B 플레이어 승격·hq/read-ahead 등). 그 경로에서 출력이 0(무음 PCM 또는 볼륨/게인 0)으로 남는 조건을 코드 근거로 확정해 수정. 크로스페이드 끝난 뒤 들어온 플레이어의 volume/게인이 1로 확정되는지, 플레이어 교체·재빌드 때 0이 복사되지 않는지 확인.
+② 'silence detected ... rebuilding'이 실제로 소리를 되살리지 못한 이유를 찾아 고치기: 재빌드 뒤 일정 시간 안에 여전히 무음이면 다음 단계(현재 위치에서 플레이어 재준비, 그래도 안 되면 다른 스트림으로 재해결)로 올라가게. 진짜 조용한 구간(곡 자체 무음·인트로)과 출력 고장을 구분(디코더 출력 PCM 레벨 vs 게인 적용 후 레벨, 원본 파형 분석값이 있으면 그 구간 에너지와 비교). 이벤트 기반, 폴링·주기 타이머 금지(이미 있는 감지 콜백을 활용).
+③ 복구 단계마다 로그: 'silence recover: <id> step=<rebuild|reprepare|reresolve> result=<sound|still-silent>' 및 AudioTrack 재생성 때 이유 로그 'AUDIO_OUT AudioTrack ... reason=<...>'.
+테스트: 무음 감지→단계 상승 판단(순수 함수), 크로스페이드 종료 후 게인 1 확정, 진짜 조용한 구간은 복구 안 함 — 단위 테스트.
+반드시: 배터리(추가 디코딩·폴링 금지), 크로스페이드/자동 믹스·HQ 교체 경로 회귀 금지, 바꾼 함수의 모든 호출부 재확인, 기존 주석 의도 지울 땐 이유. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+- HIGH — `app/src/main/java/com/music/bitchord/playback/audio/AudioSilenceRecovery.kt:82`: `stalled` returns RECOVER before the decoder-silent check, so a genuinely quiet passage with skip-silence enabled (SilenceSkipper emits 0-frame blocks, freezing `frames`/`lastBufferAtMs`) is treated as a fault and climbs the whole ladder, potentially re-resolving to a different stream. Fix: require `!decoderSilentThroughoutOutput` for the stalled branch too (or detect "no buffers because frames were intentionally skipped").
+- MEDIUM — `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9472`: the `volume <= 0.01f` path marks `Step.REBUILD` spent and logs it as run without ever calling `rebuildPlayersForOutput`, so a still-silent path escalates to REPREPARE and the AudioTrack-rebuild rung is never executed. Fix: actually call `performSilenceRecoveryStep(Step.REBUILD)` there, or do not consume/inflight a rung for a gain-only restore.
+- MEDIUM — `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9567`: `at` is captured before the up-to-10s async re-resolve and reused at line 9612, so normal playback progress (or a user seek) during resolution is undone by `seekTo` back to the stale position. Fix: re-read `currentPosition` on the Main thread after resolution (as `switchToAlternateOrSkip` does) and abort if the item/position changed.
+- LOW — `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9524`: `silence recover: ... result=still-silent` is emitted before the step is even performed, so the required per-step outcome log never reflects an actual result. Fix: log the step outcome only after the recheck window proves audio still silent (or when escalating) and log `result=sound` on recovery.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
