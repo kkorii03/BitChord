@@ -1,0 +1,20 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(FIXLIST 115 남은 MEDIUM): 다음 곡 싱크 준비(next-prep)에서 엔진 단계 실패(오디오 없음, HTTP 429, 받아쓰기 줄 부족 등)가 성공한 '답 없음'과 똑같이 'no-answer'로 로그·기록된다. 그래서 featurehealth 집계에서 진짜 실패와 '확인했지만 보정할 것 없음'을 구분할 수 없고, 실패한 곡이 다시 시도되지 않을 수 있다.
+할 일:
+① 원인 확정(파일:줄): next-prep 싱크 결과를 만드는 곳(LyricsTiming, next-prep 정책/실행 코드)에서 no-answer 가 붙는 모든 경로.
+② 결과 종류를 나눈다: answered / no-answer(엔진 정상, 보정 없음) / failed:<이유>(no-audio|rate-limit|too-few-lines|error). 로그 한 줄: 'next-prep sync: <곡id> result=<종류> reason=<이유>'. 기존 로그 형식에 의존하는 scripts/featurehealth.py 가 있으면 새 형식도 읽게 같이 고칠 것.
+③ failed 는 '확정 기록'으로 저장하지 않는다(다음 재생 때 다시 시도). 단 rate-limit 은 기존 백오프 규칙을 따른다. 재시도 루프·타이머 추가 금지(배터리 우선, 이벤트 기반).
+테스트: 엔진 실패 시 결과가 failed 이고 저장되지 않음, 정상 무보정은 no-answer 로 저장됨 — 단위 테스트(고치기 전 실패). 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, 서명 수정 금지. 싱크 시각 계산 로직 자체는 바꾸지 말 것. 바꾼 함수의 모든 호출부와 타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+HIGH — app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1616: `answer` is only Gemini's result, so when Gemini is already spent and Deepgram returns words that don't fit, a healthy no-answer is reported as `failed:error` and Deepgram's paid attempt is dropped. Track whether any engine answered (`heard != null || answer != null`) and only set failure when none did, persisting engines that did answer.
+MEDIUM — app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:2049: `recordSongAttempt` is no longer called on the `no-answer`/`few-words` returns, so for the ordinary `probe == null` screen/download path a Deepgram response with too few words no longer marks the engine spent and Whisper is paid again on later playback. Call `recordSongAttempt` in those branches too; it already no-ops when a probe failure is set.
+MEDIUM — app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1555: the video path uses `Deepgram.words`, which discards the HTTP code, so a 429 is classified `failed:error` rather than `RATE_LIMIT` and no retry-hold applies before the next playback. Use `Deepgram.listen`/propagate the code and reuse the existing rate-limit deferral.
+LOW — shared/src/jvmTest/kotlin/com/music/bitchord/playback/NextPrepSyncResultTest.kt:20: the new test only exercises `NextPrepPolicy.shouldStoreSyncResult`, which production code never calls, so the required "failed not stored, healthy no-answer stored" behavior in `LyricsTiming` is not actually verified. Add a test through `placeWithAi`/`verifySong` storage, or wire the helper into the production store path.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
