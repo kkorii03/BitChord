@@ -220,6 +220,10 @@
     <string name="quality_upgrade_unavailable">Quality can\'t be changed right now</string>
     <string name="quality_upgrade_music_video">A music video\'s quality can\'t be changed</string>
     <string name="quality_upgrade_no_source">High-quality sources are turned off</string>
+    <string name="quality_upgrade_downloaded">For a download, use “Re-download in higher quality”</string>
+    <string name="hq_redownload_searching">Looking for a higher-quality copy</string>
+    <string name="hq_redownload_queued">Re-downloading in higher quality</string>
+    <string name="hq_redownload_waiting_wifi">Will re-download in higher quality on Wi-Fi</string>
     <string name="quality_upgrade_busy">Checking the quality now. Try again in a moment</string>
     <string name="quality_upgrade_reason_not_proven">the new copy couldn\'t be verified</string>
     <string name="quality_upgrade_reason_unavailable">the change isn\'t available right now</string>

@@ -824,6 +824,29 @@ object QualityUpgrade {
      * the answer being waited for, not a stale one, and the item it was started
      * against is the item still playing.
      */
+    /**
+     * Opens the second look for a track the listener asked about by hand when
+     * nothing left it pending.
+     *
+     * The automatic look empties [pending] as it asks, and [askByHand] drops
+     * [lastPending], so a track whose automatic search had already answered
+     * reached the manual pass with nothing to search with. [adoptUnresolved]
+     * only takes tracks played from the cache, so a resolved track was turned
+     * away with "can't change the quality right now" before any search ran
+     * (10-31, '체포하겠어' and 'Friction', no line after "asked for by hand").
+     */
+    fun adoptByHand(mediaId: String, target: TrackMatcher.Target, playing: StreamFormat?): Boolean {
+        if (target.title.isBlank() || mediaId !in handAsked) return false
+        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
+        NerdStats.onLosslessRaceStart(mediaId)
+        TrackLog.d(
+            TAG,
+            "manual upgrade: searching again for '${target.title}' over ${playing?.summary ?: "an unmeasured stream"}",
+            about = mediaId,
+        )
+        return true
+    }
+
     fun askByHand(mediaId: String) {
         handAsked += mediaId
         asked -= mediaId

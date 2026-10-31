@@ -2,6 +2,7 @@ package com.music.bitchord.download
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.R
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -535,6 +536,7 @@ object HqLibraryUpgrade {
                 "download-check: waiting for an unmetered connection",
                 song.videoId,
             )
+            if (!automatic) tellListener(context, song, R.string.hq_redownload_waiting_wifi)
             return UpgradeRequest.REFUSED
         }
         val meta = Downloads.savedMetadataFor(song.videoId)
@@ -576,8 +578,11 @@ object HqLibraryUpgrade {
                     song.videoId,
                 )
             }
+            if (!automatic) tellListener(context, song, R.string.hq_redownload_queued)
             return UpgradeRequest.QUEUED
         }
+        // A tap with no answer for many seconds read as a dead button (10-31).
+        if (!automatic && !allowEqual) tellListener(context, song, R.string.hq_redownload_searching)
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
             val candidate = runCatching {
@@ -607,6 +612,7 @@ object HqLibraryUpgrade {
                                 "download-check: waiting for an unmetered connection",
                                 song.videoId,
                             )
+                            if (!automatic) tellListener(context, song, R.string.hq_redownload_waiting_wifi)
                             return@launch
                         }
                         enqueueVerified(
@@ -616,6 +622,13 @@ object HqLibraryUpgrade {
                             automatic = automatic,
                             allowMetered = hqUpgradeAllowsMetered(automatic),
                         )
+                        TrackLog.i(
+                            TAG,
+                            "download-check: ${song.videoId} manual=${!automatic} result=found " +
+                                "action=upgrade tier=${verified.tier.name}",
+                            song.videoId,
+                        )
+                        if (!automatic) tellListener(context, song, R.string.hq_redownload_queued)
                         return@launch
                     }
                 }
@@ -624,7 +637,17 @@ object HqLibraryUpgrade {
             // sound comparison proved better. Falling back to an unverified
             // search here used to fetch a lower rendition (320 AAC asked for,
             // 160 Opus served) under the banner of an upgrade.
-            if (!allowEqual) return@launch
+            if (!allowEqual) {
+                TrackLog.i(
+                    TAG,
+                    "download-check: ${song.videoId} manual=${!automatic} result=" +
+                        (if (candidate == null) "no-candidate" else "not-verified-better") +
+                        " action=none tier=${currentTier.name}",
+                    song.videoId,
+                )
+                if (!automatic) tellListener(context, song, R.string.quality_upgrade_no_better)
+                return@launch
+            }
             // The repair could not be proved first, so the download itself has
             // to prove it: the served rendition must be at least the rung of
             // the file being replaced, or [Downloads.prepare] refuses it and
@@ -661,6 +684,14 @@ object HqLibraryUpgrade {
         // caller record a verdict the download never accepted; SEARCHING says
         // only that the request itself was accepted and has started.
         return UpgradeRequest.SEARCHING
+    }
+
+    /** A short answer to a request the listener made by hand. */
+    private fun tellListener(context: Context, song: Song, message: Int) {
+        TrackLog.i(TAG, "download-check: ${song.videoId} told listener: ${context.getString(message)}", song.videoId)
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(context.applicationContext, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun enqueueVerified(

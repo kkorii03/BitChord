@@ -6883,11 +6883,23 @@ class PlaybackService : MediaLibraryService() {
                 // the cached-track path, was refused by it for being pending, and
                 // lost its upgrade until the next progress sample came round.
                 if (!QualityUpgrade.isPending(mediaId) &&
-                    (uri == null || !adoptCachedTrack(mediaId, uri, playingSeconds))
+                    (uri == null || !adoptCachedTrack(mediaId, uri, playingSeconds)) &&
+                    (uri == null || manualUpgradeFor != mediaId || !adoptByHand(mediaId, uri, playingSeconds))
                 ) {
+                    // A downloaded file is replaced by the download's own
+                    // "re-download in high quality", never swapped here.
+                    val downloaded = uri?.getQueryParameter("v")?.let {
+                        com.music.bitchord.download.Downloads.savedUri(this@PlaybackService, it) != null
+                    } == true
                     reportManualUpgrade(
                         mediaId,
-                        upgradeMessage(R.string.quality_upgrade_unavailable, null),
+                        getString(
+                            if (downloaded) {
+                                R.string.quality_upgrade_downloaded
+                            } else {
+                                R.string.quality_upgrade_unavailable
+                            },
+                        ),
                     )
                     return@launch
                 }
@@ -6895,6 +6907,7 @@ class PlaybackService : MediaLibraryService() {
                     QualityUpgrade.lookAgain(mediaId, playingSeconds)
                 }
                 if (better == null) {
+                    TrackLog.d("BitChord", "upgrade search for $mediaId: no better copy on any source", about = mediaId)
                     val outcome = QualityUpgradeAdvice.outcome(
                         found = false,
                         currentIsLossless = currentIsLossless(mediaId),
@@ -7202,6 +7215,9 @@ class PlaybackService : MediaLibraryService() {
 
     private fun reportManualUpgrade(mediaId: String, message: String) {
         if (manualUpgradeFor != mediaId) return
+        // Every answer the listener sees is in the log too; until 10-31 the
+        // toasts were the only record and a refusal left no trace at all.
+        TrackLog.i("BitChord", "manual upgrade answer for $mediaId: $message", about = mediaId)
         manualUpgradeFor = null
         manualJoinedRunningUpgrade = false
         Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
@@ -7255,6 +7271,22 @@ class PlaybackService : MediaLibraryService() {
      *   caller — needed here to turn the size of the cache entry into a
      *   bitrate. See [cachedFloor].
      */
+    /**
+     * A manual request for a track nothing has left pending: its automatic
+     * look already answered, or it was resolved rather than played from the
+     * cache. See [QualityUpgrade.adoptByHand].
+     */
+    private suspend fun adoptByHand(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
+        val videoId = uri.getQueryParameter("v") ?: return false
+        if (com.music.bitchord.download.Downloads.savedUri(this, videoId) != null) return false
+        val format = withContext(Dispatchers.Main) {
+            player?.takeIf { it.currentMediaItem?.mediaId == mediaId }?.audioFormat
+        }
+        val playing = format?.let { withContext(Dispatchers.IO) { cachedFloor(uri, it, durationSec) } }
+            ?: StreamChoice.of(mediaId)?.format
+        return QualityUpgrade.adoptByHand(mediaId, SourceResolver.targetIn(uri), playing)
+    }
+
     private suspend fun adoptCachedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
         val format = withContext(Dispatchers.Main) {
             player

@@ -200,6 +200,10 @@
     <string name="quality_upgrade_unavailable">지금은 음질을 바꿀 수 없습니다</string>
     <string name="quality_upgrade_music_video">뮤직비디오 판은 음질을 바꿀 수 없습니다</string>
     <string name="quality_upgrade_no_source">고음질 소스가 꺼져 있습니다</string>
+    <string name="quality_upgrade_downloaded">다운로드한 곡은 ‘고음질로 다시 받기’로 바꿀 수 있습니다</string>
+    <string name="hq_redownload_searching">고음질 음원을 찾는 중입니다</string>
+    <string name="hq_redownload_queued">고음질로 다시 받습니다</string>
+    <string name="hq_redownload_waiting_wifi">Wi-Fi에 연결되면 고음질로 다시 받습니다</string>
     <string name="quality_upgrade_busy">음질을 확인하는 중입니다. 잠시 후 다시 시도해 주십시오</string>
     <string name="quality_upgrade_reason_not_proven">새 음원을 확인할 수 없었습니다</string>
     <string name="quality_upgrade_reason_unavailable">지금은 시도할 수 없습니다</string>
