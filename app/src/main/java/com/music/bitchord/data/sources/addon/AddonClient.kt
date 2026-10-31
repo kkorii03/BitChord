@@ -421,6 +421,19 @@ class AddonClient(rawBaseUrl: String) {
                             }
                             decision.waitMs
                         }
+                        // A refused credential is not a catalogue miss, and
+                        // not an outage either: the server is awake and is
+                        // answering, it just will not serve this addon until
+                        // the user reconnects it. 402 is included because the
+                        // hosts in the 10-31 report answer an exhausted
+                        // upstream quota that way; 403 is a token that is not
+                        // allowed to ask.
+                        response.code == 401 ||
+                            response.code == 402 ||
+                            response.code == 403 -> {
+                            HqHostTracker.noteResponse(host, elapsedMs, ok = true)
+                            throw AddonAuthException("HTTP ${response.code}", response.code)
+                        }
                         // A 5xx is a server having a bad minute and will be tried
                         // again on the next track; a 4xx is this app asking for
                         // something it will never be given — a wrong URL, a token
@@ -626,7 +639,21 @@ class AddonClient(rawBaseUrl: String) {
  * [SourceHealth.Rejected][com.music.bitchord.data.sources.SourceHealth.Rejected],
  * with a line fit to show a user.
  */
-class AddonException(message: String) : Exception(message)
+open class AddonException(message: String) : Exception(message)
+
+/**
+ * The addon refused this app's credential or permission — HTTP 401, 402 or 403.
+ *
+ * Separate from [AddonException] because the listener can act on it: the
+ * source is not missing the track and is not down, it needs reconnecting in
+ * Settings. A search answered this way must not be remembered as "nobody has
+ * it", and the manual-upgrade answer names the source instead of claiming no
+ * better copy exists.
+ */
+class AddonAuthException(
+    message: String,
+    val status: Int,
+) : AddonException(message)
 
 /**
  * The addon is momentarily not answering — down, overloaded, rate limiting.

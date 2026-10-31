@@ -215,6 +215,7 @@
     <string name="quality_upgrade_reference_unavailable">Quality can\'t be checked right now. Try again</string>
     <string name="quality_upgrade_already_best">Already the best quality for this track</string>
     <string name="quality_upgrade_no_better">No higher-quality copy found</string>
+    <string name="quality_upgrade_addon_auth">The %1$s addon\'s authentication was refused. Reconnect the addon in Settings</string>
     <string name="quality_upgrade_failed">Couldn\'t change the quality</string>
     <string name="quality_upgrade_too_late">The track is almost over, so the quality was left alone</string>
     <string name="quality_upgrade_unavailable">Quality can\'t be changed right now</string>

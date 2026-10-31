@@ -7131,28 +7131,13 @@ class PlaybackService : MediaLibraryService() {
                     )
                     return@launch
                 }
+                val upgradeReport = SourceResolver.SearchReport()
                 val better = withContext(Dispatchers.IO) {
-                    QualityUpgrade.lookAgain(mediaId, playingSeconds)
+                    QualityUpgrade.lookAgain(mediaId, playingSeconds, upgradeReport)
                 }
                 if (better == null) {
                     TrackLog.d("BitChord", "upgrade search for $mediaId: no better copy on any source", about = mediaId)
-                    val outcome = QualityUpgradeAdvice.outcome(
-                        found = false,
-                        currentIsLossless = currentIsLossless(mediaId),
-                        currentIsAtmos = currentIsAtmos(mediaId),
-                        hasHigherSource = SourceResolver.canSubstituteForYouTube(),
-                    )
-                    val message = if (outcome == QualityUpgradeAdvice.Outcome.ALREADY_BEST) {
-                        upgradeMessage(
-                            R.string.quality_upgrade_already_best,
-                            currentQualityLabel(mediaId),
-                        )
-                    } else {
-                        upgradeMessage(
-                            R.string.quality_upgrade_no_better,
-                            currentQualityLabel(mediaId),
-                        )
-                    }
+                    val message = noBetterUpgradeMessage(mediaId, upgradeReport)
                     if (deferManualAnswer()) {
                         TrackLog.d(
                             "BitChord",
@@ -7237,8 +7222,9 @@ class PlaybackService : MediaLibraryService() {
                         about = mediaId,
                     )
                     NerdStats.onLosslessRaceStart(mediaId)
+                    val retryReport = SourceResolver.SearchReport()
                     val next = withContext(Dispatchers.IO) {
-                        QualityUpgrade.lookAgain(mediaId, playingSeconds)
+                        QualityUpgrade.lookAgain(mediaId, playingSeconds, retryReport)
                     }
                     if (next == null) {
                         if (deferManualAnswer()) {
@@ -7251,7 +7237,7 @@ class PlaybackService : MediaLibraryService() {
                         }
                         reportManualUpgrade(
                             mediaId,
-                            upgradeMessage(R.string.quality_upgrade_no_better, currentQualityLabel(mediaId)),
+                            noBetterUpgradeMessage(mediaId, retryReport),
                         )
                         return@launch
                     }
@@ -7470,6 +7456,38 @@ class PlaybackService : MediaLibraryService() {
             "hq-tier: $title ${current.label} -> ${next.label} from $source",
             mediaId,
         )
+    }
+
+    /**
+     * The answer to a manual request that found nothing. A refused addon
+     * credential is not "no better copy": the source never searched, and the
+     * listener has to reconnect it in Settings.
+     */
+    private fun noBetterUpgradeMessage(
+        mediaId: String,
+        report: SourceResolver.SearchReport,
+    ): String {
+        val authSources = report.authSourceNames
+        if (authSources.isNotEmpty()) {
+            return getString(R.string.quality_upgrade_addon_auth, authSources.joinToString(", "))
+        }
+        val outcome = QualityUpgradeAdvice.outcome(
+            found = false,
+            currentIsLossless = currentIsLossless(mediaId),
+            currentIsAtmos = currentIsAtmos(mediaId),
+            hasHigherSource = SourceResolver.canSubstituteForYouTube(),
+        )
+        return if (outcome == QualityUpgradeAdvice.Outcome.ALREADY_BEST) {
+            upgradeMessage(
+                R.string.quality_upgrade_already_best,
+                currentQualityLabel(mediaId),
+            )
+        } else {
+            upgradeMessage(
+                R.string.quality_upgrade_no_better,
+                currentQualityLabel(mediaId),
+            )
+        }
     }
 
     /** "고음질로 바꿨어요 · AAC 256kbps" — the detail is dropped when unknown. */

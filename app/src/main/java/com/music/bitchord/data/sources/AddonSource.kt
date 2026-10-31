@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.addon.AddonAuthException
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.AddonManifest
@@ -135,7 +136,9 @@ class AddonSource(
                     return@fold SourceHealth.Ok("매니페스트 없음 · 검색은 가능")
                 }
                 val reason = failure.message ?: "애드온에 연결할 수 없습니다"
-                if (failure is AddonException) {
+                if (failure is AddonAuthException) {
+                    SourceHealth.Rejected(authRejectedReason())
+                } else if (failure is AddonException) {
                     SourceHealth.Rejected(reason)
                 } else {
                     TrackLog.w(TAG, "addon unreachable for ${config.displayName}: $reason")
@@ -195,7 +198,9 @@ class AddonSource(
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
             val tracks = client.search(query, tier).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
-                if (failure is AddonUnavailable) {
+                if (failure is AddonAuthException) {
+                    SourceResolver.reportSourceAuthFailure(config.id)
+                } else if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
                 return@withContext emptyList()
@@ -261,7 +266,9 @@ class AddonSource(
                 if (failure !is AddonNotFound) {
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
                 }
-                if (failure is AddonUnavailable) {
+                if (failure is AddonAuthException) {
+                    SourceResolver.reportSourceAuthFailure(config.id)
+                } else if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
                 return@withContext fromRow(trackId, tier)
@@ -435,6 +442,10 @@ class AddonSource(
     fun clearCompletedTrackCalls() {
         client.clearCompletedTrackCalls()
     }
+
+    /** The same words a manual upgrade uses when this source refuses its credential. */
+    private fun authRejectedReason(): String =
+        "${config.displayName} 애드온 인증이 거부되었습니다. 설정에서 애드온을 다시 연결해 주십시오."
 
     private companion object {
         const val TAG = "BitChord"

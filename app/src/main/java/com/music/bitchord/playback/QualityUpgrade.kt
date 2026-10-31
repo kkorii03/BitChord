@@ -536,7 +536,11 @@ object QualityUpgrade {
         }
     }
 
-    suspend fun lookAgain(mediaId: String, playingDurationSec: Int?): SourceStream? {
+    suspend fun lookAgain(
+        mediaId: String,
+        playingDurationSec: Int?,
+        report: SourceResolver.SearchReport = SourceResolver.SearchReport(),
+    ): SourceStream? {
         val waiting = pending[mediaId] ?: return null
         lastPending[mediaId] = waiting
         val excludedSources = failedSources[mediaId].orEmpty().toSet()
@@ -554,7 +558,6 @@ object QualityUpgrade {
          * about the catalogue, so it must not enter [asked].
          */
         var conclusive = false
-        val report = SourceResolver.SearchReport()
         val expectedSec = waiting.target.durationSec
         val effectiveDurationSec = effectiveTargetDuration(expectedSec, playingDurationSec)
         if (expectedSec != null && playingDurationSec != null &&

@@ -195,6 +195,7 @@
     <string name="quality_upgrade_reference_unavailable">지금은 음질을 확인할 수 없습니다. 다시 시도하십시오</string>
     <string name="quality_upgrade_already_best">이미 이 곡의 최고 음질입니다</string>
     <string name="quality_upgrade_no_better">더 높은 음질을 찾지 못했습니다</string>
+    <string name="quality_upgrade_addon_auth">%1$s 애드온 인증이 거부되었습니다. 설정에서 애드온을 다시 연결해 주십시오.</string>
     <string name="quality_upgrade_failed">음질을 바꾸지 못했습니다</string>
     <string name="quality_upgrade_too_late">곡이 거의 끝나 음질을 바꾸지 않았습니다</string>
     <string name="quality_upgrade_unavailable">지금은 음질을 바꿀 수 없습니다</string>

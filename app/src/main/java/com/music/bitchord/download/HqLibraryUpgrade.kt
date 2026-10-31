@@ -590,6 +590,11 @@ object HqLibraryUpgrade {
                     target = target,
                     playing = DownloadedQuality.formatOf(badge),
                     excludeSources = setOfNotNull(wrongSource),
+                    // A tap on the download's own upgrade button is a manual
+                    // request: it gets the longer per-source search window and
+                    // asks a resting source once. The automatic library pass
+                    // keeps the ordinary rules.
+                    manual = !automatic,
                 )
             }.getOrNull()
             if (candidate != null) {
