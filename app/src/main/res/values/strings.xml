@@ -218,6 +218,8 @@
     <string name="quality_upgrade_failed">Couldn\'t change the quality</string>
     <string name="quality_upgrade_too_late">The track is almost over, so the quality was left alone</string>
     <string name="quality_upgrade_unavailable">Quality can\'t be changed right now</string>
+    <string name="quality_upgrade_music_video">A music video\'s quality can\'t be changed</string>
+    <string name="quality_upgrade_no_source">High-quality sources are turned off</string>
     <string name="quality_upgrade_busy">Checking the quality now. Try again in a moment</string>
     <string name="quality_upgrade_reason_not_proven">the new copy couldn\'t be verified</string>
     <string name="quality_upgrade_reason_unavailable">the change isn\'t available right now</string>

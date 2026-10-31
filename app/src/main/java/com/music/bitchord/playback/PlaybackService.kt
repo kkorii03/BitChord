@@ -6733,9 +6733,22 @@ class PlaybackService : MediaLibraryService() {
         val shelved = QualityUpgrade.shelvedFor(mediaId)
         if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) {
             if (manualUpgradeFor == mediaId) {
+                val refusal = QualityUpgrade.refusalFor(mediaId, uri)
+                TrackLog.i(
+                    "BitChord",
+                    "manual upgrade refused: $mediaId reason=${refusal.name.lowercase()}",
+                    about = mediaId,
+                )
                 reportManualUpgrade(
                     mediaId,
-                    upgradeMessage(R.string.quality_upgrade_unavailable, null),
+                    getString(
+                        when (refusal) {
+                            QualityUpgrade.Refusal.MUSIC_VIDEO -> R.string.quality_upgrade_music_video
+                            QualityUpgrade.Refusal.NO_SOURCE -> R.string.quality_upgrade_no_source
+                            QualityUpgrade.Refusal.NO_STREAM -> R.string.quality_upgrade_unavailable
+                            QualityUpgrade.Refusal.ALREADY_CHECKED -> R.string.quality_upgrade_no_better
+                        },
+                    ),
                 )
             }
             return false

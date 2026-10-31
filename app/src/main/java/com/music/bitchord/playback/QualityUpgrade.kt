@@ -327,6 +327,29 @@ object QualityUpgrade {
      * the decoder to settle first. Everything here is a fact about the queue
      * entry and the settings; nothing here touches the network.
      */
+    /**
+     * Why [couldStillUpgrade] said no, in the words a manual request is
+     * answered with. Each one is a different thing for the listener to do (or
+     * not do) next, and "can't change it right now" covered all of them.
+     */
+    enum class Refusal { NO_STREAM, MUSIC_VIDEO, NO_SOURCE, ALREADY_CHECKED }
+
+    fun refusalFor(mediaId: String, uri: Uri?): Refusal = refusalOf(
+        hasStream = uri?.getQueryParameter("v") != null,
+        musicVideo = uri?.getQueryParameter("m") == "1",
+        canSubstitute = SourceResolver.canSubstituteForYouTube(),
+    )
+
+    internal fun refusalOf(hasStream: Boolean, musicVideo: Boolean, canSubstitute: Boolean): Refusal = when {
+        !hasStream -> Refusal.NO_STREAM
+        // Substitution never matches a music-video row against a catalogue
+        // recording (SourceResolver refuses video targets): the listener's way
+        // to lossless is the song version of the row, not this one.
+        musicVideo -> Refusal.MUSIC_VIDEO
+        !canSubstitute -> Refusal.NO_SOURCE
+        else -> Refusal.ALREADY_CHECKED
+    }
+
     fun couldStillUpgrade(mediaId: String, uri: Uri?): Boolean {
         if (uri == null || uri.getQueryParameter("v") == null ||
             uri.getQueryParameter("m") == "1"

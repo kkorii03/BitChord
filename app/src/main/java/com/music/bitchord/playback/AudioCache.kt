@@ -1815,9 +1815,21 @@ object AudioCache {
             // next playlist entry ahead of reach); there is no entry left for
             // read-ahead to own. Re-checked when the fetch actually runs.
             .filterNot(::playerHoldsVideo)
+        // The player buffering the next item is a reason not to write its
+        // bytes, never a reason to skip its high-quality lookup. Dropping it
+        // here sent the lookup to the track *after* next (10-31: 'upgrade
+        // ahead: Belly Dancer' while Breathe was next) and released the
+        // next-song bundle with no answer (next-prep hq=none(no-answer)). The
+        // pinned stream reaches the buffered item through the standby's
+        // lossless re-prepare; only its bytes are skipped below.
+        val heldHead = headId?.takeIf {
+            it !in videoIds &&
+                SourceRegistry.parseTrackKey(it) == null &&
+                it !in Downloads.saved.value
+        }
         // A head that read-ahead will not resolve (a download, a source-backed
         // row) has no high-quality answer coming; release anyone waiting on it.
-        if (headId != null && headId !in videoIds) {
+        if (headId != null && headId !in videoIds && headId != heldHead) {
             headFlight?.complete(null)
         }
         // With substitution possible, only the *bytes* half drops out. Read-
@@ -1837,7 +1849,7 @@ object AudioCache {
         // whenever the modules are slow, and warming it here is what makes the
         // race worth running at all.
         val substitutable = SourceResolver.canSubstituteForYouTube()
-        job = videoIds.firstOrNull()?.let { next ->
+        job = (heldHead ?: videoIds.firstOrNull())?.let { next ->
             val target = upcoming.firstOrNull { it.mediaId == next }?.target
             // A track the listener reverted plays from its own `#original`
             // rendition — see [OriginalVersion] — while read-ahead builds its
@@ -1917,7 +1929,9 @@ object AudioCache {
                 val cacheBytes = BatteryPolicy.cachePrefetchBytesAllowed(
                     metered = metered,
                     lowPower = AppSettings.lowPower.value,
-                ) && (!substitutable || warmed != null) && !pinnedToYouTube
+                ) && (!substitutable || warmed != null) && !pinnedToYouTube &&
+                    // The player already owns this entry; see heldHead.
+                    next != heldHead
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
