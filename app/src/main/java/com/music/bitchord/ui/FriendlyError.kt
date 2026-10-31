@@ -2,6 +2,7 @@ package com.music.bitchord.ui
 
 import android.content.Context
 import com.music.bitchord.R
+import com.music.bitchord.data.sources.addon.SourceFormats
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -29,8 +30,23 @@ object FriendlyError {
     fun message(context: Context, rawReason: String): String =
         message(context, IllegalStateException(rawReason))
 
+    /**
+     * A source status line, localised for the two addon-address refusals that
+     * have a string of their own. Every other reason is already written for the
+     * listener and is returned unchanged.
+     */
+    fun reason(context: Context, rawReason: String): String = when (rawReason) {
+        SourceFormats.NOT_ADDON_URL -> context.getString(R.string.source_addon_not_addon)
+        SourceFormats.REPOSITORY_URL -> context.getString(R.string.source_addon_repository_url)
+        else -> rawReason
+    }
+
     fun message(context: Context, error: Throwable): String {
         val raw = error.message.orEmpty()
+        when (raw) {
+            SourceFormats.NOT_ADDON_URL -> return context.getString(R.string.source_addon_not_addon)
+            SourceFormats.REPOSITORY_URL -> return context.getString(R.string.source_addon_repository_url)
+        }
         if (raw.any { it in '\uAC00'..'\uD7A3' }) return raw
         return context.getString(resourceFor(error))
     }

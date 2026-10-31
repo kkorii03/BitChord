@@ -15,7 +15,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -121,9 +124,42 @@ class AddonClient(rawBaseUrl: String) {
      * that holds nothing for one query is answering correctly — so callers must
      * read the [Result] rather than the count.
      */
-    suspend fun probeSearch(): Result<Int> =
-        fetch<AddonSearchResponse>(endpoint(listOf("search"), mapOf("q" to PROBE_QUERY)))
-            .map { it.tracks.size }
+    suspend fun probeSearch(): Result<Int> {
+        val url = runCatching {
+            endpoint(listOf("search"), mapOf("q" to PROBE_QUERY))
+        }.getOrElse { return Result.failure(it) }
+        return runCatching {
+            val text = body(url, rejectHtml = true)
+            // A web page can answer 200 on every path, and not every page
+            // labels itself `text/html`. Any body that is not JSON is a page or
+            // some other document, not a search answer, so a parse failure is
+            // the same refusal as the header check rather than an unclassified
+            // serialization error.
+            val root = try {
+                json.parseToJsonElement(text)
+            } catch (failure: SerializationException) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+            // Only an object whose `tracks` key is actually an array is the
+            // search answer this app knows how to read; an error object and an
+            // HTML page are not.
+            val obj = root as? JsonObject
+                ?: throw AddonException(SourceFormats.NOT_ADDON_URL)
+            if (obj["tracks"] !is JsonArray) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+            try {
+                json.decodeFromJsonElement(AddonSearchResponse.serializer(), obj).tracks.size
+            } catch (failure: SerializationException) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+        }.onFailure { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure !is AddonNotFound) {
+                TrackLog.w(TAG, "  ✗ addon probe failed ${redact(url)}: ${failure.message}")
+            }
+        }
+    }
 
     // ── Search ────────────────────────────────────────────────────────────
 
@@ -334,7 +370,7 @@ class AddonClient(rawBaseUrl: String) {
      * is precisely the miss the caller is equipped to handle and not something
      * to log as a fault.
      */
-    private suspend fun body(url: String): String = withContext(Dispatchers.IO) {
+    private suspend fun body(url: String, rejectHtml: Boolean = false): String = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
@@ -380,6 +416,12 @@ class AddonClient(rawBaseUrl: String) {
                                 throw AddonException("Empty response")
                             }
                             HqHostTracker.noteResponse(host, elapsedMs, ok = true)
+                            if (rejectHtml &&
+                                response.header("Content-Type").orEmpty()
+                                    .contains("text/html", ignoreCase = true)
+                            ) {
+                                throw AddonException(SourceFormats.NOT_ADDON_URL)
+                            }
                             return@withContext text
                         }
                         response.code == 404 -> {
