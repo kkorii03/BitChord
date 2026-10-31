@@ -156,16 +156,27 @@ object SourceFormats {
      * The repository-page refusal for [rawUrl], or null when the host is not a
      * code host. An addon may be hosted on GitHub Pages, which is a different
      * host and still works; only the repository page itself is refused.
+     *
+     * A raw document is not the repository page: `/owner/repo/raw/...` and
+     * GitLab's `/owner/repo/-/raw/...` return file contents, so a JSON index
+     * served from there is still allowed through to [identify]'s normal
+     * document pass.
      */
     fun repositoryReason(rawUrl: String): String? {
-        val host = rawUrl.trim().toHttpUrlOrNull()?.host?.lowercase() ?: return null
-        return if (host == "github.com" || host == "www.github.com" ||
-            host == "gitlab.com" || host == "www.gitlab.com"
-        ) {
-            REPOSITORY_URL
+        val url = rawUrl.trim().toHttpUrlOrNull() ?: return null
+        val host = url.host.lowercase()
+        val isGitLab = host == "gitlab.com" || host == "www.gitlab.com"
+        if (host != "github.com" && host != "www.github.com" && !isGitLab) return null
+        val segments = url.pathSegments.filter { it.isNotEmpty() }
+        if (segments.size < 2) return null
+        val rawDocument = if (isGitLab) {
+            (segments.size >= 3 && segments[2].equals("raw", ignoreCase = true)) ||
+                (segments.size >= 4 && segments[2] == "-" &&
+                    segments[3].equals("raw", ignoreCase = true))
         } else {
-            null
+            segments.size >= 3 && segments[2].equals("raw", ignoreCase = true)
         }
+        return if (rawDocument) null else REPOSITORY_URL
     }
 
     /**

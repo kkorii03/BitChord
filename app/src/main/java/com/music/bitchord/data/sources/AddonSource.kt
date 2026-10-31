@@ -142,12 +142,15 @@ class AddonSource(
                 // The probe is the only thing that has actually looked at what
                 // /search returns. When it says the answer was a web page or
                 // not a search list, that is the reason to show — not the
-                // missing manifest that led here.
+                // missing manifest that led here. Every other AddonException
+                // (an empty body, a 4xx) is left to the manifest failure's own
+                // classification below: those are temporary or besides the
+                // point, not proof that the address is not an addon.
                 val probeFailure = probe.exceptionOrNull()
-                if (probeFailure is AddonException) {
-                    return@fold SourceHealth.Rejected(
-                        probeFailure.message ?: SourceFormats.NOT_ADDON_URL,
-                    )
+                if (probeFailure is AddonException &&
+                    probeFailure.message == SourceFormats.NOT_ADDON_URL
+                ) {
+                    return@fold SourceHealth.Rejected(SourceFormats.NOT_ADDON_URL)
                 }
                 val reason = failure.message ?: "애드온에 연결할 수 없습니다"
                 if (failure is AddonException) {

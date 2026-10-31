@@ -15,6 +15,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -129,16 +130,29 @@ class AddonClient(rawBaseUrl: String) {
         }.getOrElse { return Result.failure(it) }
         return runCatching {
             val text = body(url, rejectHtml = true)
-            val root = json.parseToJsonElement(text)
-            // A web page can answer 200 on every path. Only an object whose
-            // `tracks` key is actually an array is the search answer this app
-            // knows how to read; an error object and an HTML page are not.
+            // A web page can answer 200 on every path, and not every page
+            // labels itself `text/html`. Any body that is not JSON is a page or
+            // some other document, not a search answer, so a parse failure is
+            // the same refusal as the header check rather than an unclassified
+            // serialization error.
+            val root = try {
+                json.parseToJsonElement(text)
+            } catch (failure: SerializationException) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+            // Only an object whose `tracks` key is actually an array is the
+            // search answer this app knows how to read; an error object and an
+            // HTML page are not.
             val obj = root as? JsonObject
                 ?: throw AddonException(SourceFormats.NOT_ADDON_URL)
             if (obj["tracks"] !is JsonArray) {
                 throw AddonException(SourceFormats.NOT_ADDON_URL)
             }
-            json.decodeFromJsonElement(AddonSearchResponse.serializer(), obj).tracks.size
+            try {
+                json.decodeFromJsonElement(AddonSearchResponse.serializer(), obj).tracks.size
+            } catch (failure: SerializationException) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
         }.onFailure { failure ->
             if (failure is CancellationException) throw failure
             if (failure !is AddonNotFound) {
