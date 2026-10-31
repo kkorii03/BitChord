@@ -47,8 +47,12 @@ try:
 except Exception:
     sys.exit(0)
 def label(n): return (n.get('text') or '') + '|' + (n.get('content-desc') or '')
+# A leading '=' asks for an exact label only (see .github/ui-tour/tour.sh).
+exact_only = want.startswith('=')
+if exact_only:
+    want = want[1:]
 hits = [n for n in nodes if want in ((n.get('text') or ''), (n.get('content-desc') or ''))]
-if not hits:
+if not hits and not exact_only:
     hits = [n for n in nodes if want in label(n)]
 if not hits:
     sys.exit(0)
@@ -164,7 +168,7 @@ section_settings() {
   # Lyrics is a page of its own: tap the row, photograph the page and its
   # sources dialog, then come back to the main list.
   scroll_top
-  if tap_scrolled "가사" 4 20; then
+  if tap_scrolled "=가사" 4 20; then
     shot settings-lyrics "Lyrics settings"
     adb shell input swipe 540 1700 540 600 400
     sleep 1

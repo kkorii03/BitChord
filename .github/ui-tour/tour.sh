@@ -102,8 +102,13 @@ try:
 except Exception:
     sys.exit(0)
 def label(n): return (n.get('text') or '') + '|' + (n.get('content-desc') or '')
+# A leading '=' asks for an exact label only: '가사' alone otherwise matches
+# '가사 애니메이션…' in another row's subtitle before the real row scrolls in.
+exact_only = want.startswith('=')
+if exact_only:
+    want = want[1:]
 hits = [n for n in nodes if want in ((n.get('text') or ''), (n.get('content-desc') or ''))]
-if not hits:
+if not hits and not exact_only:
     hits = [n for n in nodes if want in label(n)]
 if not hits:
     sys.exit(0)
@@ -504,7 +509,7 @@ section_settings() {
 
     # Lyrics settings live on their own page behind one '가사' row.
     scroll_top
-    if tap_scrolled "가사" 6 20; then
+    if tap_scrolled "=가사" 6 20; then
       shot settings-lyrics "Lyrics settings page"
       scroll_shots settings-lyrics-scrolled 2 "Lyrics settings scrolled"
       scroll_top
