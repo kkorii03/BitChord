@@ -195,7 +195,9 @@ class AddonSource(
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
             val tracks = client.search(query, tier).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
-                if (failure is AddonUnavailable) SourceResolver.reportSourceFailure(config.id)
+                if (failure is AddonUnavailable) {
+                    SourceResolver.reportSourceFailure(config.id, network = failure.transport)
+                }
                 return@withContext emptyList()
             }
             tracks.asSequence()
@@ -259,7 +261,9 @@ class AddonSource(
                 if (failure !is AddonNotFound) {
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
                 }
-                if (failure is AddonUnavailable) SourceResolver.reportSourceFailure(config.id)
+                if (failure is AddonUnavailable) {
+                    SourceResolver.reportSourceFailure(config.id, network = failure.transport)
+                }
                 return@withContext fromRow(trackId, tier)
             }
 
