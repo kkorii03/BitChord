@@ -60,6 +60,7 @@ import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.stats.SmartPlaylist
 import com.music.bitchord.data.stats.SmartPlaylists
@@ -3118,6 +3119,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                     credit = header.subtitle
                                 }
                                 if (thumbnailUrl == null) artwork = header.thumbnailUrl
+                            }
+                            // A playlist header can arrive without its own
+                            // image even when its video rows have stills. The
+                            // page used to fall straight to the default icon;
+                            // take the first row's picture (or its video id's
+                            // still) so the header shows a cover again.
+                            if (artwork.isNullOrBlank()) {
+                                artwork = (page.songs + page.suggested + page.hiddenSongs)
+                                    .firstNotNullOfOrNull { song ->
+                                        song.thumbnailUrl?.takeIf { it.isNotBlank() }
+                                            ?: videoThumbnailUrl(song.videoId)
+                                    }
                             }
                             description = page.description
                             // A page whose only rows are videos (Liked Music's

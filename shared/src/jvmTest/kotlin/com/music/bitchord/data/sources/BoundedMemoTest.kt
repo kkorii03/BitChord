@@ -43,6 +43,16 @@ class BoundedMemoTest {
     }
 
     @Test
+    fun `a later success replaces a remembered failure`() {
+        val memo = BoundedMemo<String, String>(limit = 4)
+        memo.getOrPut("cover") { "" }
+
+        memo.put("cover", "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
+
+        assertEquals("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg", memo.get("cover"))
+    }
+
+    @Test
     fun `clear drops every answer`() {
         val memo = BoundedMemo<String, Int>(limit = 4)
         memo.getOrPut("a") { 1 }

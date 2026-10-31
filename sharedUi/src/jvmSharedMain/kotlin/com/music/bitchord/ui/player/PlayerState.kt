@@ -193,6 +193,20 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
     }
 }
 
+/**
+ * Whether another load of the same cover is worth asking for.
+ *
+ * A missing URL has nothing to retry, and the cap is what keeps a phone with
+ * no network from spinning. A normal URL below the cap is always allowed: the
+ * bound must never turn a transient failure into a permanent blank cover.
+ */
+internal fun artworkRetryAllowed(
+    url: String?,
+    failed: Boolean,
+    attempt: Int,
+    maxRetries: Int,
+): Boolean = !url.isNullOrBlank() && failed && attempt < maxRetries
+
 @Composable
 internal fun rememberPlayerArtwork(
     remoteArt: String?,
@@ -205,7 +219,7 @@ internal fun rememberPlayerArtwork(
         // A track with no artwork at all fails immediately and would fail
         // identically on every further go: there is no request to make, so
         // there is nothing a second go could do differently.
-        if (artUrl == null || !art.failed || art.attempt >= maxRetries) return@LaunchedEffect
+        if (!artworkRetryAllowed(artUrl, art.failed, art.attempt, maxRetries)) return@LaunchedEffect
         delay(ART_RETRY_DELAY_MS)
         art.retry()
     }

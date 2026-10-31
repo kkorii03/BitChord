@@ -82,6 +82,21 @@ class YouTubeDisplayCleanerTest {
     }
 
     @Test
+    fun `cleaning a video row keeps its artwork url`() {
+        val video = Song(
+            videoId = "dQw4w9WgXcQ",
+            title = "Shape of You - Ed Sheeran (cover by Jane)",
+            artist = "Jane",
+            thumbnailUrl = "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            isVideo = true,
+        )
+
+        val cleaned = YouTubeDisplayCleaner.clean(video)
+
+        assertEquals("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg", cleaned.thumbnailUrl)
+    }
+
+    @Test
     fun `the reported Marigold cover keeps the singer, not the uploader`() {
         val cover = song("\uC544\uC774\uBBAD - Marigold / cover by \uC624\uD654\uC694", "Ohwayo")
 

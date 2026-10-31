@@ -35,6 +35,18 @@ class BoundedMemo<K : Any, V : Any>(private val limit: Int) {
         return computed
     }
 
+    /**
+     * Stores [value] for [key], replacing an earlier answer.
+     *
+     * A caller that initially failed and later succeeded must be able to
+     * replace the remembered failure; [getOrPut] deliberately never overwrites
+     * an existing entry.
+     */
+    @Synchronized
+    fun put(key: K, value: V) {
+        entries[key] = value
+    }
+
     @Synchronized
     fun clear() {
         entries.clear()
