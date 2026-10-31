@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.sources.TrackMatcher
+import java.util.Locale
 
 /**
  * Korean-fork title rules restored after the upstream v1.9 merge.
@@ -9,6 +10,40 @@ import com.music.bitchord.data.sources.TrackMatcher
  * for the one-line hooks marked `// [KO] title-rules`.
  */
 object KoTitleRules {
+
+    /**
+     * The take marker written for a tribute-style title. Existing markers
+     * (`cover`, `karaoke`, `instrumental`) live in TrackMatcher's
+     * VERSION_WORDS; these phrases are the ones that were missing there.
+     */
+    const val TRIBUTE_TAKE = "tribute"
+
+    private val TRIBUTE_TAKE_PATTERNS = listOf(
+        Regex("""\btribute\s+to\b"""),
+        Regex("""\boriginally\s+performed\s+by\b"""),
+        Regex("""\bin\s+the\s+style\s+of\b"""),
+        Regex("""\bmade\s+famous\s+by\b"""),
+    )
+
+    /** [TRIBUTE_TAKE] when [text] is a tribute/covers-catalogue title, else null. */
+    fun tributeTake(text: String): String? {
+        val folded = text.lowercase(Locale.ROOT)
+        return TRIBUTE_TAKE.takeIf {
+            TRIBUTE_TAKE_PATTERNS.any { pattern -> pattern.containsMatchIn(folded) }
+        }
+    }
+
+    /**
+     * Whether an exact-runtime credit disagreement may stand in for a shared
+     * credit. Never, for this fork: a same-script different artist at the same
+     * runtime is the string-quartet cover / tribute shape, and a credit in
+     * another script (Qobuz JP's マイリー・サイラス) is only a candidate —
+     * [TrackMatcher.isArtistUnverifiedOriginal] keeps it for the sound check,
+     * and a path with no sound check (v1.9 Direct Source's first play) refuses
+     * it. Missing an upgrade is better than playing the wrong recording.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun creditsOverrideAllowed(wantedArtist: String, gotArtist: String): Boolean = false
 
     /**
      * The first credited artist, after the fork's byline expansion.

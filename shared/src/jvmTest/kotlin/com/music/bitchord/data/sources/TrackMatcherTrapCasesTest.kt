@@ -3,7 +3,6 @@ package com.music.bitchord.data.sources
 import com.music.bitchord.data.model.Song
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -36,7 +35,6 @@ class TrackMatcherTrapCasesTest {
     private val flowers = TrackMatcher.Target("Flowers", "Miley Cyrus", durationSec = 200)
     private val dynamite = TrackMatcher.Target("Dynamite", "BTS", durationSec = 199)
 
-    @Ignore("BUG: CREDITS_DISAGREE admits a same-length different-artist cover with no take marker")
     @Test
     fun `cruel summer by a string quartet is rejected`() {
         assertFalse(
@@ -81,7 +79,6 @@ class TrackMatcherTrapCasesTest {
         )
     }
 
-    @Ignore("BUG: 'tribute' is not a take marker in score, so CREDITS_DISAGREE admits this same-length row")
     @Test
     fun `uptown funk tribute is rejected`() {
         assertFalse(
@@ -136,7 +133,6 @@ class TrackMatcherTrapCasesTest {
         )
     }
 
-    @Ignore("BUG: 'tribute' is not a take marker in score, so the cross-script credit override admits it")
     @Test
     fun `localised artist with a tribute title is still rejected`() {
         assertFalse(
@@ -152,11 +148,30 @@ class TrackMatcherTrapCasesTest {
     }
 
     @Test
-    fun `flowers by a localised artist is accepted`() {
-        assertTrue(
-            accepted(
-                flowers,
-                song("Flowers", "マイリー・サイラス", "3:20"),
+    fun `flowers by a localised artist waits for the sound check`() {
+        val localised = song("Flowers", "マイリー・サイラス", "3:20")
+        // [KO] No path without a sound check may take it on credits alone...
+        assertFalse(accepted(flowers, localised))
+        // ...but it stays a candidate for the one that has one (hq-verify).
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(localised, flowers))
+    }
+
+    @Test
+    fun `a same-script stranger is not even a sound-check candidate`() {
+        assertFalse(
+            TrackMatcher.isArtistUnverifiedOriginal(
+                song("Cruel Summer", "Midnite String Quartet", "2:58"),
+                cruelSummer,
+            ),
+        )
+    }
+
+    @Test
+    fun `a localised tribute is not a sound-check candidate`() {
+        assertFalse(
+            TrackMatcher.isArtistUnverifiedOriginal(
+                song("Cruel Summer - Tribute to Taylor Swift", "テイラー・スウィフト", "2:58"),
+                cruelSummer,
             ),
         )
     }
