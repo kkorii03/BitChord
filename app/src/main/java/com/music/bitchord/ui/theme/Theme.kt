@@ -94,7 +94,7 @@ private val BitChordTypography = Typography(
     bodyMedium = TextStyle(fontWeight = FontWeight.W400, fontSize = 14.sp, letterSpacing = 0.3.sp),
     labelMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = 12.sp, letterSpacing = 0.25.sp),
     labelSmall = TextStyle(fontWeight = FontWeight.W600, fontSize = 11.sp, letterSpacing = 0.3.sp),
-).withFamily(SFProDisplay)
+).withFamily(SFProDisplay).withPhraseLineBreak()
 
 /**
  * SF Pro Display as the app first shipped it, before [SFProDisplay] moved every
@@ -120,7 +120,26 @@ private val LegacyTypography = Typography(
     bodyMedium = TextStyle(fontWeight = FontWeight.W400, fontSize = 14.sp),
     labelMedium = TextStyle(fontWeight = FontWeight.W600, fontSize = 12.sp),
     labelSmall = TextStyle(fontWeight = FontWeight.W600, fontSize = 11.sp),
-).withFamily(SFProDisplayLegacy)
+).withFamily(SFProDisplayLegacy).withPhraseLineBreak()
+
+/** Applies [PhraseLineBreak] to every style in the scale. */
+private fun Typography.withPhraseLineBreak() = Typography(
+    displayLarge = displayLarge.copy(lineBreak = PhraseLineBreak),
+    displayMedium = displayMedium.copy(lineBreak = PhraseLineBreak),
+    displaySmall = displaySmall.copy(lineBreak = PhraseLineBreak),
+    headlineLarge = headlineLarge.copy(lineBreak = PhraseLineBreak),
+    headlineMedium = headlineMedium.copy(lineBreak = PhraseLineBreak),
+    headlineSmall = headlineSmall.copy(lineBreak = PhraseLineBreak),
+    titleLarge = titleLarge.copy(lineBreak = PhraseLineBreak),
+    titleMedium = titleMedium.copy(lineBreak = PhraseLineBreak),
+    titleSmall = titleSmall.copy(lineBreak = PhraseLineBreak),
+    bodyLarge = bodyLarge.copy(lineBreak = PhraseLineBreak),
+    bodyMedium = bodyMedium.copy(lineBreak = PhraseLineBreak),
+    bodySmall = bodySmall.copy(lineBreak = PhraseLineBreak),
+    labelLarge = labelLarge.copy(lineBreak = PhraseLineBreak),
+    labelMedium = labelMedium.copy(lineBreak = PhraseLineBreak),
+    labelSmall = labelSmall.copy(lineBreak = PhraseLineBreak),
+)
 
 /** Applies [family] to every style in the scale, so nothing is left on Roboto. */
 private fun Typography.withFamily(family: FontFamily) = Typography(

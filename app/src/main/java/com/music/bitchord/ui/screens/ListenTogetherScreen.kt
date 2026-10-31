@@ -49,6 +49,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import com.music.bitchord.ui.theme.AppSpacing
 import androidx.compose.material3.ModalBottomSheet
 import com.music.bitchord.ui.components.IosSwitch
 import androidx.compose.material3.Text

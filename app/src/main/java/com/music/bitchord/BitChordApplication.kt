@@ -46,6 +46,9 @@ import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.PlaylistSync
+import com.music.bitchord.startup.AppForeground
+import com.music.bitchord.startup.StartupTrace
+import com.music.bitchord.startup.StartupWork
 import androidx.work.Configuration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -115,18 +118,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         AndroidStreamHooks.installEarly()
         PlayerPlatform.install(AndroidPlayerHost(this))
         com.music.bitchord.ui.AppUi.install(com.music.bitchord.ui.AndroidAppUiHost)
-        // The shared data layer (lyrics, the YouTube Music client) logs to
-        // logcat on debug builds only, as the app's own DebugLog always has.
-        if (BuildConfig.DEBUG) {
-            DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
-                when (level) {
-                    'D' -> android.util.Log.d(tag, message, error)
-                    'I' -> android.util.Log.i(tag, message, error)
-                    'W' -> android.util.Log.w(tag, message, error)
-                    else -> android.util.Log.e(tag, message, error)
-                }
-            }
-        } else {
+        // The shared data layer (lyrics, the YouTube Music client) logs through
+        // DebugLog. Route it into TrackLog's ring buffer on every build, so the
+        // diagnostic export can show what actually happened on a release phone;
+        // TrackLog's own echo decides what still reaches logcat.
+        DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
+            TrackLog.write(level, tag, message, error)
+        }
+        if (!BuildConfig.DEBUG) {
             // R8 strips android.util.Log from a release build (proguard-rules.pro);
             // this stops Media3 composing the lines it would have handed it.
             androidx.media3.common.util.Log.setLogLevel(androidx.media3.common.util.Log.LOG_LEVEL_OFF)
@@ -268,6 +267,74 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
+        // Nothing may start a foreground download service from a process that
+        // was woken in the background. The queue and the high-quality pass are
+        // event-driven: this is the event that lets them continue.
+        AppForeground.onForeground {
+            Downloads.onForeground(this)
+            com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
+            com.music.bitchord.download.HqLibraryUpgrade.onForeground(this)
+        }
+        AppForeground.onBackground {
+            // A delayed retry must not wake the process with no window to show
+            // for it; the plan stays on disk and the next foreground resumes it.
+            com.music.bitchord.download.HqLibraryUpgrade.onBackground(this)
+            // The same for the song-version repair: a network-constrained worker
+            // left queued would start the process later only to return, and its
+            // worker cannot start the download service without a window.
+            // A pass already running is left to finish; only queued work is
+            // dropped, so leaving the app does not restart the scan.
+            com.music.bitchord.download.MvSoundRedownload.pause(this)
+        }
+        // A verdict remembered by an earlier launch is repaired in the
+        // background without waiting for the Downloads page or another play.
+        // A process woken without a window first drops work left queued by the
+        // process that died; a pass already running is left alone.
+        if (!AppForeground.isForeground) {
+            com.music.bitchord.download.MvSoundRedownload.pause(this)
+        }
+        com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(this)
+        com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
+        // A repair parked by the Wi-Fi-only setting must resume when the
+        // connection changes. [AppSettings.meteredConnection] is already fed by
+        // the one default-network callback, but [AppSettings.downloadsAllowedNow]
+        // also flips when the Wi-Fi-only switch is turned off on cellular, so
+        // both sources are read here. This is another reader of existing state,
+        // not a second watcher or a poll. Without it, joining Wi-Fi or turning
+        // the rule off with the app open left the repair dormant until the next
+        // start or track.
+        var mvRepairAllowed = AppSettings.downloadsAllowedNow
+        CoroutineScope(Dispatchers.Default).launch {
+            combine(
+                AppSettings.meteredConnection,
+                AppSettings.wifiOnlyDownloads,
+            ) { metered, wifiOnly ->
+                !wifiOnly || metered != true
+            }
+                .distinctUntilChanged()
+                .collect { allowedNow ->
+                    if (com.music.bitchord.download.mvRepairShouldReschedule(
+                            wasAllowed = mvRepairAllowed,
+                            allowedNow = allowedNow,
+                        )
+                    ) {
+                        // A worker left in retry backoff must not delay the
+                        // repair this transition just woke.
+                        com.music.bitchord.download.MvSoundRedownload.scheduleIfEnabled(
+                            this@BitChordApplication,
+                            replace = true,
+                        )
+                    }
+                    mvRepairAllowed = allowedNow
+                }
+        }
+        // One-time cleanup of legacy HQ rejections that were written when an
+        // unmeasurable candidate looked like a mismatch. On IO because it reads
+        // the whole verdict file, and lazy because nothing needs it this frame.
+        CoroutineScope(Dispatchers.IO).launch {
+            com.music.bitchord.playback.smart.HqVerificationStore.init(this@BitChordApplication)
+        }
+        com.music.bitchord.download.LikedAutoDownload.init(this)
         // After both of the things a check reads: the setting and the record.
         PlaylistSync.init(this)
         // The device's own listening record. Opened here rather than in
@@ -427,6 +494,67 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
     private val emulatedGpu: Boolean by lazy {
         listOf("/vendor/lib64", "/vendor/lib", "/system/lib64", "/system/lib")
             .any { java.io.File("$it/egl/libEGL_emulation.so").exists() }
+    }
+
+    /**
+     * Chains the platform's own handler rather than replacing it.
+     *
+     * The app's line goes to the trail synchronously before the process dies —
+     * the writer thread will not get a turn — and the previous handler still
+     * runs so the crash is reported to the system exactly as before.
+     */
+    private fun installCrashHandler() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching { TrackLog.crash(thread, throwable) }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+
+    /**
+     * One line per process start. "Warm" is a previous process seen in the last
+     * ten minutes: Android's own cold/warm distinction is not visible from an
+     * Application, and for reading a crash trail what matters is whether this
+     * is a fresh launch or a restart of something that was just running.
+     */
+    private fun logProcessStart(directory: File) {
+        val marker = File(directory, "process.txt")
+        val now = System.currentTimeMillis()
+        val previousAt = runCatching {
+            processMarkerTimestamp(marker.readText())
+        }.getOrDefault(0L)
+        val warm = isWarmProcessRestart(now, previousAt, WARM_RESTART_MS)
+        TrackLog.i(
+            "BitChord",
+            "lifecycle: process start pid=${android.os.Process.myPid()} ${if (warm) "warm" else "cold"}",
+        )
+        runCatching { marker.writeText(processMarkerLine(android.os.Process.myPid(), now)) }
+    }
+
+    /**
+     * Trim callbacks are events, not a signal to start watching memory: only
+     * the levels that mean the process is actually under pressure are logged,
+     * and every one of them is a chance to get the buffered tail onto disk.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        when (level) {
+            android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE,
+            android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE,
+            -> TrackLog.w("BitChord", "lifecycle: trim memory level=$level")
+        }
+        TrackLog.flush()
+        com.music.bitchord.data.FeatureHealthCounters.flush()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        TrackLog.w("BitChord", "lifecycle: low memory")
+        TrackLog.flush()
+        com.music.bitchord.data.FeatureHealthCounters.flush()
     }
 
     private fun initLastfm() {

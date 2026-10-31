@@ -176,6 +176,7 @@ import com.music.bitchord.ui.components.HqLibraryUpgradeAllRow
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
+import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ui.components.LikedMusicCover
 import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
@@ -2576,6 +2577,11 @@ private fun SectionCard(
             placeholderColor = palette.elevated,
         )
         return
+    }
+    val shape = if (item.isArtist || item.browseId?.startsWith("UC") == true) {
+        CircleShape
+    } else {
+        RoundedCornerShape(LARGE_CARD_CORNER)
     }
     Column(
         modifier = modifier

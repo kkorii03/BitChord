@@ -137,6 +137,12 @@ enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark")
 }
 
+/** Where a private session was switched on, named in the diagnostic log. // [KO] private listening */
+enum class PrivateListeningSource(val logLabel: String) {
+    SETTINGS("settings"),
+    SONG_MENU("song menu"),
+}
+
 /**
  * How the app's SF Pro Display is set. [DEFAULT] draws each weight one cut
  * lighter and spaces it to Apple Music's own screens; [LEGACY] is the cut the
@@ -663,6 +669,15 @@ object AppSettings {
     /** Once a song has been suggested or played this session, AutoPlay won't offer it again. */
     val dontRepeatSuggestions = MutableStateFlow(false)
 
+    /** Prefer the catalogue audio release when the selected result is a music video. // [KO] */
+    val preferMusicOnly = MutableStateFlow(true)
+
+    /** Jumps over non-song parts of a video using SponsorBlock. // [KO] */
+    val skipNonMusicParts = MutableStateFlow(true)
+
+    /** Widens [skipNonMusicParts] to sponsorship reads, intros and outros. // [KO] */
+    val skipSponsorParts = MutableStateFlow(false)
+
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
 
@@ -923,6 +938,7 @@ object AppSettings {
     val localMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     /** Layout used by the Recents shelf on Play; compact tracks are the default. */
+    val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST) // [KO]
     val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
 
     /**
@@ -1369,6 +1385,22 @@ object AppSettings {
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
+        // [KO] prefer-music-only / non-music + sponsor skipping
+        val storedPreferMusicOnly = if (prefs.contains(KEY_PREFER_MUSIC_ONLY)) {
+            prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        } else {
+            null
+        }
+        preferMusicOnly.value = preferMusicOnlyDefault(
+            storedPreferMusicOnly,
+            existingInstall = hadSettingsBeforeMigrations,
+        )
+        if (storedPreferMusicOnly == null && !hadSettingsBeforeMigrations) {
+            prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, preferMusicOnly.value).apply()
+        }
+        skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
+        skipSponsorParts.value = prefs.getBoolean(KEY_SKIP_SPONSOR_PARTS, false)
+        homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE) // [KO] recents layout
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
@@ -2140,6 +2172,21 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_DONT_REPEAT_SUGGESTIONS, value).apply()
     }
 
+    fun setPreferMusicOnly(value: Boolean) { // [KO] prefer-music-only
+        preferMusicOnly.value = value
+        prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setSkipNonMusicParts(value: Boolean) { // [KO] skip non-music parts
+        skipNonMusicParts.value = value
+        prefs.edit().putBoolean(KEY_SKIP_NON_MUSIC_PARTS, value).apply()
+    }
+
+    fun setSkipSponsorParts(value: Boolean) { // [KO] skip sponsor parts
+        skipSponsorParts.value = value
+        prefs.edit().putBoolean(KEY_SKIP_SPONSOR_PARTS, value).apply()
+    }
+
     fun setSmartVersionAlignment(value: Boolean) {
         smartVersionAlignment.value = value
         prefs.edit().putBoolean(KEY_SMART_VERSION_ALIGNMENT, value).apply()
@@ -2761,6 +2808,11 @@ object AppSettings {
     fun setDownloadedMusicViewType(value: LibraryViewType) {
         downloadedMusicViewType.value = value
         prefs.edit().putString(KEY_DOWNLOADED_MUSIC_VIEW_TYPE, value.name).apply()
+    }
+
+    fun setHomeRecentsViewType(value: LibraryViewType) { // [KO]
+        homeRecentsViewType.value = value
+        prefs.edit().putString(KEY_HOME_RECENTS_VIEW_TYPE, value.name).apply()
     }
 
     fun setLocalMusicFolderUri(value: String) {
@@ -3872,6 +3924,9 @@ object AppSettings {
     private const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
+    private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only" // [KO]
+    private const val KEY_SKIP_NON_MUSIC_PARTS = "skip_non_music_parts" // [KO]
+    private const val KEY_SKIP_SPONSOR_PARTS = "skip_sponsor_parts" // [KO]
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
@@ -3927,6 +3982,7 @@ object AppSettings {
     private const val KEY_DETAIL_SONG_SORTS = "detail_song_sorts"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
+    private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type" // [KO]
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"

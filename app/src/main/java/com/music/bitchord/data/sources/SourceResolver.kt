@@ -15,6 +15,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Turns a queued track into an openable stream, using whichever source can
@@ -43,6 +44,164 @@ import kotlinx.coroutines.withTimeoutOrNull
 object SourceResolver {
 
     private const val TAG = "BitChord"
+
+    /**
+     * Sources that have failed repeatedly, and when they may be asked again.
+     *
+     * A dead addon must not cost every track in the queue its full timeout.
+     * The rest is a timestamp comparison rather than a timer: nothing runs in
+     * the background, and the source simply becomes eligible again on the
+     * first request after [COOLDOWN_MS].
+     */
+    internal object SourceCooldown {
+        private class State(var failures: Int = 0, var untilMs: Long = 0L)
+
+        private val states = ConcurrentHashMap<String, State>()
+
+        /**
+         * A monotonic mark for each source's failures, so a caller can tell
+         * whether *its* search failed without the source having to throw.
+         */
+        private val failureMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
+        internal fun failureMark(configId: String): Long =
+            failureMarks[configId]?.get() ?: 0L
+
+        fun isResting(configId: String): Boolean {
+            val state = states[configId] ?: return false
+            if (state.untilMs > System.currentTimeMillis()) return true
+            if (state.untilMs != 0L) states.remove(configId)
+            return false
+        }
+
+        fun failed(configId: String) {
+            failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
+                .incrementAndGet()
+            val state = states.computeIfAbsent(configId) { State() }
+            state.failures += 1
+            if (state.failures >= FAILURES_BEFORE_REST) {
+                state.untilMs = System.currentTimeMillis() + COOLDOWN_MS
+                TrackLog.w(
+                    "BitChord",
+                    "source $configId failed ${state.failures} times; resting for ${COOLDOWN_MS / 60_000} minutes",
+                )
+            }
+        }
+
+        fun succeeded(configId: String) {
+            states.remove(configId)
+        }
+
+        internal fun resetForTest() {
+            states.clear()
+            failureMarks.clear()
+        }
+
+        private const val FAILURES_BEFORE_REST = 2
+        private const val COOLDOWN_MS = 30 * 60 * 1000L
+    }
+
+    /**
+     * Search answers already in hand, so the same source is not asked the same
+     * question again for the same track.
+     */
+    private data class SearchKey(
+        val sourceId: String,
+        val target: String,
+        val request: String,
+        val waitForAll: Boolean,
+        val query: String,
+    )
+
+    private class SearchAnswer(val rows: List<Song>, val at: Long)
+
+    private val searchAnswers = ConcurrentHashMap<SearchKey, SearchAnswer>()
+
+    /**
+     * The per-source detail of one search, for the `hq-search` line.
+     */
+    data class SearchOutcome(
+        val stream: SourceStream? = null,
+        val results: Int = 0,
+        val best: Song? = null,
+        val verdict: String = "title",
+        val conclusive: Boolean = true,
+    )
+
+    /**
+     * What every source in one [bestAcross] walk answered, so a caller can
+     * tell "nobody has it" from "nobody could tell us right now".
+     */
+    class SearchReport {
+        private val entries = mutableListOf<SearchOutcome>()
+
+        @Volatile
+        var allConclusive: Boolean = true
+            private set
+
+        fun record(outcome: SearchOutcome) {
+            synchronized(entries) { entries += outcome }
+            if (!outcome.conclusive) allConclusive = false
+        }
+
+        /** Test seam: the per-source verdicts this walk collected. */
+        internal fun outcomes(): List<SearchOutcome> = synchronized(entries) { entries.toList() }
+    }
+
+    /** A substitute stream already judged to be the original recording. */
+    private class Remembered(val stream: SourceStream, val at: Long)
+
+    private val remembered = ConcurrentHashMap<String, Remembered>()
+
+    internal fun clearSearchAnswers() {
+        searchAnswers.clear()
+        remembered.clear()
+    }
+
+    /**
+     * A source's own failure path, for sources that turn a transport fault into
+     * an empty answer instead of throwing.
+     */
+    internal fun reportSourceFailure(configId: String) {
+        SourceCooldown.failed(configId)
+    }
+
+    /** Keeps [stream] as the verified original for [target], for a later play. */
+    fun rememberOriginal(target: TrackMatcher.Target, stream: SourceStream) {
+        if (target.title.isBlank()) return
+        val now = System.currentTimeMillis()
+        remembered.entries.removeIf { now - it.value.at > REMEMBERED_TTL_MS }
+        if (remembered.size >= REMEMBERED_MAX) {
+            remembered.minByOrNull { it.value.at }?.let { remembered.remove(it.key) }
+        }
+        remembered[targetKey(target)] = Remembered(stream, now)
+    }
+
+    /** The verified original already found for [target], if it is still fresh. */
+    fun rememberedOriginal(target: TrackMatcher.Target): SourceStream? {
+        val key = targetKey(target)
+        val entry = remembered[key] ?: return null
+        if (System.currentTimeMillis() - entry.at > REMEMBERED_TTL_MS) {
+            remembered.remove(key)
+            return null
+        }
+        return entry.stream
+    }
+
+    private fun targetKey(target: TrackMatcher.Target): String = listOf(
+        target.title,
+        target.artist,
+        target.durationSec,
+        target.album,
+        target.isExplicit,
+        target.isVideo,
+    ).joinToString("\u0001")
+
+    private fun requestKey(request: StreamRequest): String = when (request) {
+        is StreamRequest.Lossless -> "lossless"
+        is StreamRequest.Best -> "best"
+        is StreamRequest.Capped -> "capped:${request.maxKbps}"
+    }
 
     /**
      * What to ask a source for, right now, from the connection's ceiling alone
@@ -726,7 +885,6 @@ object SourceResolver {
         // YouTube one. Minus any addon whose manifest says `allowDownloads: 0`:
         // that one plays, but the file comes from whoever is next in line.
         val active = SourceRegistry.activeForDownload()
-            .filterNot { it.configId in excludeSources }
         // YouTube can be switched off, and a download still goes to it when
         // nothing here answers — the download path never consults this list. So
         // an absent YouTube means everything enabled outranks it, which is
@@ -797,7 +955,7 @@ object SourceResolver {
                     request,
                     waitForAll = true,
                     strictLength = strictLength,
-                )?.let { keep(it) }
+                ).stream?.let { keep(it) }
             }
         }
 
@@ -1094,25 +1252,94 @@ object SourceResolver {
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
+        strictOriginal: Boolean = false,
+        excludeHosts: Set<String> = emptySet(),
         driftSec: Int = UPGRADE_DRIFT_SEC,
+        manual: Boolean = false,
+        report: SearchReport? = null,
         refine: suspend (MusicSource, SourceStream) -> SourceStream? = { _, stream -> stream },
         timeoutMs: Long? = null,
-        accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
+        accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val until = timeoutMs?.let { System.nanoTime() + it * 1_000_000 }
-        val rank = sources.withIndex().associate { (index, source) -> source to index }
-        val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = sources
+        val usable = sources.filterNot { source ->
+            val resting = SourceCooldown.isResting(source.configId)
+            if (resting && !manual) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} is resting after repeated failures; skipping for this track",
+                )
+                val skipped = SearchOutcome(verdict = "resting", conclusive = false)
+                report?.record(skipped)
+                TrackLog.d(TAG, hqSearchLine(target, source, skipped))
+                true
+            } else {
+                if (resting) {
+                    TrackLog.d(
+                        TAG,
+                        "${source.displayName} is resting; asking it once because this upgrade was requested by hand",
+                    )
+                }
+                false
+            }
+        }
+        if (usable.isEmpty()) return@coroutineScope null
+        val order = usable.mapIndexed { index, source -> source.configId to index }.toMap()
+        val running: MutableList<Deferred<Pair<MusicSource, SearchOutcome>>> = usable
             .map { source ->
                 async {
-                    source to matchAndStream(
-                        source,
-                        target,
-                        request,
-                        waitForAll,
-                        strictLength,
-                        requireSharedArtist,
-                        driftSec,
-                    )?.let { refine(source, it) }
+                    val remaining = until?.let { remainingMs(it) }
+                    val budget = if (remaining == null) {
+                        SOURCE_LOOKUP_TIMEOUT_MS
+                    } else {
+                        minOf(SOURCE_LOOKUP_TIMEOUT_MS, remaining)
+                    }
+                    val answer = if (budget <= 0L) {
+                        null
+                    } else {
+                        withTimeoutOrNull(budget) {
+                            matchAndStream(
+                                source,
+                                target,
+                                request,
+                                waitForAll,
+                                strictLength,
+                                requireSharedArtist,
+                                strictOriginal,
+                                manual,
+                                driftSec,
+                            )
+                        }
+                    }
+                    val outcome = if (answer == null) {
+                        // A timeout while the device is offline (or behind a
+                        // captive portal) is the connection, not the source.
+                        // A global budget running out is the caller's clock.
+                        if (budget > 0L && !AudioCache.isOffline()) SourceCooldown.failed(source.configId)
+                        TrackLog.d(
+                            TAG,
+                            "${source.displayName} timed out after ${budget}ms; " +
+                                "skipping for this track",
+                        )
+                        val timedOut = SearchOutcome(verdict = "timeout", conclusive = false)
+                        TrackLog.d(TAG, hqSearchLine(target, source, timedOut))
+                        timedOut
+                    } else {
+                        // A stream is proof the source is healthy. A miss is
+                        // neither proof of health nor a failure: it answered.
+                        if (answer.stream != null) SourceCooldown.succeeded(source.configId)
+                        // A hand-made request is also the one chance a resting
+                        // source gets to prove it is back. A complete answer is
+                        // enough evidence, even when the catalogue held nothing.
+                        if (manual && answer.conclusive) SourceCooldown.succeeded(source.configId)
+                        answer
+                    }
+                    val refined = if (outcome.stream != null) {
+                        outcome.copy(stream = refine(source, outcome.stream))
+                    } else {
+                        outcome
+                    }
+                    source to refined
                 }
             }
             .toMutableList()
@@ -1178,7 +1405,9 @@ object SourceResolver {
                     if (!accept(source, stream)) continue
                     val held = best
                     val wins = held == null || isBetter(stream.format, held.second.format) ||
-                        (!isBetter(held.second.format, stream.format) && rank.getValue(source) < rank.getValue(held.first))
+                        (!isBetter(held.second.format, stream.format) &&
+                            (order[source.configId] ?: Int.MAX_VALUE) <
+                            (order[held.first.configId] ?: Int.MAX_VALUE))
                     if (wins) best = source to stream
                 }
                 // Playback needs the first usable answer so sound can start.
@@ -1227,8 +1456,11 @@ object SourceResolver {
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
+        strictOriginal: Boolean = false,
+        manual: Boolean = false,
         driftSec: Int = UPGRADE_DRIFT_SEC,
-    ): SourceStream? {
+    ): SearchOutcome {
+        var last = SearchOutcome()
         for (query in TrackMatcher.queries(target)) {
             val key = SearchKey(
                 sourceId = source.configId,
@@ -1337,8 +1569,41 @@ object SourceResolver {
                 }
                 matches = sameLength
             }
-            if (matches.isEmpty()) continue
-            return streamBest(
+            if (matches.isEmpty()) {
+                val bestMatch = matches.firstOrNull() ?: TrackMatcher.ranked(candidates, target).firstOrNull()
+                    ?: candidates.firstOrNull()
+                val verdict = when {
+                    // A source that failed while producing this answer said
+                    // nothing about the catalogue, even when the rows it sent
+                    // back were empty — see the `error` contract in
+                    // [SearchOutcome].
+                    !conclusive -> "error"
+                    candidates.isEmpty() -> "title"
+                    bestMatch == null -> "title"
+                    else -> TrackMatcher.rejectionReason(
+                        bestMatch,
+                        target,
+                        strictOriginal = strictOriginal,
+                        requireSharedArtist = requireSharedArtist,
+                        strictLength = strictLength,
+                        driftSec = driftSec,
+                    )
+                }
+                last = SearchOutcome(
+                    results = candidates.size,
+                    best = bestMatch,
+                    verdict = verdict,
+                    conclusive = conclusive,
+                )
+                // A source that reported a fault will not answer the other
+                // query either; asking it again only spends a request.
+                if (!conclusive) {
+                    TrackLog.d(TAG, hqSearchLine(target, source, last))
+                    return last
+                }
+                continue
+            }
+            val stream = streamBest(
                 source,
                 matches,
                 target,
@@ -1350,6 +1615,26 @@ object SourceResolver {
                 // Only the patient lookups can afford to open more than one row.
                 compareRows = waitForAll,
             )
+            // Every stream open can fail — a 500, a timeout, a host that went
+            // away between the search and the open — and [attempt] counts each
+            // one against the source. A search that looked healthy but could
+            // not produce a stream is not a confirmed miss, so the caller must
+            // be allowed to ask again once the source is back. That holds even
+            // when a stream did open: [streamBest] falls back to a row below the
+            // request when the better one failed (10-31 Flowers: HTTP 500), and
+            // the copy it settled for is still played, just not taken as final.
+            if (SourceCooldown.failureMark(source.configId) != mark) {
+                conclusive = false
+            }
+            last = SearchOutcome(
+                stream = stream,
+                results = candidates.size,
+                best = matches.firstOrNull(),
+                verdict = if (stream != null) "match" else "error",
+                conclusive = conclusive,
+            )
+            TrackLog.d(TAG, hqSearchLine(target, source, last))
+            return last
         }
         // One line per source per walk, whether it found the recording or not.
         TrackLog.d(TAG, hqSearchLine(target, source, last))
