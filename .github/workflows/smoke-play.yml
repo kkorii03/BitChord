@@ -63,8 +63,11 @@ jobs:
           target: google_apis
           profile: pixel_7
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none ${{ env.EMU_HTTP_PROXY }}
-          script: bash scripts/smoke/run.sh
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # Device-wide proxy through the runner's authfwd (see set_proxy_port.py).
+          script: |
+            if [ -n "$SMOKE_UPSTREAM_PROXY" ]; then (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &) ; sleep 2; adb shell settings put global http_proxy 10.0.2.2:3128; fi
+            bash scripts/smoke/run.sh
 
       - name: Report
         if: always()
