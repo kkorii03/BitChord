@@ -169,12 +169,35 @@ object SongVersionPolicy {
      * returns the original row for both shapes, so the caller cannot tell them
      * apart from the return value alone — [answered] is the cache marker that
      * separates "searched and found nothing" from "could not search".
+     *
+     * [waitedOut] is set when a caller stopped waiting for this lookup on its
+     * own deadline or cancelled it. A search that had not finished by then must
+     * never be frozen as "no version": the late answer may be a miss that
+     * arrived after the deadline, or the request may have been cut short. Such
+     * an answer stays retryable even when the underlying search eventually
+     * returns. A found recording is still safe to keep, since finding one is
+     * never the failure this guard exists for.
      */
     fun songVersionVerdictIsDefinitive(
         searchSucceeded: Boolean,
         answered: Boolean,
         found: Boolean,
-    ): Boolean = found || (searchSucceeded && answered)
+        waitedOut: Boolean = false,
+    ): Boolean = found || (!waitedOut && searchSucceeded && answered)
+
+    /**
+     * Whether the post-first-sound retry of a song-version lookup may run.
+     *
+     * Only a before-audio lookup that gave up on its deadline or was cancelled
+     * leaves a retry pending, and it is spent at most once per track. A
+     * completed "no version" search is not retried: it is the answer, and
+     * asking again would spend a request and battery on every ordinary music
+     * video.
+     */
+    fun shouldRetrySongVersionAfterAudio(
+        timedOutOrCancelled: Boolean,
+        alreadyRetried: Boolean,
+    ): Boolean = timedOutOrCancelled && !alreadyRetried
 
     /**
      * Whether an audio-switch pass is complete enough to cache "no catalogue
