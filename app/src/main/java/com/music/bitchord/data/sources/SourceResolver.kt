@@ -76,8 +76,20 @@ object SourceResolver {
          */
         private val failureMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
 
+        /**
+         * A monotonic mark for credential refusals, kept apart from the
+         * generic failure mark so a search can say *why* it produced nothing.
+         * A 401/402/403 still raises [failureMarks] and follows the resting
+         * rule; this mark only decides whether the verdict reads `auth`
+         * instead of `error`.
+         */
+        private val authMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
         internal fun failureMark(configId: String): Long =
             failureMarks[configId]?.get() ?: 0L
+
+        internal fun authMark(configId: String): Long =
+            authMarks[configId]?.get() ?: 0L
 
         fun isResting(configId: String): Boolean {
             val state = states[configId] ?: return false
@@ -106,6 +118,21 @@ object SourceResolver {
             recordFailure(configId, countForRest = online)
         }
 
+        /**
+         * The addon answered 401/402/403: its credential or permission is
+         * refused, not its catalogue empty and not its server down.
+         *
+         * Counts toward the rest rule exactly like any other source failure,
+         * so the same refused source is not asked on every track. The separate
+         * mark lets the search verdict say `auth` instead of the misleading
+         * `title`, and keeps that empty answer out of the memo.
+         */
+        internal fun authFailed(configId: String) {
+            authMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
+                .incrementAndGet()
+            recordFailure(configId, countForRest = true)
+        }
+
         private fun recordFailure(configId: String, countForRest: Boolean) {
             failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
                 .incrementAndGet()
@@ -128,6 +155,7 @@ object SourceResolver {
         internal fun resetForTest() {
             states.clear()
             failureMarks.clear()
+            authMarks.clear()
         }
 
         private const val FAILURES_BEFORE_REST = 2
@@ -156,7 +184,7 @@ object SourceResolver {
      *
      * [verdict] is why a result was or was not usable:
      * `match`, `artist-unverified`, `duration`, `title`, `artist`, `version`,
-     * `error`, `timeout` or `resting`. [conclusive] is false when the source
+     * `auth`, `error`, `timeout` or `resting`. [conclusive] is false when the source
      * could not give a complete answer — a failed backend, a timeout, or being
      * skipped while resting — which is what stops that "none" from being
      * remembered as final.
@@ -187,15 +215,23 @@ object SourceResolver {
      */
     class SearchReport {
         private val entries = mutableListOf<SearchOutcome>()
+        private val authSources = mutableListOf<String>()
 
         @Volatile
         var allConclusive: Boolean = true
             private set
 
-        fun record(outcome: SearchOutcome) {
-            synchronized(entries) { entries += outcome }
+        fun record(outcome: SearchOutcome, sourceName: String? = null) {
+            synchronized(entries) {
+                entries += outcome
+                if (outcome.verdict == "auth" && sourceName != null) authSources += sourceName
+            }
             if (!outcome.conclusive) allConclusive = false
         }
+
+        /** Sources whose credential was refused, for the listener-facing answer. */
+        val authSourceNames: List<String>
+            get() = synchronized(entries) { authSources.distinct() }
 
         /** Test seam: the per-source verdicts this walk collected. */
         internal fun outcomes(): List<SearchOutcome> = synchronized(entries) { entries.toList() }
@@ -224,6 +260,16 @@ object SourceResolver {
     internal fun reportSourceFailure(configId: String, network: Boolean = false) {
         if (network) SourceCooldown.networkFailed(configId, online = !offlineCheck())
         else SourceCooldown.failed(configId)
+    }
+
+    /**
+     * A source refused this app's credential (401/402/403). The caller turns
+     * that into an empty list, so this mark is what keeps the empty answer
+     * from being memoised as a confirmed miss and what lets the `hq-search`
+     * line say `auth`.
+     */
+    internal fun reportSourceAuthFailure(configId: String) {
+        SourceCooldown.authFailed(configId)
     }
 
     /** Keeps [stream] as the verified original for [target], for a later play. */
@@ -1191,6 +1237,7 @@ object SourceResolver {
         report: SearchReport? = null,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
+        val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
         val usable = sources.filterNot { source ->
             val resting = SourceCooldown.isResting(source.configId)
             if (resting && !manual) {
@@ -1199,7 +1246,7 @@ object SourceResolver {
                     "${source.displayName} is resting after repeated failures; skipping for this track",
                 )
                 val skipped = SearchOutcome(verdict = "resting", conclusive = false)
-                report?.record(skipped)
+                report?.record(skipped, source.displayName)
                 TrackLog.d(TAG, hqSearchLine(target, source, skipped))
                 true
             } else {
@@ -1217,7 +1264,7 @@ object SourceResolver {
         val running: MutableList<Deferred<Pair<MusicSource, SearchOutcome>>> = usable
             .map { source ->
                 async {
-                    val answer = withTimeoutOrNull(sourceTimeoutMs) {
+                    val answer = withTimeoutOrNull(lookupTimeoutMs) {
                         matchAndStream(
                             source,
                             target,
@@ -1239,7 +1286,7 @@ object SourceResolver {
                         if (!offlineCheck()) SourceCooldown.failed(source.configId)
                         TrackLog.d(
                             TAG,
-                            "${source.displayName} timed out after ${sourceTimeoutMs}ms; " +
+                            "${source.displayName} timed out after ${lookupTimeoutMs}ms; " +
                                 "skipping for this track",
                         )
                         val timedOut = SearchOutcome(verdict = "timeout", conclusive = false)
@@ -1272,7 +1319,7 @@ object SourceResolver {
                 val readyDeferred = listOf(first) + running.filter { it !== first && it.isCompleted }
                 running -= readyDeferred.toSet()
                 val ready = readyDeferred.map { it.await() }
-                ready.forEach { (_, outcome) -> report?.record(outcome) }
+                ready.forEach { (source, outcome) -> report?.record(outcome, source.displayName) }
                 // A song with another addon answer must try the healthy host
                 // first; a resting one is still kept as the last resort rather
                 // than dropped. The loop below also refuses a resting host, so
@@ -1451,6 +1498,8 @@ object SourceResolver {
             // is a failure of the whole answer even when the search itself
             // looked healthy — see [SourceCooldown.failureMark].
             val mark = SourceCooldown.failureMark(source.configId)
+            val authMark = SourceCooldown.authMark(source.configId)
+            var authRejected = false
             // A hand-made request is evidence that the cached "none" was wrong.
             // Leave it unread, so the source is asked again; the fresh answer
             // then replaces the memo below.
@@ -1471,13 +1520,17 @@ object SourceResolver {
                         // them at the tier this is about to ask for.
                         request = request,
                     )
-                } ?: return SearchOutcome(verdict = "error", conclusive = false).also {
+                } ?: return SearchOutcome(
+                    verdict = if (SourceCooldown.authMark(source.configId) != authMark) "auth" else "error",
+                    conclusive = false,
+                ).also {
                     TrackLog.d(TAG, hqSearchLine(target, source, it))
                 }
-                // Some sources swallow a transport fault and return an empty
-                // list. An answer produced while this source reported a failure
-                // is not a confirmed miss, and must not be memoised — see
-                // [SourceCooldown.failureMark].
+                // Some sources swallow a transport or credential fault and
+                // return an empty list. An answer produced while this source
+                // reported a failure is not a confirmed miss, and must not be
+                // memoised — see [SourceCooldown.failureMark].
+                authRejected = SourceCooldown.authMark(source.configId) != authMark
                 conclusive = SourceCooldown.failureMark(source.configId) == mark
                 if (conclusive) {
                     if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
@@ -1581,8 +1634,9 @@ object SourceResolver {
                     // A source that failed while producing this answer said
                     // nothing about the catalogue, even when the rows it sent
                     // back were empty — see the `error` contract in
-                    // [SearchOutcome].
-                    !conclusive -> "error"
+                    // [SearchOutcome]. A refused credential is its own verdict
+                    // because the listener can fix it, unlike a server fault.
+                    !conclusive -> if (authRejected) "auth" else "error"
                     candidates.isEmpty() -> "title"
                     best == null -> "title"
                     else -> TrackMatcher.rejectionReason(
@@ -1630,7 +1684,12 @@ object SourceResolver {
             // it would mark this walk inconclusive and retry the track.
             val localisedIsAlternate =
                 verifiedOpened != null && !verifiedOpened.second.belowRequest
-            val localisedOpened = if (unverifiedMatches.isEmpty()) {
+            val localisedOpened = if (
+                unverifiedMatches.isEmpty() ||
+                // A refused credential already stopped the credited rows; the
+                // localised ones would only be refused again.
+                SourceCooldown.authMark(source.configId) != authMark
+            ) {
                 null
             } else {
                 // These are already ordered closest-runtime-first; do not let
@@ -1679,6 +1738,9 @@ object SourceResolver {
             // when a stream did open: [streamBest] falls back to a row below the
             // request when the better one failed (10-31 Flowers: HTTP 500), and
             // the copy it settled for is still played, just not taken as final.
+            if (SourceCooldown.authMark(source.configId) != authMark) {
+                authRejected = true
+            }
             if (SourceCooldown.failureMark(source.configId) != mark) {
                 conclusive = false
             }
@@ -1688,7 +1750,7 @@ object SourceResolver {
                 results = candidates.size,
                 best = chosen,
                 verdict = when {
-                    stream == null -> "error"
+                    stream == null -> if (authRejected) "auth" else "error"
                     chosen in artistUnverified -> "artist-unverified"
                     else -> "match"
                 },
@@ -1830,9 +1892,16 @@ object SourceResolver {
         val wantsLossless = request is StreamRequest.Lossless
         val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless)
         var settleFor: Pair<Song, SourceStream>? = null
+        // A credential refusal is not a property of this row: every other row
+        // will be refused the same way. Stop after the first refusal instead of
+        // spending up to three `/stream` calls (and raising the source's
+        // failure mark each time) against a source that just said no.
+        val authMark = SourceCooldown.authMark(source.configId)
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
-            val opened = attempt(source, countFailure) { source.stream(trackId, request) } ?: continue
+            val opened = attempt(source, countFailure) { source.stream(trackId, request) }
+            if (SourceCooldown.authMark(source.configId) != authMark) return settleFor
+            if (opened == null) continue
             // The row this URL came from knows how long the recording is; the
             // URL itself doesn't. Carried along so a caller swapping this into
             // a track already playing can check it — see [SourceStream.durationSec].
@@ -2070,6 +2139,19 @@ object SourceResolver {
      * of this track's answer, and the next track asks it again.
      */
     private const val SOURCE_LOOKUP_TIMEOUT_MS = 4_000L
+
+    /**
+     * A hand-made upgrade is the listener waiting for one answer, so its
+     * per-source window is three times the live path's. The automatic path
+     * keeps [SOURCE_LOOKUP_TIMEOUT_MS]: preparing the next track or improving
+     * one mid-playback must not spend twelve seconds per source.
+     */
+    private const val MANUAL_SOURCE_LOOKUP_TIMEOUT_MS = 12_000L
+
+    internal fun sourceLookupTimeoutMs(
+        manual: Boolean,
+        configured: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+    ): Long = if (manual) MANUAL_SOURCE_LOOKUP_TIMEOUT_MS else configured
 
     /**
      * The same ceiling for a download, where nobody is waiting on a first note

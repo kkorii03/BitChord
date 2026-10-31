@@ -585,11 +585,20 @@ object HqLibraryUpgrade {
         if (!automatic && !allowEqual) tellListener(context, song, R.string.hq_redownload_searching)
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
+            val report = SourceResolver.SearchReport()
             val candidate = runCatching {
                 SourceResolver.upgradeFor(
                     target = target,
                     playing = DownloadedQuality.formatOf(badge),
                     excludeSources = setOfNotNull(wrongSource),
+                    // A tap on the download's own upgrade button is a manual
+                    // request: it gets the longer per-source search window and
+                    // asks a resting source once. The automatic library pass
+                    // keeps the ordinary rules.
+                    manual = !automatic,
+                    // The report is what tells a refused credential apart from
+                    // a genuine "no better copy" below.
+                    report = report,
                 )
             }.getOrNull()
             if (candidate != null) {
@@ -645,7 +654,9 @@ object HqLibraryUpgrade {
                         " action=none tier=${currentTier.name}",
                     song.videoId,
                 )
-                if (!automatic) tellListener(context, song, R.string.quality_upgrade_no_better)
+                if (!automatic) {
+                    tellListener(context, song, upgradeNothingMessage(context, report))
+                }
                 return@launch
             }
             // The repair could not be proved first, so the download itself has
@@ -686,9 +697,38 @@ object HqLibraryUpgrade {
         return UpgradeRequest.SEARCHING
     }
 
+    /**
+     * What to say when a manual upgrade found nothing. A refused addon
+     * credential is not "no better copy": that source never searched, and the
+     * listener has to reconnect it in Settings.
+     */
+    internal fun upgradeNothingMessage(
+        context: Context,
+        report: SourceResolver.SearchReport,
+    ): CharSequence {
+        val id = upgradeNothingMessageId(report)
+        return if (id == R.string.quality_upgrade_addon_auth) {
+            context.getString(id, report.authSourceNames.joinToString(", "))
+        } else {
+            context.getString(id)
+        }
+    }
+
+    /** The resource [upgradeNothingMessage] formats; kept separate for the unit test. */
+    internal fun upgradeNothingMessageId(report: SourceResolver.SearchReport): Int =
+        if (report.authSourceNames.isEmpty()) {
+            R.string.quality_upgrade_no_better
+        } else {
+            R.string.quality_upgrade_addon_auth
+        }
+
     /** A short answer to a request the listener made by hand. */
     private fun tellListener(context: Context, song: Song, message: Int) {
-        TrackLog.i(TAG, "download-check: ${song.videoId} told listener: ${context.getString(message)}", song.videoId)
+        tellListener(context, song, context.getString(message))
+    }
+
+    private fun tellListener(context: Context, song: Song, message: CharSequence) {
+        TrackLog.i(TAG, "download-check: ${song.videoId} told listener: $message", song.videoId)
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             android.widget.Toast.makeText(context.applicationContext, message, android.widget.Toast.LENGTH_SHORT).show()
         }

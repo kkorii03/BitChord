@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.addon.AddonAuthException
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.AddonManifest
@@ -40,6 +41,20 @@ class AddonSource(
     override val displayName: String get() = config.displayName
 
     private val client = AddonClient(config.baseUrl)
+
+    /**
+     * When this addon last refused the credential, so [health] can say so even
+     * while the manifest is cached and still answers.
+     *
+     * A manifest is public metadata and is cached for ten minutes; the search
+     * and stream endpoints are where the token is actually spent. Without this
+     * mark a 401 on `/search` would leave the sources screen reporting `Ok`
+     * until the manifest cache expired, hiding the only fix the listener has.
+     * Cleared by any successful request, and treated as stale after
+     * [AUTH_FAILURE_MEMORY_MS].
+     */
+    @Volatile
+    private var lastAuthFailureAtMs: Long = 0L
 
     /**
      * Rows this addon has recently handed over, by their own track id.
@@ -116,6 +131,18 @@ class AddonSource(
         client.manifest().fold(
             onSuccess = { manifest ->
                 recordPolicy(manifest)
+                if (authRecentlyRejected()) {
+                    return@fold SourceHealth.Rejected(authRejectedReason())
+                }
+                // A healthy manifest only says the host is reachable: the
+                // token is spent on `/search`, and a fresh instance (after a
+                // restart or a registry rebuild) has no local auth mark yet.
+                // Ask once so a refused credential cannot hide behind the
+                // ten-minute manifest cache and still report `Ok`.
+                if (client.probeSearch().exceptionOrNull() is AddonAuthException) {
+                    noteAuthFailure()
+                    return@fold SourceHealth.Rejected(authRejectedReason())
+                }
                 SourceHealth.Ok(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
@@ -135,7 +162,9 @@ class AddonSource(
                     return@fold SourceHealth.Ok("매니페스트 없음 · 검색은 가능")
                 }
                 val reason = failure.message ?: "애드온에 연결할 수 없습니다"
-                if (failure is AddonException) {
+                if (failure is AddonAuthException) {
+                    SourceHealth.Rejected(authRejectedReason())
+                } else if (failure is AddonException) {
                     SourceHealth.Rejected(reason)
                 } else {
                     TrackLog.w(TAG, "addon unreachable for ${config.displayName}: $reason")
@@ -195,11 +224,14 @@ class AddonSource(
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
             val tracks = client.search(query, tier).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
-                if (failure is AddonUnavailable) {
+                if (failure is AddonAuthException) {
+                    noteAuthFailure()
+                } else if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
                 return@withContext emptyList()
             }
+            lastAuthFailureAtMs = 0L
             tracks.asSequence()
                 .filter { it.id.isNotBlank() && it.title.isNotBlank() }
                 .take(limit)
@@ -261,6 +293,14 @@ class AddonSource(
                 if (failure !is AddonNotFound) {
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
                 }
+                if (failure is AddonAuthException) {
+                    noteAuthFailure()
+                    // The row's own URL is not a way around a refused
+                    // credential: handing it back would make this look like a
+                    // successful match and clear the source's rest, hiding the
+                    // refusal from the resolver and the listener.
+                    return@withContext null
+                }
                 if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
@@ -281,6 +321,7 @@ class AddonSource(
                 return@withContext fromRow(trackId, tier)
             }
 
+            lastAuthFailureAtMs = 0L
             openable(url, answer, trackId, tier).also { stream ->
                 if (stereoOnly && stream?.format?.isDolbyAtmos == true) {
                     TrackLog.w(
@@ -436,6 +477,19 @@ class AddonSource(
         client.clearCompletedTrackCalls()
     }
 
+    /** The same words a manual upgrade uses when this source refuses its credential. */
+    private fun authRejectedReason(): String =
+        "${config.displayName} 애드온 인증이 거부되었습니다. 설정에서 애드온을 다시 연결해 주십시오."
+
+    private fun noteAuthFailure() {
+        lastAuthFailureAtMs = System.currentTimeMillis()
+        SourceResolver.reportSourceAuthFailure(config.id)
+    }
+
+    private fun authRecentlyRejected(): Boolean =
+        lastAuthFailureAtMs != 0L &&
+            System.currentTimeMillis() - lastAuthFailureAtMs < AUTH_FAILURE_MEMORY_MS
+
     private companion object {
         const val TAG = "BitChord"
 
@@ -445,6 +499,13 @@ class AddonSource(
 
         /** How many search rows to remember. A long queue's worth, several times over. */
         const val MAX_ROWS = 256
+
+        /**
+         * How long a refused credential is remembered for [health]. Matches the
+         * source rest rule: long enough to keep pointing at Settings, short
+         * enough that a fixed token is not hidden by an old failure.
+         */
+        const val AUTH_FAILURE_MEMORY_MS = 30 * 60 * 1000L
 
         /**
          * Containers that name their own codec. A `.flac` holds FLAC and
