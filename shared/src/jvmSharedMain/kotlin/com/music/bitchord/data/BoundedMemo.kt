@@ -47,6 +47,12 @@ class BoundedMemo<K : Any, V : Any>(private val limit: Int) {
         entries[key] = value
     }
 
+    /** Drop one answer so the next [get] or [getOrPut] reads it again. */
+    @Synchronized
+    fun remove(key: K) {
+        entries.remove(key)
+    }
+
     @Synchronized
     fun clear() {
         entries.clear()

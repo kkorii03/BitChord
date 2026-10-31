@@ -43,17 +43,7 @@ object DownloadedArtworkResolver {
      */
     private const val RESOLVED_ENTRIES = 512
 
-    /**
-     * How long a remembered miss suppresses another disk read.
-     *
-     * Short enough that a sidecar written a moment after the first ask is
-     * picked up without the listener doing anything, long enough that a row
-     * recomposing on every frame does not re-open a dead path each time.
-     */
-    private const val MISS_RETRY_MS = 3_000L
-
     private val resolved = BoundedMemo<String, String>(RESOLVED_ENTRIES)
-    private val missedAt = BoundedMemo<String, Long>(RESOLVED_ENTRIES)
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val claimed = ConcurrentHashMap.newKeySet<String>()
     private val inFlightLock = Mutex()
@@ -62,24 +52,23 @@ object DownloadedArtworkResolver {
         val key = keyOf(song)
         val cached = resolved.get(key)
         if (!cached.isNullOrEmpty()) return@withContext cached
-        val now = System.currentTimeMillis()
-        if (cached != null && !missDue(missedAt.get(key), now)) return@withContext null
+        // A remembered miss is not timed. It is dropped only when the cover
+        // save reports itself (see [invalidate]), so a row recomposing on every
+        // frame still never re-opens a dead path, while a sidecar written later
+        // no longer has to wait for an unrelated redraw to be seen.
+        if (cached != null) return@withContext null
         val job = inFlightLock.withLock { inFlight.getOrPut(key) { CompletableDeferred() } }
         if (claimed.add(key)) {
             try {
                 val value = resolveNow(context.applicationContext, song) ?: ""
                 // A real URI replaces an earlier "none" for the same key. The
                 // first attempt can fail before the download has finished
-                // writing its sidecar; keeping that empty answer with getOrPut
-                // forever left the row, header and player blank even after the
-                // cover existed. A remembered miss therefore only pauses the
-                // work for [MISS_RETRY_MS] rather than suppressing it for good.
+                // writing its sidecar; a miss is kept until the save event
+                // drops it (see [invalidate]), rather than for a fixed delay.
                 if (value.isEmpty()) {
                     resolved.getOrPut(key) { value }
-                    missedAt.put(key, now)
                 } else {
                     resolved.put(key, value)
-                    missedAt.put(key, 0L)
                 }
                 job.complete(value)
             } catch (cancelled: CancellationException) {
@@ -88,7 +77,6 @@ object DownloadedArtworkResolver {
             } catch (error: Throwable) {
                 Log.d(TAG, "cover lookup failed for ${song.videoId}: ${error.message}")
                 resolved.getOrPut(key) { "" }
-                missedAt.put(key, now)
                 job.complete("")
             } finally {
                 claimed.remove(key)
@@ -105,9 +93,15 @@ object DownloadedArtworkResolver {
         value.takeIf { it.isNotEmpty() }
     }
 
-    /** Whether a remembered miss is old enough to look again. */
-    private fun missDue(missedAt: Long?, now: Long): Boolean =
-        missedAt == null || now - missedAt >= MISS_RETRY_MS
+    /**
+     * Forget what was resolved for [song] so the next ask reads the disk again.
+     *
+     * Called for the id whose cover save event just arrived. Only that row's
+     * answer is dropped; every other resolved cover stays in the memo.
+     */
+    fun invalidate(song: Song) {
+        resolved.remove(keyOf(song))
+    }
 
     private fun resolveNow(context: Context, song: Song): String? {
         val savedExists = localArtworkExists(song.thumbnailUrl)
@@ -116,7 +110,10 @@ object DownloadedArtworkResolver {
                 ArtworkCandidateKind.EMBEDDED -> {
                     val picture = embeddedPicture(context, candidate.value)
                     if (picture != null) {
-                        persist(context, keyOf(song), picture)?.let { return it }
+                        persist(context, keyOf(song), picture)?.let { saved ->
+                            if (saved.wrote) DownloadedArtworkEvents.coverSaved(song.videoId)
+                            return saved.uri
+                        }
                     }
                 }
                 ArtworkCandidateKind.SAVED_THUMBNAIL ->
@@ -187,7 +184,9 @@ object DownloadedArtworkResolver {
         }.getOrDefault(false)
     }
 
-    private fun persist(context: Context, key: String, bytes: ByteArray): String? = runCatching {
+    private class Persisted(val uri: String, val wrote: Boolean)
+
+    private fun persist(context: Context, key: String, bytes: ByteArray): Persisted? = runCatching {
         val dir = File(context.cacheDir, "downloaded-art").apply { mkdirs() }
         val extension = if (bytes.size >= 2 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte()) {
             "png"
@@ -198,10 +197,11 @@ object DownloadedArtworkResolver {
             .digest(key.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) } + ".$extension"
         val file = File(dir, name)
-        if (!file.isFile || file.length() == 0L) {
+        val wrote = !file.isFile || file.length() == 0L
+        if (wrote) {
             file.outputStream().use { it.write(bytes) }
         }
-        Uri.fromFile(file).toString()
+        Persisted(Uri.fromFile(file).toString(), wrote)
     }.onFailure {
         Log.d(TAG, "could not save embedded cover: ${it.message}")
     }.getOrNull()
