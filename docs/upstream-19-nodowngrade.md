@@ -39,6 +39,7 @@
 
 ## 품질 업그레이드(HQ) 교체 단계 — 컴파일 초록 뒤 별도로
 - 현황(10-31 밤): u19-app-sources 가 컴파일을 맞추려고 `SourceResolver.bestAcross` 를 1.9 원본 대신 우리 HQ 장치(SourceCooldown, HqHostTracker, HqQuality.couldWin 90초 소리 비교, SearchReport, strictOriginal, manual)로 바꿨다. 우리 HQ 코드가 PlaybackService·QualityUpgrade·HqLibraryUpgrade·MvSoundRedownload·HqAudioVerify 에 퍼져 있어서 한 번에 떼면 컴파일이 깨지므로 일단 채택.
+- 10-31: fix-1030 의 "가수명이 다른 글자(일본어 등)로 적힌 고음질 사본 허용"(`allowArtistUnverified`, 테스트 UpgradeArtistScriptSearch/UnverifiedFallback/UnverifiedRanking 3개)은 우리 HQ 장치 깊숙이 붙어 있어 옮기지 않고 테스트만 뺐다. 1.9 는 같은 문제를 `TrackMatcher.score` 의 CREDIT_OVERRIDE_SEC(길이 2초 이내면 허용)로 푼다. HQ 교체 때 이 3개 테스트(`git show origin/task/fix-1030:app/src/test/java/com/music/bitchord/<이름>.kt`)를 1.9 경로 기준으로 다시 써서 같은 곡이 통과하는지 확인할 것.
 - 사용자 방침(1.9 기본, 우리 품질 업그레이드는 문제 많음)에 따라 컴파일 초록 뒤 한 작업으로 교체: ① 우리 HQ 기능 vs 1.9 QualityUpgrade/DirectSourceGate 기능 비교표 작성(DeepSeek), ② 1.9 에 없는 것 중 **맞는 곡**에 관한 것(strictOriginal = 커버·리마스터로 바꾸지 않기, MV 소리 재다운로드)만 ko/ hook 으로 유지, ③ 나머지 HQ 장치는 1.9 로 교체, ④ HQ 테스트·featurehealth D1-hq 로 전후 비교.
 
 ## 병합 뒤 task/fix-1030 에 더 들어간 수정 (10-31, 원래 세션)
