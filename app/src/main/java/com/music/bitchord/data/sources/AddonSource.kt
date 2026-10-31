@@ -10,6 +10,7 @@ import com.music.bitchord.data.sources.addon.AddonNotFound
 import com.music.bitchord.data.sources.addon.AddonStream
 import com.music.bitchord.data.sources.addon.AddonTrack
 import com.music.bitchord.data.sources.addon.AddonUnavailable
+import com.music.bitchord.data.sources.addon.SourceFormats
 import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -113,6 +114,9 @@ class AddonSource(
         if (shutOut("a health check")) {
             return@withContext SourceHealth.Rejected(NEEDS_LOSSLESS_OUTPUT)
         }
+        SourceFormats.repositoryReason(config.baseUrl)?.let {
+            return@withContext SourceHealth.Rejected(it)
+        }
         client.manifest().fold(
             onSuccess = { manifest ->
                 recordPolicy(manifest)
@@ -130,9 +134,20 @@ class AddonSource(
                 // moment it answers a search. Reported plainly rather than as a
                 // success with a hidden caveat, so the row says which of the two
                 // kinds of working this is.
-                if (client.probeSearch().isSuccess) {
+                val probe = client.probeSearch()
+                if (probe.isSuccess) {
                     TrackLog.d(TAG, "${config.displayName}: no manifest, but search answers")
                     return@fold SourceHealth.Ok("매니페스트 없음 · 검색은 가능")
+                }
+                // The probe is the only thing that has actually looked at what
+                // /search returns. When it says the answer was a web page or
+                // not a search list, that is the reason to show — not the
+                // missing manifest that led here.
+                val probeFailure = probe.exceptionOrNull()
+                if (probeFailure is AddonException) {
+                    return@fold SourceHealth.Rejected(
+                        probeFailure.message ?: SourceFormats.NOT_ADDON_URL,
+                    )
                 }
                 val reason = failure.message ?: "애드온에 연결할 수 없습니다"
                 if (failure is AddonException) {

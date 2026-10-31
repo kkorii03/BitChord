@@ -114,7 +114,7 @@ class SourceFormatsTest {
     @Test
     fun `a module index listing nothing is refused`() {
         val reason = reason(SourceFormats.detect("""{"category:music":[]}"""))
-        assertTrue(reason, reason.contains("listed no modules"))
+        assertTrue(reason, reason.contains("모듈 인덱스에 모듈이 없습니다"))
     }
 
     // ── Unrecognised ──────────────────────────────────────────────────────
@@ -122,13 +122,13 @@ class SourceFormatsTest {
     @Test
     fun `a page that is not JSON says so`() {
         val reason = reason(SourceFormats.detect("<!doctype html><html><body>Not found</body></html>"))
-        assertTrue(reason, reason.contains("did not return JSON"))
+        assertTrue(reason, reason.contains("JSON을 반환하지 않았습니다"))
     }
 
     @Test
     fun `a bare JSON array is refused`() {
         val reason = reason(SourceFormats.detect("""[{"id":"a"}]"""))
-        assertTrue(reason, reason.contains("list"))
+        assertTrue(reason, reason.contains("배열"))
     }
 
     /** Some other index: the URL was the right sort of thing, the app is wrong for it. */

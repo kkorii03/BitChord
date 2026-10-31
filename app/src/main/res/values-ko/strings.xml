@@ -154,6 +154,8 @@
     <string name="play_next">다음 항목 재생</string>
     <string name="queue">대기열</string>
     <string name="source_unrecognised">BitChord가 이 링크를 인식할 수 없습니다.</string>
+    <string name="source_addon_not_addon">애드온 주소가 아닙니다. 웹페이지 주소 대신 애드온 서버 주소(manifest.json 이 있는 주소)를 넣으십시오.</string>
+    <string name="source_addon_repository_url">저장소 페이지 주소입니다. 안내(README)에 있는 애드온 서버 주소를 넣으십시오.</string>
     <string name="source_already_added">이미 %1$s(으)로 추가됨</string>
     <string name="source_setup_required">탭하여 설정 완료</string>
     <string name="source_skipped_by_quality">%1$s에서 사용 안 함 · 품질이 %2$s(으)로 설정됨</string>

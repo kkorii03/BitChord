@@ -164,6 +164,8 @@
     <string name="play_next">Play next</string>
     <string name="queue">Queue</string>
     <string name="source_unrecognised">BitChord could not tell what that link is</string>
+    <string name="source_addon_not_addon">That is not an addon address. Enter the addon server address (the address with manifest.json) instead of a web page address.</string>
+    <string name="source_addon_repository_url">That is a repository page address. Enter the addon server address from its instructions (README).</string>
     <string name="source_already_added">Already added as %1$s</string>
     <string name="source_setup_required">Tap to finish setting up</string>
     <string name="source_skipped_by_quality">Not used on %1$s · quality is set to %2$s</string>
