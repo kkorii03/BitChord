@@ -8529,10 +8529,25 @@ class PlaybackService : MediaLibraryService() {
      * short cut before the first note rather than a YouTube start and a seam.
      */
     private suspend fun resolveDirect(videoId: String, target: TrackMatcher.Target): Resolved {
-        val direct = runCatching { DirectSourceGate.lookup(videoId, target) }
-            .onFailure { if (it is CancellationException) throw it }
-            .getOrNull()
-        if (direct != null) return Resolved.Module(direct)
+        // [KO] first-audio: the YouTube walk runs beside the addon lookup, not
+        // after it. The addon still wins if it answers within its window; if it
+        // does not, the URL is already in hand instead of costing another
+        // client walk of silence.
+        val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
+            runCatching { StreamResolver.resolve(videoId) }
+        }
+        val direct = try {
+            runCatching { DirectSourceGate.lookup(videoId, target) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+        } catch (e: CancellationException) {
+            fallback.cancel()
+            throw e
+        }
+        if (direct != null) {
+            fallback.cancel()
+            return Resolved.Module(direct)
+        }
         val running = DirectSourceGate.stillLooking(videoId)
         TrackLog.d(
             "BitChord",
@@ -8545,9 +8560,12 @@ class PlaybackService : MediaLibraryService() {
             about = videoId,
         )
         val url = try {
-            StreamResolver.resolve(videoId)
+            fallback.await().getOrThrow()
         } catch (e: Exception) {
-            if (e is CancellationException) throw e
+            if (e is CancellationException) {
+                fallback.cancel()
+                throw e
+            }
             // YouTube cannot serve it, so a lookup still running is all that
             // is left, and there is nothing playing for it to swap into.
             return Resolved.Module(running?.await() ?: throw e)

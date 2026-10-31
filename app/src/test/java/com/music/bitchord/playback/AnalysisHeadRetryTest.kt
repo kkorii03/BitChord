@@ -87,6 +87,41 @@ class AnalysisHeadRetryTest {
     }
 
     @Test
+    fun aPlayerReadWinsOverAnAnalysisWriterOnTheSameEntry() {
+        // Regression: an analysis round writing the plain key made the
+        // player's open wait for the whole 4.98 MB file, so first audio came
+        // 28 ms after the round finished rather than when the URL resolved.
+        assertTrue(
+            analysisHeadMustYieldToPlayback(
+                analysisWriteKey = "YedjjosYKmI",
+                playbackReadKey = "YedjjosYKmI",
+                roundInFlight = true,
+                playerHoldsVideo = true,
+            ),
+        )
+    }
+
+    @Test
+    fun anAltPlaybackReadDoesNotStopThePlainAnalysisRound() {
+        assertFalse(
+            analysisHeadMustYieldToPlayback(
+                analysisWriteKey = "YedjjosYKmI",
+                playbackReadKey = "YedjjosYKmI#alt",
+                roundInFlight = true,
+                playerHoldsVideo = true,
+            ),
+        )
+        assertFalse(
+            analysisHeadMustYieldToPlayback(
+                analysisWriteKey = "YedjjosYKmI",
+                playbackReadKey = "YedjjosYKmI",
+                roundInFlight = false,
+                playerHoldsVideo = true,
+            ),
+        )
+    }
+
+    @Test
     fun aClaimKeptWhileAReaderHeldThePartialIsNotRetriedUntilTheReaderLetsGo() {
         // Dropping the claim on HeldElsewhere let the 250 ms idle tick launch
         // a round, resolve contentLength and retry the locked removeResource
