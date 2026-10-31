@@ -45,6 +45,7 @@
 - 함정 사례(원래 세션이 10-31 실제 검색 결과에서 본 것) — 1.9 기준 시험에 반드시 고정:
   - 거절해야 함: 'Cruel Summer' 검색에 섞여 나온 Midnite String Quartet(현악 커버), 'Cruel Summer [Originally Performed by Taylor Swift] (Instrumental Version)' / Maxi Leave, '(LP Giobbi Remix)', '(Live from TS | The Eras Tour)'. 'Uptown Funk' 1위 'Uptown Funk - Tribute to Mark Ronson and Bruno Mars' / Billboard Shakers. 제목 같고 길이 비슷해도 거절.
   - 받아야 함: Qobuz 일본 지역 계정의 가타카나 가수명 — Flowers → マイリー・サイラス(200초), Dynamite → 'BTS (防弾少年団)'.
+  - 감독 확인(10-31, TrackMatcherTrapCasesTest): 1.9 `directStream` 은 `requireSharedArtist` 없이 `ranked` 만 쓰므로, 길이 2초 이내면 **같은 글자의 다른 가수(현악 커버 Midnite String Quartet)와 트리뷰트도 통과**한다 → 첫 재생에서 커버가 나올 위험. 반대로 1.9 업그레이드 경로(`requireSharedArtist = true`)는 가타카나 가수를 `sharesArtist` 에서 떨어뜨려 Qobuz 일본 계정 고음질 업그레이드를 잃는다(우리 기능 대비 다운그레이드). 조치: u19-trapfix(같은 글자 다른 가수는 길이 예외 금지, 트리뷰트 표식 추가, ko/ hook). HQ 교체 때 업그레이드 경로의 artist 필터에 "다른 글자 + 길이 2초 이내" 허용을 ko hook 으로 추가.
   - 우리 쪽은 다른 글자 가수 후보를 소리 대조(hq-verify accepted)일 때만 채택했다. 1.9 에 소리 대조가 없으면, 다른 글자 가수 + 길이 일치여도 커버/리믹스/라이브/인스트루멘털/트리뷰트 거절 규칙이 먼저 걸리는지 테스트로 고정한다.
 - 사용자 방침(1.9 기본, 우리 품질 업그레이드는 문제 많음)에 따라 컴파일 초록 뒤 한 작업으로 교체: ① 우리 HQ 기능 vs 1.9 QualityUpgrade/DirectSourceGate 기능 비교표 작성(DeepSeek), ② 1.9 에 없는 것 중 **맞는 곡**에 관한 것(strictOriginal = 커버·리마스터로 바꾸지 않기, MV 소리 재다운로드)만 ko/ hook 으로 유지, ③ 나머지 HQ 장치는 1.9 로 교체, ④ HQ 테스트·featurehealth D1-hq 로 전후 비교.
 
