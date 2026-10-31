@@ -187,6 +187,7 @@ import com.music.bitchord.ui.navigation.AppRoute
 import com.music.bitchord.ui.components.SpotifyImportAlert
 import com.music.bitchord.ui.screens.WearOsScreen
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
+import com.music.bitchord.ui.screens.TelegramSettingsScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
@@ -1078,6 +1079,7 @@ private fun BitChordApp(
         route == AppRoute.Settings -> "Settings"
         route == AppRoute.Lyrics -> "Settings/lyrics"
         route == AppRoute.AccountScrobbling -> "Settings/account_scrobbling"
+        route == AppRoute.Telegram -> "Settings/telegram"
         route == AppRoute.Discord -> "Settings/discord"
         route == AppRoute.Spotify -> "Settings/spotify"
         route == AppRoute.Sources -> "Settings/sources"
@@ -3410,8 +3412,11 @@ private fun BitChordApp(
                                 onOpenLastfmLogin = { showLastfmLogin = true },
                                 onOpenDiscord = { navigator.push(AppRoute.Discord) },
                                 onOpenSpotify = { navigator.push(AppRoute.Spotify) },
+                                onOpenTelegram = { navigator.push(AppRoute.Telegram) },
                                 contentPadding = listPadding,
                             )
+                        } else if (pageRoute == AppRoute.Telegram) {
+                            TelegramSettingsScreen(contentPadding = listPadding)
                         } else if (pageRoute == AppRoute.Sources) {
                             SourcesScreen(
                                 contentPadding = listPadding,
@@ -4303,6 +4308,7 @@ private fun BitChordApp(
                         AppRoute.History -> stringResource(R.string.history)
                         is AppRoute.LibraryShowAll -> route.shelf.title
                         AppRoute.AccountScrobbling -> stringResource(R.string.account_scrobbling)
+                        AppRoute.Telegram -> stringResource(R.string.telegram)
                         AppRoute.Sources -> stringResource(R.string.sources)
                         AppRoute.ListenTogether -> stringResource(R.string.listen_together)
                         AppRoute.WearOs -> stringResource(R.string.wear_os_page_title)

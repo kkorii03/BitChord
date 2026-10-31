@@ -71,3 +71,11 @@
 -dontwarn org.conscrypt.**
 -dontwarn com.android.org.conscrypt.**
 -dontwarn io.github.muntashirakon.adb.**
+
+# ---- Telegram (TDLib) -----------------------------------------------------------
+# The Java API is serialised by name across JNI and TDLib's update callbacks
+# find their nested types reflectively. Keeping it whole also keeps the
+# org.drinkless.tdlib.*$... names the native library expects.
+-keep class org.drinkless.tdlib.** { *; }
+-keep class com.music.bitchord.telegram.** { *; }
+-dontwarn org.drinkless.tdlib.**

@@ -101,6 +101,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         CoroutineScope(Dispatchers.IO).launch { logProcessStart(logDirectory) }
         registerActivityLifecycleCallbacks(activityLifecycle)
         AppForeground.install(this)
+        // Telegram's TDLib client is never opened here. This only installs the
+        // foreground/playback listeners that decide, on an event, whether a
+        // client that something asked for may stay open.
+        com.music.bitchord.telegram.TelegramClientManager.init(this)
         TrackLog.i("BitChord", "lifecycle: app created")
 
         // The player is drawn by the shared UI module; this is what it reads

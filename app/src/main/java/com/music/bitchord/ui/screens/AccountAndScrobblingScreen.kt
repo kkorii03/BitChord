@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.SwitchAccount
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -43,6 +44,8 @@ import com.music.bitchord.data.DiagnosticsExport
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.telegram.TelegramAuthStage
+import com.music.bitchord.telegram.TelegramClientManager
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -58,6 +61,7 @@ fun AccountAndScrobblingScreen(
     onOpenLastfmLogin: () -> Unit,
     onOpenDiscord: () -> Unit,
     onOpenSpotify: () -> Unit,
+    onOpenTelegram: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -77,6 +81,7 @@ fun AccountAndScrobblingScreen(
     val discordUsername by AppSettings.discordUsername.collectAsStateWithLifecycle()
     val discordRpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
+    val telegramState by TelegramClientManager.state.collectAsStateWithLifecycle()
     val musicGated by MusicGateFallback.active.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -181,6 +186,21 @@ fun AccountAndScrobblingScreen(
                     },
                 )
             }
+        }
+
+        SettingsGroup(header = stringResource(R.string.telegram)) {
+            SettingsRow(
+                icon = Icons.Rounded.Send,
+                title = stringResource(R.string.telegram),
+                subtitle = stringResource(
+                    if (telegramState.stage == TelegramAuthStage.READY) {
+                        R.string.connected
+                    } else {
+                        R.string.tap_to_connect
+                    },
+                ),
+                onClick = onOpenTelegram,
+            )
         }
 
         SettingsGroup(
