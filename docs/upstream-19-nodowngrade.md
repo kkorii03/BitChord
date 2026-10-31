@@ -37,5 +37,9 @@
 | 큐 비면 플레이어 닫기, 분석 대기(폴링 없음) | 우리 | 테스트/코드 확인 | 잃음 → app 단계 |
 | 1.9 신기능: bit-perfect/USB DAC, 팟캐스트, Top Picks, LoopMix, 뮤직비디오 플레이어 | 1.9 | merge-guard 1번(1.9 파일 삭제 0) + 1.9 테스트 CI 목록에 추가 | 삭제 0 확인(현재 HEAD) |
 
+## 품질 업그레이드(HQ) 교체 단계 — 컴파일 초록 뒤 별도로
+- 현황(10-31 밤): u19-app-sources 가 컴파일을 맞추려고 `SourceResolver.bestAcross` 를 1.9 원본 대신 우리 HQ 장치(SourceCooldown, HqHostTracker, HqQuality.couldWin 90초 소리 비교, SearchReport, strictOriginal, manual)로 바꿨다. 우리 HQ 코드가 PlaybackService·QualityUpgrade·HqLibraryUpgrade·MvSoundRedownload·HqAudioVerify 에 퍼져 있어서 한 번에 떼면 컴파일이 깨지므로 일단 채택.
+- 사용자 방침(1.9 기본, 우리 품질 업그레이드는 문제 많음)에 따라 컴파일 초록 뒤 한 작업으로 교체: ① 우리 HQ 기능 vs 1.9 QualityUpgrade/DirectSourceGate 기능 비교표 작성(DeepSeek), ② 1.9 에 없는 것 중 **맞는 곡**에 관한 것(strictOriginal = 커버·리마스터로 바꾸지 않기, MV 소리 재다운로드)만 ko/ hook 으로 유지, ③ 나머지 HQ 장치는 1.9 로 교체, ④ HQ 테스트·featurehealth D1-hq 로 전후 비교.
+
 ## 병합 뒤 task/fix-1030 에 더 들어간 수정 (10-31, 원래 세션)
 병합 기준 `724fd5ef` 이후 15커밋(가사 싱크 엔진 실패 표시, 늦게 온 표지 다시 그리기, 다음 곡 비디오 싱크 429 대기, 품질 업그레이드 가수명/네트워크 실패 표시). 컴파일이 초록이 된 뒤 `origin/task/fix-1030` 을 한 번 더 합친다. 품질 업그레이드 관련 커밋은 1.9 Direct Source 로 대체되므로 테스트만 비교 자료로 쓴다.
