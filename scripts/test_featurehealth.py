@@ -193,6 +193,46 @@ class NextPrepTests(unittest.TestCase):
         )
         self.assertEqual(2, metric(report, "D1-sync-skip").attempts)
 
+    def test_next_prep_sync_line_separates_failure_from_healthy_no_answer(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "next-prep: A version=a lyrics=lrc hq=none "
+                "sync=skipped(no-answer) mix=none in 100ms",
+            ),
+            line(
+                "19:00:00.001",
+                "next-prep sync: a result=no-answer reason=none",
+            ),
+            line(
+                "19:00:01.000",
+                "next-prep: B version=b lyrics=lrc hq=none "
+                "sync=skipped(no-answer) mix=none in 100ms",
+            ),
+            line(
+                "19:00:01.001",
+                "next-prep sync: b result=failed:no-audio reason=no-audio",
+            ),
+            line(
+                "19:00:02.000",
+                "next-prep: C version=c lyrics=lrc hq=none "
+                "sync=applied mix=none in 100ms",
+            ),
+            line(
+                "19:00:02.001",
+                "next-prep sync: c result=answered reason=applied",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(3, sync.attempts)
+        self.assertEqual(1, sync.successes)
+        self.assertEqual(
+            {"no-answer": 1, "no-audio": 1},
+            report.stats["next_prep"]["sync_skip_reasons"],
+        )
+        self.assertEqual(1, report.stats["next_prep"]["sync_failed"])
+
 
 class LosslessTests(unittest.TestCase):
     def test_accepted_verify_needs_actual_flac_playback(self) -> None:
