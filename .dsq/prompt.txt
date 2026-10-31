@@ -1,0 +1,11 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin). Branch = upstream v1.9 (git tag v1.9) merged into a Korean fork (fork reference: origin/task/fix-1030).
+PRIORITY-1 REGRESSION (never play an official music video when a song version exists): on the emulator smoke test, a shared link to an official MV now plays the MV.
+This branch: 'song version: QYh6mYIJG2Y skipped (not a video)' then 'play: -> 7 rings - Ariana Grande (QYh6mYIJG2Y)' (title '7 rings (Official Video)'). Same for ekzHIouo8Q4, av5JD1dfj_c, CnAmeh0-E-U, -RJSbO8UZVY.
+Fork, same test: 'song version: QYh6mYIJG2Y kept (timeout)' ... 'song version: QYh6mYIJG2Y -> XZ868t23Pb4 via search shared', track-summary video=y.
+Path: MainActivity LinkRequest.Track -> YtMusicRepository.trackLinks(videoId) = InnertubeParser.parseWatchQueue(Innertube.next(videoId)).firstOrNull{...} -> Song; YtMusicRepository line ~1230 SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) is false on this branch, so the swap is skipped.
+Task: find why the Song from trackLinks has isVideo=false and typeUnknown=false here but video=y in the fork. Compare InnertubeParser.parseWatchQueue / the watch-next row parsing (musicVideoType, MUSIC_VIDEO_TYPE_OMV/UGC/ATV, isVideo, typeUnknown, the ko RepoRestoredModels flags) and Innertube.next(...) request between HEAD, v1.9 and origin/task/fix-1030 (git diff v1.9 HEAD -- <file>, git show origin/task/fix-1030:<file>). Also check the Song model fields (shared .../data/model/Song.kt) and shared/src/*/ko/RepoRestoredModels.kt.
+Fix with the smallest change so an OMV/UGC watch row is a video (or typeUnknown when the response does not say), as in the fork; v1.9 code that is correct stays. Add a unit test with a minimal watch-next JSON fixture (an OMV row) asserting isVideo=true, and one for an ATV row asserting isVideo=false. Check other callers of the changed parser still behave (search, radio, queue).
+Rules: Do NOT touch .github/, keys/, gradle files, strings. Do NOT revert unrelated files; do not checkout other branches. Re-read callers. Use grep / Select-String, not rg.
+Verify: ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.*' and ./gradlew :app:compileProdDebugKotlin.
+At the end, summary in 10 lines or fewer: root cause (file:line, fork vs HEAD) / fix / tests / other callers affected / unresolved problems.
