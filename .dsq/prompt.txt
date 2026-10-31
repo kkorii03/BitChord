@@ -1,0 +1,28 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 test21, 10-31 15:47): 'Flowers - Miley Cyrus'(BkSSOGNeWTM)는 Qobuz 등에 분명히 무손실이 있는데 '더 높은 음질을 찾지 못했습니다'.
+로그 흐름:
+ 15:47:08 addon search(soundfean = Qobuz [Heisenbergg]) q='flowers miley cyrus' tier=LOSSLESS — ALREADY RUNNING (다른 곡 검색과 겹침)
+ 15:47:11~12 'Eljohnzc Addon Monochrome timed out after 4000ms', 'gglos timed out after 4000ms', 'source ... failed 2 times; resting for 30 minutes' (두 소스)
+ 15:47:12 'upgrade ahead: Flowers none (keeping YouTube)', 'substitute: Flowers no original on any configured source'
+ 15:47:20 Eljohnzc HTTP 500, 15:47:27 gglos timeout
+ 15:47:39 재생 시작: addon search(soundfean) q='flowers miley cyrus' — CACHE HIT, q='flowers' — CACHE HIT → 'upgrade search: no better copy'
+ 15:47:43, 15:47:49 사용자가 직접 업그레이드 → 'looking for a better copy' 직후 1초 만에 'no better copy' — addon search 줄이 아예 없음(어떤 소스에도 실제로 묻지 않음), 쉬는 소스 2개는 'is resting after repeated failures; skipping'.
+할 일:
+① 원인 확정(파일:줄): 어떤 캐시/판정이 수동 요청에서 실제 검색 없이 'none'을 돌려주는지(SourceResolver 의 '원곡 없음' 판정 캐시, addon 검색 결과 캐시, StreamChoice/QualityUpgrade 의 기록 등). upgradeQualityNow 가 SourceRegistry.clearCompletedAddonTrackCalls() 를 부르는데도 CACHE HIT 이 나는 이유.
+② 일부 소스가 실패·시간초과·쉬는 중인 상태에서 나온 '없음'은 확정 캐시 금지(나중에 다시 물을 수 있게). 확정 '없음'은 활성 소스가 모두 정상 응답했을 때만.
+③ 사용자가 직접 누른 요청: 그 곡의 '없음' 판정·검색 결과 캐시를 무시하고, 쉬는 소스도 이번 한 번은 다시 묻기(성공하면 쉬는 상태 해제). 자동 경로의 쉬기 규칙은 유지.
+④ 소스별 결과를 로그 한 줄로: 'hq-search: <곡> <소스> results=N best=<제목/아티스트/길이> verdict=<match|duration|title|artist|version|error|timeout|resting>' — 왜 매칭 실패했는지 알 수 있게(검색 결과는 있는데 판정에서 떨어지는 경우 포함).
+⑤ 배터리·요청 수: 수동 요청 1회당 소스별 1회만.
+테스트: 실패 섞인 '없음'은 캐시 안 됨, 수동 요청은 캐시·쉬기 무시, 정상 '없음'은 캐시됨 — 단위 테스트(고치기 전 실패).
+제약: .github/, keys, 서명 수정 금지. 바꾼 함수 모든 호출부 재확인. 마지막 10줄 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+HIGH — app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7102 — A manual press that joins a running automatic check can still be answered by that automatic pass: if it finds nothing it calls `reportManualUpgrade` (line 7235), which clears `manualUpgradeFor`, so the waiter's `if (manualUpgradeFor == mediaId)` is false and the manual pass never runs; the automatic search also used `manual=false`, so resting sources were skipped. Fix: while `manualJoinedRunningUpgrade` is true, suppress the automatic pass's manual answer, or force the waiter to run the manual pass even after `manualUpgradeFor` was cleared.
+HIGH — app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1385 — `conclusive` is only checked around `search()`, but `streamBest` can fail every stream open (HTTP 500/timeout), which increments the source's failure mark; the outcome is still returned `conclusive=true`, so `QualityUpgrade` records the track in `asked` and never retries through the automatic path. Fix: keep the pre-search failure mark available and recompare it after `streamBest`, marking the outcome inconclusive when it advanced.
+MEDIUM — app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1360 — When a source swallows a failure and returns an empty list, `candidates.isEmpty()` is evaluated before `!conclusive`, so the required `hq-search` line says `verdict=title` instead of `error`; this hides exactly the failure the task asks to expose. Fix: test `!conclusive` before `candidates.isEmpty()` and emit `error`.
+LOW — shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:498 — `rejectionReason` checks `strictLength` against `SUBSTITUTE_DRIFT_SEC` (5 s), while the actual filter in `matchAndStream` uses `UPGRADE_DRIFT_SEC` (2 s), so a row rejected on a 3–5 s drift is logged as `verdict=match` rather than `duration`. Fix: let the caller pass the drift used by the real filter and use it here.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
