@@ -97,10 +97,8 @@ fun autoplayQueueNeedsRefresh(
     currentIndex: Int,
     itemCount: Int,
     loadInProgress: Boolean,
-    repeatOne: Boolean = false,
 ): Boolean = enabled &&
     !repeatAll &&
-    !repeatOne &&
     !loadInProgress &&
     currentIndex >= 0 &&
     currentIndex == itemCount - 1

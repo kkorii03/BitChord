@@ -369,10 +369,14 @@ internal fun InlineQueue(
                     }
                     queueSection(tracks.context, QueueSection.CONTEXT, drag, controlsLocked, onJumpTo, onRemove)
                 }
-                if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
-                    item(key = "autoplay-heading") {
-                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
-                    }
+                item(key = "autoplay-heading") {
+                    AutoplayHeading(
+                        hasTracks = tracks.autoplay.isNotEmpty(),
+                        autoplayEnabled = autoplayEnabled,
+                        modifier = queueMotion(),
+                    )
+                }
+                if (autoplayEnabled) {
                     item(key = "autoplay-video-radio") {
                         VideoRadioRow(
                             checked = videoRadio,
@@ -381,6 +385,8 @@ internal fun InlineQueue(
                             modifier = queueMotion(),
                         )
                     }
+                }
+                if (tracks.autoplay.isNotEmpty()) {
                     queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove)
                 }
             }
@@ -471,7 +477,11 @@ private fun QueueClearButton(style: TextStyle, locked: Boolean, onClear: () -> U
 }
 
 @Composable
-private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
+private fun AutoplayHeading(
+    hasTracks: Boolean,
+    autoplayEnabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -493,7 +503,11 @@ private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
             )
             Text(
                 text = stringResource(
-                    if (hasTracks) Res.string.autoplay_queue_description else Res.string.autoplay_empty_description,
+                    when {
+                        hasTracks -> Res.string.autoplay_queue_description
+                        autoplayEnabled -> Res.string.autoplay_empty_description
+                        else -> Res.string.autoplay_disabled_description
+                    },
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.55f),

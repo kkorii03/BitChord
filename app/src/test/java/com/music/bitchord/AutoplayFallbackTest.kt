@@ -35,15 +35,14 @@ class AutoplayFallbackTest {
     }
 
     @Test
-    fun `repeat one does not refresh a queue it will not advance through`() {
-        assertFalse(
+    fun `repeat one still refreshes a queue because autoplay on means filled`() {
+        assertTrue(
             autoplayQueueNeedsRefresh(
                 enabled = true,
                 repeatAll = false,
                 currentIndex = 2,
                 itemCount = 3,
                 loadInProgress = false,
-                repeatOne = true,
             ),
         )
     }

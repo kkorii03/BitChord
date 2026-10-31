@@ -3,6 +3,7 @@ package com.music.bitchord.data.net
 import com.music.bitchord.data.model.Song
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,18 +35,133 @@ class AutoplayQueuePolicyTest {
     }
 
     @Test
-    fun `repeat one never fetches because the same track plays again`() {
-        // The queue does not advance while repeat-one loops the current track,
-        // so a station fetched now cannot be reached. It is fetched again when
-        // the listener leaves repeat-one.
-        assertFalse(autoplayTopUpNeeded(true, false, 0, repeatOne = true))
-        assertFalse(autoplayTopUpNeeded(true, false, 4, repeatOne = true))
+    fun `repeat one still fills the queue while the current track loops`() {
+        // AutoPlay on means the queue is filled. Repeat-one only loops the
+        // current track; the prepared tail is heard the moment it is left.
+        assertTrue(autoplayTopUpNeeded(enabled = true, repeatAll = false, queuedAhead = 0))
+        assertTrue(autoplayTopUpNeeded(true, false, 4))
     }
 
     @Test
     fun `the threshold is the caller's to set`() {
         assertFalse(autoplayTopUpNeeded(true, false, 2, minAhead = 2))
         assertTrue(autoplayTopUpNeeded(true, false, 1, minAhead = 2))
+    }
+
+    @Test
+    fun `the autoplay switch is drawn on only when repeat all is not holding it`() {
+        assertTrue(autoplayShownEnabled(true, AUTOPLAY_REPEAT_MODE_OFF))
+        assertTrue(autoplayShownEnabled(true, AUTOPLAY_REPEAT_MODE_ONE))
+        assertFalse(autoplayShownEnabled(true, AUTOPLAY_REPEAT_MODE_ALL))
+        assertFalse(autoplayShownEnabled(false, AUTOPLAY_REPEAT_MODE_OFF))
+        assertFalse(autoplayShownEnabled(false, AUTOPLAY_REPEAT_MODE_ONE))
+        assertFalse(autoplayShownEnabled(false, AUTOPLAY_REPEAT_MODE_ALL))
+    }
+
+    @Test
+    fun `turning autoplay on releases repeat all and fills immediately`() {
+        val result = autoplayToggleResult(
+            autoplay = false,
+            repeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            heldAutoplay = null,
+        )
+        assertTrue(result.autoplay)
+        assertEquals(AUTOPLAY_REPEAT_MODE_OFF, result.repeatMode)
+        assertNull(result.heldAutoplay)
+        assertTrue(
+            autoplayTopUpNeeded(
+                enabled = result.autoplay,
+                repeatAll = result.repeatMode == AUTOPLAY_REPEAT_MODE_ALL,
+                queuedAhead = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun `turning autoplay off while repeat all is on drops the held value`() {
+        val result = autoplayToggleResult(
+            autoplay = true,
+            repeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            heldAutoplay = true,
+        )
+        assertFalse(result.autoplay)
+        assertEquals(AUTOPLAY_REPEAT_MODE_ALL, result.repeatMode)
+        assertNull(result.heldAutoplay)
+    }
+
+    @Test
+    fun `repeat all switches autoplay off and remembers it was on`() {
+        val result = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_OFF,
+            repeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            autoplay = true,
+            heldAutoplay = null,
+        )
+        assertFalse(result.autoplay)
+        assertEquals(true, result.heldAutoplay)
+    }
+
+    @Test
+    fun `leaving repeat all restores the autoplay it switched off`() {
+        val toRepeatOne = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            repeatMode = AUTOPLAY_REPEAT_MODE_ONE,
+            autoplay = false,
+            heldAutoplay = true,
+        )
+        assertTrue(toRepeatOne.autoplay)
+        assertNull(toRepeatOne.heldAutoplay)
+
+        val toOff = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            repeatMode = AUTOPLAY_REPEAT_MODE_OFF,
+            autoplay = false,
+            heldAutoplay = true,
+        )
+        assertTrue(toOff.autoplay)
+        assertNull(toOff.heldAutoplay)
+    }
+
+    @Test
+    fun `leaving repeat all keeps autoplay off when it was already off`() {
+        val entering = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_OFF,
+            repeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            autoplay = false,
+            heldAutoplay = null,
+        )
+        assertFalse(entering.autoplay)
+        assertEquals(false, entering.heldAutoplay)
+
+        val leaving = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_ALL,
+            repeatMode = AUTOPLAY_REPEAT_MODE_OFF,
+            autoplay = false,
+            heldAutoplay = entering.heldAutoplay,
+        )
+        assertFalse(leaving.autoplay)
+        assertNull(leaving.heldAutoplay)
+    }
+
+    @Test
+    fun `repeat one and off changes leave autoplay alone`() {
+        val toRepeatOne = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_OFF,
+            repeatMode = AUTOPLAY_REPEAT_MODE_ONE,
+            autoplay = true,
+            heldAutoplay = null,
+        )
+        assertTrue(toRepeatOne.autoplay)
+        assertNull(toRepeatOne.heldAutoplay)
+
+        val toOff = repeatModeAutoplayResult(
+            previousRepeatMode = AUTOPLAY_REPEAT_MODE_ONE,
+            repeatMode = AUTOPLAY_REPEAT_MODE_OFF,
+            autoplay = true,
+            heldAutoplay = null,
+        )
+        assertTrue(toOff.autoplay)
+        assertNull(toOff.heldAutoplay)
     }
 
     @Test
