@@ -119,6 +119,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.PlayingAudioFormat
 import java.util.Locale
@@ -372,12 +373,45 @@ internal fun PlaybackQualityLabel(
  * carries the same measurements for a longer look. The Settings switch keeps
  * the line up all the time instead.
  *
- * Automix's analysis state deliberately has no line here: it describes the
- * app's own work rather than the music, so it belongs in the diagnostic log,
- * not on the player.
+ * Under the measured stream sits Automix's own analysis line. It describes
+ * the app's work rather than the music, so it stays inside this diagnostic
+ * block: only the listener who asked for stats for nerds sees it, and only
+ * while Automix is actually switched on.
  */
 internal fun nerdStatsVisible(revealed: Boolean, alwaysShow: Boolean): Boolean =
     revealed || alwaysShow
+
+/**
+ * Which Automix line the sleeve draws under its measured stream, if any.
+ *
+ * Pure so the on/off and per-state vocabulary can be tested without Compose.
+ * The party and video rules come ahead of the pair's states because they say
+ * no analysis is coming at all; the states only matter when it is.
+ */
+internal sealed class AutomixStatusLine {
+    data object Hidden : AutomixStatusLine()
+    data object StoppedInParty : AutomixStatusLine()
+    data object VideoCrossfade : AutomixStatusLine()
+    data class Analysis(
+        val current: TrackAnalysisState,
+        val next: TrackAnalysisState,
+    ) : AutomixStatusLine()
+}
+
+internal fun automixStatusLine(
+    showNerdStats: Boolean,
+    automixEnabled: Boolean,
+    inParty: Boolean,
+    isVideoOrigin: Boolean,
+    automixVideos: Boolean,
+    current: TrackAnalysisState,
+    next: TrackAnalysisState,
+): AutomixStatusLine = when {
+    !showNerdStats || !automixEnabled -> AutomixStatusLine.Hidden
+    inParty -> AutomixStatusLine.StoppedInParty
+    isVideoOrigin && !automixVideos -> AutomixStatusLine.VideoCrossfade
+    else -> AutomixStatusLine.Analysis(current, next)
+}
 
 @Composable
 internal fun SleeveNerdStats(
@@ -391,6 +425,29 @@ internal fun SleeveNerdStats(
     val alwaysShow by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!nerdStatsVisible(revealed, alwaysShow)) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+    val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val automixVideos by PlayerSettings.automixVideos.collectAsStateWithLifecycle()
+    val smartAnalysis by PlayerSettings.smartAnalysis.collectAsStateWithLifecycle()
+    // A party doesn't mix, and doesn't analyse for one either — see
+    // [com.music.bitchord.playback.CrossfadeController]. So the two flows above
+    // simply stop moving there, and the stats line has to say why rather than
+    // leave their last values on screen as if they still described something.
+    //
+    // Read off the party rather than published as a third flow: it is the same
+    // fact the controller and the analyzer each read for themselves, and a
+    // mirror of it could only ever disagree.
+    val inParty by remember {
+        PlayerPlatform.host.party.map { it.inParty }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = PlayerPlatform.host.party.value.inParty)
+    val statusLine = automixStatusLine(
+        showNerdStats = alwaysShow,
+        automixEnabled = smartFadeOn,
+        inParty = inParty,
+        isVideoOrigin = song.isVideoOrigin,
+        automixVideos = automixVideos,
+        current = smartAnalysis.current,
+        next = smartAnalysis.next,
+    )
     // The measured stream for this track only; see [PlaybackQualityLabel].
     val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)
     // A plain white line reads fine over the usual dark tile, but a light
@@ -413,6 +470,32 @@ internal fun SleeveNerdStats(
                 text = stats,
                 style = nerdStyle,
                 color = Color.White.copy(alpha = 0.65f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+        val statusText = when (statusLine) {
+            AutomixStatusLine.Hidden -> null
+            AutomixStatusLine.StoppedInParty -> stringResource(Res.string.automix_stopped_in_party)
+            AutomixStatusLine.VideoCrossfade -> stringResource(Res.string.automix_not_supported_video)
+            is AutomixStatusLine.Analysis -> stringResource(
+                // Both sides always named, even when they agree, so the line
+                // reads the same way every time and the eye can find the half
+                // it wants without re-parsing the sentence.
+                Res.string.automix_analysis_status,
+                statusLine.current.localizedLabel(),
+                statusLine.next.localizedLabel(),
+            )
+        }
+        if (statusText != null) {
+            Text(
+                text = statusText,
+                style = nerdStyle,
+                // Dimmer than the measured line above it: that one describes
+                // the audio, this one describes the app, and the ranking
+                // should show.
+                color = Color.White.copy(alpha = 0.5f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -1948,4 +2031,14 @@ private fun codecLabel(mimeType: String?): String? = when {
     mimeType.endsWith("flac") -> "FLAC"
     mimeType.endsWith("alac") -> "ALAC"
     else -> mimeType.substringAfter('/').uppercase(Locale.ROOT)
+}
+
+/** Wording for the Automix status line; see [TrackAnalysisState]. */
+@Composable
+private fun TrackAnalysisState.localizedLabel(): String = when (this) {
+    TrackAnalysisState.ANALYSED -> stringResource(Res.string.analysis_complete)
+    TrackAnalysisState.REFINING -> stringResource(Res.string.analysis_refining)
+    TrackAnalysisState.ANALYSING -> stringResource(Res.string.analysis_in_progress)
+    TrackAnalysisState.WAITING -> stringResource(Res.string.waiting)
+    TrackAnalysisState.FAILED -> stringResource(Res.string.failed)
 }
