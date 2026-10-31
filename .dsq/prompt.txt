@@ -1,0 +1,166 @@
+﻿[NO-FIX-LOOP]
+You are fixing compile errors in the APP module after merging upstream BitChord v1.9 into our Korean fork, and re-attaching lost Korean-fork features. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. Our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist or whose upstream signature changed. The shared and sharedUi modules already compile (do not edit shared/ or sharedUi/ main code).
+Reference versions (fetch first):
+  git fetch origin task/fix-1030 ; then use commit 724fd5ef = our fork right before the merge (git show 724fd5ef:<path>)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only, never push there)
+Lost-feature inventory: docs/upstream-19-lost.md (rows give fork file:line, identifiers, where to re-attach). Feature decisions: docs/upstream-19-plan.md and docs/upstream-19-nodowngrade.md.
+
+USER POLICY (strict): upgrade to v1.9 with NO functional downgrade. Where v1.9 has its own implementation of a feature, v1.9's is used: quality upgrade / hq-swap / HQ prefetch / HqAudioVerify wiring -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings screen layout, menus, video playback, tab bar, mini player -> v1.9. For those, adapt or delete OUR now-dead caller code (list every deletion with reason in the summary) — never delete v1.9 code.
+KEEP and RE-ATTACH every Korean-fork feature v1.9 does not have, for rows of docs/upstream-19-lost.md buckets A-E, I, J that touch your files: lyrics sync correction (incl. AudioCache timingKeep), song-version verdict / no music video / audio instead of MV (musicOnlyTried, alternateVersionCache), settings prefer_music_only, skip_non_music_parts, skip_sponsor_parts (keys, setters, and the PlaybackService collectors that apply them), Korea-blocked fallback + proxy (recheckGateNow), video radio, Korean UI labels, diagnostic logs (installCrashHandler/logProcessStart/onTrimMemory, release TrackLog.echo, DebugLog->TrackLog, crossfade skipped line, consume-user-queue line, audio switch refusal detail), withPhraseLineBreak, close player when queue empties, TrackAnalyzer.awaitWindow (event-driven, no polling).
+
+Separation rule (docs/ko-fork-layout.md): restored Korean code goes in NEW files under app/src/main/java/com/music/bitchord/ko/ (package com.music.bitchord.ko), not back inside upstream files. Inside a file that exists in v1.9, add only short calls marked with a trailing comment // [KO] <feature>. Prefer extension/top-level functions. When an upstream signature changed, adapt OUR code to it.
+
+HARD RULES (results are machine-checked; a violating result is thrown away):
+- never restore a whole file from 724fd5ef / task/fix-1030; never delete or empty a file that exists in v1.9; never revert v1.9 hunks to the fork version.
+- edit only YOUR files (list below) plus new files under app/src/main/java/com/music/bitchord/ko/ (name them <LaneName>*.kt). If you need a declaration that belongs in another lane's file, do NOT edit that file: write 'NEEDS: <file>: <declaration>' in the summary and, if you can, provide it as a function in your own ko/ file.
+- do not edit .github/, keys/, signing, gradle files.
+Check your own errors with: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' . Other lanes fix the other files in parallel, so errors elsewhere are expected — ignore them. Goal: zero errors in your files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change.
+
+At the end, summarize in 12 lines or less: modified files / new ko files / Korean features restored / our code dropped in favour of v1.9 (with reason) / NEEDS lines / remaining errors in your files / unresolved questions.
+
+LaneName=service. YOUR FILES:
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
+app/src/main/java/com/music/bitchord/playback/QueueCoordinator.kt
+app/src/main/java/com/music/bitchord/playback/PrefetchController.kt
+app/src/main/java/com/music/bitchord/playback/Autoplay.kt
+app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt
+app/src/main/java/com/music/bitchord/playback/PartySync.kt
+app/src/main/java/com/music/bitchord/playback/TranslationAhead.kt
+app/src/main/java/com/music/bitchord/playback/SongVersionController.kt
+
+Current compile errors in your files (132):
+app/src/main/java/com/music/bitchord/playback/Autoplay.kt:186:9 Unresolved reference 'videoWanted'.
+app/src/main/java/com/music/bitchord/playback/Autoplay.kt:186:24 Unresolved reference 'offline'.
+app/src/main/java/com/music/bitchord/playback/Autoplay.kt:190:9 Unresolved reference 'videoWanted'.
+app/src/main/java/com/music/bitchord/playback/Autoplay.kt:594:25 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt:611:26 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/PartySync.kt:760:50 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:416:24 Unresolved reference 'songCacheEvictionCount'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:453:19 Unresolved reference 'Innertube'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:486:19 Unresolved reference 'Innertube'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:567:19 Unresolved reference 'Innertube'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:636:33 Unresolved reference 'Innertube'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:639:36 Unresolved reference 'Innertube'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:649:47 Unresolved reference 'Innertube'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1041:55 Unresolved reference 'PLAYBACK_STATE_SAVE_MS'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1120:41 Unresolved reference 'ManualUpgradeThrottle'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1120:63 Unresolved reference 'MANUAL_UPGRADE_COOLDOWN_MS'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1320:17 Unresolved reference 'PrivateListening'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1370:74 Unresolved reference 'playReason'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1839:58 Unresolved reference 'AUDIO_TRACK_REASON_TTL_MS'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2060:50 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2061:44 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2143:65 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2216:64 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2327:71 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2621:51 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2655:54 Unresolved reference 'analysisTimeMs'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2656:46 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2656:70 Unresolved reference 'hasWindow'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2764:37 Unresolved reference 'current'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2974:37 Argument type mismatch: actual type is 'Long?', but 'Long' was expected.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3003:25 Unresolved reference 'wasPlayingBeforeAlign'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3290:13 Unresolved reference 'logVersionSwapRefused'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3298:17 Unresolved reference 'logVersionSwapRefused'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:3320:17 Unresolved reference 'logVersionSwapRefused'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:4384:24 Unresolved reference 'sessionFavoriteStatus'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:4852:27 Unresolved reference 'transitionReason'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:4852:60 Unresolved reference 'missingMeta'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:4944:17 Unresolved reference 'PrivateListening'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:5614:57 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:5625:29 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6571:14 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6686:54 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6686:60 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6703:13 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6716:49 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6716:55 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6727:16 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:6765:21 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7046:13 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7047:14 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7172:33 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7264:48 Unresolved reference 'rememberOriginal'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7271:29 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7296:54 Argument type mismatch: actual type is 'Unit', but 'PlaybackService.SwapOutcome' was expected.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7353:35 Unresolved reference 'QualityUpgradeAdvice'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7359:50 Unresolved reference 'QualityUpgradeAdvice'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7370:25 Unresolved reference 'deferManualAnswer'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7395:44 Unresolved reference 'rememberOriginal'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7402:25 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7434:25 Operator '!=' cannot be applied to 'Unit' and 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7435:58 Argument type mismatch: actual type is 'Unit', but 'PlaybackService.SwapOutcome' was expected.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7458:29 Unresolved reference 'deferManualAnswer'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7482:21 Unresolved reference 'deferManualAnswer'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7558:13 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7576:25 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7587:14 Unresolved reference 'QualityUpgradeAdvice'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7615:9 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7635:9 Unresolved reference 'PlayingAudioFormat'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7638:9 Unresolved reference 'PlayingAudioFormat'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7646:9 Unresolved reference 'PlayingAudioFormat'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7649:9 Unresolved reference 'QualityUpgradeAdvice'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7659:58 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7660:42 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7660:48 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7664:16 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7675:18 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7677:20 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7680:21 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7684:40 Unresolved reference 'label'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7886:14 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7893:20 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7919:24 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7927:24 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7937:24 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7951:24 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7975:24 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7990:20 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:8134:67 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:8202:16 Return type mismatch: expected 'Unit', actual 'PlaybackService.SwapOutcome'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:8642:82 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9101:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9101:59 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9102:51 Return type mismatch: expected 'String?', actual 'Any'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9111:27 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9113:26 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9113:60 None of the following candidates is applicable:
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9114:47 Unresolved reference 'displayName'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9120:54 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9128:34 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9128:40 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9129:47 Return type mismatch: expected 'String?', actual 'Any'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9790:17 Unresolved reference 'sessionFavoriteStatus'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9876:51 Unresolved reference 'SourceRegistry'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9992:55 Unresolved reference 'nextTrackPreparation'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:9994:36 Unresolved reference 'nextTrackPreparation'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:10466:33 Unresolved reference 'resampleTargetRate'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:10495:50 Unresolved reference 'resampleTargetRate'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:10865:53 Unresolved reference 'directFloatSupported'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:11364:14 Unresolved reference 'PrivateListening'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:11430:14 Unresolved reference 'PrivateListening'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:11442:14 Unresolved reference 'PrivateListening'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:11535:13 Unresolved reference 'PrivateListening'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12034:26 Unresolved reference 'skipNonMusicParts'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12058:26 Unresolved reference 'skipNonMusicParts'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12065:53 Unresolved reference 'skipSponsorParts'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12097:26 Unresolved reference 'skipNonMusicParts'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12124:26 Unresolved reference 'skipNonMusicParts'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12142:53 Unresolved reference 'skipSponsorParts'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12695:50 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:12711:50 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/PrefetchController.kt:67:39 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/PrefetchController.kt:68:35 Cannot infer type for type parameter 'A'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PrefetchController.kt:68:35 Cannot infer type for type parameter 'B'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/PrefetchController.kt:188:37 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/QueueCoordinator.kt:102:13 Unresolved reference 'userQueueIndices'.
+app/src/main/java/com/music/bitchord/playback/QueueCoordinator.kt:103:55 Unresolved reference 'userQueueIndices'.
+app/src/main/java/com/music/bitchord/playback/QueueCoordinator.kt:103:83 Unresolved reference 'userQueueIndices'.
+app/src/main/java/com/music/bitchord/playback/QueueCoordinator.kt:104:25 Unresolved reference 'player'.
+app/src/main/java/com/music/bitchord/playback/SongVersionController.kt:152:26 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/SongVersionController.kt:187:26 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/SongVersionController.kt:498:26 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/playback/TranslationAhead.kt:357:56 Unresolved reference 'keepForTiming'.
