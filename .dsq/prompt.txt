@@ -1,0 +1,52 @@
+﻿You are fixing compile errors after merging upstream BitChord v1.9 into our Korean fork. Branch base = task/upstream-19. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. So our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist (or upstream renamed/changed signatures).
+Reference versions (fetch them first):
+  git fetch origin task/fix-1030            -> origin/task/fix-1030 = our fork BEFORE the merge
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   -> pure upstream v1.9 (read only, never push there)
+Use `git show origin/task/fix-1030:<path>` and `git show v1.9:<path>` to see what each side had.
+
+Policy (user order): adopt v1.9 maximally. Where v1.9 has its own implementation of the same feature, USE v1.9's and delete our now-dead caller code instead of restoring ours: quality upgrade / hq-swap / HQ prefetch -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings, menus, video playback, tab bar, mini player -> v1.9.
+KEEP (restore if lost) only Korean-fork features v1.9 does not have: lyrics sync correction, song-version verdict / no music-video / audio instead of MV / cover-piano rejection, Korea-blocked song fallback + proxy playback + alternate ATV copy, video radio, Korean strings, diagnostic log lines (DiagLog / featurehealth lines).
+
+Separation rule (read docs/ko-fork-layout.md): when you restore a lost Korean declaration, put it in a NEW file under package com.music.bitchord.ko (sharedUi: sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/<LaneName>Restored*.kt, package com.music.bitchord.ko.ui), NOT back inside an upstream file. Inside an upstream file (one that exists in v1.9) add only one-line calls marked with a trailing comment // [KO] <feature>. Prefer extension functions / top-level functions over editing upstream classes. Never split or delete upstream v1.9 code. When an upstream signature changed, adapt OUR code to the new upstream signature, not the other way round.
+
+Scope: fix the errors in YOUR files only (list below). The shared module already compiles (do not edit shared/). Other lanes fix the other sharedUi files in parallel, so the full build will still show errors in files outside your list - ignore those, do not edit files outside your list except new files under .../ko/. Check with: ./gradlew :sharedUi:compileReleaseKotlinAndroid --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' ; your goal is ZERO errors in your files. Do not edit .github/, keys/, signing, gradle files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change. If you delete our code because v1.9 replaces it, list it in the summary with the reason.
+If you delete a test of a removed feature, list it in the summary.
+
+At the end, summarize in 10 lines or less: modified files / new ko files / what was restored (Korean features) / what was dropped in favour of v1.9 / remaining errors in your files / unresolved questions.
+
+HARD RULES (results are checked; violating results are thrown away): never restore a whole file from origin/task/fix-1030, never delete or empty a file that exists in v1.9, never edit app/ (the app module is fixed after sharedUi). Only your listed files and new files under ko/ui/ are taken from your result.
+
+YOUR FILES: sharedUi/.../ui/player/LyricsOffsetSheet.kt, ui/player/PlayerLyrics.kt (LaneName=Lyrics). These carry our Korean lyrics-sync correction UI: keep every sync feature working on top of the v1.9 player.
+
+Current compile errors in your files (from CI):
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:96:11 Unresolved reference 'SongLyricsSync'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:323:37 Unresolved reference 'SongLyricsSync'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:325:17 Property delegate must have a 'getValue(Nothing?, KProperty0<??? (Unknown type for type parameter T)>)' method. None of the following functions is applicable:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:325:20 Cannot infer type for type parameter 'T'. Specify it explicitly.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:326:30 Function invocation 'lines()' expected.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:326:44 Function invocation 'lines()' expected.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:326:62 Unresolved reference 'text'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:332:27 Unresolved reference 'timing'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:332:40 Unresolved reference 'onAiTiming'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:349:32 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:352:25 Unresolved reference 'onOffset'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:352:42 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:355:42 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:362:32 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:365:25 Unresolved reference 'onOffset'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:365:42 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:396:40 Unresolved reference 'text'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:424:41 Unresolved reference 'lyricPositionMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:424:82 Unresolved reference 'timeMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:425:41 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:427:29 Unresolved reference 'onOffset'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:455:46 Unresolved reference 'lyricPositionMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:456:61 Unresolved reference 'timeMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:465:59 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:468:47 Unresolved reference 'offsetMs'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/LyricsOffsetSheet.kt:470:33 Unresolved reference 'onOffset'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerLyrics.kt:2284:25 Unresolved reference 'animateDpAsState'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerLyrics.kt:2289:33 Cannot infer type for type parameter 'T'. Specify it explicitly.
