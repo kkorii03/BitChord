@@ -421,6 +421,13 @@ object TrackMatcher {
         candidate: Song,
         target: Target,
         maxDriftSec: Int = SUBSTITUTE_DRIFT_SEC,
+        /**
+         * Accept a row whose artist is written in a different script, as long
+         * as title, take and runtime agree — see [isArtistUnverifiedOriginal].
+         * The sound comparison still has to accept it; this only lets the
+         * caller *find* it and offer it to that comparison.
+         */
+        allowArtistUnverified: Boolean = false,
     ): Boolean {
         if (isCoverOf(candidate, target)) return false
         val wanted = parseTitle(target.title, target.artist)
@@ -448,13 +455,88 @@ object TrackMatcher {
                 namesTheSameArtist(target.artist, candidate.artist)) ||
                 sharesArtistChannel(target, candidate) ||
                 sharesRelease(target, candidate)
-            if (!sameArtist) return false
+            if (!sameArtist &&
+                !(allowArtistUnverified && isArtistUnverifiedOriginal(candidate, target, maxDriftSec))
+            ) {
+                return false
+            }
         }
         if (target.durationSec != null) {
             val gotSec = secondsOf(candidate.durationText) ?: return false
             if (abs(target.durationSec - gotSec) > maxDriftSec) return false
         }
         return true
+    }
+
+    /**
+     * Whether [candidate] is the requested recording apart from an artist
+     * credit that cannot be compared because it is written in another script.
+     *
+     * A catalogue localises a Western act's name (Qobuz returns
+     * "Flowers/マイリー・サイラス" for Miley Cyrus). The name then shares no
+     * letters with the queue row, so an ordinary credit check can only ever
+     * say "different" — and every such localised result was thrown away before
+     * the audio comparison could rescue it. This keeps the row only when every
+     * signal that *is* comparable agrees: the exact normalised title (featuring
+     * credits and other brackets are already excluded by [parseTitle]), the
+     * same take markers, a runtime within [ARTIST_UNVERIFIED_DRIFT_SEC], and no
+     * cover/karaoke/tribute arrangement. A same-script but different artist
+     * still fails [artistScriptsDiffer], so this never becomes a general
+     * artist bypass.
+     *
+     * This is a search grade, not a replacement verdict: callers must still
+     * have the sound comparison accept the row before it may play.
+     */
+    fun isArtistUnverifiedOriginal(
+        candidate: Song,
+        target: Target,
+        maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
+    ): Boolean {
+        if (target.artist.isBlank() || candidate.artist.isBlank()) return false
+        if (!artistScriptsDiffer(target.artist, candidate.artist)) return false
+        // A channel or release identity that proves the same act is a normal
+        // match, not an unverified one.
+        if (namesTheSameArtist(target.artist, candidate.artist) ||
+            sharesArtistChannel(target, candidate) ||
+            sharesRelease(target, candidate)
+        ) {
+            return false
+        }
+        if (isCoverOf(candidate, target)) return false
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return false
+        if (!coresEqual(wanted.cores(), got.cores())) return false
+        val albumMarks = albumVersionMarkers(candidate.albumName)
+        val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
+            (albumMarks intersect wanted.versions)
+        if (wanted.versions != effectiveVersions) return false
+        val wantedSec = target.durationSec ?: return false
+        val gotSec = secondsOf(candidate.durationText) ?: return false
+        return abs(wantedSec - gotSec) <= maxDriftSec
+    }
+
+    /**
+     * Whether the two credits are written in scripts that share no letters at
+     * all (Latin vs kana/Hangul/Han/Cyrillic, ...). When they do share a script
+     * a different name is a different artist and must stay a rejection.
+     */
+    fun artistScriptsDiffer(wanted: String, got: String): Boolean {
+        val want = artistScripts(wanted)
+        val have = artistScripts(got)
+        return want.isNotEmpty() && have.isNotEmpty() && want.intersect(have).isEmpty()
+    }
+
+    private fun artistScripts(text: String): Set<Character.UnicodeScript> {
+        val out = mutableSetOf<Character.UnicodeScript>()
+        for (ch in normalize(text)) {
+            if (!ch.isLetter()) continue
+            when (val script = Character.UnicodeScript.of(ch.code)) {
+                Character.UnicodeScript.COMMON, Character.UnicodeScript.INHERITED -> Unit
+                else -> out += script
+            }
+        }
+        return out
     }
 
     /**
@@ -482,6 +564,20 @@ object TrackMatcher {
          * `duration` rather than as a match against a wider default.
          */
         driftSec: Int = SUBSTITUTE_DRIFT_SEC,
+        /**
+         * Report a cross-script artist as `artist-unverified` rather than
+         * `artist`. The upgrade path sets this so a localised catalogue row is
+         * still offered to the sound comparison instead of being dropped at
+         * the credit check.
+         */
+        allowArtistUnverified: Boolean = false,
+        /**
+         * The runtime window for the cross-script grade. Separate from
+         * [driftSec] so the localised row is judged at [ARTIST_UNVERIFIED_DRIFT_SEC]
+         * while a normally credited row keeps the caller's stricter window.
+         */
+        artistUnverifiedDriftSec: Int =
+            maxOf(driftSec, ARTIST_UNVERIFIED_DRIFT_SEC),
     ): String {
         if (strictOriginal) {
             if (isCoverOf(candidate, target)) return "version"
@@ -498,7 +594,27 @@ object TrackMatcher {
                     namesTheSameArtist(target.artist, candidate.artist)) ||
                     sharesArtistChannel(target, candidate) ||
                     sharesRelease(target, candidate)
-                if (!sameArtist) return "artist"
+                if (!sameArtist) {
+                    if (allowArtistUnverified) {
+                        if (isArtistUnverifiedOriginal(candidate, target, artistUnverifiedDriftSec)) {
+                            return "artist-unverified"
+                        }
+                        // Title and take may agree while only the runtime is
+                        // out. Report the term that actually rejected the row
+                        // instead of calling a localised credit an artist miss.
+                        if (artistScriptsDiffer(target.artist, candidate.artist) &&
+                            strictLength && target.durationSec != null
+                        ) {
+                            val gotSec = secondsOf(candidate.durationText) ?: return "duration"
+                            if (abs(target.durationSec - gotSec) > artistUnverifiedDriftSec &&
+                                isArtistUnverifiedOriginal(candidate, target, Int.MAX_VALUE)
+                            ) {
+                                return "duration"
+                            }
+                        }
+                    }
+                    return "artist"
+                }
             }
             if (strictLength && target.durationSec != null) {
                 val gotSec = secondsOf(candidate.durationText) ?: return "duration"
@@ -507,6 +623,21 @@ object TrackMatcher {
             return "match"
         }
         if (requireSharedArtist && !sharesArtist(target.artist, candidate.artist)) {
+            if (allowArtistUnverified) {
+                if (isArtistUnverifiedOriginal(candidate, target, artistUnverifiedDriftSec)) {
+                    return "artist-unverified"
+                }
+                if (strictLength && target.durationSec != null &&
+                    artistScriptsDiffer(target.artist, candidate.artist)
+                ) {
+                    val gotSec = secondsOf(candidate.durationText) ?: return "duration"
+                    if (abs(target.durationSec - gotSec) > artistUnverifiedDriftSec &&
+                        isArtistUnverifiedOriginal(candidate, target, Int.MAX_VALUE)
+                    ) {
+                        return "duration"
+                    }
+                }
+            }
             return "artist"
         }
         if (strictLength && !withinSeconds(candidate, target, driftSec)) {
@@ -2053,6 +2184,14 @@ object TrackMatcher {
      * listener asked for, not for accepting a search result.
      */
     const val SUBSTITUTE_DRIFT_SEC = 5
+
+    /**
+     * How close an artist-unverified row's runtime must be. The credit is the
+     * one identity signal missing, so the remaining signals have to be
+     * unusually strong; three seconds is the same tight window the normal
+     * matcher treats as one master.
+     */
+    const val ARTIST_UNVERIFIED_DRIFT_SEC = 3
 
     /**
      * Whether two runtimes differ by more than [DURATION_LIMIT_SEC], meaning

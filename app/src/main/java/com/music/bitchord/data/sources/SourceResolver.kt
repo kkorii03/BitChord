@@ -155,11 +155,16 @@ object SourceResolver {
      * The per-source detail of one search, for the `hq-search` line.
      *
      * [verdict] is why a result was or was not usable:
-     * `match`, `duration`, `title`, `artist`, `version`, `error`, `timeout`
-     * or `resting`. [conclusive] is false when the source could not give a
-     * complete answer — a failed backend, a timeout, or being skipped while
-     * resting — which is what stops that "none" from being remembered as
-     * final.
+     * `match`, `artist-unverified`, `duration`, `title`, `artist`, `version`,
+     * `error`, `timeout` or `resting`. [conclusive] is false when the source
+     * could not give a complete answer — a failed backend, a timeout, or being
+     * skipped while resting — which is what stops that "none" from being
+     * remembered as final.
+     *
+     * [alternate] is the second-best row found for the same track, kept so a
+     * caller whose first choice fails its own accept gate can still consider
+     * an `artist-unverified` copy. It is never adopted without that gate, and
+     * [alternateVerdict] says which kind of row it is.
      */
     data class SearchOutcome(
         val stream: SourceStream? = null,
@@ -167,6 +172,9 @@ object SourceResolver {
         val best: Song? = null,
         val verdict: String = "title",
         val conclusive: Boolean = true,
+        val alternate: SourceStream? = null,
+        val alternateBest: Song? = null,
+        val alternateVerdict: String? = null,
     )
 
     /**
@@ -731,6 +739,7 @@ object SourceResolver {
             strictLength = true,
             requireSharedArtist = true,
             strictOriginal = true,
+            allowArtistUnverified = true,
             excludeHosts = excludeHosts,
             manual = manual,
             report = report,
@@ -1163,6 +1172,12 @@ object SourceResolver {
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
+        /**
+         * Keep a row whose artist is localised into another script as an
+         * `artist-unverified` candidate. Only the upgrade path sets this: the
+         * caller then has `hq-verify` accept it before it may play.
+         */
+        allowArtistUnverified: Boolean = false,
         excludeHosts: Set<String> = emptySet(),
         sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
         /**
@@ -1212,6 +1227,7 @@ object SourceResolver {
                             requireSharedArtist,
                             strictOriginal,
                             manual,
+                            allowArtistUnverified,
                         )
                     }
                     if (answer == null) {
@@ -1243,6 +1259,7 @@ object SourceResolver {
             }
             .toMutableList()
         var best: Pair<MusicSource, SourceStream>? = null
+        var bestVerdict: String? = null
         try {
             while (running.isNotEmpty()) {
                 val first = select {
@@ -1265,37 +1282,84 @@ object SourceResolver {
                 ) { HqHostTracker.isResting(it) }
                 for (index in candidateOrder) {
                     val (source, outcome) = ready[index]
-                    val stream = outcome.stream ?: continue
-                    val host = HqHostTracker.hostOf(stream.url)
-                    if (host != null && host in excludeHosts) continue
-                    // A host that just rate-limited us is not asked again for
-                    // this track. SourceCooldown still handles the source-level
-                    // failure; this is the narrower server-level rest.
-                    if (host != null && HqHostTracker.isResting(host)) {
-                        TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
-                        continue
+                    // The row the source actually chose comes first. Its
+                    // alternate is the other copy of the same recording — the
+                    // localised credit whose artist could not be compared —
+                    // and is only consulted when the first choice fails this
+                    // walk's own gate below.
+                    val offers = buildList {
+                        outcome.stream?.let { add(Triple(it, outcome.verdict, outcome.best)) }
+                        outcome.alternate?.let {
+                            add(
+                                Triple(
+                                    it,
+                                    outcome.alternateVerdict ?: "artist-unverified",
+                                    outcome.alternateBest,
+                                ),
+                            )
+                        }
                     }
-                    val current = best
-                    val earlierSource = current != null &&
-                        (order[source.configId] ?: Int.MAX_VALUE) <
-                        (order[current.first.configId] ?: Int.MAX_VALUE)
-                    // Only an answer that could actually win needs the expensive
-                    // gate. That gate is the ninety-second sound comparison for
-                    // the read-ahead, and running it for a candidate already
-                    // beaten on rendition cost a decode *and* added it to the
-                    // tail of the race, after even the slowest search had
-                    // finished — see [HqQuality.couldWin].
-                    val couldWin = HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)
-                    // A host with a recent 429, a poor success rate or very
-                    // slow transfers sorts behind a healthy one at the same
-                    // rendition. The format still decides first.
-                    val hostPreferred = current != null && !couldWin &&
-                        !HqQuality.isBetter(current.second.format, stream.format) &&
-                        HqHostTracker.penalty(host) <
-                        HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
-                    if (!couldWin && !hostPreferred) continue
-                    if (!accept(source, stream)) continue
-                    best = source to stream
+                    for ((stream, verdict, _) in offers) {
+                        val host = HqHostTracker.hostOf(stream.url)
+                        if (host != null && host in excludeHosts) continue
+                        // A host that just rate-limited us is not asked again for
+                        // this track. SourceCooldown still handles the source-level
+                        // failure; this is the narrower server-level rest.
+                        if (host != null && HqHostTracker.isResting(host)) {
+                            TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
+                            continue
+                        }
+                        val current = best
+                        val earlierSource = current != null &&
+                            (order[source.configId] ?: Int.MAX_VALUE) <
+                            (order[current.first.configId] ?: Int.MAX_VALUE)
+                        // A normally credited match always outranks a localised
+                        // one. The localised row is a candidate for the sound
+                        // comparison, not evidence that the recording is this
+                        // source's, so it must not discard a match that hq-verify
+                        // may well prefer. A verified row that opened only as a
+                        // below-request settle-for is ranked after the localised
+                        // row: the fallback exists precisely because that copy
+                        // was not what the request asked for.
+                        val candidateRank = offerRank(verdict, stream)
+                        val currentRank = current?.let { offerRank(bestVerdict ?: "match", it.second) }
+                            ?: Int.MAX_VALUE
+                        // Only an answer that could actually win needs the expensive
+                        // gate. That gate is the ninety-second sound comparison for
+                        // the read-ahead, and running it for a candidate already
+                        // beaten on rendition cost a decode *and* added it to the
+                        // tail of the race, after even the slowest search had
+                        // finished — see [HqQuality.couldWin].
+                        val couldWin = HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)
+                        // A host with a recent 429, a poor success rate or very
+                        // slow transfers sorts behind a healthy one at the same
+                        // rendition. The format still decides first.
+                        val hostPreferred = current != null && !couldWin &&
+                            !HqQuality.isBetter(current.second.format, stream.format) &&
+                            HqHostTracker.penalty(host) <
+                            HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
+                        val beats = when {
+                            current == null -> true
+                            candidateRank != currentRank -> candidateRank < currentRank
+                            // Among localised rows the smallest runtime
+                            // difference is the required choice; quality only
+                            // breaks an equal drift.
+                            isArtistUnverifiedRank(candidateRank) -> {
+                                val candidateDrift = runtimeDrift(stream, target)
+                                val currentDrift = runtimeDrift(current.second, target)
+                                if (candidateDrift != currentDrift) {
+                                    candidateDrift < currentDrift
+                                } else {
+                                    couldWin || hostPreferred
+                                }
+                            }
+                            else -> couldWin || hostPreferred
+                        }
+                        if (!beats) continue
+                        if (!accept(source, stream)) continue
+                        best = source to stream
+                        bestVerdict = verdict
+                    }
                 }
                 // Playback needs the first usable answer so sound can start.
                 // An upgrade is different: it runs while audio is already
@@ -1308,6 +1372,36 @@ object SourceResolver {
             running.forEach { it.cancel() }
         }
         best
+    }
+
+    /**
+     * How the source race ranks the kinds of row it can be offered, lowest
+     * first: a normally credited match, then a localised `artist-unverified`
+     * row, then a verified copy that only opened below the request, and last a
+     * localised row that also only opened below it.
+     *
+     * Request satisfaction outranks artist verification: a copy that actually
+     * serves what was asked for must not lose to a settle-for merely because
+     * the latter's catalogue localised the credit. Otherwise a lossy localised
+     * fallback could discard the verified copy hq-verify would have accepted.
+     */
+    private fun offerRank(verdict: String, stream: SourceStream): Int = when {
+        verdict == "artist-unverified" && stream.belowRequest ->
+            ARTIST_UNVERIFIED_BELOW_REQUEST_RANK
+        verdict == "artist-unverified" -> ARTIST_UNVERIFIED_RANK
+        stream.belowRequest -> BELOW_REQUEST_RANK
+        else -> MATCH_RANK
+    }
+
+    /** Whether [rank] is one of the localised-row tiers; see [offerRank]. */
+    private fun isArtistUnverifiedRank(rank: Int): Boolean =
+        rank == ARTIST_UNVERIFIED_RANK || rank == ARTIST_UNVERIFIED_BELOW_REQUEST_RANK
+
+    /** How far an opened stream's row sits from the requested runtime. */
+    private fun runtimeDrift(stream: SourceStream, target: TrackMatcher.Target): Int {
+        val wanted = target.durationSec ?: return 0
+        val got = stream.durationSec ?: return 0
+        return kotlin.math.abs(wanted - got)
     }
 
     /**
@@ -1340,6 +1434,7 @@ object SourceResolver {
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
         manual: Boolean = false,
+        allowArtistUnverified: Boolean = false,
     ): SearchOutcome {
         var last = SearchOutcome()
         for (query in TrackMatcher.queries(target)) {
@@ -1390,12 +1485,43 @@ object SourceResolver {
                 }
                 rows
             }
-            var matches = TrackMatcher.ranked(candidates, target)
-            if (strictOriginal) {
-                matches = matches.filter { TrackMatcher.isOriginalRecording(it, target) }
+            val ranked = TrackMatcher.ranked(candidates, target)
+            // Rows whose only disagreement is an artist credit in another
+            // script are kept apart so the ordinary match order still wins.
+            // Judged over every result, not just the top row: the localised
+            // copy is often not what the search backend puts first.
+            val artistUnverified = mutableSetOf<Song>()
+            var matches: List<Song> = if (strictOriginal) {
+                val verified = ranked.filter { TrackMatcher.isOriginalRecording(it, target) }
+                if (allowArtistUnverified) {
+                    val localised = (ranked + candidates)
+                        .distinct()
+                        .filterNot { it in verified }
+                        .filter {
+                            TrackMatcher.isArtistUnverifiedOriginal(
+                                it,
+                                target,
+                                TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC,
+                            )
+                        }
+                        .sortedBy { candidate ->
+                            val got = TrackMatcher.secondsOf(candidate.durationText)
+                                ?: Int.MAX_VALUE
+                            kotlin.math.abs((target.durationSec ?: 0) - got)
+                        }
+                    artistUnverified += localised
+                    verified + localised
+                } else {
+                    verified
+                }
+            } else {
+                ranked
             }
             if (requireSharedArtist) {
-                matches = matches.filter { TrackMatcher.sharesArtist(target.artist, it.artist) }
+                matches = matches.filter {
+                    it in artistUnverified ||
+                        TrackMatcher.sharesArtist(target.artist, it.artist)
+                }
             }
             // JioSaavn can return different audio under the same title and
             // artist on different releases. With no album on the requested
@@ -1403,10 +1529,15 @@ object SourceResolver {
             // duration is not enough when the wrong recording is only a
             // second away. Treat it as this source missing and retain the
             // known-correct fallback.
+            // Only normally credited rows take part in the JioSaavn release
+            // collision rule. A localised-artist row is already waiting for
+            // the sound comparison, and letting its album veto a verified copy
+            // would reinstate the failure this fallback exists to remove.
+            val verifiedForConflict = matches.filterNot { it in artistUnverified }
             if (source.kind == SourceKind.JIOSAAVN &&
-                TrackMatcher.hasConflictingAlbums(matches, target)
+                TrackMatcher.hasConflictingAlbums(verifiedForConflict, target)
             ) {
-                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(matches, target)
+                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(verifiedForConflict, target)
                 if (canonical == null) {
                     TrackLog.w(
                         TAG,
@@ -1434,10 +1565,17 @@ object SourceResolver {
             // nothing else is worth cutting a listener's audio for — or filing
             // on their device under the name of the track they asked for.
             if (strictLength) {
-                matches = matches.filter { TrackMatcher.withinSeconds(it, target, UPGRADE_DRIFT_SEC) }
+                matches = matches.filter {
+                    val drift = if (it in artistUnverified) {
+                        TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC
+                    } else {
+                        UPGRADE_DRIFT_SEC
+                    }
+                    TrackMatcher.withinSeconds(it, target, drift)
+                }
             }
             if (matches.isEmpty()) {
-                val best = matches.firstOrNull() ?: TrackMatcher.ranked(candidates, target).firstOrNull()
+                val best = matches.firstOrNull() ?: ranked.firstOrNull()
                     ?: candidates.firstOrNull()
                 val verdict = when {
                     // A source that failed while producing this answer said
@@ -1454,6 +1592,7 @@ object SourceResolver {
                         requireSharedArtist = requireSharedArtist,
                         strictLength = strictLength,
                         driftSec = UPGRADE_DRIFT_SEC,
+                        allowArtistUnverified = allowArtistUnverified,
                     )
                 }
                 last = SearchOutcome(
@@ -1470,7 +1609,68 @@ object SourceResolver {
                 }
                 continue
             }
-            val stream = streamBest(source, matches, target, request)
+            // A normal artist match always goes first, but only when it
+            // actually opened what was asked for. A below-request settle-for
+            // must not stop the localised row from being tried: that row may
+            // be the lossless copy the request wanted, and hq-verify decides
+            // whether it is the same recording. See [offerRank] for the order
+            // the source race applies afterwards.
+            val verifiedMatches = matches.filterNot { it in artistUnverified }
+            val unverifiedMatches = matches.filter { it in artistUnverified }
+            val verifiedOpened = if (verifiedMatches.isEmpty()) {
+                null
+            } else {
+                streamBest(source, verifiedMatches, target, request)
+            }
+            // When the credited copy already serves the request, the localised
+            // row is only an alternate for hq-verify, not something worth
+            // opening now. It is still opened so a caller whose gate rejects
+            // the credited copy has it in hand, but a failure here must not be
+            // charged to the source: the verified copy is fine, and counting
+            // it would mark this walk inconclusive and retry the track.
+            val localisedIsAlternate =
+                verifiedOpened != null && !verifiedOpened.second.belowRequest
+            val localisedOpened = if (unverifiedMatches.isEmpty()) {
+                null
+            } else {
+                // These are already ordered closest-runtime-first; do not let
+                // [preferred]'s quality tiers reorder them. The closest cut is
+                // the candidate hq-verify is asked about first.
+                streamBest(
+                    source,
+                    unverifiedMatches,
+                    target,
+                    request,
+                    preserveOrder = true,
+                    countFailure = !localisedIsAlternate,
+                )
+            }
+            var opened = verifiedOpened
+            var alternate: Pair<Song, SourceStream>? = null
+            var alternateVerdict: String? = null
+            when {
+                verifiedOpened != null && !verifiedOpened.second.belowRequest -> {
+                    opened = verifiedOpened
+                    if (localisedOpened != null) {
+                        alternate = localisedOpened
+                        alternateVerdict = "artist-unverified"
+                    }
+                }
+                localisedOpened != null &&
+                    (verifiedOpened == null ||
+                        !localisedOpened.second.belowRequest ||
+                        isBetter(localisedOpened.second.format, verifiedOpened.second.format)) -> {
+                    opened = localisedOpened
+                    if (verifiedOpened != null) {
+                        alternate = verifiedOpened
+                        alternateVerdict = "match"
+                    }
+                }
+                verifiedOpened != null -> {
+                    opened = verifiedOpened
+                }
+            }
+            val stream = opened?.second
             // Every stream open can fail — a 500, a timeout, a host that went
             // away between the search and the open — and [attempt] counts each
             // one against the source. A search that looked healthy but could
@@ -1482,12 +1682,20 @@ object SourceResolver {
             if (SourceCooldown.failureMark(source.configId) != mark) {
                 conclusive = false
             }
+            val chosen = opened?.first
             last = SearchOutcome(
                 stream = stream,
                 results = candidates.size,
-                best = matches.firstOrNull(),
-                verdict = if (stream != null) "match" else "error",
+                best = chosen,
+                verdict = when {
+                    stream == null -> "error"
+                    chosen in artistUnverified -> "artist-unverified"
+                    else -> "match"
+                },
                 conclusive = conclusive,
+                alternate = alternate?.second,
+                alternateBest = alternate?.first,
+                alternateVerdict = alternateVerdict,
             )
             TrackLog.d(TAG, hqSearchLine(target, source, last))
             return last
@@ -1606,13 +1814,25 @@ object SourceResolver {
         matches: List<Song>,
         target: TrackMatcher.Target,
         request: StreamRequest,
-    ): SourceStream? {
+        /**
+         * Keep the caller's order instead of [preferred]'s quality order. The
+         * localised fallback is already sorted by runtime difference, which is
+         * the choice the sound comparison is meant to see first.
+         */
+        preserveOrder: Boolean = false,
+        /**
+         * Whether a failed open counts against the source's health. False for
+         * an alternate that is only being kept in case the primary is rejected:
+         * an unused copy failing says nothing about the copy that opened.
+         */
+        countFailure: Boolean = true,
+    ): Pair<Song, SourceStream>? {
         val wantsLossless = request is StreamRequest.Lossless
-        val ordered = preferred(matches, target, wantsLossless)
-        var settleFor: SourceStream? = null
+        val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless)
+        var settleFor: Pair<Song, SourceStream>? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
-            val opened = attempt(source) { source.stream(trackId, request) } ?: continue
+            val opened = attempt(source, countFailure) { source.stream(trackId, request) } ?: continue
             // The row this URL came from knows how long the recording is; the
             // URL itself doesn't. Carried along so a caller swapping this into
             // a track already playing can check it — see [SourceStream.durationSec].
@@ -1632,7 +1852,7 @@ object SourceResolver {
                         "duration=${match.durationText ?: "?"} explicit=${match.isExplicit ?: "?"} " +
                         "→ ${served.summary}",
                 )
-                return stream
+                return match to stream
             }
             TrackLog.d(
                 TAG,
@@ -1646,7 +1866,10 @@ object SourceResolver {
             // and which one the listener ends up on if nothing better exists
             // should not come down to which catalogue happened to be asked
             // first.
-            settleFor = betterOf(settleFor, stream.copy(belowRequest = true))
+            val lower = match to stream.copy(belowRequest = true)
+            if (settleFor == null || isBetter(lower.second.format, settleFor.second.format)) {
+                settleFor = lower
+            }
         }
         return settleFor
     }
@@ -1691,7 +1914,11 @@ object SourceResolver {
      * swallowing it would keep walking sources for a track nobody is waiting
      * for any more.
      */
-    private suspend fun <T> attempt(source: MusicSource, block: suspend () -> T): T? = try {
+    private suspend fun <T> attempt(
+        source: MusicSource,
+        countFailure: Boolean = true,
+        block: suspend () -> T,
+    ): T? = try {
         block()
     } catch (e: CancellationException) {
         throw e
@@ -1701,7 +1928,9 @@ object SourceResolver {
         // lacks the track, so it must not be memoised as a confirmed miss. It
         // counts toward the rest only when the device is online — during an
         // outage every source fails at once and parking them would outlast it.
-        if (source.kind != SourceKind.YOUTUBE) {
+        // [countFailure] is off for an optional open whose result is not
+        // needed; its failure says nothing about this track's answer.
+        if (countFailure && source.kind != SourceKind.YOUTUBE) {
             if (e.isNetworkFailure()) {
                 SourceCooldown.networkFailed(source.configId, online = !offlineCheck())
             } else {
@@ -1791,6 +2020,12 @@ object SourceResolver {
      * rounding a runtime differently and nothing else.
      */
     private const val UPGRADE_DRIFT_SEC = 2
+
+    /** The source race's ordering of row kinds; see [offerRank]. */
+    private const val MATCH_RANK = 0
+    private const val ARTIST_UNVERIFIED_RANK = 1
+    private const val BELOW_REQUEST_RANK = 2
+    private const val ARTIST_UNVERIFIED_BELOW_REQUEST_RANK = 3
 
     /**
      * How close two runtimes have to be to be the same cut of a song.
