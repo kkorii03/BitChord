@@ -1,0 +1,20 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin). Branch = upstream v1.9 (git tag v1.9) merged into a Korean fork (fork reference: origin/task/fix-1030, where first audio was ~100-200 ms from cache).
+URGENT BUG on the user's phone: first sound takes 9 s. Log for one tap (all times 02:15):
+21.920 play: -> yellow brick home (YedjjosYKmI) reason=PLAYLIST_CHANGED
+21.955 holding YedjjosYKmI until it is within 25s of playing   (v1.9 DirectSourceGate)
+22.002 released YedjjosYKmI
+22.183 analysis head for YedjjosYKmI deferred: another writer has it   (fork AudioCache)
+22.774 hq-search ... Qobuz verdict=auth ; 26.006 Eljohnzc timed out after 4000ms
+26.007 no addon served 'yellow brick home' directly; playing it from YouTube   (v1.9 PlaybackService)
+26.457 TIMING YedjjosYKmI direct: 448ms ; 28.283 resolve: YedjjosYKmI via InnerTubeX in 2276 ms
+31.130 analysis head round for YedjjosYKmI: total=4983799 want=4983799 held=4983799
+31.158 TIMING first audio: 9239ms since track selected
+So: (a) YouTube resolve did not start until the direct-source window gave up (~4 s of addon timeouts); (b) after resolve the player still waited ~3 s, until the automix analysis download of the WHOLE file (4.98 MB) finished — first audio came 28 ms after 'analysis head round ... held=4983799'.
+Task:
+1) (b) is the bigger bug: find in app/src/main/java/com/music/bitchord/playback/AudioCache.kt (search 'another writer has it', 'analysis head round') and the player's data source path how the player ends up waiting for the analysis writer. Rule to implement: playback always wins — the analysis head must never hold a cache key the player needs, or must hand over / let the player read the bytes already written; the analysis fetch may wait or re-fetch instead. Compare with v1.9 (git diff v1.9 -- AudioCache.kt) and the fork to see which side introduced the wait.
+2) (a): in v1.9 PlaybackService/DirectSourceGate, start the YouTube resolve in parallel with the direct-source lookup instead of after it (keep v1.9's choice: if an addon answers first within the window, use it), or skip the window entirely when every direct addon is resting (SourceSearchKo / SourceResolver.SourceCooldown.isResting). Keep the change small and mark it // [KO] first-audio.
+3) Unit tests: one that fails before your change for (b) (player read not blocked by an analysis writer), one for (a) if feasible.
+Rules: Do NOT touch .github/, keys/, gradle files, strings. Do NOT revert unrelated files; do not checkout other branches. Battery: no polling/timers. Re-read callers of changed functions. Use grep / Select-String, not rg.
+Verify: ./gradlew :app:compileProdDebugKotlin and your tests plus ./gradlew :app:testProdDebugUnitTest --tests '*AudioCache*' --tests '*DirectSource*' --tests '*Analysis*'.
+At the end, summary in 10 lines or fewer: root cause (file:line) / fix / test results / unresolved problems.
