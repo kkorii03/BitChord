@@ -43,7 +43,6 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.BatterySaver
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
-import androidx.compose.material.icons.rounded.BlurOn
 import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Check
@@ -65,9 +64,7 @@ import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Timer
-import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -91,7 +88,6 @@ import androidx.compose.material.icons.rounded.Wifi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
-import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -203,6 +199,8 @@ fun SettingsScreen(
     onAccountScrobbling: () -> Unit,
     onEqualizer: () -> Unit,
     onOpenReplay: () -> Unit,
+    /** Opens the lyrics settings screen that owns the rows this row replaces. */
+    onOpenLyrics: () -> Unit,
     onLyricsSources: () -> Unit,
     onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
@@ -244,7 +242,6 @@ fun SettingsScreen(
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
-    val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val videoCanvas by AppSettings.videoCanvas.collectAsStateWithLifecycle()
@@ -252,43 +249,13 @@ fun SettingsScreen(
     val signatureApiUrl by AppSettings.signatureApiUrl.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
-    val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
-    val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
-    val geminiTranslation by AppSettings.geminiTranslation.collectAsStateWithLifecycle()
-    val geminiApiKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
-    val deepgramApiKey by AppSettings.deepgramApiKey.collectAsStateWithLifecycle()
-    val deepgramKeyRejected by com.music.bitchord.data.lyrics.Deepgram.keyRejected.collectAsStateWithLifecycle()
-    val prefetchTranslation by AppSettings.prefetchTranslation.collectAsStateWithLifecycle()
-    val autoTranslateLyrics by AppSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
-    val autoLyricsTiming by AppSettings.autoLyricsTiming.collectAsStateWithLifecycle()
-    val aiLyrics by AppSettings.aiLyrics.collectAsStateWithLifecycle()
-    val aiTimingAhead by AppSettings.aiTimingAhead.collectAsStateWithLifecycle()
     val syncSafetyNextPrep by AppSettings.syncSafetyNextPrep.collectAsStateWithLifecycle()
     val syncSafetyDownloadRecheck by AppSettings.syncSafetyDownloadRecheck.collectAsStateWithLifecycle()
     val syncSafetyHqSync by AppSettings.syncSafetyHqSync.collectAsStateWithLifecycle()
-    val keepDownloadTranslation by AppSettings.keepDownloadTranslation.collectAsStateWithLifecycle()
-    val lockScreenLyrics by AppSettings.lockScreenLyrics.collectAsStateWithLifecycle()
     val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
     val resumeOnHeadphones by AppSettings.resumeOnHeadphones.collectAsStateWithLifecycle()
     val personalisedAutoplay by AppSettings.personalisedAutoplay.collectAsStateWithLifecycle()
     val videoRadio by AppSettings.videoRadio.collectAsStateWithLifecycle()
-    // Read again whenever the page comes back, which is how a grant made in
-    // the system's own screen shows up here.
-    val settingsForeground = com.music.bitchord.ui.rememberIsForeground()
-    val canDrawOverlays = remember(settingsForeground) {
-        com.music.bitchord.lockscreen.LockScreenLyrics.canShow(context)
-    }
-    val openOverlayPermission: () -> Unit = {
-        runCatching {
-            context.startActivity(
-                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        }
-    }
-    val geminiKeyRejected by com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyRejected
-        .collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -1371,256 +1338,25 @@ fun SettingsScreen(
             }
         }
 
-        SearchableSettingsGroup(search, header = stringResource(R.string.settings_lyrics)) {
-            val syncedLyricsTitle = stringResource(R.string.synced_lyrics)
-            // Same reasoning as Animated cover art above: the lyrics source and
-            // translation rows are only here while this is on.
-            row(syncedLyricsTitle, "lyrics", "translation", "lrclib", "musixmatch") {
+        // The lyrics page is a screen of its own now — see [LyricsSettingsScreen].
+        // This row takes the old expanded group's place (and its first row's
+        // glyph) so the list keeps one lyrics entry where the group was.
+        SearchableSettingsGroup(search) {
+            val lyricsTitle = stringResource(R.string.settings_lyrics)
+            row(
+                lyricsTitle,
+                "lyrics", "translation", "lrclib", "musixmatch", "blur",
+                "timing", "sync", "gemini", "ai", "deepgram", "prefetch",
+                "download", "lock screen", "lockscreen",
+                "실시간 가사", "가사 소스", "번역 언어", "AI 가사 번역",
+                "가사 자동 번역", "가사 타이밍", "잠금 화면 가사", "가사 싱크",
+                *LyricsSettingsCatalog.keys.toTypedArray(),
+            ) {
                 SettingsRow(
                     icon = Icons.AutoMirrored.Rounded.Notes,
-                    title = syncedLyricsTitle,
-                    subtitle = stringResource(R.string.synced_lyrics_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = syncedLyrics,
-                            onCheckedChange = AppSettings::setSyncedLyrics,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSyncedLyrics(!syncedLyrics) },
+                    title = lyricsTitle,
+                    onClick = onOpenLyrics,
                 )
-            }
-            // Nothing to choose between while the feature is off, and the
-            // sources are third-party services being reached on the user's
-            // connection — which is the part worth being able to narrow.
-            if (syncedLyrics) {
-                val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
-                row(lyricsBlurTitle, "lyrics", "blur") {
-                    SettingsRow(
-                        icon = Icons.Rounded.BlurOn,
-                        title = lyricsBlurTitle,
-                        subtitle = stringResource(R.string.blur_unfocused_lyrics_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = lyricsBlur,
-                                onCheckedChange = AppSettings::setLyricsBlur,
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setLyricsBlur(!lyricsBlur) },
-                    )
-                }
-                val lyricsSourcesTitle = stringResource(R.string.lyrics_sources)
-                row(lyricsSourcesTitle, "lyrics", "lrclib", "musixmatch") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Language,
-                        title = lyricsSourcesTitle,
-                        subtitle = lyricsSources
-                            .sortedBy { it.ordinal }
-                            .joinToString(", ") { it.label }
-                            .ifEmpty { stringResource(R.string.no_lyrics_sources_enabled) },
-                        trailing = { Chevron() },
-                        onClick = onLyricsSources,
-                    )
-                }
-                val translationLanguageTitle = stringResource(R.string.translation_language)
-                row(translationLanguageTitle, "lyrics", "translate") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Translate,
-                        title = translationLanguageTitle,
-                        subtitle = if (translationLanguage.isBlank()) {
-                            stringResource(R.string.translation_language_subtitle)
-                        } else {
-                            translationLanguageName(
-                                translationLanguage,
-                                AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault(),
-                            )
-                        },
-                        trailing = { Chevron() },
-                        onClick = onTranslationLanguage,
-                    )
-                }
-                val geminiTranslationTitle = stringResource(R.string.gemini_translation)
-                row(geminiTranslationTitle, "lyrics", "translate", "gemini", "ai") {
-                    SettingsRow(
-                        icon = Icons.Rounded.AutoAwesome,
-                        title = geminiTranslationTitle,
-                        subtitle = stringResource(
-                            when {
-                                geminiApiKey.isBlank() -> R.string.gemini_translation_subtitle_missing
-                                geminiKeyRejected -> R.string.gemini_translation_subtitle_rejected
-                                else -> R.string.gemini_translation_subtitle_ready
-                            },
-                        ),
-                        trailing = {
-                            Switch(
-                                checked = geminiTranslation && geminiApiKey.isNotBlank(),
-                                onCheckedChange = { on ->
-                                    if (on && geminiApiKey.isBlank()) onGeminiKey()
-                                    else AppSettings.setGeminiTranslation(on)
-                                },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = onGeminiKey,
-                    )
-                }
-                val autoTranslateTitle = stringResource(R.string.auto_translate_lyrics)
-                row(autoTranslateTitle, "lyrics", "translate", "auto") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Translate,
-                        title = autoTranslateTitle,
-                        subtitle = stringResource(R.string.auto_translate_lyrics_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = autoTranslateLyrics,
-                                onCheckedChange = { AppSettings.setAutoTranslateLyrics(it) },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setAutoTranslateLyrics(!autoTranslateLyrics) },
-                    )
-                }
-                val autoLyricsTimingTitle = stringResource(R.string.auto_lyrics_timing)
-                row(autoLyricsTimingTitle, "lyrics", "timing", "sync", "video", "ai", "gemini") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Timer,
-                        title = autoLyricsTimingTitle,
-                        subtitle = stringResource(R.string.auto_lyrics_timing_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = autoLyricsTiming,
-                                onCheckedChange = { AppSettings.setAutoLyricsTiming(it) },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setAutoLyricsTiming(!autoLyricsTiming) },
-                    )
-                }
-                val aiTimingAheadTitle = stringResource(R.string.ai_timing_ahead)
-                row(aiTimingAheadTitle, "lyrics", "timing", "sync", "ai", "gemini", "ahead") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Timer,
-                        title = aiTimingAheadTitle,
-                        subtitle = stringResource(R.string.ai_timing_ahead_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = aiTimingAhead,
-                                onCheckedChange = { AppSettings.setAiTimingAhead(it) },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setAiTimingAhead(!aiTimingAhead) },
-                    )
-                }
-                val resetDownloadSyncTitle = stringResource(R.string.reset_download_sync)
-                row(resetDownloadSyncTitle, "lyrics", "timing", "sync", "download", "recheck") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Cached,
-                        title = resetDownloadSyncTitle,
-                        subtitle = stringResource(R.string.reset_download_sync_subtitle),
-                        trailing = { Chevron() },
-                        onClick = onResetDownloadSync,
-                    )
-                }
-                val deepgramTitle = stringResource(R.string.deepgram_api_key)
-                row(deepgramTitle, "lyrics", "timing", "sync", "ai", "deepgram", "whisper", "key") {
-                    SettingsRow(
-                        icon = Icons.Rounded.AutoAwesome,
-                        title = deepgramTitle,
-                        subtitle = stringResource(
-                            when {
-                                deepgramApiKey.isBlank() -> R.string.deepgram_subtitle_missing
-                                deepgramKeyRejected -> R.string.deepgram_subtitle_rejected
-                                AppSettings.deepgramKeyIsBundled -> R.string.deepgram_subtitle_bundled
-                                else -> R.string.deepgram_subtitle_ready
-                            },
-                        ) + if (deepgramApiKey.length >= 8) " (••••${deepgramApiKey.takeLast(4)})" else "",
-                        trailing = { Chevron() },
-                        onClick = onDeepgramKey,
-                    )
-                }
-                val aiLyricsTitle = stringResource(R.string.ai_lyrics)
-                row(aiLyricsTitle, "lyrics", "ai", "gemini", "transcribe") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Timer,
-                        title = aiLyricsTitle,
-                        subtitle = stringResource(R.string.ai_lyrics_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = aiLyrics,
-                                onCheckedChange = { AppSettings.setAiLyrics(it) },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setAiLyrics(!aiLyrics) },
-                    )
-                }
-                val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)
-                row(prefetchTranslationTitle, "lyrics", "translate", "next", "prefetch") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Cached,
-                        title = prefetchTranslationTitle,
-                        subtitle = stringResource(R.string.prefetch_translation_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = prefetchTranslation,
-                                onCheckedChange = { AppSettings.setPrefetchTranslation(it) },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setPrefetchTranslation(!prefetchTranslation) },
-                    )
-                }
-                val keepDownloadTranslationTitle = stringResource(R.string.keep_download_translation)
-                row(keepDownloadTranslationTitle, "lyrics", "translate", "download", "offline") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Download,
-                        title = keepDownloadTranslationTitle,
-                        subtitle = stringResource(R.string.keep_download_translation_subtitle),
-                        trailing = {
-                            Switch(
-                                checked = keepDownloadTranslation,
-                                onCheckedChange = { AppSettings.setKeepDownloadTranslation(it) },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = { AppSettings.setKeepDownloadTranslation(!keepDownloadTranslation) },
-                    )
-                }
-                val lockScreenLyricsTitle = stringResource(R.string.lock_screen_lyrics)
-                row(lockScreenLyricsTitle, "lyrics", "lock screen", "lockscreen") {
-                    SettingsRow(
-                        icon = Icons.Rounded.Lock,
-                        title = lockScreenLyricsTitle,
-                        subtitle = stringResource(
-                            if (lockScreenLyrics && !canDrawOverlays) {
-                                R.string.lock_screen_lyrics_needs_permission
-                            } else {
-                                R.string.lock_screen_lyrics_subtitle
-                            },
-                        ),
-                        trailing = {
-                            Switch(
-                                checked = lockScreenLyrics && canDrawOverlays,
-                                onCheckedChange = { on ->
-                                    AppSettings.setLockScreenLyrics(on)
-                                    if (on && !canDrawOverlays) openOverlayPermission()
-                                },
-                                colors = settingsSwitchColors(),
-                            )
-                        },
-                        onClick = {
-                            if (lockScreenLyrics && !canDrawOverlays) {
-                                openOverlayPermission()
-                            } else {
-                                val on = !lockScreenLyrics
-                                AppSettings.setLockScreenLyrics(on)
-                                if (on && !canDrawOverlays) openOverlayPermission()
-                            }
-                        },
-                    )
-                }
             }
         }
 
@@ -3254,7 +2990,7 @@ internal fun RowDivider() {
  * app's accent.
  */
 @Composable
-private fun settingsSwitchColors() = SwitchDefaults.colors(
+internal fun settingsSwitchColors() = SwitchDefaults.colors(
     checkedTrackColor = IosSwitchGreen,
     checkedBorderColor = IosSwitchGreen,
     checkedThumbColor = Color.White,

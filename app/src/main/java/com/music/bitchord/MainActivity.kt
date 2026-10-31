@@ -198,6 +198,7 @@ import com.music.bitchord.ui.screens.SPOTIFY_BROWSE_ID
 import com.music.bitchord.ui.screens.libraryLinks
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.ui.screens.ListenTogetherScreen
+import com.music.bitchord.ui.screens.LyricsSettingsScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
@@ -1075,6 +1076,7 @@ private fun BitChordApp(
         showNowPlaying -> "Player"
         route == AppRoute.Replay -> "Replay"
         route == AppRoute.Settings -> "Settings"
+        route == AppRoute.Lyrics -> "Settings/lyrics"
         route == AppRoute.AccountScrobbling -> "Settings/account_scrobbling"
         route == AppRoute.Discord -> "Settings/discord"
         route == AppRoute.Spotify -> "Settings/spotify"
@@ -3430,6 +3432,19 @@ private fun BitChordApp(
                             )
                         } else if (pageRoute == AppRoute.Equalizer) {
                             EqualizerScreen(contentPadding = listPadding)
+                        } else if (pageRoute == AppRoute.Lyrics) {
+                            LyricsSettingsScreen(
+                                onLyricsSources = { showLyricsSources = true },
+                                onTranslationLanguage = { showTranslationLanguage = true },
+                                onGeminiKey = { showGeminiKey = true },
+                                onDeepgramKey = { showDeepgramKey = true },
+                                onResetDownloadSync = {
+                                    scope.launch {
+                                        LyricsTiming.resetDownloadedSync(context.applicationContext)
+                                    }
+                                },
+                                contentPadding = listPadding,
+                            )
                         } else if (pageRoute == AppRoute.Settings) {
                             SettingsScreen(
                                 windowWidth = windowWidth,
@@ -3446,6 +3461,7 @@ private fun BitChordApp(
                                     replayLandingPage = ReplayStoryPage.INTRO
                                     navigator.push(AppRoute.Replay)
                                 },
+                                onOpenLyrics = { navigator.push(AppRoute.Lyrics) },
                                 onLyricsSources = { showLyricsSources = true },
                                 onTranslationLanguage = { showTranslationLanguage = true },
                                 onSources = { navigator.push(AppRoute.Sources) },
@@ -4284,6 +4300,7 @@ private fun BitChordApp(
                         AppRoute.WearOs -> stringResource(R.string.wear_os_page_title)
                         AppRoute.Equalizer -> stringResource(R.string.equalizer)
                         AppRoute.Settings -> stringResource(R.string.settings)
+                        AppRoute.Lyrics -> stringResource(R.string.settings_lyrics)
                         AppRoute.Replay -> stringResource(R.string.replay)
                         null -> when {
                             detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
