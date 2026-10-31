@@ -1,0 +1,22 @@
+﻿BitChord 안드로이드 앱(Kotlin, Compose). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+사용자 보고(폰, 로그 10:45~10:48): ∞(자동 재생)가 켜져 있는데도 반복(전체) 버튼을 켜면 대기열이 채워지지 않음. 로그: 'autoplay: skip seed=... enabled=true repeat=all ahead=0'. 화면은 ∞ 켜진 모양 그대로이고 부제는 '추천 곡을 찾지 못했습니다' → 고장처럼 보임. 반복 끔 직후 autoplay 판단이 안 찍힌 경우도 있음(10:45:53 'mode: repeat=off (was one)' 뒤 없음).
+사용자가 정한 규칙(최우선): '∞ 켜면 재생목록이 채워지고, ∞ 끄면 안 채워진다.' ∞ 표시는 항상 실제 동작과 같아야 함.
+구현:
+① 자동 재생 채우기 여부는 ∞ 설정이 결정. 반복 한 곡(repeat=one)은 ∞와 무관하게 공존: ∞ 켜져 있으면 대기열은 평소처럼 채움(지금 곡만 반복 재생되므로 무해, 반복을 끄면 바로 이어짐).
+② 반복 전체(repeat=all)와 ∞는 서로 배타(애플뮤직과 같음): 반복 전체를 켜면 ∞가 꺼짐(설정·표시 모두), ∞를 켜면 반복 전체가 꺼짐(off로) 그리고 즉시 채우기. 반복 전체 → 다음 단계(한 곡) → off 순환에서 off/한 곡으로 넘어갈 때 ∞를 자동으로 다시 켜지는 않음(사용자가 끈 상태 존중). 단, 반복 전체 때문에 꺼진 경우에는 반복 전체가 풀릴 때 원래 ∞ 상태로 복원(이전 값 기억, 앱 재시작 후에도 유지).
+③ ∞가 켜지는 순간 / 반복 전체가 풀리는 순간 자동 재생 판단 즉시 1회 실행(이벤트 기반, 폴링·타이머 금지).
+④ '추천 곡을 찾지 못했습니다'는 실제 추천 요청이 0곡으로 끝났을 때만. ∞ 꺼짐이면 자동 재생 줄 부제는 '자동 재생이 꺼져 있습니다' 같은 정확한 안내(strings 기본 영어 + values-ko, 합니다체).
+⑤ 이미 붙은 자동 재생 곡은 모드 전환 때 지우지 않음.
+테스트: 모드 조합별 채우기 여부·∞ 표시(순수 함수), ∞ 켬→반복 전체 해제+채우기, 반복 전체 켬→∞ 꺼짐·해제 시 복원, 반복 한 곡+∞ 켜짐 → 채움 — 단위 테스트. 앱 테스트를 CI 목록에 넣어야 하면 요약에 적을 것(.github 수정 금지).
+UI 규칙: 애플뮤직 한국어 느낌(명사형 버튼, 합니다체, 느낌표 금지). 자동 믹스 상태줄·비디오 표지 건드리지 말 것.
+반드시: 바꾼 함수의 모든 호출부·타입 재확인, 설정 저장 키 호환(기존 사용자 설정 유지), 배터리 우선. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- HIGH `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:1613` — Leaving repeat-all never clears `autoplaySeed`, so if the last load for this track returned 0 songs the restored AutoPlay calls `loadAutoplayForCurrentTrack()` but it exits at the `same-seed` guard and the queue is never refilled, breaking the "∞ on means filled" rule and requirement ③ (the removed `restoreAutoplayTracks` cleared the seed explicitly). Fix: when `previous == REPEAT_MODE_ALL && repeatMode != REPEAT_MODE_ALL`, cancel `autoplayLoadJob` and set `autoplaySeed = null` before the reload.
+- MEDIUM `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerQueue.kt:508` — The subtitle still infers "No recommendations found" from queue emptiness alone, so it is shown before any request completes and even for in-flight/failed requests, violating requirement ④'s "only after a real 0-song result". Fix: expose the AutoPlay request outcome from `PlaybackService` and select `autoplay_empty_description` only when an actual request returned zero, otherwise use a neutral/loading description.
+- LOW `tv/src/main/java/com/music/bitchord/ui/tv/screens/TvSettingsScreen.kt:174` — This call site of the changed `AppSettings.setAutoplay` toggles AutoPlay without releasing repeat-all or recording the held value, so it can leave both on and make the phone's shown ∞ state disagree with the actual queue behaviour. Fix: route this through the service's toggle/repeat reconciliation (or make `setAutoplay` release `REPEAT_MODE_ALL` and set `heldAutoplay`) so the mutual-exclusion invariant holds on every surface.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
