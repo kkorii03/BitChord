@@ -24,6 +24,17 @@ internal sealed class DirectVerdictRace<out S> {
     object None : DirectVerdictRace<Nothing>()
 }
 
+/**
+ * Whether an anonymous direct client's private answer may really be the
+ * signed-in user's own upload. The direct ladder sends no cookie, so for a
+ * known upload or a signed-in session the cookie-backed walk may still serve
+ * it; that verdict must not settle the track or cancel the walk.
+ */
+internal fun anonymousPrivateMayBeOwned(
+    reason: String?,
+    mayBeOwnPrivateUpload: Boolean,
+): Boolean = mayBeOwnPrivateUpload && UnplayableReason.isPrivateOnly(reason)
+
 private sealed class RaceEvent<out S> {
     class Direct<out S>(val value: DirectProbe<S>) : RaceEvent<S>()
     class InnerTubeX<out S>(val value: S?) : RaceEvent<S>()

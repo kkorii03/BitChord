@@ -81,6 +81,16 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `a private upload is distinguishable from an irreversible removal`() {
+        assertTrue(UnplayableReason.isPrivateOnly("Private video"))
+        assertTrue(UnplayableReason.isPrivateOnly("비공개 트랙입니다"))
+        assertFalse(UnplayableReason.isPrivateOnly("This video has been removed by the uploader"))
+        assertFalse(UnplayableReason.isPrivateOnly("삭제된 동영상입니다"))
+        assertFalse(UnplayableReason.isPrivateOnly("It was blocked due to the claimed content by SME"))
+        assertFalse(UnplayableReason.isPrivateOnly("Private video, now deleted"))
+    }
+
+    @Test
     fun `rate limits are retryable`() {
         assertFalse(UnplayableReason.isDefinitive("HTTP 429 Too Many Requests"))
         assertFalse(UnplayableReason.isDefinitive("429"))

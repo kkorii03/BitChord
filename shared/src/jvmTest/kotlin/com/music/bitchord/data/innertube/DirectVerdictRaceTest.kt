@@ -63,6 +63,30 @@ class DirectVerdictRaceTest {
     }
 
     @Test
+    fun `an anonymous private answer cannot settle a signed-in upload`() {
+        assertTrue(
+            anonymousPrivateMayBeOwned(
+                "Private video",
+                mayBeOwnPrivateUpload = true,
+            ),
+        )
+        assertFalse(
+            anonymousPrivateMayBeOwned(
+                "This video has been removed by the uploader",
+                mayBeOwnPrivateUpload = true,
+            ),
+            "a removal is gone even for the account that owns the video",
+        )
+        assertFalse(
+            anonymousPrivateMayBeOwned(
+                "Private video",
+                mayBeOwnPrivateUpload = false,
+            ),
+            "without a session or a known upload the private verdict is the recording's",
+        )
+    }
+
+    @Test
     fun `a playable direct stream does not jump the learned InnerTubeX path`() = runBlocking {
         val direct = async { DirectProbe.Stream("direct-stream") }
         val itx = async {

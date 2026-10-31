@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -686,7 +687,9 @@ object StreamResolver {
         var directPrecheck: Deferred<DirectProbe<DirectRun>>? =
             if (itxLeads && order.directAllowed()) {
                 resolverScope.async(TrackLog.about(videoId)) {
-                    timed("$videoId direct") { directProbe(videoId) }
+                    timed("$videoId direct") {
+                        directProbe(videoId, checkActive = { ensureActive() })
+                    }
                 }
             } else {
                 null
@@ -789,6 +792,7 @@ object StreamResolver {
             }
         }
 
+        try {
         val stream = try {
             // The first ask is the cheap one (the learned or preferred route,
             // ~0.3 s). Most tracks are served right there and never involve the
@@ -998,6 +1002,13 @@ object StreamResolver {
         TrackLog.d(TAG, "TIMING $videoId total resolve: $took ms")
         ResolutionFacts.note(videoId, "direct")
         return stream
+        } finally {
+            // The precheck belongs to this walk only. If an early exit — a
+            // vanished recording, an extraction failsafe or a caller's
+            // cancellation — leaves it unconsumed, stop its HTTP/probe work
+            // rather than letting it finish out on resolverScope.
+            directPrecheck?.cancel()
+        }
     }
 
     /**
@@ -1262,13 +1273,21 @@ object StreamResolver {
         videoId: String,
         maxKbps: Int = maxKbps(),
         viaProxy: Boolean = false,
+        checkActive: () -> Unit = {},
     ): DirectProbe<DirectRun> {
         var refused = false
         var refusedReason: String? = null
-        for (found in DirectClientResolver.candidates(videoId, maxKbps, viaProxy) { reason ->
-            refused = true
-            refusedReason = UnplayableReason.keepTrackSpecific(refusedReason, reason)
-        }) {
+        for (found in DirectClientResolver.candidates(
+            videoId,
+            maxKbps,
+            viaProxy,
+            onRefused = { reason ->
+                refused = true
+                refusedReason = UnplayableReason.keepTrackSpecific(refusedReason, reason)
+            },
+            checkActive = checkActive,
+        )) {
+            checkActive()
             if (probe(found.url, viaProxy) == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
                 return DirectProbe.Stream(
@@ -1280,10 +1299,21 @@ object StreamResolver {
             }
             TrackLog.w(TAG, "direct ${found.client} URL for $videoId failed the probe")
         }
-        return if (UnplayableReason.isDefinitelyGone(refusedReason)) {
-            DirectProbe.Gone(refusedReason.orEmpty())
-        } else {
-            DirectProbe.Other(refused, refusedReason)
+        // These clients carry no cookie, so "private" may only mean the
+        // signed-in account owns it. Let the cookie-backed walk decide instead
+        // of cancelling it and caching the track as permanently unplayable.
+        val privateForSession = anonymousPrivateMayBeOwned(
+            refusedReason,
+            mayBeOwnPrivateUpload = UploadedTracks.contains(videoId) ||
+                !Innertube.cookie.isNullOrBlank(),
+        )
+        return when {
+            UnplayableReason.isDefinitelyGone(refusedReason) && !privateForSession ->
+                DirectProbe.Gone(refusedReason.orEmpty())
+            privateForSession ->
+                DirectProbe.Other(refused = true, reason = null)
+            else ->
+                DirectProbe.Other(refused, refusedReason)
         }
     }
 
