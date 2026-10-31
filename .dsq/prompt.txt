@@ -1,0 +1,8 @@
+﻿이전 라운드(이 기준 브랜치 = cloud/fix-video-thumbs-1031)에 수정이 이미 들어 있음. 그 라운드는 러너의 Maven 의존성 해석 실패로 컴파일 확인을 못 했음. 이번 할 일: 컴파일·테스트를 실제로 돌려 오류를 고치고, 아래 원래 지시의 완료 조건을 다시 확인. 범위를 넓히지 말 것.
+
+BitChord 안드로이드 앱(Kotlin, Compose, Coil). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+회귀 버그(사용자 폰 스크린샷, 시험판 test19 = 145c427): YouTube '비디오 노래'(커버 영상 등 youtube.com 영상 행)의 표지가 전부 안 나옴 — ① 재생목록 화면(오화요 양식모음/한식모음) 곡 행의 썸네일이 빈 회색 칸 ② 재생목록 머리 표지가 기본 아이콘 ③ 재생 화면 표지가 음표 아이콘(야화 - 안예은 · 오화요 커버). 공식 곡(Somebody, Be Alright)은 표지가 정상. 이전 사용자판(89f9e3b8)에서는 비디오 노래 표지가 나왔음.
+할 일: git diff 89f9e3b8..HEAD 에서 영상 행의 표지(thumbnail/artworkUrl/ytimg/hqdefault, YouTubeWebParser·CatalogSongMapper·YouTubeDisplayCleaner·DownloadedArtworkResolver·RemoteArtworkStore·MediaSessionArtwork·이미지 재시도 제한·비트맵 상한·탐색 타일 이미지 제거 작업 등)를 바꾼 지점을 찾아 원인을 코드로 특정(요약에 커밋과 줄). 표지가 다시 나오게 고치되, 그 작업이 원래 고치려던 문제(재시도 폭주, 글자 겹친 타일 등)는 유지. 정사각형 맞춤(위아래 검은 띠 제거) 동작도 유지.
+테스트: 영상 행 → 표지 URL 이 비지 않는지(파서·정리 함수) 단위 테스트, 표지 재시도 제한이 정상 URL 을 막지 않는지.
+반드시: 배터리. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약: 원인 커밋·줄 / 수정 / 테스트.
+
