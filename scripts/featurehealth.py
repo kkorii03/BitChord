@@ -827,9 +827,19 @@ def analyze(log: Log) -> Report:
             at >= row["at"] for at in verified_summary_at.get(row["version"], ())
         )
 
+    def file_timed_result(result: str) -> bool:
+        # Only the file-timed skip is answered by a later refine. A genuine
+        # engine failure or an off switch must keep failing the scoreboard.
+        return result.startswith("skipped:file-timed")
+
     def row_sync_success(row: dict[str, Any]) -> bool:
-        return row_sync_result(row) == "answered" or (
-            row["lyrics"] != "none" and verified_after(row)
+        result = row_sync_result(row)
+        if result == "answered":
+            return True
+        return (
+            row["lyrics"] != "none"
+            and file_timed_result(result)
+            and verified_after(row)
         )
 
     def sync_result_reason(result: str) -> str:
@@ -846,7 +856,7 @@ def analyze(log: Log) -> Report:
     d1_sync_verified = sum(
         1
         for row in d1_with_lyrics
-        if row_sync_result(row) != "answered" and verified_after(row)
+        if file_timed_result(row_sync_result(row)) and verified_after(row)
     )
     d1_sync_failed = sum(
         1
@@ -1045,43 +1055,76 @@ def analyze(log: Log) -> Report:
         wanted = _norm_title(event["title"])
         ids = title_to_ids.get(wanted, set())
         event_id = event["id"]
+
+        def belongs(video_id: str | None, title: str) -> bool:
+            return d2_belongs(video_id, title, wanted, ids, event_id)
+
+        # One event covers one playback. When the event was logged during a
+        # track (a verify or swap), that track's PLAY is the anchor. An
+        # upgrade-ahead event logged before its row starts is anchored to the
+        # row's first PLAY instead. The window ends at the same song's next
+        # PLAY (a replay) or TRACK-SUMMARY, so a later replay cannot rewrite
+        # this event's result.
+        prior_plays = [
+            row for row in plays if row["at"] <= event["at"] and belongs(row["id"], row["title"])
+        ]
+        if prior_plays:
+            anchor = max(prior_plays, key=lambda row: row["at"])
+            window_start = anchor["at"]
+        else:
+            upcoming = [
+                row for row in plays
+                if row["at"] > event["at"] and belongs(row["id"], row["title"])
+            ]
+            anchor = min(upcoming, key=lambda row: row["at"], default=None)
+            # The event precedes the row's first PLAY: keep everything from
+            # the event (including that first PLAY) in its playback.
+            window_start = event["at"]
+        boundary_from = anchor["at"] if anchor is not None else event["at"]
+        boundaries = [
+            row["at"] for row in plays
+            if row["at"] > boundary_from and belongs(row["id"], row["title"])
+        ] + [
+            row["at"] for row in summaries
+            if row["at"] > boundary_from and belongs(row["id"], row["title"])
+        ]
+        window_end = min(boundaries, default=None)
+
+        def in_window(row: dict[str, Any]) -> bool:
+            return row["at"] >= window_start and (
+                window_end is None or row["at"] < window_end
+            )
+
         # A completed swap is the strongest per-song evidence: from that point
         # the track is playing the verified lossless copy, even when the verify
         # line that opened the event was logged after (or before) the swap and
-        # the only DECODE line was the low-quality one it replaced.
-        swapped = any(
-            row["state"] == "done"
-            and d2_belongs(
-                row["id"],
-                title_by_id.get(row["id"], ""),
-                wanted,
-                ids,
-                event_id,
-            )
-            for row in hq_swaps
-        )
+        # the only DECODE line was the low-quality one it replaced. It only
+        # covers this event's playback, and a later lossy DECODE (a fallback)
+        # still wins, as it does for ordinary playback.
+        done_swaps = [
+            row for row in hq_swaps
+            if row["state"] == "done"
+            and in_window(row)
+            and belongs(row["id"], title_by_id.get(row["id"], ""))
+        ]
+        last_swap = max(done_swaps, key=lambda row: row["at"], default=None)
+        decodes_in_window = [
+            row for row in decodes
+            if in_window(row) and belongs(row["id"], title_by_id.get(row["id"], ""))
+        ]
         decodes_after = [
-            row
-            for row in decodes
-            if row["at"] >= event["at"]
-            and d2_belongs(
-                row["id"],
-                title_by_id.get(row["id"], ""),
-                wanted,
-                ids,
-                event_id,
-            )
+            row for row in decodes_in_window if row["at"] >= event["at"]
         ]
         last_decode = max(decodes_after, key=lambda row: row["at"], default=None)
+        swap_fallback = last_swap is not None and any(
+            row["at"] >= last_swap["at"] and not _is_flac(row["mime"])
+            for row in decodes_in_window
+        )
+        swapped = last_swap is not None and not swap_fallback
         other_played = any(
             evidence["at"] >= event["at"]
-            and d2_belongs(
-                evidence["id"],
-                evidence["title"],
-                wanted,
-                ids,
-                event_id,
-            )
+            and in_window(evidence)
+            and belongs(evidence["id"], evidence["title"])
             for evidence in flac_evidence
         )
         if swapped:

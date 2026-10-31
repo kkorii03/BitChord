@@ -1161,6 +1161,9 @@ class LyricsController(
         val refine = refineFrom?.let {
             LyricsTiming.refine(app, request.videoId, lines, it, audioSource)
         }
+        // Refine suspends on store I/O. A track switch or a newer timing pass
+        // may have landed meanwhile; do not publish its stale facts then.
+        if (generation != lyricsGeneration || timingLines !== lines) return
         val verifiedShift = refine?.takeIf { it.verified }?.medianMs
         TrackDiagnostics.noteLyricsSync(
             videoId = request.videoId,
