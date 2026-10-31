@@ -1,0 +1,15 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 vc92, 10-31 19:52): 사용자가 GitHub 저장소 웹페이지 주소(https://github.com/...)를 '애드온 추가'에 넣었는데 앱이 소스로 받아들였다.
+ 19:52:12 identify(https://github.com/***) failed: HTTP 404
+ 19:52:13 identify(https://github.com/***) — no manifest, but /search answered
+ 19:52:13 github.com: no manifest, but search answers
+ 이후 hq-search: 'Flowers' github.com results=0 verdict=title (모든 곡 0개), 19:54:33 '애드온이 BitChord의 요청을 제한하고 있습니다'(GitHub 429).
+원인 추정: manifest 가 없을 때 /search 가 HTTP 200 이기만 하면(HTML 웹페이지여도) 애드온으로 인정.
+할 일:
+① 원인 확정(파일:줄): identify / 'no manifest, but search answers' 판정 위치.
+② manifest 없이 /search 로 인정하려면 응답이 JSON 이고 기존 애드온 검색 응답 형태(파싱 가능한 결과 목록)일 때만. Content-Type text/html 또는 파싱 실패면 거절.
+③ 거절 시 추가 화면 안내(합니다체, values-ko 와 기본 values 둘 다): '애드온 주소가 아닙니다. 웹페이지 주소 대신 애드온 서버 주소(manifest.json 이 있는 주소)를 넣으십시오.' github.com·gitlab.com 같은 저장소 주소면 '저장소 페이지 주소입니다. 안내(README)에 있는 애드온 서버 주소를 넣으십시오.'
+④ 이미 저장된 소스 중 같은 이유(HTML 응답)로 실패하는 소스는 소스 상태에 같은 이유 표시(새 화면 만들지 말 것). 자동 삭제는 하지 않음.
+테스트(고치기 전 실패): HTML 200 /search → 거절, JSON 정상 /search → 인정, github.com 주소 → 저장소 안내 문구. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, 서명 수정 금지. 정상 애드온 추가 흐름 변경 금지. 바꾼 함수의 모든 호출부 재확인. 타이머·폴링 금지.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결.
