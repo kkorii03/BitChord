@@ -1,0 +1,25 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 test21, 10-31 15:46~15:47): 'Betty (Get Money) - Yung Gravy'(e2T_MvOVapI, 노래 버전으로 교체된 행)를 누르고 약 53초 동안 소리가 없음.
+타임라인:
+ 15:46:35.757 play: -> Betty idx=0/65 reason=PLAYLIST_CHANGED; 'TIMING e2T_MvOVapI direct: 269ms'
+ 15:46:37.313 'InnerTubeX WEB_CREATOR__po minted an unusable URL ... REFUSED'
+ 15:46:40~44 'ITX PlayerClientDirector: client response unavailable' 수십 번(VISIONOS, WEB_EMBEDDED_PLAYER, TVHTML5_SIMPLY, WEB_KIDS)
+ 15:46:44.803 'InnerTubeX failed ... This track is unavailable' (9055ms), 'proxy-playback: e2T_MvOVapI early race (first refusal at 9056ms)'
+ 15:46:48~51 'probe REFUSED: HTTP 403 ... googlevideo ... c=WEB_CREATOR / WEB_REMIX itag=251', 'first stream ... was refused; asking as an upload'
+ 15:47:09 Qobuz [Heisenbergg] matched Betty → 15:47:11 'upgrade found ... FLAC 24-bit' → 15:47:25 hq-verify accepted → 15:47:28 hq-swap → 그제서야 'TIMING first audio: 0ms'(53초).
+ 사용자 설정: proxy on(http) scope=music_only. 한국 IP 차단(저작권/지역) 곡으로 보임.
+기대: 차단된 곡은 몇 초 안에 소리가 나야 함 — 순서: ① 같은 곡의 다른 정상 판(ATV 다른 사본) ② 일본 프록시 경유 재생 ③ 고음질 소스(Qobuz 등)에서 찾은 같은 녹음을 바로 재생(검증은 듣는 동안 백그라운드, 기존 hq-verify 규칙 유지) ④ 그래도 없으면 곧바로 다음 곡. MV 로 대체 금지.
+할 일: 이 53초 동안 각 단계가 왜 늦었거나 결론을 못 냈는지 코드로 확정(파일:줄): 직접 경로의 REFUSED 를 확정 거절로 보지 않은 이유, 프록시 경유 race 결과가 로그에 없는 이유, 고음질 소스 대체가 첫 소리 경로가 아니라 hq-swap 으로만 들어온 이유. 그리고 위 순서대로 각 단계에 시간 한도를 두어 전체 첫 소리 10초 이내(가능하면 5초)가 되게 수정. 단계마다 로그 'blocked-start: <id> step=<...> result=<...> ms=<...>'.
+테스트: 단계 결정·시간 한도 순수 함수 단위 테스트(고치기 전 실패).
+반드시: 배터리(폴링 금지), 정상 곡 재생 경로 회귀 금지, 바꾼 함수 모든 호출부 재확인. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+1. HIGH — `shared/.../innertube/StreamResolver.kt:842-884` — `raceForFirstSuccess` swallows proxy transport failures into `null`, then this path throws `PermanentlyUnplayableException`, so the outer catch memoizes the track as unplayable for 10 minutes and skips extraction; the pre-existing `ProxyFailure.isProxyDown` guard that kept proxy outages transient is bypassed. Fix: distinguish a proxy/network failure and rethrow it as transient instead of converting it into a track verdict.
+2. MEDIUM — `app/.../playback/PlaybackService.kt:6019-6027` and `shared/.../net/BlockedStartPolicy.kt:55-72` — the high-quality budget restarts from `startedAt` after the resolver already spent its separate 10s budget, and `plan`/`nextStep`/`ALTERNATE_TIMEOUT_MS` are never used (production alternate uses 2500ms), so the promised step order and total 10s ceiling are not actually enforced. Fix: thread one selection deadline through both layers and drive the steps from `plan()`/`timeoutFor()`.
+3. MEDIUM — `app/.../playback/PlaybackService.kt:6015` and `app/.../sources/SourceResolver.kt:402` — the new catalogue rescue is not gated to YouTube rows or picked addon rows, so a failed JioSaavn/addon row can be silently replaced by another source, violating the existing `MIX_PARAM` “picked row is not up for substitution” rule. Fix: only run this path for `bitchord://watch` rows and when `SourceResolver.isPickedAddonRow(uri)` is false.
+4. LOW — `app/.../playback/PlaybackService.kt:6065` / `:6174` — a candidate is removed only when the track reaches `isPlaying`, so if the forced high-quality item fails or is skipped first the stale entry survives and a later play of the same mediaId can be verified against the old stream. Fix: clear the entry on media transition, playback error, or skip as well.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
