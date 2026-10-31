@@ -1,0 +1,16 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin). Branch = upstream v1.9 (git tag v1.9) merged into a Korean fork (fork reference: origin/task/fix-1030, where automix worked: D7-crossfade 7/8 ok).
+URGENT BUG on the user's phone (this branch): automix starts the crossfade a few seconds into the song instead of near its end.
+Log (smartFade=on, crossfade=0s setting, YouTube Opus streams, 5-minute songs):
+02:15:31.158 first audio of 'yellow brick home' (YedjjosYKmI, ~5 min)
+02:15:43.113 crossfade: arm out=YedjjosYKmI in=xZjosn2u1gA fade=10746ms cue=4603ms smart=true
+02:15:46.151 crossfade: start ...   -> song cut at played=24 s, track-summary ended=natural
+02:15:53.775 play: -> Honey Bee (xZjosn2u1gA) reason=AUTO; 02:16:11.813 crossfade: arm out=xZjosn2u1gA in=FyjnbSsZ2tc fade=6000ms cue=0ms (18 s into the song) -> arm-timeout
+Also seen: 'analysis head round for <id>: total=... want=... held=...' and 'analysis head for <id> deferred: another writer has it' (fork AudioCache code), 'holding <id> until it is within 25s of playing' (v1.9 DirectSourceGate).
+Task: find the root cause and fix it.
+1) Find where CrossfadeController decides to arm (smart plan start / lastSmartPlanStartMs / TransitionPlanner / TransitionPolicy / TrackAnalyzer outro). Compare every involved file with v1.9 (git diff v1.9 -- <file>) and with the fork (git show origin/task/fix-1030:<file>). Suspects: the plan's outgoing duration or outro time computed from a partial analysis (the analysis head = first N bytes) instead of the full track; duration units (ms vs s); an analysis keyed to the wrong track; a fork hook that changed positions (silence skip / skip non-music / timing keep).
+2) Write a failing unit test that reproduces 'arms early' from the inputs you identify, then fix with the smallest change. If the bug is in v1.9's own code (also present at tag v1.9), fix it in place with a // [KO] comment explaining; if it came from the merge, restore v1.9 behaviour.
+3) Guard: never arm a smart transition earlier than (duration - fade - 30 s) unless the track is shorter than 60 s; log 'crossfade: refused early plan ...' when the guard trips.
+Rules: Do NOT touch .github/, keys/, gradle files, strings. Do NOT revert unrelated files; do not checkout other branches. Battery: no polling/timers. Re-read callers of changed functions. Use grep / Select-String, not rg.
+Verify: ./gradlew :app:compileProdDebugKotlin and run your new test plus ./gradlew :app:testProdDebugUnitTest --tests '*Crossfade*' --tests '*Transition*' --tests '*Automix*'.
+At the end, summary in 10 lines or fewer: root cause (file:line, with the evidence) / fix / test results / whether v1.9 itself has the bug / unresolved problems.
