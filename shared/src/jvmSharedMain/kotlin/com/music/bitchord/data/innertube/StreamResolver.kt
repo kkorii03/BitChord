@@ -839,12 +839,28 @@ object StreamResolver {
                 // failure that landed first used to leave the race waiting on
                 // the thirteen-second InnerTubeX walk, which is the same
                 // silence in a different coroutine.
+                //
+                // The proxy's own exception is kept rather than collapsed into
+                // the race's `null`: a dead proxy is a network fault, not a
+                // verdict about this recording. Losing it here made the block
+                // below throw [PermanentlyUnplayableException], which the outer
+                // handler remembers for ten minutes and which skipped
+                // extraction — the exact guard [ProxyFailure.isProxyDown]
+                // exists to keep transient (see the proxy retry below).
+                var proxyFailure: Throwable? = null
                 val racedPair = try {
                     withTimeoutOrNull(proxyTimeout) {
                         raceForFirstSuccess(
                             direct = { itxStream.await() },
                             proxy = {
-                                withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
+                                try {
+                                    withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (failure: Exception) {
+                                    proxyFailure = failure
+                                    null
+                                }
                             },
                         )
                     }
@@ -869,6 +885,18 @@ object StreamResolver {
                     ),
                 )
                 if (won != null) return won
+                val deadProxy = proxyFailure
+                if (deadProxy != null && ProxyFailure.isProxyDown(deadProxy)) {
+                    TrackLog.w(
+                        TAG,
+                        "blocked-start: $videoId step=proxy result=error ms=" +
+                            "${MonotonicClock.nowMs() - resolveStart}; " +
+                            "proxy route failed, keeping the track transient",
+                    )
+                    itxStream.cancel()
+                    itx.cancel()
+                    throw deadProxy
+                }
                 if (BlockedStartPolicy.shouldSkipExtraction(
                         directRefused = true,
                         proxyFailed = true,

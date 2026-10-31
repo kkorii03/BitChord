@@ -51,13 +51,27 @@ object BlockedStartPolicy {
      */
     const val HIGH_QUALITY_TIMEOUT_MS = 3_000L
 
-    /** The steps worth attempting, in the order they are attempted. */
+    /**
+     * The steps worth attempting, in the order they are attempted.
+     *
+     * Walked with [nextStep] rather than written out by hand: the order is the
+     * one thing a caller and this policy must agree on, and a separate list
+     * would let a later edit reorder one without the other.
+     */
     fun plan(proxyAvailable: Boolean, highQualityAvailable: Boolean): List<BlockedStartBudget> =
         buildList {
-            add(BlockedStartBudget(BlockedStartStep.ALTERNATE, ALTERNATE_TIMEOUT_MS))
-            if (proxyAvailable) add(BlockedStartBudget(BlockedStartStep.PROXY, PROXY_TIMEOUT_MS))
-            if (highQualityAvailable) {
-                add(BlockedStartBudget(BlockedStartStep.HIGH_QUALITY, HIGH_QUALITY_TIMEOUT_MS))
+            var step = nextStep(BlockedStartStep.DIRECT)
+            while (step != null && step != BlockedStartStep.NEXT_TRACK) {
+                val timeout = when (step) {
+                    BlockedStartStep.ALTERNATE -> ALTERNATE_TIMEOUT_MS
+                    BlockedStartStep.PROXY -> PROXY_TIMEOUT_MS.takeIf { proxyAvailable }
+                    BlockedStartStep.HIGH_QUALITY -> HIGH_QUALITY_TIMEOUT_MS.takeIf {
+                        highQualityAvailable
+                    }
+                    else -> null
+                }
+                if (timeout != null) add(BlockedStartBudget(step, timeout))
+                step = nextStep(step)
             }
             add(BlockedStartBudget(BlockedStartStep.NEXT_TRACK, 0L))
         }

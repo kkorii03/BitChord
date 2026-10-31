@@ -155,6 +155,42 @@ class BlockedStartPolicyTest {
     }
 
     @Test
+    fun `the plan is the same walk nextStep describes`() {
+        val walked = buildList {
+            var step: BlockedStartStep? = BlockedStartStep.DIRECT
+            while (true) {
+                step = BlockedStartPolicy.nextStep(step!!) ?: break
+                add(step)
+            }
+        }
+        assertEquals(walked, BlockedStartPolicy.plan(true, true).map { it.step })
+        assertEquals(
+            listOf(BlockedStartStep.ALTERNATE, BlockedStartStep.NEXT_TRACK),
+            BlockedStartPolicy.plan(proxyAvailable = false, highQualityAvailable = false)
+                .map { it.step },
+        )
+    }
+
+    @Test
+    fun `the catalogue rungs share the deadline the resolver already spent`() {
+        // Selection started 9 s ago: the resolver's walk comes out of the same
+        // ten seconds, so the alternate gets the last second and the
+        // high-quality search gets none rather than a fresh private budget.
+        assertEquals(
+            1_000L,
+            BlockedStartPolicy.timeoutFor(BlockedStartStep.ALTERNATE, 9_000L),
+        )
+        assertEquals(
+            1_000L,
+            BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 9_000L),
+        )
+        assertEquals(
+            0L,
+            BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 10_000L),
+        )
+    }
+
+    @Test
     fun `extraction is skipped only after both direct and proxy refused`() {
         assertTrue(BlockedStartPolicy.shouldSkipExtraction(directRefused = true, proxyFailed = true))
         assertFalse(BlockedStartPolicy.shouldSkipExtraction(directRefused = true, proxyFailed = false))
