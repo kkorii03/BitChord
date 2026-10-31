@@ -1355,6 +1355,7 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.AutoMirrored.Rounded.Notes,
                     title = lyricsTitle,
+                    trailing = { Chevron() },
                     onClick = onOpenLyrics,
                 )
             }

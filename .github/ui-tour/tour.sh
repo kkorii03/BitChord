@@ -502,9 +502,16 @@ section_settings() {
       back
     fi
 
+    # Lyrics settings live on their own page behind one '가사' row.
     scroll_top
-    if tap_scrolled "가사 소스" 6 20; then
-      shot settings-lyrics-sources "Lyrics sources dialog"
+    if tap_scrolled "가사" 6 20; then
+      shot settings-lyrics "Lyrics settings page"
+      scroll_shots settings-lyrics-scrolled 2 "Lyrics settings scrolled"
+      scroll_top
+      if tap_scrolled "가사 소스" 4 6; then
+        shot settings-lyrics-sources "Lyrics sources dialog"
+        back
+      fi
       back
     fi
 
