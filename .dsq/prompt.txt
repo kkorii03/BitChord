@@ -1,0 +1,10 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030. 이번 작업은 조사·계획서만, 앱 코드 변경 금지.
+배경: 사용자의 고음질 애드온(외부 서버 3곳)이 인증 거부·서버 오류로 모두 막혀 품질 업그레이드가 안 된다. 공개 프로젝트 https://github.com/Hexclyde/bitchord-morphe-patches (GPL-3.0, Java, BitChord 1.8.1 용 Morphe 패치, 'Unofficial Telegram music': 사용자 자신의 텔레그램 계정(TDLib)으로 가입한 채널의 FLAC/WAV/ALAC 파일을 BitChord 에서 검색·스트리밍, 서버 없음)을 우리 한국어 포크에 '소스'로 옮겨 넣을 수 있는지 판단한다. 우리 앱도 업스트림 BitChord(GPL-3.0) 포크라 라이선스는 호환.
+할 일(러너에서 `git clone --depth 1 https://github.com/Hexclyde/bitchord-morphe-patches /tmp/tg` 로 받아 읽을 것):
+① 패치가 BitChord 1.8.1 의 어느 클래스/인터페이스에 걸리는지(소스 등록 SourceRegistry/MusicSource/AddonSource/ModuleSource, 검색 탭, 설정 화면, 재생 DataSource 등) 목록과, 우리 포크(task/fix-1030)에서 같은 지점(파일:줄). 우리 품질 업그레이드(SourceResolver.upgradeFor, hq-verify)·다음 곡 준비에 텔레그램 결과가 후보로 들어갈 수 있는 경로.
+② TDLib 네이티브 라이브러리: 어디서 받는지(vendor/), ABI 별 크기, arm64 만 넣으면 APK 증가량. 빌드 방식(Gradle 의존성 vs .so 직접 포함).
+③ 배터리·네트워크: TDLib 가 백그라운드에서 연결을 유지하는지, 패치가 언제 TDLib 를 켜고 끄는지, 주기 작업(색인·동기화) 유무. 우리 원칙(주기 폴링 금지, 이벤트 기반, 화면 꺼짐 배터리 최소)과 충돌하는 부분.
+④ 사용자가 해야 할 설정: my.telegram.org 의 api_id/api_hash, 전화번호·코드 로그인, 2단계 비밀번호, 채널 선택 등. 개인정보(세션 파일 저장 위치·암호화).
+⑤ 옮기는 방법 2가지 비교: (a) 코드를 우리 앱 ko/ 쪽 새 소스로 이식, (b) 별도 애드온 서버를 사용자 폰에서 띄움 등 — 추천안과 단계별 작업 목록(각 단계 완료 조건), 예상 규모(파일 수·줄 수), 위험.
+결과물: docs/telegram-source-plan.md (한국어, 위 ①~⑤ + 추천). 코드 변경 금지(.github, keys 포함).
+마지막 10줄 이내 요약: 연결 지점 / APK 증가 / 배터리 / 사용자 설정 / 추천안 / 예상 규모.
