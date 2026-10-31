@@ -1,0 +1,14 @@
+[NO-FIX-LOOP]
+Repo: BitChord Android app (Kotlin). Branch has upstream v1.9 merged (git tag v1.9 exists).
+Goal: make these 3 failing app unit tests pass by fixing STRING RESOURCES ONLY:
+- KoreanStringsTest (koreanCopyHasNoCasualHaeyoEndings at line 31, koreanCopyUsesPlaylistTerm at line 43)
+- UiTranslationCoverageTest.userVisibleLabelsAreNotMarkedUntranslatable (line 55)
+Read the 2 test files first to see exactly what they check and which files they scan.
+Cause: v1.9 added new Korean strings written in 해요체 (~해요, ~예요, ~세요 casual endings) and using 재생목록 instead of 플레이리스트, and/or marked user-visible labels translatable=false.
+Rules:
+- Korean style = Apple Music Korea: formal 합니다체 (~합니다, ~습니다, ~하십시오/명사형), noun labels, 플레이리스트, 보관함. Do not change meaning.
+- Only edit res/values-ko*/strings*.xml and, if the coverage test requires, the translatable attribute in res/values/strings*.xml (app and sharedUi modules). Do NOT delete any string key. Do NOT touch Kotlin code, tests, .github/, keys/, gradle files.
+- Do NOT revert any file to an older version; do not checkout other branches.
+- Use grep / Select-String, not rg (rg is not installed).
+Verify: ./gradlew :app:testDebugUnitTest --tests '*KoreanStringsTest' --tests '*UiTranslationCoverageTest' (if gradle is available).
+At the end, summary in 10 lines or fewer: changed files / key changes (list each changed key) / test result / unresolved problems.
