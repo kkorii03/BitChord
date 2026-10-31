@@ -386,4 +386,44 @@ class NextPrepPolicyTest {
         assertFalse(NextPrepPolicy.syncMayRun(isVideo = true, substituted = false))
         assertFalse(NextPrepPolicy.syncMayRun(isVideo = false, substituted = true))
     }
+
+    @Test
+    fun aFreshNextRowWithNoStoredTimingEntryStillRunsItsSongCheck() {
+        // The next row is usually a track that has never played, so it has no
+        // timing entry until the check itself writes one. Treating that as
+        // "nothing to do" produced sync=skipped(no-answer) for every first-time
+        // next row without ever asking the engine.
+        assertTrue(
+            NextPrepPolicy.songCheckMayStart(
+                hasEntry = false,
+                retryHeld = false,
+                engineAllowed = true,
+            ),
+        )
+        assertTrue(
+            NextPrepPolicy.songCheckMayStart(
+                hasEntry = true,
+                retryHeld = false,
+                engineAllowed = true,
+            ),
+        )
+    }
+
+    @Test
+    fun aSongCheckStillWaitsForItsRetryOrAMissingEngine() {
+        assertFalse(
+            NextPrepPolicy.songCheckMayStart(
+                hasEntry = false,
+                retryHeld = true,
+                engineAllowed = true,
+            ),
+        )
+        assertFalse(
+            NextPrepPolicy.songCheckMayStart(
+                hasEntry = true,
+                retryHeld = false,
+                engineAllowed = false,
+            ),
+        )
+    }
 }

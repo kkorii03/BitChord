@@ -55,6 +55,24 @@ object NextPrepPolicy {
     fun syncMayRun(isVideo: Boolean, substituted: Boolean): Boolean = !isVideo && !substituted
 
     /**
+     * Whether a song's own sync check may start.
+     *
+     * A missing timing entry is not a reason to skip it. The next row is
+     * usually a track that has never played, so no entry has been written for
+     * it yet; the check itself creates that entry when it records its answer
+     * (or a 429 hold). Requiring one first made every first-time next row end
+     * at `sync=skipped(no-answer)` without ever asking an engine.
+     *
+     * [hasEntry] is kept in the signature so the old rule — and the regression
+     * it caused — stays explicit at every call site and in the tests.
+     */
+    fun songCheckMayStart(
+        hasEntry: Boolean,
+        retryHeld: Boolean,
+        engineAllowed: Boolean,
+    ): Boolean = !retryHeld && engineAllowed
+
+    /**
      * The steps still worth running, in their fixed order: wanted, not already
      * stored, and not already tried for this row.
      */
@@ -121,6 +139,8 @@ object NextPrepPolicy {
         /** The listener's synced-lyrics setting is off, so the step was never wanted. */
         val syncedLyrics: Boolean = true,
         val hasLyrics: Boolean = false,
+        /** The lyrics carry provider times; a song check can only move those. */
+        val hasTimedLines: Boolean = true,
         /** The lyrics came from a file whose own clock is not the video's. */
         val fileTimed: Boolean = false,
         /** Whether the lyrics' clock may be measured against the audio at all. */
@@ -148,6 +168,7 @@ object NextPrepPolicy {
         facts.lyricsOff -> "lyrics-off"
         !facts.syncedLyrics -> "synced-off"
         !facts.hasLyrics -> "no-lyrics"
+        !facts.hasTimedLines -> "no-timed-lines"
         facts.timedToVideo -> "timed-to-video"
         !facts.recordTimed || facts.fileTimed -> "file-timed"
         !facts.heavyWorkAllowed -> "heavy-off"

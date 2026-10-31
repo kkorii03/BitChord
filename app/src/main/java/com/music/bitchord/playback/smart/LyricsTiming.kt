@@ -1665,20 +1665,20 @@ object LyricsTiming {
             lines,
             audioSourceKey(song.videoId, song.localUri != null),
         )
+        // A fresh next row has no entry until its first check writes one. That
+        // is the normal case for the next-song bundle, not a reason to skip.
         val entry = store(context).get(song.videoId)
-        if (entry == null) {
-            TrackLog.d(TAG, "lyrics-sync: song-check skipped (no entry)", song.videoId)
-            return false
-        }
         // A 429 is not a failed answer: the engine was never really asked, so
         // it is not recorded as spent. The song waits instead until the
         // server's own delay has passed, and the next playback (an event, not
         // a timer) tries again.
-        val retryAt = entry.songRetryAtMs
-        if (entry.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+        val retryAt = entry?.songRetryAtMs
+        val retryHeld = entry?.songRetryKey == key &&
+            retryAt != null && retryAt > System.currentTimeMillis()
+        if (retryHeld) {
             TrackLog.d(
                 TAG,
-                "lyrics-sync: song-check deferred until ${retryAt}",
+                "lyrics-sync: song-check deferred until $retryAt",
                 song.videoId,
             )
             return false
@@ -1693,7 +1693,14 @@ object LyricsTiming {
             songOnly = true,
         )
         val engine = ENGINE_DEEPGRAM_WHISPER
-        if (engine !in engines || !com.music.bitchord.data.lyrics.Deepgram.usable) {
+        val engineAllowed = engine in engines &&
+            com.music.bitchord.data.lyrics.Deepgram.usable
+        if (!com.music.bitchord.playback.NextPrepPolicy.songCheckMayStart(
+                hasEntry = entry != null,
+                retryHeld = retryHeld,
+                engineAllowed = engineAllowed,
+            )
+        ) {
             TrackLog.d(
                 TAG,
                 "lyrics-sync: song-check skipped engine=$engine allowed=${engine in engines} " +
