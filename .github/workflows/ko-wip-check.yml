@@ -68,7 +68,11 @@ jobs:
           grep -E "BUILD (SUCCESSFUL|FAILED)" test.log | while IFS= read -r l; do echo "::notice title=tests-build::$l"; done || true
           exit $status
 
+      # Runs even when the shared tests failed, so one CI run reports both
+      # the failing tests and the app's compile errors.
       - name: Compile the app
+        id: compile
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set +e -o pipefail
@@ -83,6 +87,7 @@ jobs:
       # artwork fixes. Named one by one: the rest of app/src/test is not kept
       # green (the audio output tests already fail on this branch's base).
       - name: App playback tests
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         shell: bash
         run: |
           set +e -o pipefail
