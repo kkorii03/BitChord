@@ -467,17 +467,56 @@ object LyricsTiming {
         timing: Timing,
         audioSource: String? = null,
         stillCurrent: () -> Boolean = { true },
+    ): RefinePolicy.Result = refineWithSnapshot(
+        context,
+        videoId,
+        lines,
+        timing,
+        audioSource,
+        stillCurrent,
+        null,
+    )
+
+    /**
+     * [refine] anchored to an entry captured before a long listen; see
+     * [RefineSnapshot]. Not part of the public surface because the anchor is
+     * only meaningful to a caller that suspends between the capture and here.
+     */
+    internal suspend fun refineWithSnapshot(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        timing: Timing,
+        audioSource: String? = null,
+        stillCurrent: () -> Boolean = { true },
+        snapshot: RefineSnapshot? = null,
     ): RefinePolicy.Result {
         // No base is a song version shown on its lyric provider's own clock —
         // the commonest case of all. That provider can still sit a fifth of a
         // second off (vc78: Espresso -0.23 s, Viva La Vida -0.25 s, never
         // refined), so the refine runs without a base too.
         val base = timing.base
-        val entry = store(context).get(videoId) ?: Entry()
+        val stored = store(context).get(videoId) ?: Entry()
+        // A caller that listened for a long while before this call captures
+        // the entry first ([RefineSnapshot]); its refine then computes and
+        // writes against that older entry so a correction saved during the
+        // listen is detected below instead of becoming the new baseline.
+        val entry = snapshot?.entry ?: stored
         val key = textKey(lines, audioSource)
         val result = refineResult(entry, key, base, lines, timing)
         val words = refineWords(entry, key, base)
         if (words.isEmpty()) return result
+        // The snapshot was taken before the caller's long listen. If the
+        // stored entry no longer matches it, another path corrected this song
+        // meanwhile and this result is about facts that changed.
+        if (snapshot != null && stored != snapshot.entry) {
+            TrackLog.i(
+                "BitChord",
+                "lyrics-refine: $videoId stale result dropped (stored entry changed)",
+                videoId,
+            )
+            return result
+        }
         val appliedMs = if (result.applied) result.medianMs else null
         val appliedSlope = if (result.applied) result.slopePerMin else 0.0
         if (entry.refineMs == appliedMs && entry.refineSlopePerMin == appliedSlope &&
@@ -488,14 +527,29 @@ object LyricsTiming {
         // The refine suspends on store I/O. A track switch or a newer timing
         // pass may have landed meanwhile, so do not let these stale facts
         // clear or overwrite the newer correction before publishing them.
-        if (!stillCurrent()) return result
-        store(context).update(videoId) {
+        if (!stillCurrent()) {
+            TrackLog.i(
+                "BitChord",
+                "lyrics-refine: $videoId stale result dropped (track changed)",
+                videoId,
+            )
+            return result
+        }
+        val saved = store(context).updateIfUnchanged(videoId, entry) {
             it.copy(
                 refineMs = appliedMs,
                 refineSlopePerMin = appliedSlope,
                 refineLines = result.lines,
                 refineMad = result.madMs,
             )
+        }
+        if (!saved) {
+            TrackLog.i(
+                "BitChord",
+                "lyrics-refine: $videoId stale result dropped (stored entry changed)",
+                videoId,
+            )
+            return result
         }
         val baseLabel = when {
             base == null -> "none"
@@ -516,6 +570,17 @@ object LyricsTiming {
         )
         return result
     }
+
+    /**
+     * The saved entry a refine started from, taken before a long listen so
+     * [refine] can tell whether another path saved a newer correction while
+     * the words were being heard. See [refineSnapshot].
+     */
+    internal class RefineSnapshot internal constructor(internal val entry: Entry)
+
+    /** Captures [videoId]'s saved entry for a later [refine]'s staleness check. */
+    internal suspend fun refineSnapshot(context: Context, videoId: String): RefineSnapshot =
+        RefineSnapshot(store(context).get(videoId) ?: Entry())
 
     /** The refine [result] for the words kept for these lyrics and sound, without writing anything. */
     private fun refineResult(
@@ -610,10 +675,12 @@ object LyricsTiming {
             if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return@withLock false
             val before = store(context).get(videoId)
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
+            var heardWords: List<SavedWord>? = null
             if (!hadWords) {
                 val audio = VideoAudio.songWav(context, song, VideoAudio.SONG_CHECK_SECONDS)
                     ?: return@withLock false
                 val words = listenForRefine(audio, lines) ?: return@withLock false
+                heardWords = words
                 store(context).update(videoId) {
                     it.copy(
                         refineHeardKey = key,
@@ -623,9 +690,27 @@ object LyricsTiming {
                     )
                 }
             }
+            // Anchor the refine to the entry from before the listen, with our
+            // own words write folded in. A newer correction saved during the
+            // listen then makes the stored entry differ and the result is
+            // dropped instead of overwriting it.
+            val firstAnchor = RefineSnapshot(
+                (before ?: Entry()).let { start ->
+                    if (heardWords == null) {
+                        start
+                    } else {
+                        start.copy(
+                            refineHeardKey = key,
+                            refineHeardWords = heardWords,
+                            refineHeardSeconds = VideoAudio.SONG_CHECK_SECONDS,
+                            refineHeardExtended = false,
+                        )
+                    }
+                },
+            )
             val entry = store(context).get(videoId) ?: return@withLock false
             val heardSeconds = refineHeardSeconds(entry)
-            val result = refine(context, videoId, lines, timing, audioSource)
+            val result = refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = firstAnchor)
             if (entry.refineHeardExtended || heardSeconds >= RefineExtendPolicy.EXTEND_SECONDS ||
                 !RefineExtendPolicy.shouldExtend(result, heardSeconds, lastLineMs(lines))
             ) {
@@ -640,6 +725,7 @@ object LyricsTiming {
                 if (!hadWords) _changes.tryEmit(videoId)
                 return@withLock !hadWords
             }
+            val beforeExtend = store(context).get(videoId) ?: Entry()
             val audio = VideoAudio.songWav(context, song, target) ?: return@withLock !hadWords
             val words = listenForRefine(audio, lines) ?: return@withLock !hadWords
             store(context).update(videoId) {
@@ -650,7 +736,17 @@ object LyricsTiming {
                     refineHeardExtended = true,
                 )
             }
-            refine(context, videoId, lines, timing, audioSource)
+            // Same anchor, now taken before this second listen; the first
+            // refine's own write is already part of [beforeExtend].
+            val extendAnchor = RefineSnapshot(
+                beforeExtend.copy(
+                    refineHeardKey = key,
+                    refineHeardWords = words,
+                    refineHeardSeconds = target,
+                    refineHeardExtended = true,
+                ),
+            )
+            refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = extendAnchor)
             _changes.tryEmit(videoId)
             true
         }
@@ -2890,11 +2986,11 @@ object LyricsTiming {
      * ever carries. Times are on the video's own clock, as heard.
      */
     @Serializable
-    private data class SavedWord(val t: String, val s: Long, val e: Long)
+    internal data class SavedWord(val t: String, val s: Long, val e: Long)
 
     /** A [LyricsTimeMap] with what was said about it. */
     @Serializable
-    private data class SavedMap(
+    internal data class SavedMap(
         val knots: List<Long>,
         val headRate: Double,
         val tailRate: Double,
@@ -2922,7 +3018,7 @@ object LyricsTiming {
     )
 
     @Serializable
-    private data class Entry(
+    internal data class Entry(
         // ko-21/22: the loudness measurement (superseded, see AUTO_VERSION)
         // and per-line AI answers.
         val autoChecked: Boolean = false,
@@ -3032,6 +3128,38 @@ object LyricsTiming {
                 dirty = true
             }
             scheduleSave()
+        }
+
+        /**
+         * [update], but only when the entry still equals [expected].
+         *
+         * A refine reads the entry, computes away from the lock and writes
+         * back later; another path (a newer refine, an AI answer, a hand
+         * correction) may have saved this video meanwhile. The comparison and
+         * the write share [update]'s lock, so an older result cannot clear or
+         * overwrite the newer correction. False means nothing was written.
+         */
+        suspend fun updateIfUnchanged(
+            videoId: String,
+            expected: Entry,
+            change: (Entry) -> Entry,
+        ): Boolean {
+            var saved = false
+            mutex.withLock {
+                val map = loaded()
+                val current = map[videoId] ?: Entry()
+                if (current != expected) return@withLock
+                // Reinsert at the end like [update], so the entry just written
+                // cannot be the oldest and be evicted by the loop below in the
+                // same call (an oversized restored backup).
+                map.remove(videoId)
+                map[videoId] = change(current)
+                while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
+                dirty = true
+                saved = true
+            }
+            if (saved) scheduleSave()
+            return saved
         }
 
         /** Forgets every file's sync-check version, leaving the stored sync itself in place. */
