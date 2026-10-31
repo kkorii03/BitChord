@@ -1,0 +1,180 @@
+﻿You are fixing compile errors after merging upstream BitChord v1.9 into our Korean fork. Branch base = task/upstream-19. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. So our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist (or upstream renamed/changed signatures).
+Reference versions (fetch them first):
+  git fetch origin task/fix-1030            -> origin/task/fix-1030 = our fork BEFORE the merge
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   -> pure upstream v1.9 (read only, never push there)
+Use `git show origin/task/fix-1030:<path>` and `git show v1.9:<path>` to see what each side had.
+
+Policy (user order): adopt v1.9 maximally. Where v1.9 has its own implementation of the same feature, USE v1.9's and delete our now-dead caller code instead of restoring ours: quality upgrade / hq-swap / HQ prefetch -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings, menus, video playback, tab bar, mini player -> v1.9.
+KEEP (restore if lost) only Korean-fork features v1.9 does not have: lyrics sync correction, song-version verdict / no music-video / audio instead of MV / cover-piano rejection, Korea-blocked song fallback + proxy playback + alternate ATV copy, video radio, Korean strings, diagnostic log lines (DiagLog / featurehealth lines).
+
+Separation rule (read docs/ko-fork-layout.md): when you restore a lost Korean declaration, put it in a NEW file under package com.music.bitchord.ko (shared: shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/<LaneName>Restored*.kt; use commonMain/ko only if commonMain code needs it), NOT back inside an upstream file. Inside an upstream file (one that exists in v1.9) add only one-line calls marked with a trailing comment // [KO] <feature>. Prefer extension functions / top-level functions over editing upstream classes. Never split or delete upstream v1.9 code. When an upstream signature changed, adapt OUR code to the new upstream signature, not the other way round.
+
+Scope: fix the errors in YOUR files only (list below). Other lanes fix the other shared files in parallel, so the full build will still show errors in files outside your list - ignore those, do not edit files outside your list except new files under .../ko/. Check with: ./gradlew :shared:compileKotlinJvm --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' ; your goal is ZERO errors in your files. Do not edit .github/, keys/, signing, gradle files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change. If you delete our code because v1.9 replaces it, list it in the summary with the reason.
+If you delete a test of a removed feature, list it in the summary.
+
+At the end, summarize in 10 lines or less: modified files / new ko files / what was restored (Korean features) / what was dropped in favour of v1.9 / remaining errors in your files / unresolved questions.
+
+YOUR FILES: shared/.../data/innertube/StreamResolver.kt, Innertube.kt, InnertubeParser.kt, YouTubeWebSearch.kt (LaneName=Innertube)
+
+Current compile errors in your files (from CI):
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:778:69 No parameter with name 'forceSigned' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:778:69 No value passed for parameter 'bodyExtras'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:780:33 No parameter with name 'browseId' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:780:54 No parameter with name 'forceSigned' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:794:17 Unresolved reference 'not' for operator '!'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:799:13 Unresolved reference 'not' for operator '!'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:815:29 No parameter with name 'forceAnonymous' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:826:29 No parameter with name 'forceAnonymous' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:826:52 No parameter with name 'directRetryOnProxyFailure' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:861:29 No parameter with name 'browseId' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:861:50 No parameter with name 'forceAnonymous' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1007:29 No parameter with name 'browseId' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1035:9 No parameter with name 'forceAnonymous' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1126:13 Unresolved reference 'postMusicAnonymous'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1127:17 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1128:31 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1160:59 No parameter with name 'kind' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1163:60 No parameter with name 'kind' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1188:9 Unresolved reference 'postMusicAnonymous'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1189:13 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1211:9 No parameter with name 'hl' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1212:9 No parameter with name 'gl' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1213:9 No parameter with name 'searchKind' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1214:9 No parameter with name 'searchQueryLength' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1778:13 No parameter with name 'browseId' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1778:24 Unresolved reference 'browseId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1779:13 No parameter with name 'forceAnonymous' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1779:30 Unresolved reference 'forceAnonymous'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1780:13 No parameter with name 'forceSigned' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1780:13 No value passed for parameter 'bodyExtras'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1780:27 Unresolved reference 'forceSigned'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1782:13 Unresolved reference 'isSearchEndpoint'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1785:19 Argument type mismatch: actual type is 'JsonObject', but 'Boolean' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1788:17 Unresolved reference 'searchLogLine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1791:28 Unresolved reference 'searchKind'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1791:42 Unresolved reference 'defaultSearchKind'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1792:35 Unresolved reference 'searchQueryLength'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1801:13 Unresolved reference 'not' for operator '!'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1802:27 Condition type mismatch: inferred type is 'JsonObject' but 'Boolean' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1806:33 Condition type mismatch: inferred type is 'JsonObject' but 'Boolean' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1807:27 Unresolved reference 'accountHeadersFor'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1816:36 Condition type mismatch: inferred type is 'JsonObject' but 'Boolean' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1817:27 Condition type mismatch: inferred type is 'JsonObject' but 'Boolean' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1817:60 Unresolved reference 'visitorIdFor'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1826:37 Unresolved reference 'hl'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1838:43 Cannot infer type for implicit value parameter 'it'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1838:43 Operator call 'component1()' is ambiguous for destructuring of type '??? (Unknown type for value parameter <destruct>)'. Applicable candidates:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1838:43 Operator call 'component2()' is ambiguous for destructuring of type '??? (Unknown type for value parameter <destruct>)'. Applicable candidates:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1845:47 Unresolved reference 'hl'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1846:47 Unresolved reference 'gl'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1859:41 Unresolved reference 'not' for operator '!'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1860:41 Unresolved reference 'dataSyncIdForRequest'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1861:47 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1861:47 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1861:51 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1878:36 Unresolved reference 'directRetryOnProxyFailure'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1878:66 Unresolved reference 'isAccountWrite'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1929:13 Condition type mismatch: inferred type is 'JsonObject' but 'Boolean' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1958:32 Unresolved reference 'isAnonymousYouTubeRequest'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1959:13 Unresolved reference 'isSearchEndpoint'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1963:17 Unresolved reference 'searchLogLine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1966:42 Unresolved reference 'defaultSearchKind'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:1982:13 Unresolved reference 'accountHeadersFor'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2022:33 Unresolved reference 'region'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2022:41 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2022:41 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2022:45 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2071:9 Unresolved reference 'isSearchEndpoint'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2072:58 Unresolved reference 'isAnonymousBrowseId'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/Innertube.kt:2087:16 Suspend function 'suspend fun <T> withRetry(attempts: Int = ..., block: suspend () -> T): T' can only be called from a coroutine or another suspend function.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/InnertubeParser.kt:740:21 No parameter with name 'isArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/InnertubeParser.kt:1103:13 No parameter with name 'isArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:637:14 Syntax error: Expecting 'catch' or 'finally'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:637:15 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:642:17 Unresolved reference 'directTried'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:643:13 Unresolved reference 'directTried'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:648:17 Unresolved reference 'directPrecheck'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:653:17 Unresolved reference 'directPrecheck'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:653:33 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:653:38 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:653:40 Unresolved reference 'directPrecheck'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:653:65 Unresolved reference 'await'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:662:17 Unresolved reference 'served'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:667:17 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:668:17 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:669:56 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:671:36 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:672:17 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:673:56 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:680:51 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:688:17 Unresolved reference 'itxWalked'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:689:13 Unresolved reference 'itxWalked'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:694:48 Unresolved reference 'served'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:696:25 Unresolved reference 'itxUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:696:82 Unresolved reference 'itxUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:704:51 Unresolved reference 'itxUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:712:28 Unresolved reference 'directPrecheck'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:733:25 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:734:25 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:735:64 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:746:55 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:749:17 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:750:17 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:751:56 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:751:90 Unresolved reference 'reason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:752:64 Unresolved reference 'reason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:754:77 Unresolved reference 'refused'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:756:17 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:756:46 Unresolved reference 'refused'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:757:17 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:758:56 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:758:90 Unresolved reference 'reason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:765:61 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:767:17 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:853:25 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:853:51 Unresolved reference 'itxUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:869:21 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:870:21 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:871:60 Unresolved reference 'directUnplayableReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:890:17 Unresolved reference 'preferredItx'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:890:69 Unresolved reference 'preferredItx'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:891:17 Unresolved reference 'preferDirect'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:894:34 Unresolved reference 'goneRefusal'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:900:21 Unresolved reference 'goneReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:907:25 Unresolved reference 'goneRefusal'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:908:18 Unresolved reference 'preferredItx'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:908:42 Unresolved reference 'preferDirect'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:909:56 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:917:17 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:924:29 Unresolved reference 'gated'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:941:24 Unresolved reference 'gated'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:947:36 Unresolved reference 'goneRefusal'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:949:28 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:950:60 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:952:21 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:979:23 Unresolved reference 'goneRefusal'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:984:21 Unresolved reference 'goneReason'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:989:29 Unresolved reference 'served'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1030:18 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1031:18 Unresolved reference 'goneRefusal'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1036:40 Unresolved reference 'directUnplayable'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1039:17 Unresolved reference 'proxyAttempted'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1085:9 Unresolved reference 'servedKey'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1085:20 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1085:27 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1088:38 Unresolved reference 'servedLabel'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1088:84 Unresolved reference 'orderLabel'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1098:13 Unresolved reference 'directPrecheck'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1306:51 Unresolved reference 'manifestIdForProfile'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1307:68 Argument type mismatch: actual type is 'Any', but 'String' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1314:51 Unresolved reference 'manifestIdForProfile'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1315:68 Argument type mismatch: actual type is 'Any', but 'String' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1443:28 Unresolved reference 'manifestIdForProfile'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1444:15 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1444:15 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1444:19 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/YouTubeWebSearch.kt:71:23 Unresolved reference 'searchLogLine'.
+
