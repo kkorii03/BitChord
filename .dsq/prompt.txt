@@ -1,0 +1,13 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 로그 10-31): 공식 곡 '(It Goes Like) Nanana - 페기 구'(sCz5y84dwuA)가 재생목록에서 뮤직비디오 판(video=y)으로 들어옴. 노래 버전(오디오 전용 ATV 판) 찾기 결과:
+ 10:26:59.014 'song version: sCz5y84dwuA kept (timeout)'  (MainActivity.playRadio, withTimeout(BEFORE_AUDIO_TIMEOUT_MS))
+ 10:26:59.082 'song version: sCz5y84dwuA kept (none)'      (SongVersionController, 68ms 뒤)
+ 10:27:53.115 'song version: sCz5y84dwuA -> none via cache' 이후 계속 none.
+→ 시간 초과/취소된 조회가 '오디오 판 없음'으로 캐시되어 이후 영영 뮤직비디오 판으로 재생되고, 그 결과 품질 업그레이드(m=1 거절)·가사 싱크도 비디오 기준이 됨. 사용자는 '일반 노래인데 왜 비디오로 취급하냐'고 함.
+할 일:
+① YtMusicRepository.songVersion / SongVersionController / 관련 캐시 경로를 조사해 timeout·취소·네트워크 오류가 'none'(확정 없음)으로 저장되는 경로를 모두 찾아 막기. 확정 없음은 실제 검색이 끝까지 돌아 후보 0개일 때만 저장. 68ms 만의 'kept (none)'이 어디서 왔는지 요약에 정확히(파일:줄).
+② before-audio 조회가 시간 초과로 비디오 판을 먼저 틀었으면, 첫 소리 뒤 백그라운드에서 한 번 더 찾아(이벤트 기반 1회, 폴링 금지) 오디오 판을 찾으면 기존 정책대로(다음 재생부터 또는 기존 곡 중간 교체 경로가 있으면 그 경로) 반영하고 'song version: <id> -> <new> via retry' 로그.
+③ 커버·라이브·유튜버 업로드는 기존 판정 그대로(오디오 판으로 바꾸면 안 됨) — 회귀 테스트로 보장.
+④ 이미 'none'으로 잘못 저장된 기존 캐시 항목이 앱 업데이트 후 다시 조회되도록(예: 확정 여부 표시가 없는 기존 none 항목은 1회 재검증).
+테스트: timeout/취소는 캐시 안 됨, 진짜 0후보는 캐시됨, 재시도 1회 동작, 커버는 바뀌지 않음 — 단위 테스트.
+반드시: 요청 수·배터리(재시도는 곡당 1회), 바꾼 함수 모든 호출부 재확인. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
