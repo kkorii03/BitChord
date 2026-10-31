@@ -61,8 +61,17 @@ internal object TelegramFileNames {
  */
 object TelegramMessageMapper {
 
+    // Which documents count as music. Container suffixes that are usually video
+    // (mp4, webm) stay out: a channel's clips must not show up as songs or as
+    // upgrade candidates. Parsing still strips every probe suffix.
+    private val DOCUMENT_EXCLUDED = setOf("mp4", "webm")
     private val FILE_NAME = Regex(
-        """.*\.($AUDIO_EXTENSION_PATTERN)$""",
+        """.*\.(${
+            TelegramFormatProbe.AUDIO_EXTENSIONS
+                .filterNot { it.lowercase() in DOCUMENT_EXCLUDED }
+                .sorted()
+                .joinToString("|") { Regex.escape(it) }
+        })$""",
         RegexOption.IGNORE_CASE,
     )
 
