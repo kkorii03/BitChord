@@ -1454,6 +1454,7 @@
     <string name="telegram_continue">계속</string>
     <string name="telegram_log_in">로그인</string>
     <string name="telegram_log_out">로그아웃</string>
+    <string name="telegram_reset_session">세션 초기화</string>
     <string name="telegram_status">상태</string>
     <string name="telegram_status_connected">연결됨</string>
     <string name="telegram_connected_as">%1$s 계정으로 연결됨</string>

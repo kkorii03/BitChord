@@ -1549,6 +1549,7 @@
     <string name="telegram_continue">Continue</string>
     <string name="telegram_log_in">Log in</string>
     <string name="telegram_log_out">Log out</string>
+    <string name="telegram_reset_session">Reset session</string>
     <string name="telegram_status">Status</string>
     <string name="telegram_status_connected">Connected</string>
     <string name="telegram_connected_as">Connected as %1$s</string>

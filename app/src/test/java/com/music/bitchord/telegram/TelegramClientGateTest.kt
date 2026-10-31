@@ -37,28 +37,29 @@ class TelegramClientGateTest {
     }
 
     @Test
-    fun playbackKeepsTheClientOpenInTheBackground() {
+    fun telegramPlaybackKeepsTheClientOpenInTheBackground() {
         val gate = TelegramClientGate()
         gate.onForeground(true)
         gate.acquire("settings")
         gate.onForeground(false)
         assertFalse(gate.shouldBeOpen)
-        assertTrue(gate.onPlaybackActive(true))
+        assertTrue(gate.onTelegramPlaybackActive(true))
         assertTrue(gate.shouldBeOpen)
-        assertFalse(gate.onPlaybackActive(false))
+        assertFalse(gate.onTelegramPlaybackActive(false))
         assertFalse(gate.shouldBeOpen)
     }
 
     @Test
-    fun playbackAloneOpensAndKeepsTheClientOpen() {
+    fun telegramPlaybackAloneOpensAndKeepsTheClientOpen() {
         val gate = TelegramClientGate()
-        // Playback is its own reason: no screen holder is required, and the
-        // background does not close a playing client.
-        assertTrue(gate.onPlaybackActive(true))
+        // Telegram playback is its own reason: no screen holder is required, and the
+        // background does not close a playing client. Local/YouTube playback never
+        // reaches this term.
+        assertTrue(gate.onTelegramPlaybackActive(true))
         assertTrue(gate.shouldBeOpen)
         gate.onForeground(false)
         assertTrue(gate.shouldBeOpen)
-        assertFalse(gate.onPlaybackActive(false))
+        assertFalse(gate.onTelegramPlaybackActive(false))
         assertFalse(gate.shouldBeOpen)
     }
 

@@ -79,6 +79,29 @@ class TelegramDatabaseKeyStoreTest {
     }
 
     @Test
+    fun anExplicitResetMintsAFreshKeyOnlyAfterTheSessionIsGone() {
+        database.mkdirs()
+        file.writeText("v1:not-a-real-iv:not-a-real-body")
+        val key = key()
+        val store = TelegramDatabaseKeyStore(file, { key }) { database.exists() }
+
+        try {
+            store.loadOrCreate()
+            fail("A corrupt key must be reported before the reset.")
+        } catch (_: TelegramDatabaseKeyException) {
+            // Expected: the UI offers a reset instead of rotating silently.
+        }
+
+        // resetSession() deletes db/files first, then clears the key.
+        database.deleteRecursively()
+        store.clear()
+        val created = store.loadOrCreate()
+
+        assertEquals(32, created.size)
+        assertArrayEquals(created, TelegramDatabaseKeyStore(file, { key }).loadOrCreate())
+    }
+
+    @Test
     fun aFreshSessionGetsAKey() {
         val key = key()
         val store = TelegramDatabaseKeyStore(file, { key }) { false }

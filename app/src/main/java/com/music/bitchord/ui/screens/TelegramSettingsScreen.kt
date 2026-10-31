@@ -75,6 +75,13 @@ fun TelegramSettingsScreen(
             topSpacing = 0.dp,
         ) {
             StateRow(state.stage, state.accountName, state.error)
+            if (state.error == TelegramError.GENERIC && state.stage != TelegramAuthStage.READY) {
+                RowDivider()
+                DestructiveRow(
+                    label = stringResource(R.string.telegram_reset_session),
+                    onClick = { TelegramClientManager.resetSession() },
+                )
+            }
             if (state.configured && !editingCredentials) {
                 RowDivider()
                 SettingsRow(

@@ -2,7 +2,6 @@ package com.music.bitchord.telegram
 
 import android.content.Context
 import android.os.Build
-import com.music.bitchord.playback.PlaybackActivity
 import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -64,15 +63,8 @@ object TelegramClientManager {
         if (this.context != null) return
         this.context = context.applicationContext
         gate.onForeground(AppForeground.isForeground)
-        gate.onPlaybackActive(PlaybackActivity.active)
         AppForeground.onForeground { sync("foreground") }
         AppForeground.onBackground { sync("background") }
-        PlaybackActivity.addPlayingListener { playing ->
-            sync(if (playing) "playback started" else "playback stopped")
-        }
-        PlaybackActivity.addBufferingListener { buffering ->
-            sync(if (buffering) "playback buffering" else "playback buffering stopped")
-        }
     }
 
     /** The settings screen holds the client only while it is open. */
@@ -88,6 +80,19 @@ object TelegramClientManager {
         work.execute {
             gate.release(reason)
             applyGate("close: $reason")
+        }
+    }
+
+    /**
+     * The Telegram source calls this when its own playback starts or stops.
+     * Global playback (local, YouTube, add-ons) must not reach here: this stage
+     * has no Telegram playback yet, so no caller is wired.
+     */
+    fun onTelegramPlayback(active: Boolean) {
+        if (context == null) return
+        work.execute {
+            gate.onTelegramPlaybackActive(active)
+            applyGate(if (active) "telegram playback started" else "telegram playback stopped")
         }
     }
 
@@ -159,11 +164,42 @@ object TelegramClientManager {
                 finishClosed(deleteLocalSession = true)
                 TelegramLog.authState("closed")
             } else {
-                // Keep the client and its files: the Closed update finishes the
-                // logout later instead of opening/deleting underneath it.
-                update { it.copy(stage = TelegramAuthStage.CLOSING, error = TelegramError.GENERIC) }
+                // Never delete files under an unconfirmed close. Drop the stale
+                // handle and generation after the timeout so startClient is not
+                // latched shut forever; a retry can then reset the session.
+                resetAfterCloseTimeout("logout")
             }
             applyGate("logged out")
+        }
+    }
+
+    /**
+     * Explicit recovery for a session that cannot be opened (for example a
+     * database key that no longer decrypts). The client is closed first, then
+     * db/files and only after that the key are removed, so the next open mints
+     * a fresh key for a session that no longer exists.
+     */
+    fun resetSession() {
+        work.execute {
+            ensureCredentialsLoaded()
+            val target = client
+            if (target != null && !closeNow("session reset")) {
+                // The close timed out; files stay in place for a later retry.
+                applyGate("session reset deferred")
+                return@execute
+            }
+            deleteSession()
+            logoutRequested = false
+            update {
+                it.copy(
+                    stage = TelegramAuthStage.CLOSED,
+                    clientOpen = false,
+                    accountName = null,
+                    error = null,
+                )
+            }
+            TelegramLog.authState("session reset")
+            applyGate("session reset")
         }
     }
 
@@ -186,7 +222,6 @@ object TelegramClientManager {
         if (context == null) return
         work.execute {
             gate.onForeground(AppForeground.isForeground)
-            gate.onPlaybackActive(PlaybackActivity.active)
             applyGate(reason)
         }
     }
@@ -196,7 +231,7 @@ object TelegramClientManager {
         if (gate.shouldBeOpen) {
             if (client == null) {
                 val reasons = gate.openReasons.toMutableList()
-                if (gate.playbackActive) reasons += "playback"
+                if (gate.telegramPlaybackActive) reasons += "telegram playback"
                 startClient(reasons.joinToString(","))
             }
         } else {
@@ -267,9 +302,11 @@ object TelegramClientManager {
 
     /**
      * Sends Close and waits for TDLib's Closed confirmation. Returns true only
-     * when the native client is really gone. On timeout the handle and session
-     * files stay in place so no second client can share the database and no
-     * files are deleted under an open client; the Closed update finishes later.
+     * when the native client is really gone. On timeout the session files stay
+     * in place so nothing is deleted under an open client, but the stale handle
+     * and its generation are dropped: otherwise `closing`/`client` would latch
+     * [startClient] shut forever after one hung Close. Stale callbacks from the
+     * abandoned client fail the generation check.
      *
      * Runs on [work] only.
      */
@@ -295,8 +332,34 @@ object TelegramClientManager {
             finishClosed(deleteLocalSession = logoutRequested)
             return true
         }
-        update { it.copy(stage = TelegramAuthStage.CLOSED, error = TelegramError.GENERIC) }
+        resetAfterCloseTimeout(reason)
         return false
+    }
+
+    /**
+     * Drops a client that did not confirm Closed in time without touching its
+     * files. Bumping the generation makes queued updates from that client
+     * unusable, and clearing [closing]/[client] lets a later gate event start
+     * again instead of staying latched. Runs on [work] only.
+     */
+    private fun resetAfterCloseTimeout(reason: String) {
+        generation.incrementAndGet()
+        client = null
+        clientClosed = null
+        closing = false
+        auth = null
+        paramsSent = false
+        appliedCredentials = TelegramApplicationCredentials.EMPTY
+        logoutRequested = false
+        TelegramLog.clientClosed("$reason timeout")
+        update {
+            it.copy(
+                stage = TelegramAuthStage.CLOSED,
+                clientOpen = false,
+                accountName = null,
+                error = TelegramError.GENERIC,
+            )
+        }
     }
 
     /**
@@ -304,6 +367,10 @@ object TelegramClientManager {
      * clears the local session. Runs on [work] only, never while the client is open.
      */
     private fun finishClosed(deleteLocalSession: Boolean) {
+        // Advance first: any update already queued from this client must be
+        // dropped, or a trailing Closing could overwrite CLOSED and re-enter
+        // auth handlers after cleanup.
+        generation.incrementAndGet()
         client = null
         clientClosed = null
         closing = false
