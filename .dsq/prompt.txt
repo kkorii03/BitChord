@@ -1,0 +1,20 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (1·2단계: 엔진·로그인·검색·재생 완료).
+텔레그램 음악 소스 이식 3단계 / 3단계: 품질 업그레이드 연결. docs/telegram-source-plan.md 의 'Opus 검토 보정'을 따른다.
+목표: 사용자가 텔레그램에 로그인하고 채널을 고르면, 품질 업그레이드(재생 중 수동/자동, 다음 곡 준비, 보관함 고음질 받기)가 텔레그램의 무손실 파일을 후보로 찾아 기존 판정·소리 대조(hq-verify)를 거쳐 교체한다.
+할 일:
+① 2단계에서 업그레이드 경로에서 일부러 뺀 지점(TelegramSourceStageTwoReviewTest 의 '자동 후보 제외')을 찾아, 텔레그램이 '로그인 완료 + 채팅 1개 이상 선택 + 소스 켜짐'일 때만 SourceResolver.upgradeFor/substitute/NextTrackPreparation.prepareHq/HqLibraryUpgrade 의 후보 소스가 되게 한다(YouTube 보다 위 순위 유지).
+② 판정은 기존 그대로: TrackMatcher 엄격 판정(커버·리믹스·라이브·인스트·트리뷰트 거절, 다른 문자 체계 가수 = artist-unverified 는 hq-verify accepted 일 때만), 길이 허용치, hq-verify. 텔레그램 파일명/태그가 '아티스트 - 제목.flac' 형태일 때 제목·가수 파싱이 맞는지 확인하고 부족하면 보강(원본의 파일명 파싱 참고).
+③ 요청 수·배터리: 곡당 텔레그램 검색 1회(선택한 채팅 범위), 결과 캐시는 기존 hq-search 캐시 규칙 그대로(실패 섞인 '없음'은 캐시 금지). 클라이언트는 검색·스트림 lease 동안만 열림(1·2단계 정책). 로그인 안 됐으면 후보에서 조용히 빠짐(로그 한 줄 'hq-search: <곡> Telegram verdict=signed-out').
+④ hq-search 로그에 텔레그램 줄이 다른 소스와 같은 형식으로 남게.
+테스트(고치기 전 실패): 로그인·선택 조건별 후보 포함 여부, 'Artist - Title.flac' 파싱, 커버 파일 거절, signed-out 은 후보 아님 — 단위 테스트. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, *.jks, 서명 수정 금지. 업스트림 파일 쪼개기·삭제 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부·타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 수정 파일 / 후보 조건 / 판정·파싱 / 요청 수 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- MEDIUM `app/src/main/java/com/music/bitchord/telegram/TelegramClientManager.kt:220` — `hasValidatedSession()` can return the pre-load default, and `clearValidatedSession()` (:243) sets `markerLoaded = true` without ever creating/loading `sessionMarker`, so a login completing before the startup read cannot persist the marker (and a logout cannot clear the old one). Fix: have `hasValidatedSession`, `markSessionValidated`, and `clearValidatedSession` all call `ensureSessionMarkerLoaded()` under `selectionLock` before reading/writing.
+- LOW `app/src/main/java/com/music/bitchord/telegram/TelegramMessageMapper.kt:19` — the new extension whitelist omits `.ape/.wv/.dsf/.dff/.oga/.mp4/.webm`, which `TelegramFormatProbe` treats as supported and `MessageAudio` accepts unfiltered, so tagless filenames in those formats keep the suffix and fail strict title matching (previously any last extension was stripped). Fix: derive the suffix set from the shared audio-format list rather than duplicating a narrower one.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
