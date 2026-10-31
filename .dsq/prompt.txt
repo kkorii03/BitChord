@@ -1,0 +1,173 @@
+﻿[NO-FIX-LOOP]
+You are fixing compile errors in the APP module after merging upstream BitChord v1.9 into our Korean fork, and re-attaching lost Korean-fork features. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. Our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist or whose upstream signature changed. The shared and sharedUi modules already compile (do not edit shared/ or sharedUi/ main code).
+Reference versions (fetch first):
+  git fetch origin task/fix-1030 ; then use commit 724fd5ef = our fork right before the merge (git show 724fd5ef:<path>)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only, never push there)
+Lost-feature inventory: docs/upstream-19-lost.md (rows give fork file:line, identifiers, where to re-attach). Feature decisions: docs/upstream-19-plan.md and docs/upstream-19-nodowngrade.md.
+
+USER POLICY (strict): upgrade to v1.9 with NO functional downgrade. Where v1.9 has its own implementation of a feature, v1.9's is used: quality upgrade / hq-swap / HQ prefetch / HqAudioVerify wiring -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings screen layout, menus, video playback, tab bar, mini player -> v1.9. For those, adapt or delete OUR now-dead caller code (list every deletion with reason in the summary) — never delete v1.9 code.
+KEEP and RE-ATTACH every Korean-fork feature v1.9 does not have, for rows of docs/upstream-19-lost.md buckets A-E, I, J that touch your files: lyrics sync correction (incl. AudioCache timingKeep), song-version verdict / no music video / audio instead of MV (musicOnlyTried, alternateVersionCache), settings prefer_music_only, skip_non_music_parts, skip_sponsor_parts (keys, setters, and the PlaybackService collectors that apply them), Korea-blocked fallback + proxy (recheckGateNow), video radio, Korean UI labels, diagnostic logs (installCrashHandler/logProcessStart/onTrimMemory, release TrackLog.echo, DebugLog->TrackLog, crossfade skipped line, consume-user-queue line, audio switch refusal detail), withPhraseLineBreak, close player when queue empties, TrackAnalyzer.awaitWindow (event-driven, no polling).
+
+Separation rule (docs/ko-fork-layout.md): restored Korean code goes in NEW files under app/src/main/java/com/music/bitchord/ko/ (package com.music.bitchord.ko), not back inside upstream files. Inside a file that exists in v1.9, add only short calls marked with a trailing comment // [KO] <feature>. Prefer extension/top-level functions. When an upstream signature changed, adapt OUR code to it.
+
+HARD RULES (results are machine-checked; a violating result is thrown away):
+- never restore a whole file from 724fd5ef / task/fix-1030; never delete or empty a file that exists in v1.9; never revert v1.9 hunks to the fork version.
+- edit only YOUR files (list below) plus new files under app/src/main/java/com/music/bitchord/ko/ (name them <LaneName>*.kt). If you need a declaration that belongs in another lane's file, do NOT edit that file: write 'NEEDS: <file>: <declaration>' in the summary and, if you can, provide it as a function in your own ko/ file.
+- do not edit .github/, keys/, signing, gradle files.
+Check your own errors with: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' . Other lanes fix the other files in parallel, so errors elsewhere are expected — ignore them. Goal: zero errors in your files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change.
+
+At the end, summarize in 12 lines or less: modified files / new ko files / Korean features restored / our code dropped in favour of v1.9 (with reason) / NEEDS lines / remaining errors in your files / unresolved questions.
+
+LaneName=main. YOUR FILES:
+app/src/main/java/com/music/bitchord/MainActivity.kt
+app/src/main/java/com/music/bitchord/MainActivityLayout.kt
+app/src/main/java/com/music/bitchord/ui/components/MiniPlayer.kt
+app/src/main/java/com/music/bitchord/ui/components/FrostedTopBar.kt
+app/src/main/java/com/music/bitchord/ui/components/GlassNavBar.kt
+app/src/main/java/com/music/bitchord/ui/player/CanvasArtworkPlayer.kt
+app/src/main/java/com/music/bitchord/ui/theme/Theme.kt
+
+Current compile errors in your files (140):
+app/src/main/java/com/music/bitchord/MainActivity.kt:183:41 Unresolved reference 'PrivateListeningSource'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:459:5 'dispatchTouchEvent' overrides nothing. Potential signatures for overriding:
+app/src/main/java/com/music/bitchord/MainActivity.kt:459:41 Unresolved reference 'MotionEvent'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:460:16 Unresolved reference 'actionMasked'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:460:32 Unresolved reference 'MotionEvent'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:512:13 Unresolved reference 'SettingsTransferInbox'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:636:9 Unresolved reference 'SettingsTransferInbox'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:654:25 Unresolved reference 'Log'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:659:34 Unresolved reference 'Log'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:661:17 Unresolved reference 'Log'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:666:13 Unresolved reference 'Log'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:672:17 Unresolved reference 'Log'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:677:17 Unresolved reference 'Log'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:744:28 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:778:24 Unresolved reference 'setPlayerShown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:798:68 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:805:13 Unresolved reference 'setPlayerShown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:805:35 Unresolved reference 'PlayerExpandSource'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:818:13 Unresolved reference 'setPlayerShown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:818:34 Unresolved reference 'PlayerExpandSource'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1104:34 Property delegate must have a 'getValue(Nothing?, KProperty0<??? (Unknown type for type parameter T)>)' method. None of the following functions is applicable:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1104:37 Unresolved reference 'SettingsTransferInbox'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1104:37 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1104:67 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1155:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1156:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1157:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1158:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1420:17 No parameter with name 'isVideo' found.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1421:17 No parameter with name 'alternatives' found.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1422:17 No parameter with name 'artistKnown' found.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1423:17 No parameter with name 'artistAliases' found.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1437:9 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1438:9 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1439:9 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1465:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1466:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1467:24 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1546:27 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1546:56 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:1857:50 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:1945:42 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:2048:50 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:2405:35 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:2812:38 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:2855:25 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:2988:59 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3010:61 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3164:39 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3168:39 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3178:65 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3195:49 Unresolved reference 'selectLyricsProvider'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:3225:53 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3227:76 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3314:61 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3459:51 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:3799:69 Unresolved reference 'asTypeUnknown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:3844:71 Unresolved reference 'asTypeUnknown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:3989:29 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4052:29 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4110:29 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4220:51 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4425:92 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4484:56 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4500:43 Unresolved reference 'rootTabChrome'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:4500:75 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4515:64 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4529:40 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4626:79 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4648:83 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4857:34 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:4889:31 Unresolved reference 'setPlayerShown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:4889:52 Unresolved reference 'PlayerExpandSource'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:4926:35 Unresolved reference 'setPlayerShown'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:4926:56 Unresolved reference 'PlayerExpandSource'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5278:68 Unresolved reference 'PrivateListeningSource'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5309:21 Unresolved reference 'not' for operator '!'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5309:22 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:5330:29 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:5405:37 Unresolved reference 'lyrics'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5406:60 Unresolved reference 'timeMs'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5406:77 Unresolved reference 'timeMs'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5407:66 Unresolved reference 'timeMs'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5409:29 Unresolved reference 'lyricsTiming'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5410:29 Unresolved reference 'lyricsTiming'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5410:61 Unresolved reference 'lyricsTiming'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5418:69 Unresolved reference 'lyricsTiming'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5543:70 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:5852:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5853:17 Unresolved reference 'localPlaylists'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5853:46 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5858:61 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5858:61 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5858:61 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/MainActivity.kt:5858:67 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5860:40 Unresolved reference 'browseId'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5861:35 Unresolved reference 'title'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5862:90 Unresolved reference 'songs'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5863:42 Unresolved reference 'songs'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5863:63 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5863:98 Unresolved reference 'thumbnailUrl'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5891:35 Argument type mismatch: actual type is '() -> Unit', but '(() -> Unit)?' was expected.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5908:23 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5951:23 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5967:43 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5983:38 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5983:38 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5983:38 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/MainActivity.kt:5983:44 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5987:73 Unresolved reference 'browseId'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:5994:39 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6001:45 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6028:38 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6028:38 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6028:38 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/MainActivity.kt:6028:44 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6032:73 Unresolved reference 'browseId'.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6039:39 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6047:55 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/MainActivity.kt:6220:55 Overload resolution ambiguity between candidates:
+app/src/main/java/com/music/bitchord/MainActivity.kt:6984:9 Conflicting overloads:
+app/src/main/java/com/music/bitchord/MainActivity.kt:6995:9 Conflicting overloads:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7010:19 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7020:13 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7028:13 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7031:19 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7054:16 Redeclaration:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7059:19 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7060:19 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7061:19 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivity.kt:7062:19 Conflicting declarations:
+app/src/main/java/com/music/bitchord/MainActivityLayout.kt:62:17 Redeclaration:
+app/src/main/java/com/music/bitchord/ui/components/FrostedTopBar.kt:217:23 Unresolved reference 'WindowInsets'.
+app/src/main/java/com/music/bitchord/ui/components/FrostedTopBar.kt:238:43 Condition type mismatch: inferred type is '() -> Boolean' but 'Boolean' was expected.
+app/src/main/java/com/music/bitchord/ui/components/GlassNavBar.kt:50:35 Conflicting import: imported name 'ContentScale' is ambiguous.
+app/src/main/java/com/music/bitchord/ui/components/GlassNavBar.kt:69:35 Conflicting import: imported name 'ContentScale' is ambiguous.
+app/src/main/java/com/music/bitchord/ui/components/MiniPlayer.kt:51:35 Conflicting import: imported name 'ContentScale' is ambiguous.
+app/src/main/java/com/music/bitchord/ui/components/MiniPlayer.kt:68:35 Conflicting import: imported name 'ContentScale' is ambiguous.
+app/src/main/java/com/music/bitchord/ui/player/CanvasArtworkPlayer.kt:419:37 Unresolved reference 'currentFrameCapturePx'.
+app/src/main/java/com/music/bitchord/ui/player/CanvasArtworkPlayer.kt:455:17 Unresolved reference 'currentFrameCapturePx'.
