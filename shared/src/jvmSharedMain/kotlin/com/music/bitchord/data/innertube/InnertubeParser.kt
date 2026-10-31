@@ -1481,6 +1481,7 @@ object InnertubeParser {
             run.o("navigationEndpoint").o("browseEndpoint").s("browseId")
                 ?.takeIf { it.isNotBlank() }
         }
+        val videoType = renderer.findString("musicVideoType")
         return Song(
             videoId = videoId,
             title = title,
@@ -1492,9 +1493,17 @@ object InnertubeParser {
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,
-            // A catalogue track is credited "Artist • Album • Year"; the
-            // matching music video is "Artist • 417M views • 2.4M likes".
-            isVideo = byline.any { it.contains("views", ignoreCase = true) },
+            // The row's own `musicVideoType` is authoritative where present:
+            // an OMV/UGC row is a video even when its byline carries no view
+            // tally, and an ATV row is the catalogue song even beside a video
+            // upload. The byline tally is the older signal for responses
+            // without it.
+            isVideo = when {
+                videoType != null -> !videoType.contains("ATV", ignoreCase = true)
+                else -> byline.any {
+                    it.contains("views", ignoreCase = true) || it.contains("조회수")
+                }
+            },
             isExplicit = renderer.hasExplicitBadge(),
         )
     }
