@@ -1,0 +1,6 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 로그 10-31, 여러 번 반복): 다음 곡 준비 줄이 'next-prep: <곡> version=... lyrics=bugs hq=none(no-answer) sync=skipped(no-answer) mix=ready in 26773ms' 처럼 sync=skipped(no-answer)로 끝남. 다음 곡 가사 싱크를 미리 맞추는 단계가 답을 받지 못하고 건너뛰어짐(10-30 vc88 로그에서도 3/3).
+참고: hq=none(no-answer)는 AudioCache.prefetchQueue 가 플레이어가 이미 버퍼링 중인 다음 곡을 빼던 문제로, 이미 고쳐짐(heldHead) — 건드리지 말 것. sync 쪽만.
+할 일: ① NextTrackPreparation(및 관련 파일)에서 sync 단계가 'no-answer'가 되는 모든 경로를 코드로 찾고, 실제 원인을 확정(무엇을 기다리다 시간 초과/누락되는지, 기다리는 신호가 누가 언제 완료하는지). 요약에 파일:줄로. ② 신호가 영원히 오지 않는 경로를 고쳐 실제로 싱크를 준비하거나, 준비할 수 없으면 이유가 정확한 값(no-lyrics, no-audio, video, disabled 등)으로 찍히게. ③ 배터리: 다음 곡 1곡만, 이벤트 기반, 폴링·타이머 추가 금지. ④ 현재 곡 재생·가사 싱크 경로 회귀 금지.
+테스트: no-answer 원인 재현 단위 테스트(고치기 전 실패, 고친 뒤 통과).
+제약: .github/, keys, 서명 수정 금지. 바꾼 함수의 모든 호출부 재확인. 마지막 10줄 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
