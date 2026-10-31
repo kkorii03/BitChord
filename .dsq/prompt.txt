@@ -1,0 +1,22 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+텔레그램 음악 소스 이식 1단계 / 3단계: 엔진과 로그인. 먼저 docs/telegram-source-plan.md 전체를 읽을 것(맨 위 'Opus 검토 보정'이 본문보다 우선). 원본 코드는 러너에서 `git clone --depth 1 https://github.com/Hexclyde/bitchord-morphe-patches /tmp/tg` 로 받아 참고·이식(GPL-3.0, 우리 앱도 GPL-3.0; 이식한 파일 머리에 원본 출처와 GPL-3.0 표기 유지).
+이번 단계 범위(검색·재생·업그레이드 연결은 하지 않음):
+① TDLib 를 앱에 넣기: 계획서대로 arm64-v8a 만, 네이티브 .so 와 Java API(org.drinkless.tdlib) 포함 방식은 계획서 추천을 따른다. 빌드 설정 변경은 의존성·jniLibs 추가까지만(서명 설정 금지).
+② 우리 코드 ko/telegram/ 아래(업스트림 파일은 연결부 최소 수정만): TelegramClientManager — TDLib 클라이언트를 필요할 때만 열고(로그인 화면·이후 검색/재생 요청), 앱이 백그라운드이고 재생 중이 아니면 닫는다. 앱 시작 때 자동 연결 금지. 주기 작업·폴링 금지.
+③ 설정 → 계정 및 연동(계획서의 진입점) 아래 '텔레그램' 화면: api_id·api_hash 입력(api_hash 는 Android Keystore 로 암호화 저장), 로그인 단계(전화번호 → 인증 코드 → 2단계 비밀번호), 로그인 상태 표시, 로그아웃. TDLib 세션 파일은 백업 제외 저장소. 문구는 애플뮤직 한국어 합니다체(values-ko 와 기본 values 둘 다).
+④ 진단 로그: 'telegram: client open/close reason=...', 'telegram: auth state=...' (전화번호·코드·키는 절대 로그에 남기지 않음).
+테스트(고치기 전 실패): 클라이언트 열기/닫기 정책(백그라운드+재생 아님 → 닫음, 재생 중 → 유지, 시작 시 안 엶), api_hash 저장 시 평문이 남지 않음(가능한 범위), 로그 문구에 비밀값 없음 — 단위 테스트. 새 테스트 클래스 이름 요약에 적을 것.
+완료 조건: :app:compileProdReleaseKotlin 통과, 새 테스트 통과, APK 증가량(arm64)을 요약에 기록.
+제약: .github/, keys, *.jks, 서명 설정 수정 금지. 업스트림 파일 쪼개기·삭제 금지. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 수정·신규 파일 / TDLib 포함 방식 / APK 증가 / 수명 정책 / 테스트 결과 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+HIGH — TelegramClientGate.kt:27 (wired via TelegramClientManager.kt:67,70-76) — because `playbackActive` comes from the global `PlaybackActivity`, the new independent term opens/holds a TDLib client for any local/YouTube playback, including buffering, even before Telegram is configured, wasting battery and violating the plan's “텔레그램 재생·다운로드” rule. Fix: derive playback from Telegram-source playback only, or acquire a playback holder at Telegram playback start.
+MEDIUM — TelegramClientManager.kt:298 (with :164) — when Close/LogOut misses the 5s/20s deadline the code leaves `closing=true` and the native client alive with no retry or escalation, so a hung TDLib stays open in the background forever and `startClient` remains latched shut. Fix: on timeout schedule an event-driven retry or safely force-reset the handle and bump the generation instead of leaving the state latched indefinitely.
+LOW — TelegramClientManager.kt:306-315 (with :225-232) — `finishClosed` does not advance `generation`, so callbacks already queued from the just-closed client still pass the generation checks and run `onUpdate` after cleanup, letting a queued `Closing` overwrite the CLOSED/error state (and potentially re-run auth handlers). Fix: increment `generation` in `finishClosed` so queued updates from the closed client are dropped.
+LOW — TelegramClientManager.kt:428-434 (with TelegramSettingsScreen.kt:157-161) — the new hard failure for a missing/unreadable database key has no recovery path because logout/reset is only offered in READY, so a Keystore invalidation permanently bricks Telegram with no in-app reset. Fix: expose a reset/delete-session action on this error state and mint a fresh key only after the unreadable session is removed.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
