@@ -82,6 +82,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.AudioOutputHealth
+import com.music.bitchord.playback.audio.AudioSilenceRecovery
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
@@ -693,6 +694,7 @@ class PlaybackService : MediaLibraryService() {
             // picker for "go back to following the system", so a stuck choice
             // would be a picker that had quietly broken the obvious behaviour.
             AudioRouting.forget()
+            markAudioTrackReason("route-added")
             requestOutputReconfiguration()
         }
         override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
@@ -703,6 +705,7 @@ class PlaybackService : MediaLibraryService() {
             if (removedDevices.any { it.id == AudioRouting.selectedId.value }) {
                 AudioRouting.forget()
             }
+            markAudioTrackReason("route-removed")
             requestOutputReconfiguration()
         }
     }
@@ -795,12 +798,24 @@ class PlaybackService : MediaLibraryService() {
     /**
      * Output-health state, advanced by the existing progress sampler rather
      * than a new timer. [silenceCheckFrames] is the sink's frame counter at
-     * the previous tick; [silenceRecoveries] bounds how many times one track
-     * may rebuild its output path.
+     * the previous tick; [silenceRecoveries] counts the recovery rungs one
+     * track has climbed, and [silenceStepAtMs] bounds how long each gets to
+     * prove itself.
      */
     private var silenceCheckFrames = -1L
     private var silenceRecoveries = 0
     private var silenceRecoveryFor: String? = null
+    private var silenceStepAtMs = 0L
+    private var silenceStepInFlight: AudioSilenceRecovery.Step? = null
+
+    /**
+     * Why the next AudioTrack initialization is expected, for the log line
+     * that event writes. Media3 does not say what asked for a new track, and
+     * a mid-song recreation with no reason in the log is what made this bug
+     * hard to place.
+     */
+    private var audioTrackReason: String? = null
+    private var audioTrackReasonAtMs = 0L
 
     /** When the current track was chosen, for the time-to-first-audio log. */
     private var trackSelectedAt: Long? = null
@@ -1741,7 +1756,7 @@ class PlaybackService : MediaLibraryService() {
             applySpatialAudioEnabled()
             publishNerdStats()
             currentAudioInputFormat = format
-            applyOutputRoute()
+            applyOutputRoute(reason = "format")
         }
 
         /**
@@ -1813,11 +1828,37 @@ class PlaybackService : MediaLibraryService() {
                 sampleRateHz = audioTrackConfig.sampleRate,
                 bufferSize = audioTrackConfig.bufferSize,
             )
+            val now = SystemClock.elapsedRealtime()
+            val reason = audioTrackReason
+                ?.takeIf { now - audioTrackReasonAtMs <= AUDIO_TRACK_REASON_TTL_MS }
+                ?: "media3-reconfigure"
+            audioTrackReason = null
             TrackLog.i(
                 "AUDIO_OUT",
-                "AudioTrack ${audioTrackConfig.sampleRate}Hz encoding=${audioTrackConfig.encoding}",
+                "AudioTrack ${audioTrackConfig.sampleRate}Hz encoding=${audioTrackConfig.encoding} " +
+                    "reason=$reason",
                 about = eventTime.mediaId(),
             )
+            // A sink that was torn down and stood back up mid-song must not
+            // leave the session muted. Outside any transition the only correct
+            // gain is unity and both filters are open; inside one the
+            // controller owns the fader.
+            val live = player
+            val transitioning = HqSwapPolicy.transitionOwnsPlayer(
+                crossfadeActive = crossfade?.isTransitioning() == true,
+                versionSwapActive = versionSwapJob?.isActive == true,
+                losslessSwapActive = hqSwapOwnsStandby || hqSwappingMediaId != null,
+            )
+            if (live != null && !transitioning) {
+                if (live.volume <= 0.01f) {
+                    TrackLog.w(
+                        "AUDIO_OUT",
+                        "AudioTrack recreated at volume=${live.volume} reason=$reason; restoring gains",
+                        about = eventTime.mediaId(),
+                    )
+                }
+                recoverAudibleGains()
+            }
         }
 
     }
@@ -2531,6 +2572,12 @@ class PlaybackService : MediaLibraryService() {
                 loudnessB.setBlendTrim(trim)
             },
             onSettled = {
+                // A blend is over: whoever it left as the session must stand at
+                // full gain with both filters open. finish() already sets the
+                // incoming side to 1, but doing it here as well is what makes
+                // the settled state a rule the recovery path can rely on rather
+                // than a side effect of one function's ordering.
+                recoverAudibleGains()
                 if (boundedEditState.hasPendingEdits) {
                     scope.launch {
                         applyDeferredBoundedQueueEdit()
@@ -2764,6 +2811,7 @@ class PlaybackService : MediaLibraryService() {
 
         versionSwapJob?.cancel()
         val generation = ++versionSwapGeneration
+        markAudioTrackReason("version-swap")
         versionSwapJob = scope.launch(Dispatchers.Main) {
             val mediaId = targetMediaItem.mediaId
             swappingMediaId = mediaId
@@ -6193,6 +6241,7 @@ class PlaybackService : MediaLibraryService() {
         )
         val currentVerified = currentPlayingVerification(mediaId)
         hqSwapOwnsStandby = true
+        markAudioTrackReason("hq-swap")
         val swapped = try {
             smoothSwapToLossless(
                 mediaId,
@@ -9333,7 +9382,10 @@ class PlaybackService : MediaLibraryService() {
         if (silenceRecoveryFor != id) {
             silenceRecoveryFor = id
             silenceRecoveries = 0
+            silenceStepAtMs = 0L
+            silenceStepInFlight = null
             silenceCheckFrames = -1L
+            AudioOutputHealth.reset()
         }
         if (!player.isPlaying ||
             player.playbackState != Player.STATE_READY ||
@@ -9348,6 +9400,35 @@ class PlaybackService : MediaLibraryService() {
         }
 
         val now = SystemClock.elapsedRealtime()
+        val outputSilentFor = AudioOutputHealth.outputSilentForMs(now)
+        val decoderSilentFor = AudioOutputHealth.decoderSilentForMs(now)
+        val soundNow = outputSilentFor == 0L && AudioOutputHealth.lastNonSilentAtMs > 0L
+
+        // A step that has brought sound back reports it, and only then is the
+        // ladder reset. Leaving the clock running through a rebuild is what
+        // lets a still-silent path climb to the next rung; the old reset made
+        // lastNonSilentAtMs zero, so a sink that never came back could never be
+        // judged silent again.
+        silenceStepInFlight?.let { step ->
+            if (soundNow) {
+                TrackLog.i(
+                    "AUDIO_OUT",
+                    "silence recover: $id step=${step.wire} result=sound",
+                    about = id,
+                )
+                silenceStepInFlight = null
+                silenceRecoveries = 0
+                silenceStepAtMs = 0L
+            }
+        }
+        // Sound that came back after the ladder was spent (a seek, a later
+        // resolve) reopens it too; otherwise a second dropout in the same
+        // track could never be recovered.
+        if (soundNow && silenceStepInFlight == null && silenceRecoveries > 0) {
+            silenceRecoveries = 0
+            silenceStepAtMs = 0L
+        }
+
         // Between transitions the session player is never meant to be muted.
         if (player.volume <= 0.01f) {
             TrackLog.w(
@@ -9357,6 +9438,9 @@ class PlaybackService : MediaLibraryService() {
             )
             silenceCheckFrames = -1L
             recoverAudibleGains()
+            // A gain-only restore is not a ladder rung: leaving it unspent
+            // means a path that stays silent still gets the real AudioTrack
+            // rebuild instead of escalating straight to re-prepare.
             return
         }
 
@@ -9367,39 +9451,174 @@ class PlaybackService : MediaLibraryService() {
         }
         val stalled = frames == silenceCheckFrames &&
             AudioOutputHealth.lastBufferAtMs > 0L &&
-            now - AudioOutputHealth.lastBufferAtMs > OUTPUT_STALL_MS
-        val silent = AudioOutputHealth.lastNonSilentAtMs > 0L &&
-            now - AudioOutputHealth.lastNonSilentAtMs > OUTPUT_SILENT_MS
-        if (!stalled && !silent) {
+            now - AudioOutputHealth.lastBufferAtMs > AudioSilenceRecovery.OUTPUT_STALL_MS
+        if (!stalled && outputSilentFor == 0L) {
             silenceCheckFrames = frames
             return
         }
-        if (silenceRecoveries >= MAX_SILENCE_RECOVERIES) return
-        silenceRecoveries++
+        val msSinceStep = if (silenceStepAtMs > 0L) {
+            now - silenceStepAtMs
+        } else {
+            Long.MAX_VALUE
+        }
+        val decision = AudioSilenceRecovery.decide(
+            stalled = stalled,
+            outputSilentForMs = outputSilentFor,
+            decoderSilentThroughoutOutput = AudioOutputHealth.decoderSilentThroughoutOutput(),
+            recoveries = silenceRecoveries,
+            msSinceLastRecovery = msSinceStep,
+        )
+        if (decision.action != AudioSilenceRecovery.Action.RECOVER) {
+            // The ladder gave up only after the last step's recheck window
+            // expired; that is the point at which its outcome is known.
+            if (decision.reason == "steps-exhausted") {
+                silenceStepInFlight?.let { step ->
+                    logSilentStepOutcome(id, step)
+                    silenceStepInFlight = null
+                }
+            }
+            silenceCheckFrames = frames
+            return
+        }
+        val step = decision.step ?: return
+        // A decision to climb again after the recheck window is the outcome of
+        // the step that was in flight; log it before starting the next one.
+        silenceStepInFlight?.let { previous ->
+            logSilentStepOutcome(id, previous)
+        }
         TrackLog.w(
             "AUDIO_OUT",
-            "silence detected id=$id stalled=$stalled silent=$silent " +
-                "frames=$frames sinceBuffer=${now - AudioOutputHealth.lastBufferAtMs}ms; rebuilding",
+            "silence detected id=$id stalled=$stalled silent=${outputSilentFor > 0L} " +
+                "frames=$frames sinceBuffer=${now - AudioOutputHealth.lastBufferAtMs}ms " +
+                "decoderSilent=${decoderSilentFor}ms; step=${step.wire}",
             about = id,
         )
+        silenceRecoveries++
+        silenceStepAtMs = now
+        silenceStepInFlight = step
+        performSilenceRecoveryStep(step)
         silenceCheckFrames = -1L
-        recoverAudibleGains()
-        if (stalled) {
-            // A frozen sink needs a new AudioTrack, not just a new gain.
-            rebuildPlayersForOutput(shouldEnableFloatOutput())
+    }
+
+    /**
+     * Reports a finished rung that did not bring sound back. Called only after
+     * its recheck window (or when the ladder is out of steps), so the logged
+     * result describes the step rather than the moment it started.
+     */
+    private fun logSilentStepOutcome(id: String?, step: AudioSilenceRecovery.Step) {
+        TrackLog.w(
+            "AUDIO_OUT",
+            "silence recover: $id step=${step.wire} result=still-silent",
+            about = id,
+        )
+    }
+
+    /** Climbs one rung of the output-recovery ladder selected by [AudioSilenceRecovery]. */
+    private fun performSilenceRecoveryStep(step: AudioSilenceRecovery.Step) {
+        when (step) {
+            AudioSilenceRecovery.Step.REBUILD -> {
+                recoverAudibleGains()
+                // A frozen sink needs a new AudioTrack, not just a new gain.
+                rebuildPlayersForOutput(shouldEnableFloatOutput())
+            }
+            AudioSilenceRecovery.Step.REPREPARE -> {
+                recoverAudibleGains()
+                val live = player ?: return
+                val index = live.currentMediaItemIndex
+                if (index == C.INDEX_UNSET) return
+                val position = live.currentPosition.coerceAtLeast(0L)
+                // Same position, new sink setup: a seek flushes the output path
+                // and prepare() lets Media3 stand it up again.
+                live.seekTo(index, position)
+                live.prepare()
+            }
+            AudioSilenceRecovery.Step.RERESOLVE -> {
+                recoverAudibleGains()
+                reresolveCurrentStreamForSilence()
+            }
+        }
+    }
+
+    /**
+     * Last rung: leave the chosen stream and let the resolver pick another.
+     * Event-driven — it runs once when the ladder reaches it, not on a timer.
+     */
+    private fun reresolveCurrentStreamForSilence() {
+        val live = player ?: return
+        val item = live.currentMediaItem ?: return
+        val mediaId = item.mediaId
+        val index = live.currentMediaItemIndex
+        if (index == C.INDEX_UNSET) return
+        val uri = item.localConfiguration?.uri
+        // A local file has no alternate stream to resolve; re-preparing it is
+        // the only thing this rung can do.
+        if (item.toSong()?.localUri != null || uri?.scheme == "file") {
+            live.seekTo(index, live.currentPosition.coerceAtLeast(0L))
+            live.prepare()
+            return
+        }
+        val previous = StreamChoice.of(mediaId)?.url ?: StreamContainer.servedUrl(mediaId)
+        scope.launch(TrackLog.about(mediaId)) {
+            val recovered = withContext(Dispatchers.IO) {
+                withTimeoutOrNull(MID_PLAY_RESOLVE_TIMEOUT_MS) {
+                    StreamResolver.reResolveTrack(
+                        mediaId,
+                        forceProxy = false,
+                        refusedUrl = previous,
+                    ) ?: StreamResolver.reResolveTrack(
+                        mediaId,
+                        forceProxy = true,
+                        refusedUrl = previous,
+                    )
+                }
+            }
+            withContext(Dispatchers.Main) {
+                val current = this@PlaybackService.player ?: return@withContext
+                if (current.currentMediaItem?.mediaId != mediaId) return@withContext
+                // The queue may have been edited while the lookup was in
+                // flight; the index captured before it is then stale.
+                if (current.currentMediaItemIndex != index) return@withContext
+                // Read the position after the lookup, not before it: normal
+                // playback (or a seek) moved on during those seconds, and
+                // re-seeking to the captured value would undo it.
+                val at = current.currentPosition.coerceAtLeast(0L)
+                if (recovered != null) {
+                    StreamChoice.remember(
+                        mediaId,
+                        SourceStream(recovered.url, headers = recovered.headers),
+                        substituted = false,
+                    )
+                    StreamContainer.served(mediaId, recovered.url)
+                    TrackLog.w(
+                        "AUDIO_OUT",
+                        "silence recover: $mediaId step=reresolve stream=${
+                            if (recovered.viaProxy) "proxy" else recovered.client
+                        }",
+                        about = mediaId,
+                    )
+                }
+                retryingMediaId = mediaId
+                current.seekTo(index, at)
+                current.prepare()
+            }
         }
     }
 
     /** Puts the gains and filters a finished transition may have left down back to normal. */
     private fun recoverAudibleGains() {
-        player?.volume = 1f
+        val live = player
+        live?.volume = AudioSilenceRecovery.settledGain(
+            transitionActive = crossfade?.isTransitioning() == true,
+            current = live.volume,
+        )
         transitionFilterA.open()
         transitionFilterB.open()
         transitionFilterA.parkEcho()
         transitionFilterB.parkEcho()
         loudnessA.setBlendTrim(1f)
         loudnessB.setBlendTrim(1f)
-        AudioOutputHealth.reset()
+        // Deliberately not AudioOutputHealth.reset(): the silence clock has to
+        // keep running so a step that did not work can be judged and escalate.
     }
 
     /**
@@ -9656,12 +9875,19 @@ class PlaybackService : MediaLibraryService() {
             ?: status.negotiationResult?.output?.channelCount?.takeIf { it > 0 }
     }
 
+    /** Records why the next AudioTrack initialization is expected. */
+    private fun markAudioTrackReason(reason: String) {
+        audioTrackReason = reason
+        audioTrackReasonAtMs = SystemClock.elapsedRealtime()
+    }
+
     /**
      * Applies the user's USB-DAC preference through the public Android routing
      * API. This does not bypass the system USB driver: it intentionally lets
      * Android negotiate only formats the connected DAC actually advertises.
      */
-    private fun applyOutputRoute() {
+    private fun applyOutputRoute(reason: String = "route") {
+        markAudioTrackReason(reason)
         val manager = audioManager ?: return
         val usb = preferredUsbDevice()
         val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
@@ -9840,8 +10066,9 @@ class PlaybackService : MediaLibraryService() {
             while (crossfade?.isTransitioning() == true) delay(50)
             val requestedFloat = shouldEnableFloatOutput()
             if (requestedFloat == configuredFloatOutput) {
-                applyOutputRoute()
+                applyOutputRoute(reason = "route")
             } else {
+                markAudioTrackReason("output-rebuild")
                 rebuildPlayersForOutput(requestedFloat)
             }
         }
@@ -9856,6 +10083,7 @@ class PlaybackService : MediaLibraryService() {
     private fun rebuildPlayersForOutput(enableFloat: Boolean) {
         val oldActive = player ?: return
         val oldSpare = spare ?: return
+        markAudioTrackReason("output-rebuild")
         val items = List(oldActive.mediaItemCount) { oldActive.getMediaItemAt(it) }
         val index = oldActive.currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
         val position = oldActive.currentPosition.coerceAtLeast(0L)
@@ -9889,6 +10117,11 @@ class PlaybackService : MediaLibraryService() {
         spare = newSpare
         newSpare.audioSessionId = newActive.audioSessionId
         AppSettings.audioSessionId.value = newActive.audioSessionId
+        // A rebuild must not inherit a fader left down by the player it
+        // replaces: outside a transition both sides are at unity until the
+        // crossfade arms the spare again.
+        newActive.volume = AudioSilenceRecovery.SETTLED_GAIN
+        newSpare.volume = AudioSilenceRecovery.SETTLED_GAIN
         applySettings(newActive)
         applySettings(newSpare)
         newActive.repeatMode = repeatMode
@@ -9910,13 +10143,15 @@ class PlaybackService : MediaLibraryService() {
         crossfade = newCrossfade
         newCrossfade.start()
         mediaSession?.player = newSessionPlayer(newActive, newCrossfade)
-        applyOutputRoute()
+        applyOutputRoute(reason = "output-rebuild")
         if (items.isNotEmpty()) newActive.prepare()
         newActive.playWhenReady = playWhenReady
 
         oldActive.release()
         oldSpare.release()
-        AudioOutputHealth.reset()
+        // No AudioOutputHealth.reset() here: a rebuild is itself a recovery
+        // step, and the silence clock has to survive it so a path that stays
+        // silent can escalate instead of looking healthy forever.
         TrackLog.i(
             "AUDIO_OUT",
             "live output switch: ${if (enableFloat) "PCM_FLOAT" else "PCM_16BIT"}",
@@ -12835,14 +13070,8 @@ class PlaybackService : MediaLibraryService() {
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
 
-        /** A sink that has not accepted a buffer for this long is stalled. */
-        const val OUTPUT_STALL_MS = 4_000L
-
-        /** Frames arriving, but all zero, for this long is a silent output path. */
-        const val OUTPUT_SILENT_MS = 12_000L
-
-        /** One track may rebuild its output path at most this many times. */
-        const val MAX_SILENCE_RECOVERIES = 2
+        /** How long an AudioTrack-reason hint stays valid for the next event. */
+        const val AUDIO_TRACK_REASON_TTL_MS = 10_000L
 
         /**
          * How often the playhead is written back while playing. The restore
