@@ -247,3 +247,11 @@ fun Modifier.liquidGlass(
         backdropScale = GLASS_RESOLUTION_SCALE,
     )
 }
+
+/** The surface tint the navigation bar's glass is drawn with. */
+@Composable
+fun glassBarTint(): Color? =
+    if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) null else Color.White.copy(alpha = DARK_BAR_OPACITY)
+
+/** How white the nav bar's glass is in dark theme — see [glassBarTint]. */
+private const val DARK_BAR_OPACITY = 0.16f

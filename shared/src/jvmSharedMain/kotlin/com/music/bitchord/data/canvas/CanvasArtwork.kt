@@ -36,6 +36,10 @@ data class CanvasArtwork(
      * else keeps the square [url].
      */
     val portraitUrl: String? = null,
+    val clipStartMs: Long? = null, // [KO] video canvas loop
+    val clipEndMs: Long? = null, // [KO] video canvas loop
+    /** When [url] stops working (a video stream's link expires); null for one that keeps. */
+    val expiresAtMs: Long? = null, // [KO] video canvas loop
 ) {
     /** Cut from a video rather than published as motion artwork. */
     val fromVideo: Boolean get() = clipStartMs != null

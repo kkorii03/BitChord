@@ -621,18 +621,79 @@ object StreamResolver {
 
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
-        val stream = try {
-            timed("$videoId InnerTubeX") { innerTubeXStreamAllowingUploads(videoId) }
-                ?.let { found ->
-                    // A live broadcast's adaptive URL is one window of a stream
-                    // that keeps growing: it plays the few seconds that exist
-                    // and then ends. Live is played from its HLS playlist.
-                    if (!isLiveUrl(found.url)) found
-                    else timed("$videoId live HLS") { liveHlsStream(videoId) } ?: found
-                }
-                ?: run {
-                    TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+        // A track that has already played through the proxy is known to be
+        // refused here, so asking the direct clients again only spends the
+        // eleven seconds this memory exists to save. A proxy miss falls
+        // through to the ordinary ladder rather than failing the track.
+        var proxyAttempted = false
+        if (ProxyPlayback.canResolveViaProxy() && ProxyPlayback.isRemembered(videoId)) {
+            proxyAttempted = true
+            TrackLog.d(TAG, "proxy-playback: $videoId remembered")
+            try {
+                return resolveViaProxy(videoId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // resolveViaProxy has already logged the reason.
+            }
+        }
+
+        // In Korea without Premium the clients InnerTubeX leads with are the
+        // refused ones; the anonymous IOS/ANDROID request is what plays there,
+        // so it goes first once the gate is known, and last for everyone else.
+        // Through the overseas proxy only metadata travels; player requests stay
+        // on the Korean connection (see ProxyScopeMatcher), where the Music
+        // clients are refused just as when gated, so the same order applies.
+        val gated = MusicGateFallback.isActive() || com.music.bitchord.data.net.YouTubeProxy.config.usable
+
+        // The path that served the last track goes first — see [ResolutionOrder].
+        // A winner that has missed twice in a row has already been forgotten, and
+        // a benched direct path is not a winner worth leading with either.
+        val learned = order.preferred()
+        val preferredItx = ResolutionOrder.itxManifest(learned)
+        val preferDirect = learned == ResolutionOrder.DIRECT
+        val orderLabel = if (learned != null) "learned" else "default"
+
+        var servedKey: String? = null
+        var servedLabel: String? = null
+        fun served(key: String, label: String) {
+            servedKey = key
+            servedLabel = label
+        }
+
+        var itxWalked = false
+        var directTried = false
+
+        // The direct path's answer, in the one form the proxy retry cares
+        // about: a client said UNPLAYABLE/LOGIN_REQUIRED rather than merely
+        // being slow. Read by the failure handler below.
+        var directUnplayable = false
+        var directUnplayableReason: String? = null
+        var itxUnplayableReason: String? = null
+
+        // A claim, a takedown or a private upload names the recording itself.
+        // A region/Premium gate, an age-restricted or a paid track is not gone:
+        // those still have to reach the proxy retry and extraction. Only the
+        // definitely-gone set may settle the resolve early; isTrackSpecific is
+        // still used below for bench decisions, where age/paid count too.
+        fun goneReason(): String? =
+            directUnplayableReason?.takeIf { UnplayableReason.isDefinitelyGone(it) }
+                ?: itxUnplayableReason?.takeIf { UnplayableReason.isDefinitelyGone(it) }
+
+        fun goneRefusal(): Boolean = goneReason() != null
+
+        // When InnerTubeX leads (a learned InnerTubeX path, or the default
+        // non-gated ladder), its walk can take thirteen seconds on a track the
+        // sub-second direct ask can already pronounce gone. The direct probe
+        // therefore starts beside it; only a definitive recording verdict may
+        // cancel the walk. See [raceDirectDefinitive].
+        val itxLeads = preferredItx != null || (!preferDirect && !gated)
+        var directPrecheck: Deferred<DirectProbe<DirectRun>>? =
+            if (itxLeads && order.directAllowed()) {
+                resolverScope.async(TrackLog.about(videoId)) {
+                    timed("$videoId direct") {
+                        directProbe(videoId, checkActive = { ensureActive() })
+                    }
                 }
             } else {
                 null

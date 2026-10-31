@@ -87,6 +87,23 @@ private val DrawerMaxWidth = 640.dp
 private const val StepMs = 100
 private const val DismissDragFraction = 0.25f
 
+/**
+ * What the sync drawer needs to correct the song playing on its own: its
+ * correction now, the lines as they are showing (that correction included),
+ * where the lyrics clock is, and where to send a new correction.
+ */
+internal class SongLyricsSync(
+    val offsetMs: Long,
+    /** How the lines were moved onto the video's clock, for the figures shown here. */
+    val timing: LyricsTimingUi,
+    /** Asks Gemini to time the lines (or takes its answer back); null where it can't. */
+    val onAiTiming: (() -> Unit)?,
+    val lines: List<LyricLine>,
+    /** The lyrics clock now: the playhead with the all-songs offset applied, ms. */
+    val lyricPositionMs: () -> Long,
+    val onOffset: (Long) -> Unit,
+)
+
 /** A player drawer for shifting all synced lyrics against the playback clock. */
 @Composable
 internal fun LyricsOffsetSheet(

@@ -417,12 +417,7 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
                 newPosition: Player.PositionInfo,
                 reason: Int,
             ) {
-                // Except a loop mix re-anchoring the playhead through its tempo
-                // ramp: reported moving forward, and only a reading to correct
-                // towards, not a jump. Its loop wraps go backwards and count.
-                val reanchor = reason == Player.DISCONTINUITY_REASON_INTERNAL &&
-                    newPosition.positionMs > oldPosition.positionMs
-                if (!reanchor) position.seeks++
+                position.seeks++
             }
             override fun onEvents(p: Player, events: Player.Events) = sync(
                 error = state.error,
@@ -685,7 +680,12 @@ private fun Song.matchQuery(): String = buildString {
  */
 private fun Song.pickedMixQuery(configId: String): String {
     if (SourceRegistry.config(configId)?.kind != SourceKind.ADDON) return ""
-    return "&${SourceResolver.MIX_PARAM}=${SourceResolver.mixOf(sourceQuality)}"
+    val mix = when (sourceQuality) {
+        null -> SourceResolver.MIX_ANY
+        "DOLBY" -> SourceResolver.MIX_ATMOS
+        else -> SourceResolver.MIX_STEREO
+    }
+    return "&${SourceResolver.MIX_PARAM}=$mix"
 }
 
 /**

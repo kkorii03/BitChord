@@ -164,6 +164,20 @@ data class Song(
      * non-history rows (e.g. search results, library).
      */
     val feedbackToken: String? = null,
+    /**
+     * A cover upload shown as its song (see CoverTitles): the upload's own
+     * title and channel, kept for the menu and for matching, while [title]
+     * and [artist] read "곡명" and "원곡자 · 부른사람 커버". Null on everything
+     * else.
+     */
+    val originalTitle: String? = null,
+    val originalArtist: String? = null,
+    /** Who sings a cover — what its plays are counted under. */
+    val coverSinger: String? = null,
+    /** Whose song a cover is, when its title says. */
+    val coverOriginalArtist: String? = null,
+    /** A video-radio row rather than a normal track; see NextPrepPolicy. */
+    val videoRadio: Boolean = false,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
@@ -457,6 +471,8 @@ data class ShelfItem(
      * picture the player can show. Drawn as a 16:9 card, as the web player does.
      */
     val isVideo: Boolean = false,
+    /** True when the card opens an artist page, whatever its browse id looks like. */
+    val isArtist: Boolean = false,
 )
 
 /** How a shelf's items are laid out — the web player's `ShelfLayout`, by the same rules. */

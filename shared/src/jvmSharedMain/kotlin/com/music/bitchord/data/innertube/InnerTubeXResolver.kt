@@ -490,6 +490,19 @@ object InnerTubeXResolver {
      */
     val sessionGeneration: StateFlow<Int> = _sessionGeneration.asStateFlow()
 
+    /**
+     * The catalog id inside a profile id: `WEB_CREATOR__po` is the
+     * `WEB_CREATOR` manifest with a PoToken, and is what the override asks for.
+     * Null when [profileId] names no catalog entry (legacy ids), in which case
+     * there is nothing to remember an order for.
+     */
+    fun manifestIdForProfile(profileId: String?): String? {
+        val candidate = PlaybackClientCatalog.manifestIdFromProfileId(profileId)
+            ?: profileId?.substringBefore("__")
+            ?: return null
+        return candidate.takeIf { PlaybackClientCatalog.find(it) != null }
+    }
+
     /** Headers the media fetch for [url] must carry, when InnerTubeX minted it. */
     fun headersFor(url: String): Map<String, String>? = minted[url]?.headers
 

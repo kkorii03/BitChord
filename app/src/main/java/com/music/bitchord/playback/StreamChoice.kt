@@ -178,6 +178,22 @@ object StreamChoice {
         chosen.remove(videoId)
     }
 
+    fun forgetUrl(url: String) {
+        val key = canonicalUrl(url)
+        val match = chosen.entries.firstOrNull { canonicalUrl(it.value.stream.url) == key }
+        if (match == null) {
+            // Not silent: the resolver told us this URL was rate-limited and the
+            // pin above is the only copy that would be served again. A no-match
+            // means the keys differ (encoding, redirect) and the pin survives.
+            TrackLog.w(TAG, "no stream choice to forget for rate-limited URL: ${LogUrl.of(url)}")
+            return
+        }
+        chosen.remove(match.key)
+    }
+
+    /** The same URL OkHttp opens, so `Uri` re-encoding cannot lose the match. */
+    private fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
+
     /**
      * Releases every choice [drop] says no longer stands — a lowered quality
      * ceiling, which an addon pinned under the old one must not outlive.
