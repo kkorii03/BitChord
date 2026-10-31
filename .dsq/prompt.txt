@@ -1,0 +1,9 @@
+[NO-FIX-LOOP]
+Repo: BitChord Android app (Kotlin). This branch = upstream v1.9 (git tag v1.9) merged into a Korean fork. ANALYSIS ONLY: do not change any code. Write one new file: docs/upstream-19-hq-compare.md (Korean, plain words; the owner cannot code).
+Task: compare the fork's quality-upgrade (HQ) stack on this branch against v1.9's own quality upgrade / Direct Source.
+- Fork HQ code (this branch): app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt (SourceCooldown, SearchReport, bestAcross with strictOriginal/requireSharedArtist/excludeHosts/manual/refine/accept, hq-search log lines), playback/PlaybackService.kt (search for HqQuality, HqHostTracker, lookForBetterCopy, ManualUpgradeThrottle), playback/QualityUpgrade.kt, download/HqLibraryUpgrade.kt, MvSoundRedownload, HqAudioVerify.
+- v1.9 side: git show v1.9:<same paths>, plus v1.9 DirectSourceGate, SourceResolver.directStream, TrackMatcher.score (CREDIT_OVERRIDE_SEC). Use git diff v1.9 -- <path> to see what the fork added.
+Produce a table, one row per fork HQ behavior: what it does / does v1.9 have an equivalent (name the function) / which tests cover it (app/src/test) / risk of losing it (wrong song played? quality? battery?) / recommendation: USE-1.9, KEEP-AS-KO-HOOK (only if it protects playing the RIGHT song, e.g. never swap to a cover/remaster/MV audio), or DROP.
+Then a short ordered step list for replacing the fork HQ machinery with v1.9 while keeping the KEEP rows as small hooks in a com.music.bitchord.ko package, listing which test files would need to be deleted or rewritten.
+Use grep / Select-String, not rg. Do NOT touch any other file.
+At the end, summary in 10 lines or fewer: changed files / key findings / unresolved questions.
