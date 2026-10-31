@@ -1,0 +1,19 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+목표: 10-31~11-01 에 합친 변경의 회귀 검사. 사용자가 지금 이 코드(vc94 = 4626358b 와 동일 앱)를 매일 쓴다. 대상 범위 = `git diff 724fd5ef 4626358b -- app shared`(테스트 제외). 핵심 위험 영역:
+ 1) 한국 차단 곡 9초 예산(StreamResolver early race·proxy race·extraction deadline, ResolutionRace 취소, BlockedStartRescue/Policy, PlaybackService firstAudio·audibleMediaId 로 다음 곡 준비 지연) — 차단 안 된 일반 곡 재생·seek·다음 곡 자동 넘김·크로스페이드가 느려지거나 멈추는 경로가 없는지, 코루틴 취소가 새는지, 예산 만료 후 다음 곡 넘김이 중복되지 않는지.
+ 2) 품질 업그레이드 가수명 문자 체계(artist-unverified)·네트워크 failureMark·애드온 401 auth·수동 12초 — 엉뚱한 곡이 hq-verify 없이 채택되는 경로가 없는지, 소스가 영구히 쉬는 상태로 굳지 않는지.
+ 3) 가사 refine updateIfUnchanged·RefineSnapshot·extend 생략 — 정상 보정이 저장 안 되는 경로(항상 stale 로 판정)가 없는지.
+ 4) 다운로드 표지 이벤트(DownloadedArtworkEvents/Resolver) — 메모리 누수·무한 재구성.
+할 일: 각 영역을 읽고 실제 결함만 찾아 고친다(추측성 리팩터링 금지). 결함마다 '재현 조건 → 잘못된 결과'를 적고 회귀 테스트(고치기 전 실패)를 붙인다. 결함이 없으면 고치지 말고 근거와 함께 '없음'으로 보고.
+제약: .github/, keys, 서명 수정 금지. 업스트림 파일 쪼개기·삭제 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부와 타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 영역별 판정(결함/없음, 파일:줄) / 수정 파일 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+MEDIUM app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:4737 — `rowAlreadySounding` returns true for `REPEAT` (`previousEnded && isPlaying`), but `summaryFirstAudioMs`'s `previousEnded` rule expects a same-row repeat to be passed `alreadyAudible=false` and returns `null`; the candidate passes `true`, so repeat-one is recorded as `firstAudio=0` instead of unmeasured. Fix: exclude same-id repeats from the audibility hint (or pass a reason-aware flag) before `startTrackSummary`.
+LOW app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:4698 — A gapless auto-advance to a not-yet-resolved video row is classified as `alreadySounding`, yet `resolveSongVersionBeforeAudio` still receives raw `alreadyAudible=false` and can `pause()` for a version hold, so the row is recorded as audible/prefetched while it is actually silent and held. Fix: derive the audibility decision after the version-hold decision, or pass the same flag consistently so an audible row is never held.
+No other defects found: the `directRefusalStartsRescue` gate matches the existing `gated && refused` condition, and adding `noteBlockedSignal` on the learned-InnerTubeX direct refusal correctly caps the proxy with the shared budget.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
