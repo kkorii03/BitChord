@@ -168,6 +168,7 @@ import com.music.bitchord.data.settings.TransferCategory
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
@@ -910,14 +911,22 @@ fun SettingsScreen(
                 }
             }
             val outputPrecisionTitle = stringResource(R.string.output_precision)
+            val outputRouteLabel = stringResource(
+                when (outputStatus.routeKind) {
+                    AudioRouting.Kind.PHONE -> R.string.route_phone
+                    AudioRouting.Kind.WIRED -> R.string.route_wired
+                    AudioRouting.Kind.USB -> R.string.route_usb
+                    AudioRouting.Kind.BLUETOOTH -> R.string.route_bluetooth
+                    AudioRouting.Kind.HDMI -> R.string.route_hdmi
+                    AudioRouting.Kind.OTHER -> R.string.route_other
+                },
+            )
             row(outputPrecisionTitle, "pcm", "bit depth", "sample rate", "dac") {
                 SettingsRow(
                     icon = Icons.Rounded.GraphicEq,
                     title = outputPrecisionTitle,
                     subtitle = buildString {
-                        append(outputStatus.sink)
-                        append(" · ")
-                        append(outputStatus.deviceName)
+                        append(outputRouteLabel)
                         (outputStatus.actualSampleRateHz ?: outputStatus.sampleRatesHz.firstOrNull())
                             ?.let { append(" · ${it / 1000.0} kHz") }
                     },
@@ -1346,6 +1355,26 @@ fun SettingsScreen(
                     }
                 }
             }
+            val hiddenCategoriesTitle = stringResource(R.string.hidden_explore_categories)
+            row(hiddenCategoriesTitle, "explore", "category", "filter", "hide") {
+                SettingsRow(
+                    icon = Icons.Rounded.VisibilityOff,
+                    title = hiddenCategoriesTitle,
+                    subtitle = if (hiddenExploreCategories.isEmpty()) {
+                        stringResource(R.string.hidden_explore_categories_none)
+                    } else {
+                        stringResource(
+                            R.string.hidden_explore_categories_count,
+                            hiddenExploreCategories.size,
+                        )
+                    },
+                    trailing = { Chevron() },
+                    onClick = { showHiddenCategories = true },
+                )
+            }
+        }
+
+        SearchableSettingsGroup(search, header = stringResource(R.string.settings_lyrics)) {
             val syncedLyricsTitle = stringResource(R.string.synced_lyrics)
             // Same reasoning as Animated cover art above: the lyrics source and
             // translation rows are only here while this is on.
@@ -1595,23 +1624,6 @@ fun SettingsScreen(
                         },
                     )
                 }
-            }
-            val hiddenCategoriesTitle = stringResource(R.string.hidden_explore_categories)
-            row(hiddenCategoriesTitle, "explore", "category", "filter", "hide") {
-                SettingsRow(
-                    icon = Icons.Rounded.VisibilityOff,
-                    title = hiddenCategoriesTitle,
-                    subtitle = if (hiddenExploreCategories.isEmpty()) {
-                        stringResource(R.string.hidden_explore_categories_none)
-                    } else {
-                        stringResource(
-                            R.string.hidden_explore_categories_count,
-                            hiddenExploreCategories.size,
-                        )
-                    },
-                    trailing = { Chevron() },
-                    onClick = { showHiddenCategories = true },
-                )
             }
         }
 
@@ -2672,21 +2684,28 @@ private fun QualityTarget.localizedTitle(): String = stringResource(
 @Composable
 private fun AudioQuality.localizedLabel(): String = stringResource(
     when (this) {
-        AudioQuality.LOW -> R.string.low
-        AudioQuality.MEDIUM -> R.string.medium
-        AudioQuality.HIGH -> R.string.high
-        // The top rung is "whatever the sources can do", which on YouTube is
-        // its best Opus/AAC — not a lossless stream. The download picker keeps
-        // "Lossless" because a saved file genuinely can be bit-exact.
-        AudioQuality.LOSSLESS -> R.string.best_quality
+        AudioQuality.LOW -> R.string.quality_efficient
+        AudioQuality.MEDIUM -> R.string.quality_high
+        AudioQuality.HIGH -> R.string.quality_lossless
+        AudioQuality.LOSSLESS -> R.string.quality_hi_res
+    },
+)
+
+@Composable
+private fun AudioQuality.localizedDetail(): String = stringResource(
+    when (this) {
+        AudioQuality.LOW -> R.string.quality_efficient_detail
+        AudioQuality.MEDIUM -> R.string.quality_high_detail
+        AudioQuality.HIGH -> R.string.quality_lossless_detail
+        AudioQuality.LOSSLESS -> R.string.quality_hi_res_detail
     },
 )
 
 @Composable
 private fun DownloadQuality.localizedLabel(): String = stringResource(
     when (this) {
-        DownloadQuality.STANDARD -> R.string.standard
-        DownloadQuality.HIGH -> R.string.high
+        DownloadQuality.STANDARD -> R.string.quality_efficient
+        DownloadQuality.HIGH -> R.string.quality_high
         DownloadQuality.LOSSLESS -> R.string.lossless
     },
 )
@@ -2864,7 +2883,7 @@ private fun QualitySheet(
                 Text(
                     text = stringResource(
                         R.string.audio_quality_connection,
-                        target.localizedTitle().lowercase(Locale.getDefault()),
+                        target.localizedTitle(),
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2893,7 +2912,7 @@ private fun QualitySheet(
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = stringResource(R.string.quality_hourly, quality.detail, quality.hourly),
+                        text = quality.localizedDetail(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -3253,7 +3272,7 @@ private val IosSwitchGrey = Color(0xFF39393D)
 
 /**
  * A row's explanation, a clear step below its title: four-fifths of the title
- * size with a tight leading, so two-line subtitles stay compact.
+ * size with a tight leading, so one-line subtitles stay compact.
  */
 @Composable
 private fun settingsSubtitleStyle() = MaterialTheme.typography.bodyLarge.copy(
@@ -3334,7 +3353,8 @@ internal fun SettingsRow(
                     text = subtitle,
                     style = settingsSubtitleStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 5,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -3398,7 +3418,8 @@ internal fun SettingsSubRow(
                     text = subtitle,
                     style = settingsSubtitleStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 5,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -3472,6 +3493,8 @@ internal fun SliderRow(
                         text = subtitle,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

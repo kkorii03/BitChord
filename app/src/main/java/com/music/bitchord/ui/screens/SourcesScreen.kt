@@ -885,10 +885,10 @@ private fun SourceRow(
 @Composable
 private fun AudioQuality.localizedLabel(): String = stringResource(
     when (this) {
-        AudioQuality.LOW -> R.string.low
-        AudioQuality.MEDIUM -> R.string.medium
-        AudioQuality.HIGH -> R.string.high
-        AudioQuality.LOSSLESS -> R.string.best_quality
+        AudioQuality.LOW -> R.string.quality_efficient
+        AudioQuality.MEDIUM -> R.string.quality_high
+        AudioQuality.HIGH -> R.string.quality_lossless
+        AudioQuality.LOSSLESS -> R.string.quality_hi_res
     },
 )
 
