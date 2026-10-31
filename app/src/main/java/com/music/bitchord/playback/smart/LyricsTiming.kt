@@ -711,6 +711,13 @@ object LyricsTiming {
             val entry = store(context).get(videoId) ?: return@withLock false
             val heardSeconds = refineHeardSeconds(entry)
             val result = refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = firstAnchor)
+            // A newer correction landed during the first listen, so the refine
+            // above dropped its result. A second listen would anchor on that
+            // newer entry and then overwrite it; leave it as it is.
+            if (entry != firstAnchor.entry) {
+                if (!hadWords) _changes.tryEmit(videoId)
+                return@withLock !hadWords
+            }
             if (entry.refineHeardExtended || heardSeconds >= RefineExtendPolicy.EXTEND_SECONDS ||
                 !RefineExtendPolicy.shouldExtend(result, heardSeconds, lastLineMs(lines))
             ) {
