@@ -92,9 +92,30 @@ object QualityUpgrade {
          * twice for a rejection it already gave the first time.
          */
         val servedBy: String? = null,
+        /**
+         * Whether the listener asked for this search by hand. A manual request
+         * overrules the cached "nothing better" verdict and the resting rule
+         * for its one turn; see [SourceResolver.bestAcross].
+         */
+        val manual: Boolean = false,
     )
 
     private val pending = ConcurrentHashMap<String, Pending>()
+
+    /**
+     * When an inconclusive second look may be tried again, keyed by media id.
+     *
+     * A search that came back empty only because a source failed, timed out or
+     * was still resting is not a verdict. It must not enter [asked], but it
+     * also must not be retried on every progress sample — that would be a
+     * timer by another name. The timestamp lets the next ordinary event (a
+     * progress sample, a resume) ask again once the window has passed, and the
+     * automatic path keeps its rest and cache rules.
+     */
+    private val retryAfter = ConcurrentHashMap<String, Long>()
+
+    /** How long an inconclusive "none" waits before an automatic retry. */
+    private const val INCONCLUSIVE_RETRY_MS = 60_000L
 
     /**
      * The last [Pending] a second look was asked about, kept so a candidate
@@ -229,7 +250,13 @@ object QualityUpgrade {
             inFlight?.cancel()
             return false
         }
-        pending[mediaId] = Pending(target, inFlight, playing, servedBy)
+        pending[mediaId] = Pending(
+            target,
+            inFlight,
+            playing,
+            servedBy,
+            manual = mediaId in handAsked,
+        )
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -360,6 +387,12 @@ object QualityUpgrade {
         // overruled — see [askByHand].
         if (mediaId !in handAsked && uri.getQueryParameter(MARKER) != null) return false
         if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false
+        // An inconclusive second look was not a verdict. Wait a bounded window
+        // before the next ordinary event retries it, so a source that was down
+        // is asked again without turning every progress sample into a search.
+        val retryAt = retryAfter[mediaId] ?: 0L
+        if (System.currentTimeMillis() < retryAt) return false
+        if (retryAt != 0L) retryAfter.remove(mediaId)
         // Same widening as [settledForLess]: a track playing off the cache is
         // worth a second look whenever anything outranks YouTube, not only
         // when lossless was asked for.
@@ -449,7 +482,12 @@ object QualityUpgrade {
             asked += mediaId
             return false
         }
-        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
+        pending[mediaId] = Pending(
+            target,
+            inFlight = null,
+            playing = playing,
+            manual = mediaId in handAsked,
+        )
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -510,6 +548,13 @@ object QualityUpgrade {
          * [asked] is allowed to mean.
          */
         var answered = false
+        /**
+         * Whether the answer is a verdict or merely an interruption. A `none`
+         * reached while a source failed, timed out or was resting says nothing
+         * about the catalogue, so it must not enter [asked].
+         */
+        var conclusive = false
+        val report = SourceResolver.SearchReport()
         val expectedSec = waiting.target.durationSec
         val effectiveDurationSec = effectiveTargetDuration(expectedSec, playingDurationSec)
         if (expectedSec != null && playingDurationSec != null &&
@@ -559,6 +604,7 @@ object QualityUpgrade {
                         )
                     }
                     answered = true
+                    conclusive = true
                     return late
                 }
             }
@@ -572,6 +618,8 @@ object QualityUpgrade {
                 servedBy = waiting.servedBy,
                 excludeSources = excludedSources,
                 excludeHosts = excludedHosts,
+                manual = waiting.manual,
+                report = report,
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
@@ -582,6 +630,13 @@ object QualityUpgrade {
                         servedBy = it.sourceConfigId,
                     )
                 }
+                // A source is only remembered as having answered "no" when
+                // every source actually answered. A timeout, a failure or a
+                // resting source leaves the question open for a later retry.
+                // A copy that opened while a better row failed (a fallback
+                // below the request) is not a verdict either: once the source
+                // is back the better row may open.
+                conclusive = report.allConclusive
                 answered = true
             }
         } finally {
@@ -592,7 +647,19 @@ object QualityUpgrade {
                 // [adoptUnresolved] offer the same track again at the next
                 // progress sample.
                 pending.remove(mediaId)
-                asked += mediaId
+                if (conclusive) {
+                    asked += mediaId
+                } else {
+                    // Not a verdict: a source failed, timed out or was resting.
+                    // Allow a later event to ask again after a bounded wait
+                    // instead of recording the track as permanently answered.
+                    retryAfter[mediaId] = System.currentTimeMillis() + INCONCLUSIVE_RETRY_MS
+                    TrackLog.d(
+                        TAG,
+                        "'${waiting.target.title}' has no confirmed answer yet; a source was unavailable, will retry",
+                        about = mediaId,
+                    )
+                }
             }
             // Otherwise the search was cancelled — the queue moved on while it
             // was still running — and *nothing was learned*. The track is left
@@ -666,6 +733,7 @@ object QualityUpgrade {
         lastPending.remove(mediaId)
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
+        retryAfter.remove(mediaId)
     }
 
     /**
@@ -741,6 +809,7 @@ object QualityUpgrade {
         lastPending.remove(mediaId)
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
+        retryAfter.remove(mediaId)
         // A request made by hand is about the track the listener was listening
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
@@ -837,7 +906,8 @@ object QualityUpgrade {
      */
     fun adoptByHand(mediaId: String, target: TrackMatcher.Target, playing: StreamFormat?): Boolean {
         if (target.title.isBlank() || mediaId !in handAsked) return false
-        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
+        pending[mediaId] = Pending(target, inFlight = null, playing = playing, manual = true)
+        retryAfter.remove(mediaId)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -854,7 +924,31 @@ object QualityUpgrade {
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
         lastPending.remove(mediaId)
+        retryAfter.remove(mediaId)
+        // A lookup already pending for this track inherited the automatic
+        // path's view of the world. Mark it manual so it ignores the search
+        // memo and asks a resting source once, which is what the listener
+        // pressed the button for.
+        pending[mediaId]?.let { pending[mediaId] = it.copy(manual = true) }
+        followUps[mediaId]?.let { followUps[mediaId] = it.copy(manual = true) }
     }
+
+    /**
+     * Whether a running automatic pass must leave the manual request that
+     * joined it unanswered, so the waiter can run the manual pass itself.
+     *
+     * The pass captured `manual = false` when it started, before the listener
+     * pressed the button; its search therefore skipped resting sources and
+     * replayed the memoised empty answer. A `none` from that pass is not the
+     * answer to the manual request — the request was for a search under the
+     * manual rules — and answering it would clear [PlaybackService]'s
+     * `manualUpgradeFor` before the waiter could run. See 10-31 'Flowers'.
+     */
+    internal fun defersAutomaticAnswerToManual(
+        startedManual: Boolean,
+        manualPending: Boolean,
+        manualJoined: Boolean,
+    ): Boolean = !startedManual && manualPending && manualJoined
 
     /**
      * Abandons the second look for every track at once, because the player all
@@ -902,6 +996,7 @@ object QualityUpgrade {
         (pending.keys + followUps.keys + forced.keys + shelved.keys + auditioning).forEach(::forget)
         asked.clear()
         refused.clear()
+        retryAfter.clear()
     }
 
     // ── Handing the stream to the player ────────────────────────────────────

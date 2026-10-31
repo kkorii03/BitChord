@@ -58,6 +58,21 @@ object SourceResolver {
 
         private val states = ConcurrentHashMap<String, State>()
 
+        /**
+         * A monotonic mark for each source's failures, so a caller can tell
+         * whether *its* search failed without the source having to throw.
+         *
+         * Some sources turn a transport fault into an empty answer (see
+         * [MusicSource.search]), which is indistinguishable from "this
+         * catalogue does not have that recording" at the call site. Comparing
+         * this mark before and after the call is what keeps that empty answer
+         * from being memoised as a confirmed miss.
+         */
+        private val failureMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
+        internal fun failureMark(configId: String): Long =
+            failureMarks[configId]?.get() ?: 0L
+
         fun isResting(configId: String): Boolean {
             val state = states[configId] ?: return false
             if (state.untilMs > System.currentTimeMillis()) return true
@@ -66,6 +81,8 @@ object SourceResolver {
         }
 
         fun failed(configId: String) {
+            failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
+                .incrementAndGet()
             val state = states.computeIfAbsent(configId) { State() }
             state.failures += 1
             if (state.failures >= FAILURES_BEFORE_REST) {
@@ -81,7 +98,10 @@ object SourceResolver {
             states.remove(configId)
         }
 
-        internal fun resetForTest() = states.clear()
+        internal fun resetForTest() {
+            states.clear()
+            failureMarks.clear()
+        }
 
         private const val FAILURES_BEFORE_REST = 2
         private const val COOLDOWN_MS = 30 * 60 * 1000L
@@ -104,8 +124,47 @@ object SourceResolver {
 
     private val searchAnswers = ConcurrentHashMap<SearchKey, SearchAnswer>()
 
-    /** Distinguishes a source that answered with nothing from one that timed out. */
-    private class Answer(val stream: SourceStream?)
+    /**
+     * The per-source detail of one search, for the `hq-search` line.
+     *
+     * [verdict] is why a result was or was not usable:
+     * `match`, `duration`, `title`, `artist`, `version`, `error`, `timeout`
+     * or `resting`. [conclusive] is false when the source could not give a
+     * complete answer — a failed backend, a timeout, or being skipped while
+     * resting — which is what stops that "none" from being remembered as
+     * final.
+     */
+    data class SearchOutcome(
+        val stream: SourceStream? = null,
+        val results: Int = 0,
+        val best: Song? = null,
+        val verdict: String = "title",
+        val conclusive: Boolean = true,
+    )
+
+    /**
+     * What every source in one [bestAcross] walk answered, so a caller can
+     * tell "nobody has it" from "nobody could tell us right now".
+     *
+     * Only a walk whose every source answered conclusively is a `none` worth
+     * caching. A source that timed out, failed, or was skipped for resting is
+     * exactly the case that must be asked again later.
+     */
+    class SearchReport {
+        private val entries = mutableListOf<SearchOutcome>()
+
+        @Volatile
+        var allConclusive: Boolean = true
+            private set
+
+        fun record(outcome: SearchOutcome) {
+            synchronized(entries) { entries += outcome }
+            if (!outcome.conclusive) allConclusive = false
+        }
+
+        /** Test seam: the per-source verdicts this walk collected. */
+        internal fun outcomes(): List<SearchOutcome> = synchronized(entries) { entries.toList() }
+    }
 
     /** A substitute stream already judged to be the original recording. */
     private class Remembered(val stream: SourceStream, val at: Long)
@@ -306,7 +365,7 @@ object SourceResolver {
         if (!picked && request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
-                val upgraded = matchAndStream(source, target, request, strictOriginal = true) ?: continue
+                val upgraded = matchAndStream(source, target, request, strictOriginal = true).stream ?: continue
                 // Only a genuinely lossless answer is an upgrade. A source that
                 // *can* serve lossless but settled for a transcode of this
                 // particular track has not beaten the pinned source at anything
@@ -405,7 +464,7 @@ object SourceResolver {
             strictLength = target.durationSec != null,
             requireSharedArtist = true,
             strictOriginal = true,
-        )?.also {
+        ).stream?.also {
             TrackLog.d(TAG, "YouTube fallback matched '${target.title}' after its higher-quality source failed")
         }
     }
@@ -546,6 +605,13 @@ object SourceResolver {
         excludeSources: Set<String> = emptySet(),
         excludeHosts: Set<String> = emptySet(),
         allowSameRendition: Boolean = false,
+        /**
+         * A search the listener asked for. It ignores the memoised answer for
+         * this track and asks resting sources once more; see [bestAcross].
+         */
+        manual: Boolean = false,
+        /** Filled with each source's verdict, so a caller can tell none from not-now. */
+        report: SearchReport? = null,
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -590,6 +656,8 @@ object SourceResolver {
             requireSharedArtist = true,
             strictOriginal = true,
             excludeHosts = excludeHosts,
+            manual = manual,
+            report = report,
         ) { candidate, stream ->
             val acceptable = worthSwapping(stream.format, playing) ||
                 (allowSameRendition && HqQuality.isSameOrBetter(stream.format, playing))
@@ -786,7 +854,7 @@ object SourceResolver {
                 waitForAll = true,
                 strictLength = strictLength,
                 strictOriginal = true,
-            ) ?: continue
+            ).stream ?: continue
             // Dolby Atmos is not bit-exact PCM, but it is the native premium
             // rendition that playback already prefers.  Keep it on the same
             // first-class download path instead of throwing it away and
@@ -1021,34 +1089,53 @@ object SourceResolver {
         strictOriginal: Boolean = false,
         excludeHosts: Set<String> = emptySet(),
         sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+        /**
+         * A request the listener made by hand. It ignores the per-track
+         * search cache and asks a resting source once more: the answer being
+         * overruled is "nobody has it", which the listener has evidence
+         * against. The automatic path keeps the rest rule.
+         */
+        manual: Boolean = false,
+        /** Collects each source's verdict so a caller can tell a real none from an interrupted one. */
+        report: SearchReport? = null,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val usable = sources.filterNot { source ->
-            SourceCooldown.isResting(source.configId).also { resting ->
+            val resting = SourceCooldown.isResting(source.configId)
+            if (resting && !manual) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} is resting after repeated failures; skipping for this track",
+                )
+                val skipped = SearchOutcome(verdict = "resting", conclusive = false)
+                report?.record(skipped)
+                TrackLog.d(TAG, hqSearchLine(target, source, skipped))
+                true
+            } else {
                 if (resting) {
                     TrackLog.d(
                         TAG,
-                        "${source.displayName} is resting after repeated failures; skipping for this track",
+                        "${source.displayName} is resting; asking it once because this upgrade was requested by hand",
                     )
                 }
+                false
             }
         }
         if (usable.isEmpty()) return@coroutineScope null
         val order = usable.mapIndexed { index, source -> source.configId to index }.toMap()
-        val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = usable
+        val running: MutableList<Deferred<Pair<MusicSource, SearchOutcome>>> = usable
             .map { source ->
                 async {
                     val answer = withTimeoutOrNull(sourceTimeoutMs) {
-                        Answer(
-                            matchAndStream(
-                                source,
-                                target,
-                                request,
-                                waitForAll,
-                                strictLength,
-                                requireSharedArtist,
-                                strictOriginal,
-                            ),
+                        matchAndStream(
+                            source,
+                            target,
+                            request,
+                            waitForAll,
+                            strictLength,
+                            requireSharedArtist,
+                            strictOriginal,
+                            manual,
                         )
                     }
                     if (answer == null) {
@@ -1063,12 +1150,18 @@ object SourceResolver {
                             "${source.displayName} timed out after ${sourceTimeoutMs}ms; " +
                                 "skipping for this track",
                         )
-                        source to null
+                        val timedOut = SearchOutcome(verdict = "timeout", conclusive = false)
+                        TrackLog.d(TAG, hqSearchLine(target, source, timedOut))
+                        source to timedOut
                     } else {
                         // A stream is proof the source is healthy. A miss is
                         // neither proof of health nor a failure: it answered.
                         if (answer.stream != null) SourceCooldown.succeeded(source.configId)
-                        source to answer.stream
+                        // A hand-made request is also the one chance a resting
+                        // source gets to prove it is back. A complete answer is
+                        // enough evidence, even when the catalogue held nothing.
+                        if (manual && answer.conclusive) SourceCooldown.succeeded(source.configId)
+                        source to answer
                     }
                 }
             }
@@ -1086,16 +1179,17 @@ object SourceResolver {
                 val readyDeferred = listOf(first) + running.filter { it !== first && it.isCompleted }
                 running -= readyDeferred.toSet()
                 val ready = readyDeferred.map { it.await() }
+                ready.forEach { (_, outcome) -> report?.record(outcome) }
                 // A song with another addon answer must try the healthy host
                 // first; a resting one is still kept as the last resort rather
                 // than dropped. The loop below also refuses a resting host, so
                 // this order only decides which healthy answer is seen first.
                 val candidateOrder = HqVerifyPolicy.candidateOrder(
-                    ready.map { HqHostTracker.hostOf(it.second?.url) },
+                    ready.map { HqHostTracker.hostOf(it.second.stream?.url) },
                 ) { HqHostTracker.isResting(it) }
                 for (index in candidateOrder) {
-                    val (source, stream) = ready[index]
-                    if (stream == null) continue
+                    val (source, outcome) = ready[index]
+                    val stream = outcome.stream ?: continue
                     val host = HqHostTracker.hostOf(stream.url)
                     if (host != null && host in excludeHosts) continue
                     // A host that just rate-limited us is not asked again for
@@ -1169,7 +1263,9 @@ object SourceResolver {
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
-    ): SourceStream? {
+        manual: Boolean = false,
+    ): SearchOutcome {
+        var last = SearchOutcome()
         for (query in TrackMatcher.queries(target)) {
             val key = SearchKey(
                 sourceId = source.configId,
@@ -1179,21 +1275,45 @@ object SourceResolver {
                 query = query,
             )
             val now = System.currentTimeMillis()
-            val cached = searchAnswers[key]?.takeIf { now - it.at < SEARCH_MEMO_TTL_MS }?.rows
-            val candidates = cached ?: attempt(source) {
-                source.search(
-                    query,
-                    limit = MATCH_CANDIDATES,
-                    waitForAll = waitForAll,
-                    // The search and the stream are one question here: a
-                    // catalogue that files its rows by tier should describe
-                    // them at the tier this is about to ask for.
-                    request = request,
-                )
-            }?.also { rows ->
-                if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
-                searchAnswers[key] = SearchAnswer(rows, System.currentTimeMillis())
-            } ?: return null
+            // Taken before either the search or the stream calls below, so the
+            // same comparison covers both. A stream open that 500s or times out
+            // is a failure of the whole answer even when the search itself
+            // looked healthy — see [SourceCooldown.failureMark].
+            val mark = SourceCooldown.failureMark(source.configId)
+            // A hand-made request is evidence that the cached "none" was wrong.
+            // Leave it unread, so the source is asked again; the fresh answer
+            // then replaces the memo below.
+            val cached = if (manual) null else {
+                searchAnswers[key]?.takeIf { now - it.at < SEARCH_MEMO_TTL_MS }?.rows
+            }
+            var conclusive = true
+            val candidates = if (cached != null) {
+                cached
+            } else {
+                val rows = attempt(source) {
+                    source.search(
+                        query,
+                        limit = MATCH_CANDIDATES,
+                        waitForAll = waitForAll,
+                        // The search and the stream are one question here: a
+                        // catalogue that files its rows by tier should describe
+                        // them at the tier this is about to ask for.
+                        request = request,
+                    )
+                } ?: return SearchOutcome(verdict = "error", conclusive = false).also {
+                    TrackLog.d(TAG, hqSearchLine(target, source, it))
+                }
+                // Some sources swallow a transport fault and return an empty
+                // list. An answer produced while this source reported a failure
+                // is not a confirmed miss, and must not be memoised — see
+                // [SourceCooldown.failureMark].
+                conclusive = SourceCooldown.failureMark(source.configId) == mark
+                if (conclusive) {
+                    if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
+                    searchAnswers[key] = SearchAnswer(rows, System.currentTimeMillis())
+                }
+                rows
+            }
             var matches = TrackMatcher.ranked(candidates, target)
             if (strictOriginal) {
                 matches = matches.filter { TrackMatcher.isOriginalRecording(it, target) }
@@ -1216,6 +1336,12 @@ object SourceResolver {
                         TAG,
                         "${source.displayName} returned conflicting albums for '${target.title}'; refusing to guess",
                     )
+                    last = SearchOutcome(
+                        results = candidates.size,
+                        best = matches.firstOrNull(),
+                        verdict = "version",
+                        conclusive = conclusive,
+                    )
                     continue
                 }
                 TrackLog.d(
@@ -1234,10 +1360,78 @@ object SourceResolver {
             if (strictLength) {
                 matches = matches.filter { TrackMatcher.withinSeconds(it, target, UPGRADE_DRIFT_SEC) }
             }
-            if (matches.isEmpty()) continue
-            return streamBest(source, matches, target, request)
+            if (matches.isEmpty()) {
+                val best = matches.firstOrNull() ?: TrackMatcher.ranked(candidates, target).firstOrNull()
+                    ?: candidates.firstOrNull()
+                val verdict = when {
+                    // A source that failed while producing this answer said
+                    // nothing about the catalogue, even when the rows it sent
+                    // back were empty — see the `error` contract in
+                    // [SearchOutcome].
+                    !conclusive -> "error"
+                    candidates.isEmpty() -> "title"
+                    best == null -> "title"
+                    else -> TrackMatcher.rejectionReason(
+                        best,
+                        target,
+                        strictOriginal = strictOriginal,
+                        requireSharedArtist = requireSharedArtist,
+                        strictLength = strictLength,
+                        driftSec = UPGRADE_DRIFT_SEC,
+                    )
+                }
+                last = SearchOutcome(
+                    results = candidates.size,
+                    best = best,
+                    verdict = verdict,
+                    conclusive = conclusive,
+                )
+                // A source that reported a fault will not answer the other
+                // query either; asking it again only spends a request.
+                if (!conclusive) {
+                    TrackLog.d(TAG, hqSearchLine(target, source, last))
+                    return last
+                }
+                continue
+            }
+            val stream = streamBest(source, matches, target, request)
+            // Every stream open can fail — a 500, a timeout, a host that went
+            // away between the search and the open — and [attempt] counts each
+            // one against the source. A search that looked healthy but could
+            // not produce a stream is not a confirmed miss, so the caller must
+            // be allowed to ask again once the source is back. That holds even
+            // when a stream did open: [streamBest] falls back to a row below the
+            // request when the better one failed (10-31 Flowers: HTTP 500), and
+            // the copy it settled for is still played, just not taken as final.
+            if (SourceCooldown.failureMark(source.configId) != mark) {
+                conclusive = false
+            }
+            last = SearchOutcome(
+                stream = stream,
+                results = candidates.size,
+                best = matches.firstOrNull(),
+                verdict = if (stream != null) "match" else "error",
+                conclusive = conclusive,
+            )
+            TrackLog.d(TAG, hqSearchLine(target, source, last))
+            return last
         }
-        return null
+        // One line per source per walk, whether it found the recording or not.
+        TrackLog.d(TAG, hqSearchLine(target, source, last))
+        return last
+    }
+
+    /** The one line that says why a source did or did not supply this track. */
+    private fun hqSearchLine(
+        target: TrackMatcher.Target,
+        source: MusicSource,
+        outcome: SearchOutcome,
+    ): String {
+        val best = outcome.best?.let {
+            "${it.title}/${it.artist}/${it.durationText ?: "?"}"
+        } ?: "-"
+        return "hq-search: '${target.title}' ${source.displayName} " +
+            "results=${outcome.results} best=$best verdict=${outcome.verdict}"
     }
 
     /**

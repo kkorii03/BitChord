@@ -67,6 +67,27 @@ class QualityUpgradeScopeTest {
         assertTrue(QualityUpgrade.hasAnsweredFor(mediaId))
     }
 
+
+    /**
+     * A hand-made request overrules a previous "nothing better" verdict, even
+     * when that verdict was reached while a source was down. See
+     * [QualityUpgrade.askByHand].
+     */
+    @Test
+    fun `a manual request reopens an answered track`() {
+        val manualId = "manual-reopen"
+        QualityUpgrade.markAnsweredForTest(manualId)
+        assertTrue(QualityUpgrade.hasAnsweredFor(manualId))
+
+        QualityUpgrade.askByHand(manualId)
+
+        assertFalse(
+            "the listener contradicting a cached none must start the search again",
+            QualityUpgrade.hasAnsweredFor(manualId),
+        )
+        QualityUpgrade.forget(manualId)
+    }
+
     /** One track's replay says nothing about another's. */
     @Test
     fun `re-opening one track leaves the rest alone`() {
@@ -77,6 +98,47 @@ class QualityUpgradeScopeTest {
 
         assertFalse(QualityUpgrade.hasAnsweredFor(mediaId))
         assertTrue(QualityUpgrade.hasAnsweredFor("other"))
+    }
+
+    /**
+     * A manual request that joins an automatic pass must not be answered by
+     * that pass. Its search started before the press, so it used the automatic
+     * rules (a memoised empty answer, resting sources skipped); only the
+     * waiter's manual search may report.
+     */
+    @Test
+    fun `an automatic pass defers a joined manual request to the manual search`() {
+        assertTrue(
+            QualityUpgrade.defersAutomaticAnswerToManual(
+                startedManual = false,
+                manualPending = true,
+                manualJoined = true,
+            ),
+        )
+        assertFalse(
+            "a pass that started manual may answer it",
+            QualityUpgrade.defersAutomaticAnswerToManual(
+                startedManual = true,
+                manualPending = true,
+                manualJoined = true,
+            ),
+        )
+        assertFalse(
+            "nothing is deferred when no manual request is waiting",
+            QualityUpgrade.defersAutomaticAnswerToManual(
+                startedManual = false,
+                manualPending = false,
+                manualJoined = true,
+            ),
+        )
+        assertFalse(
+            "nothing is deferred when the request did not join",
+            QualityUpgrade.defersAutomaticAnswerToManual(
+                startedManual = false,
+                manualPending = true,
+                manualJoined = false,
+            ),
+        )
     }
 
 }
