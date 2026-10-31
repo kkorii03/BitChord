@@ -1,0 +1,11 @@
+[NO-FIX-LOOP]
+Repo: BitChord Android app (Kotlin). This branch = upstream v1.9 (git tag v1.9) merged into a Korean fork. Policy: v1.9 behavior is the default; fork behavior wins only if it is a Korean-only feature.
+Two failing app unit tests:
+1) AppSettingsDefaultsTest 'cache and sync limits keep their published defaults' (AppSettingsDefaultsTest.kt:73)
+2) PrecisionAudioSinkTest 'float output trims silence and advances the stream offset' (PrecisionAudioSinkTest.kt:459)
+For each: read the test, then compare the production code with the v1.9 version (git show v1.9:<path>, git diff v1.9 -- <path>). Decide whether the test or the code is from v1.9 and which side the merge changed.
+- If the code differs from v1.9 only because of a fork change that is not a Korean-only feature, restore the v1.9 lines for that behavior.
+- If the fork default is intentional for Korea (look for comments, [KO] markers, docs/upstream-19-plan.md), keep the code and update the test expectation, and explain why.
+Rules: only edit the production file(s) directly involved and these 2 tests. Do NOT touch .github/, keys/, gradle files, strings. Do NOT revert unrelated files; do not checkout other branches. Battery first: no polling/timers. Re-read all callers and types of any function you change. Use grep / Select-String, not rg.
+Verify: ./gradlew :app:testDebugUnitTest --tests '*AppSettingsDefaultsTest' --tests '*PrecisionAudioSinkTest' (if gradle is available).
+At the end, summary in 10 lines or fewer: changed files / key changes (v1.9 vs fork for each) / test result / unresolved problems.
