@@ -1,0 +1,119 @@
+﻿[NO-FIX-LOOP]
+You are fixing compile errors in the APP module after merging upstream BitChord v1.9 into our Korean fork, and re-attaching lost Korean-fork features. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. Our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist or whose upstream signature changed. The shared and sharedUi modules already compile (do not edit shared/ or sharedUi/ main code).
+Reference versions (fetch first):
+  git fetch origin task/fix-1030 ; then use commit 724fd5ef = our fork right before the merge (git show 724fd5ef:<path>)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only, never push there)
+Lost-feature inventory: docs/upstream-19-lost.md (rows give fork file:line, identifiers, where to re-attach). Feature decisions: docs/upstream-19-plan.md and docs/upstream-19-nodowngrade.md.
+
+USER POLICY (strict): upgrade to v1.9 with NO functional downgrade. Where v1.9 has its own implementation of a feature, v1.9's is used: quality upgrade / hq-swap / HQ prefetch / HqAudioVerify wiring -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings screen layout, menus, video playback, tab bar, mini player -> v1.9. For those, adapt or delete OUR now-dead caller code (list every deletion with reason in the summary) — never delete v1.9 code.
+KEEP and RE-ATTACH every Korean-fork feature v1.9 does not have, for rows of docs/upstream-19-lost.md buckets A-E, I, J that touch your files: lyrics sync correction (incl. AudioCache timingKeep), song-version verdict / no music video / audio instead of MV (musicOnlyTried, alternateVersionCache), settings prefer_music_only, skip_non_music_parts, skip_sponsor_parts (keys, setters, and the PlaybackService collectors that apply them), Korea-blocked fallback + proxy (recheckGateNow), video radio, Korean UI labels, diagnostic logs (installCrashHandler/logProcessStart/onTrimMemory, release TrackLog.echo, DebugLog->TrackLog, crossfade skipped line, consume-user-queue line, audio switch refusal detail), withPhraseLineBreak, close player when queue empties, TrackAnalyzer.awaitWindow (event-driven, no polling).
+
+Separation rule (docs/ko-fork-layout.md): restored Korean code goes in NEW files under app/src/main/java/com/music/bitchord/ko/ (package com.music.bitchord.ko), not back inside upstream files. Inside a file that exists in v1.9, add only short calls marked with a trailing comment // [KO] <feature>. Prefer extension/top-level functions. When an upstream signature changed, adapt OUR code to it.
+
+HARD RULES (results are machine-checked; a violating result is thrown away):
+- never restore a whole file from 724fd5ef / task/fix-1030; never delete or empty a file that exists in v1.9; never revert v1.9 hunks to the fork version.
+- edit only YOUR files (list below) plus new files under app/src/main/java/com/music/bitchord/ko/ (name them <LaneName>*.kt). If you need a declaration that belongs in another lane's file, do NOT edit that file: write 'NEEDS: <file>: <declaration>' in the summary and, if you can, provide it as a function in your own ko/ file.
+- do not edit .github/, keys/, signing, gradle files.
+Check your own errors with: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' . Other lanes fix the other files in parallel, so errors elsewhere are expected — ignore them. Goal: zero errors in your files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change.
+
+At the end, summarize in 12 lines or less: modified files / new ko files / Korean features restored / our code dropped in favour of v1.9 (with reason) / NEEDS lines / remaining errors in your files / unresolved questions.
+
+LaneName=sources. YOUR FILES:
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt
+app/src/main/java/com/music/bitchord/data/sources/ModuleSource.kt
+app/src/main/java/com/music/bitchord/data/sources/AddonSource.kt
+app/src/main/java/com/music/bitchord/data/sources/SourceRegistry.kt
+app/src/main/java/com/music/bitchord/data/innertube/AndroidStreamHooks.kt
+app/src/main/java/com/music/bitchord/BitChordApplication.kt
+app/src/main/java/com/music/bitchord/data/DiagnosticsExport.kt
+
+Current compile errors in your files (86):
+app/src/main/java/com/music/bitchord/BitChordApplication.kt:104:9 Unresolved reference 'installCrashHandler'.
+app/src/main/java/com/music/bitchord/BitChordApplication.kt:108:49 Unresolved reference 'logProcessStart'.
+app/src/main/java/com/music/bitchord/BitChordApplication.kt:110:9 Unresolved reference 'AppForeground'.
+app/src/main/java/com/music/bitchord/BitChordApplication.kt:202:9 Unresolved reference 'StartupWork'.
+app/src/main/java/com/music/bitchord/BitChordApplication.kt:342:9 Unresolved reference 'StartupTrace'.
+app/src/main/java/com/music/bitchord/data/DiagnosticsExport.kt:135:63 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/data/DiagnosticsExport.kt:148:63 Unresolved reference 'skipNonMusicParts'.
+app/src/main/java/com/music/bitchord/data/DiagnosticsExport.kt:149:62 Unresolved reference 'skipSponsorParts'.
+app/src/main/java/com/music/bitchord/data/innertube/AndroidStreamHooks.kt:32:39 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/data/innertube/AndroidStreamHooks.kt:33:39 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/data/innertube/AndroidStreamHooks.kt:34:39 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/data/innertube/AndroidStreamHooks.kt:35:40 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/data/innertube/AndroidStreamHooks.kt:59:54 Unresolved reference 'forgetUrl'.
+app/src/main/java/com/music/bitchord/data/sources/AddonSource.kt:198:65 Unresolved reference 'reportSourceFailure'.
+app/src/main/java/com/music/bitchord/data/sources/AddonSource.kt:262:65 Unresolved reference 'reportSourceFailure'.
+app/src/main/java/com/music/bitchord/data/sources/ModuleSource.kt:113:32 Unresolved reference 'reportSourceFailure'.
+app/src/main/java/com/music/bitchord/data/sources/ModuleSource.kt:235:32 Unresolved reference 'reportSourceFailure'.
+app/src/main/java/com/music/bitchord/data/sources/ModuleSource.kt:245:32 Unresolved reference 'reportSourceFailure'.
+app/src/main/java/com/music/bitchord/data/sources/ModuleSource.kt:255:32 Unresolved reference 'reportSourceFailure'.
+app/src/main/java/com/music/bitchord/data/sources/SourceRegistry.kt:346:24 Unresolved reference 'clearSearchAnswers'.
+app/src/main/java/com/music/bitchord/data/sources/SourceRegistry.kt:509:24 Unresolved reference 'clearSearchAnswers'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:223:72 No parameter with name 'strictOriginal' found.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:223:95 Unresolved reference 'stream'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:231:47 Argument type mismatch: actual type is 'String', but 'StreamFormat?' was expected.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:259:79 No parameter with name 'strictOriginal' found.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:285:26 Unresolved reference 'rememberedOriginal'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:290:15 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:290:15 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:290:19 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:295:42 Unresolved reference 'summary'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:333:17 No parameter with name 'strictOriginal' found.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:402:13 No parameter with name 'strictOriginal' found.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:403:11 Unresolved reference 'stream'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:403:19 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:403:24 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:463:13 No parameter with name 'strictOriginal' found.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:464:22 Argument type mismatch: actual type is 'suspend (MusicSource, SourceStream) -> Boolean', but '(MusicSource, SourceStream) -> Boolean' was expected.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:472:23 Unresolved reference 'rememberOriginal'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:550:17 Unresolved reference 'SearchReport'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:729:41 Unresolved reference 'excludeSources'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:904:13 Unresolved reference 'SourceCooldown'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:906:9 Unresolved reference 'SourceCooldown'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1139:49 Unresolved reference 'report'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1145:64 Unresolved reference 'stream'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1149:42 Unresolved reference 'stream'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1151:49 Unresolved reference 'excludeHosts'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1161:26 Unresolved reference 'order'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1161:67 Unresolved reference 'compareTo'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1162:26 Unresolved reference 'order'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1169:55 Argument type mismatch: actual type is 'String', but 'StreamFormat?' was expected.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1174:68 Argument type mismatch: actual type is 'String', but 'StreamFormat?' was expected.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1180:57 Argument type mismatch: actual type is 'String', but 'StreamFormat' was expected.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1181:56 Argument type mismatch: actual type is 'String', but 'StreamFormat?' was expected.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1233:23 Unresolved reference 'SearchKey'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1235:26 Unresolved reference 'targetKey'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1236:27 Unresolved reference 'requestKey'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1245:24 Unresolved reference 'SourceCooldown'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1249:30 Unresolved reference 'manual'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1250:17 Unresolved reference 'searchAnswers'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1250:55 Unresolved reference 'at'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1250:58 'operator' modifier is required on 'fun <T> Comparable<T>.compareTo(other: T): Int'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1250:82 Unresolved reference 'rows'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1266:29 Unresolved reference 'SearchOutcome'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1266:82 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1266:87 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1273:30 Unresolved reference 'SourceCooldown'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1275:25 Unresolved reference 'searchAnswers'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1275:64 Unresolved reference 'searchAnswers'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1276:21 Unresolved reference 'searchAnswers'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1276:42 Unresolved reference 'SearchAnswer'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1281:17 Unresolved reference 'strictOriginal'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1302:21 Unresolved reference 'last'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1302:28 Unresolved reference 'SearchOutcome'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1355:54 Unresolved reference 'last'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1356:16 Unresolved reference 'last'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1363:18 Unresolved reference 'SearchOutcome'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1365:28 Unresolved reference 'best'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1365:34 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1365:34 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1365:38 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1366:19 Unresolved reference 'title'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1366:31 Unresolved reference 'artist'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1366:44 Unresolved reference 'durationText'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1369:32 Unresolved reference 'results'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1369:70 Unresolved reference 'verdict'.
+app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1616:13 Unresolved reference 'SourceCooldown'.
