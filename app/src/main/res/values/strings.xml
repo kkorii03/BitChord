@@ -1603,4 +1603,7 @@
     <string name="pipeline_none">None</string>
     <string name="pipeline_dsd_full_band">DSD to PCM, full band below the cutoff</string>
     <string name="pipeline_surround">%1$s (Surround)</string>
+    <string name="source_addon_not_addon">That is not an addon address. Enter the addon server address (the address with manifest.json) instead of a web page address.</string>
+    <string name="source_addon_repository_url">That is a repository page address. Enter the addon server address from its instructions (README).</string>
+    <string name="quality_upgrade_addon_auth">The %1$s addon\'s authentication was refused. Reconnect the addon in Settings</string>
 </resources>

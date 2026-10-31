@@ -110,7 +110,7 @@ class ModuleSource(
 
             val modules = manager.fetchIndex(indexUrl).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
-                SourceResolver.reportSourceFailure(config.id)
+                SourceResolver.reportSourceFailure(config.id, network = SourceResolver.isNetworkFault(e))
                 return@withContext emptyList()
             }
 
@@ -164,10 +164,16 @@ class ModuleSource(
     ): List<Song> {
         val loaded = manager.loadModule(module) { baseUrl }.getOrElse { e ->
             TrackLog.w(TAG, "${config.displayName}: load failed for ${module.id} — ${e.message}")
+            if (SourceResolver.isNetworkFault(e)) {
+                SourceResolver.reportSourceFailure(config.id, network = true)
+            }
             return emptyList()
         }
         val searchResponse = manager.searchTracks(loaded, query, limit).getOrElse { e ->
             TrackLog.w(TAG, "${config.displayName}: search failed for ${module.id} — ${e.message}")
+            if (SourceResolver.isNetworkFault(e)) {
+                SourceResolver.reportSourceFailure(config.id, network = true)
+            }
             return emptyList()
         }
         return searchResponse.tracks.map { track ->
@@ -232,7 +238,7 @@ class ModuleSource(
             // then ask for the stream URL.
             val modules = manager.fetchIndex(config.baseUrl).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
-                SourceResolver.reportSourceFailure(config.id)
+                SourceResolver.reportSourceFailure(config.id, network = SourceResolver.isNetworkFault(e))
                 return@withContext null
             }
             val module = modules.firstOrNull { it.id == moduleId } ?: run {
@@ -242,7 +248,7 @@ class ModuleSource(
             val baseUrl = config.baseUrl.substringBeforeLast("/")
             val loaded = manager.loadModule(module) { baseUrl }.getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: load failed for $moduleId — ${e.message}")
-                SourceResolver.reportSourceFailure(config.id)
+                SourceResolver.reportSourceFailure(config.id, network = SourceResolver.isNetworkFault(e))
                 return@withContext null
             }
             val streamResponse = manager.getStreamUrl(
@@ -252,7 +258,7 @@ class ModuleSource(
                 settings = settingsFor(request),
             ).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
-                SourceResolver.reportSourceFailure(config.id)
+                SourceResolver.reportSourceFailure(config.id, network = SourceResolver.isNetworkFault(e))
                 return@withContext null
             }
             val url = streamResponse.streamUrl?.ifBlank { null } ?: run {

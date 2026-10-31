@@ -15,7 +15,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -121,9 +124,42 @@ class AddonClient(rawBaseUrl: String) {
      * that holds nothing for one query is answering correctly — so callers must
      * read the [Result] rather than the count.
      */
-    suspend fun probeSearch(): Result<Int> =
-        fetch<AddonSearchResponse>(endpoint(listOf("search"), mapOf("q" to PROBE_QUERY)))
-            .map { it.tracks.size }
+    suspend fun probeSearch(): Result<Int> {
+        val url = runCatching {
+            endpoint(listOf("search"), mapOf("q" to PROBE_QUERY))
+        }.getOrElse { return Result.failure(it) }
+        return runCatching {
+            val text = body(url, rejectHtml = true)
+            // A web page can answer 200 on every path, and not every page
+            // labels itself `text/html`. Any body that is not JSON is a page or
+            // some other document, not a search answer, so a parse failure is
+            // the same refusal as the header check rather than an unclassified
+            // serialization error.
+            val root = try {
+                json.parseToJsonElement(text)
+            } catch (failure: SerializationException) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+            // Only an object whose `tracks` key is actually an array is the
+            // search answer this app knows how to read; an error object and an
+            // HTML page are not.
+            val obj = root as? JsonObject
+                ?: throw AddonException(SourceFormats.NOT_ADDON_URL)
+            if (obj["tracks"] !is JsonArray) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+            try {
+                json.decodeFromJsonElement(AddonSearchResponse.serializer(), obj).tracks.size
+            } catch (failure: SerializationException) {
+                throw AddonException(SourceFormats.NOT_ADDON_URL)
+            }
+        }.onFailure { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure !is AddonNotFound) {
+                TrackLog.w(TAG, "  ✗ addon probe failed ${redact(url)}: ${failure.message}")
+            }
+        }
+    }
 
     // ── Search ────────────────────────────────────────────────────────────
 
@@ -334,7 +370,7 @@ class AddonClient(rawBaseUrl: String) {
      * is precisely the miss the caller is equipped to handle and not something
      * to log as a fault.
      */
-    private suspend fun body(url: String): String = withContext(Dispatchers.IO) {
+    private suspend fun body(url: String, rejectHtml: Boolean = false): String = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
@@ -363,7 +399,10 @@ class AddonClient(rawBaseUrl: String) {
                 HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
                 HqHostTracker.rest(host, TRANSPORT_REST_MS)
                 TrackLog.w(TAG, "  ✗ addon transport failed ${redact(url)}: ${failure.message}")
-                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
+                throw AddonUnavailable(
+                    failure.message ?: "애드온에 연결할 수 없습니다",
+                    transport = true,
+                )
             }
 
             val wait = try {
@@ -377,6 +416,12 @@ class AddonClient(rawBaseUrl: String) {
                                 throw AddonException("Empty response")
                             }
                             HqHostTracker.noteResponse(host, elapsedMs, ok = true)
+                            if (rejectHtml &&
+                                response.header("Content-Type").orEmpty()
+                                    .contains("text/html", ignoreCase = true)
+                            ) {
+                                throw AddonException(SourceFormats.NOT_ADDON_URL)
+                            }
                             return@withContext text
                         }
                         response.code == 404 -> {
@@ -418,6 +463,19 @@ class AddonClient(rawBaseUrl: String) {
                             }
                             decision.waitMs
                         }
+                        // A refused credential is not a catalogue miss, and
+                        // not an outage either: the server is awake and is
+                        // answering, it just will not serve this addon until
+                        // the user reconnects it. 402 is included because the
+                        // hosts in the 10-31 report answer an exhausted
+                        // upstream quota that way; 403 is a token that is not
+                        // allowed to ask.
+                        response.code == 401 ||
+                            response.code == 402 ||
+                            response.code == 403 -> {
+                            HqHostTracker.noteResponse(host, elapsedMs, ok = true)
+                            throw AddonAuthException("HTTP ${response.code}", response.code)
+                        }
                         // A 5xx is a server having a bad minute and will be tried
                         // again on the next track; a 4xx is this app asking for
                         // something it will never be given — a wrong URL, a token
@@ -444,7 +502,10 @@ class AddonClient(rawBaseUrl: String) {
                 HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
                 HqHostTracker.rest(host, TRANSPORT_REST_MS)
                 TrackLog.w(TAG, "  ✗ addon body failed ${redact(url)}: ${failure.message}")
-                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
+                throw AddonUnavailable(
+                    failure.message ?: "애드온에 연결할 수 없습니다",
+                    transport = true,
+                )
             }
             quietUntilMs = System.currentTimeMillis() + wait
             attempt++
@@ -628,15 +689,36 @@ class AddonClient(rawBaseUrl: String) {
  * [SourceHealth.Rejected][com.music.bitchord.data.sources.SourceHealth.Rejected],
  * with a line fit to show a user.
  */
-class AddonException(message: String) : Exception(message)
+open class AddonException(message: String) : Exception(message)
+
+/**
+ * The addon refused this app's credential or permission — HTTP 401, 402 or 403.
+ *
+ * Separate from [AddonException] because the listener can act on it: the
+ * source is not missing the track and is not down, it needs reconnecting in
+ * Settings. A search answered this way must not be remembered as "nobody has
+ * it", and the manual-upgrade answer names the source instead of claiming no
+ * better copy exists.
+ */
+class AddonAuthException(
+    message: String,
+    val status: Int,
+) : AddonException(message)
 
 /**
  * The addon is momentarily not answering — down, overloaded, rate limiting.
  * Worth keeping switched on and worth asking again on the next track, which is
  * the whole distinction
  * [SourceHealth][com.music.bitchord.data.sources.SourceHealth] draws.
+ *
+ * [transport] is true when the addon could not be reached at all (DNS, TLS, a
+ * refused connection, a body read that timed out). That still counts against
+ * the source, but an offline device must not be parked for it.
  */
-class AddonUnavailable(message: String) : Exception(message)
+class AddonUnavailable(
+    message: String,
+    val transport: Boolean = false,
+) : Exception(message)
 
 /** The addon answered, and does not have what was asked for. A miss, not a fault. */
 class AddonNotFound : Exception("이 애드온에 없음")

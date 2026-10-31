@@ -129,9 +129,25 @@ object NextPrepPolicy {
 
 
     /**
+     * Why the sync step could not reach an engine answer. These are the
+     * engine-stage failures that used to end at `no-answer`, the same token a
+     * healthy check writes when it found nothing to correct. Keeping them
+     * apart lets the diagnostics score a real failure and lets the caller
+     * retry it on the next playback instead of treating it as confirmed.
+     */
+    enum class SyncFailure(val token: String) {
+        NO_AUDIO("no-audio"),
+        RATE_LIMIT("rate-limit"),
+        TOO_FEW_LINES("too-few-lines"),
+        ERROR("error"),
+    }
+
+    /**
      * What the next row's sync can say about itself. [hasTiming] is the answer
      * after the existing measurement/AI/refine path has run; everything else
-     * describes why that path could not produce one.
+     * describes why that path could not produce one. [failure] is set only
+     * when an engine stage actually failed; it is null for a healthy check
+     * that had nothing to correct.
      */
     data class SyncFacts(
         /** The developer switch for the bundle's lyrics/sync path is off. */
@@ -153,6 +169,8 @@ object NextPrepPolicy {
         val currentPlayedMs: Long = 0L,
         val remainingMs: Long = 1L,
         val hasTiming: Boolean = false,
+        /** The engine-stage failure, when the path was actually attempted and failed. */
+        val failure: SyncFailure? = null,
     )
 
     /**
@@ -182,6 +200,63 @@ object NextPrepPolicy {
     /** The exact `sync=` value for the next-prep line. */
     fun syncStatus(facts: SyncFacts): String =
         if (facts.hasTiming) "applied" else "skipped(${syncSkipReason(facts) ?: "no-answer"})"
+
+    /**
+     * The result of the next-prep sync step as its own line reports it:
+     * `answered`, `no-answer` (the engine ran and found nothing to correct),
+     * `failed:<reason>` (the engine stage itself failed), or `skipped:<reason>`
+     * for a path that never ran. A failure only replaces the healthy
+     * `no-answer`; switches, clocks and deadlines keep their existing reason
+     * because they stopped the path before an engine could fail.
+     */
+    fun syncResult(facts: SyncFacts): String = when {
+        facts.hasTiming -> "answered"
+        syncSkipReason(facts) != "no-answer" -> "skipped:${syncSkipReason(facts)}"
+        facts.failure != null -> "failed:${facts.failure.token}"
+        else -> "no-answer"
+    }
+
+    /** The `reason=` half of the `next-prep sync:` line. */
+    fun syncResultReason(facts: SyncFacts): String = when {
+        facts.hasTiming -> "applied"
+        syncSkipReason(facts) != "no-answer" -> syncSkipReason(facts)!!
+        facts.failure != null -> facts.failure.token
+        else -> "none"
+    }
+
+    /**
+     * Whether this outcome is a confirmed answer worth storing. A failed
+     * engine attempt must not be kept as the row's answer; the next playback
+     * asks again (rate limits keep their own existing backoff).
+     */
+    fun shouldStoreSyncResult(facts: SyncFacts): Boolean =
+        !syncResult(facts).startsWith("failed:")
+
+    /**
+     * The same rule for a caller that only has the engine-stage [failure], not
+     * a whole [SyncFacts]. A failure is never stored as confirmed; a healthy
+     * no-answer is.
+     */
+    fun shouldStoreSyncResult(failure: SyncFailure?): Boolean = failure == null
+
+    /**
+     * The engine-stage failure to report after a video attempt, or null when
+     * at least one engine answered. A Deepgram transcript that did not fit the
+     * lines still answered, so it is a healthy no-answer even when Gemini is
+     * already spent. Only every engine returning nothing is a failure, and a
+     * 429 keeps its own reason so the existing rate-limit hold can defer the
+     * next playback.
+     */
+    fun engineFailure(
+        anyEngineAnswered: Boolean,
+        rateLimited: Boolean,
+        audioPresent: Boolean,
+    ): SyncFailure? = when {
+        anyEngineAnswered -> null
+        rateLimited -> SyncFailure.RATE_LIMIT
+        !audioPresent -> SyncFailure.NO_AUDIO
+        else -> SyncFailure.ERROR
+    }
 
     /** A value for a step that has no answer, with the reason that stopped it. */
     fun noneWithReason(reason: String?): String = "none(${reason ?: "none"})"

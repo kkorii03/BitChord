@@ -193,6 +193,125 @@ class NextPrepTests(unittest.TestCase):
         )
         self.assertEqual(2, metric(report, "D1-sync-skip").attempts)
 
+    def test_next_prep_sync_line_separates_failure_from_healthy_no_answer(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "next-prep: A version=a lyrics=lrc hq=none "
+                "sync=skipped(no-answer) mix=none in 100ms",
+            ),
+            line(
+                "19:00:00.001",
+                "next-prep sync: a result=no-answer reason=none",
+            ),
+            line(
+                "19:00:01.000",
+                "next-prep: B version=b lyrics=lrc hq=none "
+                "sync=skipped(no-answer) mix=none in 100ms",
+            ),
+            line(
+                "19:00:01.001",
+                "next-prep sync: b result=failed:no-audio reason=no-audio",
+            ),
+            line(
+                "19:00:02.000",
+                "next-prep: C version=c lyrics=lrc hq=none "
+                "sync=applied mix=none in 100ms",
+            ),
+            line(
+                "19:00:02.001",
+                "next-prep sync: c result=answered reason=applied",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(3, sync.attempts)
+        self.assertEqual(1, sync.successes)
+        self.assertEqual(
+            {"no-answer": 1, "no-audio": 1},
+            report.stats["next_prep"]["sync_skip_reasons"],
+        )
+        self.assertEqual(1, report.stats["next_prep"]["sync_failed"])
+
+
+    def test_verified_refine_after_file_timed_skip_counts_as_sync(self) -> None:
+        text = log_text(
+            line(
+                "13:09:00.000",
+                "next-prep: Dynamite version=HaEYUJ2aRHs lyrics=lrc.red hq=none "
+                "sync=skipped(file-timed) mix=none in 100ms",
+            ),
+            line(
+                "13:09:00.001",
+                "next-prep sync: HaEYUJ2aRHs result=skipped:file-timed reason=file-timed",
+            ),
+            line(
+                "13:09:03.000",
+                "lyrics-refine: HaEYUJ2aRHs lines=26 median=68ms mad=51ms "
+                "slope=0 model=const applied=n base=none",
+            ),
+            line(
+                "13:11:03.000",
+                "track-summary: HaEYUJ2aRHs 'Dynamite' video=n source=browse:MPREb_x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=verified shift=68 match=- manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(1, sync.attempts)
+        self.assertEqual(1, sync.successes)
+        self.assertTrue(sync.passed)
+        self.assertEqual(0, metric(report, "D1-sync-skip").attempts)
+        self.assertEqual(1, report.stats["next_prep"]["sync_verified"])
+        self.assertEqual(1, metric(report, "D6-sync").successes)
+
+    def test_verified_refine_does_not_rescue_failed_or_off_sync(self) -> None:
+        text = log_text(
+            line(
+                "13:09:00.000",
+                "next-prep: Failed Song version=failed1 lyrics=lrc.red hq=none "
+                "sync=failed:no-audio mix=none in 100ms",
+            ),
+            line(
+                "13:09:00.001",
+                "next-prep sync: failed1 result=failed:no-audio reason=no-audio",
+            ),
+            line(
+                "13:09:01.000",
+                "next-prep: Off Song version=off1 lyrics=lrc.red hq=none "
+                "sync=skipped(off) mix=none in 100ms",
+            ),
+            line(
+                "13:09:01.001",
+                "next-prep sync: off1 result=skipped:off reason=off",
+            ),
+            line("13:09:03.000", "lyrics-refine: failed1 lines=26 median=68ms mad=51ms slope=0 model=const applied=n base=none"),
+            line("13:09:04.000", "lyrics-refine: off1 lines=26 median=68ms mad=51ms slope=0 model=const applied=n base=none"),
+            line(
+                "13:11:03.000",
+                "track-summary: failed1 'Failed Song' video=n source=browse:MPREb_x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=verified shift=68 match=- manualOffset=0 ended=natural",
+            ),
+            line(
+                "13:11:04.000",
+                "track-summary: off1 'Off Song' video=n source=browse:MPREb_x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=verified shift=68 match=- manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(2, sync.attempts)
+        self.assertEqual(0, sync.successes)
+        self.assertEqual(1, report.stats["next_prep"]["sync_failed"])
+        self.assertEqual(
+            {"no-audio": 1, "off": 1},
+            report.stats["next_prep"]["sync_skip_reasons"],
+        )
+        self.assertEqual(0, report.stats["next_prep"]["sync_verified"])
+
 
 class LosslessTests(unittest.TestCase):
     def test_accepted_verify_needs_actual_flac_playback(self) -> None:
@@ -285,6 +404,107 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(1, report.stats["lossless"]["hq_ahead"])
         self.assertEqual(2, metric(report, "D2-swap").attempts)
         self.assertEqual(1, metric(report, "D2-swap").successes)
+
+
+    def test_hq_swap_done_counts_playback_after_the_verify_line(self) -> None:
+        text = log_text(
+            line(
+                "13:07:50.000",
+                "play: -> Dynamite - BTS (HaEYUJ2aRHs) idx=0/10 reason=AUTO",
+            ),
+            line(
+                "13:07:50.100",
+                "HaEYUJ2aRHs <- audio/opus 48kHz 160kbps ?-bit 2ch",
+                tag="DECODE",
+            ),
+            line("13:07:58.000", "hq-swap: HaEYUJ2aRHs start at=12509 offset=1"),
+            line("13:07:59.000", "hq-swap: HaEYUJ2aRHs done"),
+            line(
+                "13:08:00.000",
+                "hq-verify: Dynamite Qobuz match=95% offset=1 -> accepted",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(1, playback.successes)
+        self.assertTrue(playback.passed)
+
+    def test_swap_does_not_hide_a_later_opus_fallback(self) -> None:
+        text = log_text(
+            play("13:07:50.000", "HaEYUJ2aRHs", "Dynamite"),
+            line("13:07:58.000", "hq-swap: HaEYUJ2aRHs start at=12509 offset=1"),
+            line("13:07:59.000", "hq-swap: HaEYUJ2aRHs done"),
+            line("13:08:00.000", "hq-verify: Dynamite Qobuz match=95% offset=1 -> accepted"),
+            line(
+                "13:08:10.000",
+                "HaEYUJ2aRHs <- audio/opus 48kHz 160kbps ?-bit 2ch",
+                tag="DECODE",
+            ),
+            summary("13:11:03.000", "HaEYUJ2aRHs", "Dynamite"),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(0, playback.successes)
+        self.assertFalse(playback.passed)
+
+    def test_swap_must_belong_to_the_events_playback(self) -> None:
+        text = log_text(
+            play("13:07:00.000", "HaEYUJ2aRHs", "Dynamite"),
+            line("13:07:05.000", "hq-verify: Dynamite Qobuz match=95% offset=1 -> accepted"),
+            summary("13:08:00.000", "HaEYUJ2aRHs", "Dynamite"),
+            play("13:10:00.000", "HaEYUJ2aRHs", "Dynamite"),
+            line("13:10:01.000", "hq-swap: HaEYUJ2aRHs start at=1000 offset=1"),
+            line("13:10:02.000", "hq-swap: HaEYUJ2aRHs done"),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(0, playback.successes)
+        self.assertFalse(playback.passed)
+
+    def test_upgrade_ahead_after_a_summary_anchors_to_the_next_play(self) -> None:
+        text = log_text(
+            play("13:03:00.000", "MUny_GDYIDM", "404 (New Era)"),
+            summary("13:03:10.000", "MUny_GDYIDM", "404 (New Era)"),
+            line(
+                "13:03:21.000",
+                "upgrade ahead: '404 (New Era)' ready at FLAC · 16-bit · 44.1 kHz "
+                "from Qobuz [Heisenbergg]",
+            ),
+            line(
+                "13:03:38.000",
+                "next-prep: 404 (New Era) version=MUny_GDYIDM lyrics=lrc_red hq=none "
+                "sync=applied mix=ready in 33285ms",
+            ),
+            play("13:03:40.000", "MUny_GDYIDM", "404 (New Era)"),
+            line(
+                "13:03:41.000",
+                "MUny_GDYIDM <- audio/flac 44.1kHz 900kbps 16-bit 2ch",
+                tag="DECODE",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(1, playback.successes)
+        self.assertTrue(playback.passed)
+
+    def test_a_later_replay_does_not_fail_an_earlier_flac_playback(self) -> None:
+        text = log_text(
+            play("19:00:00.000", "id1", "Replay Song"),
+            line("19:00:05.000", "hq-verify: Replay Song Qobuz match=95% offset=0 -> accepted"),
+            line("19:00:10.000", "id1 <- audio/flac 44.1kHz 900kbps 16-bit 2ch", tag="DECODE"),
+            summary("19:00:20.000", "id1", "Replay Song"),
+            play("19:00:30.000", "id1", "Replay Song"),
+            line("19:00:40.000", "id1 <- audio/opus 48kHz 160kbps ?-bit 2ch", tag="DECODE"),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(1, playback.successes)
+        self.assertTrue(playback.passed)
 
 
 class AutoplayTests(unittest.TestCase):

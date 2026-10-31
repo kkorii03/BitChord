@@ -198,6 +198,8 @@ internal class NextTrackPreparation(
         var stateKey = NextPrepPolicy.stateKey(snapshot.queueKey, song.videoId)
         var steps = attemptsFor(stateKey)
         var syncTiming: LyricsTiming.Timing? = null
+        var syncFailure: NextPrepPolicy.SyncFailure? = null
+        var syncProbe: LyricsTiming.NextSyncProbe? = null
         var deadlineHit = false
         // Steps this particular run actually reached, for the log: [steps] is
         // the session-wide set, so a step disabled now could still appear there
@@ -317,6 +319,8 @@ internal class NextTrackPreparation(
                             if (lines != null && !substituted) {
                                 // Free measurement and timing first: they need
                                 // no upload and are what times most covers.
+                                val probe = LyricsTiming.NextSyncProbe()
+                                syncProbe = probe
                                 val prepared = LyricsTiming.prepareNextFree(
                                     context = context,
                                     song = song,
@@ -349,9 +353,11 @@ internal class NextTrackPreparation(
                                             fromFile = found.fromFile,
                                             source = found.source,
                                             timing = prepared,
+                                            probe = probe,
                                         )
                                     }
                                 }
+                                syncFailure = probe.failure
                             }
                         }
                         Step.MIX -> Unit
@@ -368,6 +374,10 @@ internal class NextTrackPreparation(
                     "next-prep ${step.name.lowercase(Locale.ROOT)} failed: ${failure.message}",
                     about = song.videoId,
                 )
+                if (step == Step.SYNC) {
+                    syncFailure = syncProbe?.failure
+                        ?: NextPrepPolicy.SyncFailure.ERROR
+                }
                 false
             }
             if (completed == null) {
@@ -502,6 +512,7 @@ internal class NextTrackPreparation(
             currentPlayedMs = playedMs,
             remainingMs = if (deadlineHit) 0L else leftNow,
             hasTiming = timing != null,
+            failure = syncFailure,
         )
         val lyricsLabel = found?.source?.name?.lowercase(Locale.ROOT)
             ?: if (Step.LYRICS !in triedThisRun) {
@@ -516,10 +527,16 @@ internal class NextTrackPreparation(
         } else {
             NextPrepPolicy.syncStatus(syncFacts)
         }
-        val hqLabel = hq?.name?.lowercase(Locale.ROOT)
-            ?: NextPrepPolicy.noneWithReason(
-                if (deadlineHit) "deadline" else hqSkipReason(song),
-            )
+        // Read-ahead can pin the lossless stream after this bundle's HQ step
+        // already answered null (its flight is registered by prefetchQueue a
+        // moment later). The summary is written at the end, so report the
+        // latest answer rather than the one captured at the start.
+        val hqLabel = nextPrepHqLabel(
+            prepared = hq,
+            latest = existingHq(song),
+            deadlineHit = deadlineHit,
+            skipReason = hqSkipReason(song),
+        )
         val mixLabel = if (mix) {
             "ready"
         } else {
@@ -536,6 +553,26 @@ internal class NextTrackPreparation(
                 "sync=$syncLabel " +
                 "mix=$mixLabel in ${tookMs}ms" +
                 if (deadlineHit) " (deadline)" else "",
+            about = song.videoId,
+        )
+        // One line for the sync result alone: `answered`, `no-answer` (the
+        // engine ran and found nothing to correct), or `failed:<reason>`.
+        // The old `sync=` field stays for existing readers; this line is what
+        // featurehealth scores so a real engine failure is not counted as a
+        // healthy no-answer.
+        val syncResult = if (Step.SYNC !in triedThisRun) {
+            "skipped:off"
+        } else {
+            NextPrepPolicy.syncResult(syncFacts)
+        }
+        val syncReason = if (Step.SYNC !in triedThisRun) {
+            "off"
+        } else {
+            NextPrepPolicy.syncResultReason(syncFacts)
+        }
+        TrackLog.i(
+            "BitChord",
+            "next-prep sync: ${song.videoId} result=$syncResult reason=$syncReason",
             about = song.videoId,
         )
     }
@@ -877,6 +914,23 @@ internal class NextTrackPreparation(
         /** A player message at 30 s is the gate; this only covers a seek/pause race. */
         const val AI_GATE_GRACE_MS = 5_000L
     }
+}
+
+/**
+ * The `hq=` token for the next-prep summary. The answer already prepared wins
+ * unless a newer one has landed since (read-ahead may pin the lossless stream
+ * while the step is still being reported); with neither, the old skip reason
+ * is kept, including the end-of-track deadline.
+ */
+internal fun nextPrepHqLabel(
+    prepared: HqTier?,
+    latest: HqTier?,
+    deadlineHit: Boolean,
+    skipReason: String?,
+): String {
+    val hq = latest ?: prepared
+    return hq?.name?.lowercase(Locale.ROOT)
+        ?: NextPrepPolicy.noneWithReason(if (deadlineHit) "deadline" else skipReason)
 }
 
 /**

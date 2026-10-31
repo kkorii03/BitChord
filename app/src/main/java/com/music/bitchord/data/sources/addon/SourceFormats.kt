@@ -48,6 +48,20 @@ sealed interface DetectedFormat {
 
 object SourceFormats {
 
+    /**
+     * What a link that answers with a web page, or with a JSON document that is
+     * not a search answer, is told. Kept here so the identify pass, the health
+     * row and the sources screen all say the same sentence.
+     */
+    const val NOT_ADDON_URL =
+        "애드온 주소가 아닙니다. 웹페이지 주소 대신 애드온 서버 주소(manifest.json 이 있는 주소)를 넣으십시오."
+
+    /** A repository page is a different mistake from an arbitrary web page. */
+    const val REPOSITORY_URL =
+        "저장소 페이지 주소입니다. 안내(README)에 있는 애드온 서버 주소를 넣으십시오."
+
+    private const val NOT_JSON = "이 주소는 JSON을 반환하지 않았습니다"
+
     private const val TAG = "BitChord"
 
     private val json = Json {
@@ -83,6 +97,13 @@ object SourceFormats {
             )
         }
 
+        // A repository page is never an addon, and probing it only spends the
+        // host's rate limit on an HTML search page. Said before any request so
+        // the refusal names the mistake the user actually made.
+        repositoryReason(url)?.let {
+            return@withContext Result.success(DetectedFormat.Unsupported(it))
+        }
+
         val base = AddonClient.normalizeBase(url)
         val isDocument = url.substringBefore('?').endsWith(".json", ignoreCase = true)
         val attempts = if (isDocument) {
@@ -115,10 +136,50 @@ object SourceFormats {
             )
         }
 
+        // An HTML answer is a web page, not an addon, even when its status code
+        // was 200. The same is true of the URL itself when it was not JSON:
+        // saying "that was not JSON" is true but leaves the user pasting the
+        // same kind of link again.
+        val probeFailure = probed.exceptionOrNull()
+        val urlWasHtml = firstUnsupported?.reason == NOT_JSON
+        if (probeFailure?.message == NOT_ADDON_URL || urlWasHtml) {
+            return@withContext Result.success(DetectedFormat.Unsupported(NOT_ADDON_URL))
+        }
+
         // Report what was actually found over the transport error from a URL
         // the user never typed.
         firstUnsupported?.let { return@withContext Result.success(it) }
         Result.failure(lastFailure ?: AddonUnavailable("이 주소에서 응답이 없습니다"))
+    }
+
+    /**
+     * The repository-page refusal for [rawUrl], or null when the host is not a
+     * code host. An addon may be hosted on GitHub Pages, which is a different
+     * host and still works; only the repository page itself is refused.
+     *
+     * A raw document is not the repository page: `/owner/repo/raw/...` and
+     * GitLab's `/owner/repo/-/raw/...` return file contents, so a JSON index
+     * served from there is still allowed through to [identify]'s normal
+     * document pass.
+     */
+    fun repositoryReason(rawUrl: String): String? {
+        val url = rawUrl.trim().toHttpUrlOrNull() ?: return null
+        val host = url.host.lowercase()
+        val isGitLab = host == "gitlab.com" || host == "www.gitlab.com"
+        if (host != "github.com" && host != "www.github.com" && !isGitLab) return null
+        val segments = url.pathSegments.filter { it.isNotEmpty() }
+        if (segments.size < 2) return null
+        val rawDocument = if (isGitLab) {
+            // A project can sit in nested groups (`/group/sub/repo/-/raw/...`),
+            // so the `-/raw` marker is looked for anywhere after the owner.
+            (segments.size >= 3 && segments[2].equals("raw", ignoreCase = true)) ||
+                segments.drop(2).zipWithNext().any { (dash, raw) ->
+                    dash == "-" && raw.equals("raw", ignoreCase = true)
+                }
+        } else {
+            segments.size >= 3 && segments[2].equals("raw", ignoreCase = true)
+        }
+        return if (rawDocument) null else REPOSITORY_URL
     }
 
     /**
@@ -131,7 +192,7 @@ object SourceFormats {
      */
     fun detect(body: String, url: String = ""): DetectedFormat {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull()
-            ?: return DetectedFormat.Unsupported("이 주소는 JSON을 반환하지 않았습니다")
+            ?: return DetectedFormat.Unsupported(NOT_JSON)
 
         val obj = root as? JsonObject
             ?: return DetectedFormat.Unsupported(

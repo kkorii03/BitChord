@@ -33,6 +33,7 @@ import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.LyricsTag
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.NextPrepPolicy
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
@@ -95,6 +96,19 @@ import kotlinx.serialization.json.Json
 object LyricsTiming {
 
     private const val TAG = "LyricsTiming"
+
+    /**
+     * Collects the engine-stage failure of one next-prep sync attempt.
+     *
+     * The lyrics screen and the player also run these checks, so the failure
+     * is carried by the caller instead of being written to the store: only the
+     * next-song bundle needs to tell a real failure from a healthy
+     * `no-answer`, and a failed attempt must not be kept as a confirmed answer.
+     */
+    class NextSyncProbe {
+        @Volatile
+        var failure: NextPrepPolicy.SyncFailure? = null
+    }
 
     /** How the lines were moved before any correction by hand. */
     sealed interface Adjustment {
@@ -452,6 +466,7 @@ object LyricsTiming {
         lines: List<LyricLine>,
         timing: Timing,
         audioSource: String? = null,
+        stillCurrent: () -> Boolean = { true },
     ): RefinePolicy.Result {
         // No base is a song version shown on its lyric provider's own clock —
         // the commonest case of all. That provider can still sit a fifth of a
@@ -470,6 +485,10 @@ object LyricsTiming {
         ) {
             return result
         }
+        // The refine suspends on store I/O. A track switch or a newer timing
+        // pass may have landed meanwhile, so do not let these stale facts
+        // clear or overwrite the newer correction before publishing them.
+        if (!stillCurrent()) return result
         store(context).update(videoId) {
             it.copy(
                 refineMs = appliedMs,
@@ -1402,10 +1421,12 @@ object LyricsTiming {
         artist: String = "",
         isVideo: Boolean = false,
         audioSource: String? = null,
+        probe: NextSyncProbe? = null,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) {
             TrackLog.d(TAG, "AI timing skipped: only ${sung.size} sung lines", videoId)
+            probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
             return null
         }
         val key = textKey(lines, audioSource)
@@ -1436,7 +1457,7 @@ object LyricsTiming {
         // manual tap is kept apart so it can still force a fresh answer.
         val flight = if (automatic) "$videoId:$key" else "$videoId:$key:manual"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo)
+            askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
         }
         val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
         if (running === fresh) {
@@ -1466,8 +1487,31 @@ object LyricsTiming {
         title: String,
         artist: String,
         isVideo: Boolean,
+        probe: NextSyncProbe? = null,
     ): Adjustment.Mapped? {
         val started = System.currentTimeMillis()
+        // The next-song bundle honours the existing 429 hold: a previous
+        // playback may have been turned away, and asking again before the
+        // server's wait has passed would spend the same key.
+        if (probe != null) {
+            val held = store(context).get(videoId)
+            val retryAt = held?.songRetryAtMs
+            if (held?.songRetryKey == key &&
+                retryAt != null && retryAt > System.currentTimeMillis()
+            ) {
+                TrackLog.d(TAG, "AI timing deferred until $retryAt", videoId)
+                probe.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+                return null
+            }
+            // The 429 wait is account-wide, not per song: another video's
+            // turn-away holds this one too, as it does for song checks.
+            val quietUntil = songQuietUntilMs
+            if (quietUntil > System.currentTimeMillis()) {
+                TrackLog.d(TAG, "AI timing deferred until $quietUntil", videoId)
+                probe.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+                return null
+            }
+        }
         // The sound the phone already has, when it has all of it; the YouTube
         // address (Gemini fetching and watching the video) otherwise.
         val audio = runCatching { VideoAudio.wav(context, videoId) }.getOrNull()
@@ -1486,7 +1530,35 @@ object LyricsTiming {
         // Kept before the call, not after: a request that fails, times out or
         // is cancelled has still been paid for, and must not be made again for
         // these lyrics. [AiTimingPolicy] reads this to pick the next engine.
+        // A next-prep probe defers the write until the outcome is known: an
+        // engine-stage failure is not a confirmed attempt and must be asked
+        // again on the next playback.
+        val pendingAttempts = mutableListOf<String>()
+        var pendingWhisper = false
+        // Whether any engine actually answered, even with a transcript that
+        // did not fit: only "no engine answered" is an engine-stage failure.
+        var anyEngineAnswered = false
+        // Set when Deepgram turned the request away with a 429, so the next
+        // playback waits out the existing deferral instead of treating the
+        // refusal as a generic error.
+        var rateLimitedWaitMs: Long? = null
+        suspend fun persistAttempts() {
+            if (probe == null || pendingAttempts.isEmpty()) return
+            store(context).update(videoId) { entry ->
+                val sameLyrics = entry.aiAttemptedKey == key
+                entry.copy(
+                    aiAttemptedKey = key,
+                    aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + pendingAttempts).distinct(),
+                    whisperKey = if (pendingWhisper) key else entry.whisperKey,
+                )
+            }
+            pendingAttempts.clear()
+        }
         suspend fun noteAttempt(name: String) {
+            if (probe != null) {
+                pendingAttempts += name
+                return
+            }
             store(context).update(videoId) { entry ->
                 val sameLyrics = entry.aiAttemptedKey == key
                 entry.copy(
@@ -1506,9 +1578,17 @@ object LyricsTiming {
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_WHISPER,
             ).filter { it.second in engines }) {
                 noteAttempt(name)
-                if (name == ENGINE_WHISPER) store(context).update(videoId) { it.copy(whisperKey = key) }
+                if (name == ENGINE_WHISPER) {
+                    if (probe == null) {
+                        store(context).update(videoId) { it.copy(whisperKey = key) }
+                    } else {
+                        pendingWhisper = true
+                    }
+                }
                 val asked = System.currentTimeMillis()
-                val heard = com.music.bitchord.data.lyrics.Deepgram.words(audio, language, model)
+                val heardAnswer = com.music.bitchord.data.lyrics.Deepgram.listen(audio, language, model)
+                val heard = heardAnswer.words
+                if (heard != null) anyEngineAnswered = true
                 val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
                 val raw = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
                 val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
@@ -1526,6 +1606,15 @@ object LyricsTiming {
                     },
                     videoId,
                 )
+                if (heardAnswer.httpCode == 429) {
+                    val wait = SongSyncRetry.retryDelayMs(heardAnswer.retryAfterMs, 0)
+                    rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
+                    songQuietUntilMs = System.currentTimeMillis() + wait
+                    rateLimitedLog(videoId, wait)
+                    // The same key is refused for Whisper too; Gemini is a
+                    // separate provider and may still answer below.
+                    break
+                }
                 if (fitted != null) {
                     adjustment = fitted
                     engine = name
@@ -1546,6 +1635,7 @@ object LyricsTiming {
                 sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
                 audioWav = audio,
             )
+            if (answer != null) anyEngineAnswered = true
             val raw = answer?.let { fitAi(lines, sung.map { s -> s.index }, it) }
             adjustment = raw?.takeIf { aiMayApply(lines, it, isVideo) }
             TrackLog.d(
@@ -1565,9 +1655,27 @@ object LyricsTiming {
             )
         }
         if (adjustment == null) {
-            if (answer != null) store(context).update(videoId) { it.copy(aiFailedKey = key) }
+            // Any engine that answered — even with a transcript that did not
+            // fit — is a healthy no-answer. Only no answer from every engine
+            // is an engine-stage failure; keep it out of the confirmed
+            // attempts so the next playback asks again.
+            if (probe != null) {
+                probe.failure = NextPrepPolicy.engineFailure(
+                    anyEngineAnswered = anyEngineAnswered,
+                    rateLimited = rateLimitedWaitMs != null,
+                    audioPresent = audio != null,
+                )
+            }
+            if (rateLimitedWaitMs != null) {
+                markRateLimited(context, videoId, key, rateLimitedWaitMs!!)
+            }
+            if (NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) {
+                persistAttempts()
+                if (anyEngineAnswered) store(context).update(videoId) { it.copy(aiFailedKey = key) }
+            }
             return null
         }
+        persistAttempts()
         store(context).update(videoId) {
             it.copy(
                 aiTextKey = key,
@@ -1641,6 +1749,7 @@ object LyricsTiming {
         context: Context,
         song: Song,
         lines: List<LyricLine>,
+        probe: NextSyncProbe? = null,
     ): Boolean {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         val timed = lines.any { it.timeMs > 0 }
@@ -1681,6 +1790,7 @@ object LyricsTiming {
                 "lyrics-sync: song-check deferred until $retryAt",
                 song.videoId,
             )
+            probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
             return false
         }
         val engines = AiTimingPolicy.nextEngines(
@@ -1715,7 +1825,7 @@ object LyricsTiming {
         // lyrics text, whoever asks. A cancelled caller stops waiting only.
         val flight = "song:${song.videoId}:$key"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            verifySongRequest(context.applicationContext, song, lines, key, engine)
+            verifySongRequest(context.applicationContext, song, lines, key, engine, probe)
         }
         val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
         if (running === fresh) {
@@ -1794,6 +1904,7 @@ object LyricsTiming {
         fromFile: Boolean,
         source: LyricsSource?,
         timing: Timing?,
+        probe: NextSyncProbe? = null,
     ): Timing? {
         val query = CoverTitles.lyricsQuery(song)
         val timeable = !fromFile || query.isVideo
@@ -1822,6 +1933,7 @@ object LyricsTiming {
                     artist = query.artist,
                     isVideo = true,
                     audioSource = audioSource,
+                    probe = probe,
                 )
                 result = timing(
                     context, song.videoId, lines, timeable, recordTimed, true, audioSource,
@@ -1830,7 +1942,7 @@ object LyricsTiming {
         } else if (!songVerified(context, song, lines)) {
             // The record-timed song check: same Deepgram/Whisper request and
             // same fit/guard the screen runs when the lyrics arrive.
-            verifySong(context, song, lines)
+            verifySong(context, song, lines, probe)
             result = timing(
                 context, song.videoId, lines, timeable, recordTimed, false, audioSource,
             )
@@ -1902,15 +2014,19 @@ object LyricsTiming {
         lines: List<LyricLine>,
         key: Int,
         engine: String,
+        probe: NextSyncProbe? = null,
     ): Boolean = songSyncGate.withLock {
         // Checked again under the gate: another song's 429 may have marked
         // this one while its flight was waiting here.
         val pending = store(context).get(song.videoId)
         val retryAt = pending?.songRetryAtMs
         if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+            probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
             return@withLock false
         }
-        val check = runSongCheck(context, song, lines, key, engine) ?: return@withLock false
+        val check = runSongCheck(context, song, lines, key, engine, probe)
+            ?: return@withLock false
+        if (check.failure != null) return@withLock false
         if (check.result == "no-words") return@withLock false
         val fitted = check.fitted ?: return@withLock true
         store(context).update(song.videoId) {
@@ -1954,11 +2070,13 @@ object LyricsTiming {
         lines: List<LyricLine>,
         key: Int,
         engine: String,
+        probe: NextSyncProbe? = null,
     ): SongCheck? {
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
         val audio = VideoAudio.songWav(context, song) ?: run {
             songLog(song.videoId, "no-audio", null, null, 0)
+            probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
             return null
         }
         // Sync-test mode only: the ninety seconds the check already decoded,
@@ -1970,29 +2088,33 @@ object LyricsTiming {
         val seconds = (windowMs / 1000.0).roundToInt()
         if (indices.size < MIN_AI_LINES) {
             songLog(song.videoId, "no-words", null, null, seconds)
-            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0)
+            probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
+            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0, probe?.failure)
         }
         val texts = indices.map { lines[it].text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
-        val answer = listenForSong(context, song.videoId, key, audio, language) ?: return null
-        // Spent once Deepgram actually answered — success or refusal. A
-        // cancellation or a request that never reached it is not recorded,
-        // so the next playback may try again; nothing is recorded before the
-        // answer either, which used to leave a song never checked again when
-        // its screen job was cancelled mid-request. A 429 never gets here:
-        // [listenForSong] either retried it or deferred the song.
-        if (answer.httpCode != null) noteAttempt(context, song.videoId, key, engine)
+        val answer = listenForSong(context, song.videoId, key, audio, language, probe) ?: return null
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
-            return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0)
+            probe?.failure = when {
+                answer.httpCode == 429 -> NextPrepPolicy.SyncFailure.RATE_LIMIT
+                answer.httpCode == null -> NextPrepPolicy.SyncFailure.ERROR
+                answer.httpCode !in 200..299 -> NextPrepPolicy.SyncFailure.ERROR
+                else -> NextPrepPolicy.SyncFailure.TOO_FEW_LINES
+            }
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+            return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0, probe?.failure)
         }
         if (heard.size < MIN_AI_LINES) {
             songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
-            return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size)
+            probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+            return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
         val fitted = fitAi(lines, indices, starts) ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
             return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size)
         }
         val match = fitted.matchPercent
@@ -2000,14 +2122,38 @@ object LyricsTiming {
         when {
             !LyricsAiGuard.agreementAllows(match) -> {
                 songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
+                recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
                 return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size)
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
+                recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
                 return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size)
             }
         }
+        recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
         return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size)
+    }
+
+    /**
+     * Records the engine as spent only for an answer the engine actually
+     * produced (a fit, a refusal, or an applied correction). A next-prep
+     * engine-stage failure stays unrecorded so the next playback retries it;
+     * a rate limit keeps its own [markRateLimited] backoff instead.
+     */
+    private suspend fun recordSongAttempt(
+        context: Context,
+        videoId: String,
+        key: Int,
+        engine: String,
+        httpCode: Int?,
+        probe: NextSyncProbe?,
+    ) {
+        if (httpCode == null) return
+        // The probe is only read here: a failure has already been set above
+        // when the answer carried no words or too few of them.
+        if (!NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) return
+        noteAttempt(context, videoId, key, engine)
     }
 
     /** What [runSongCheck] made of one lyric sheet; [result] is the song-sync log token. */
@@ -2020,6 +2166,13 @@ object LyricsTiming {
         val seconds: Int,
         val http: Int?,
         val words: Int?,
+        /**
+         * Set for an engine-stage failure (no audio, rate limit, too few
+         * words). Null means the engine ran and answered, even if it had
+         * nothing to correct. Kept apart from [result] because the old
+         * `no-answer` token could mean either.
+         */
+        val failure: NextPrepPolicy.SyncFailure? = null,
     )
 
     /**
@@ -2033,12 +2186,14 @@ object LyricsTiming {
         key: Int,
         audio: ByteArray,
         language: String,
+        probe: NextSyncProbe? = null,
     ): com.music.bitchord.data.lyrics.Deepgram.Answer? {
         val quiet = songQuietUntilMs - System.currentTimeMillis()
         if (quiet > 0) {
             if (!SongSyncRetry.canWaitInline(quiet)) {
                 markRateLimited(context, videoId, key, quiet)
                 rateLimitedLog(videoId, quiet)
+                probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
                 return null
             }
             delay(quiet)
@@ -2061,6 +2216,7 @@ object LyricsTiming {
                 !SongSyncRetry.canWaitInline(wait)
             ) {
                 markRateLimited(context, videoId, key, wait)
+                probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
                 return null
             }
             delay(wait)

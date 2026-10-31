@@ -542,7 +542,11 @@ object QualityUpgrade {
         }
     }
 
-    suspend fun lookAgain(mediaId: String, playingDurationSec: Int?): SourceStream? {
+    suspend fun lookAgain(
+        mediaId: String,
+        playingDurationSec: Int?,
+        report: SourceResolver.SearchReport = SourceResolver.SearchReport(),
+    ): SourceStream? {
         val waiting = pending[mediaId] ?: return null
         lastPending[mediaId] = waiting
         val excludedSources = failedSources[mediaId].orEmpty().toSet()

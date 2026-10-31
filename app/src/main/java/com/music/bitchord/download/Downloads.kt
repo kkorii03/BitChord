@@ -14,6 +14,7 @@ import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.HqAutoDownloadPolicy
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.remote.DownloadedArtworkEvents
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
@@ -1732,6 +1733,12 @@ object Downloads {
                 )
             },
         )
+        // The cover file has landed with the track. Tell any row already
+        // showing these ids to read it again; its earlier ask may have seen a
+        // miss, and a remembered miss is no longer timed out on its own.
+        if (savedArtwork != null || artworkUri != null) {
+            DownloadedArtworkEvents.coverSaved(ids)
+        }
         // A file whose recorded source is one of these ids is the recording
         // these rows asked for, so a length verdict from the old file no longer
         // applies. When the new file landed elsewhere, remove the old one once

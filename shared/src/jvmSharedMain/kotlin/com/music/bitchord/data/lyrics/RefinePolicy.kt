@@ -57,6 +57,16 @@ object RefinePolicy {
         /** Whether this is the narrow constant/line fit or the wide common move. */
         val model: Model = Model.CONST,
     ) {
+        /**
+         * A measurement that confirms the provider's clock but is too small to
+         * move: enough lines agreed tightly, and the median sits inside
+         * [MIN_SHIFT_MS]. The summary reports this as `sync=verified` with the
+         * measured median, because the absence of a correction is the answer.
+         */
+        val verified: Boolean
+            get() = !applied && lines >= MIN_LINES && madMs <= MAX_MAD_MS &&
+                abs(medianMs) < MIN_SHIFT_MS
+
         companion object {
             val NONE = Result(applied = false, medianMs = 0L, madMs = 0L, lines = 0)
         }

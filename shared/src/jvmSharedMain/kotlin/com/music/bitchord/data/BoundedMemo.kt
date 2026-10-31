@@ -47,6 +47,27 @@ class BoundedMemo<K : Any, V : Any>(private val limit: Int) {
         entries[key] = value
     }
 
+    /** Drop one answer so the next [get] or [getOrPut] reads it again. */
+    @Synchronized
+    fun remove(key: K) {
+        entries.remove(key)
+    }
+
+    /**
+     * Drop every answer whose key matches [predicate].
+     *
+     * A caller that only knows part of the key — a save event names a song id,
+     * while an answer is filed under every field that can change the picture —
+     * still has to forget all of that song's answers.
+     */
+    @Synchronized
+    fun removeMatching(predicate: (K) -> Boolean) {
+        val iterator = entries.keys.iterator()
+        while (iterator.hasNext()) {
+            if (predicate(iterator.next())) iterator.remove()
+        }
+    }
+
     @Synchronized
     fun clear() {
         entries.clear()
