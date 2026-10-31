@@ -436,6 +436,29 @@ class PrecisionAudioSink(
                 silenceUntilHandover(inArm, loopBlockUs, decodedFrames)
             }
 
+            // The float branch bypasses Media3's silence processor, so trim
+            // any long silent run here and fold the cut into the delegate's
+            // output-stream offset. The 16-bit branch leaves this to Media3.
+            val skippedBefore = silenceSkipper.skippedFrames
+            val outputFrameOffset = if (shouldSkipSilence()) {
+                silenceSkipper.process(audioBlock)
+                silenceSkipper.firstOutputFrameOffset
+            } else {
+                0
+            }
+            val skippedHere = silenceSkipper.skippedFrames - skippedBefore
+            if (skippedHere > 0L) {
+                skippedFramesForStream += skippedHere
+                SilenceSkipStats.set(skippedFramesForStream, configuredSampleRate)
+                super.setOutputStreamOffsetUs(
+                    SilenceSkipOffset.adjustedOutputStreamOffsetUs(
+                        outputStreamOffsetUs,
+                        skippedFramesForStream,
+                        configuredSampleRate,
+                    ),
+                )
+            }
+
             // The decoder-level peak is taken before the DSP chain so the
             // output-health meter can tell a quiet passage in the file from a
             // fader, filter or AudioTrack that has turned a live signal into
@@ -443,9 +466,6 @@ class PrecisionAudioSink(
             // "audible or not".
             val health = isAudible() && audioBlock.frameCount > 0
             val decodedPeak = if (health) healthPeak(audioBlock) else 0f
-            // v1.9 leaves silence skipping to Media3; the precision sink does
-            // not shift output frames, so the offset is always zero.
-            val outputFrameOffset = 0
 
             // Process normalized Float32 samples through custom DSP chain
             dspChain.process(audioBlock)

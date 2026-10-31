@@ -1014,7 +1014,8 @@ object TrackMatcher {
         // people. This exact exception is what admitted the 3:30 Lovely
         // track for Yo Yo Honey Singh's 3:31 "Brown Rang" video.
             ?: CREDITS_DISAGREE.takeIf {
-                !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC)
+                !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC) &&
+                    KoTitleRules.creditsOverrideAllowed(target.artist, candidate.artist) // [KO] artist-script override
             }
             ?: return null
         val explicit = explicitScore(target.isExplicit, candidate.isExplicit) ?: return null
@@ -1515,6 +1516,7 @@ object TrackMatcher {
 
     private fun parseTitleUncached(raw: String, artist: String = ""): TitleParts {
         val versions = sortedSetOf<String>()
+        KoTitleRules.tributeTake(raw)?.let(versions::add) // [KO] tribute take
         val context = mutableSetOf<String>()
         val soundtrack = stripSoundtrackTail(raw)
         // A playlist row prints its position in front of the name ("3.여수밤바다",
