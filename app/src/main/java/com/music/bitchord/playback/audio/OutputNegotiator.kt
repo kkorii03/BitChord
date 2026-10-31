@@ -31,9 +31,9 @@ enum class TransportType(val label: String) {
 enum class FallbackReason(val label: String) {
     NONE("None"),
     UNSUPPORTED_FORMAT("Unsupported source format"),
-    ROUTE_LIMITATION("Route limitation (device profile)"),
-    OS_LIMITATION("OS limitation (system audio policy)"),
-    DECODER_LIMITATION("Decoder limitation"),
+    ROUTE_LIMITATION("경로 제한 (기기 프로필)"),
+    OS_LIMITATION("OS 제한 (시스템 오디오 정책)"),
+    DECODER_LIMITATION("디코더 제한"),
 }
 
 data class SourceDescriptor(
@@ -311,18 +311,11 @@ object OutputNegotiator {
             bluetoothCodecBitDepth = btCodecBitDepth,
         ) && delegateSupportsFloat
         if (canUseFloat) {
-            // Direct USB being unavailable is still worth naming even though
-            // the mixer now takes float: it is the difference between the DAC
-            // being driven directly and Android resampling into the same
-            // AudioTrack. The encoding itself is no longer a compromise.
-            val (reason, detail) = if (
-                routeKind == AudioRouting.Kind.USB && directUsbProbe?.isViable == false
-            ) {
-                FallbackReason.DIRECT_USB_UNAVAILABLE to
-                    (directUsbProbe.diagnosticReason ?: "USB 기기가 16비트 PCM만 지원")
-            } else {
-                FallbackReason.NONE to null
-            }
+            // v1.9's bit-perfect USB path replaced our direct-AudioTrack USB
+            // probe, so there is no "direct USB unavailable" condition left to
+            // report here: float through the mixer is the best this path can do.
+            val reason = FallbackReason.NONE
+            val detail: String? = null
             return OutputDescriptor(
                 transport = TransportType.AUDIO_TRACK,
                 encoding = PcmEncoding.PCM_FLOAT,

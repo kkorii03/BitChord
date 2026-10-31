@@ -84,6 +84,10 @@ object QueueCoordinator {
         }
 
         player.removeRuns(userQueueIndices)
+        if (userQueueIndices.isNotEmpty()) {
+            TrackLog.d("BitChord", "queue: remove n=${userQueueIndices.size} at=${userQueueIndices.first()} " +
+                "size=${player.mediaItemCount} by=clear-user-queue")
+        }
     }
 
     /**
@@ -98,10 +102,6 @@ object QueueCoordinator {
             while (start > 0 && indices[start - 1] == indices[start] - 1) start--
             removeMediaItems(indices[start], indices[end - 1] + 1)
             end = start
-        }
-        if (userQueueIndices.isNotEmpty()) {
-            TrackLog.d("BitChord", "queue: remove n=${userQueueIndices.size} at=${userQueueIndices.first()} " +
-                "size=${player.mediaItemCount} by=clear-user-queue")
         }
     }
 
@@ -127,6 +127,10 @@ object QueueCoordinator {
         }
 
         player.removeRuns(playedIndices)
+        if (playedIndices.isNotEmpty()) {
+            TrackLog.d("BitChord", "queue: remove n=${playedIndices.size} at=${playedIndices.first()} " +
+                "size=${player.mediaItemCount} by=consume-user-queue")
+        }
     }
 
     /** @see QueueTimeline.buildJumpQueue */

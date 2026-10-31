@@ -24,7 +24,6 @@
 package com.music.bitchord.playback.smart
 
 import android.content.Context
-import android.os.SystemClock
 import android.media.MediaDataSource
 import android.net.Uri
 import android.os.Build
@@ -429,6 +428,40 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 runWindow(trackId, analysisUri, durationSeconds, window, copy)
             }
         }
+    }
+
+    /** True once [trackId] has a usable result for [window]. */
+    fun hasWindow(trackId: String, window: AnalysisWindow): Boolean =
+        measuredWindows[trackId]?.contains(window) == true
+
+    /**
+     * Waits for one window's first answer, without polling.
+     *
+     * The next-song bundle requests the incoming track's opening and then
+     * suspends here until the analysis thread publishes it (or gives up), so
+     * its log line can say whether the mix was ready before the track started.
+     * A timeout only ends the wait; the existing analysis keeps running and
+     * the crossfade path still picks it up.
+     */
+    suspend fun awaitWindow(trackId: String, window: AnalysisWindow, timeoutMs: Long): Boolean {
+        if (hasWindow(trackId, window)) return true
+        // Deferred work will not publish inside this wait, so do not hold the
+        // next-song bundle here for the full timeout.
+        if (stopped) return false
+        val key = "$trackId@${window.name}"
+        val waiter = windowWaiters.computeIfAbsent(key) { CompletableDeferred() }
+        if (hasWindow(trackId, window)) {
+            waiter.complete(Unit)
+            return true
+        }
+        return withTimeoutOrNull(timeoutMs) {
+            waiter.await()
+            true
+        } ?: hasWindow(trackId, window)
+    }
+
+    private fun completeWindow(trackId: String, window: AnalysisWindow) {
+        windowWaiters.remove("$trackId@${window.name}")?.complete(Unit)
     }
 
     /**
@@ -1699,7 +1732,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val began = SystemClock.elapsedRealtime()
         val copy = runCatching { copyToRead(trackId, uri, durationSeconds) }.getOrNull() ?: return null
         val (stereo, start) = copy.open()?.use { source ->
-            AudioDecoder.decodeRegionStereo(source, max(0.0, fromSeconds), toSeconds) { stopped }
+            AudioDecoder.decodeRegionStereo(source, max(0.0, fromSeconds), toSeconds, abort = { stopped })
         } ?: return null
         if (stereo.left.isEmpty()) return null
         val rate = sampleRate.toDouble()

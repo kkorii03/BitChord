@@ -436,6 +436,17 @@ class PrecisionAudioSink(
                 silenceUntilHandover(inArm, loopBlockUs, decodedFrames)
             }
 
+            // The decoder-level peak is taken before the DSP chain so the
+            // output-health meter can tell a quiet passage in the file from a
+            // fader, filter or AudioTrack that has turned a live signal into
+            // zeroes. Sampled rather than every sample: this only needs to know
+            // "audible or not".
+            val health = isAudible() && audioBlock.frameCount > 0
+            val decodedPeak = if (health) healthPeak(audioBlock) else 0f
+            // v1.9 leaves silence skipping to Media3; the precision sink does
+            // not shift output frames, so the offset is always zero.
+            val outputFrameOffset = 0
+
             // Process normalized Float32 samples through custom DSP chain
             dspChain.process(audioBlock)
 
@@ -577,7 +588,7 @@ class PrecisionAudioSink(
         silenceSkipper.enabled &&
             isPrecisionActive &&
             configuredSampleRate > 0 &&
-            (targetOutputEncoding == PcmEncoding.PCM_FLOAT || directAudioOutput?.isActive == true)
+            targetOutputEncoding == PcmEncoding.PCM_FLOAT
 
     /**
      * Passed straight through, noting on the way how far the DSP chain is
@@ -1049,6 +1060,9 @@ class PrecisionAudioSink(
     companion object {
         private const val TAG = "PrecisionAudioSink"
         const val DEFAULT_CAPACITY_FRAMES: Int = 4096
+
+        /** One in this many frames is enough for the output-health meter. */
+        private const val HEALTH_SAMPLE_STRIDE: Int = 16
 
         /** Song <-> mix crossings: identical audio crossed this quickly is heard as one. */
         private const val HANDOVER_SECONDS = 0.025

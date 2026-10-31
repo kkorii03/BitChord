@@ -181,6 +181,13 @@ import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.settings.PrivateListening
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.PlayingAudioFormat
+import com.music.bitchord.data.sources.QualityUpgradeAdvice
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.StreamFormat
@@ -2511,14 +2518,6 @@ class PlaybackService : MediaLibraryService() {
         crossfade = controller
         QueueShuffle.isCrossfadeTransitioning = { crossfade?.isTransitioning() == true }
         controller.start()
-        // A verified lossless copy can land after the next transition was
-        // armed but before its blend starts. The standby is then still holding
-        // the lossy copy; re-arm it on the event rather than polling for one.
-        scope.launch {
-            StreamChoice.revisions.drop(1).collect {
-                refreshArmedIncomingLossless()
-            }
-        }
 
         mediaSession = MediaLibrarySession.Builder(
             this,
@@ -2612,13 +2611,7 @@ class PlaybackService : MediaLibraryService() {
             standby = { requireNotNull(spare) },
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
-            canMix = { outgoingItem, incomingItem ->
-                CrossfadeArmPolicy.canMix(
-                    crossfadeFormatFor(outgoingItem, outgoing = true),
-                    crossfadeFormatFor(incomingItem, outgoing = false),
-                )
-            },
-            requestAnalysis = { item, durationMs, window ->
+            requestAnalysis = { item, durationMs, window: com.music.bitchord.playback.smart.AnalysisWindow ->
                 item.localConfiguration?.uri?.let { uri ->
                     trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, window)
                 }
@@ -2652,31 +2645,17 @@ class PlaybackService : MediaLibraryService() {
                 }
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
-            analysisTimeMs = { item -> trackAnalyzer.analysisTimeMs(item.mediaId) },
-            analysisWindowMeasured = { item, window -> trackAnalyzer.hasWindow(item.mediaId, window) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
             onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
-            // A next track whose lossless copy was verified ahead is opened as
-            // that copy from the first frame, rather than buffering Opus and
-            // handing it over before the upgrade lands.
-            prepareIncomingItem = { item ->
-                losslessAheadItem(item)?.also { logHqAhead(item.mediaId) } ?: item
-            },
             // Both sinks, not a role: the trim is about what the pair sums to.
             onBlendHeadroom = { trim ->
                 loudnessA.setBlendTrim(trim)
                 loudnessB.setBlendTrim(trim)
             },
             onSettled = {
-                // A blend is over: whoever it left as the session must stand at
-                // full gain with both filters open. finish() already sets the
-                // incoming side to 1, but doing it here as well is what makes
-                // the settled state a rule the recovery path can rely on rather
-                // than a side effect of one function's ordering.
-                recoverAudibleGains()
                 if (boundedEditState.hasPendingEdits) {
                     scope.launch {
                         applyDeferredBoundedQueueEdit()
@@ -2755,9 +2734,25 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /**
+     * The rating the notification star should draw, with the same persisted
+     * fallback the widget uses. Reading the snapshot only when this process has
+     * no override keeps a normal tap from touching preferences at all.
+     */
+    private fun sessionFavoriteStatus(videoId: String?): LikeStatus {
+        val override = videoId?.let { LikeState.overrides.value[it] }
+        val persisted = if (videoId != null && override == null) {
+            MediaWidgetSnapshot.load(this)
+        } else {
+            null
+        }
+        return SessionFavoriteState.status(videoId, override, persisted)
+    }
+
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
-        val liked = isLiked(player?.currentMediaItem)
+        val current = player?.currentMediaItem
+        val liked = isLiked(current)
         // The icon constant tells controllers like Android Auto what the button
         // means; the custom drawable swaps Material's sharp star for the
         // player's rounded one on the notification itself.
@@ -2960,6 +2955,7 @@ class PlaybackService : MediaLibraryService() {
             }
             try {
                 val startPosition = activePlayer.currentPosition
+                val wasPlayingBeforeAlign = activePlayer.playWhenReady
                 val alignmentOffsetMs = if (measureAlignment) {
                     prepareVersionAlignment(sourceSong, targetSong, startPosition)
                 } else {
@@ -2971,7 +2967,7 @@ class PlaybackService : MediaLibraryService() {
                 val alignedPosition: (Long) -> Long = if (officialMap != null) {
                     { pos -> officialMap.map(pos).coerceAtLeast(0L) }
                 } else {
-                    { pos -> (pos + alignmentOffsetMs).coerceAtLeast(0L) }
+                    { pos -> (pos + (alignmentOffsetMs ?: 0L)).coerceAtLeast(0L) }
                 }
                 if (officialMap != null) {
                     val mapped = alignedPosition(startPosition)
@@ -3278,6 +3274,14 @@ class PlaybackService : MediaLibraryService() {
      * current item playing and the pair is remembered so the same hopeless
      * decode is not tried again this process.
      */
+    private fun logVersionSwapRefused(sourceSong: Song, targetSong: Song, confidence: Double?) {
+        TrackLog.w(
+            "BitChord",
+            "version swap refused: ${sourceSong.title} -> ${targetSong.title} conf=${confidence ?: -1.0}",
+            sourceSong.videoId,
+        )
+    }
+
     private suspend fun prepareVersionAlignment(
         sourceSong: Song,
         targetSong: Song,
@@ -7094,46 +7098,13 @@ class PlaybackService : MediaLibraryService() {
      * served from the disk cache was never resolved at all and is judged here
      * instead — see [adoptCachedTrack] and [QualityUpgrade.adoptUnresolved].
      */
-    private fun lookForBetterCopy(player: ExoPlayer): Boolean {
-        val item = player.currentMediaItem ?: return false
+    private fun lookForBetterCopy(player: ExoPlayer) {
+        val item = player.currentMediaItem ?: return
         val mediaId = item.mediaId
         val uri = item.localConfiguration?.uri
-        val manual = manualUpgradeFor == mediaId
-        // Nothing may be fetched for this row before it has made a sound: the
-        // search would compete with the resolve that is trying to start it
-        // (report 60). A cold start reaches the first-sound callback below and
-        // is picked up there; a gapless or crossfaded advance is already
-        // sounding and may go ahead.
-        if (!manual &&
-            !SongVersionPolicy.hasMadeFirstSound(mediaId, audibleMediaId) &&
-            !player.isPlaying
-        ) {
-            return false
-        }
         val alreadyPending = QualityUpgrade.isPending(mediaId)
         val shelved = QualityUpgrade.shelvedFor(mediaId)
-        if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) {
-            if (manualUpgradeFor == mediaId) {
-                val refusal = QualityUpgrade.refusalFor(mediaId, uri)
-                TrackLog.i(
-                    "BitChord",
-                    "manual upgrade refused: $mediaId reason=${refusal.name.lowercase()}",
-                    about = mediaId,
-                )
-                reportManualUpgrade(
-                    mediaId,
-                    getString(
-                        when (refusal) {
-                            QualityUpgrade.Refusal.MUSIC_VIDEO -> R.string.quality_upgrade_music_video
-                            QualityUpgrade.Refusal.NO_SOURCE -> R.string.quality_upgrade_no_source
-                            QualityUpgrade.Refusal.NO_STREAM -> R.string.quality_upgrade_unavailable
-                            QualityUpgrade.Refusal.ALREADY_CHECKED -> R.string.quality_upgrade_no_better
-                        },
-                    ),
-                )
-            }
-            return false
-        }
+        if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) return
         if (upgradeJob?.isActive == true) {
             // Already hunting for this track. One left over from a track the
             // queue has moved past is a different matter: it can only come
@@ -7145,41 +7116,7 @@ class PlaybackService : MediaLibraryService() {
             // handed to this track while that one runs on unreferenced, which
             // is all it needs: it carries its own media id and ends itself by
             // shelving what it proved.
-            if (upgradeFor == mediaId) {
-                if (manualUpgradeFor == mediaId) {
-                    // A manual request joins the check already running for this
-                    // track rather than starting a second one. The job re-reads
-                    // this flag at its decision points and reports the result.
-                    manualJoinedRunningUpgrade = true
-                    val running = upgradeJob
-                    TrackLog.d(
-                        "BitChord",
-                        "manual upgrade joined the check already running for $mediaId",
-                        about = mediaId,
-                    )
-                    scope.launch {
-                        running?.join()
-                        if (manualUpgradeFor == mediaId) {
-                            // The automatic pass ended without answering the
-                            // manual request; start the manual pass now. The
-                            // pass may have written its own "nothing" verdict
-                            // and memoised the empty catalogue answers while
-                            // this waiter was parked, so both are reopened
-                            // immediately before the manual search.
-                            manualJoinedRunningUpgrade = false
-                            val live = player
-                            if (live?.currentMediaItem?.mediaId == mediaId) {
-                                SourceRegistry.clearCompletedAddonTrackCalls()
-                                QualityUpgrade.askByHand(mediaId)
-                                lookForBetterCopy(live)
-                            } else {
-                                manualUpgradeFor = null
-                            }
-                        }
-                    }
-                }
-                return false
-            }
+            if (upgradeFor == mediaId) return
             cancelStaleUpgradeJob()
         }
         upgradeFor = mediaId
@@ -7243,271 +7180,17 @@ class PlaybackService : MediaLibraryService() {
                 QualityUpgrade.lookAgain(mediaId, playingSeconds)
             } ?: return@launch
             try {
-                // A previous visit to this track already did all the expensive
-                // parts and lost the swap to a skip. Nothing about the answer has
-                // gone stale — the stream is still parked and its bytes are still
-                // on disk — so this goes straight to the swap and skips the ten
-                // seconds of catalogue searching it would otherwise repeat.
-                if (shelved != null) {
-                    if (manualUpgradeFor != mediaId) {
-                        // A stream found earlier is still valid. A verified
-                        // lossless copy replaces the song that is already
-                        // sounding, exactly as a fresh find does; a lossy one
-                        // is kept for the next play instead.
-                        var targetTitle: String? = null
-                        var verified: HqVerificationStore.Verified? = null
-                        uri?.let { SourceResolver.targetIn(it) }?.let { target ->
-                            val currentTier = currentTierFor(mediaId)
-                            val answer = HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved)
-                            if (answer != null) {
-                                logHqTier(mediaId, target.title, shelved, currentTier)
-                                SourceResolver.rememberOriginal(target, shelved)
-                                targetTitle = target.title
-                                verified = answer
-                            }
-                        }
-                        QualityUpgrade.forget(mediaId)
-                        if (verified != null && targetTitle != null && uri != null &&
-                            HqQuality.isLosslessTier(shelved.format)
-                        ) {
-                            if (swapLosslessMidSong(mediaId, uri, shelved, targetTitle, verified)) {
-                                return@launch
-                            }
-                            prefetchLosslessForNextPlay(mediaId, uri, shelved, targetTitle)
-                            return@launch
-                        }
-                        if (targetTitle != null) {
-                            prefetchLosslessForNextPlay(mediaId, uri, shelved, targetTitle)
-                        }
-                        TrackLog.d(
-                            "BitChord",
-                            "upgrade for $mediaId kept for next play; no mid-song swap",
-                            about = mediaId,
-                        )
-                        return@launch
-                    }
-                    TrackLog.d("BitChord", "re-offering the upgrade already proved for $mediaId")
-                    NerdStats.onLosslessRaceStart(mediaId)
-                    val outcome = try {
-                        swapIn(mediaId, shelved)
-                    } finally {
-                        NerdStats.onLosslessRaceEnd(mediaId)
-                    }
-                    reportManualSwapOutcome(mediaId, outcome)
-                    return@launch
-                }
-                // The runtime the decoder reports is the only measured evidence
-                // about what is playing, and everything downstream weighs
-                // candidates against it — so it is worth a short wait rather than
-                // a null. It is genuinely not known yet at some of the moments
-                // this is called from: a queue advance runs its transition before
-                // the item it moved onto has finished preparing.
-                val playingSeconds = withTimeoutOrNull(DURATION_SETTLE_MS) {
-                    while (true) {
-                        val ms = withContext(Dispatchers.Main) {
-                            this@PlaybackService.player
-                                ?.takeIf { it.currentMediaItem?.mediaId == mediaId }
-                                ?.duration
-                                ?: 0L
-                        }
-                        if (ms > 0) return@withTimeoutOrNull (ms / 1000).toInt()
-                        delay(UPGRADE_PROVE_STEP_MS)
-                    }
-                    @Suppress("UNREACHABLE_CODE") null
-                }
-                // Re-asked rather than carried down from above, because the wait
-                // is long enough for the answer to have changed: the resolver runs
-                // on the loader thread and marks a track pending as it opens the
-                // source, which for a track being fetched is precisely what has to
-                // happen before the decoder can report the runtime waited for just
-                // above. Reading the flag from before the wait meant a freshly
-                // resolved track arrived here looking un-resolved, was handed to
-                // the cached-track path, was refused by it for being pending, and
-                // lost its upgrade until the next progress sample came round.
-                if (!QualityUpgrade.isPending(mediaId) &&
-                    (uri == null || !adoptCachedTrack(mediaId, uri, playingSeconds)) &&
-                    (uri == null || manualUpgradeFor != mediaId || !adoptByHand(mediaId, uri, playingSeconds))
-                ) {
-                    // A downloaded file is replaced by the download's own
-                    // "re-download in high quality", never swapped here.
-                    val downloaded = uri?.getQueryParameter("v")?.let {
-                        com.music.bitchord.download.Downloads.savedUri(this@PlaybackService, it) != null
-                    } == true
-                    reportManualUpgrade(
-                        mediaId,
-                        getString(
-                            if (downloaded) {
-                                R.string.quality_upgrade_downloaded
-                            } else {
-                                R.string.quality_upgrade_unavailable
-                            },
-                        ),
-                    )
-                    return@launch
-                }
-                val better = withContext(Dispatchers.IO) {
-                    QualityUpgrade.lookAgain(mediaId, playingSeconds)
-                }
-                if (better == null) {
-                    TrackLog.d("BitChord", "upgrade search for $mediaId: no better copy on any source", about = mediaId)
-                    val outcome = QualityUpgradeAdvice.outcome(
-                        found = false,
-                        currentIsLossless = currentIsLossless(mediaId),
-                        currentIsAtmos = currentIsAtmos(mediaId),
-                        hasHigherSource = SourceResolver.canSubstituteForYouTube(),
-                    )
-                    val message = if (outcome == QualityUpgradeAdvice.Outcome.ALREADY_BEST) {
-                        upgradeMessage(
-                            R.string.quality_upgrade_already_best,
-                            currentQualityLabel(mediaId),
-                        )
-                    } else {
-                        upgradeMessage(
-                            R.string.quality_upgrade_no_better,
-                            currentQualityLabel(mediaId),
-                        )
-                    }
-                    if (deferManualAnswer()) {
-                        TrackLog.d(
-                            "BitChord",
-                            "automatic upgrade for $mediaId came back empty; the joined manual request will search again",
-                            about = mediaId,
-                        )
-                        return@launch
-                    }
-                    reportManualUpgrade(mediaId, message)
-                    return@launch
-                }
-                // A request made by hand is still honoured below. The
-                // automatic pass now swaps the lossless copy into the track
-                // that is already sounding — the user's decision on 10-30 —
-                // after the whole file is on disk and through the spare
-                // player, so the current song no longer plays Opus to its end
-                // because a FLAC was proved ten seconds in.
-                if (manualUpgradeFor != mediaId) {
-                    var targetTitle: String? = null
-                    var verified: HqVerificationStore.Verified? = null
-                    uri?.let { SourceResolver.targetIn(it) }?.let { target ->
-                        val currentTier = currentTierFor(mediaId)
-                        val answer = HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
-                        if (answer != null) {
-                            logHqTier(mediaId, target.title, better, currentTier)
-                            SourceResolver.rememberOriginal(target, better)
-                            targetTitle = target.title
-                            verified = answer
-                        }
-                    }
-                    QualityUpgrade.forget(mediaId)
-                    if (verified != null && targetTitle != null && uri != null &&
-                        HqQuality.isLosslessTier(better.format)
-                    ) {
-                        if (swapLosslessMidSong(mediaId, uri, better, targetTitle, verified)) {
-                            return@launch
-                        }
-                        prefetchLosslessForNextPlay(mediaId, uri, better, targetTitle)
-                        return@launch
-                    }
-                    if (targetTitle != null) {
-                        prefetchLosslessForNextPlay(mediaId, uri, better, targetTitle)
-                    }
-                    TrackLog.d(
-                        "BitChord",
-                        "upgrade found for $mediaId kept for next play; no mid-song swap",
-                        about = mediaId,
-                    )
-                    return@launch
-                }
-                var candidate = better ?: return@launch
-                var round = 0
-                while (true) {
-                    val outcome = try {
-                        swapIn(mediaId, candidate)
-                    } finally {
-                        // The badge comes down when the upgrade is done, not when the
-                        // search that found it was — including the deliberate wait in
-                        // [swapIn] before the audio is allowed to be cut. See
-                        // [QualityUpgrade.lookAgain]. In `finally` because a queue
-                        // that moves on cancels this job, and a cancelled swap has to
-                        // put the badge out as surely as a completed one.
-                        NerdStats.onLosslessRaceEnd(mediaId)
-                    }
-                    if (outcome != SwapOutcome.NOT_PROVEN || round >= MAX_UPGRADE_CANDIDATES) {
-                        reportManualSwapOutcome(mediaId, outcome)
-                        return@launch
-                    }
-                    // The candidate was found, chosen and then failed to prove
-                    // itself — a 429, a timeout, a stream that was too slow to
-                    // be worth the wait. Its source and host are now excluded;
-                    // ask the same tier again immediately rather than leaving
-                    // the listener on the copy they asked to improve.
-                    round++
-                    if (!QualityUpgrade.retryNext(mediaId)) {
-                        reportManualSwapOutcome(mediaId, outcome)
-                        return@launch
-                    }
-                    TrackLog.d(
-                        "BitChord",
-                        "upgrade candidate for $mediaId failed; trying the next source",
-                        about = mediaId,
-                    )
-                    NerdStats.onLosslessRaceStart(mediaId)
-                    val next = withContext(Dispatchers.IO) {
-                        QualityUpgrade.lookAgain(mediaId, playingSeconds)
-                    }
-                    if (next == null) {
-                        if (deferManualAnswer()) {
-                            TrackLog.d(
-                                "BitChord",
-                                "automatic upgrade for $mediaId ran out of candidates; the joined manual request will search again",
-                                about = mediaId,
-                            )
-                            return@launch
-                        }
-                        reportManualUpgrade(
-                            mediaId,
-                            upgradeMessage(R.string.quality_upgrade_no_better, currentQualityLabel(mediaId)),
-                        )
-                        return@launch
-                    }
-                    candidate = next ?: return@launch
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failed: Exception) {
-                TrackLog.w(
-                    "BitChord",
-                    "manual upgrade for $mediaId failed: ${failed.javaClass.simpleName}: ${failed.message}",
-                    about = mediaId,
-                )
-                if (deferManualAnswer()) {
-                    TrackLog.d(
-                        "BitChord",
-                        "automatic upgrade for $mediaId failed; the joined manual request will search again",
-                        about = mediaId,
-                    )
-                    return@launch
-                }
-                reportManualUpgrade(
-                    mediaId,
-                    upgradeMessage(
-                        R.string.quality_upgrade_failed,
-                        getString(R.string.quality_upgrade_reason_unavailable),
-                    ),
-                )
+                swapIn(mediaId, better)
             } finally {
-                // A manual request that joined this automatic check is left for
-                // the waiter to answer if this job ended without reporting.
-                if (manualUpgradeFor == mediaId && !manualJoinedRunningUpgrade) {
-                    manualUpgradeFor = null
-                }
-                // Every way out of this job puts the badge down. A second search
-                // that found nothing (lookAgain == null) used to return with the
-                // race still marked, and the player menu greys "Upgrade quality"
-                // out while a race is marked — for the rest of the song.
+                // The badge comes down when the upgrade is done, not when the
+                // search that found it was — including the deliberate wait in
+                // [swapIn] before the audio is allowed to be cut. See
+                // [QualityUpgrade.lookAgain]. In `finally` because a queue
+                // that moves on cancels this job, and a cancelled swap has to
+                // put the badge out as surely as a completed one.
                 NerdStats.onLosslessRaceEnd(mediaId)
             }
         }
-        return true
     }
 
     /**
@@ -7541,69 +7224,23 @@ class PlaybackService : MediaLibraryService() {
     private fun upgradeQualityNow() {
         val player = player ?: return
         val mediaId = player.currentMediaItem?.mediaId ?: return
-        // A request that arrives while this track's check is already running
-        // joins that check instead of starting a second one. The running job
-        // re-reads [manualUpgradeFor] at its decision points; if it ends
-        // silently, this waiter starts the manual pass so the request is never
-        // left unanswered.
-        if (upgradeJob?.isActive == true && upgradeFor == mediaId) {
-            manualUpgradeFor = mediaId
-            manualJoinedRunningUpgrade = true
-            // Joining the running check must not turn the manual request back
-            // into the automatic one. Completed catalogue answers are dropped
-            // (in-flight work is kept) and the track's "already asked" verdict
-            // is reopened, so the pass that follows this join asks the sources
-            // again instead of replaying the empty answer that started it. The
-            // running job is left to finish; only completed entries go.
-            SourceRegistry.clearCompletedAddonTrackCalls()
-            QualityUpgrade.askByHand(mediaId)
-            val running = upgradeJob
-            TrackLog.d(
-                "BitChord",
-                "manual upgrade joined the check already running for $mediaId",
-                about = mediaId,
-            )
-            scope.launch {
-                running?.join()
-                if (manualUpgradeFor == mediaId) {
-                    manualJoinedRunningUpgrade = false
-                    val live = player
-                    if (live?.currentMediaItem?.mediaId == mediaId) {
-                        // The automatic pass may have written its "nothing"
-                        // verdict while this waiter was parked. Reopen both the
-                        // verdict and the catalogue answers now, immediately
-                        // before the manual pass, so it really asks again.
-                        SourceRegistry.clearCompletedAddonTrackCalls()
-                        QualityUpgrade.askByHand(mediaId)
-                        lookForBetterCopy(live)
-                    } else {
-                        manualUpgradeFor = null
-                    }
-                }
-            }
+        // Do not charge the manual cooldown for a command that merely arrived
+        // while this track's automatic or manual upgrade was already running.
+        // The UI disables the row too, but the service is the authoritative
+        // boundary for controllers which do not use that UI.
+        if (mediaId in NerdStats.racingLossless.value ||
+            (upgradeJob?.isActive == true && upgradeFor == mediaId)
+        ) {
+            TrackLog.d("BitChord", "manual upgrade ignored for $mediaId: upgrade already running", about = mediaId)
             return
         }
-        val hasHigherSource = SourceResolver.canSubstituteForYouTube()
-        if (!QualityUpgradeAdvice.shouldSearch(
-                currentIsLossless = currentIsLossless(mediaId),
-                currentIsAtmos = currentIsAtmos(mediaId),
-                hasHigherSource = hasHigherSource,
-            )
-        ) {
-            // There is no catalogue to ask: with only YouTube enabled (or the
-            // track already lossless/Atmos) this install cannot beat what is
-            // playing. Say so instead of starting a search that can only come
-            // back empty — and, crucially, instead of returning in silence.
+        val remaining = manualUpgradeThrottle.tryAcquire(SystemClock.elapsedRealtime())
+        if (remaining > 0) {
             TrackLog.d(
                 "BitChord",
-                "manual upgrade unnecessary for $mediaId: already at the best available quality",
+                "manual upgrade ignored for $mediaId: ${remaining}ms cooldown remaining",
                 about = mediaId,
             )
-            Toast.makeText(
-                applicationContext,
-                upgradeMessage(R.string.quality_upgrade_already_best, currentQualityLabel(mediaId)),
-                Toast.LENGTH_SHORT,
-            ).show()
             return
         }
         OriginalVersion.unpin(mediaId)
@@ -7615,14 +7252,7 @@ class PlaybackService : MediaLibraryService() {
         SourceRegistry.clearCompletedAddonTrackCalls()
         QualityUpgrade.askByHand(mediaId)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
-        manualUpgradeFor = mediaId
-        manualJoinedRunningUpgrade = false
-        if (!lookForBetterCopy(player) && manualUpgradeFor == mediaId) {
-            reportManualUpgrade(
-                mediaId,
-                upgradeMessage(R.string.quality_upgrade_unavailable, null),
-            )
-        }
+        lookForBetterCopy(player)
     }
 
     /**
@@ -7890,67 +7520,7 @@ class PlaybackService : MediaLibraryService() {
         val at = withContext(Dispatchers.Main) { swapPointFor(mediaId) } ?: return
         if (at.duration > 0 && at.duration - at.position < UPGRADE_MIN_REMAINING_MS) {
             TrackLog.d("BitChord", "upgrade abandoned: only ${at.duration - at.position}ms of the track left")
-            return SwapOutcome.TOO_LATE
-        }
-        // Nothing is cut in until the sound comparison says this is the same
-        // recording as the YouTube song version. A manual request is no
-        // exception: the listener asked for a better copy, not a different
-        // song. The answer is cached per pair, so a stream verified during
-        // next-song preparation costs only a map lookup here.
-        val target = runCatching { SourceResolver.targetIn(Uri.parse(at.uri)) }.getOrNull()
-        val verification = target?.let {
-            // A manual request ignores the automatic retry cooldown and any
-            // missing reference remembered earlier in this play, and waits
-            // longer for the YouTube opening.
-            HqAudioVerify.verifyOutcome(this, mediaId, it, stream, manual = true)
-        }
-        when (verification) {
-            is HqAudioVerify.Outcome.Mismatch -> {
-                TrackLog.d(
-                    "BitChord",
-                    "upgrade refused for $mediaId: '${target?.title}' did not match the YouTube version",
-                    about = mediaId,
-                )
-                QualityUpgrade.failedCandidate(
-                    mediaId,
-                    stream.sourceConfigId,
-                    HqHostTracker.hostOf(stream.url),
-                )
-                return SwapOutcome.MISMATCH
-            }
-            is HqAudioVerify.Outcome.NoReference -> {
-                TrackLog.d(
-                    "BitChord",
-                    "upgrade deferred for $mediaId: no reference reason=${verification.reason.wire}",
-                    about = mediaId,
-                )
-                return SwapOutcome.NO_REFERENCE
-            }
-            is HqAudioVerify.Outcome.Deferred -> {
-                // Not attempted because the host is resting. That is not a
-                // verdict on the candidate, so it is not counted against it.
-                TrackLog.d(
-                    "BitChord",
-                    "upgrade deferred for $mediaId: the host is still resting",
-                    about = mediaId,
-                )
-                return SwapOutcome.NOT_PROVEN
-            }
-            is HqAudioVerify.Outcome.Unavailable,
-            is HqAudioVerify.Outcome.Abandoned -> {
-                TrackLog.d(
-                    "BitChord",
-                    "upgrade refused for $mediaId: the candidate could not be measured",
-                    about = mediaId,
-                )
-                QualityUpgrade.failedCandidate(
-                    mediaId,
-                    stream.sourceConfigId,
-                    HqHostTracker.hostOf(stream.url),
-                )
-                return SwapOutcome.NOT_PROVEN
-            }
-            else -> Unit
+            return
         }
 
         val upgradedUri = QualityUpgrade.upgradedUri(at.uri)
@@ -7965,10 +7535,6 @@ class PlaybackService : MediaLibraryService() {
         // reaches its bytes through the same resolving data source the real one
         // does, and that is where a marked URI is turned back into a stream.
         QualityUpgrade.force(mediaId, stream)
-        // From here until the whole rendition is on disk, this host is busy
-        // with the track being listened to. The next track's read-ahead waits
-        // rather than opening a second request to it.
-        HqHostTracker.beginDownload(mediaId, HqHostTracker.hostOf(stream.url))
         val warmedThrough = auditionUpgrade(mediaId, at, upgradedUri, stream, alreadyFilled)
             // The audition takes seconds, long enough for the ceiling to drop
             // under it; treated as a failed one, so nothing is cut.
@@ -7981,13 +7547,9 @@ class PlaybackService : MediaLibraryService() {
             // returning a few seconds later. Dropping the parked stream stops
             // [QualityUpgrade.forcedStream] serving a URL that has just failed
             // to prove itself.
-            QualityUpgrade.failedCandidate(
-                mediaId,
-                stream.sourceConfigId,
-                HqHostTracker.hostOf(stream.url),
-            )
+            QualityUpgrade.forget(mediaId)
             withContext(Dispatchers.IO) { AudioCache.discardRendition(Uri.parse(upgradedUri)) }
-            return SwapOutcome.NOT_PROVEN
+            return
         }
 
         // There used to be an unconditional five-second hold here, keyed off the
@@ -8056,7 +7618,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
-        val outcome = withContext(Dispatchers.Main) {
+        withContext(Dispatchers.Main) {
             val now = swapPointFor(mediaId)
             if (crossfade?.isTransitioning() == true) {
                 // Caught right before the swap that would have broken it —
@@ -8065,7 +7627,7 @@ class PlaybackService : MediaLibraryService() {
                 // "queue moved on" case just below.
                 QualityUpgrade.shelve(mediaId, stream)
                 TrackLog.d("BitChord", "upgrade for $mediaId shelved: a crossfade was still running")
-                return@withContext SwapOutcome.UNAVAILABLE
+                return@withContext
             }
             if (now == null) {
                 // The queue moved on between the upgrade being proved and the
@@ -8077,13 +7639,13 @@ class PlaybackService : MediaLibraryService() {
                 // was indistinguishable from never having looked.
                 QualityUpgrade.shelve(mediaId, stream)
                 TrackLog.d("BitChord", "upgrade for $mediaId proved but the queue moved on; shelved")
-                return@withContext SwapOutcome.UNAVAILABLE
+                return@withContext
             }
-            val player = player ?: return@withContext SwapOutcome.UNAVAILABLE
+            val player = player ?: return@withContext
             if (now.duration > 0 && now.duration - now.position < UPGRADE_MIN_REMAINING_MS) {
                 TrackLog.d("BitChord", "upgrade abandoned: only ${now.duration - now.position}ms of the track left")
                 QualityUpgrade.forget(mediaId)
-                return@withContext SwapOutcome.TOO_LATE
+                return@withContext
             }
             // The parked stream can be taken away underneath a swap in flight:
             // a playback failure on the *old* stream runs [recoverFrom], which
@@ -8094,7 +7656,7 @@ class PlaybackService : MediaLibraryService() {
             // one key, which is the corruption the audition exists to avoid.
             if (QualityUpgrade.forcedStream(Uri.parse(upgradedUri)) == null) {
                 TrackLog.d("BitChord", "upgrade abandoned: its stream was dropped while it was being proved")
-                return@withContext SwapOutcome.UNAVAILABLE
+                return@withContext
             }
             // Not fatal, just slower than intended, and worth being able to see
             // in a log: the audition buffers ahead of a moving target and can
@@ -8112,12 +7674,6 @@ class PlaybackService : MediaLibraryService() {
             val previousFormat = NerdStats.declaredFormat(mediaId)
             swappingMediaId = mediaId
             swapCutAt = SystemClock.elapsedRealtime()
-            TrackLog.d(
-                "BitChord",
-                "queue: replace n=1 at=${player.currentMediaItemIndex} " +
-                    "size=${player.mediaItemCount} by=upgrade",
-                about = mediaId,
-            )
             val upgradedMetadata = now.item.mediaMetadata.buildUpon()
                 .setExtras(Bundle(now.item.mediaMetadata.extras ?: Bundle()).apply {
                     putBoolean(EXTRA_QUALITY_UPGRADED, true)
@@ -8137,10 +7693,6 @@ class PlaybackService : MediaLibraryService() {
             NerdStats.recordSource(mediaId, upgradedSourceName)
             player.seekTo(player.currentMediaItemIndex, now.position)
             player.prepare()
-            // The continuation reads for this item must keep resolving to the
-            // upgraded copy, and the lyric clock reads the same record to find
-            // the verified offset. See [StreamChoice] and [LyricsTiming].
-            StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat)
@@ -8184,22 +7736,7 @@ class PlaybackService : MediaLibraryService() {
                     AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
                 }
             }
-            // With the better copy now audible, pull the rest of it onto disk
-            // in one sequential pass. Playback is never held back by this: it
-            // reads whatever has already arrived, and a host that starts
-            // refusing midway cannot take back the bytes already cached.
-            scope.launch(TrackLog.about(mediaId)) {
-                AudioCache.cacheWholeRendition(
-                    Uri.parse(upgradedUri),
-                    now.item.mediaMetadata.title?.toString(),
-                )
-            }
-            SwapOutcome.SWAPPED
         }
-        if (outcome != SwapOutcome.SWAPPED) {
-            HqHostTracker.endDownload(mediaId, HqHostTracker.hostOf(stream.url))
-        }
-        return outcome
     }
 
     /** Main thread. Null unless [mediaId] is still current and has another upgrade slot. */
@@ -9989,6 +9526,22 @@ class PlaybackService : MediaLibraryService() {
         AudioCache.cancel()
     }
 
+    /**
+     * The one-row bundle that prepares the next track's version, lyrics, high
+     * quality, sync check and mix analysis while this one plays. It is started
+     * only by the first-sound event or a queue change — never a timer.
+     */
+    private val nextTrackPreparation by lazy {
+        NextTrackPreparation(
+            context = this,
+            scope = scope,
+            currentPlayer = { player },
+            prepareMix = { exoPlayer -> crossfade?.prepareNextTransition(exoPlayer) },
+            mixReady = { id -> trackAnalyzer.analysisFor(id).isUsable },
+            awaitMix = { id -> trackAnalyzer.analysisFor(id).isUsable },
+        )
+    }
+
     private fun scheduleNextPrep(player: ExoPlayer) = nextTrackPreparation.schedule(player)
 
     private fun cancelNextPrep() = nextTrackPreparation.cancel()
@@ -10843,10 +10396,27 @@ class PlaybackService : MediaLibraryService() {
         return AudioRouting.kindOf(device.type) ?: AudioRouting.Kind.PHONE
     }
 
+    /**
+     * The rate the resampler should open AudioTrack at, or null to keep the
+     * decoder's rate. See [AudioOutputPolicy.outputSampleRateFor].
+     */
+    private fun resampleTargetRate(inputRateHz: Int): Int? {
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+        return AudioOutputPolicy.outputSampleRateFor(
+            sourceRateHz = inputRateHz,
+            routeKind = routeKind,
+            advertisedSampleRates = activeDevice?.sampleRates?.toList().orEmpty(),
+        )
+    }
+
     private fun shouldEnableFloatOutput(): Boolean {
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
         val advertisesFloat = activeDevice?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true
+        val directFloatSupported = audioManager?.let { mgr ->
+            DirectAudioProbe.probeDirectSupport(mgr, 48000, 2, activeDevice).supportsFloat
+        } ?: false
         // Worth knowing which way this cuts for a hi-res stream: with float
         // off, Media3 downconverts *every* input encoding to 16-bit, because
         // float and 16-bit are the only two linear-PCM tracks its sink can
@@ -10883,6 +10453,43 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
+        }
+        scope.launch {
+            // [KO] SponsorBlock settings change what this track still has to
+            // skip; the toggle itself re-reads the current track (no timer).
+            AppSettings.skipNonMusicParts.drop(1).collect {
+                refreshSkipSegmentsForSettings()
+            }
+        }
+        scope.launch {
+            AppSettings.skipSponsorParts.drop(1).collect {
+                refreshSkipSegmentsForSettings()
+            }
+        }
+        scope.launch {
+            // [KO] Event-driven private-session switch: silence account-visible
+            // writes on the way in, resume Discord on the way out.
+            AppSettings.privateListening.drop(1).collect { enabled ->
+                PlaybackTracker.suppressCurrent(player?.currentMediaItem?.mediaId)
+                if (enabled) {
+                    ListeningRecorder.onPrivateModeEnabled()
+                    scrobbleManager?.onPrivateModeEnabled()
+                    listenBrainzSong = null
+                    listenBrainzStartMs = 0L
+                    listenBrainzDurationMs = null
+                    clearDiscordPresence()
+                } else {
+                    player?.takeIf { it.isPlaying }?.let(::pushDiscordPresence)
+                }
+            }
+        }
+        scope.launch {
+            // [KO] Re-evaluate the queued next track when music-only changes,
+            // instead of waiting for another timeline event.
+            AppSettings.preferMusicOnly.drop(1).collect {
+                cancelPrefetch()
+                player?.takeIf { it.isPlaying }?.let(::prefetchAround)
+            }
         }
         scope.launch {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
@@ -13855,6 +13462,19 @@ class PlaybackService : MediaLibraryService() {
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
 
+        /** How long an AudioTrack-reason hint stays valid for the next event. */
+        const val AUDIO_TRACK_REASON_TTL_MS = 10_000L
+
+        /**
+         * How often the playhead is written back while playing. The restore
+         * point only has to be roughly where the listener was; pause, track
+         * change and service stop write it exactly.
+         */
+        const val PLAYBACK_STATE_SAVE_MS = 30_000L
+
+        /** Rate limit for listener-requested quality retries. */
+        const val MANUAL_UPGRADE_COOLDOWN_MS = 30_000L
+
         /** How often [driveDirectWindow] checks whether the next track's window has opened. */
         const val DIRECT_WINDOW_STEP_MS = 500L
 
@@ -14246,3 +13866,66 @@ private fun withoutPlatformAlac(selector: MediaCodecSelector) =
  * than on the main thread while a player is built.
  */
 private val ffmpegDecodesAlac by lazy { FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_ALAC) }
+
+/**
+ * Short reason names a diagnostic log reads without the Media3 constants.
+ * Restored from the Korean fork (docs/upstream-19-lost.md bucket E).
+ */
+private fun transitionReason(reason: Int): String = when (reason) {
+    Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
+    Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
+    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "REPEAT"
+    Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
+    else -> "OTHER($reason)"
+}
+
+private fun playReason(reason: Int): String = when (reason) {
+    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "ui"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "focus"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "noisy"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "suppressed"
+    else -> "other($reason)"
+}
+
+/** Which pieces a queue item is missing, for the `play:` line's `meta=`. */
+private fun missingMeta(song: Song?): String {
+    if (song == null) return "title,artist,artwork"
+    val missing = buildList {
+        if (song.title.isBlank()) add("title")
+        if (song.artist.isBlank()) add("artist")
+        if (song.thumbnailUrl.isNullOrBlank()) add("artwork")
+    }
+    return missing.ifEmpty { listOf("ok") }.joinToString(",")
+}
+
+/**
+ * How many entries [PlaybackService.cacheSong] has to drop so that adding one
+ * more keeps the cache at or below [max].
+ *
+ * Pure so the ceiling can be checked without a running service; returns zero
+ * while there is still room.
+ */
+internal fun songCacheEvictionCount(size: Int, max: Int): Int =
+    if (size >= max) size - max + 1 else 0
+
+/**
+ * App-side gate for explicit quality retries (v1.9 class, lost in the merge).
+ * Automatic upgrades never pass through this object.
+ */
+internal class ManualUpgradeThrottle(private val cooldownMs: Long) {
+    private var lastAcceptedAtMs: Long? = null
+
+    @Synchronized
+    fun tryAcquire(nowMs: Long): Long {
+        val previous = lastAcceptedAtMs
+        if (previous != null) {
+            val remaining = cooldownMs - (nowMs - previous)
+            if (remaining > 0) return remaining
+        }
+        lastAcceptedAtMs = nowMs
+        return 0L
+    }
+}
+

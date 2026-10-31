@@ -129,7 +129,7 @@ object AudioDecoder {
         label: String = "analysis",
     ): Pair<Pcm, Double>? {
         val chunks = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             chunks += toMono(buffer, info, channels)
         } ?: return null
         return Pcm(flatten(chunks), decoded.first) to decoded.second
@@ -201,7 +201,7 @@ object AudioDecoder {
     ): Pair<StereoPcm, Double>? {
         val left = ArrayList<FloatArray>()
         val right = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
         return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
@@ -219,7 +219,7 @@ object AudioDecoder {
         abort: () -> Boolean = { false },
         onChunk: (samples: FloatArray, atSeconds: Double, sampleRate: Int) -> Unit,
     ): Pair<Double, Double>? =
-        decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
+        decodeRaw(source, startSeconds, endSeconds, abort, "analysis") { buffer, info, channels, rate ->
             onChunk(toMono(buffer, info, channels), info.presentationTimeUs / 1_000_000.0, rate)
         }
 
@@ -247,6 +247,39 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRawWith(
+        openSource = { extractor -> extractor.setDataSource(source) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRaw(
+        file: File,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRawWith(
+        openSource = { extractor -> extractor.setDataSource(file.absolutePath) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRawWith(
+        openSource: (MediaExtractor) -> Unit,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) {
