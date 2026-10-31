@@ -184,7 +184,10 @@ object TelegramClientManager {
      * order; duplicates across chats are dropped by chat/message id.
      */
     suspend fun searchTracks(query: String, limit: Int): List<TelegramTrack> {
-        ensureCredentialsLoaded()
+        // The credential store and Keystore are disk work. Load them on the
+        // worker so the first search from the UI thread never does that I/O
+        // itself, and read the selected chats only after they are loaded.
+        withContext(Dispatchers.IO) { runOnWorker { ensureCredentialsLoaded() } }
         val chats = selectedChatIds().toList().sorted()
         if (chats.isEmpty()) return emptyList()
         acquire(SEARCH_HOLDER)
@@ -211,6 +214,25 @@ object TelegramClientManager {
             withContext(Dispatchers.IO) { loadChats() }
         } finally {
             release(CHATS_HOLDER)
+        }
+    }
+
+    /**
+     * The file details [TelegramSource][com.music.bitchord.data.sources.TelegramSource]
+     * needs to describe a stream, resolved while holding the gate.
+     *
+     * A search has already released its client when its rows are played, so
+     * looking this up without a holder finds no client. The holder is released
+     * before the DataSource opens; [beginStream] acquires its own and waits for
+     * the session again, which is the event that keeps it open for playback.
+     */
+    suspend fun streamMetadata(trackId: String): TelegramTrack {
+        acquire(STREAM_METADATA_HOLDER)
+        return try {
+            awaitReady()
+            withContext(Dispatchers.IO) { trackForStream(trackId) }
+        } finally {
+            release(STREAM_METADATA_HOLDER)
         }
     }
 
@@ -904,6 +926,7 @@ object TelegramClientManager {
     private const val SEARCH_HOLDER = "search"
     private const val CHATS_HOLDER = "chats"
     private const val STREAM_HOLDER = "stream"
+    private const val STREAM_METADATA_HOLDER = "stream metadata"
     private const val MAX_CHATS = 500
     private const val MAX_CHAT_PAGES = MAX_CHATS / 100
 }

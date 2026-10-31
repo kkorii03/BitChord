@@ -36,11 +36,24 @@ object TelegramLog {
     fun clientClosed(reason: String) = write(line("client close reason=$reason"))
     fun authState(state: String) = write(line("auth state=$state"))
 
-    /** Query text, chat names and phone numbers never reach this line. */
-    fun search(queryLength: Int, chats: Int, results: Int, millis: Long) =
-        write(line("search q=$queryLength chats=$chats results=$results ms=$millis"))
+    /**
+     * Query text, chat names and phone numbers never reach this line.
+     *
+     * Built outside [line]'s numeric redaction on purpose: the fields here are
+     * already only lengths, counts and milliseconds, and running them through
+     * it turned a required `ms=1234` into `ms=***`.
+     */
+    internal fun searchLine(queryLength: Int, chats: Int, results: Int, millis: Long): String =
+        "telegram: search q=$queryLength chats=$chats results=$results ms=$millis"
 
-    fun stream(event: String, fileId: Int) = write(line("stream ${fileHash(fileId)} $event"))
+    fun search(queryLength: Int, chats: Int, results: Int, millis: Long) =
+        write(searchLine(queryLength, chats, results, millis))
+
+    /** The file id is hashed, so a numeric-only hash must not be redacted either. */
+    internal fun streamLine(event: String, fileId: Int): String =
+        "telegram: stream ${fileHash(fileId)} $event"
+
+    fun stream(event: String, fileId: Int) = write(streamLine(event, fileId))
 
     /** A stable short hash, so log lines can be matched without naming a file id. */
     fun fileHash(fileId: Int): String =

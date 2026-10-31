@@ -7,6 +7,9 @@ import com.music.bitchord.telegram.TelegramClientManager
 import com.music.bitchord.telegram.TelegramLog
 import com.music.bitchord.telegram.TelegramStreamUri
 import com.music.bitchord.telegram.TelegramTrackMapper
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val TAG = "BitChord"
 
@@ -46,17 +49,30 @@ class TelegramSource(
     ): List<Song> {
         if (query.isBlank()) return emptyList()
         return try {
-            TelegramClientManager.searchTracks(query, limit)
-                .map { TelegramTrackMapper.toSong(it, config.id) }
+            // The source contract runs on IO; keep the encrypted-prefs and
+            // TDLib work off whatever thread the search box happens to be on.
+            withContext(Dispatchers.IO) {
+                TelegramClientManager.searchTracks(query, limit)
+                    .map { TelegramTrackMapper.toSong(it, config.id) }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (failure: Throwable) {
-            TrackLog.w(TAG, "telegram: search failed — ${failure.message}")
-            emptyList()
+            // A failed search is not an empty catalogue: let the Search tab
+            // report this source as failed instead of showing "no results".
+            TrackLog.w(TAG, "telegram: search failed (${failure::class.simpleName})")
+            throw failure
         }
     }
 
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? {
         val track = try {
-            TelegramClientManager.trackForStream(trackId)
+            // A search releases its client before returning rows, so metadata
+            // resolution has to hold the gate itself; otherwise request() sees
+            // no client and every Telegram row resolves to null.
+            TelegramClientManager.streamMetadata(trackId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (failure: Throwable) {
             TelegramLog.stream("unavailable", trackId.hashCode())
             return null

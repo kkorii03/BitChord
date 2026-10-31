@@ -485,9 +485,11 @@ object SourceResolver {
         // Not YouTube, though, for a row picked from the Addons search: its
         // Opus is a lesser copy of a different upload, and the listener chose
         // this addon's precisely to not be hearing it — see [MIX_PARAM].
-        val fallbacks = active.filterNot {
-            it.configId == configId || (pickedMix != null && it.kind == SourceKind.YOUTUBE)
-        }
+        val fallbacks = automaticUpgradeCandidates(
+            active.filterNot {
+                it.configId == configId || (pickedMix != null && it.kind == SourceKind.YOUTUBE)
+            },
+        )
         val (fallbackSource, stream) = bestAcross(fallbacks, target, request, strictOriginal = true) ?: return null
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
@@ -1143,8 +1145,22 @@ object SourceResolver {
      * [AudioCache][com.music.bitchord.playback.AudioCache] decide how to treat
      * a YouTube id before anyone has asked a source for it.
      */
-    fun canSubstituteForYouTube(): Boolean =
-        SourceRegistry.activeForPlayback().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
+    fun canSubstituteForYouTube(): Boolean {
+        val active = SourceRegistry.activeForPlayback()
+        val above = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
+        return above > 0 && automaticUpgradeCandidates(active.take(above)).isNotEmpty()
+    }
+
+    /**
+     * Sources an automatic upgrade, substitute or fallback walk may ask.
+     *
+     * Telegram is ranked above YouTube for stage 3's quality upgrade, but this
+     * stage wires only explicit search and its own playback. Leaving it in
+     * these walks would open TDLib behind the listener's back for ordinary
+     * YouTube playback, so it stays out until that integration is written.
+     */
+    internal fun automaticUpgradeCandidates(sources: List<MusicSource>): List<MusicSource> =
+        sources.filterNot { it.kind == SourceKind.TELEGRAM }
 
     /**
      * The sources ranked above [configId], in order.
@@ -1156,6 +1172,7 @@ object SourceResolver {
         active.indexOfFirst { it.configId == configId }
             .let { if (it < 0) active.size else it }
             .let { active.take(it) }
+            .let(::automaticUpgradeCandidates)
 
     /**
      * The best stream the configured [sources] can serve for [target] — **all

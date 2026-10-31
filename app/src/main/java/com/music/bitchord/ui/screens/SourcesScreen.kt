@@ -918,7 +918,8 @@ private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
 
 @Composable
 private fun SourceConfig.telegramStatusLine(health: SourceHealth?): String {
-    val state = TelegramClientManager.state.value
+    val state by TelegramClientManager.state.collectAsStateWithLifecycle()
+    val selectedChats by TelegramClientManager.selectedChats.collectAsStateWithLifecycle()
     return when {
         state.stage == TelegramAuthStage.WAIT_CREDENTIALS ->
             stringResource(R.string.telegram_source_setup_required)
@@ -930,7 +931,7 @@ private fun SourceConfig.telegramStatusLine(health: SourceHealth?): String {
             stringResource(R.string.telegram_source_connects_on_search)
         state.stage != TelegramAuthStage.READY ->
             stringResource(R.string.telegram_source_login_required)
-        TelegramClientManager.selectedChats.value.isEmpty() ->
+        selectedChats.isEmpty() ->
             stringResource(R.string.telegram_source_no_chats)
         health is SourceHealth.Rejected -> FriendlyError.reason(LocalContext.current, health.reason)
         else -> (health as? SourceHealth.Ok)?.detail
