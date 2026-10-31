@@ -1,7 +1,6 @@
 package com.music.bitchord.ui.player
 
 import com.music.bitchord.ui.components.trackArtSize
-import androidx.compose.ui.layout.ContentScale
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.components.ExplicitSongTitle
 
