@@ -106,6 +106,8 @@ import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.listentogether.partyTopUpEchoed
 import com.music.bitchord.data.listentogether.partyTopUpLanded
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
+import com.music.bitchord.data.net.BlockedStartPolicy
+import com.music.bitchord.data.net.BlockedStartStep
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.net.HqRetryPolicy
@@ -1283,6 +1285,7 @@ class PlaybackService : MediaLibraryService() {
             // here would only make the resume start the same steps again.
             if (isPlaying) scheduleNextPrep(exoPlayer)
             if (isPlaying) lookForBetterCopy(exoPlayer)
+            if (isPlaying) verifyBlockedStartCandidate(exoPlayer)
             savePlaybackState(exoPlayer)
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
             // already flipped that — but this is where hasNext/hasPrevious and
@@ -1437,6 +1440,14 @@ class PlaybackService : MediaLibraryService() {
                 return
             }
 
+            // A forced high-quality start that never reached a first note is
+            // stale once the queue moves on: a later play of the same id must
+            // not be verified against bytes from this abandoned item. The swap
+            // above is the one transition that keeps it (same id, same row).
+            mediaItem?.mediaId?.let { current ->
+                blockedStartCandidates.keys.removeIf { it != current }
+            }
+
             // A receiver, if it is the speaker, is put on whatever became
             // current — or it is the one that moved, and this is the phone
             // catching up, which [CastPlayback] tells apart by track.
@@ -1497,6 +1508,9 @@ class PlaybackService : MediaLibraryService() {
                 "error: ${error.errorCodeName} (${error.errorCode}) on ${exoPlayer.currentMediaItem?.mediaId}",
                 about = exoPlayer.currentMediaItem?.mediaId,
             )
+            // The forced high-quality item failed before its first note; its
+            // candidate must not outlive that stream and verify a later play.
+            exoPlayer.currentMediaItem?.mediaId?.let(blockedStartCandidates::remove)
             recoverFrom(error, exoPlayer)
         }
 
@@ -4864,6 +4878,19 @@ class PlaybackService : MediaLibraryService() {
     private var manualJoinedRunningUpgrade = false
 
     /**
+     * A high-quality copy that started a YouTube-blocked track before
+     * `hq-verify` could run. The existing comparison still runs while the
+     * listener hears it; a measured mismatch is the one outcome that must take
+     * the wrong recording off the speaker.
+     */
+    private data class BlockedStartCandidate(
+        val target: TrackMatcher.Target,
+        val stream: SourceStream,
+    )
+
+    private val blockedStartCandidates = ConcurrentHashMap<String, BlockedStartCandidate>()
+
+    /**
      * Ends [upgradeJob] because the queue has moved on — unless it has already
      * found a stream and is proving it.
      *
@@ -5769,6 +5796,10 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun skipPastUnplayable(mediaId: String, reason: String) {
         val exoPlayer = player ?: return
+        // The forced high-quality stream is gone with this item; keeping its
+        // Candidate would let a later play of the same id verify against bytes
+        // that are no longer the ones playing.
+        blockedStartCandidates.remove(mediaId)
         if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
         if (!exoPlayer.hasNextMediaItem()) {
             // Nothing is queued after it, but AutoPlay may still be able to
@@ -5858,8 +5889,13 @@ class PlaybackService : MediaLibraryService() {
         allowAlternateRecording: Boolean = true,
     ) {
         if (!alternateLookups.add(mediaId)) return
+        // The selection deadline, not the failure handler's clock. The resolver
+        // has already spent part of the listener's ten seconds before this
+        // coroutine starts; measuring from here restarted the catalogue steps
+        // with a fresh budget and let one blocked start run past the ceiling
+        // (9 s in the resolver, then 5.5 s more here).
+        val selectionStartedAt = trackSelectedAt ?: SystemClock.elapsedRealtime()
         scope.launch(TrackLog.about(mediaId)) {
-            val startedAt = SystemClock.elapsedRealtime()
             try {
                 // A 403 in the middle of a track is not a verdict about the
                 // videoId: the URL expired or its client was refused. Ask for
@@ -5932,52 +5968,184 @@ class PlaybackService : MediaLibraryService() {
                         about = mediaId,
                     )
                 }
-                val alternate = if (allowAlternateRecording) {
-                    withContext(Dispatchers.IO) {
-                        // The resolver has already ruled the id out, so the
-                        // cheapest rescue is a song version this run already
-                        // found — including one that landed after the
-                        // pre-audio lookup timed out. Only when there is none
-                        // is a search spent, and that search is one bounded
-                        // song-version lookup rather than the old multi-query
-                        // alternate walk.
-                        val downloaded = song.localUri != null || Downloads.isDownloaded(song.videoId)
-                        val cached = YtMusicRepository.cachedSongVersionFor(song)
-                        val fromCache = UnplayableAlternate.cachedSongVersion(
-                            row = song,
-                            cached = cached,
-                            downloaded = downloaded,
-                            unplayable = cached?.let { StreamResolver.isUnplayable(it.videoId) } == true,
-                        )
-                        val budget = UnplayableAlternate.searchBudgetMs(
-                            elapsedMs = SystemClock.elapsedRealtime() - startedAt,
-                            budgetMs = DEFINITIVE_ALTERNATE_TIMEOUT_MS,
-                        )
-                        fromCache ?: if (!UnplayableAlternate.allowsSongVersion(song, downloaded) ||
-                            budget <= 0L
-                        ) {
-                            null
-                        } else {
-                            withTimeoutOrNull(budget) {
-                                YtMusicRepository.songVersion(song, beforeAudio = true)?.let { found ->
-                                    UnplayableAlternate.cachedSongVersion(
+                // Walk the policy's order rather than a private one. Both
+                // rungs are measured from the selection deadline above, so the
+                // resolver's share comes out of the same ten seconds and the
+                // rescue cannot add a fresh 2.5 s + 3 s after it.
+                val plan = BlockedStartPolicy.plan(
+                    // The proxy rung runs inside StreamResolver, not here.
+                    proxyAvailable = false,
+                    highQualityAvailable = true,
+                )
+                var alternate: Song? = null
+                var highQuality: SourceStream? = null
+                for (rung in plan) {
+                    when (rung.step) {
+                        BlockedStartStep.ALTERNATE -> {
+                            alternate = if (allowAlternateRecording) {
+                                withContext(Dispatchers.IO) {
+                                    // The resolver has already ruled the id out,
+                                    // so the cheapest rescue is a song version
+                                    // this run already found — including one that
+                                    // landed after the pre-audio lookup timed
+                                    // out. Only when there is none is a search
+                                    // spent, and that search is one bounded
+                                    // song-version lookup rather than the old
+                                    // multi-query alternate walk.
+                                    val downloaded = song.localUri != null ||
+                                        Downloads.isDownloaded(song.videoId)
+                                    val cached = YtMusicRepository.cachedSongVersionFor(song)
+                                    val fromCache = UnplayableAlternate.cachedSongVersion(
                                         row = song,
-                                        cached = found,
+                                        cached = cached,
                                         downloaded = downloaded,
-                                        unplayable = StreamResolver.isUnplayable(found.videoId),
+                                        unplayable = cached?.let {
+                                            StreamResolver.isUnplayable(it.videoId)
+                                        } == true,
                                     )
+                                    val budgetMs = BlockedStartPolicy.timeoutFor(
+                                        BlockedStartStep.ALTERNATE,
+                                        SystemClock.elapsedRealtime() - selectionStartedAt,
+                                    )
+                                    fromCache ?: if (!UnplayableAlternate.allowsSongVersion(
+                                            song,
+                                            downloaded,
+                                        ) || budgetMs <= 0L
+                                    ) {
+                                        null
+                                    } else {
+                                        withTimeoutOrNull(budgetMs) {
+                                            YtMusicRepository.songVersion(song, beforeAudio = true)
+                                                ?.let { found ->
+                                                    UnplayableAlternate.cachedSongVersion(
+                                                        row = song,
+                                                        cached = found,
+                                                        downloaded = downloaded,
+                                                        unplayable = StreamResolver.isUnplayable(
+                                                            found.videoId,
+                                                        ),
+                                                    )
+                                                }
+                                        }
+                                    }
+                                }
+                            } else {
+                                null
+                            }
+                            TrackLog.d(
+                                "BitChord",
+                                BlockedStartPolicy.logLine(
+                                    mediaId,
+                                    BlockedStartStep.ALTERNATE,
+                                    when {
+                                        alternate != null -> "ok:${alternate.videoId}"
+                                        allowAlternateRecording -> "none"
+                                        else -> "skipped"
+                                    },
+                                    SystemClock.elapsedRealtime() - selectionStartedAt,
+                                ),
+                                about = mediaId,
+                            )
+                        }
+                        BlockedStartStep.HIGH_QUALITY -> {
+                            // Another upload was not available. A high-quality
+                            // source is the next thing that can make a sound:
+                            // YouTube's own stream is the one this network
+                            // refused, so waiting for it again only repeats the
+                            // refusal. This is the one live-path search allowed
+                            // before the first note, and only for a row that
+                            // has not made one — a mid-song rescue still may
+                            // not become another recording. `hq-verify` still
+                            // runs afterwards, while the listener hears it, and
+                            // can refuse the copy under the existing rules.
+                            if (BlockedStartPolicy.shouldSearchHighQuality(
+                                    alternateFound = alternate != null,
+                                    allowAlternateRecording = allowAlternateRecording,
+                                    networkFault = networkFault,
+                                    definitelyGone = UnplayableReason.isDefinitelyGone(reason),
+                                )
+                            ) {
+                                highQuality = withContext(Dispatchers.IO) {
+                                    val budgetMs = BlockedStartPolicy.timeoutFor(
+                                        BlockedStartStep.HIGH_QUALITY,
+                                        SystemClock.elapsedRealtime() - selectionStartedAt,
+                                    )
+                                    val target = uri?.let { SourceResolver.targetIn(it) }
+                                    // A catalogue rescue is only for a YouTube
+                                    // watch row, and never for a row the listener
+                                    // picked by hand: that row is not up for
+                                    // substitution (see MIX_PARAM).
+                                    val youtubeRow = uri != null &&
+                                        uri.scheme == "bitchord" &&
+                                        uri.authority == "watch" &&
+                                        !SourceResolver.isPickedAddonRow(uri)
+                                    val found = if (!youtubeRow || budgetMs <= 0L ||
+                                        target == null || !SourceResolver.canSubstituteForYouTube()
+                                    ) {
+                                        null
+                                    } else {
+                                        withTimeoutOrNull(budgetMs) {
+                                            SourceResolver.blockedStartStream(target, budgetMs)
+                                        }
+                                    }
+                                    TrackLog.d(
+                                        "BitChord",
+                                        BlockedStartPolicy.logLine(
+                                            mediaId,
+                                            BlockedStartStep.HIGH_QUALITY,
+                                            if (found != null) {
+                                                "ok:${found.sourceConfigId ?: "source"}"
+                                            } else {
+                                                "none"
+                                            },
+                                            SystemClock.elapsedRealtime() - selectionStartedAt,
+                                        ),
+                                        about = mediaId,
+                                    )
+                                    found
                                 }
                             }
                         }
+                        else -> Unit
                     }
-                } else {
-                    null
                 }
                 withContext(Dispatchers.Main) {
                     val live = this@PlaybackService.player ?: return@withContext
                     val currentItem = live.currentMediaItem ?: return@withContext
                     if (currentItem.mediaId != mediaId) return@withContext
-                    val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                    val elapsedMs = SystemClock.elapsedRealtime() - selectionStartedAt
+                    if (highQuality != null) {
+                        val target = uri?.let { SourceResolver.targetIn(it) }
+                        val currentUri = currentItem.localConfiguration?.uri
+                        if (target != null && currentUri != null) {
+                            val wasPlaying = live.playWhenReady
+                            QualityUpgrade.force(mediaId, highQuality)
+                            StreamChoice.remember(mediaId, highQuality, substituted = true)
+                            blockedStartCandidates[mediaId] =
+                                BlockedStartCandidate(target, highQuality)
+                            // Same reason as a mid-song upgrade: replacing the
+                            // item is reported as a playlist change, and this
+                            // row must not be booked twice before its first
+                            // note.
+                            swappingMediaId = mediaId
+                            live.replaceMediaItem(
+                                live.currentMediaItemIndex,
+                                currentItem.buildUpon()
+                                    .setUri(QualityUpgrade.upgradedUri(currentUri.toString()))
+                                    .setMimeType(null)
+                                    .build(),
+                            )
+                            live.seekTo(live.currentMediaItemIndex, 0L)
+                            if (wasPlaying) live.play()
+                            live.prepare()
+                            TrackLog.w(
+                                "BitChord",
+                                "unplayable: $mediaId $reason -> high-quality start",
+                                about = mediaId,
+                            )
+                            return@withContext
+                        }
+                    }
                     val decision = UnplayableRecovery.decide(
                         definitive = true,
                         hasAlternate = alternate != null,
@@ -5998,6 +6166,16 @@ class PlaybackService : MediaLibraryService() {
                         TrackLog.i(
                             "BitChord",
                             "unplayable timing: $mediaId skip after ${elapsedMs}ms",
+                            about = mediaId,
+                        )
+                        TrackLog.i(
+                            "BitChord",
+                            BlockedStartPolicy.logLine(
+                                mediaId,
+                                BlockedStartStep.NEXT_TRACK,
+                                "skip",
+                                SystemClock.elapsedRealtime() - selectionStartedAt,
+                            ),
                             about = mediaId,
                         )
                         skipPastUnplayable(mediaId, skipReason)
@@ -6041,6 +6219,40 @@ class PlaybackService : MediaLibraryService() {
 
     /** Ids with an alternate lookup already running, so one failure starts one search. */
     private val alternateLookups = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Proves a high-quality stream that was allowed to make the first sound of
+     * a blocked track. This is a playback event, not a timer: it runs once, on
+     * the transition to playing, and never polls. A missing YouTube reference
+     * (the blocked case) is not a rejection under [HqAudioVerify]'s rules, so
+     * the copy keeps playing; only a measured mismatch takes it off the
+     * speaker.
+     */
+    private fun verifyBlockedStartCandidate(exoPlayer: ExoPlayer) {
+        val mediaId = exoPlayer.currentMediaItem?.mediaId ?: return
+        val candidate = blockedStartCandidates.remove(mediaId) ?: return
+        scope.launch(TrackLog.about(mediaId)) {
+            val outcome = HqAudioVerify.verifyOutcome(
+                this@PlaybackService,
+                mediaId,
+                candidate.target,
+                candidate.stream,
+            )
+            if (outcome !is HqAudioVerify.Outcome.Mismatch) return@launch
+            withContext(Dispatchers.Main) {
+                val live = player ?: return@withContext
+                if (live.currentMediaItem?.mediaId != mediaId) return@withContext
+                TrackLog.w(
+                    "BitChord",
+                    "blocked-start: $mediaId hq-verify refused the high-quality start; moving on",
+                    about = mediaId,
+                )
+                QualityUpgrade.refuseUpgrades(mediaId)
+                QualityUpgrade.forget(mediaId)
+                skipPastUnplayable(mediaId, "high-quality start did not match the recording")
+            }
+        }
+    }
 
     /**
      * [this] song swapped onto [alternate] while keeping everything that says
