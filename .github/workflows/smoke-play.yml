@@ -40,7 +40,9 @@ jobs:
             # The Tokyo VM's 8888 exits on a datacenter IP, which YouTube answers
             # with its bot check (no audio, runs 40289071778/40304462986). Its
             # 8889 exits on the M8's home IP through tools\homeproxy-tunnel.ps1.
-            python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/smoke.bitchord-settings" "${SMOKE_PROXY_PORT:-8889}"
+            # The HQ sources' servers rate-limit runner IPs as well, so the
+            # whole emulator goes through 8889, not just the app's YouTube.
+            python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/smoke.bitchord-settings" "${SMOKE_PROXY_PORT:-8889}" --emulator
             echo "SMOKE_SETTINGS_FILE=$RUNNER_TEMP/smoke.bitchord-settings" >> "$GITHUB_ENV"
             echo "::notice title=smoke::HQ sources loaded"
           else
@@ -61,7 +63,7 @@ jobs:
           target: google_apis
           profile: pixel_7
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none ${{ env.EMU_HTTP_PROXY }}
           script: bash scripts/smoke/run.sh
 
       - name: Report
