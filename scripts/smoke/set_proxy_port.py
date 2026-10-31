@@ -22,7 +22,8 @@ proxy = data.get("proxy")
 if not (isinstance(proxy, dict) and proxy.get("host")):
     print("smoke: settings carry no proxy")
     sys.exit(0)
-proxy["port"] = port
+if not emulator:
+    proxy["port"] = port
 if emulator:
     # The emulator's own -http-proxy hands the proxy IPv6 literals (the home
     # end has no IPv6) and timed everything out (run 41165396517). Android's
@@ -38,10 +39,14 @@ if emulator:
         with open(env_file, "a", encoding="utf-8") as f:
             f.write(f"SMOKE_UPSTREAM_PROXY={proxy['host']}:{port}\n")
             f.write(f"SMOKE_UPSTREAM_AUTH={auth}\n")
-    # The app's own proxy stays on for YouTube: with it off the app's client
-    # answered NO_PROXY and ignored the device proxy (run 41166431685, no
-    # audio). Both now end at the same home route.
-    print(f"smoke: app proxy and device-wide proxy (authfwd) on port {port}")
+    # The app's own proxy keeps the listener's port, exactly as on the phone:
+    # its MUSIC_ONLY scope carries the YouTube Music requests through the
+    # overseas exit. Pointing it at the home route too made the emulator a
+    # Korean client ('music gate: YouTube Music restricted', every song
+    # version lookup timed out, run 41215306260). Requests outside the scope
+    # follow the device proxy (the app does since ko-102-test22), which is
+    # the home route below — where the phone's own audio comes from.
+    print(f"smoke: app proxy kept on port {proxy.get('port')}, device-wide proxy (authfwd) on port {port}")
 else:
     print(f"smoke: proxy port -> {port}")
 with open(path, "w", encoding="utf-8") as f:
