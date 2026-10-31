@@ -94,4 +94,34 @@ object AutomixWorkPolicy {
     /** The lead used by the controller; zero when no transition can happen. */
     fun standbyLeadMs(transitionPossible: Boolean): Long =
         if (transitionPossible) STANDBY_LEAD_MS else 0L
+
+    /**
+     * [EARLY_MIX_GUARD_MS] is the largest legitimate gap between where a smart
+     * fade starts and the end of the outgoing file: an analyzed outro can pull
+     * the start back, but three-quarters of a minute of song is a bad plan, not
+     * a long outro. Tracks shorter than [MIN_GUARD_DURATION_MS] are exempt
+     * because a genuine mix-out can sit anywhere on them.
+     */
+    const val EARLY_MIX_GUARD_MS = 30_000L
+    const val MIN_GUARD_DURATION_MS = 60_000L
+
+    /**
+     * Whether a smart plan starts implausibly early for [durationMs].
+     *
+     * [fadeMs] is included so the rule is about where the blend begins relative
+     * to the whole track: `start >= duration - fade - guard`. The guard exists
+     * because a tail analysis can be published in its regional timeline instead
+     * of the track's (content end ~24 s on a five-minute song), and arming from
+     * that cuts the song off after a few seconds. Pure so the boundary can be
+     * tested without a player.
+     */
+    fun smartArmTooEarly(
+        transitionStartMs: Long,
+        durationMs: Long,
+        fadeMs: Long,
+    ): Boolean {
+        if (durationMs <= 0L || durationMs < MIN_GUARD_DURATION_MS) return false
+        val earliest = durationMs - fadeMs.coerceAtLeast(0L) - EARLY_MIX_GUARD_MS
+        return transitionStartMs < earliest
+    }
 }

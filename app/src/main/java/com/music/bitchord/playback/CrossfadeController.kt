@@ -1536,6 +1536,18 @@ class CrossfadeController(
         if (fade <= 0L) return
 
         val transitionStartMs = (plan.transitionStart * 1000).roundToLong()
+        // A tail analysis published in its regional timeline (or any other bad
+        // outgoing timing) puts the plan seconds into the song. Never arm it:
+        // the ordinary advance is a better outcome than cutting the track off.
+        if (AutomixWorkPolicy.smartArmTooEarly(transitionStartMs, duration, fade)) {
+            val early = "out=${currentItem.mediaId} in=${nextItem.mediaId} " +
+                "start=$transitionStartMs duration=$duration fade=$fade"
+            if (early != lastEarlyPlanVerdict) {
+                lastEarlyPlanVerdict = early
+                Log.w(TAG, "crossfade: refused early plan $early")
+            }
+            return
+        }
         plannedTransition = currentItem.mediaId to transitionStartMs
         val remaining = transitionStartMs - player.currentPosition
         if (remaining <= MIX_PREFETCH_MS && currentAnalysis.isUsable && nextAnalysis.isUsable) {
@@ -3206,6 +3218,7 @@ class CrossfadeController(
 
     private var lastSmartPlan: TransitionPlan? = null
     private var lastSmartPlanStartMs = 0L
+    private var lastEarlyPlanVerdict: String? = null
 
     /**
      * The detailed Automix line under the stream stats: both songs' analysis

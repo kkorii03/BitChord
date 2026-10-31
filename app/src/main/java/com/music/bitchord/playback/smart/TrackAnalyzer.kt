@@ -56,6 +56,29 @@ import kotlin.math.ceil
 import kotlin.math.max
 import java.util.Locale
 
+/** Moves every time in [TrackFeatures.Features] by [offset] seconds. */
+internal fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Features {
+    if (offset == 0.0) return this
+    fun List<Double>.shifted() = map { it + offset }
+    fun List<EnergySample>.shifted() = map { it.copy(time = it.time + offset) }
+    fun List<MixCandidate>.shifted() = map { it.copy(time = it.time + offset) }
+    return copy(
+        audibleStartTime = audibleStartTime + offset,
+        pickupTime = pickupTime + offset,
+        introEndTime = introEndTime + offset,
+        outroStartTime = outroStartTime + offset,
+        contentEndTime = contentEndTime + offset,
+        mixInTime = mixInTime + offset,
+        mixOutTime = mixOutTime + offset,
+        downbeats = downbeats.shifted(),
+        phraseBoundaries = phraseBoundaries.shifted(),
+        energyCurve = energyCurve.shifted(),
+        lowEnergyCurve = lowEnergyCurve.shifted(),
+        mixInCandidates = mixInCandidates.shifted(),
+        mixOutCandidates = mixOutCandidates.shifted(),
+    )
+}
+
 /**
  * Produces [TrackAnalysis] for tracks that are about to be mixed, and hands it
  * to [TransitionPlanner].
@@ -851,29 +874,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         )
     }
 
-    /** Moves every time in [TrackFeatures.Features] by [offset] seconds. */
-    private fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Features {
-        if (offset == 0.0) return this
-        fun List<Double>.shifted() = map { it + offset }
-        fun List<EnergySample>.shifted() = map { it.copy(time = it.time + offset) }
-        fun List<MixCandidate>.shifted() = map { it.copy(time = it.time + offset) }
-        return copy(
-            audibleStartTime = audibleStartTime + offset,
-            pickupTime = pickupTime + offset,
-            introEndTime = introEndTime + offset,
-            outroStartTime = outroStartTime + offset,
-            contentEndTime = contentEndTime + offset,
-            mixInTime = mixInTime + offset,
-            mixOutTime = mixOutTime + offset,
-            downbeats = downbeats.shifted(),
-            phraseBoundaries = phraseBoundaries.shifted(),
-            energyCurve = energyCurve.shifted(),
-            lowEnergyCurve = lowEnergyCurve.shifted(),
-            mixInCandidates = mixInCandidates.shifted(),
-            mixOutCandidates = mixOutCandidates.shifted(),
-        )
-    }
-
     private fun analyzeHead(
         trackId: String,
         uri: Uri,
@@ -1573,7 +1573,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             grid = inputs.forModel?.let { tracker.track(it, offsetSeconds = actualStart) },
             vocalMask = if (features != null && vocalValues != null) vocalMask(vocalValues, features, actualStart) else null,
             seconds = seconds,
-            features = inputs.derived,
+            // [KO] A tail region is decoded from the end of the file, so its
+            // features carry times local to that region (0..45s). Returning the
+            // unshifted copy made a 5-minute track's content end read as ~24s
+            // and armed the smart fade seconds into the song. publishWindow and
+            // analyzeWindow already expect track-timeline seconds.
+            features = derived,
             start = actualStart,
             vocalWindow = vocalValues?.let { CurveWindow(actualStart, VocalSpectrogram.frameRate, it) },
             levelWindow = if (features != null) levelCurve(stereo, actualStart) else null,
