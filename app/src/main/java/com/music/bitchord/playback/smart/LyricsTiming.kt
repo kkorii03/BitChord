@@ -1485,6 +1485,20 @@ object LyricsTiming {
         probe: NextSyncProbe? = null,
     ): Adjustment.Mapped? {
         val started = System.currentTimeMillis()
+        // The next-song bundle honours the existing 429 hold: a previous
+        // playback may have been turned away, and asking again before the
+        // server's wait has passed would spend the same key.
+        if (probe != null) {
+            val held = store(context).get(videoId)
+            val retryAt = held?.songRetryAtMs
+            if (held?.songRetryKey == key &&
+                retryAt != null && retryAt > System.currentTimeMillis()
+            ) {
+                TrackLog.d(TAG, "AI timing deferred until $retryAt", videoId)
+                probe.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+                return null
+            }
+        }
         // The sound the phone already has, when it has all of it; the YouTube
         // address (Gemini fetching and watching the video) otherwise.
         val audio = runCatching { VideoAudio.wav(context, videoId) }.getOrNull()
@@ -1508,6 +1522,13 @@ object LyricsTiming {
         // again on the next playback.
         val pendingAttempts = mutableListOf<String>()
         var pendingWhisper = false
+        // Whether any engine actually answered, even with a transcript that
+        // did not fit: only "no engine answered" is an engine-stage failure.
+        var anyEngineAnswered = false
+        // Set when Deepgram turned the request away with a 429, so the next
+        // playback waits out the existing deferral instead of treating the
+        // refusal as a generic error.
+        var rateLimitedWaitMs: Long? = null
         suspend fun persistAttempts() {
             if (probe == null || pendingAttempts.isEmpty()) return
             store(context).update(videoId) { entry ->
@@ -1552,7 +1573,9 @@ object LyricsTiming {
                     }
                 }
                 val asked = System.currentTimeMillis()
-                val heard = com.music.bitchord.data.lyrics.Deepgram.words(audio, language, model)
+                val heardAnswer = com.music.bitchord.data.lyrics.Deepgram.listen(audio, language, model)
+                val heard = heardAnswer.words
+                if (heard != null) anyEngineAnswered = true
                 val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
                 val raw = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
                 val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
@@ -1570,6 +1593,15 @@ object LyricsTiming {
                     },
                     videoId,
                 )
+                if (heardAnswer.httpCode == 429) {
+                    val wait = SongSyncRetry.retryDelayMs(heardAnswer.retryAfterMs, 0)
+                    rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
+                    songQuietUntilMs = System.currentTimeMillis() + wait
+                    rateLimitedLog(videoId, wait)
+                    // The same key is refused for Whisper too; Gemini is a
+                    // separate provider and may still answer below.
+                    break
+                }
                 if (fitted != null) {
                     adjustment = fitted
                     engine = name
@@ -1590,6 +1622,7 @@ object LyricsTiming {
                 sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
                 audioWav = audio,
             )
+            if (answer != null) anyEngineAnswered = true
             val raw = answer?.let { fitAi(lines, sung.map { s -> s.index }, it) }
             adjustment = raw?.takeIf { aiMayApply(lines, it, isVideo) }
             TrackLog.d(
@@ -1609,20 +1642,23 @@ object LyricsTiming {
             )
         }
         if (adjustment == null) {
-            // An answer from Gemini that simply did not fit is a healthy
-            // no-answer (the engine ran and found nothing to correct). No
-            // answer at all is an engine-stage failure; keep it out of the
-            // confirmed attempts so the next playback asks again.
-            if (probe != null && answer == null) {
-                probe.failure = if (audio == null) {
-                    NextPrepPolicy.SyncFailure.NO_AUDIO
-                } else {
-                    NextPrepPolicy.SyncFailure.ERROR
-                }
+            // Any engine that answered — even with a transcript that did not
+            // fit — is a healthy no-answer. Only no answer from every engine
+            // is an engine-stage failure; keep it out of the confirmed
+            // attempts so the next playback asks again.
+            if (probe != null) {
+                probe.failure = NextPrepPolicy.engineFailure(
+                    anyEngineAnswered = anyEngineAnswered,
+                    rateLimited = rateLimitedWaitMs != null,
+                    audioPresent = audio != null,
+                )
             }
-            if (probe?.failure == null) {
+            if (rateLimitedWaitMs != null) {
+                markRateLimited(context, videoId, key, rateLimitedWaitMs!!)
+            }
+            if (NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) {
                 persistAttempts()
-                if (answer != null) store(context).update(videoId) { it.copy(aiFailedKey = key) }
+                if (anyEngineAnswered) store(context).update(videoId) { it.copy(aiFailedKey = key) }
             }
             return null
         }
@@ -2053,11 +2089,13 @@ object LyricsTiming {
                 answer.httpCode !in 200..299 -> NextPrepPolicy.SyncFailure.ERROR
                 else -> NextPrepPolicy.SyncFailure.TOO_FEW_LINES
             }
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
             return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0, probe?.failure)
         }
         if (heard.size < MIN_AI_LINES) {
             songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
             probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
             return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
@@ -2101,7 +2139,7 @@ object LyricsTiming {
         if (httpCode == null) return
         // The probe is only read here: a failure has already been set above
         // when the answer carried no words or too few of them.
-        if (probe?.failure != null) return
+        if (!NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) return
         noteAttempt(context, videoId, key, engine)
     }
 

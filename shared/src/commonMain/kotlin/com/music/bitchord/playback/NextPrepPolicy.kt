@@ -232,6 +232,32 @@ object NextPrepPolicy {
     fun shouldStoreSyncResult(facts: SyncFacts): Boolean =
         !syncResult(facts).startsWith("failed:")
 
+    /**
+     * The same rule for a caller that only has the engine-stage [failure], not
+     * a whole [SyncFacts]. A failure is never stored as confirmed; a healthy
+     * no-answer is.
+     */
+    fun shouldStoreSyncResult(failure: SyncFailure?): Boolean = failure == null
+
+    /**
+     * The engine-stage failure to report after a video attempt, or null when
+     * at least one engine answered. A Deepgram transcript that did not fit the
+     * lines still answered, so it is a healthy no-answer even when Gemini is
+     * already spent. Only every engine returning nothing is a failure, and a
+     * 429 keeps its own reason so the existing rate-limit hold can defer the
+     * next playback.
+     */
+    fun engineFailure(
+        anyEngineAnswered: Boolean,
+        rateLimited: Boolean,
+        audioPresent: Boolean,
+    ): SyncFailure? = when {
+        anyEngineAnswered -> null
+        rateLimited -> SyncFailure.RATE_LIMIT
+        !audioPresent -> SyncFailure.NO_AUDIO
+        else -> SyncFailure.ERROR
+    }
+
     /** A value for a step that has no answer, with the reason that stopped it. */
     fun noneWithReason(reason: String?): String = "none(${reason ?: "none"})"
 
