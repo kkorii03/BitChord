@@ -28,15 +28,25 @@ enum class BlockedStartStep {
 data class BlockedStartBudget(val step: BlockedStartStep, val timeoutMs: Long)
 
 object BlockedStartPolicy {
-    /** The whole rescue, from the first refusal to the next row making a sound. */
-    const val TOTAL_BUDGET_MS = 10_000L
+    /** The whole rescue, from the play tap to a first sound or the next row. */
+    const val TOTAL_BUDGET_MS = 9_000L
+
+    /**
+     * The part of [TOTAL_BUDGET_MS] the stream resolver may spend after the
+     * first refusal. The rest is reserved for the catalogue search that can
+     * actually make a sound on a region-blocked track: 10-31 Betty spent its
+     * whole minute inside the resolver and was only then allowed to look for
+     * the FLAC that played it. Five seconds leaves the four-second
+     * high-quality window intact.
+     */
+    const val RESOLVER_BUDGET_MS = 5_000L
 
     /**
      * How long a direct client's refusal is allowed to sit beside InnerTubeX
      * before the proxy is started. The direct answer lands in ~300 ms on this
      * device; nine seconds was the walk that produced the report.
      */
-    const val DIRECT_HOLD_MS = 1_200L
+    const val DIRECT_HOLD_MS = 1_000L
 
     /** Another normal upload of the same recording: one bounded catalogue ask. */
     const val ALTERNATE_TIMEOUT_MS = 1_500L
@@ -103,9 +113,56 @@ object BlockedStartPolicy {
                 (remaining - HIGH_QUALITY_TIMEOUT_MS).coerceAtLeast(0L),
             )
             BlockedStartStep.PROXY -> PROXY_TIMEOUT_MS.coerceAtMost(remaining)
-            BlockedStartStep.HIGH_QUALITY -> HIGH_QUALITY_TIMEOUT_MS
+            // The high-quality window is still the protected rung, but it is
+            // now paid for out of the same nine seconds. When the resolver has
+            // already spent the budget, starting a four-second catalogue
+            // search can only outlive the listener, so the answer is zero and
+            // the row moves on.
+            BlockedStartStep.HIGH_QUALITY -> HIGH_QUALITY_TIMEOUT_MS.coerceAtMost(remaining)
             BlockedStartStep.NEXT_TRACK -> 0L
         }
+    }
+
+    /**
+     * The first-audio figure the track summary records: real elapsed time from
+     * the play tap, never the zero a late same-row transition used to write.
+     *
+     * A crossfaded row has genuinely been sounding since before it became
+     * current, so its answer is zero. A missing start means the track never
+     * made a sound and the summary keeps `firstAudio=-`.
+     */
+    fun firstAudioMs(selectedAtMs: Long?, nowMs: Long, alreadyAudible: Boolean): Long? = when {
+        alreadyAudible -> 0L
+        selectedAtMs == null -> null
+        else -> (nowMs - selectedAtMs).coerceAtLeast(0L)
+    }
+
+    /**
+     * The first-audio figure a summary keeps when the same row becomes current
+     * again (a version or source refresh).
+     *
+     * The outgoing summary is written and cleared first, so the new summary
+     * cannot read the old measurement from its own fields. The caller passes
+     * the value it captured before logging them. A same-id refresh keeps a
+     * measurement already taken; otherwise a crossfaded row is zero and a row
+     * that has not sounded has no figure yet. This is what stops the 10-31
+     * firstAudio=0 being written over a track the listener waited 32 s for.
+     */
+    fun summaryFirstAudioMs(
+        previousVideoId: String?,
+        currentVideoId: String?,
+        previousFirstAudioMs: Long?,
+        alreadyAudible: Boolean,
+        previousEnded: Boolean = false,
+    ): Long? = when {
+        // A repeat of the same row is a new play, not a refresh: the outgoing
+        // track ran to its end and the next one has not sounded yet.
+        currentVideoId != null &&
+            currentVideoId == previousVideoId &&
+            !previousEnded &&
+            previousFirstAudioMs != null -> previousFirstAudioMs
+        alreadyAudible -> 0L
+        else -> null
     }
 
     /**

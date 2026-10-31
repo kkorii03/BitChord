@@ -107,6 +107,7 @@ import com.music.bitchord.data.listentogether.partyTopUpEchoed
 import com.music.bitchord.data.listentogether.partyTopUpLanded
 import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.data.net.BlockedStartPolicy
+import com.music.bitchord.data.net.BlockedStartRescue
 import com.music.bitchord.data.net.BlockedStartStep
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.UnplayableAlternate
@@ -822,6 +823,14 @@ class PlaybackService : MediaLibraryService() {
     /** When the current track was chosen, for the time-to-first-audio log. */
     private var trackSelectedAt: Long? = null
 
+    /**
+     * The row [trackSelectedAt] belongs to. A PLAYLIST_CHANGED transition for
+     * the same row (a source/version swap) must not restart the first-audio
+     * clock, or a track that finally sounds after a blocked-start rescue is
+     * reported as 0 ms because its clock was reset a moment before the sound.
+     */
+    private var selectedTrackMediaId: String? = null
+
     /** The track the one-line summary will be about when it stops being current. */
     private var summarySong: Song? = null
 
@@ -1224,10 +1233,20 @@ class PlaybackService : MediaLibraryService() {
             if (player === activePlayer && activePlayer.isPlaying &&
                 events.contains(Player.EVENT_TIMELINE_CHANGED)
             ) {
-                // Read-ahead follows the queue edit too, so the bundle's
-                // high-quality step has the same next row to wait on.
-                prefetchAround(activePlayer)
-                scheduleNextPrep(activePlayer)
+                // A transition leaves isPlaying true for a moment while the
+                // incoming row has not made a sound. Starting the next row's
+                // read-ahead there put its slow InnerTubeX walk beside the
+                // current row's own, which is the cold start this guard
+                // prevents. The first-sound callback schedules it instead.
+                val heardCurrent = activePlayer.currentMediaItem?.mediaId?.let {
+                    it == audibleMediaId
+                } == true
+                if (heardCurrent) {
+                    // Read-ahead follows the queue edit too, so the bundle's
+                    // high-quality step has the same next row to wait on.
+                    prefetchAround(activePlayer)
+                    scheduleNextPrep(activePlayer)
+                }
             }
         }
 
@@ -1253,8 +1272,12 @@ class PlaybackService : MediaLibraryService() {
             // the legs that were measured were the ones running in the
             // background for tracks nobody was waiting on.
             if (isPlaying) {
-                trackSelectedAt?.let {
-                    val tookMs = SystemClock.elapsedRealtime() - it
+                trackSelectedAt?.let { selectedAt ->
+                    val tookMs = BlockedStartPolicy.firstAudioMs(
+                        selectedAtMs = selectedAt,
+                        nowMs = SystemClock.elapsedRealtime(),
+                        alreadyAudible = false,
+                    ) ?: return@let
                     TrackLog.d(
                         "BitChord",
                         "TIMING first audio: ${tookMs}ms since track selected",
@@ -4455,7 +4478,13 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** Remembers the facts the one-line summary will need when this track ends. */
-    private fun startTrackSummary(song: Song?, alreadyAudible: Boolean) {
+    private fun startTrackSummary(
+        song: Song?,
+        alreadyAudible: Boolean,
+        previousId: String? = summarySong?.videoId,
+        previousFirstAudio: Long? = summaryFirstAudioMs,
+        previousEnded: Boolean = false,
+    ) {
         summarySong = song
         if (song == null) {
             summarySource = "none"
@@ -4479,7 +4508,16 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         // A crossfaded track has been sounding since before it became current.
-        summaryFirstAudioMs = if (alreadyAudible) 0L else null
+        // A same-row refresh (a version/source swap) must keep the measurement
+        // already taken; overwriting it with 0 is how the 10-31 summary said
+        // firstAudio=0 on a track the listener waited 32 seconds to hear.
+        summaryFirstAudioMs = BlockedStartPolicy.summaryFirstAudioMs(
+            previousVideoId = previousId,
+            currentVideoId = song.videoId,
+            previousFirstAudioMs = previousFirstAudio,
+            alreadyAudible = alreadyAudible,
+            previousEnded = previousEnded,
+        )
     }
 
     /**
@@ -4565,6 +4603,13 @@ class PlaybackService : MediaLibraryService() {
         // The outgoing track's story ends here. Its own lines are already in
         // the log; this is the one line that ties them together for a reader
         // who was not watching while it played.
+        //
+        // The line clears the summary fields, so the same-row refresh's
+        // measurement has to be captured first. Handing it to
+        // [startTrackSummary] below is what keeps a version/source swap from
+        // reporting firstAudio=0 for a track that already sounded.
+        val outgoingSummaryId = summarySong?.videoId
+        val outgoingFirstAudioMs = summaryFirstAudioMs
         if (!sameTrackSwap) logTrackSummary(previousEnded)
         syncBoundedContextCursor(exoPlayer, mediaItem)
         if (boundedContextWindow != null && !ListenTogether.state.value.inParty) {
@@ -4674,8 +4719,16 @@ class PlaybackService : MediaLibraryService() {
         val played = mediaItem?.toSong()
         // Refreshing the same track's summary is safe: it does not write the
         // outgoing line, it only updates which source the still-playing track
-        // will report when it actually ends.
-        startTrackSummary(played, alreadyAudible)
+        // will report when it actually ends. The measurement captured before
+        // the outgoing line was cleared is passed along so a same-row refresh
+        // cannot overwrite it with zero.
+        startTrackSummary(
+            played,
+            alreadyAudible,
+            previousId = outgoingSummaryId,
+            previousFirstAudio = outgoingFirstAudioMs,
+            previousEnded = previousEnded,
+        )
         TrackLog.i(
             "BitChord",
             "play: -> ${played?.title?.take(80).orEmpty()} - ${played?.artist?.take(80).orEmpty()} " +
@@ -4696,7 +4749,21 @@ class PlaybackService : MediaLibraryService() {
         // and an armed timer would sit there until some unrelated buffering
         // blip tripped it, reporting a wait of seconds for a track that started
         // instantly. Measured one at 16871ms.
-        trackSelectedAt = if (alreadyAudible) null else SystemClock.elapsedRealtime()
+        val selectionId = mediaItem?.mediaId
+        val sameUnheardSelection = selectionId != null &&
+            selectionId == selectedTrackMediaId &&
+            trackSelectedAt != null
+        if (alreadyAudible) {
+            // A same-row source/version refresh can arrive with the audible
+            // hint while the row has still never sounded. Keeping its clock is
+            // what makes the eventual first-audio figure describe the whole
+            // wait instead of the few milliseconds since the refresh.
+            if (!sameUnheardSelection) trackSelectedAt = null
+            selectedTrackMediaId = selectionId
+        } else if (!sameUnheardSelection) {
+            selectedTrackMediaId = selectionId
+            trackSelectedAt = SystemClock.elapsedRealtime()
+        }
         if (alreadyAudible) {
             TrackLog.d(
                 "BitChord",
@@ -4820,7 +4887,9 @@ class PlaybackService : MediaLibraryService() {
         // start reaches here with isPlaying still false and is picked up by
         // [playbackListener]'s first-sound callback; a gapless advance and a
         // crossfade are already sounding, so they prefetch here as before.
-        if (exoPlayer.isPlaying || alreadyAudible) prefetchAround(exoPlayer)
+        val currentAudible = alreadyAudible ||
+            (exoPlayer.isPlaying && exoPlayer.currentMediaItem?.mediaId == audibleMediaId)
+        if (currentAudible) prefetchAround(exoPlayer)
         // The second look belongs to the track it was started for; the
         // queue moving on ends it — unless it is already proving what it
         // found, see [cancelStaleUpgradeJob] — and starts the new
@@ -5890,11 +5959,15 @@ class PlaybackService : MediaLibraryService() {
     ) {
         if (!alternateLookups.add(mediaId)) return
         // The selection deadline, not the failure handler's clock. The resolver
-        // has already spent part of the listener's ten seconds before this
+        // has already spent part of the listener's nine seconds before this
         // coroutine starts; measuring from here restarted the catalogue steps
         // with a fresh budget and let one blocked start run past the ceiling
         // (9 s in the resolver, then 5.5 s more here).
         val selectionStartedAt = trackSelectedAt ?: SystemClock.elapsedRealtime()
+        val rescue = BlockedStartRescue(
+            startedAtMs = selectionStartedAt,
+            nowMs = { SystemClock.elapsedRealtime() },
+        )
         scope.launch(TrackLog.about(mediaId)) {
             try {
                 // A 403 in the middle of a track is not a verdict about the
@@ -5970,7 +6043,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 // Walk the policy's order rather than a private one. Both
                 // rungs are measured from the selection deadline above, so the
-                // resolver's share comes out of the same ten seconds and the
+                // resolver's share comes out of the same nine seconds and the
                 // rescue cannot add a fresh 2.5 s + 3 s after it.
                 val plan = BlockedStartPolicy.plan(
                     // The proxy rung runs inside StreamResolver, not here.
@@ -6003,18 +6076,21 @@ class PlaybackService : MediaLibraryService() {
                                             StreamResolver.isUnplayable(it.videoId)
                                         } == true,
                                     )
-                                    val budgetMs = BlockedStartPolicy.timeoutFor(
-                                        BlockedStartStep.ALTERNATE,
-                                        SystemClock.elapsedRealtime() - selectionStartedAt,
-                                    )
+                                    // A copy already in hand is used even when
+                                    // the budget is spent: it needs no request
+                                    // and can make a sound immediately.
                                     fromCache ?: if (!UnplayableAlternate.allowsSongVersion(
                                             song,
                                             downloaded,
-                                        ) || budgetMs <= 0L
+                                        )
                                     ) {
                                         null
                                     } else {
-                                        withTimeoutOrNull(budgetMs) {
+                                        // One bounded lookup, inside the same
+                                        // nine seconds the resolver has been
+                                        // spending. A late answer is discarded
+                                        // by the rescue clock.
+                                        rescue.runStep(BlockedStartStep.ALTERNATE) {
                                             YtMusicRepository.songVersion(song, beforeAudio = true)
                                                 ?.let { found ->
                                                     UnplayableAlternate.cachedSongVersion(
@@ -6066,10 +6142,6 @@ class PlaybackService : MediaLibraryService() {
                                 )
                             ) {
                                 highQuality = withContext(Dispatchers.IO) {
-                                    val budgetMs = BlockedStartPolicy.timeoutFor(
-                                        BlockedStartStep.HIGH_QUALITY,
-                                        SystemClock.elapsedRealtime() - selectionStartedAt,
-                                    )
                                     val target = uri?.let { SourceResolver.targetIn(it) }
                                     // A catalogue rescue is only for a YouTube
                                     // watch row, and never for a row the listener
@@ -6079,12 +6151,17 @@ class PlaybackService : MediaLibraryService() {
                                         uri.scheme == "bitchord" &&
                                         uri.authority == "watch" &&
                                         !SourceResolver.isPickedAddonRow(uri)
-                                    val found = if (!youtubeRow || budgetMs <= 0L ||
+                                    val found = if (!youtubeRow ||
                                         target == null || !SourceResolver.canSubstituteForYouTube()
                                     ) {
                                         null
                                     } else {
-                                        withTimeoutOrNull(budgetMs) {
+                                        // The protected high-quality window is
+                                        // paid from the same nine seconds, so
+                                        // the listener hears this copy or the
+                                        // next row rather than a search that
+                                        // outlives the budget.
+                                        rescue.runStep(BlockedStartStep.HIGH_QUALITY) { budgetMs ->
                                             SourceResolver.blockedStartStream(target, budgetMs)
                                         }
                                     }

@@ -43,18 +43,23 @@ class BlockedStartPolicyTest {
     }
 
     @Test
-    fun `every step is bounded by the whole rescue's ten seconds`() {
+    fun `every step is bounded by the whole rescue's nine seconds`() {
         val plan = BlockedStartPolicy.plan(proxyAvailable = true, highQualityAvailable = true)
         val spent = plan.filter { it.step != BlockedStartStep.NEXT_TRACK }.sumOf { it.timeoutMs }
         assertTrue(plan.all { it.timeoutMs <= BlockedStartPolicy.TOTAL_BUDGET_MS })
         assertTrue(
             spent <= BlockedStartPolicy.TOTAL_BUDGET_MS,
-            "the rescue may not promise more than the listener's ten seconds: $spent",
+            "the rescue may not promise more than the listener's nine seconds: $spent",
         )
         assertTrue(
             BlockedStartPolicy.DIRECT_HOLD_MS + spent <= BlockedStartPolicy.TOTAL_BUDGET_MS,
-            "the direct hold is spent from the same ten seconds: " +
+            "the direct hold is spent from the same nine seconds: " +
                 "${BlockedStartPolicy.DIRECT_HOLD_MS + spent}",
+        )
+        assertTrue(
+            BlockedStartPolicy.RESOLVER_BUDGET_MS + BlockedStartPolicy.HIGH_QUALITY_TIMEOUT_MS <=
+                BlockedStartPolicy.TOTAL_BUDGET_MS,
+            "the resolver must leave the high-quality window inside the same nine seconds",
         )
     }
 
@@ -112,7 +117,7 @@ class BlockedStartPolicyTest {
             BlockedStartPolicy.HIGH_QUALITY_TIMEOUT_MS,
             BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 0L),
         )
-        assertEquals(0L, BlockedStartPolicy.timeoutFor(BlockedStartStep.ALTERNATE, 10_000L))
+        assertEquals(0L, BlockedStartPolicy.timeoutFor(BlockedStartStep.ALTERNATE, 9_000L))
         assertEquals(0L, BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, 25_000L))
     }
 
@@ -168,23 +173,25 @@ class BlockedStartPolicyTest {
     }
 
     @Test
-    fun `a late rescue still gets its high-quality window`() {
-        // 10-31 Betty: the resolver had spent about nine seconds before the
+    fun `a late rescue still gets its high-quality window inside the budget`() {
+        // 10-31 Betty: the resolver had spent about five seconds before the
         // catalogue rungs ran. The greedy split gave the alternate the last
         // second and the high-quality search none, so the track that a Qobuz
-        // FLAC could play was skipped instead.
+        // FLAC could play was skipped instead. The resolver is now bounded to
+        // its own five seconds, leaving that window intact.
         assertEquals(
             0L,
-            BlockedStartPolicy.timeoutFor(BlockedStartStep.ALTERNATE, 9_000L),
+            BlockedStartPolicy.timeoutFor(BlockedStartStep.ALTERNATE, 5_000L),
             "the alternate leaves the high-quality window free",
         )
         assertEquals(
             BlockedStartPolicy.HIGH_QUALITY_TIMEOUT_MS,
-            BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 9_000L),
+            BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 5_000L),
         )
         assertEquals(
-            BlockedStartPolicy.HIGH_QUALITY_TIMEOUT_MS,
-            BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 10_000L),
+            0L,
+            BlockedStartPolicy.timeoutFor(BlockedStartStep.HIGH_QUALITY, 9_000L),
+            "a spent budget does not start a four-second search past the ceiling",
         )
         assertEquals(
             BlockedStartPolicy.ALTERNATE_TIMEOUT_MS,

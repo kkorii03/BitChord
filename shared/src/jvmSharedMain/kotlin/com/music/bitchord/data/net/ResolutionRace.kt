@@ -68,6 +68,12 @@ internal suspend fun <T> raceForFirstSuccess(
     val other = try {
         otherJob.await()
     } catch (cancelled: CancellationException) {
+        // The caller (for example a withTimeoutOrNull around this race) has
+        // cancelled us. Both routes live on the shared scope, not as children
+        // of this coroutine, so they must be stopped explicitly or the slow
+        // proxy/InnerTubeX walk keeps running past the caller's budget.
+        directJob.cancel()
+        proxyJob.cancel()
         throw cancelled
     } catch (t: Throwable) {
         first
