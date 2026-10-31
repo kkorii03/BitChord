@@ -468,6 +468,9 @@ def judge_c5(lines: list[LogLine]) -> Result:
                 and (
                     (VERSION_SWAP_RE.search(line.msg) and "7QihqRWMrz8" in line.msg)
                     or ("unplayable: 7QihqRWMrz8" in line.msg and "-> alt" in line.msg)
+                    # The scenario queue holds only this track, so a timely
+                    # skip has nothing to land on; the decision time counts.
+                    or ("unplayable: 7QihqRWMrz8" in line.msg and "-> skip" in line.msg)
                 )
             ),
             None,
