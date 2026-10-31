@@ -6,6 +6,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -234,12 +235,17 @@ object TelegramClientManager {
      * [beginStream] takes its own and waits for the session again.
      */
     suspend fun streamMetadata(trackId: String): TelegramTrack {
-        runOnWorker { acquireStreamLease("stream metadata open") }
+        // Callers include main-thread prefetch: the wait for the worker happens
+        // on IO, never on the caller's thread. The release must still run when
+        // the lookup is cancelled, or the lease (and the client) would leak.
+        withContext(Dispatchers.IO) { runOnWorker { acquireStreamLease("stream metadata open") } }
         return try {
             awaitReady()
             withContext(Dispatchers.IO) { trackForStream(trackId) }
         } finally {
-            runOnWorker { releaseStreamLease("stream metadata close") }
+            withContext(NonCancellable + Dispatchers.IO) {
+                runOnWorker { releaseStreamLease("stream metadata close") }
+            }
         }
     }
 
