@@ -1,10 +1,17 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.FriendlyError
+import com.music.bitchord.playback.AudioRouting
+import androidx.compose.material3.Switch
+import com.music.bitchord.data.settings.PrivateListeningSource
+import com.music.bitchord.ui.theme.AppSpacing
+import androidx.compose.material3.SwitchDefaults
 import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.wear.WatchInstaller
 import android.content.Context
 import androidx.annotation.StringRes
 import android.content.Intent
+import android.media.AudioFormat
 import android.media.audiofx.AudioEffect
 import android.net.Uri
 import android.os.Build
@@ -258,6 +265,7 @@ fun SettingsScreen(
     val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     val directSourceStream by AppSettings.directSourceStream.collectAsStateWithLifecycle()
+    val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     // A property of the hardware, so it is read once rather than remembered
     // against a key that can never change — see [DeviceCodecs.playsDolbyAtmos],
     // which caches the codec-list walk for the life of the process.
@@ -2729,6 +2737,15 @@ private fun AppFont.description(): String = stringResource(
     when (this) {
         AppFont.DEFAULT -> R.string.font_default_subtitle
         AppFont.LEGACY -> R.string.font_legacy_subtitle
+    },
+)
+
+@Composable
+private fun LowPowerMode.localizedLabel(): String = stringResource(
+    when (this) {
+        LowPowerMode.AUTO -> R.string.low_power_auto
+        LowPowerMode.ON -> R.string.low_power_on
+        LowPowerMode.OFF -> R.string.low_power_off
     },
 )
 

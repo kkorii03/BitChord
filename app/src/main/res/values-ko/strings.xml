@@ -1438,12 +1438,12 @@
     <string name="pipeline_source_verified">출처: %1$s · 검증됨(오프셋 %2$s ms)</string>
     <string name="pipeline_source_unverified">출처: %1$s · 검증 전</string>
     <string name="search_source_youtube" translatable="false">YouTube</string>
-    <string name="sync_downloaded_playlists">재생목록 최신 상태로 유지</string>
-    <string name="sync_downloaded_playlists_subtitle">하루 두 번 확인하여 다운로드한 재생목록에 새로 추가된 노래를 다운로드합니다</string>
+    <string name="sync_downloaded_playlists">플레이리스트 최신 상태로 유지</string>
+    <string name="sync_downloaded_playlists_subtitle">하루 두 번 확인하여 다운로드한 플레이리스트에 새로 추가된 노래를 다운로드합니다</string>
     <string name="playlist_sync_ask_title">%1$s의 새 노래: %2$d</string>
     <string name="playlist_sync_ask_text">탭하여 다운로드</string>
     <string name="playlist_sync_done_title">%1$s에 추가됨: %2$d</string>
-    <string name="playlist_updates_channel">재생목록 업데이트</string>
+    <string name="playlist_updates_channel">플레이리스트 업데이트</string>
     <string name="source_downloads_on">다운로드 허용</string>
     <string name="direct_source_stream">소스에서 직접 스트리밍</string>
     <string name="direct_source_stream_in_party">함께 듣기 파티 중에는 꺼집니다</string>
@@ -1456,7 +1456,7 @@
     <string name="folders">폴더</string>
     <string name="folder">폴더</string>
     <string name="no_local_folders">음악이 있는 폴더가 없습니다</string>
-    <string name="offline_playlist_empty">아직 이 재생목록에 노래가 없습니다. 노래 메뉴에서 추가하세요.</string>
+    <string name="offline_playlist_empty">아직 이 플레이리스트에 노래가 없습니다. 노래 메뉴에서 추가하십시오.</string>
     <string name="offline_liked_empty">이 기기에서 좋아요한 노래가 여기에 표시됩니다</string>
     <string name="saved_on_this_device">이 기기에 저장됨</string>
     <string name="find_your_mood">분위기 찾기</string>
@@ -1464,7 +1464,7 @@
     <string name="no_video_version">이 노래의 동영상 버전을 찾을 수 없습니다</string>
     <string name="version_switch_in_party">함께 듣기에서는 모두가 같은 버전을 듣습니다</string>
     <string name="addon_blocked_title">이 노래를 재생할 수 없음</string>
-    <string name="addon_blocked_quality">%1$s의 오디오 품질이 %2$s(으)로 설정되어 있습니다. %3$s의 노래는 무손실로만 재생됩니다. 이 노래를 재생하려면 설정 → 오디오 품질에서 변경하세요.</string>
+    <string name="addon_blocked_quality">%1$s의 오디오 품질이 %2$s(으)로 설정되어 있습니다. %3$s의 노래는 무손실로만 재생됩니다. 이 노래를 재생하려면 설정 → 오디오 품질에서 변경하십시오.</string>
     <string name="addon_blocked_watch">음악이 워치를 통해 재생 중이며, 워치는 오디오를 무손실 미만으로 제한합니다. 휴대전화가 음악 재생을 다시 맡으면 %1$s의 노래가 다시 재생됩니다.</string>
     <string name="download_addon_left_out_title">%1$s 없이 다운로드 중</string>
     <string name="download_addon_not_allowed">%1$s에서 다운로드를 허용하지 않아 다른 소스에서 노래를 저장합니다.</string>

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ui.icons.SfIcons
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility

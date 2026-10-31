@@ -174,12 +174,24 @@ suspend fun loadAutoplayTracks(
     sessionSong: Song? = null,
     sessionIds: Set<String> = emptySet(),
 ): Result<List<Song>> {
-    val seed = youtubeSeedFor(seedSong) ?: return Result.success(emptyList())
-    // A music video plays on with music videos, as YouTube Music does.
-    val videos = seedSong.isVideo && seed == seedSong.videoId
-    val related = YtMusicRepository.radio(seed, preferVideo = videos).getOrElse { return Result.failure(it) }
-    val extra = QueueBuilder.extend(existing, related, limit, preferVideos = videos)
-    if (extra.isEmpty()) return Result.success(emptyList())
+    val seed = youtubeSeedFor(seedSong) ?: run {
+        // A module track has no YouTube id of its own and the catalogue search
+        // found no match. Say so: an empty batch here used to look exactly like
+        // a station that answered with nothing.
+        TrackLog.d(
+            "BitChord",
+            "autoplay: no youtube seed for ${seedSong.videoId}",
+            about = seedSong.videoId,
+        )
+        return Result.success(emptyList())
+    }
+    val mode = videoRadioModeFor(seedSong)
+    // A shared queue is one running order for everyone; a per-listener video
+    // station would make that order depend on whose phone topped it up.
+    val videoWanted = AppSettings.videoRadio.value &&
+        mode == AutoplayMode.VIDEO_RADIO &&
+        !ListenTogether.state.value.inParty
+    val offline = AppSettings.meteredConnection.value == null
 
     // Offline the only video songs that can play are the downloaded ones; no
     // station request is worth starting just to fail.

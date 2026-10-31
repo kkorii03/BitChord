@@ -497,27 +497,27 @@ internal fun SleeveNerdStats(
             AutomixStatusLine.Hidden -> null
             AutomixStatusLine.StoppedInParty -> stringResource(Res.string.automix_stopped_in_party)
             AutomixStatusLine.VideoCrossfade -> stringResource(Res.string.automix_not_supported_video)
-            is AutomixStatusLine.Analysis -> stringResource(
-                // Both sides always named, even when they agree, so the line
-                // reads the same way every time and the eye can find the half
-                // it wants without re-parsing the sentence.
-                text = when {
-                    // Ahead of the video case because it is the broader one:
-                    // in a party nothing is analysed for any song, video or
-                    // not, so naming the video limitation there would describe
-                    // a rule that is not the one in force.
-                    inParty -> stringResource(Res.string.automix_stopped_in_party)
-                    song.isVideoOrigin ->
-                        stringResource(Res.string.automix_not_supported_video)
-                    // The detailed line once the controller has one: each song's
-                    // grid, then the planned mix — the loops and what cleared them.
-                    automixDetail != null -> automixDetail!!
-                    else -> stringResource(
-                        Res.string.automix_analysis_status,
-                        smartAnalysis.current.localizedLabel(),
-                        smartAnalysis.next.localizedLabel(),
-                    )
-                },
+            is AutomixStatusLine.Analysis -> when {
+                // Ahead of the video case because it is the broader one:
+                // in a party nothing is analysed for any song, video or
+                // not, so naming the video limitation there would describe
+                // a rule that is not the one in force.
+                inParty -> stringResource(Res.string.automix_stopped_in_party)
+                song.isVideoOrigin ->
+                    stringResource(Res.string.automix_not_supported_video)
+                // The detailed line once the controller has one: each song's
+                // grid, then the planned mix — the loops and what cleared them.
+                automixDetail != null -> automixDetail!!
+                else -> stringResource(
+                    Res.string.automix_analysis_status,
+                    smartAnalysis.current.localizedLabel(),
+                    smartAnalysis.next.localizedLabel(),
+                )
+            }
+        }
+        if (statusText != null) {
+            Text(
+                text = statusText,
                 style = nerdStyle,
                 // Dimmer than the measured line above it: that one describes
                 // the audio, this one describes the app, and the ranking
@@ -675,6 +675,9 @@ internal fun PlayerActionRow(
     onToggleAutoplay: () -> Unit,
     onOpenOutput: () -> Unit,
 ) {
+    val shuffle = shuffleModeControl(shuffleEnabled)
+    val repeat = repeatModeControl(repeatMode)
+    val autoplay = autoplayModeControl(autoplayEnabled)
     val showPartyButton by PlayerSettings.showListenTogetherButton.collectAsStateWithLifecycle()
     val inParty = rememberPartyBadge().inParty
     // Just the output glyph in the middle.
@@ -766,7 +769,11 @@ internal fun PlayerActionRow(
                         )
                     }
                 } else {
-                    OutputPill(onOutput = onOpenOutput)
+                    OutputPartyPill(
+                        onOutput = onOpenOutput,
+                        onParty = {},
+                        onOpenMembers = {},
+                    )
                 }
             }
             Box(
@@ -1232,8 +1239,18 @@ internal fun OutputCaption(
     val captionModifier = Modifier
         .fillMaxWidth(0.65f)
         .clickable { if (badge.inParty) onOpenMembers() else onOpenOutput() }
-    if (!badge.inParty && (outputFormat.bitPerfect || outputFormat.dacLimited)) {
-        ShimmerText(
+    when {
+        badge.inParty -> Text(
+            text = jamName,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = AppType.Micro),
+            color = LocalPlayerTint.current.copy(alpha = 0.55f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = captionModifier,
+        )
+        !externalOutput -> Unit
+        outputFormat.bitPerfect || outputFormat.dacLimited -> ShimmerText(
             text = outputName,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = AppType.Micro,

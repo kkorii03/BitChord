@@ -142,6 +142,17 @@ enum class ThemeMode(val label: String) {
  * lighter and spaces it to Apple Music's own screens; [LEGACY] is the cut the
  * app shipped with before that, every weight its own and spaced tight.
  */
+/**
+ * Where a private session was switched on, named in the diagnostic log.
+ *
+ * Turning it off is always the listener's own act, so only the two ways on are
+ * listed here; expiry logs its own cause.
+ */
+enum class PrivateListeningSource(val logLabel: String) {
+    SETTINGS("settings"),
+    SONG_MENU("song menu"),
+}
+
 enum class AppFont { DEFAULT, LEGACY }
 
 /**
@@ -663,6 +674,26 @@ object AppSettings {
     /** Once a song has been suggested or played this session, AutoPlay won't offer it again. */
     val dontRepeatSuggestions = MutableStateFlow(false)
 
+    /**
+     * Prefer the catalogue audio release when the selected result is a music
+     * video. The video itself is still handed to the player first so its
+     * metadata appears immediately while the catalogue match is resolved.
+     */
+    val preferMusicOnly = MutableStateFlow(true)
+
+    /**
+     * Jumps over the parts of a YouTube video that are not the song — the
+     * greeting a cover opens with, the channel plug it ends on — using
+     * SponsorBlock's public submissions. On by default.
+     */
+    val skipNonMusicParts = MutableStateFlow(true)
+
+    /**
+     * Widens [skipNonMusicParts] to sponsorship reads, self-promotion, intros
+     * and outros. Off by default.
+     */
+    val skipSponsorParts = MutableStateFlow(false)
+
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
 
@@ -918,6 +949,8 @@ object AppSettings {
     /** Hides short clips, recorder output and non-music formats from Local Music. */
     val filterNonMusicAudio = MutableStateFlow(true)
 
+    /** Layout used by the Recents shelf on Play; compact tracks are the default. */
+    val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST)
     val localMusicSort = MutableStateFlow(LocalMusicSort.TITLE_ASC)
     val downloadedMusicSort = MutableStateFlow(LocalMusicSort.TITLE_ASC)
     val localMusicViewType = MutableStateFlow(LibraryViewType.LIST)
@@ -2140,6 +2173,21 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_DONT_REPEAT_SUGGESTIONS, value).apply()
     }
 
+    fun setPreferMusicOnly(value: Boolean) {
+        preferMusicOnly.value = value
+        prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setSkipNonMusicParts(value: Boolean) {
+        skipNonMusicParts.value = value
+        prefs.edit().putBoolean(KEY_SKIP_NON_MUSIC_PARTS, value).apply()
+    }
+
+    fun setSkipSponsorParts(value: Boolean) {
+        skipSponsorParts.value = value
+        prefs.edit().putBoolean(KEY_SKIP_SPONSOR_PARTS, value).apply()
+    }
+
     fun setSmartVersionAlignment(value: Boolean) {
         smartVersionAlignment.value = value
         prefs.edit().putBoolean(KEY_SMART_VERSION_ALIGNMENT, value).apply()
@@ -2751,6 +2799,11 @@ object AppSettings {
             KEY_DETAIL_SONG_SORTS,
             detailSongSorts.value.entries.joinToString(",") { (id, sort) -> "$id=${sort.name}" },
         ).apply()
+    }
+
+    fun setHomeRecentsViewType(value: LibraryViewType) {
+        homeRecentsViewType.value = value
+        prefs.edit().putString(KEY_HOME_RECENTS_VIEW_TYPE, value.name).apply()
     }
 
     fun setLocalMusicViewType(value: LibraryViewType) {
@@ -3791,7 +3844,7 @@ object AppSettings {
     const val MIN_LYRICS_OFFSET_MS = -5_000
     const val MAX_LYRICS_OFFSET_MS = 5_000
 
-    const val DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS = 5
+    const val DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS = 3
     const val MIN_UPGRADE_LENGTH_SLACK_SECONDS = 0
     const val MAX_UPGRADE_LENGTH_SLACK_SECONDS = 10
 
@@ -3872,6 +3925,9 @@ object AppSettings {
     private const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
+    private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_SKIP_NON_MUSIC_PARTS = "skip_non_music_parts"
+    private const val KEY_SKIP_SPONSOR_PARTS = "skip_sponsor_parts"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
@@ -3927,6 +3983,7 @@ object AppSettings {
     private const val KEY_DETAIL_SONG_SORTS = "detail_song_sorts"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
+    private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"

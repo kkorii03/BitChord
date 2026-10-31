@@ -36,3 +36,12 @@ internal data class LyricsLoadKey(
         )
     }
 }
+
+/** The settings a lyrics lookup for [videoId] was made under. */
+internal fun lyricsLookupKey(
+    videoId: String,
+    sources: Set<LyricsSource>,
+    order: List<LyricsSource>,
+    prioritizeSyllableSync: Boolean,
+): List<Any> = listOf(videoId, sources, order, prioritizeSyllableSync)
+

@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.KoTitleRules // [KO] title-rules
 import kotlin.math.abs
 import java.text.Normalizer
 import java.util.Locale
@@ -196,10 +197,7 @@ object TrackMatcher {
         parseTitle(title, artist).let { (it.words + it.versions).joinToString(" ") }
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
-    internal fun primaryArtist(artist: String): String {
-        val primary = normalize(artist).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
-        return primary.takeUnless { it in YOUTUBE_TYPE_LABELS }.orEmpty()
-    }
+    internal fun primaryArtist(artist: String): String = KoTitleRules.primaryArtist(artist) // [KO] title-rules
 
     /**
      * Every name a credit line carries, in the order it reads.
@@ -820,13 +818,8 @@ object TrackMatcher {
         // [TitleParts.context], so a core appearing verbatim as the other
         // side's context is accepted — but only across scripts (CJK-only vs
         // Latin), so same-script packaging never rescues a different title.
-        val isTitleMatch = when {
-            wanted.core == got.core -> true
-            romajiOf(wanted.core) == romajiOf(got.core) -> true
-            isTranslationMatch(wanted, got) -> true
-            wanted.core.length <= 3 || got.core.length <= 3 -> false
-            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
-        }
+        val isTitleMatch = coresMatch(wanted.cores(), got.cores(), containment = true) ||
+            isTranslationMatch(wanted, got) // [KO] title-rules
         if (!isTitleMatch) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
@@ -1619,19 +1612,8 @@ object TrackMatcher {
      * carry a title and its stated translation, so an English catalogue row
      * still matches the Korean listing that named both.
      */
-    private fun coresMatch(wanted: List<String>, got: List<String>, containment: Boolean): Boolean {
-        for (w in wanted) {
-            for (g in got) {
-                if (w == g || romajiOf(w) == romajiOf(g)) return true
-                if (containment && w.length > 3 && g.length > 3 &&
-                    (w.contains(g) || g.contains(w))
-                ) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
+    private fun coresMatch(wanted: List<String>, got: List<String>, containment: Boolean): Boolean =
+        KoTitleRules.coresMatch(wanted, got, containment) // [KO] title-rules
 
     /** Exact identity (or the same title in the other script), across every reading. */
     private fun coresEqual(wanted: List<String>, got: List<String>): Boolean =

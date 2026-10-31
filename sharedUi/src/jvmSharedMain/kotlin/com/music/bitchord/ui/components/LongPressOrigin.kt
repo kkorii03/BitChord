@@ -186,3 +186,6 @@ private class HoldCapture {
 }
 
 private val NoLiftPadding = PaddingValues()
+
+/** Longest edge of the held-item bitmap, in pixels. See [longPressMenuClickable]. */
+private const val MAX_CAPTURE_PX = 1024f

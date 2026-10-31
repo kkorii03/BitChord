@@ -1,5 +1,6 @@
 package com.music.bitchord.download
 
+import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.innertube.PlayerClient

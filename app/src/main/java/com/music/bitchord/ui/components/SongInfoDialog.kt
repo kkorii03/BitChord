@@ -28,7 +28,9 @@ import com.music.bitchord.data.SongInfoField
 import com.music.bitchord.data.SongInfoQuality
 import com.music.bitchord.data.SongInfoRepository
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ui.theme.ArtworkPalette
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Refresh
 
 private val INFO_BODY_MAX_HEIGHT = 360.dp
@@ -50,9 +52,8 @@ private fun SongInfoField.labelRes(): Int = when (this) {
  * title, hairline [AlertRule]s, full-width [AlertAction]s — rather than a
  * Material [AlertDialog], so it reads as one of the app's own alerts.
  *
- * Kept in a window [Dialog] because it opens from the song actions menu, which
- * can sit inside the player's own window; an in-tree overlay would be drawn
- * underneath it. A
+ * Kept in a window [Dialog] because it opens from the song actions sheet, which
+ * is itself a window; an in-tree overlay would be drawn underneath it. A
  * separate window can't sample the app's haze, so the card takes the plain
  * surface the other alerts fall back to under "reduce dynamic blur".
  */
@@ -173,6 +174,113 @@ private fun SongInfoRow(label: String, value: String?, unknown: Boolean = false)
                     text = value,
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
                     color = if (unknown) onSurface.copy(alpha = 0.6f) else onSurface,
+                    textAlign = TextAlign.End,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The sheet's own Song Info page, laid out like the sleep timer picker: a back
+ * arrow and title over a hairline, then full-width rows on the artwork tint.
+ * [SongInfoDialog] is kept for the held-row menu, which has no pages to swap.
+ */
+@Composable
+internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Unit) {
+    var retry by remember(song.videoId) { mutableIntStateOf(0) }
+    val info by produceState<SongInfo?>(null, song, retry) {
+        value = null
+        value = SongInfoRepository.load(song)
+    }
+    val snapshot by NerdStats.current.collectAsState()
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.back),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.song_info),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = listOf(song.title, song.artist).filter { it.isNotBlank() }.joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+
+        val unknown = stringResource(R.string.song_info_unknown)
+        val quality = SongInfoQuality.label(song, snapshot)
+        val lines = info?.let { SongInfoDisplay.lines(it, song, quality, unknown) }
+            ?: SongInfoDisplay.loadingLines(song)
+        lines.forEach { line ->
+            SongInfoPageRow(
+                label = stringResource(line.field.labelRes()),
+                value = line.value,
+                unknown = line.unknown,
+                palette = palette,
+            )
+        }
+
+        if (info?.failed == true) {
+            ActionRow(Icons.Rounded.Refresh, stringResource(R.string.song_info_retry), accent = palette.accent) {
+                retry++
+            }
+            Text(
+                text = stringResource(R.string.song_info_error),
+                modifier = Modifier.padding(horizontal = 22.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.onBackgroundVariant,
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** Same metrics as the sleep timer's options; the value takes the sheet's accent, spinner while loading. */
+@Composable
+private fun SongInfoPageRow(label: String, value: String?, unknown: Boolean, palette: ArtworkPalette) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Spacer(Modifier.width(16.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            if (value == null) {
+                CircularProgressIndicator(
+                    color = palette.onBackgroundVariant,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(16.dp),
+                )
+            } else {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (unknown) palette.onBackgroundVariant else palette.accent,
                     textAlign = TextAlign.End,
                 )
             }

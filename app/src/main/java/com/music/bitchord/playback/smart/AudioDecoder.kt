@@ -247,6 +247,39 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
+        label: String = "analysis",
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRaw(
+        openSource = { extractor -> extractor.setDataSource(source) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRaw(
+        file: File,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String = "analysis",
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRaw(
+        openSource = { extractor -> extractor.setDataSource(file.absolutePath) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRaw(
+        openSource: (MediaExtractor) -> Unit,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) {
