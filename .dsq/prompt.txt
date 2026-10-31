@@ -1,0 +1,25 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 vc92, 10-31 19:00~19:01, 품질 업그레이드 수동 요청 4곡 모두 실패):
+ 19:00:17.616 W/BitChord   ✗ addon call failed https://soundfean-musics.onrender.com/***: HTTP 401
+ 19:00:17.617 W/BitChord Qobuz [Heisenbergg]: search failed — HTTP 401        (19시 이후 45회 전부 401, 새벽에는 HTTP 402 3회)
+ 19:01:05.493 D/BitChord hq-search: 'Flowers' Qobuz [Heisenbergg] results=0 best=- verdict=title     ← 인증 거부인데 '제목 불일치'로 기록
+ 19:01:08.613 D/BitChord hq-search: 'Flowers' gglos results=0 best=- verdict=timeout  (Eljohnzc Addon Monochrome 도 매번 4000ms timeout; 오후 기록상 이 서버들은 9~16초 뒤 500/응답을 주기도 함)
+ 19:01:08.615 I/BitChord manual upgrade answer for BkSSOGNeWTM: 더 높은 음질을 찾지 못했습니다 · Opus
+할 일:
+① 원인 확정(파일:줄): 애드온 HTTP 401/402/403 이 어디서 빈 결과로 바뀌어 verdict=title 이 되는지(AddonClient → AddonSource → SourceResolver).
+② 401/402/403 은 '인증/권한 실패'로 구분: hq-search verdict=auth, 그 '없음'은 확정 캐시 금지(failureMark 상승, 기존 hq-none-cache 규칙 재사용), 같은 소스는 기존 쉬기 규칙 적용.
+③ 사용자 안내: 수동 업그레이드 결과에서 실패 이유가 인증이면 '더 높은 음질을 찾지 못했습니다' 대신 '<소스 이름> 애드온 인증이 거부되었습니다. 설정에서 애드온을 다시 연결해 주십시오.' (합니다체, values-ko 와 기본 values 둘 다 문자열 추가). 소스 상태를 보여 주는 설정 화면이 있으면 그 소스에 같은 이유 표시(새 화면 만들지 말 것).
+④ 수동 요청(사용자가 직접 누른 업그레이드)만 소스별 검색 시간 한도를 4초 → 12초로. 자동 경로(다음 곡 준비·재생 중 자동)는 그대로. 요청 수 늘리지 말 것, 타이머·폴링 추가 금지.
+테스트(고치기 전 실패): 401 응답 → verdict=auth·캐시 안 됨·안내 문구가 인증; 수동 요청은 12초 한도, 자동은 4초 — 단위 테스트. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, 서명 수정 금지. 바꾼 함수의 모든 호출부와 타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `app/src/main/java/com/music/bitchord/download/HqLibraryUpgrade.kt:589` — The manual re-download path now passes `manual = true` but no `SearchReport`, so an auth refusal still falls through to `quality_upgrade_no_better` at line 653 instead of the new auth message. Fix: pass a report and use `quality_upgrade_addon_auth` with its auth source names when non-empty.
+- MEDIUM `app/src/main/java/com/music/bitchord/data/sources/AddonSource.kt:130` — `health()` only reports auth when the manifest fetch fails; if the manifest succeeds (or is cached for 10 minutes) while `/search` returns 401, the Sources screen still shows `Ok`, contrary to the task's “same reason in the source-status screen” requirement. Fix: retain a last-auth-failure signal and have `health()` return `Rejected(authRejectedReason())` when recent, or probe `/search` even after a successful manifest.
+- MEDIUM `app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1300` — On a `/stream` 401/402/403, `AddonSource.stream` still returns `fromRow`, so the outcome can be non-null with `verdict=match` and `bestAcross` then calls `SourceCooldown.succeeded()`, erasing the rest that `authFailed` just set. Fix: do not use the row fallback on `AddonAuthException` (return null), or suppress `succeeded()` when the auth mark changed.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
