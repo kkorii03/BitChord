@@ -5,6 +5,7 @@ import android.os.Build
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.startup.AppForeground
+import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +58,9 @@ object TelegramClientManager {
     private var credentialStore: TelegramCredentialStore? = null
     private var databaseKeyStore: TelegramDatabaseKeyStore? = null
     private var chatSelection: TelegramChatSelection? = null
+    @Volatile
+    private var selectionLoaded = false
+    private val selectionLock = Any()
     private var home: File? = null
 
     private var credentials = TelegramApplicationCredentials.EMPTY
@@ -85,6 +89,10 @@ object TelegramClientManager {
         if (File(context.noBackupFilesDir, "telegram-native/application.sealed").isFile) {
             _state.update { it.copy(configured = true) }
         }
+        // The selected chats decide whether an automatic upgrade has anything
+        // to search. Reading them at start is a small encrypted-prefs read, not
+        // a TDLib connection: the client still opens only for a request.
+        StartupWork.background("telegram-chats") { ensureChatSelectionLoaded() }
         gate.onForeground(AppForeground.isForeground)
         AppForeground.onForeground { sync("foreground") }
         AppForeground.onBackground { sync("background") }
@@ -169,15 +177,31 @@ object TelegramClientManager {
 
     fun setChatSelected(chatId: Long, selected: Boolean) {
         ensureCredentialsLoaded()
-        val next = if (selected) _selectedChats.value + chatId else _selectedChats.value - chatId
-        _selectedChats.value = next
-        runCatching { chatSelection?.save(next) }
+        synchronized(selectionLock) {
+            val next = if (selected) _selectedChats.value + chatId else _selectedChats.value - chatId
+            _selectedChats.value = next
+            runCatching { chatSelection?.save(next) }
+        }
     }
 
     fun setSelectedChatIds(ids: Set<Long>) {
         ensureCredentialsLoaded()
-        _selectedChats.value = ids
-        runCatching { chatSelection?.save(ids) }
+        synchronized(selectionLock) {
+            _selectedChats.value = ids
+            runCatching { chatSelection?.save(ids) }
+        }
+    }
+
+    /** Reads the chosen chats off disk once; it neither decrypts credentials nor opens TDLib. */
+    private fun ensureChatSelectionLoaded() {
+        if (selectionLoaded) return
+        synchronized(selectionLock) {
+            if (selectionLoaded) return
+            val app = context ?: return
+            val selection = chatSelection ?: TelegramChatSelection(app).also { chatSelection = it }
+            _selectedChats.value = runCatching { selection.load() }.getOrNull().orEmpty()
+            selectionLoaded = true
+        }
     }
 
     /**
@@ -695,8 +719,7 @@ object TelegramClientManager {
         val dir = File(app.noBackupFilesDir, "telegram-native")
         home = dir
         credentialStore = TelegramCredentialStore(app)
-        chatSelection = TelegramChatSelection(app)
-        _selectedChats.value = runCatching { chatSelection?.load() }.getOrNull().orEmpty()
+        ensureChatSelectionLoaded()
         databaseKeyStore = TelegramDatabaseKeyStore(
             File(dir, "database.key.sealed"),
             { TelegramKeystore.key(app, "database") },
@@ -868,8 +891,11 @@ object TelegramClientManager {
         runCatching { files.deleteRecursively() }
         // Chats were chosen for this account's session; a new login starts
         // with none rather than searching chats it may not belong to.
-        _selectedChats.value = emptySet()
-        runCatching { chatSelection?.clear() }
+        synchronized(selectionLock) {
+            ensureChatSelectionLoaded()
+            _selectedChats.value = emptySet()
+            runCatching { chatSelection?.clear() }
+        }
         // With no session the source has nothing to answer, so leave it off
         // until the next interactive login turns it back on.
         telegramConfig()?.takeIf { it.enabled }?.let { SourceRegistry.setEnabled(it.id, false) }

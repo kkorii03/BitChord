@@ -16,16 +16,31 @@ import org.junit.Test
 class TelegramSourceStageTwoReviewTest {
 
     @Test
-    fun `automatic upgrade walks leave telegram out until stage three`() {
+    fun `automatic upgrade walks include telegram once it is ready to search`() {
         val candidates = SourceResolver.automaticUpgradeCandidates(
             listOf(
-                FakeSource("telegram", SourceKind.TELEGRAM),
+                FakeSource("telegram", SourceKind.TELEGRAM, eligible = true),
                 FakeSource("addon", SourceKind.ADDON),
                 FakeSource("youtube", SourceKind.YOUTUBE),
             ),
         )
 
-        assertEquals(listOf(SourceKind.ADDON, SourceKind.YOUTUBE), candidates.map { it.kind })
+        assertEquals(
+            listOf(SourceKind.TELEGRAM, SourceKind.ADDON, SourceKind.YOUTUBE),
+            candidates.map { it.kind },
+        )
+    }
+
+    @Test
+    fun `automatic upgrade walks still skip telegram without a session`() {
+        val candidates = SourceResolver.automaticUpgradeCandidates(
+            listOf(
+                FakeSource("telegram", SourceKind.TELEGRAM, eligible = false),
+                FakeSource("addon", SourceKind.ADDON),
+            ),
+        )
+
+        assertEquals(listOf(SourceKind.ADDON), candidates.map { it.kind })
     }
 
     @Test
@@ -46,8 +61,10 @@ class TelegramSourceStageTwoReviewTest {
     private class FakeSource(
         override val configId: String,
         override val kind: SourceKind,
+        private val eligible: Boolean = true,
     ) : MusicSource {
         override val displayName: String get() = configId
+        override val automaticUpgradeEligible: Boolean get() = eligible
         override suspend fun health(): SourceHealth = SourceHealth.Ok()
         override suspend fun search(
             query: String,

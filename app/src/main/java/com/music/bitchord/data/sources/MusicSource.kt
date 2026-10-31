@@ -138,6 +138,26 @@ interface MusicSource {
     /** What the user named it, falling back to the server's own hostname. */
     val displayName: String
 
+    /**
+     * Whether the automatic quality walks may ask this source.
+     *
+     * True for an ordinary catalogue. Telegram overrides it because its client
+     * is deliberately opened only for a request: an automatic walk before a
+     * signed-in listener has chosen a chat would have nothing to search and
+     * would open TDLib behind their back. Explicit search still uses the source
+     * directly — see [SourceResolver].
+     */
+    val automaticUpgradeEligible: Boolean get() = true
+
+    /**
+     * Why [automaticUpgradeEligible] is false, as the `hq-search` verdict.
+     *
+     * Null when the source is eligible, or when its reason is not worth a log
+     * line. Telegram returns `signed-out` so the automatic walk leaves the one
+     * line the source plan asks for instead of silently disappearing.
+     */
+    val automaticUpgradeIneligibleReason: String? get() = null
+
     /** Reachability and credentials, for the sources screen and for skipping dead sources. */
     suspend fun health(): SourceHealth
 

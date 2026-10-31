@@ -7,6 +7,7 @@ import com.music.bitchord.telegram.TelegramClientManager
 import com.music.bitchord.telegram.TelegramLog
 import com.music.bitchord.telegram.TelegramStreamUri
 import com.music.bitchord.telegram.TelegramTrackMapper
+import com.music.bitchord.telegram.TelegramUpgradeGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,6 +29,16 @@ class TelegramSource(
     override val configId: String get() = config.id
     override val kind: SourceKind get() = SourceKind.TELEGRAM
     override val displayName: String get() = config.label.ifBlank { SourceKind.TELEGRAM.label }
+
+    override val automaticUpgradeIneligibleReason: String?
+        get() = TelegramUpgradeGate.ineligibleReason(
+            stage = TelegramClientManager.state.value.stage,
+            selectedChats = TelegramClientManager.selectedChats.value.size,
+            enabled = config.enabled,
+        )
+
+    override val automaticUpgradeEligible: Boolean
+        get() = automaticUpgradeIneligibleReason == null
 
     override suspend fun health(): SourceHealth {
         val state = TelegramClientManager.state.value

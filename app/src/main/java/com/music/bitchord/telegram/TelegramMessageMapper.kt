@@ -4,6 +4,34 @@ import org.drinkless.tdlib.TdApi
 import java.util.Locale
 
 /**
+ * Reads the `Artist - Title` form Telegram users file lossless uploads under.
+ *
+ * Audio messages usually carry tags, but a document — which is how most FLAC
+ * and ALAC reaches Telegram — often has only its file name. The separator has
+ * to be a spaced dash so a hyphenated artist or title (Jay-Z, "Spider-Man")
+ * stays whole; leading track numbers are packaging, like the ones the title
+ * parser already drops.
+ */
+internal object TelegramFileNames {
+
+    private val SEPARATOR = Regex("""\s+[-\u2013\u2014]\s+""")
+    private val TRACK_NUMBER = Regex("""^\s*\d{1,3}\s*[.\-\u2013\u2014]\s*""")
+
+    data class Parsed(val artist: String, val title: String)
+
+    fun parse(fileName: String): Parsed? {
+        val stem = fileName.substringBeforeLast('.', fileName).trim()
+        if (stem.isEmpty()) return null
+        val cleaned = stem.replace(TRACK_NUMBER, "").trim()
+        val separator = SEPARATOR.find(cleaned) ?: return null
+        val artist = cleaned.substring(0, separator.range.first).trim()
+        val title = cleaned.substring(separator.range.last + 1).trim()
+        if (artist.isEmpty() || title.isEmpty()) return null
+        return Parsed(artist = artist, title = title)
+    }
+}
+
+/**
  * Turns TDLib messages into [TelegramTrack]s.
  *
  * Ported from Hexclyde/bitchord-morphe-patches (GPL-3.0-or-later) TrackMetadata
@@ -61,14 +89,15 @@ object TelegramMessageMapper {
         }
         if (file.id == 0) return null
         val format = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val named = TelegramFileNames.parse(fileName)
         return TelegramTrack(
             id = "${message.chatId}_${message.id}",
             chatId = message.chatId,
             messageId = message.id,
             fileId = file.id,
             size = file.size,
-            title = title.ifBlank { fileName },
-            artist = artist,
+            title = title.ifBlank { named?.title ?: fileName },
+            artist = artist.ifBlank { named?.artist.orEmpty() },
             durationSec = duration,
             format = format,
             mimeType = mimeType,

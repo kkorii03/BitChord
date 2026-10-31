@@ -9,6 +9,7 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.HqHostTracker
+import com.music.bitchord.telegram.TelegramUpgradeGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -450,7 +451,7 @@ object SourceResolver {
         // A row picked by hand is not up for substitution — see [MIX_PARAM].
         val picked = pickedMix != null && pinned is AddonSource
         if (!picked && request is StreamRequest.Lossless && pinned?.kind?.canServeLossless != true) {
-            for (source in rankedAbove(configId, active)) {
+            for (source in rankedAbove(configId, active, target)) {
                 if (!source.kind.canServeLossless) continue
                 val upgraded = matchAndStream(source, target, request, strictOriginal = true).stream ?: continue
                 // Only a genuinely lossless answer is an upgrade. A source that
@@ -489,6 +490,7 @@ object SourceResolver {
             active.filterNot {
                 it.configId == configId || (pickedMix != null && it.kind == SourceKind.YOUTUBE)
             },
+            target,
         )
         val (fallbackSource, stream) = bestAcross(fallbacks, target, request, strictOriginal = true) ?: return null
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
@@ -554,7 +556,7 @@ object SourceResolver {
         if (target.title.isBlank() || target.isVideo || timeoutMs <= 0L) return null
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        val candidates = rankedAbove(youtube.configId, active)
+        val candidates = rankedAbove(youtube.configId, active, target)
         if (candidates.isEmpty()) return null
         val found = withTimeoutOrNull(timeoutMs) {
             bestAcross(
@@ -646,7 +648,7 @@ object SourceResolver {
         if (target.title.isBlank() || target.isVideo) return null
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        val candidates = rankedAbove(youtube.configId, active)
+        val candidates = rankedAbove(youtube.configId, active, target)
         if (candidates.isEmpty()) {
             TrackLog.d(TAG, "upgrade ahead: '${target.title}' none (keeping YouTube)")
             return null
@@ -778,7 +780,7 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            rankedAbove(youtube.configId, active).filterNot {
+            rankedAbove(youtube.configId, active, target).filterNot {
                 it.configId == servedBy || it.configId in excludeSources
             },
             target,
@@ -922,7 +924,7 @@ object SourceResolver {
         // an absent YouTube means everything enabled outranks it, which is
         // already what [rankedAbove] says about a config that isn't in the list.
         val youtubeId = active.firstOrNull { it.kind == SourceKind.YOUTUBE }?.configId
-        val ranked = rankedAbove(youtubeId.orEmpty(), active)
+        val ranked = rankedAbove(youtubeId.orEmpty(), active, target)
         val strictLength = target.durationSec != null
 
         // Who is in the bit-exact walk, and who is left to the race below it.
@@ -1154,25 +1156,57 @@ object SourceResolver {
     /**
      * Sources an automatic upgrade, substitute or fallback walk may ask.
      *
-     * Telegram is ranked above YouTube for stage 3's quality upgrade, but this
-     * stage wires only explicit search and its own playback. Leaving it in
-     * these walks would open TDLib behind the listener's back for ordinary
-     * YouTube playback, so it stays out until that integration is written.
+     * Telegram is ranked above YouTube and joins these walks only when
+     * [MusicSource.automaticUpgradeEligible] says there is an account and a
+     * selected chat to search. A source left on without a session stays out,
+     * which is what keeps an automatic upgrade from opening TDLib for an
+     * account that has not signed in; [target] lets that one case leave the
+     * `hq-search` line instead of disappearing silently.
      */
-    internal fun automaticUpgradeCandidates(sources: List<MusicSource>): List<MusicSource> =
-        sources.filterNot { it.kind == SourceKind.TELEGRAM }
+    internal fun automaticUpgradeCandidates(
+        sources: List<MusicSource>,
+        target: TrackMatcher.Target? = null,
+    ): List<MusicSource> {
+        val kept = ArrayList<MusicSource>(sources.size)
+        for (source in sources) {
+            if (source.automaticUpgradeEligible) {
+                kept += source
+                continue
+            }
+            val reason = source.automaticUpgradeIneligibleReason
+            if (target != null && source.kind == SourceKind.TELEGRAM &&
+                reason == TelegramUpgradeGate.SIGNED_OUT
+            ) {
+                TrackLog.d(
+                    TAG,
+                    hqSearchLine(
+                        target,
+                        source,
+                        SearchOutcome(results = 0, verdict = reason),
+                    ),
+                )
+            }
+        }
+        return kept
+    }
 
     /**
      * The sources ranked above [configId], in order.
      *
      * A config that isn't in [active] ranks last: it is disabled or incomplete,
-     * and everything that *is* enabled is worth trying ahead of it.
+     * and everything that *is* enabled is worth trying ahead of it. [target] is
+     * only for the automatic walk's own log line — see
+     * [automaticUpgradeCandidates].
      */
-    private fun rankedAbove(configId: String, active: List<MusicSource>): List<MusicSource> =
+    private fun rankedAbove(
+        configId: String,
+        active: List<MusicSource>,
+        target: TrackMatcher.Target? = null,
+    ): List<MusicSource> =
         active.indexOfFirst { it.configId == configId }
             .let { if (it < 0) active.size else it }
             .let { active.take(it) }
-            .let(::automaticUpgradeCandidates)
+            .let { automaticUpgradeCandidates(it, target) }
 
     /**
      * The best stream the configured [sources] can serve for [target] — **all
@@ -1281,7 +1315,13 @@ object SourceResolver {
         val running: MutableList<Deferred<Pair<MusicSource, SearchOutcome>>> = usable
             .map { source ->
                 async {
-                    val answer = withTimeoutOrNull(lookupTimeoutMs) {
+                    // Telegram's client is deliberately cold between requests
+                    // (stage one closes it when no lease holds it), so the
+                    // four-second catalogue window can expire before TDLib has
+                    // even opened its session. This is a per-source timeout,
+                    // not a longer wait for the other sources.
+                    val sourceTimeout = sourceLookupTimeoutMsFor(source, lookupTimeoutMs)
+                    val answer = withTimeoutOrNull(sourceTimeout) {
                         matchAndStream(
                             source,
                             target,
@@ -1303,7 +1343,7 @@ object SourceResolver {
                         if (!offlineCheck()) SourceCooldown.failed(source.configId)
                         TrackLog.d(
                             TAG,
-                            "${source.displayName} timed out after ${lookupTimeoutMs}ms; " +
+                            "${source.displayName} timed out after ${sourceTimeout}ms; " +
                                 "skipping for this track",
                         )
                         val timedOut = SearchOutcome(verdict = "timeout", conclusive = false)
@@ -2156,6 +2196,8 @@ object SourceResolver {
      * of this track's answer, and the next track asks it again.
      */
     private const val SOURCE_LOOKUP_TIMEOUT_MS = 4_000L
+    /** Enough for a cold TDLib session plus one search on the Telegram source. */
+    private const val TELEGRAM_LOOKUP_TIMEOUT_MS = 15_000L
 
     /**
      * A hand-made upgrade is the listener waiting for one answer, so its
@@ -2169,6 +2211,18 @@ object SourceResolver {
         manual: Boolean,
         configured: Long = SOURCE_LOOKUP_TIMEOUT_MS,
     ): Long = if (manual) MANUAL_SOURCE_LOOKUP_TIMEOUT_MS else configured
+
+    /**
+     * The timeout for one source in a race.
+     *
+     * Telegram keeps its client shut between requests, so an automatic search
+     * pays the session open before its first TDLib query. Giving it the ordinary
+     * four-second window made the upgrade path give up while the client was
+     * still starting; the extra time is bounded to this source so a slow addon
+     * still loses the race as before.
+     */
+    private fun sourceLookupTimeoutMsFor(source: MusicSource, base: Long): Long =
+        if (source.kind == SourceKind.TELEGRAM) maxOf(base, TELEGRAM_LOOKUP_TIMEOUT_MS) else base
 
     /**
      * The same ceiling for a download, where nobody is waiting on a first note
