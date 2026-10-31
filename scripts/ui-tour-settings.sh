@@ -161,6 +161,22 @@ section_settings() {
     back
   fi
 
+  # Lyrics is a page of its own: tap the row, photograph the page and its
+  # sources dialog, then come back to the main list.
+  scroll_top
+  if tap_scrolled "가사" 4 20; then
+    shot settings-lyrics "Lyrics settings"
+    adb shell input swipe 540 1700 540 600 400
+    sleep 1
+    shot settings-lyrics-scrolled "Lyrics settings scrolled"
+    scroll_top
+    if tap_scrolled "가사 소스" 4 12; then
+      shot settings-lyrics-sources "Lyrics sources dialog"
+      back
+    fi
+    back
+  fi
+
   # Keep the group-header pictures the full tour also takes.
   scroll_top
   for spec in "계정 및 연동:settings-account-group" "오디오 품질:settings-audio-quality-group" \
