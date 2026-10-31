@@ -43,14 +43,27 @@ object DownloadedArtworkResolver {
      */
     private const val RESOLVED_ENTRIES = 512
 
+    /**
+     * How long a remembered miss suppresses another disk read.
+     *
+     * Short enough that a sidecar written a moment after the first ask is
+     * picked up without the listener doing anything, long enough that a row
+     * recomposing on every frame does not re-open a dead path each time.
+     */
+    private const val MISS_RETRY_MS = 3_000L
+
     private val resolved = BoundedMemo<String, String>(RESOLVED_ENTRIES)
+    private val missedAt = BoundedMemo<String, Long>(RESOLVED_ENTRIES)
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val claimed = ConcurrentHashMap.newKeySet<String>()
     private val inFlightLock = Mutex()
 
     suspend fun resolve(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
         val key = keyOf(song)
-        resolved.get(key)?.let { return@withContext it.takeIf { value -> value.isNotEmpty() } }
+        val cached = resolved.get(key)
+        if (!cached.isNullOrEmpty()) return@withContext cached
+        val now = System.currentTimeMillis()
+        if (cached != null && !missDue(missedAt.get(key), now)) return@withContext null
         val job = inFlightLock.withLock { inFlight.getOrPut(key) { CompletableDeferred() } }
         if (claimed.add(key)) {
             try {
@@ -59,9 +72,15 @@ object DownloadedArtworkResolver {
                 // first attempt can fail before the download has finished
                 // writing its sidecar; keeping that empty answer with getOrPut
                 // forever left the row, header and player blank even after the
-                // cover existed. Failures stay cached so a dead path is still
-                // not re-opened on every recomposition.
-                if (value.isEmpty()) resolved.getOrPut(key) { value } else resolved.put(key, value)
+                // cover existed. A remembered miss therefore only pauses the
+                // work for [MISS_RETRY_MS] rather than suppressing it for good.
+                if (value.isEmpty()) {
+                    resolved.getOrPut(key) { value }
+                    missedAt.put(key, now)
+                } else {
+                    resolved.put(key, value)
+                    missedAt.put(key, 0L)
+                }
                 job.complete(value)
             } catch (cancelled: CancellationException) {
                 job.complete("")
@@ -69,6 +88,7 @@ object DownloadedArtworkResolver {
             } catch (error: Throwable) {
                 Log.d(TAG, "cover lookup failed for ${song.videoId}: ${error.message}")
                 resolved.getOrPut(key) { "" }
+                missedAt.put(key, now)
                 job.complete("")
             } finally {
                 claimed.remove(key)
@@ -84,6 +104,10 @@ object DownloadedArtworkResolver {
         }
         value.takeIf { it.isNotEmpty() }
     }
+
+    /** Whether a remembered miss is old enough to look again. */
+    private fun missDue(missedAt: Long?, now: Long): Boolean =
+        missedAt == null || now - missedAt >= MISS_RETRY_MS
 
     private fun resolveNow(context: Context, song: Song): String? {
         val savedExists = localArtworkExists(song.thumbnailUrl)
