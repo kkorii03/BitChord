@@ -156,10 +156,14 @@ object BlockedStartPolicy {
         previousEnded: Boolean = false,
     ): Long? = when {
         // A repeat of the same row is a new play, not a refresh: the outgoing
-        // track ran to its end and the next one has not sounded yet.
+        // track ran to its end and the next one has not sounded yet, even
+        // though the gapless handoff can make the caller report it audible.
         currentVideoId != null &&
             currentVideoId == previousVideoId &&
-            !previousEnded &&
+            previousEnded -> null
+        // A same-row refresh keeps the measurement already taken.
+        currentVideoId != null &&
+            currentVideoId == previousVideoId &&
             previousFirstAudioMs != null -> previousFirstAudioMs
         alreadyAudible -> 0L
         else -> null

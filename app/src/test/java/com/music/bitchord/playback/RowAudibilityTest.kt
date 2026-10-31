@@ -58,4 +58,24 @@ class RowAudibilityTest {
             ),
         )
     }
+
+    @Test
+    fun `a gapless row held for its song version is not audible yet`() {
+        assertFalse(
+            rowSoundingAfterVersionHold(
+                alreadySounding = true,
+                versionHeld = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a gapless row with no version hold is still already sounding`() {
+        assertTrue(
+            rowSoundingAfterVersionHold(
+                alreadySounding = true,
+                versionHeld = false,
+            ),
+        )
+    }
 }

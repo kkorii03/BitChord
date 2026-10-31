@@ -4587,7 +4587,7 @@ class PlaybackService : MediaLibraryService() {
         // sounding so read-ahead and the next-row bundle are not held back
         // until some later event. A skip into a buffering row is not ended, so
         // it still waits for its first sound.
-        val alreadySounding = rowAlreadySounding(
+        var alreadySounding = rowAlreadySounding(
             alreadyAudible = alreadyAudible,
             previousEnded = previousEnded,
             isPlaying = exoPlayer.isPlaying,
@@ -4696,6 +4696,15 @@ class PlaybackService : MediaLibraryService() {
         }
         scheduleBoundedContextTopUp()
         resolveSongVersionBeforeAudio(exoPlayer, mediaItem, alreadyAudible)
+        // A song-version hold pauses a row that a gapless advance otherwise
+        // looks and sounds like it has already started. The hold is decided
+        // above, so the audibility hint has to be settled afterwards: a held
+        // row must not be marked audible, must not lose its wait clock, and
+        // must not start read-ahead until its first real sound.
+        alreadySounding = rowSoundingAfterVersionHold(
+            alreadySounding = alreadySounding,
+            versionHeld = songVersionController.isHoldingFirstSound,
+        )
         scheduleUpcomingSongVersions(exoPlayer)
         // A *different* track is a clean slate for [recoverFrom], and so is the
         // same track becoming current for any reason other than that method's
@@ -13851,3 +13860,16 @@ internal fun rowAlreadySounding(
     previousEnded: Boolean,
     isPlaying: Boolean,
 ): Boolean = alreadyAudible || (previousEnded && isPlaying)
+
+/**
+ * Whether that row is still audible once the song-version decision has run.
+ *
+ * A gapless advance into a video row is paused by [SongVersionController]'s
+ * first-sound hold, so the transition's playing state no longer describes it;
+ * treating it as audible there would write firstAudio=0 and start read-ahead
+ * for a row nobody can hear yet.
+ */
+internal fun rowSoundingAfterVersionHold(
+    alreadySounding: Boolean,
+    versionHeld: Boolean,
+): Boolean = alreadySounding && !versionHeld
