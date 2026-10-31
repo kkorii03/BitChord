@@ -161,6 +161,9 @@ object SourceResolver {
             synchronized(entries) { entries += outcome }
             if (!outcome.conclusive) allConclusive = false
         }
+
+        /** Test seam: the per-source verdicts this walk collected. */
+        internal fun outcomes(): List<SearchOutcome> = synchronized(entries) { entries.toList() }
     }
 
     /** A substitute stream already judged to be the original recording. */
@@ -1272,6 +1275,11 @@ object SourceResolver {
                 query = query,
             )
             val now = System.currentTimeMillis()
+            // Taken before either the search or the stream calls below, so the
+            // same comparison covers both. A stream open that 500s or times out
+            // is a failure of the whole answer even when the search itself
+            // looked healthy — see [SourceCooldown.failureMark].
+            val mark = SourceCooldown.failureMark(source.configId)
             // A hand-made request is evidence that the cached "none" was wrong.
             // Leave it unread, so the source is asked again; the fresh answer
             // then replaces the memo below.
@@ -1282,7 +1290,6 @@ object SourceResolver {
             val candidates = if (cached != null) {
                 cached
             } else {
-                val mark = SourceCooldown.failureMark(source.configId)
                 val rows = attempt(source) {
                     source.search(
                         query,
@@ -1357,8 +1364,12 @@ object SourceResolver {
                 val best = matches.firstOrNull() ?: TrackMatcher.ranked(candidates, target).firstOrNull()
                     ?: candidates.firstOrNull()
                 val verdict = when {
-                    candidates.isEmpty() -> "title"
+                    // A source that failed while producing this answer said
+                    // nothing about the catalogue, even when the rows it sent
+                    // back were empty — see the `error` contract in
+                    // [SearchOutcome].
                     !conclusive -> "error"
+                    candidates.isEmpty() -> "title"
                     best == null -> "title"
                     else -> TrackMatcher.rejectionReason(
                         best,
@@ -1366,6 +1377,7 @@ object SourceResolver {
                         strictOriginal = strictOriginal,
                         requireSharedArtist = requireSharedArtist,
                         strictLength = strictLength,
+                        driftSec = UPGRADE_DRIFT_SEC,
                     )
                 }
                 last = SearchOutcome(
@@ -1383,6 +1395,15 @@ object SourceResolver {
                 continue
             }
             val stream = streamBest(source, matches, target, request)
+            // Every stream open can fail — a 500, a timeout, a host that went
+            // away between the search and the open — and [attempt] counts each
+            // one against the source. A search that looked healthy but could
+            // not produce a stream is not a confirmed miss, so the caller must
+            // be allowed to ask again once the source is back. A stream that
+            // *did* open is a yes regardless of an earlier failed row.
+            if (stream == null && SourceCooldown.failureMark(source.configId) != mark) {
+                conclusive = false
+            }
             last = SearchOutcome(
                 stream = stream,
                 results = candidates.size,

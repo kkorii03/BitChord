@@ -43,6 +43,7 @@ class HqSearchCacheTest {
         var rows: List<Song> = emptyList(),
         private val streamFormat: StreamFormat? = StreamFormat("flac"),
         private val reportsFailure: Boolean = false,
+        var streamFails: Boolean = false,
     ) : MusicSource {
         override val displayName: String get() = configId
         override val kind: SourceKind get() = sourceKind
@@ -66,8 +67,13 @@ class HqSearchCacheTest {
             return rows
         }
 
-        override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
-            streamFormat?.let { SourceStream(url = "https://$configId/$trackId", format = it) }
+        override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? {
+            if (streamFails) {
+                SourceResolver.reportSourceFailure(configId)
+                return null
+            }
+            return streamFormat?.let { SourceStream(url = "https://$configId/$trackId", format = it) }
+        }
     }
 
     private fun target() = TrackMatcher.Target("Flowers", "Miley Cyrus", durationSec = 200)
@@ -168,6 +174,56 @@ class HqSearchCacheTest {
         assertNotNull("a hand-made request must ask again", found)
         // The first query now finds the row, so the manual walk stops there.
         assertEquals(queries + 1, source.asked)
+    }
+
+    @Test
+    fun `a stream failure after a healthy search is not a confirmed none`() = runBlocking {
+        val source = FakeSource(
+            "Qobuz",
+            rows = listOf(flowers("flowers-1")),
+            streamFails = true,
+        )
+        val report = SourceResolver.SearchReport()
+
+        assertNull(
+            SourceResolver.bestAcross(
+                listOf(source),
+                target(),
+                StreamRequest.Best,
+                waitForAll = true,
+                report = report,
+            ),
+        )
+        assertFalse(
+            "a search that could not open a stream is not a confirmed miss",
+            report.allConclusive,
+        )
+
+        source.streamFails = false
+        assertNotNull(
+            "the automatic path may ask again once the source can open a stream",
+            SourceResolver.bestAcross(listOf(source), target(), StreamRequest.Best, waitForAll = true),
+        )
+    }
+
+    @Test
+    fun `an empty answer after a swallowed failure is an error, not a title miss`() = runBlocking {
+        val source = FakeSource("Qobuz", reportsFailure = true)
+        val report = SourceResolver.SearchReport()
+
+        assertNull(
+            SourceResolver.bestAcross(
+                listOf(source),
+                target(),
+                StreamRequest.Best,
+                waitForAll = true,
+                report = report,
+            ),
+        )
+
+        val outcome = report.outcomes().single()
+        assertEquals("the failure must be visible in the hq-search line", "error", outcome.verdict)
+        assertFalse(outcome.conclusive)
     }
 
     @Test

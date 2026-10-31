@@ -931,6 +931,23 @@ object QualityUpgrade {
     }
 
     /**
+     * Whether a running automatic pass must leave the manual request that
+     * joined it unanswered, so the waiter can run the manual pass itself.
+     *
+     * The pass captured `manual = false` when it started, before the listener
+     * pressed the button; its search therefore skipped resting sources and
+     * replayed the memoised empty answer. A `none` from that pass is not the
+     * answer to the manual request — the request was for a search under the
+     * manual rules — and answering it would clear [PlaybackService]'s
+     * `manualUpgradeFor` before the waiter could run. See 10-31 'Flowers'.
+     */
+    internal fun defersAutomaticAnswerToManual(
+        startedManual: Boolean,
+        manualPending: Boolean,
+        manualJoined: Boolean,
+    ): Boolean = !startedManual && manualPending && manualJoined
+
+    /**
      * Abandons the second look for every track at once, because the player all
      * of it was about is gone.
      *

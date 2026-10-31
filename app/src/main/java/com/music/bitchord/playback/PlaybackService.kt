@@ -6780,10 +6780,16 @@ class PlaybackService : MediaLibraryService() {
                         running?.join()
                         if (manualUpgradeFor == mediaId) {
                             // The automatic pass ended without answering the
-                            // manual request; start the manual pass now.
+                            // manual request; start the manual pass now. The
+                            // pass may have written its own "nothing" verdict
+                            // and memoised the empty catalogue answers while
+                            // this waiter was parked, so both are reopened
+                            // immediately before the manual search.
                             manualJoinedRunningUpgrade = false
                             val live = player
                             if (live?.currentMediaItem?.mediaId == mediaId) {
+                                SourceRegistry.clearCompletedAddonTrackCalls()
+                                QualityUpgrade.askByHand(mediaId)
                                 lookForBetterCopy(live)
                             } else {
                                 manualUpgradeFor = null
@@ -6800,6 +6806,16 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.d("BitChord", "looking again for a better copy of $mediaId", about = mediaId)
         }
         upgradeJob = scope.launch(TrackLog.about(mediaId)) {
+            // A manual request that joined after this pass started is answered
+            // only by the waiter's manual search below, never by this pass's
+            // automatic one — its search skipped resting sources and read the
+            // memo. See [QualityUpgrade.defersAutomaticAnswerToManual].
+            fun deferManualAnswer(): Boolean =
+                QualityUpgrade.defersAutomaticAnswerToManual(
+                    startedManual = manual,
+                    manualPending = manualUpgradeFor == mediaId,
+                    manualJoined = manualJoinedRunningUpgrade,
+                )
             try {
                 // A previous visit to this track already did all the expensive
                 // parts and lost the swap to a skip. Nothing about the answer has
@@ -6925,6 +6941,14 @@ class PlaybackService : MediaLibraryService() {
                             currentQualityLabel(mediaId),
                         )
                     }
+                    if (deferManualAnswer()) {
+                        TrackLog.d(
+                            "BitChord",
+                            "automatic upgrade for $mediaId came back empty; the joined manual request will search again",
+                            about = mediaId,
+                        )
+                        return@launch
+                    }
                     reportManualUpgrade(mediaId, message)
                     return@launch
                 }
@@ -7005,6 +7029,14 @@ class PlaybackService : MediaLibraryService() {
                         QualityUpgrade.lookAgain(mediaId, playingSeconds)
                     }
                     if (next == null) {
+                        if (deferManualAnswer()) {
+                            TrackLog.d(
+                                "BitChord",
+                                "automatic upgrade for $mediaId ran out of candidates; the joined manual request will search again",
+                                about = mediaId,
+                            )
+                            return@launch
+                        }
                         reportManualUpgrade(
                             mediaId,
                             upgradeMessage(R.string.quality_upgrade_no_better, currentQualityLabel(mediaId)),
@@ -7021,6 +7053,14 @@ class PlaybackService : MediaLibraryService() {
                     "manual upgrade for $mediaId failed: ${failed.javaClass.simpleName}: ${failed.message}",
                     about = mediaId,
                 )
+                if (deferManualAnswer()) {
+                    TrackLog.d(
+                        "BitChord",
+                        "automatic upgrade for $mediaId failed; the joined manual request will search again",
+                        about = mediaId,
+                    )
+                    return@launch
+                }
                 reportManualUpgrade(
                     mediaId,
                     upgradeMessage(

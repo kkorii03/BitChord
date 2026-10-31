@@ -475,6 +475,13 @@ object TrackMatcher {
         strictOriginal: Boolean = false,
         requireSharedArtist: Boolean = false,
         strictLength: Boolean = false,
+        /**
+         * The same runtime window the caller's real filter used. It is a
+         * parameter because the upgrade path is stricter than a substitute
+         * search, and a row rejected at three seconds must be reported as
+         * `duration` rather than as a match against a wider default.
+         */
+        driftSec: Int = SUBSTITUTE_DRIFT_SEC,
     ): String {
         if (strictOriginal) {
             if (isCoverOf(candidate, target)) return "version"
@@ -495,14 +502,14 @@ object TrackMatcher {
             }
             if (strictLength && target.durationSec != null) {
                 val gotSec = secondsOf(candidate.durationText) ?: return "duration"
-                if (abs(target.durationSec - gotSec) > SUBSTITUTE_DRIFT_SEC) return "duration"
+                if (abs(target.durationSec - gotSec) > driftSec) return "duration"
             }
             return "match"
         }
         if (requireSharedArtist && !sharesArtist(target.artist, candidate.artist)) {
             return "artist"
         }
-        if (strictLength && !withinSeconds(candidate, target, SUBSTITUTE_DRIFT_SEC)) {
+        if (strictLength && !withinSeconds(candidate, target, driftSec)) {
             return "duration"
         }
         return "match"
