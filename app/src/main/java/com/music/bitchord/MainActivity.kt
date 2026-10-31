@@ -9,7 +9,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -181,6 +183,7 @@ import com.music.bitchord.data.settings.BitPerfectMode
 import com.music.bitchord.ui.AddonBlockedAlert
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.PrivateListeningSource
+import com.music.bitchord.data.settings.SettingsTransferInbox
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.ui.components.AccountProfileSelector
@@ -335,6 +338,8 @@ import com.music.bitchord.data.model.TopPickKind
 import com.music.bitchord.data.model.TopPickMood
 import com.music.bitchord.ui.screens.MoodGridPage
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.PlayerExpandGuard
+import com.music.bitchord.ui.player.PlayerExpandSource
 import com.music.bitchord.ui.player.MusicVideoEngine
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import androidx.compose.ui.geometry.Offset
@@ -359,6 +364,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.layout.onSizeChanged
 import com.music.bitchord.ui.player.LocalPlayerDock
 import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ko.asTypeUnknown
+import com.music.bitchord.ko.musicOnlyTried
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.sortedForDetail
 import com.music.bitchord.ui.screens.ExploreScreen
@@ -750,6 +757,31 @@ private fun BitChordApp(
      * permanent pane.
      */
     var showNowPlaying by remember { mutableStateOf(false) }
+    // [KO] player-expand-guard
+    // The one way the player is raised, whoever asks: M3 moving it, the app
+    // moving it, or a widget's deep link. A raise has to follow a touch the
+    // activity saw since it last resumed — or be that deep link — so a
+    // programmatic open while the app is coming back to the foreground cannot
+    // raise the sheet by itself (see [PlayerExpandGuard]). Every raise that
+    // does happen leaves one line in the exportable log, with the frames that
+    // asked for it, so the next report of an unexpected raise can say which
+    // path it came by.
+    val setPlayerShown: (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
+        if (!shown) {
+            if (showNowPlaying) {
+                showNowPlaying = false
+                TrackLog.i("BitChord", "nav: Player close source=${source.logName}")
+            }
+        } else if (!showNowPlaying) {
+            if (PlayerExpandGuard.allow(source, activity.touchedSinceResume())) {
+                showNowPlaying = true
+                TrackLog.i("BitChord", "nav: Player open source=${source.logName}")
+                PlayerExpandGuard.logExpand(source, activity.msSinceResume(), activity.msSinceTouch())
+            } else {
+                PlayerExpandGuard.logRefused(source, activity.msSinceResume())
+            }
+        }
+    }
     // The DAC's own volume while direct USB output owns it; the full player
     // has its own bar for that, so the HUD stays out of its way.
     androidx.compose.runtime.SideEffect { VolumeHud.suppressed = showNowPlaying }
@@ -966,6 +998,9 @@ private fun BitChordApp(
     }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
     val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
+    // [KO] music-only settings
+    val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val videoRadio by AppSettings.videoRadio.collectAsStateWithLifecycle()
     val partyState by ListenTogether.state.collectAsStateWithLifecycle()
     // The same answer the playback service acts on, rather than a second one
     // derived here — see [autoplayEnabledFor]. Drawing the local preference in
@@ -1294,6 +1329,14 @@ private fun BitChordApp(
     }
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
+    // [KO] close-player-when-queue-empty
+    // An emptied queue — the last track removed, the queue cleared, playback
+    // stopped for good — leaves the sheet with nothing to show. Left raised, it
+    // is only hidden by `playerRaised` until the next track starts from a list,
+    // and then opens by itself over it. Event-driven: this runs on the change.
+    LaunchedEffect(player.song?.videoId) {
+        if (player.song == null && showNowPlaying) dismissPlayer()
+    }
     // A music video's picture follows this controller's clock — see [MusicVideoEngine].
     DisposableEffect(controller) {
         MusicVideoEngine.attach(controller)
@@ -1389,6 +1432,10 @@ private fun BitChordApp(
     var convertedVideoId by remember { mutableStateOf<String?>(null) }
     // Optimistically updated track for instant UI updates when switching versions
     var optimisticVersionSong by remember { mutableStateOf<Song?>(null) }
+    // Whether the playing track has a video/audio twin to switch to; looked up
+    // only while the player's action sheet is open, and cached per process.
+    var hasAlternateVersion by remember { mutableStateOf(false) }
+    val alternateVersionCache = remember { mutableMapOf<String, Boolean>() }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off, reordering
@@ -1417,10 +1464,6 @@ private fun BitChordApp(
                 player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
                 it.albumName,
                 it.localUri,
-                isVideo = query.isVideo,
-                alternatives = query.alternatives,
-                artistKnown = query.artistKnown,
-                artistAliases = query.artistAliases,
             )
         }
     }
@@ -1668,7 +1711,13 @@ private fun BitChordApp(
             // The original MediaItem was never removed, so failure only needs
             // to release the loading state and resume it immediately.
             if (audio == null || audio.videoId == song.videoId) {
-                TrackLog.w("Player", "audio switch found no distinct official song", song.videoId)
+                TrackLog.w(
+                    "Player",
+                    "audio switch found no distinct official song " +
+                        "(${if (audio == null) "no answer" else "same id"}) " +
+                        "(row video=${song.isVideo} typeUnknown=${song.typeUnknown})",
+                    song.videoId,
+                )
                 // The switch is always offered now, so say when there was nothing to switch to.
                 if (song.videoId !in missingVersions) missingVersions += song.videoId
                 if (stillCurrent) showQueueNotice(versionContext.getString(R.string.no_audio_version))
@@ -1809,6 +1858,108 @@ private fun BitChordApp(
         }
     }
 
+    // [KO] music-only-auto-swap
+    // Fallback for a video row that reached the player unconverted. Queues
+    // already resolve their current + next rows up front (see
+    // [YtMusicRepository.resolveQueueAhead]), and the service holds the first
+    // sound for the same decision (see its `resolveSongVersionBeforeAudio`),
+    // so this normally does nothing. It is deliberately limited to the window
+    // before the track has made a sound: once the listener is hearing it, a
+    // version swap would change the recording under them, so only the manual
+    // menu may do that. Tried marks only a definitive answer, so a cancelled
+    // or superseded lookup can be retried.
+    LaunchedEffect(autoMusicOnlyEffectKey(player.song?.videoId, preferMusicOnly, videoRadio)) {
+        val song = player.song ?: return@LaunchedEffect
+        val c = controller ?: return@LaunchedEffect
+        if (preferMusicOnly && !partyState.inParty && !videoRadioEnabledFor(song) &&
+            SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
+            (song.localUri == null || !AudioCache.isOffline()) &&
+            song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
+            SongVersionPolicy.mayAutoSwapBeforeAudio(
+                positionMs = c.currentPosition,
+                isPlaying = c.isPlaying,
+                alreadyAudible = false,
+            )
+        ) {
+            val settled = switchToMusicOnly(
+                song,
+                pauseWhileResolving = false,
+                alignVersion = false,
+                beforeAudioOnly = true,
+            )
+            if (settled) musicOnlyTried.add(song.videoId)
+        }
+    }
+
+    // [KO] alternate-version-cache
+    // Check if alternate (video vs audio) version exists, but only when the
+    // player's actions sheet is actually open on this track. This used to run
+    // on every track change while the app was composing, whether or not the
+    // player was on screen: one `next`/VIDEO_SWITCH search per song, and one
+    // of the biggest sources of YouTube requests during ordinary playback
+    // (the toggle it feeds is drawn only in that sheet).
+    //
+    // Skipped entirely in a Listen Together party: the track playing there is
+    // shared by everyone in it, and a per-listener version switch would put
+    // each member on their own cut of what is supposed to be one song.
+    LaunchedEffect(
+        player.song?.videoId,
+        songActions?.videoId,
+        menuFromPlayer,
+        showNowPlaying,
+        convertedAudioId,
+        convertedVideoId,
+        partyState.inParty,
+    ) {
+        val song = player.song
+        val sheetIsOpenForThisTrack = song != null &&
+            showNowPlaying &&
+            menuFromPlayer &&
+            songActions?.videoId == song.videoId
+        // A plain local file has no YouTube counterpart to switch to. A
+        // downloaded YouTube track does — its file is still that song's id, so
+        // the version lookup and switch are offered exactly as for a stream.
+        // A downloaded *video* row does too: it is still a music video, and
+        // the version switch is how it becomes the catalogue release.
+        if (song == null ||
+            SongVersionPolicy.keepsLocalFile(
+                SongOrigins.isLocalFile(song),
+                song.isVideo,
+                song.typeUnknown,
+            ) ||
+            partyState.inParty || !sheetIsOpenForThisTrack
+        ) {
+            hasAlternateVersion = false
+            return@LaunchedEffect
+        }
+        if ((convertedFromVideo != null && convertedAudioId == song.videoId) ||
+            (convertedFromAudio != null && convertedVideoId == song.videoId)) {
+            hasAlternateVersion = true
+            return@LaunchedEffect
+        }
+        alternateVersionCache[song.videoId]?.let { known ->
+            hasAlternateVersion = known
+            return@LaunchedEffect
+        }
+        hasAlternateVersion = false
+        val exists = withContext(Dispatchers.IO) {
+            if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
+                runCatching {
+                    val resolved = YtMusicRepository.songVersion(song)
+                    resolved != null && resolved.videoId != song.videoId
+                }.getOrDefault(false)
+            } else {
+                runCatching {
+                    YtMusicRepository.resolveVideo(song) != null
+                }.getOrDefault(false)
+            }
+        }
+        alternateVersionCache[song.videoId] = exists
+        if (player.song?.videoId == song.videoId && songActions?.videoId == song.videoId) {
+            hasAlternateVersion = exists
+        }
+    }
+
     fun playFrom(
         allSongs: List<Song>,
         allIndex: Int,
@@ -1854,7 +2005,7 @@ private fun BitChordApp(
                 // rest as it approaches them. A failed lookup keeps the video
                 // row, never silence. In a party the shared queue is not
                 // version-switched.
-                val queueSongs = if (AppSettings.preferMusicOnly.value) {
+                val queueSongs = if (preferMusicOnly) {
                     try {
                         YtMusicRepository.resolveQueueAhead(songs, index, ahead = 1)
                     } catch (cancelled: CancellationException) {
@@ -1942,7 +2093,7 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
-            val played = if (AppSettings.preferMusicOnly.value && !videoRadioEnabledFor(song)) {
+            val played = if (preferMusicOnly && !videoRadioEnabledFor(song)) {
                 try {
                     withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
                         YtMusicRepository.songVersion(song, beforeAudio = true)
@@ -2045,7 +2196,7 @@ private fun BitChordApp(
                     // The station's first track is the seed, and it is about to
                     // become current. Resolve its song version here, before the
                     // queue is handed over, so the music video never starts.
-                    val played = if (AppSettings.preferMusicOnly.value && !videoRadioEnabledFor(seed)) {
+                    val played = if (preferMusicOnly && !videoRadioEnabledFor(seed)) {
                         try {
                             withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
                                 YtMusicRepository.songVersion(seed, beforeAudio = true)
@@ -4403,6 +4554,11 @@ private fun BitChordApp(
                 } else {
                     MaterialTheme.colorScheme.background
                 }
+                // Root tabs are the only pages whose large in-page heading is
+                // owned by the page itself: every overlay and pushed detail
+                // supplies a back affordance and keeps the bar's title hidden.
+                val rootTabChrome = route == null && detail == null &&
+                    detailActiveShelf == null && selectedMoodGenre == null
                 // Apple's scroll edge: what passes up under the status bar and the
                 // controls is blurred — hardest at the top, none just below the
                 // controls — rather than faded out to the page colour. It is a
@@ -4971,6 +5127,10 @@ private fun BitChordApp(
         // a ⋮ or the player's ⋯, and the one a held row lifts into. Every
         // callback below is the same in each; only the frame differs.
         val songMenuBody: @Composable (Song) -> Unit = { heldSong ->
+            // Menu-only answers, collected with the menu itself, so a lyric
+            // arriving does not invalidate the app shell. // [KO] lyrics-sync
+            val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
+            val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
             // Set by whoever opened it — see [menuFromPlayer]. It cannot be
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
@@ -5060,6 +5220,7 @@ private fun BitChordApp(
             // whether or not the other version has been found yet: the
             // switch looks it up, and says so when there isn't one.
             val onToggleVersion: (() -> Unit)? = if (
+                hasAlternateVersion &&
                 controller?.currentMediaItem?.mediaId == song.videoId
             ) {
                 toggle@{
@@ -5817,6 +5978,11 @@ private fun BitChordApp(
         // the whole release — the queue rows above all.
         // One body for every frame alike — see songMenuBody.
         val browseMenuBody: @Composable (BrowseTarget) -> Unit = { target ->
+            // Playlists saved only on this device, read here so the menu
+            // recomposes when one changes. // [KO] local-playlists
+            val localPlaylists by
+                com.music.bitchord.data.spotify.LocalPlaylistStore.playlists
+                    .collectAsStateWithLifecycle()
             // Every row here closes the menu first: the tracks may still have to
             // be fetched, and leaving the sheet up over a request nothing on it
             // reports on reads as a tap that didn't land.

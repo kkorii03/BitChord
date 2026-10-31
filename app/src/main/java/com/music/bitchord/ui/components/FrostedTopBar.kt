@@ -28,8 +28,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material.icons.Icons
@@ -235,7 +237,7 @@ fun FrostedTopBar(
     // page), so all that is needed is an effect over the bar while it is up.
     // Reduce dynamic blur, a missing source and pre-API-31 devices all fall
     // back to the scrim alone, which is what the effect exists to approximate.
-    val blurBackdrop = collapsingTitle && scrolled && backButtonHazeState != null &&
+    val blurBackdrop = collapsingTitle && scrolled() && backButtonHazeState != null &&
         !reduceDynamicBlur && isGlassSupported()
     // Every bounded bar uses the same hairline, whether its pane is blurred or
     // solid. A transparent artwork page has no pane edge for a line to mark.
