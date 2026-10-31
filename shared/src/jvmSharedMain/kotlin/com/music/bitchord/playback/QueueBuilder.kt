@@ -32,6 +32,9 @@ object QueueBuilder {
     /** The artist the station was seeded on gets more room, but not the run of it. */
     const val SEED_ARTIST_LIMIT = 4
 
+    /** Fewer videos than this in a mix and a video station plays on with its songs too. */
+    const val MIN_VIDEO_STATION = 3
+
     /**
      * The subset of [candidates] worth appending after [existing]: nothing
      * already queued, nothing repeated, at most [limit] tracks.
@@ -43,12 +46,7 @@ object QueueBuilder {
      * just before the seed — and the seed's own artist then got the ordinary
      * two-track cap instead of the four a station is seeded on.
      */
-    fun extend(
-        existing: List<Song>,
-        candidates: List<Song>,
-        limit: Int,
-        seedArtist: String? = null,
-    ): List<Song> {
+    fun extend(existing: List<Song>, candidates: List<Song>, limit: Int, preferVideos: Boolean = false): List<Song> {
         val taken = existing.toMutableList()
         val perArtist = mutableMapOf<String, Int>()
         val seedArtists = (seedArtist?.takeIf { it.isNotBlank() } ?: existing.lastOrNull()?.artist)
@@ -61,8 +59,15 @@ object QueueBuilder {
         // ("Dildaara (Stand By Me)" against "Lyrical Video: Dildara Song")
         // that no title match will catch it. The catalogue cut is the one a
         // music app wants; videos only stand in when there is nothing else.
+        // [preferVideos] turns that round for a station playing on from a music
+        // video: its videos, where the mix has enough of them to be one.
         val songsOnly = candidates.filterNot { it.isVideo }
-        val ordered = songsOnly.ifEmpty { candidates }
+        val videosOnly = candidates.filter { it.isVideo }
+        val ordered = when {
+            preferVideos && videosOnly.size >= MIN_VIDEO_STATION -> videosOnly
+            preferVideos -> candidates
+            else -> songsOnly.ifEmpty { candidates }
+        }
 
         for (candidate in ordered) {
             if (out.size >= limit) break

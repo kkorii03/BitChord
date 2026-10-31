@@ -31,14 +31,11 @@ data class CanvasArtwork(
     val album: String? = null,
     val source: CanvasSource = CanvasSource.OTHER,
     /**
-     * The stretch of [url] to loop, for a clip cut from a whole video — the
-     * upload itself, or the song's music video — rather than a made-to-loop
-     * canvas. Null plays the whole clip.
+     * The same clip framed 3:4, when the provider has one. Only the phone
+     * player takes it (it runs the clip under the whole screen); everywhere
+     * else keeps the square [url].
      */
-    val clipStartMs: Long? = null,
-    val clipEndMs: Long? = null,
-    /** When [url] stops working (a video stream's link expires); null for one that keeps. */
-    val expiresAtMs: Long? = null,
+    val portraitUrl: String? = null,
 ) {
     /** Cut from a video rather than published as motion artwork. */
     val fromVideo: Boolean get() = clipStartMs != null

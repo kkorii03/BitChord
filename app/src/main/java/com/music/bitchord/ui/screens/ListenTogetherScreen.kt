@@ -1,7 +1,6 @@
 package com.music.bitchord.ui.screens
 
-import com.music.bitchord.ui.theme.AppSpacing
-
+import com.music.bitchord.ui.icons.SfIcons
 import android.content.Intent
 import android.text.format.DateFormat
 import android.widget.Toast
@@ -34,7 +33,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
@@ -52,8 +50,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
+import com.music.bitchord.ui.components.IosSwitch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -492,17 +489,12 @@ fun ListenTogetherScreen(
             .verticalScroll(rememberScrollState())
             .padding(contentPadding),
     ) {
-        Text(
-            text = stringResource(R.string.listen_together),
-            style = MaterialTheme.typography.displayLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
-        )
+        SettingsPageTitle(stringResource(R.string.listen_together))
 
         if (!signedIn) {
-            SettingsGroup(footer = stringResource(R.string.listen_together_sign_in_footer)) {
+            SettingsGroup(footer = stringResource(R.string.listen_together_sign_in_footer), topSpacing = 0.dp) {
                 SettingsRow(
-                    icon = Icons.Rounded.Login,
+                    icon = SfIcons.Login,
                     title = stringResource(R.string.sign_in),
                     subtitle = stringResource(R.string.not_signed_in),
                     onClick = onSignIn,
@@ -573,7 +565,7 @@ fun ListenTogetherScreen(
             footer = stringResource(R.string.listen_together_custom_server_footer),
         ) {
             SettingsRow(
-                icon = Icons.Rounded.Dns,
+                icon = SfIcons.Dns,
                 title = stringResource(R.string.listen_together_custom_server),
                 subtitleContent = {
                     Text(
@@ -605,6 +597,51 @@ fun ListenTogetherScreen(
 }
 
 /**
+ * Whether the party server is answering, before anything else on the screen.
+ *
+ * Every other failure in this feature looks the same from the outside — a code
+ * that will not create, a join that sits there — and most of the time the
+ * answer is simply that the server is asleep or unreachable. Saying so up front
+ * is the difference between a feature that looks broken and one that is waiting.
+ *
+ * Deliberately says nothing about *where* the server is. The address this build
+ * uses is not shown here, on the row below, or in any log — see
+ * [ListenTogether.customServerUrl].
+ */
+@Composable
+private fun ServerHealthRow(
+    status: ListenTogether.ServerStatus,
+    onRecheck: () -> Unit,
+) {
+    SettingsGroup {
+        SettingsRow(
+            icon = when (status.health) {
+                ListenTogether.Health.ONLINE -> SfIcons.CloudDone
+                ListenTogether.Health.OFFLINE -> SfIcons.CloudOff
+                else -> SfIcons.Cloud
+            },
+            title = stringResource(R.string.listen_together_server),
+            subtitle = when (status.health) {
+                ListenTogether.Health.ONLINE ->
+                    if (status.isFallback) {
+                        stringResource(R.string.listen_together_server_online_fallback, status.latencyMs)
+                    } else {
+                        stringResource(R.string.listen_together_server_online, status.latencyMs)
+                    }
+                ListenTogether.Health.OFFLINE ->
+                    stringResource(R.string.listen_together_server_offline)
+                ListenTogether.Health.CHECKING ->
+                    stringResource(R.string.listen_together_server_checking)
+                ListenTogether.Health.UNKNOWN ->
+                    stringResource(R.string.listen_together_server_unknown)
+            },
+            trailing = if (status.health == ListenTogether.Health.CHECKING) ({ Spinner() }) else null,
+            onClick = onRecheck,
+        )
+    }
+}
+
+/**
  * Whether the address that was typed is actually answering.
  *
  * Under the address rather than in a toast, because the interesting case is the
@@ -622,17 +659,17 @@ private fun ServerConnectionLine(connection: ServerConnectionState) {
             stringResource(R.string.listen_together_server_checking),
         )
         is ServerConnectionState.CustomOnline -> Triple(
-            Icons.Rounded.CloudDone,
+            SfIcons.CloudDone,
             MaterialTheme.colorScheme.primary,
             stringResource(R.string.listen_together_status_custom_online, connection.latencyMs),
         )
         is ServerConnectionState.CustomFallback -> Triple(
-            Icons.Rounded.CloudOff,
+            SfIcons.CloudOff,
             MaterialTheme.colorScheme.error,
             stringResource(R.string.listen_together_status_custom_fallback, connection.latencyMs),
         )
         ServerConnectionState.Offline -> Triple(
-            Icons.Rounded.CloudOff,
+            SfIcons.CloudOff,
             MaterialTheme.colorScheme.error,
             stringResource(R.string.listen_together_status_all_offline),
         )
@@ -835,13 +872,13 @@ private fun InAParty(
         )
         RowDivider()
         SettingsRow(
-            icon = Icons.Rounded.ContentCopy,
+            icon = SfIcons.ContentCopy,
             title = stringResource(R.string.copy_code),
             onClick = onCopy,
         )
         RowDivider()
         SettingsRow(
-            icon = Icons.Rounded.Share,
+            icon = SfIcons.Share,
             title = stringResource(R.string.share),
             onClick = onShare,
         )
@@ -876,17 +913,13 @@ private fun InAParty(
             }
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Lock,
+                icon = SfIcons.Lock,
                 title = stringResource(R.string.listen_together_host_only),
                 subtitle = stringResource(R.string.listen_together_host_only_subtitle),
                 trailing = {
-                    Switch(
+                    IosSwitch(
                         checked = state.hostOnlyControl,
                         onCheckedChange = onSetHostOnlyControl,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
                     )
                 },
                 onClick = { onSetHostOnlyControl(!state.hostOnlyControl) },
@@ -901,7 +934,7 @@ private fun InAParty(
 
     SettingsGroup {
         SettingsRow(
-            icon = Icons.Rounded.Logout,
+            icon = SfIcons.Logout,
             title = stringResource(R.string.listen_together_leave),
             subtitle = stringResource(R.string.listen_together_leave_subtitle),
             onClick = onLeave,
@@ -944,7 +977,7 @@ private fun NowPlayingInTheParty(state: ListenTogether.State) {
 
     SettingsGroup(header = stringResource(R.string.listen_together_now_playing)) {
         SettingsRow(
-            icon = Icons.Rounded.MusicNote,
+            icon = SfIcons.MusicNote,
             title = track?.title?.takeIf { it.isNotBlank() } ?: nothingPlaying,
             subtitle = if (track == null) {
                 connection
@@ -995,7 +1028,7 @@ private fun PartyAvatar(url: String?, size: Dp = ICON_SIZE) {
         )
     } else {
         Icon(
-            Icons.Rounded.Person,
+            SfIcons.Person,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.size(size),

@@ -32,6 +32,12 @@
     <string name="search_source_youtube" translatable="false">YouTube</string>
     <string name="search_source_addons">Addons</string>
     <string name="search_addons_none">No addons are enabled. Add one in Settings → Sources.</string>
+    <string name="addon_blocked_title">Can\'t play this song</string>
+    <string name="addon_blocked_quality">Audio quality on %1$s is set to %2$s. Songs from %3$s only play at Lossless — change it in Settings → Audio quality to play this one.</string>
+    <string name="addon_blocked_watch">Music is playing through your watch, which limits audio below Lossless. Songs from %1$s play again once your phone takes the music back.</string>
+    <string name="download_addon_left_out_title">Downloading without %1$s</string>
+    <string name="download_addon_not_allowed">%1$s doesn\'t allow downloads, so your songs are being saved from your other sources instead.</string>
+    <string name="download_addon_needs_lossless_output">%1$s only serves music while wired, USB or LDAC-class headphones are connected. Downloads skip it until one is, so your songs are being saved from your other sources instead.</string>
     <string name="audio_files_on_device">Audio files on device</string>
     <string name="on_device">On Device</string>
     <string name="playlists">Playlists</string>
@@ -108,6 +114,8 @@
         <item quantity="other">Downloading %1$d songs</item>
     </plurals>
     <string name="source">Sources</string>
+    <string name="direct_source_stream">Direct Source Stream</string>
+    <string name="direct_source_stream_in_party">Off while you\'re in a Listen Together party</string>
     <string name="lossless_audio">Lossless audio</string>
     <string name="prefer_lossless">Prefer lossless</string>
     <string name="lossless_source_subtitle">FLAC and ALAC straight from the source</string>
@@ -188,45 +196,11 @@
     <string name="widget_preview_pill">Song title - Artist</string>
     <string name="download_quality">Download quality</string>
     <string name="download_wifi_only">Download over Wi-Fi only</string>
-    <string name="auto_redownload_mv_sound">Re-download music-video sound as the song automatically</string>
-    <string name="auto_replace_hq_downloads">Replace downloaded songs with higher quality automatically</string>
-    <string name="auto_replace_hq_downloads_subtitle">When a sound-verified higher-quality copy exists, fetch it and replace the old file. The old file stays until the new one is complete.</string>
-    <string name="auto_prefetch_hq">Pre-save high quality for frequently played songs</string>
-    <string name="auto_prefetch_hq_subtitle">Liked and often-played songs are saved ahead of time, up to %1$d songs. Data and storage are not limited.</string>
-    <string name="hq_library_progress">Upgrading to high quality %1$d/%2$d</string>
-    <string name="hq_library_waiting">Waiting — server busy</string>
-    <string name="hq_library_upgrade_all">Redownload all in high quality</string>
-    <string name="hq_library_upgrade_all_subtitle">Replaces downloaded files with sound-verified higher-quality copies. One song at a time.</string>
-    <string name="download_health_recheck">Re-check downloaded songs</string>
-    <string name="download_health_recheck_subtitle">Checks each downloaded file once more the next time it plays, and repairs a wrong recording or a lower-quality copy. Nothing runs now.</string>
-    <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version automatically. Wi-Fi only does not apply.</string>
-    <string name="settings_footer_downloads">Sets download quality and automatic downloads. Changes apply from the next download.</string>
-    <string name="mv_sound_suspect_banner">%1$d downloaded song(s) have the music video\'s sound · Re-download as the song</string>
     <string name="convert_to_audio">Convert to audio</string>
     <string name="convert_to_video">Convert to video</string>
     <string name="converting_to_audio">Converting to audio…</string>
     <string name="revert_to_original">Revert to original</string>
     <string name="upgrade_quality">Upgrade quality</string>
-    <string name="redownload_higher_quality">Download again in higher quality</string>
-    <string name="download_already_best_quality">Already the best quality</string>
-    <string name="quality_upgrade_done">Upgraded to higher quality</string>
-    <string name="quality_upgrade_switching">Switching to higher quality</string>
-    <string name="quality_upgrade_mismatch">No high-quality version of this song was found</string>
-    <string name="quality_upgrade_reference_unavailable">Quality can\'t be checked right now. Try again</string>
-    <string name="quality_upgrade_already_best">Already the best quality for this track</string>
-    <string name="quality_upgrade_no_better">No higher-quality copy found</string>
-    <string name="quality_upgrade_failed">Couldn\'t change the quality</string>
-    <string name="quality_upgrade_too_late">The track is almost over, so the quality was left alone</string>
-    <string name="quality_upgrade_unavailable">Quality can\'t be changed right now</string>
-    <string name="quality_upgrade_music_video">A music video\'s quality can\'t be changed</string>
-    <string name="quality_upgrade_no_source">High-quality sources are turned off</string>
-    <string name="quality_upgrade_downloaded">For a download, use “Re-download in higher quality”</string>
-    <string name="hq_redownload_searching">Looking for a higher-quality copy</string>
-    <string name="hq_redownload_queued">Re-downloading in higher quality</string>
-    <string name="hq_redownload_waiting_wifi">Will re-download in higher quality on Wi-Fi</string>
-    <string name="quality_upgrade_busy">Checking the quality now. Try again in a moment</string>
-    <string name="quality_upgrade_reason_not_proven">the new copy couldn\'t be verified</string>
-    <string name="quality_upgrade_reason_unavailable">the change isn\'t available right now</string>
     <string name="dolby_atmos">Dolby Atmos</string>
     <string name="dolby_atmos_subtitle">Play the more immersive, surround version of a song when there is one.</string>
     <string name="dolby_atmos_unavailable">This device can\'t play Atmos, so these songs play in their usual version</string>
@@ -238,33 +212,9 @@
     <string name="replay_subtitle">Your top songs, artists, albums and genres</string>
     <string name="work_out_genres">Work out genres</string>
     <string name="export_data">Export data</string>
-    <string name="export_data_subtitle">Settings, playlists, search history and listening history, as one JSON file</string>
+    <string name="export_data_subtitle">Settings and listening history, as one JSON file</string>
     <string name="import_data">Import data</string>
-    <string name="import_data_subtitle">Replaces settings, history and playlists on this device</string>
-    <string name="settings_transfer_send">Send settings to another device</string>
-    <string name="settings_transfer_send_subtitle">Proxy, sources, audio quality, automix and lyrics, as one file</string>
-    <string name="settings_transfer_import">Import settings</string>
-    <string name="settings_transfer_import_subtitle">Choose a file, review what changes, then apply</string>
-    <string name="settings_transfer_send_warning">This includes your proxy password and any personal token in a source address. Only send it to someone you trust.</string>
-    <string name="settings_transfer_send_confirm">Send</string>
-    <string name="settings_transfer_share_opened">Share sheet opened</string>
-    <string name="settings_transfer_send_failed">Couldn’t send settings: %1$s</string>
-    <string name="settings_transfer_import_failed">Couldn’t read settings: %1$s</string>
-    <string name="settings_transfer_preview_title">Import settings</string>
-    <string name="settings_transfer_preview_body">These items will be applied to this device.</string>
-    <string name="settings_transfer_preview_none">Nothing will change.</string>
-    <string name="settings_transfer_preview_sources">Sources (%1$d): %2$s</string>
-    <string name="settings_transfer_preview_proxy">Proxy: %1$s</string>
-    <string name="settings_transfer_preview_quality">Audio quality: %1$d</string>
-    <string name="settings_transfer_preview_automix">Automix: %1$d</string>
-    <string name="settings_transfer_preview_lyrics">Lyrics: %1$d</string>
-    <string name="settings_transfer_preview_playback">Playback: %1$d</string>
-    <string name="settings_transfer_preview_display">Display: %1$d</string>
-    <string name="settings_transfer_preview_skipped">%1$d unknown or invalid items will be skipped.</string>
-    <string name="settings_transfer_apply">Apply</string>
-    <string name="settings_transfer_applied">Applied %1$d settings and %2$d sources.</string>
-    <string name="settings_transfer_applied_proxy">The proxy was applied too.</string>
-    <string name="settings_transfer_skipped">%1$d items were skipped.</string>
+    <string name="import_data_subtitle">Replaces the settings and history on this device</string>
     <string name="import_backup_title">Import a backup?</string>
     <string name="choose_file">Choose file</string>
     <string name="top_artists">Top artists</string>
@@ -291,6 +241,7 @@
     <string name="italian">Italian</string>
     <string name="turkish">Turkish</string>
     <string name="thai">Thai</string>
+    <string name="korean">Korean</string>
     <string name="show_all">Show all</string>
     <string name="grid_view">Grid</string>
     <string name="list_view">List</string>
@@ -298,10 +249,6 @@
     <string name="switch_to_list_view">Switch to list view</string>
     <string name="audio_quality">Audio quality</string>
     <string name="playback">Playback</string>
-    <string name="playback_speed">Playback speed</string>
-    <string name="pitch">Pitch</string>
-    <string name="pitch_lower">Lower pitch</string>
-    <string name="pitch_upper">Raise pitch</string>
     <string name="appearance">Appearance</string>
     <string name="storage">Storage</string>
     <string name="your_data">Your data</string>
@@ -326,15 +273,8 @@
     <string name="skip_silence">Skip silence</string>
     <string name="skip_silence_subtitle">Trim gaps longer than a second</string>
     <string name="skip_silence_float_subtitle">Unavailable on 32-bit float output</string>
-    <string name="prefer_music_only">Prefer music-only version</string>
-    <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
     <string name="smart_version_alignment">Smart audio alignment</string>
     <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
-    <string name="skip_non_music_parts">Skip non-music parts</string>
-    <string name="skip_non_music_parts_subtitle">Skips greetings and chatting in cover videos using public SponsorBlock data</string>
-    <string name="skip_sponsor_parts">Also skip sponsor parts</string>
-    <string name="skip_sponsor_parts_subtitle">Sponsorship reads, self-promotion, intros and outros</string>
-    <string name="skip_segment_done">Skipped a non-music part</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
@@ -380,32 +320,46 @@
     <string name="eq_preset_custom">Custom</string>
     <string name="show_nerd_stats">Show stats for nerds</string>
     <string name="show_nerd_stats_subtitle">Codec, bitrate and sample rate on the player</string>
+    <string name="show_listen_together_button">Show Listen Together button</string>
+    <string name="show_listen_together_button_subtitle">Off, the player shows only the audio output button between lyrics and the queue</string>
     <string name="app_icon">App icon</string>
     <string name="app_icon_default">Default</string>
-    <string name="app_icon_liquid_glass">Liquid Glass</string>
-    <string name="app_icon_liquid_glass_dark">Liquid Glass Dark</string>
-    <string name="app_icon_liquid_glass_clear">Liquid Glass Clear</string>
-    <string name="app_icon_liquid_glass_clear_dark">Liquid Glass Clear Dark</string>
-    <string name="app_icon_samsung_glass">Samsung Glass</string>
-    <string name="app_icon_samsung_glass_dark">Samsung Glass Dark</string>
-    <string name="app_icon_samsung_glass_clear">Samsung Glass Clear</string>
-    <string name="app_icon_samsung_glass_clear_dark">Samsung Glass Clear Dark</string>
-    <string name="app_icon_pixel_glass">Pixel Glass</string>
-    <string name="app_icon_pixel_glass_dark">Pixel Glass Dark</string>
-    <string name="app_icon_pixel_glass_clear">Pixel Glass Clear</string>
-    <string name="app_icon_pixel_glass_clear_dark">Pixel Glass Clear Dark</string>
+    <string name="app_icon_monochrome" translatable="false">Monochrome</string>
+    <string name="app_icon_liquid_glass" translatable="false">Liquid Glass</string>
+    <string name="app_icon_liquid_glass_dark" translatable="false">Liquid Glass Dark</string>
+    <string name="app_icon_liquid_glass_clear" translatable="false">Liquid Glass Clear</string>
+    <string name="app_icon_liquid_glass_clear_dark" translatable="false">Liquid Glass Clear Dark</string>
+    <string name="app_icon_samsung_glass" translatable="false">Samsung Glass</string>
+    <string name="app_icon_samsung_glass_dark" translatable="false">Samsung Glass Dark</string>
+    <string name="app_icon_samsung_glass_clear" translatable="false">Samsung Glass Clear</string>
+    <string name="app_icon_samsung_glass_clear_dark" translatable="false">Samsung Glass Clear Dark</string>
+    <string name="app_icon_pixel_glass" translatable="false">Pixel Glass</string>
+    <string name="app_icon_pixel_glass_dark" translatable="false">Pixel Glass Dark</string>
+    <string name="app_icon_pixel_glass_clear" translatable="false">Pixel Glass Clear</string>
+    <string name="app_icon_pixel_glass_clear_dark" translatable="false">Pixel Glass Clear Dark</string>
+    <string name="app_icon_neon_silver" translatable="false">Neon Silver</string>
+    <string name="app_icon_neon_cyan" translatable="false">Neon Cyan</string>
+    <string name="app_icon_neon_violet" translatable="false">Neon Violet</string>
+    <string name="app_icon_samsung_neon_silver" translatable="false">Samsung Neon Silver</string>
+    <string name="app_icon_samsung_neon_cyan" translatable="false">Samsung Neon Cyan</string>
+    <string name="app_icon_samsung_neon_violet" translatable="false">Samsung Neon Violet</string>
+    <string name="app_icon_pixel_neon_silver" translatable="false">Pixel Neon Silver</string>
+    <string name="app_icon_pixel_neon_cyan" translatable="false">Pixel Neon Cyan</string>
+    <string name="app_icon_pixel_neon_violet" translatable="false">Pixel Neon Violet</string>
     <string name="theme">Theme</string>
+    <string name="font">Font</string>
+    <string name="font_default">Default</string>
+    <string name="font_legacy">Legacy</string>
+    <string name="font_default_subtitle">SF Pro Display · Apple Music weights</string>
+    <string name="font_legacy_subtitle">SF Pro Display · Original heavy weights</string>
+    <string name="font_footer">Legacy brings back the heavier, tighter type the app used before it was matched to Apple Music.</string>
     <string name="reduce_animation">Reduce animation</string>
     <string name="reduce_animation_subtitle">Freezes the main player\'s gradient instead of drifting</string>
-    <string name="low_power_mode">Low power mode</string>
-    <string name="low_power_mode_subtitle">Cuts lyric animation, background effects and AI analysis to save battery and heat</string>
-    <string name="low_power_auto">Auto</string>
-    <string name="low_power_on">On</string>
-    <string name="low_power_off">Off</string>
     <string name="reduce_dynamic_blur">Reduce dynamic blur</string>
     <string name="reduce_dynamic_blur_subtitle">Swaps frosted glass for solid fills across the app</string>
     <string name="liquid_glass">Liquid Glass</string>
     <string name="liquid_glass_subtitle">Real refracting glass on the floating nav bar. Android 12+ only; uses more GPU.</string>
+    <string name="progressive_blur">Progressive Blur</string>
     <string name="liquid_glass_unavailable">Requires Android 12 or newer</string>
     <string name="full_screen_cover_art">Full-screen cover art</string>
     <string name="legacy_mesh_gradient">Legacy mesh gradient</string>
@@ -418,7 +372,6 @@
     <string name="artist_signatures_unconfigured">Not configured — tap to set the API URL</string>
     <string name="artist_signatures_test_failed">Could not reach the API at that URL</string>
     <string name="synced_lyrics">Synced lyrics</string>
-    <string name="settings_lyrics">Lyrics</string>
     <string name="synced_lyrics_subtitle">Lights up the words on the player as they’re sung</string>
     <string name="lyrics_sources">Lyrics sources</string>
     <string name="song_cache_limit">Song cache limit</string>
@@ -438,26 +391,18 @@
     <string name="show_queue_history">Show queue history</string>
     <string name="show_queue_history_subtitle">Show up to 25 previously played songs above Now playing in the queue</string>
     <string name="hide_song_status_subtitle">Hides the “Playing from” or “Played by” text in the main player</string>
-    <string name="widget_opens_player">Open player when tapping a widget</string>
-    <string name="widget_opens_player_subtitle">Off, a widget tap only opens the app</string>
     <string name="off">Off</string>
     <string name="low">Low</string>
     <string name="medium">Medium</string>
     <string name="high">High</string>
     <string name="standard">Standard</string>
     <string name="lossless">Lossless</string>
-    <string name="best_quality">Best quality</string>
     <string name="system">System</string>
     <string name="light">Light</string>
     <string name="dark">Dark</string>
     <string name="full_screen_cover_art_subtitle">Runs the cover to the edges of the player instead of a square sleeve</string>
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay won’t suggest a song already played or suggested this session</string>
-    <string name="personalised_autoplay">Personalised autoplay</string>
-    <string name="video_radio_continue">Continue with video songs</string>
-    <string name="video_radio_continue_subtitle">Keep a station seeded by a cover, live clip or self-uploaded song inside that video world</string>
-    <string name="personalised_autoplay_subtitle">Orders YouTube’s radio by your likes, skips and recent listening\nMixes in similar tracks from worldwide listening data (ListenBrainz)</string>
-    <string name="settings_footer_playback">Sets playback, autoplay and Automix behaviour.</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>
     <string name="filter_non_music_audio_subtitle">Hides clips under 30 seconds, WAV files, voice notes, recordings and system sounds</string>
@@ -500,8 +445,6 @@
     <string name="connect_account_first">Connect an account first</string>
     <string name="connected_presence_off">Connected, presence off</string>
     <string name="copy_log">Copy log</string>
-    <string name="problem_mark">Report a problem (writes to the log)</string>
-    <string name="problem_marked">Marked in the diagnostic log</string>
     <string name="couldnt_find">Couldn\'t find %1$s</string>
     <string name="couldnt_open_link">Couldn\'t open that link</string>
     <string name="create_playlist">Create playlist</string>
@@ -553,27 +496,11 @@
     <string name="pipeline_dsp">DSP</string>
     <string name="pipeline_output_device">Output Device</string>
     <string name="pipeline_source">Source</string>
-    <string name="pipeline_source_verified">Source: %1$s · Verified (offset %2$s ms)</string>
-    <string name="pipeline_source_unverified">Source: %1$s · Not verified</string>
     <string name="pipeline_format">Format</string>
     <string name="pipeline_bit_depth">Bit Depth</string>
     <string name="pipeline_sample_rate">Sample Rate</string>
     <string name="pipeline_bitrate">Bitrate</string>
-    <string name="pipeline_pcm_data_rate">PCM Data Rate</string>
-    <string name="pipeline_route">Route</string>
-    <string name="pipeline_bit_exact_yes">Yes</string>
-    <string name="pipeline_bit_exact_dsd">No — DSD converted to PCM</string>
-    <string name="pipeline_bit_exact_loudness">No — loudness correction</string>
-    <string name="pipeline_bit_exact_eq">No — EQ</string>
-    <string name="pipeline_bit_exact_spatial">No — spatial audio</string>
-    <string name="pipeline_bit_exact_downstream">No — %1$s</string>
-    <string name="pipeline_bit_exact_downstream_unknown">converted downstream</string>
-    <string name="route_phone">Phone speaker</string>
-    <string name="route_wired">Wired headphones</string>
-    <string name="route_usb">USB audio</string>
-    <string name="route_bluetooth">Bluetooth</string>
-    <string name="route_hdmi">HDMI</string>
-    <string name="route_other">Other output</string>
+    <string name="pipeline_pcm_data_rate" translatable="false">PCM Data Rate</string>
     <string name="pipeline_channels">Channels</string>
     <string name="pipeline_decoder_name">Decoder Name</string>
     <string name="pipeline_io_rate">I/O Rate</string>
@@ -603,6 +530,7 @@
     <string name="starting">Starting</string>
     <string name="start_radio">Start radio</string>
     <string name="shared_link">Shared link</string>
+    <string name="opened_file">Opened file</string>
     <string name="radio_started">%1$s radio started</string>
     <string name="saved_to_bitchord_folder">Saved to Music/BitChord</string>
     <string name="nothing_downloading">Nothing downloading</string>
@@ -615,15 +543,7 @@
     <string name="downloaded_playlist_empty">Nothing from this playlist remains on this device</string>
     <string name="no_local_audio_found">No audio files found on this device</string>
     <string name="no_internet_connection">No internet connection</string>
-    <string name="connection_timed_out">The connection timed out. Try again.</string>
-    <string name="connection_failed">Couldn\'t connect. Check your connection and try again.</string>
-    <string name="secure_connection_failed">Couldn\'t establish a secure connection. Try again.</string>
-    <string name="server_busy">The server is busy. Try again in a moment.</string>
-    <string name="proxy_unreachable">Couldn\'t reach the proxy. Check its settings and try again.</string>
     <string name="youtube_request_rejected">YouTube Music rejected the request. Try signing in again.</string>
-    <string name="error_not_found">Couldn\'t find this item. It may have been removed or moved.</string>
-    <string name="error_request_invalid">Couldn\'t handle the request. Check what you entered and try again.</string>
-    <string name="error_content_unavailable">No available version of this item was found. Try another source.</string>
     <string name="something_went_wrong">Something went wrong</string>
     <string name="unknown_artist">Unknown artist</string>
     <plurals name="downloads_failed_count">
@@ -704,8 +624,6 @@
     <string name="paxsenix_api_key">PaxSenix API key</string>
     <string name="paxsenix_api_key_configured">PaxSenix API key — configured</string>
     <string name="paxsenix_api_key_missing">PaxSenix API key — optional, not configured</string>
-    <string name="paxsenix_api_key_status_configured">Configured</string>
-    <string name="paxsenix_api_key_status_missing">Optional, not configured</string>
     <string name="max_delay">Maximum delay</string>
     <string name="max_delay_subtitle">Maximum scrobble delay in seconds</string>
     <string name="min_song_duration">Minimum song duration</string>
@@ -730,19 +648,9 @@
     <string name="prioritize_syllable_lyrics_subtitle">Keep searching past a line-synced match for word-by-word lyrics</string>
     <string name="quality_hourly">%1$s · %2$s</string>
     <string name="quality_per_track">%1$s · %2$s per track</string>
-    <string name="quality_efficient">Efficient</string>
-    <string name="quality_high">High quality</string>
-    <string name="quality_lossless">Lossless</string>
-    <string name="quality_hi_res">Hi-Res Lossless</string>
-    <string name="quality_efficient_detail">Smallest size · about 30MB/hour</string>
-    <string name="quality_high_detail">Everyday quality · about 80MB/hour</string>
-    <string name="quality_lossless_detail">Close to the original · about 150MB/hour</string>
-    <string name="quality_hi_res_detail">Best quality · about 300MB/hour or more</string>
     <string name="queued">Queued</string>
     <string name="remove">Remove</string>
     <string name="remove_from_liked">Remove from Liked Music</string>
-    <string name="liked_hidden_videos_show">%1$d videos hidden · Show</string>
-    <string name="liked_hidden_videos_hide">%1$d videos hidden · Hide</string>
     <string name="remove_from_playlist">Remove from this playlist</string>
     <string name="rename_playlist">Rename playlist</string>
     <string name="reorder_songs">Reorder songs</string>
@@ -771,10 +679,8 @@
     <string name="signed_in_as">Signed in as %1$s</string>
     <string name="signing_in">Signing in…</string>
     <string name="sleep_timer">Sleep timer</string>
-    <string name="private_listening">Private mode</string>
-    <string name="private_listening_subtitle">Won\'t appear in YouTube history or scrobbles. Recent plays on this device are still saved</string>
-    <string name="private_listening_indicator">Private mode is on</string>
-    <string name="private_listening_turned_on">Private mode on · turns off in 6 hours</string>
+    <string name="sleep_timer_custom">Custom</string>
+    <string name="start_sleep_timer">Start timer</string>
     <string name="sources_no_lossless">No enabled source can provide lossless audio. Add an addon to play lossless files without transcoding.</string>
     <string name="sources_order_footer">If a source does not have a track or cannot be reached, BitChord tries the next one. Sources above YouTube can replace its recording when they return a better version.</string>
     <string name="sources_order_header">Sources, tried in this order</string>
@@ -786,7 +692,7 @@
     <string name="source_matching">Source matching</string>
     <string name="upgrade_length_slack">Track length tolerance</string>
     <string name="upgrade_length_slack_subtitle">Maximum duration difference allowed for a replacement stream</string>
-    <string name="upgrade_length_slack_footer">A larger tolerance accepts more source matches; a smaller tolerance is stricter. The default is 3 seconds.</string>
+    <string name="upgrade_length_slack_footer">A larger tolerance accepts more source matches; a smaller tolerance is stricter. The default is 5 seconds.</string>
     <string name="seconds_short">%1$d s</string>
     <string name="spdc_token">sp_dc token</string>
     <string name="spotify_canvas_setup">Set up Spotify</string>
@@ -899,8 +805,8 @@
         <item quantity="other">%1$s artists</item>
     </plurals>
     <plurals name="replay_play_count">
-        <item quantity="one">%1$s Play</item>
-        <item quantity="other">%1$s Plays</item>
+        <item quantity="one">%1$s play</item>
+        <item quantity="other">%1$s plays</item>
     </plurals>
     <plurals name="replay_song_count">
         <item quantity="one">%1$s song</item>
@@ -921,8 +827,6 @@
     <string name="use_all_audio_folders">Use all audio folders</string>
     <string name="use_all_audio_folders_subtitle">Remove the folder limit and scan music across the device</string>
     <string name="album">album</string>
-    <string name="album_release_year">%1$s</string>
-    <string name="album_release_date">%1$d/%2$d/%3$d</string>
     <string name="artist">artist</string>
     <string name="webdav">WebDAV</string>
     <string name="webdav_subtitle">Music on your server</string>
@@ -959,7 +863,6 @@
     <string name="unpin">Unpin</string>
     <string name="rename">Rename</string>
     <string name="downloading">Downloading</string>
-    <string name="playlist_action_failed">Couldn\'t update this playlist</string>
     <string name="delete_playlist">Delete playlist</string>
     <string name="delete_download">Delete download</string>
     <string name="delete_playlist_confirmation">Delete “%1$s”? Tap again to confirm.</string>
@@ -979,7 +882,6 @@
     <string name="song_cache_limit_subtitle">Keeps downloaded audio on disk for instant seeking and replays</string>
     <string name="replay_genres_enabled_subtitle">Asks Last.fm for an artist’s genres. Only the artist name is sent.</string>
     <string name="replay_genres_disabled_subtitle">The Replay genre chart stays hidden while this is off</string>
-    <string name="replay_genres_missing_key_subtitle">A Last.fm API key is needed before genres can be fetched</string>
     <string name="swipe_plays_next">Swiping a song plays it next</string>
     <string name="swipe_adds_to_queue">When disabled, swiping adds the song to the end of the queue</string>
     <string name="import_backup_warning">This replaces this device’s settings and listening history with the contents of the file. Export the current data first if you want to keep it.</string>
@@ -988,12 +890,7 @@
     <string name="export_succeeded">Exported settings and %1$s</string>
     <string name="export_failed">Export failed: %1$s</string>
     <string name="import_succeeded">Imported %1$s from v%2$s</string>
-    <string name="import_succeeded_with_library">Imported %1$s and %3$d local playlists from v%2$s</string>
     <string name="import_failed">Import failed: %1$s</string>
-    <string name="import_playlists_title">Import local playlists</string>
-    <string name="import_playlists_choice">Settings, listening history and search history are replaced either way. Choose whether this file\'s local playlists replace the ones on this device, or are merged into them without duplicates.</string>
-    <string name="import_playlists_replace">Replace</string>
-    <string name="import_playlists_merge">Merge</string>
     <string name="unknown_error">unknown error</string>
     <string name="no_listening_history">no listening history</string>
     <plurals name="listening_month_count">
@@ -1024,7 +921,6 @@
     <string name="listen_as">Listen as</string>
     <string name="default_youtube_profile">YouTube Music default profile</string>
     <string name="account_profiles_help">A Google account can have Personal and Brand profiles. Each has its own library, likes and history.</string>
-    <string name="music_gate_fallback" translatable="false">YouTube Music is restricted in this region, so browsing and playback use YouTube.</string>
     <string name="choose_profile">Choose a profile</string>
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>
@@ -1137,10 +1033,44 @@
     <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
 
     <string name="export_compatible_downloads">Export compatible downloads</string>
+    <string name="sync_downloaded_playlists">Keep playlists updated</string>
+    <string name="sync_downloaded_playlists_subtitle">Checks twice a day and downloads songs newly added to your downloaded playlists</string>
+    <string name="playlist_sync_ask_title">New songs in %1$s: %2$d</string>
+    <string name="playlist_sync_ask_text">Tap to download</string>
+    <string name="playlist_sync_done_title">Added to %1$s: %2$d</string>
+    <string name="playlist_updates_channel">Playlist updates</string>
 
     <string name="output_precision">Output precision</string>
 
     <string name="prefer_usb_dac">Prefer USB DAC</string>
+
+    <string name="bit_perfect_output">Bit-perfect output</string>
+    <string name="bit_perfect_bypassed_footer">Bit-perfect output is ready, so the faded settings are bypassed and Dolby Atmos versions aren\'t requested. They work again when the DAC is disconnected or the mode is off.</string>
+    <string name="bit_perfect_sheet_warning">Sends the track to the DAC unchanged. The equalizer, loudness normalization, crossfade, Automix, playback speed and BitChord\'s volume are bypassed.</string>
+    <string name="bit_perfect_mode_off_subtitle">Audio goes through Android\'s mixer and BitChord\'s effects.</string>
+    <string name="bit_perfect_mode_usb_android">USB DAC</string>
+    <string name="bit_perfect_mode_usb_android_subtitle">Android 14 opens the DAC at each track\'s own rate and bit depth, without mixing or resampling.</string>
+    <string name="bit_perfect_requires_android_14">Requires Android 14 or later</string>
+    <string name="bit_perfect_mode_dap_exclusive">Built-in DAC (AAudio exclusive)</string>
+    <string name="bit_perfect_mode_dap_exclusive_subtitle">For music players with their own DAC. Opens the headphone or line output exclusively at each track\'s own rate. Not every device grants exclusive mode.</string>
+    <string name="bit_perfect_requires_android_8_1">Requires Android 8.1 or later</string>
+    <string name="bit_perfect_mode_usb_direct">USB DAC (direct driver)</string>
+    <string name="bit_perfect_mode_usb_direct_subtitle">BitChord drives the DAC itself, on any Android version, and sets its volume on the DAC. Asks for USB permission. Can be much louder than normal output.</string>
+    <string name="dac_volume">DAC volume</string>
+    <string name="dac_volume_subtitle">Set on the DAC itself; the music is not scaled</string>
+    <string name="usb_allow_fixed_volume">Allow DACs without volume control</string>
+    <string name="usb_allow_fixed_volume_subtitle">Otherwise such a DAC plays through normal output</string>
+    <string name="usb_allow_fixed_volume_confirm_title">Play at full scale?</string>
+    <string name="usb_allow_fixed_volume_confirm_message">BitChord can\'t set this kind of DAC\'s volume, so it plays at full scale and only the DAC\'s own knob, if it has one, controls loudness. This can be dangerously loud with sensitive headphones.</string>
+    <string name="convert_for_limited_dac">Convert for lower-spec DACs</string>
+    <string name="convert_for_limited_dac_subtitle">Converts tracks above your DAC\'s limit to its highest format. Tracks may take longer to start and won\'t be bit-perfect to the original.</string>
+    <string name="bit_perfect_confirm_title">Turn on bit-perfect output?</string>
+    <string name="bit_perfect_confirm_message">The DAC gets the music at full scale, and the phone\'s volume buttons may stop working. Turn the DAC or amplifier down before you play.</string>
+    <string name="bit_perfect_status_active">%1$s · %2$s kHz · %3$d-bit</string>
+    <string name="bit_perfect_status_dac_limited">%1$s · %2$s kHz · %3$d-bit · DAC max, converted from this track\'s format</string>
+    <string name="bit_perfect_status_inexact">%1$s · not exact: this source isn\'t lossless PCM</string>
+    <string name="bit_perfect_status_waiting">Waiting for a lossless track on a supported output</string>
+    <string name="bit_perfect_status_unavailable">Not available for this track (%1$s)</string>
 
     <string name="loudness_normalization">Loudness normalization</string>
 
@@ -1172,19 +1102,6 @@
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
 
     <string name="advanced_options">Advanced &amp; experimental options</string>
-    <string name="settings_footer_advanced">Developer options and experiments. Leave these at their defaults unless asked to change them.</string>
-
-    <string name="sync_safety_next_prep">Next-song lyrics preparation</string>
-
-    <string name="sync_safety_next_prep_subtitle">Developer option. Looks up and verifies the next song\'s lyrics and sync before it starts. Off keeps the earlier sync path.</string>
-
-    <string name="sync_safety_download_recheck">Downloaded lyrics re-check</string>
-
-    <string name="sync_safety_download_recheck_subtitle">Developer option. Re-checks a downloaded file\'s saved lyrics and sync, and reads a stored override. Off ignores both.</string>
-
-    <string name="sync_safety_hq_sync">HQ sync re-apply</string>
-
-    <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
 
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
 
@@ -1277,24 +1194,27 @@
     <string name="source_needs_lossless_output">Needs a lossless output · use a lossless supported device</string>
     <string name="source_needs_lossless_bt_codec">Needs a lossless output · Bluetooth is on %1$s; use a lossless supported device</string>
     <string name="source_needs_lossless_bt_unknown">Needs a lossless output · can’t tell which Bluetooth codec is in use</string>
+    <string name="source_downloads_on">Downloads allowed</string>
     <string name="source_downloads_off">Streaming only</string>
     <string name="lossless_output_permission">Check Bluetooth codec</string>
     <string name="lossless_output_permission_denied">Nearby devices permission is off</string>
     <string name="lossless_output_permission_denied_detail">Tap to open Settings and allow Nearby devices — without it we can’t read your Bluetooth codec</string>
     <string name="lossless_output_permission_detail">Allow Nearby devices so LDAC, LHDC or Samsung UHQ headphones can unlock lossless-only addons</string>
-    <string name="cached_songs">Offline cache</string>
-    <string name="cached_songs_subtitle">Songs from YouTube and JioSaavn kept in the offline cache</string>
-    <string name="cached_songs_empty">Nothing in the offline cache yet. Songs you play from YouTube or JioSaavn will show up here.</string>
+    <string name="cached_songs">Cached songs</string>
+    <string name="cached_songs_subtitle">Songs from YouTube and JioSaavn in the song cache</string>
+    <string name="cached_songs_empty">No cached songs yet. Songs you play from YouTube or JioSaavn will show up here.</string>
     <string name="cached_song_partial">Partial</string>
     <string name="remove_from_cache">Remove from cache</string>
+    <string name="remove_from_history">Remove from history</string>
+    <string name="remove_from_history_failed">Couldn\'t remove from history</string>
     <string name="cached_song_remove">Remove</string>
     <string name="removed_from_cache">Removed from the song cache</string>
-    <string name="show_cache_folder">Show offline cache folder</string>
-    <string name="show_cache_folder_subtitle">Adds an Offline cache folder to Library with the YouTube and JioSaavn songs kept in the offline cache</string>
+    <string name="show_cache_folder">Show cached songs folder</string>
+    <string name="show_cache_folder_subtitle">Adds a Cached songs folder to Library with the YouTube and JioSaavn songs kept in the song cache</string>
     <string name="song_cache_unlimited">Unlimited</string>
     <string name="song_cache_unlimited_subtitle">No limit. Cached audio can keep growing until your storage is full.</string>
     <string name="clear_song_cache_title">Clear song cache?</string>
-    <string name="clear_song_cache_warning">Everything in the offline cache will be deleted and the Offline cache folder will be emptied. They will stream again the next time you play them.</string>
+    <string name="clear_song_cache_warning">All cached songs will be deleted and the Cached songs folder will be emptied. They will stream again the next time you play them.</string>
     <string name="import_spotify">Import Spotify</string>
     <string name="import_spotify_subtitle">From a playlist link</string>
     <string name="spotify_import_title">Import Spotify playlist</string>
@@ -1310,11 +1230,17 @@
     <string name="spotify_import_local_fallback">Couldn\'t create it on YouTube Music, so \'%1$s\' was saved on this device instead.</string>
     <string name="spotify_import_done">Imported \'%1$s\'</string>
     <string name="spotify_import_unmatched">%1$d songs weren\'t found on YouTube Music</string>
-    <string name="spotify_import_loose">%1$d songs were matched approximately</string>
     <string name="local_playlist_subtitle">%1$d songs · On this device</string>
+    <!-- Local Music's own playlists and folders: the offline player. -->
+    <string name="folders">Folders</string>
+    <string name="folder">Folder</string>
+    <string name="no_local_folders">No folders with music in them</string>
+    <string name="offline_playlist_empty">Nothing in this playlist yet. Add songs to it from their menu.</string>
+    <string name="offline_liked_empty">Songs you like on this device show up here</string>
+    <string name="saved_on_this_device">Saved on this device</string>
     <string name="spotify_import_empty_playlist">No songs in this playlist</string>
-    <string name="spotify_import_language_preference">Language preference</string>
-    <string name="spotify_import_language_hint">e.g. Punjabi, Marathi, Korean…</string>
+    <string name="spotify_import_language_preference" translatable="false">Language preference</string>
+    <string name="spotify_import_language_hint" translatable="false">e.g. Punjabi, Marathi, Korean…</string>
     <string name="spotify_library_subtitle">Your Spotify playlists</string>
     <string name="onboarding_title">Millions of songs, stream on BitChord</string>
     <string name="onboarding_name_prompt">What should we call you?</string>
@@ -1329,15 +1255,10 @@
     <string name="song_info">Song Info</string>
     <string name="song_info_album">Album</string>
     <string name="song_info_release_date">Release date</string>
-    <string name="song_info_genre">Genre</string>
-    <string name="song_info_composer">Composer</string>
-    <string name="song_info_lyricist">Lyricist</string>
-    <string name="song_info_quality">Audio quality</string>
     <string name="song_info_views">Plays / views</string>
     <string name="song_info_likes">Likes</string>
     <string name="song_info_comments">Comments</string>
     <string name="song_info_unavailable">Not available</string>
-    <string name="song_info_unknown">No information</string>
     <string name="song_info_error">Some information could not be loaded.</string>
     <string name="song_info_retry">Retry</string>
     <!-- Settings: BitChord for Wear OS -->
@@ -1375,14 +1296,164 @@
     <string name="wear_os_code_hint">Pairing code</string>
     <string name="wear_os_done">Done</string>
     <string name="signed_by">Signed by %1$s</string>
+    <string name="find_your_mood">Find Your Mood</string>
+    <string name="no_audio_version">No audio version found for this video</string>
+    <string name="no_video_version">No video version found for this song</string>
+    <string name="version_switch_in_party">Everyone in Listen Together hears the same version</string>
+    <string name="auto_redownload_mv_sound">Re-download music-video sound as the song automatically</string>
+    <string name="auto_replace_hq_downloads">Replace downloaded songs with higher quality automatically</string>
+    <string name="auto_replace_hq_downloads_subtitle">When a sound-verified higher-quality copy exists, fetch it and replace the old file. The old file stays until the new one is complete.</string>
+    <string name="auto_prefetch_hq">Pre-save high quality for frequently played songs</string>
+    <string name="auto_prefetch_hq_subtitle">Liked and often-played songs are saved ahead of time, up to %1$d songs. Data and storage are not limited.</string>
+    <string name="hq_library_progress">Upgrading to high quality %1$d/%2$d</string>
+    <string name="hq_library_waiting">Waiting — server busy</string>
+    <string name="hq_library_upgrade_all">Redownload all in high quality</string>
+    <string name="hq_library_upgrade_all_subtitle">Replaces downloaded files with sound-verified higher-quality copies. One song at a time.</string>
+    <string name="download_health_recheck">Re-check downloaded songs</string>
+    <string name="download_health_recheck_subtitle">Checks each downloaded file once more the next time it plays, and repairs a wrong recording or a lower-quality copy. Nothing runs now.</string>
+    <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version automatically. Wi-Fi only does not apply.</string>
+    <string name="settings_footer_downloads">Sets download quality and automatic downloads. Changes apply from the next download.</string>
+    <string name="mv_sound_suspect_banner">%1$d downloaded song(s) have the music video\'s sound · Re-download as the song</string>
+    <string name="redownload_higher_quality">Download again in higher quality</string>
+    <string name="download_already_best_quality">Already the best quality</string>
+    <string name="quality_upgrade_done">Upgraded to higher quality</string>
+    <string name="quality_upgrade_switching">Switching to higher quality</string>
+    <string name="quality_upgrade_mismatch">No high-quality version of this song was found</string>
+    <string name="quality_upgrade_reference_unavailable">Quality can\'t be checked right now. Try again</string>
+    <string name="quality_upgrade_already_best">Already the best quality for this track</string>
+    <string name="quality_upgrade_no_better">No higher-quality copy found</string>
+    <string name="quality_upgrade_failed">Couldn\'t change the quality</string>
+    <string name="quality_upgrade_too_late">The track is almost over, so the quality was left alone</string>
+    <string name="quality_upgrade_unavailable">Quality can\'t be changed right now</string>
+    <string name="quality_upgrade_music_video">A music video\'s quality can\'t be changed</string>
+    <string name="quality_upgrade_no_source">High-quality sources are turned off</string>
+    <string name="quality_upgrade_downloaded">For a download, use “Re-download in higher quality”</string>
+    <string name="hq_redownload_searching">Looking for a higher-quality copy</string>
+    <string name="hq_redownload_queued">Re-downloading in higher quality</string>
+    <string name="hq_redownload_waiting_wifi">Will re-download in higher quality on Wi-Fi</string>
+    <string name="quality_upgrade_busy">Checking the quality now. Try again in a moment</string>
+    <string name="quality_upgrade_reason_not_proven">the new copy couldn\'t be verified</string>
+    <string name="quality_upgrade_reason_unavailable">the change isn\'t available right now</string>
+    <string name="settings_transfer_send">Send settings to another device</string>
+    <string name="settings_transfer_send_subtitle">Proxy, sources, audio quality, automix and lyrics, as one file</string>
+    <string name="settings_transfer_import">Import settings</string>
+    <string name="settings_transfer_import_subtitle">Choose a file, review what changes, then apply</string>
+    <string name="settings_transfer_send_warning">This includes your proxy password and any personal token in a source address. Only send it to someone you trust.</string>
+    <string name="settings_transfer_send_confirm">Send</string>
+    <string name="settings_transfer_share_opened">Share sheet opened</string>
+    <string name="settings_transfer_send_failed">Couldn’t send settings: %1$s</string>
+    <string name="settings_transfer_import_failed">Couldn’t read settings: %1$s</string>
+    <string name="settings_transfer_preview_title">Import settings</string>
+    <string name="settings_transfer_preview_body">These items will be applied to this device.</string>
+    <string name="settings_transfer_preview_none">Nothing will change.</string>
+    <string name="settings_transfer_preview_sources">Sources (%1$d): %2$s</string>
+    <string name="settings_transfer_preview_proxy">Proxy: %1$s</string>
+    <string name="settings_transfer_preview_quality">Audio quality: %1$d</string>
+    <string name="settings_transfer_preview_automix">Automix: %1$d</string>
+    <string name="settings_transfer_preview_lyrics">Lyrics: %1$d</string>
+    <string name="settings_transfer_preview_playback">Playback: %1$d</string>
+    <string name="settings_transfer_preview_display">Display: %1$d</string>
+    <string name="settings_transfer_preview_skipped">%1$d unknown or invalid items will be skipped.</string>
+    <string name="settings_transfer_apply">Apply</string>
+    <string name="settings_transfer_applied">Applied %1$d settings and %2$d sources.</string>
+    <string name="settings_transfer_applied_proxy">The proxy was applied too.</string>
+    <string name="settings_transfer_skipped">%1$d items were skipped.</string>
+    <string name="playback_speed">Playback speed</string>
+    <string name="pitch">Pitch</string>
+    <string name="pitch_lower">Lower pitch</string>
+    <string name="pitch_upper">Raise pitch</string>
+    <string name="prefer_music_only">Prefer music-only version</string>
+    <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="skip_non_music_parts">Skip non-music parts</string>
+    <string name="skip_non_music_parts_subtitle">Skips greetings and chatting in cover videos using public SponsorBlock data</string>
+    <string name="skip_sponsor_parts">Also skip sponsor parts</string>
+    <string name="skip_sponsor_parts_subtitle">Sponsorship reads, self-promotion, intros and outros</string>
+    <string name="skip_segment_done">Skipped a non-music part</string>
+    <string name="low_power_mode">Low power mode</string>
+    <string name="low_power_mode_subtitle">Cuts lyric animation, background effects and AI analysis to save battery and heat</string>
+    <string name="low_power_auto">Auto</string>
+    <string name="low_power_on">On</string>
+    <string name="low_power_off">Off</string>
+    <string name="settings_lyrics">Lyrics</string>
+    <string name="widget_opens_player">Open player when tapping a widget</string>
+    <string name="widget_opens_player_subtitle">Off, a widget tap only opens the app</string>
+    <string name="best_quality">Best quality</string>
+    <string name="personalised_autoplay">Personalised autoplay</string>
+    <string name="video_radio_continue">Continue with video songs</string>
+    <string name="video_radio_continue_subtitle">Keep a station seeded by a cover, live clip or self-uploaded song inside that video world</string>
+    <string name="personalised_autoplay_subtitle">Orders YouTube’s radio by your likes, skips and recent listening\nMixes in similar tracks from worldwide listening data (ListenBrainz)</string>
+    <string name="settings_footer_playback">Sets playback, autoplay and Automix behaviour.</string>
+    <string name="problem_mark">Report a problem (writes to the log)</string>
+    <string name="problem_marked">Marked in the diagnostic log</string>
+    <string name="pipeline_source_verified">Source: %1$s · Verified (offset %2$s ms)</string>
+    <string name="pipeline_source_unverified">Source: %1$s · Not verified</string>
+    <string name="pipeline_route">Route</string>
+    <string name="pipeline_bit_exact_yes">Yes</string>
+    <string name="pipeline_bit_exact_dsd">No — DSD converted to PCM</string>
+    <string name="pipeline_bit_exact_loudness">No — loudness correction</string>
+    <string name="pipeline_bit_exact_eq">No — EQ</string>
+    <string name="pipeline_bit_exact_spatial">No — spatial audio</string>
+    <string name="pipeline_bit_exact_downstream">No — %1$s</string>
+    <string name="pipeline_bit_exact_downstream_unknown">converted downstream</string>
+    <string name="route_phone">Phone speaker</string>
+    <string name="route_wired">Wired headphones</string>
+    <string name="route_usb">USB audio</string>
+    <string name="route_bluetooth">Bluetooth</string>
+    <string name="route_hdmi">HDMI</string>
+    <string name="route_other">Other output</string>
+    <string name="connection_timed_out">The connection timed out. Try again.</string>
+    <string name="connection_failed">Couldn\'t connect. Check your connection and try again.</string>
+    <string name="secure_connection_failed">Couldn\'t establish a secure connection. Try again.</string>
+    <string name="server_busy">The server is busy. Try again in a moment.</string>
+    <string name="proxy_unreachable">Couldn\'t reach the proxy. Check its settings and try again.</string>
+    <string name="error_not_found">Couldn\'t find this item. It may have been removed or moved.</string>
+    <string name="error_request_invalid">Couldn\'t handle the request. Check what you entered and try again.</string>
+    <string name="error_content_unavailable">No available version of this item was found. Try another source.</string>
+    <string name="paxsenix_api_key_status_configured">Configured</string>
+    <string name="paxsenix_api_key_status_missing">Optional, not configured</string>
+    <string name="quality_efficient">Efficient</string>
+    <string name="quality_high">High quality</string>
+    <string name="quality_lossless">Lossless</string>
+    <string name="quality_hi_res">Hi-Res Lossless</string>
+    <string name="quality_efficient_detail">Smallest size · about 30MB/hour</string>
+    <string name="quality_high_detail">Everyday quality · about 80MB/hour</string>
+    <string name="quality_lossless_detail">Close to the original · about 150MB/hour</string>
+    <string name="quality_hi_res_detail">Best quality · about 300MB/hour or more</string>
+    <string name="liked_hidden_videos_show">%1$d videos hidden · Show</string>
+    <string name="liked_hidden_videos_hide">%1$d videos hidden · Hide</string>
+    <string name="private_listening">Private mode</string>
+    <string name="private_listening_subtitle">Won\'t appear in YouTube history or scrobbles. Recent plays on this device are still saved</string>
+    <string name="private_listening_indicator">Private mode is on</string>
+    <string name="private_listening_turned_on">Private mode on · turns off in 6 hours</string>
+    <string name="album_release_year">%1$s</string>
+    <string name="album_release_date">%1$d/%2$d/%3$d</string>
+    <string name="playlist_action_failed">Couldn\'t update this playlist</string>
+    <string name="replay_genres_missing_key_subtitle">A Last.fm API key is needed before genres can be fetched</string>
+    <string name="import_succeeded_with_library">Imported %1$s and %3$d local playlists from v%2$s</string>
+    <string name="import_playlists_title">Import local playlists</string>
+    <string name="import_playlists_choice">Settings, listening history and search history are replaced either way. Choose whether this file\'s local playlists replace the ones on this device, or are merged into them without duplicates.</string>
+    <string name="import_playlists_replace">Replace</string>
+    <string name="import_playlists_merge">Merge</string>
+    <string name="music_gate_fallback" translatable="false">YouTube Music is restricted in this region, so browsing and playback use YouTube.</string>
+    <string name="settings_footer_advanced">Developer options and experiments. Leave these at their defaults unless asked to change them.</string>
+    <string name="sync_safety_next_prep">Next-song lyrics preparation</string>
+    <string name="sync_safety_next_prep_subtitle">Developer option. Looks up and verifies the next song\'s lyrics and sync before it starts. Off keeps the earlier sync path.</string>
+    <string name="sync_safety_download_recheck">Downloaded lyrics re-check</string>
+    <string name="sync_safety_download_recheck_subtitle">Developer option. Re-checks a downloaded file\'s saved lyrics and sync, and reads a stored override. Off ignores both.</string>
+    <string name="sync_safety_hq_sync">HQ sync re-apply</string>
+    <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
+    <string name="spotify_import_loose">%1$d songs were matched approximately</string>
+    <string name="song_info_genre">Genre</string>
+    <string name="song_info_composer">Composer</string>
+    <string name="song_info_lyricist">Lyricist</string>
+    <string name="song_info_quality">Audio quality</string>
+    <string name="song_info_unknown">No information</string>
     <string name="gemini_translation">AI lyric translation (Gemini)</string>
     <string name="gemini_translation_subtitle_ready">Gemini reads the whole song for a natural translation. Falls back to Google Translate if it fails.</string>
     <string name="gemini_translation_subtitle_missing">Tap to add a Gemini API key</string>
     <string name="gemini_translation_subtitle_rejected">Gemini refused this key, so Google Translate is being used. Tap to check the key.</string>
     <string name="gemini_api_key">Gemini API key</string>
     <string name="gemini_api_key_description">Create a free key at aistudio.google.com/apikey and paste it here. It stays on this device and is sent only to Google. Leave it empty to use Google Translate.</string>
-    <string name="korean">Korean</string>
-    <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
     <string name="default_gemini_api_key" translatable="false"></string>
     <string name="default_deepgram_api_key" translatable="false"></string>
     <string name="prefetch_translation">Translate the next song\'s lyrics ahead</string>

@@ -24,15 +24,10 @@ object AndroidStreamHooks {
     /** Before anything logs or resolves. */
     fun installEarly() {
         MonotonicClock.nowMs = SystemClock::elapsedRealtime
-        // Release builds echo too, so `adb logcat` on the listener's phone shows
-        // why a lyric or a video timing went the way it did: warnings and errors
-        // from everything, chatter only from the paths still being tuned, each
-        // line cut short (a search response can run to pages).
-        TrackLog.echo = { level, tag, message, error ->
-            // `adb shell setprop log.tag.BitChord DEBUG` opens a tag's chatter on a
-            // release build too, for a phone being diagnosed over USB.
-            if (BuildConfig.DEBUG || level != 'D' || tag in RELEASE_DEBUG_TAGS || Log.isLoggable(tag.take(23), Log.DEBUG)) {
-                val text = if (BuildConfig.DEBUG || message.length <= RELEASE_LINE_CHARS) message else message.take(RELEASE_LINE_CHARS) + "…"
+        // logcat on debug builds only; a release build keeps the lines for Copy
+        // Log and writes them nowhere else.
+        if (BuildConfig.DEBUG) {
+            TrackLog.echo = { level, tag, message, error ->
                 when (level) {
                     'D' -> Log.d(tag, text, error)
                     'I' -> Log.i(tag, text, error)

@@ -50,7 +50,6 @@ import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onPlaced
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -65,6 +64,10 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ui.player.AndroidMusicVideo
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.animation.core.animateDpAsState
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -340,6 +343,9 @@ internal fun Modifier.playerDockArt(dock: PlayerDock?, corner: Dp): Modifier {
         .graphicsLayer { alpha = if (dock.coversMiniArt) 0f else 1f }
 }
 
+/** The mini player's cover for a music video: 16:9 at the cover's 40dp height. */
+private val VIDEO_ART_WIDTH = 71.dp
+
 /** Frosted mini player that rides just above the floating tab bar. */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
@@ -421,42 +427,54 @@ fun MiniPlayer(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+            // A music video plays here at its own 16:9, as the web player's
+            // mini player does, rather than cropped into the square cover.
+            val artWidth by animateDpAsState(
+                targetValue = if (song.isVideo) VIDEO_ART_WIDTH else 40.dp,
+                label = "miniArtWidth",
+            )
+            Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(width = artWidth, height = 40.dp)
                     .playerDockArt(dock, ART_CORNER)
                     .clip(RoundedCornerShape(ART_CORNER))
                     .thumbnailBorder(RoundedCornerShape(ART_CORNER))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (privateListening) {
-                        Icon(
-                            imageVector = Icons.Rounded.VisibilityOff,
-                            contentDescription = stringResource(R.string.private_listening_indicator),
-                            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    ExplicitSongTitle(
-                        song = song,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.weight(1f),
+            ) {
+                AsyncImage(
+                    model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                // A music video keeps playing in the cover's place, cropped to
+                // it, as the web player's mini player does — the full player,
+                // when it is up, takes the picture over.
+                if (song.isVideo) {
+                    AndroidMusicVideo(
+                        videoId = song.videoId,
+                        fit = false,
+                        onRenderedChanged = {},
+                        modifier = Modifier.fillMaxSize(),
+                        priority = 0,
                     )
                 }
-                Text(
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                // The badge in the artist line's colour and a long line faded
+                // out at its end, as on the glass bar's mini player.
+                ExplicitSongTitle(
+                    song = song,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    badgeColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fadeOverflow = true,
+                )
+                FadingLine(
                     text = song.artist,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
             if (isLoading) {

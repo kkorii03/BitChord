@@ -159,23 +159,11 @@ data class Song(
     /** Browse id for an album, playlist, or other source page. */
     val playbackSourceId: String? = null,
     /**
-     * A cover upload shown as its song (see CoverTitles): the upload's own
-     * title and channel, kept for the menu and for matching, while [title]
-     * and [artist] read "곡명" and "원곡자 · 부른사람 커버". Null on everything
-     * else.
+     * Feedback token extracted from the watch-queue row's menu — used to remove
+     * this entry from the account's listening history on YouTube Music. Null on
+     * non-history rows (e.g. search results, library).
      */
-    val originalTitle: String? = null,
-    val originalArtist: String? = null,
-    /** Who sings a cover — what its plays are counted under. */
-    val coverSinger: String? = null,
-    /** Whose song a cover is, when its title says. */
-    val coverOriginalArtist: String? = null,
-    /**
-     * Queued by video radio as a video song, so it must keep playing as the
-     * upload the listener chose. This suppresses the automatic MV-to-song
-     * version swap; the upload type itself stays in [isVideo].
-     */
-    val videoRadio: Boolean = false,
+    val feedbackToken: String? = null,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
@@ -465,19 +453,23 @@ data class ShelfItem(
     val videoId: String?,
     val browseId: String?,
     /**
-     * True when the card opens an artist page, whatever its browse id looks
-     * like. YouTube's library artist feed sometimes serves a card whose id is
-     * not the usual `UC…`, and an artist is drawn round wherever it appears —
-     * including when its picture had to fall back to an album cover.
-     */
-    val isArtist: Boolean = false,
-    /**
-     * A music-video upload rather than a catalogue track, when the card is a
-     * track card at all. Read off its widescreen still; a release or artist
-     * card is never one.
+     * A music-video upload rather than a catalogue track: widescreen art, and a
+     * picture the player can show. Drawn as a 16:9 card, as the web player does.
      */
     val isVideo: Boolean = false,
 )
+
+/** How a shelf's items are laid out — the web player's `ShelfLayout`, by the same rules. */
+enum class ShelfLayout {
+    /** Square cards in one scrolling row. */
+    CARDS,
+
+    /** Track rows, four to a column — Quick picks, Listen again, Recents. */
+    LIST,
+
+    /** Widescreen cards for music videos. */
+    VIDEO,
+}
 
 /** The signed-in Google account, as YouTube Music reports it. */
 data class Account(
@@ -554,7 +546,22 @@ data class HomeShelf(
     val subtitle: String = "",
     val moreBrowseId: String? = null,
     val moreParams: String? = null,
+    val layout: ShelfLayout = ShelfLayout.CARDS,
 )
+
+/**
+ * The layout a shelf of [items] gets, as the web player decides it: rows when
+ * YouTube itself listed tracks as rows (or the shelf is Listen again, which the
+ * web player shows that way), widescreen cards when most of it is videos.
+ */
+fun shelfLayoutFor(title: String, items: List<ShelfItem>, fromList: Boolean): ShelfLayout {
+    if (items.isEmpty()) return ShelfLayout.CARDS
+    val first = items.first()
+    if (fromList && first.videoId != null) return ShelfLayout.LIST
+    if (title.trim().equals("Listen again", ignoreCase = true)) return ShelfLayout.LIST
+    if (items.count { it.isVideo } * 2 > items.size) return ShelfLayout.VIDEO
+    return ShelfLayout.CARDS
+}
 
 /**
  * These shelves minus any that mostly repeat one already on the page, or one earlier in this
@@ -781,6 +788,10 @@ data class ArtistPage(
     val monthlyListenerCount: String? = null,
     /** The header's subscribe button, when the page carries one. */
     val subscription: SubscriptionState? = null,
+    /** The header's Mix button: the artist's radio, them and the artists around them. */
+    val radio: WatchTarget? = null,
+    /** The header's Shuffle button: the artist's own catalogue, shuffled. */
+    val shuffle: WatchTarget? = null,
 )
 
 /**
