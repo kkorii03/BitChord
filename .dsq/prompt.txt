@@ -1,0 +1,15 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin). Branch = upstream v1.9 (git tag v1.9) merged into a Korean fork. Read docs/upstream-19-hq-compare.md first, especially the section '감독(Opus) 확정 판정' — those rulings override the table.
+STEP 1 of the HQ swap (only this step): make the SEARCH CORE of app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt follow v1.9, with the fork's kept behaviour as small hooks.
+Scope = the functions bestAcross and matchAndStream (and private helpers only they use). Compare with: git show v1.9:app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt
+Target shape:
+- bestAcross / matchAndStream bodies = v1.9 logic (ranking, JioSaavn album-collision rule, waitForAll racing, worthSwapping accept lambda) with these hooks only, each a one-line call marked // [KO] <name> into a NEW file app/src/main/java/com/music/bitchord/ko/SourceSearchKo.kt:
+  [KO] original-recording: when strictOriginal=true, keep only TrackMatcher.isOriginalRecording(row, target) rows (fork rule 4). Keep the strictOriginal parameter and its callers.
+  [KO] addon-health: keep SourceCooldown (isResting skip unless manual, failed/networkFailed/authFailed marks) and the rule 'do not memoise an empty answer if the source's failureMark/authMark changed during the call'. Keep the searchAnswers memo only with that rule. Move the SourceCooldown object into the ko file if it can be done without changing its public API used by AddonSource/ModuleSource/HqLibraryUpgrade/tests (SourceResolver.SourceCooldown may stay as a typealias or forwarding object).
+  [KO] hq-search-line: keep ONE TrackLog.d line per source with the verdict (title/version/artist/length/auth/timeout/error) — keep the existing hqSearchLine format exactly, featurehealth parses it.
+  [KO] manual-window: keep sourceLookupTimeoutMs(manual, configured) (4 s auto / 12 s manual).
+- Keep all existing parameters of bestAcross that callers pass (strictLength, requireSharedArtist, strictOriginal, excludeHosts, driftSec, manual, report, refine, timeoutMs, sourceTimeoutMs, accept). Do not add allowArtistUnverified in this step.
+- Everything else in SourceResolver.kt: do NOT change in this step.
+Rules: Do NOT touch .github/, keys/, gradle files, strings, any file other than SourceResolver.kt and the new ko/SourceSearchKo.kt. Do NOT revert other files; do not checkout other branches. Battery first: no polling, no timers. Re-read every caller of bestAcross/matchAndStream (grep the whole app/src) and keep them compiling. Use grep / Select-String, not rg.
+Verify: ./gradlew :app:compileProdDebugKotlin and ./gradlew :app:testProdDebugUnitTest --tests 'com.music.bitchord.HqSearchCacheTest' --tests 'com.music.bitchord.HqNetworkFailureTest' --tests 'com.music.bitchord.AddonAuthFailureTest' --tests 'com.music.bitchord.AddonAuthReviewTest' --tests 'com.music.bitchord.SourcesTest' (report each pass/fail; the HqNetwork/AddonAuth ones failed before this step).
+At the end, summary in 10 lines or fewer: changed files / which v1.9 lines were adopted vs which [KO] hooks / test results / unresolved problems / assumptions.
