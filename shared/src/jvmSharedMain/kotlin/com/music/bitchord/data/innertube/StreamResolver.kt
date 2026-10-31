@@ -868,10 +868,18 @@ object StreamResolver {
                     TAG,
                     BlockedStartPolicy.logLine(videoId, BlockedStartStep.PROXY, "start", elapsed),
                 )
-                val proxyTimeout = minOf(
-                    BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsed),
-                    if (blockedSignal) blockedBudget.remainingMs() else Long.MAX_VALUE,
-                )
+                // Only a real blocked-start signal earns the short proxy
+                // ceiling. An ordinary refusal outside a gated region keeps the
+                // old unbounded race: cutting it at the 2.5 s policy window
+                // would change a path that was not the one being fixed.
+                val proxyTimeout = if (blockedSignal) {
+                    minOf(
+                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsed),
+                        blockedBudget.remainingMs(),
+                    )
+                } else {
+                    Long.MAX_VALUE
+                }
                 val itxStream = resolverScope.async(TrackLog.about(videoId)) { itx.await()?.stream }
                 // The whole race is bounded, not just the proxy leg. A proxy
                 // failure that landed first used to leave the race waiting on
@@ -1023,10 +1031,14 @@ object StreamResolver {
                 // own fourteen seconds, and the track waited for both even
                 // though the first refusal was already in hand. The same
                 // budget the rest of the rescue obeys applies here.
-                val proxyTimeout = minOf(
-                    BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
-                    if (blockedSignal) blockedBudget.remainingMs() else Long.MAX_VALUE,
-                )
+                val proxyTimeout = if (blockedSignal) {
+                    minOf(
+                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
+                        blockedBudget.remainingMs(),
+                    )
+                } else {
+                    Long.MAX_VALUE
+                }
                 val raced = if (proxyTimeout <= 0L) {
                     null
                 } else {
@@ -1074,10 +1086,14 @@ object StreamResolver {
                         TAG,
                         "proxy-playback: $videoId early race (direct refused at ${elapsedNow}ms)",
                     )
-                    val proxyTimeout = minOf(
-                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
-                        if (blockedSignal) blockedBudget.remainingMs() else Long.MAX_VALUE,
-                    )
+                    val proxyTimeout = if (blockedSignal) {
+                        minOf(
+                            BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
+                            blockedBudget.remainingMs(),
+                        )
+                    } else {
+                        Long.MAX_VALUE
+                    }
                     val raced = if (proxyTimeout <= 0L) {
                         null
                     } else {
@@ -1401,6 +1417,16 @@ object StreamResolver {
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX $preferredManifest preferred ask failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
                 onFailure(e.message)
+                // The preferred client can answer "This track is unavailable"
+                // just as the walk below can. In a gated region that is the
+                // first refusal, and repeating the same client (or walking the
+                // catalog as an upload) is the silence this rescue exists to
+                // cut: hand the track straight to the next rescue step.
+                if (abortAfterFirstRefusal && UnplayableReason.isDefinitive(e.message)) {
+                    onBlocked()
+                    TrackLog.w(TAG, "InnerTubeX $preferredManifest refused $videoId: ${e.message}; not repeating the client")
+                    return null
+                }
                 null
             }
             if (found != null) {

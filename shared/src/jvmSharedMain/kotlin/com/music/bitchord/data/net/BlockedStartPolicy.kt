@@ -138,6 +138,34 @@ object BlockedStartPolicy {
     }
 
     /**
+     * The first-audio figure a summary keeps when the same row becomes current
+     * again (a version or source refresh).
+     *
+     * The outgoing summary is written and cleared first, so the new summary
+     * cannot read the old measurement from its own fields. The caller passes
+     * the value it captured before logging them. A same-id refresh keeps a
+     * measurement already taken; otherwise a crossfaded row is zero and a row
+     * that has not sounded has no figure yet. This is what stops the 10-31
+     * firstAudio=0 being written over a track the listener waited 32 s for.
+     */
+    fun summaryFirstAudioMs(
+        previousVideoId: String?,
+        currentVideoId: String?,
+        previousFirstAudioMs: Long?,
+        alreadyAudible: Boolean,
+        previousEnded: Boolean = false,
+    ): Long? = when {
+        // A repeat of the same row is a new play, not a refresh: the outgoing
+        // track ran to its end and the next one has not sounded yet.
+        currentVideoId != null &&
+            currentVideoId == previousVideoId &&
+            !previousEnded &&
+            previousFirstAudioMs != null -> previousFirstAudioMs
+        alreadyAudible -> 0L
+        else -> null
+    }
+
+    /**
      * Whether a direct refusal should start the proxy beside InnerTubeX now.
      *
      * Keeping InnerTubeX in front of an ordinary refusal is deliberate (a

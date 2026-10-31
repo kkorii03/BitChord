@@ -1,12 +1,16 @@
 package com.music.bitchord.data.net
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * The two-route race's failure paths: an exception is a failed route, the
@@ -96,5 +100,28 @@ class ResolutionRaceEdgeTest {
         assertEquals("direct" to "direct-result", result)
         delay(500)
         assertFalse(proxyFinished.get(), "the losing route must not keep working after a win")
+    }
+
+    @Test
+    fun `a caller's timeout while the second route is awaited stops both routes`() = runBlocking {
+        val proxyCancelled = CompletableDeferred<Unit>()
+        val result = withTimeoutOrNull(100L) {
+            raceForFirstSuccess<String>(
+                direct = { null },
+                proxy = {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        proxyCancelled.complete(Unit)
+                    }
+                },
+            )
+        }
+        assertNull(result, "the caller's budget expired before either route answered")
+        withTimeoutOrNull(1_000L) { proxyCancelled.await() }
+        assertTrue(
+            proxyCancelled.isCompleted,
+            "the still-running route must be cancelled, not left on the shared scope",
+        )
     }
 }

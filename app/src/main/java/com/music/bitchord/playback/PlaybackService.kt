@@ -4478,9 +4478,13 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** Remembers the facts the one-line summary will need when this track ends. */
-    private fun startTrackSummary(song: Song?, alreadyAudible: Boolean) {
-        val previousId = summarySong?.videoId
-        val previousFirstAudio = summaryFirstAudioMs
+    private fun startTrackSummary(
+        song: Song?,
+        alreadyAudible: Boolean,
+        previousId: String? = summarySong?.videoId,
+        previousFirstAudio: Long? = summaryFirstAudioMs,
+        previousEnded: Boolean = false,
+    ) {
         summarySong = song
         if (song == null) {
             summarySource = "none"
@@ -4507,11 +4511,13 @@ class PlaybackService : MediaLibraryService() {
         // A same-row refresh (a version/source swap) must keep the measurement
         // already taken; overwriting it with 0 is how the 10-31 summary said
         // firstAudio=0 on a track the listener waited 32 seconds to hear.
-        summaryFirstAudioMs = when {
-            song.videoId == previousId && previousFirstAudio != null -> previousFirstAudio
-            alreadyAudible -> 0L
-            else -> null
-        }
+        summaryFirstAudioMs = BlockedStartPolicy.summaryFirstAudioMs(
+            previousVideoId = previousId,
+            currentVideoId = song.videoId,
+            previousFirstAudioMs = previousFirstAudio,
+            alreadyAudible = alreadyAudible,
+            previousEnded = previousEnded,
+        )
     }
 
     /**
@@ -4597,6 +4603,13 @@ class PlaybackService : MediaLibraryService() {
         // The outgoing track's story ends here. Its own lines are already in
         // the log; this is the one line that ties them together for a reader
         // who was not watching while it played.
+        //
+        // The line clears the summary fields, so the same-row refresh's
+        // measurement has to be captured first. Handing it to
+        // [startTrackSummary] below is what keeps a version/source swap from
+        // reporting firstAudio=0 for a track that already sounded.
+        val outgoingSummaryId = summarySong?.videoId
+        val outgoingFirstAudioMs = summaryFirstAudioMs
         if (!sameTrackSwap) logTrackSummary(previousEnded)
         syncBoundedContextCursor(exoPlayer, mediaItem)
         if (boundedContextWindow != null && !ListenTogether.state.value.inParty) {
@@ -4706,8 +4719,16 @@ class PlaybackService : MediaLibraryService() {
         val played = mediaItem?.toSong()
         // Refreshing the same track's summary is safe: it does not write the
         // outgoing line, it only updates which source the still-playing track
-        // will report when it actually ends.
-        startTrackSummary(played, alreadyAudible)
+        // will report when it actually ends. The measurement captured before
+        // the outgoing line was cleared is passed along so a same-row refresh
+        // cannot overwrite it with zero.
+        startTrackSummary(
+            played,
+            alreadyAudible,
+            previousId = outgoingSummaryId,
+            previousFirstAudio = outgoingFirstAudioMs,
+            previousEnded = previousEnded,
+        )
         TrackLog.i(
             "BitChord",
             "play: -> ${played?.title?.take(80).orEmpty()} - ${played?.artist?.take(80).orEmpty()} " +
