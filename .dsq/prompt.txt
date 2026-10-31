@@ -1,0 +1,38 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 vc91 = 'Korea 차단 곡 첫 소리 9.2초 한도' 수정이 들어간 판, 10-31 15:46): 한국에서 막힌 곡 Betty (Get Money)(e2T_MvOVapI)가 재생 누르고 첫 소리까지 32초. 사용자가 15:46:49 '문제 표시' 누름. 곡 요약은 firstAudio=0 으로 잘못 기록.
+ 15:46:35.757 play: -> Betty (Get Money) (e2T_MvOVapI) reason=PLAYLIST_CHANGED
+ 15:46:35.747 substitute: 'Betty (Get Money)' no verified original; keeping YouTube
+ 15:46:36.017 TIMING e2T_MvOVapI direct: 269ms
+ 15:46:37.313 InnerTubeX WEB_CREATOR__po minted an unusable URL for e2T_MvOVapI: REFUSED (probe HTTP 403)
+ 15:46:44.803 InnerTubeX failed for e2T_MvOVapI: This track is unavailable. TIMING InnerTubeX: 9055ms
+ 15:46:44.803 proxy-playback: e2T_MvOVapI early race (first refusal at 9056ms)
+ 15:46:49.185 first stream for e2T_MvOVapI was refused; asking as an upload
+ 15:46:51.346 InnerTubeX WEB_REMIX__po as an upload for e2T_MvOVapI: REFUSED
+ 15:46:59.686 InnerTubeX failed ... TIMING e2T_MvOVapI proxy InnerTubeX: 14883ms
+ 15:46:59.876 direct IOS LOGIN_REQUIRED / 15:47:00.047 direct ANDROID LOGIN_REQUIRED, proxy direct: 361ms
+ 15:47:00.047 proxy-playback: e2T_MvOVapI failed: no stream / race won by direct in 24300ms
+ 15:47:00.048 InnerTubeX found no usable stream for e2T_MvOVapI; falling back to extraction
+ 15:47:07.755 DECODE e2T_MvOVapI <- audio/opus   (첫 소리, 32초)
+ 15:47:39.538 track-summary: e2T_MvOVapI ... resolve=direct firstAudio=0 played=29
+ (같은 시각 다음 곡 jq9zy4TBygU 도 똑같이 9.9초 InnerTubeX 실패 → upload REFUSED 경로를 병렬로 돌며 경쟁)
+할 일:
+① 원인 확정(파일:줄): 9.2초 단계 한도(test22 fix-blocked-start)가 왜 이 경로에 안 걸렸는지 — 한도 시계가 언제 시작·리셋되는지, upload 재시도·proxy InnerTubeX(14.9초)·extraction fallback 이 한도 밖에서 도는지.
+② 한도 보장: 재생 누른 순간부터 첫 소리까지 전체 예산 약 9초. 예산이 끝나면 (a) 같은 곡 고음질/대체 원곡이 있으면 즉시 그것, (b) 없으면 다음 곡으로 넘기고 '이 곡은 지역 제한으로 재생할 수 없습니다' 안내(기존 문구 있으면 재사용). 늦게 도착한 스트림은 버림. 뮤직비디오로 대체 금지(기존 규칙).
+③ 다음 곡 미리 준비(jq9zy4TBygU)가 현재 곡과 같은 느린 경로를 동시에 돌려 현재 곡을 늦추면, 현재 곡이 소리 나기 전에는 다음 곡 해석을 미룸(배터리·속도).
+④ track-summary firstAudio 가 이 경로에서 0 으로 찍히는 원인 수정(재생 시작~첫 DECODE 실제 시간).
+⑤ 첫 차단 신호(probe 403 / 'This track is unavailable')가 오면 같은 클라이언트 반복 대신 바로 다음 단계로.
+테스트(고치기 전 실패): 단계별 지연을 흉내 낸 가짜 해석기로 전체 예산 9초 넘으면 (a)/(b) 로 끝남, 늦은 스트림 무시, firstAudio 계산 — 단위 테스트. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, 서명 수정 금지. 차단 안 된 일반 곡 경로 동작 변경 금지. 타이머 반복·폴링 금지(한 번의 deadline 은 허용). 바꾼 함수의 모든 호출부와 타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 5
+- HIGH `PlaybackService.kt:4600`/`4510` — `logTrackSummary` clears `summarySong`/`summaryFirstAudioMs` before `startTrackSummary` reads them, so the new same-row preservation never fires for non-hq version/source refreshes and firstAudio is still overwritten with 0; skip logging for a same-id refresh or capture/pass the previous measurement before logging.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1400` — the preferred-InnerTubeX catch only logs and returns null, so a definitive "This track is unavailable" still falls into the repeat walk despite `abortAfterFirstRefusal`; call `onBlocked()` and return null when `UnplayableReason.isDefinitive(e.message)` and abort is set.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/ResolutionRace.kt:72` (via new timeout at `StreamResolver.kt:1034`) — after the first route fails, the cancellation catch around `otherJob.await()` rethrows without cancelling `otherJob`, so the new `withTimeoutOrNull` leaves the slow proxy/InnerTubeX call running past the budget; cancel both jobs in that catch/finally or scope the race to the caller.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1027` — even when `blockedSignal` is false this caps the early proxy race at the 2.5s `PROXY` timeout (previously unbounded), so ordinary non-region tracks whose proxy takes longer are cut off, violating the unchanged-normal-path constraint; apply the cap only when `blockedSignal`.
+- LOW `shared/src/jvmTest/kotlin/com/music/bitchord/data/net/BlockedStartRescueTest.kt:21` — tests exercise only `BlockedStartRescue`/the pure helper, not the alternate/high-quality-then-next-row path or `startTrackSummary`, so the broken firstAudio preservation is not caught; add a fake-resolver/service-level test for the (a)/(b) outcome and summary firstAudio.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
