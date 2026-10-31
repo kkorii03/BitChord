@@ -1,0 +1,188 @@
+﻿[NO-FIX-LOOP]
+You are fixing compile errors in the APP module after merging upstream BitChord v1.9 into our Korean fork, and re-attaching lost Korean-fork features. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. Our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist or whose upstream signature changed. The shared and sharedUi modules already compile (do not edit shared/ or sharedUi/ main code).
+Reference versions (fetch first):
+  git fetch origin task/fix-1030 ; then use commit 724fd5ef = our fork right before the merge (git show 724fd5ef:<path>)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only, never push there)
+Lost-feature inventory: docs/upstream-19-lost.md (rows give fork file:line, identifiers, where to re-attach). Feature decisions: docs/upstream-19-plan.md and docs/upstream-19-nodowngrade.md.
+
+USER POLICY (strict): upgrade to v1.9 with NO functional downgrade. Where v1.9 has its own implementation of a feature, v1.9's is used: quality upgrade / hq-swap / HQ prefetch / HqAudioVerify wiring -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings screen layout, menus, video playback, tab bar, mini player -> v1.9. For those, adapt or delete OUR now-dead caller code (list every deletion with reason in the summary) — never delete v1.9 code.
+KEEP and RE-ATTACH every Korean-fork feature v1.9 does not have, for rows of docs/upstream-19-lost.md buckets A-E, I, J that touch your files: lyrics sync correction (incl. AudioCache timingKeep), song-version verdict / no music video / audio instead of MV (musicOnlyTried, alternateVersionCache), settings prefer_music_only, skip_non_music_parts, skip_sponsor_parts (keys, setters, and the PlaybackService collectors that apply them), Korea-blocked fallback + proxy (recheckGateNow), video radio, Korean UI labels, diagnostic logs (installCrashHandler/logProcessStart/onTrimMemory, release TrackLog.echo, DebugLog->TrackLog, crossfade skipped line, consume-user-queue line, audio switch refusal detail), withPhraseLineBreak, close player when queue empties, TrackAnalyzer.awaitWindow (event-driven, no polling).
+
+Separation rule (docs/ko-fork-layout.md): restored Korean code goes in NEW files under app/src/main/java/com/music/bitchord/ko/ (package com.music.bitchord.ko), not back inside upstream files. Inside a file that exists in v1.9, add only short calls marked with a trailing comment // [KO] <feature>. Prefer extension/top-level functions. When an upstream signature changed, adapt OUR code to it.
+
+HARD RULES (results are machine-checked; a violating result is thrown away):
+- never restore a whole file from 724fd5ef / task/fix-1030; never delete or empty a file that exists in v1.9; never revert v1.9 hunks to the fork version.
+- edit only YOUR files (list below) plus new files under app/src/main/java/com/music/bitchord/ko/ (name them <LaneName>*.kt). If you need a declaration that belongs in another lane's file, do NOT edit that file: write 'NEEDS: <file>: <declaration>' in the summary and, if you can, provide it as a function in your own ko/ file.
+- do not edit .github/, keys/, signing, gradle files.
+Check your own errors with: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' . Other lanes fix the other files in parallel, so errors elsewhere are expected — ignore them. Goal: zero errors in your files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change.
+
+At the end, summarize in 12 lines or less: modified files / new ko files / Korean features restored / our code dropped in favour of v1.9 (with reason) / NEEDS lines / remaining errors in your files / unresolved questions.
+
+LaneName=ui. YOUR FILES:
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt
+app/src/main/java/com/music/bitchord/ui/screens/DetailScreen.kt
+app/src/main/java/com/music/bitchord/ui/screens/DiscordScreen.kt
+app/src/main/java/com/music/bitchord/ui/screens/AccountAndScrobblingScreen.kt
+app/src/main/java/com/music/bitchord/ui/screens/HistoryScreen.kt
+app/src/main/java/com/music/bitchord/ui/screens/ListenTogetherScreen.kt
+app/src/main/java/com/music/bitchord/ui/components/PlaylistPickerSheet.kt
+
+Current compile errors in your files (151):
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:213:46 Unresolved reference 'KEY_PREFER_MUSIC_ONLY'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:1886:13 Unresolved reference 'PrivateListeningSource'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:1886:38 Unresolved reference 'PrivateListeningSource'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:1899:49 Unresolved reference 'logLabel'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3168:13 Unresolved reference 'KEY_PREFER_MUSIC_ONLY'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3169:13 Unresolved reference 'KEY_SKIP_NON_MUSIC_PARTS'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3170:13 Unresolved reference 'KEY_SKIP_SPONSOR_PARTS'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3266:13 Unresolved reference 'KEY_HOME_RECENTS_VIEW_TYPE'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3314:15 Unresolved reference 'KEY_HOME_RECENTS_VIEW_TYPE'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3503:13 Unresolved reference 'KEY_PREFER_MUSIC_ONLY'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3504:13 Unresolved reference 'KEY_SKIP_NON_MUSIC_PARTS'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3505:13 Unresolved reference 'KEY_SKIP_SPONSOR_PARTS'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3632:9 Unresolved reference 'KEY_PREFER_MUSIC_ONLY'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3632:34 Unresolved reference 'preferMusicOnly'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3633:9 Unresolved reference 'KEY_SKIP_NON_MUSIC_PARTS'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3633:37 Unresolved reference 'skipNonMusicParts'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3634:9 Unresolved reference 'KEY_SKIP_SPONSOR_PARTS'.
+app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt:3634:35 Unresolved reference 'skipSponsorParts'.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:49:26 Unresolved reference 'Executors'.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:49:62 Cannot infer type for value parameter 'runnable'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:50:44 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:50:44 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:50:50 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:50:52 Unresolved reference 'isDaemon'.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:118:9 Unresolved reference 'StartupWork'.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:177:13 Condition type mismatch: inferred type is 'Any?' but 'Boolean' was expected.
+app/src/main/java/com/music/bitchord/data/settings/SearchHistory.kt:178:16 Return type mismatch: expected 'Boolean', actual 'Any?'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:443:9 Unresolved reference '_lyricsProviderStates'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:446:73 Unresolved reference 'LyricsRepository'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:502:9 Unresolved reference 'manualLyricsJobs'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:503:9 Unresolved reference 'manualLyricsJobs'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:505:9 Unresolved reference '_lyricsProviderStates'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:507:9 Unresolved reference '_lyrics'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:508:9 Unresolved reference '_lyricsSource'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:509:9 Unresolved reference 'lyricsJob'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:514:13 Unresolved reference '_lyricsChecked'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:517:9 Unresolved reference '_lyricsChecked'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:518:9 Unresolved reference 'lyricsJob'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:524:17 Unresolved reference 'EmbeddedLyrics'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:524:39 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:524:68 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:524:68 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:524:74 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:525:21 Unresolved reference '_lyrics'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:528:21 Unresolved reference '_lyricsSource'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:529:21 Unresolved reference '_lyricsChecked'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:538:25 Unresolved reference 'LyricsRepository'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:541:37 Cannot infer type for value parameter 'source'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:541:47 Unresolved reference 'providerStarted'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:542:36 Cannot infer type for value parameter 'source'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:542:44 Cannot infer type for value parameter 'result'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:543:21 Unresolved reference 'providerFinished'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:545:39 Cannot infer type for value parameter 'source'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:545:49 Unresolved reference 'providerCancelled'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:547:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:547:77 Inapplicable candidate(s): fun get(p0: LyricsSource): ??? (Unresolved qualified name: LyricsRepository.Result)
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:548:13 Unresolved reference '_lyrics'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:548:39 Function invocation 'lines()' expected.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:549:13 Unresolved reference '_lyricsSource'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:549:45 Unresolved reference 'source'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:550:13 Unresolved reference '_lyricsChecked'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:1776:48 Unresolved reference 'homeLoadJob'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:1782:60 Too many arguments for 'suspend fun refreshHome(identity: String?): Result<HomeShelf?>'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:1782:67 Too many arguments for 'suspend fun refreshHome(identity: String?): Result<HomeShelf?>'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:1782:83 Too many arguments for 'suspend fun refreshHome(identity: String?): Result<HomeShelf?>'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2173:32 Unresolved reference 'RECENTS_TITLE'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2196:29 Unresolved reference 'RECENTS_TITLE'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2225:35 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2225:55 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2226:17 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2226:75 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2227:41 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2231:17 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2234:42 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2235:25 Unresolved reference 'merge'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2239:45 Unresolved reference 'generation'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2239:60 Unresolved reference 'previous'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2242:71 Unresolved reference 'previous'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2243:25 Unresolved reference 'previous'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2243:55 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2247:15 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'Deferred<Result<HomeShelf?>>?'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:2248:45 Unresolved reference 'generation'.
+app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:3030:36 Unresolved reference 'rememberOriginal'.
+app/src/main/java/com/music/bitchord/ui/components/PlaylistPickerSheet.kt:496:14 Unresolved reference 'navigationBarsPadding'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:50:39 Conflicting import: imported name 'TextAlign' is ambiguous.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:55:39 Conflicting import: imported name 'TextAlign' is ambiguous.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:235:23 Unresolved reference 'isOffline'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:236:46 Unresolved reference 'isOffline'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:253:34 Unresolved reference 'isOffline'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:358:36 Unresolved reference 'isOffline'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:367:40 Unresolved reference 'isOffline'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:367:51 Too many arguments for 'fun WebDavUploadRow(song: Song, palette: ArtworkPalette, onUpload: (() -> Unit)?): Unit'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:641:21 Unresolved reference 'Icons'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:696:21 Unresolved reference 'Icons'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:713:21 Unresolved reference 'Icons'.
+app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt:721:20 Unresolved reference 'Icons'.
+app/src/main/java/com/music/bitchord/ui/screens/AccountAndScrobblingScreen.kt:131:24 Unresolved reference 'Icons'.
+app/src/main/java/com/music/bitchord/ui/screens/DetailScreen.kt:1223:32 Unresolved reference 'AppType'.
+app/src/main/java/com/music/bitchord/ui/screens/DetailScreen.kt:2591:23 Unresolved reference 'shape'.
+app/src/main/java/com/music/bitchord/ui/screens/DetailScreen.kt:2592:34 Unresolved reference 'shape'.
+app/src/main/java/com/music/bitchord/ui/screens/DiscordScreen.kt:594:80 Unresolved reference 'AppType'.
+app/src/main/java/com/music/bitchord/ui/screens/DiscordScreen.kt:602:81 Unresolved reference 'AppType'.
+app/src/main/java/com/music/bitchord/ui/screens/DiscordScreen.kt:611:85 Unresolved reference 'AppType'.
+app/src/main/java/com/music/bitchord/ui/screens/DiscordScreen.kt:669:73 Unresolved reference 'AppType'.
+app/src/main/java/com/music/bitchord/ui/screens/HistoryScreen.kt:59:27 Unresolved reference 'rememberLoadingTimedOut'.
+app/src/main/java/com/music/bitchord/ui/screens/ListenTogetherScreen.kt:1044:29 Unresolved reference 'AppSpacing'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:447:63 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:481:63 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:503:25 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:521:21 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:541:25 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:574:25 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:704:74 Unresolved reference 'metered'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:714:74 Unresolved reference 'metered'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:880:17 'when' expression must be exhaustive. Add the 'PHONE', 'WIRED', 'USB', 'BLUETOOTH', 'HDMI', 'OTHER' branches or an 'else' branch.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:881:21 Unresolved reference 'AudioRouting'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:882:21 Unresolved reference 'AudioRouting'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:883:21 Unresolved reference 'AudioRouting'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:884:21 Unresolved reference 'AudioRouting'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:885:21 Unresolved reference 'AudioRouting'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:886:21 Unresolved reference 'AudioRouting'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1094:71 Unresolved reference 'AudioFormat'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1116:25 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1119:65 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1119:69 Unresolved reference 'PrivateListeningSource'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1127:29 Unresolved reference 'PrivateListeningSource'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1139:25 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1238:61 None of the following candidates is applicable:
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1531:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1533:53 Cannot infer type for value parameter 'on'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1550:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1552:88 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1566:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1568:85 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1582:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1584:82 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1625:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1627:77 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1641:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1643:88 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1657:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1659:92 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1679:29 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1681:53 Cannot infer type for value parameter 'on'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:2126:25 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:2141:25 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:2156:25 Unresolved reference 'Switch'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:2602:55 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:2605:47 Unresolved reference 'FriendlyError'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:3170:38 Unresolved reference 'SwitchDefaults'.
+app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:3220:29 Unresolved reference 'AppSpacing'.
