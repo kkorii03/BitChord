@@ -43,6 +43,7 @@ import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -1540,9 +1541,41 @@ object AudioCache {
     private fun anotherWriterHas(videoId: String): Boolean =
         playerHoldsVideo(videoId) || (readAheadWrites[videoId] ?: 0) > 0
 
+    /**
+     * Stops an analysis round that is holding the entry playback is about to
+     * read. Playback always wins: the player's first byte is on the audible
+     * path, while the analysis fetch is only measurement and may wait or fetch
+     * again once the reader has let go.
+     *
+     * The claim is kept as [analysisHeadsHeldElsewhere] so the retry is the
+     * same event-driven one a round deferred at its start gets — the reader's
+     * release, never a poll.
+     */
+    private fun yieldAnalysisHeadToPlayback(key: String, videoId: String?) {
+        val id = videoId ?: return
+        val round = analysisHeadJobs[id] ?: return
+        if (!analysisHeadMustYieldToPlayback(
+                analysisWriteKey = id,
+                playbackReadKey = key,
+                roundInFlight = id in analysisHeadsInFlight,
+                playerHoldsVideo = playerHoldsVideo(id),
+            )
+        ) {
+            return
+        }
+        if (analysisHeads.containsKey(id)) analysisHeadsHeldElsewhere.add(id)
+        analysisHeadDeferredLogged.remove(id)
+        round.cancel(CancellationException("playback needs the cache entry"))
+        TrackLog.d(TAG, "analysis head for $id yielded to playback", about = id)
+    }
+
     private fun retryAnalysisHeadIfReaderReleased(videoId: String) {
         if (videoId !in analysisHeadsHeldElsewhere) return
         if (anotherWriterHas(videoId)) return
+        // The cancelled round may still be unwinding. Its own completion
+        // retries once the in-flight set is clear, so the claim is not lost to
+        // a release that arrives during teardown.
+        if (videoId in analysisHeadsInFlight) return
         analysisHeadsHeldElsewhere.remove(videoId)
         analysisHeads.remove(videoId)
         analysisHeadDeferredLogged.remove(videoId)
@@ -1639,6 +1672,10 @@ object AudioCache {
                     heldVideoId = videoId
                     retain(playbackKeysInUse, key)
                     videoId?.let { retain(playbackVideoIdsInUse, it) }
+                    // [KO] first-audio: the player owns this entry now, so an
+                    // analysis round already writing it must let go instead of
+                    // making the open wait for the whole file.
+                    yieldAnalysisHeadToPlayback(key, videoId)
                 }
                 return try {
                     activeDs.open(dataSpec)
@@ -2644,6 +2681,15 @@ object AudioCache {
     private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * The round writing each id's analysis head, so playback can take the
+     * entry back the moment it needs it. Media3 grants one writer per cache
+     * entry, so a round that started first would otherwise make the player's
+     * open wait until the whole file had been written — measured as 3s of
+     * silence after the YouTube URL was already resolved.
+     */
+    private val analysisHeadJobs = ConcurrentHashMap<String, Job>()
+
+    /**
      * Video ids whose last round ended without adding a byte. The round is
      * sized from the real length and fetches one range of one resolve, so the
      * next attempt would be the same request against the same refusal — see
@@ -3015,7 +3061,10 @@ object AudioCache {
             analysisHeads.remove(videoId)
             return
         }
-        scope.launch {
+        val round = scope.launch(
+            context = TrackLog.about(videoId),
+            start = CoroutineStart.LAZY,
+        ) {
             try {
                 val total = runCatching { StreamResolver.contentLength(videoId) }
                     .onFailure {
@@ -3117,8 +3166,24 @@ object AudioCache {
                 }
             } finally {
                 analysisHeadsInFlight.remove(videoId)
+                analysisHeadJobs.remove(videoId, coroutineContext.job)
+                // A round stopped for playback left its claim for the reader's
+                // release event. If that release already came while this job
+                // was unwinding, retry here so the claim does not become one
+                // that can never start a round.
+                if (videoId in analysisHeadsHeldElsewhere &&
+                    analysisHeads.containsKey(videoId) &&
+                    !anotherWriterHas(videoId)
+                ) {
+                    analysisHeadsHeldElsewhere.remove(videoId)
+                    analysisHeads.remove(videoId)
+                    analysisHeadDeferredLogged.remove(videoId)
+                    requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)))
+                }
             }
         }
+        analysisHeadJobs[videoId] = round
+        round.start()
     }
 
     /**

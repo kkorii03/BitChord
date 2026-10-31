@@ -62,6 +62,22 @@ internal fun analysisHeadMayClaimOrRetry(
 ): Boolean = !inFlight && !anotherWriterHas && (!alreadyRequested || heldForReader)
 
 /**
+ * Whether a running analysis round has to stop for playback.
+ *
+ * Playback always wins: its first byte is on the audible path, while the
+ * analysis fetch is only measurement and may wait or fetch again. That holds
+ * only when both writers target the *same* cache entry — an `#alt` playback
+ * read does not collide with the plain analysis key, so stopping the round
+ * there would throw away measurement for nothing.
+ */
+internal fun analysisHeadMustYieldToPlayback(
+    analysisWriteKey: String,
+    playbackReadKey: String,
+    roundInFlight: Boolean,
+    playerHoldsVideo: Boolean,
+): Boolean = roundInFlight && playerHoldsVideo && analysisWriteKey == playbackReadKey
+
+/**
  * What an analysis-head round should do after inspecting the entry it is about
  * to write.
  *

@@ -198,6 +198,16 @@ object DirectSourceGate {
      * and the caller falls back to YouTube and says so with [startedOnYouTube].
      */
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
+        // [KO] first-audio: when every addon is resting, the search can only
+        // time out. Skipping the wait lets YouTube start at once instead of
+        // after the whole direct-source window.
+        if (!directLookupWorthWaiting(
+                SourceResolver.directAddons().map { SourceResolver.SourceCooldown.isResting(it.configId) },
+            )
+        ) {
+            TrackLog.d(TAG, "all direct addons are resting; not waiting for $videoId", about = videoId)
+            return null
+        }
         val fresh = Lookup(
             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
                 SourceResolver.directStream(target)
@@ -215,6 +225,15 @@ object DirectSourceGate {
         val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
         return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
     }
+
+    /**
+     * Whether waiting for the addons could still produce an answer. Each flag
+     * is one addon resting after repeated failures; when all are, the search
+     * would spend the window only to return null, so playback goes straight to
+     * YouTube.
+     */
+    internal fun directLookupWorthWaiting(addonResting: List<Boolean>): Boolean =
+        addonResting.any { !it }
 
     /** The lookup for [videoId] if it is still going, past the point anyone waits for it. */
     fun stillLooking(videoId: String): Deferred<SourceStream?>? = lookups[videoId]?.work
