@@ -133,8 +133,11 @@ internal class SongVersionVerdictStore {
      */
     fun store(videoId: String, song: Song?, definitive: Boolean): Boolean {
         synchronized(lock) {
-            if (videoId in waived) waived.remove(videoId)
-            if (definitive) {
+            // Read under the same lock as the write: a waiter that gave up
+            // between the caller's own check and this call has still made the
+            // miss provisional, and a miss written here would never be retried.
+            val waivedNow = waived.remove(videoId)
+            if (definitive && !(song == null && waivedNow)) {
                 if (song == null) missing.add(videoId) else cache[videoId] = song
                 return false
             }

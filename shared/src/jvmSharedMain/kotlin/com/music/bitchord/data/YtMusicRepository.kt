@@ -1370,12 +1370,13 @@ object YtMusicRepository {
         // A provisional miss is never stored. If resolveAudio recorded one
         // through its own cache, drop it so the post-audio retry really
         // searches again.
-        if (songVersionVerdicts.store(song.videoId, found, definitive) &&
-            audioVersionCache[song.videoId]?.videoId == song.videoId
-        ) {
+        val provisional = songVersionVerdicts.store(song.videoId, found, definitive)
+        if (provisional && audioVersionCache[song.videoId]?.videoId == song.videoId) {
             audioVersionCache.remove(song.videoId)
         }
-        return SongVersionAnswer(found, via, definitive)
+        // The store has the last word: a waiter that gave up after the check
+        // above still leaves a miss provisional, and the retry is then owed.
+        return SongVersionAnswer(found, via, definitive && !provisional)
     }
 
     /**

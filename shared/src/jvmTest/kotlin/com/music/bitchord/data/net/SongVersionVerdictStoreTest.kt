@@ -34,6 +34,24 @@ class SongVersionVerdictStoreTest {
     }
 
     @Test
+    fun `a miss reported as definitive after the waiter gave up is not cached`() {
+        val store = SongVersionVerdictStore()
+        // The lookup read "not waited out", then the waiter's deadline fired
+        // before the verdict was written.
+        store.onWaiterCancelled("video", answerCompleted = false)
+        assertTrue(store.store("video", null, definitive = true))
+        assertFalse(store.isMissing("video"), "a waived miss must stay retryable")
+    }
+
+    @Test
+    fun `a found version still lands after the waiter gave up`() {
+        val store = SongVersionVerdictStore()
+        store.onWaiterCancelled("video", answerCompleted = false)
+        assertFalse(store.store("video", song("audio"), definitive = true))
+        assertNotNull(store.cached("video"))
+    }
+
+    @Test
     fun `a cancelled lookup is not cached as a miss`() {
         val store = SongVersionVerdictStore()
         store.onWaiterCancelled("video", answerCompleted = false)
