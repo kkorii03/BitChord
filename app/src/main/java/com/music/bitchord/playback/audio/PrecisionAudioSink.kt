@@ -393,22 +393,19 @@ class PrecisionAudioSink(
                 }
             }
 
+            // The decoder-level peak is taken before the DSP chain so the
+            // output-health meter can tell a quiet passage in the file from a
+            // fader, filter or AudioTrack that has turned a live signal into
+            // zeroes. Sampled rather than every sample: this only needs to know
+            // "audible or not".
+            val health = isAudible() && audioBlock.frameCount > 0
+            val decodedPeak = if (health) healthPeak(audioBlock) else 0f
+
             // Process normalized Float32 samples through custom DSP chain
             dspChain.process(audioBlock)
 
-            if (isAudible() && audioBlock.frameCount > 0) {
-                // Sampled rather than every sample: this meter only needs to
-                // know "audible or not", and the DSP chain has already touched
-                // every sample once.
-                var peak = 0f
-                val step = (audioBlock.channelCount * HEALTH_SAMPLE_STRIDE).coerceAtLeast(1)
-                var index = 0
-                while (index < audioBlock.sampleCount) {
-                    val magnitude = kotlin.math.abs(audioBlock.samples[index])
-                    if (magnitude > peak) peak = magnitude
-                    index += step
-                }
-                AudioOutputHealth.onBuffer(decodedFrames, peak)
+            if (health) {
+                AudioOutputHealth.onBuffer(decodedFrames, decodedPeak, healthPeak(audioBlock))
             }
 
             val blockTimeUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput)
@@ -467,6 +464,19 @@ class PrecisionAudioSink(
         }
 
         return !inputBuffer.hasRemaining() && !outputByteBuffer.hasRemaining()
+    }
+
+    /** Largest sampled magnitude in [block], for the output-health meter. */
+    private fun healthPeak(block: AudioBlock): Float {
+        var peak = 0f
+        val step = (block.channelCount * HEALTH_SAMPLE_STRIDE).coerceAtLeast(1)
+        var index = 0
+        while (index < block.sampleCount) {
+            val magnitude = kotlin.math.abs(block.samples[index])
+            if (magnitude > peak) peak = magnitude
+            index += step
+        }
+        return peak
     }
 
     /** [presentationTimeUs] moved on by [frames], or left alone when the rate is unknown. */
