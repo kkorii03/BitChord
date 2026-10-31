@@ -97,6 +97,17 @@ class TrackMatcherArtistScriptTest {
     fun `a runtime more than three seconds away is not artist-unverified`() {
         val long = candidate("マイリー・サイラス", duration = "3:24")
         assertFalse(TrackMatcher.isArtistUnverifiedOriginal(long, target))
+        assertEquals(
+            "duration",
+            TrackMatcher.rejectionReason(
+                long,
+                target,
+                strictOriginal = true,
+                strictLength = true,
+                driftSec = 2,
+                allowArtistUnverified = true,
+            ),
+        )
     }
 
     @Test

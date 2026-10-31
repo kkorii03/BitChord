@@ -571,6 +571,13 @@ object TrackMatcher {
          * the credit check.
          */
         allowArtistUnverified: Boolean = false,
+        /**
+         * The runtime window for the cross-script grade. Separate from
+         * [driftSec] so the localised row is judged at [ARTIST_UNVERIFIED_DRIFT_SEC]
+         * while a normally credited row keeps the caller's stricter window.
+         */
+        artistUnverifiedDriftSec: Int =
+            maxOf(driftSec, ARTIST_UNVERIFIED_DRIFT_SEC),
     ): String {
         if (strictOriginal) {
             if (isCoverOf(candidate, target)) return "version"
@@ -588,10 +595,23 @@ object TrackMatcher {
                     sharesArtistChannel(target, candidate) ||
                     sharesRelease(target, candidate)
                 if (!sameArtist) {
-                    if (allowArtistUnverified &&
-                        isArtistUnverifiedOriginal(candidate, target, driftSec)
-                    ) {
-                        return "artist-unverified"
+                    if (allowArtistUnverified) {
+                        if (isArtistUnverifiedOriginal(candidate, target, artistUnverifiedDriftSec)) {
+                            return "artist-unverified"
+                        }
+                        // Title and take may agree while only the runtime is
+                        // out. Report the term that actually rejected the row
+                        // instead of calling a localised credit an artist miss.
+                        if (artistScriptsDiffer(target.artist, candidate.artist) &&
+                            strictLength && target.durationSec != null
+                        ) {
+                            val gotSec = secondsOf(candidate.durationText) ?: return "duration"
+                            if (abs(target.durationSec - gotSec) > artistUnverifiedDriftSec &&
+                                isArtistUnverifiedOriginal(candidate, target, Int.MAX_VALUE)
+                            ) {
+                                return "duration"
+                            }
+                        }
                     }
                     return "artist"
                 }
@@ -603,10 +623,20 @@ object TrackMatcher {
             return "match"
         }
         if (requireSharedArtist && !sharesArtist(target.artist, candidate.artist)) {
-            if (allowArtistUnverified &&
-                isArtistUnverifiedOriginal(candidate, target, driftSec)
-            ) {
-                return "artist-unverified"
+            if (allowArtistUnverified) {
+                if (isArtistUnverifiedOriginal(candidate, target, artistUnverifiedDriftSec)) {
+                    return "artist-unverified"
+                }
+                if (strictLength && target.durationSec != null &&
+                    artistScriptsDiffer(target.artist, candidate.artist)
+                ) {
+                    val gotSec = secondsOf(candidate.durationText) ?: return "duration"
+                    if (abs(target.durationSec - gotSec) > artistUnverifiedDriftSec &&
+                        isArtistUnverifiedOriginal(candidate, target, Int.MAX_VALUE)
+                    ) {
+                        return "duration"
+                    }
+                }
             }
             return "artist"
         }

@@ -128,11 +128,16 @@ object SourceResolver {
      * The per-source detail of one search, for the `hq-search` line.
      *
      * [verdict] is why a result was or was not usable:
-     * `match`, `duration`, `title`, `artist`, `version`, `error`, `timeout`
-     * or `resting`. [conclusive] is false when the source could not give a
-     * complete answer — a failed backend, a timeout, or being skipped while
-     * resting — which is what stops that "none" from being remembered as
-     * final.
+     * `match`, `artist-unverified`, `duration`, `title`, `artist`, `version`,
+     * `error`, `timeout` or `resting`. [conclusive] is false when the source
+     * could not give a complete answer — a failed backend, a timeout, or being
+     * skipped while resting — which is what stops that "none" from being
+     * remembered as final.
+     *
+     * [alternate] is the second-best row found for the same track, kept so a
+     * caller whose first choice fails its own accept gate can still consider
+     * an `artist-unverified` copy. It is never adopted without that gate, and
+     * [alternateVerdict] says which kind of row it is.
      */
     data class SearchOutcome(
         val stream: SourceStream? = null,
@@ -140,6 +145,9 @@ object SourceResolver {
         val best: Song? = null,
         val verdict: String = "title",
         val conclusive: Boolean = true,
+        val alternate: SourceStream? = null,
+        val alternateBest: Song? = null,
+        val alternateVerdict: String? = null,
     )
 
     /**
@@ -1218,6 +1226,7 @@ object SourceResolver {
             }
             .toMutableList()
         var best: Pair<MusicSource, SourceStream>? = null
+        var bestVerdict: String? = null
         try {
             while (running.isNotEmpty()) {
                 val first = select {
@@ -1240,37 +1249,84 @@ object SourceResolver {
                 ) { HqHostTracker.isResting(it) }
                 for (index in candidateOrder) {
                     val (source, outcome) = ready[index]
-                    val stream = outcome.stream ?: continue
-                    val host = HqHostTracker.hostOf(stream.url)
-                    if (host != null && host in excludeHosts) continue
-                    // A host that just rate-limited us is not asked again for
-                    // this track. SourceCooldown still handles the source-level
-                    // failure; this is the narrower server-level rest.
-                    if (host != null && HqHostTracker.isResting(host)) {
-                        TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
-                        continue
+                    // The row the source actually chose comes first. Its
+                    // alternate is the other copy of the same recording — the
+                    // localised credit whose artist could not be compared —
+                    // and is only consulted when the first choice fails this
+                    // walk's own gate below.
+                    val offers = buildList {
+                        outcome.stream?.let { add(Triple(it, outcome.verdict, outcome.best)) }
+                        outcome.alternate?.let {
+                            add(
+                                Triple(
+                                    it,
+                                    outcome.alternateVerdict ?: "artist-unverified",
+                                    outcome.alternateBest,
+                                ),
+                            )
+                        }
                     }
-                    val current = best
-                    val earlierSource = current != null &&
-                        (order[source.configId] ?: Int.MAX_VALUE) <
-                        (order[current.first.configId] ?: Int.MAX_VALUE)
-                    // Only an answer that could actually win needs the expensive
-                    // gate. That gate is the ninety-second sound comparison for
-                    // the read-ahead, and running it for a candidate already
-                    // beaten on rendition cost a decode *and* added it to the
-                    // tail of the race, after even the slowest search had
-                    // finished — see [HqQuality.couldWin].
-                    val couldWin = HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)
-                    // A host with a recent 429, a poor success rate or very
-                    // slow transfers sorts behind a healthy one at the same
-                    // rendition. The format still decides first.
-                    val hostPreferred = current != null && !couldWin &&
-                        !HqQuality.isBetter(current.second.format, stream.format) &&
-                        HqHostTracker.penalty(host) <
-                        HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
-                    if (!couldWin && !hostPreferred) continue
-                    if (!accept(source, stream)) continue
-                    best = source to stream
+                    for ((stream, verdict, _) in offers) {
+                        val host = HqHostTracker.hostOf(stream.url)
+                        if (host != null && host in excludeHosts) continue
+                        // A host that just rate-limited us is not asked again for
+                        // this track. SourceCooldown still handles the source-level
+                        // failure; this is the narrower server-level rest.
+                        if (host != null && HqHostTracker.isResting(host)) {
+                            TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
+                            continue
+                        }
+                        val current = best
+                        val earlierSource = current != null &&
+                            (order[source.configId] ?: Int.MAX_VALUE) <
+                            (order[current.first.configId] ?: Int.MAX_VALUE)
+                        // A normally credited match always outranks a localised
+                        // one. The localised row is a candidate for the sound
+                        // comparison, not evidence that the recording is this
+                        // source's, so it must not discard a match that hq-verify
+                        // may well prefer. A verified row that opened only as a
+                        // below-request settle-for is ranked after the localised
+                        // row: the fallback exists precisely because that copy
+                        // was not what the request asked for.
+                        val candidateRank = offerRank(verdict, stream)
+                        val currentRank = current?.let { offerRank(bestVerdict ?: "match", it.second) }
+                            ?: Int.MAX_VALUE
+                        // Only an answer that could actually win needs the expensive
+                        // gate. That gate is the ninety-second sound comparison for
+                        // the read-ahead, and running it for a candidate already
+                        // beaten on rendition cost a decode *and* added it to the
+                        // tail of the race, after even the slowest search had
+                        // finished — see [HqQuality.couldWin].
+                        val couldWin = HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)
+                        // A host with a recent 429, a poor success rate or very
+                        // slow transfers sorts behind a healthy one at the same
+                        // rendition. The format still decides first.
+                        val hostPreferred = current != null && !couldWin &&
+                            !HqQuality.isBetter(current.second.format, stream.format) &&
+                            HqHostTracker.penalty(host) <
+                            HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
+                        val beats = when {
+                            current == null -> true
+                            candidateRank != currentRank -> candidateRank < currentRank
+                            // Among localised rows the smallest runtime
+                            // difference is the required choice; quality only
+                            // breaks an equal drift.
+                            candidateRank == ARTIST_UNVERIFIED_RANK -> {
+                                val candidateDrift = runtimeDrift(stream, target)
+                                val currentDrift = runtimeDrift(current.second, target)
+                                if (candidateDrift != currentDrift) {
+                                    candidateDrift < currentDrift
+                                } else {
+                                    couldWin || hostPreferred
+                                }
+                            }
+                            else -> couldWin || hostPreferred
+                        }
+                        if (!beats) continue
+                        if (!accept(source, stream)) continue
+                        best = source to stream
+                        bestVerdict = verdict
+                    }
                 }
                 // Playback needs the first usable answer so sound can start.
                 // An upgrade is different: it runs while audio is already
@@ -1283,6 +1339,24 @@ object SourceResolver {
             running.forEach { it.cancel() }
         }
         best
+    }
+
+    /**
+     * How the source race ranks the kinds of row it can be offered, lowest
+     * first: a normally credited match, then a localised `artist-unverified`
+     * row, then a verified copy that only opened below the request.
+     */
+    private fun offerRank(verdict: String, stream: SourceStream): Int = when {
+        verdict == "artist-unverified" -> ARTIST_UNVERIFIED_RANK
+        stream.belowRequest -> BELOW_REQUEST_RANK
+        else -> MATCH_RANK
+    }
+
+    /** How far an opened stream's row sits from the requested runtime. */
+    private fun runtimeDrift(stream: SourceStream, target: TrackMatcher.Target): Int {
+        val wanted = target.durationSec ?: return 0
+        val got = stream.durationSec ?: return 0
+        return kotlin.math.abs(wanted - got)
     }
 
     /**
@@ -1378,7 +1452,13 @@ object SourceResolver {
                     val localised = (ranked + candidates)
                         .distinct()
                         .filterNot { it in verified }
-                        .filter { TrackMatcher.isArtistUnverifiedOriginal(it, target, UPGRADE_DRIFT_SEC) }
+                        .filter {
+                            TrackMatcher.isArtistUnverifiedOriginal(
+                                it,
+                                target,
+                                TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC,
+                            )
+                        }
                         .sortedBy { candidate ->
                             val got = TrackMatcher.secondsOf(candidate.durationText)
                                 ?: Int.MAX_VALUE
@@ -1484,25 +1564,53 @@ object SourceResolver {
                 }
                 continue
             }
-            // A normal artist match always goes first. The localised rows are
-            // the fallback only when nothing properly credited could open a
-            // stream, so a lossless-flavoured unverified row cannot jump ahead
-            // of a verified one merely on [preferred]'s quality ordering.
+            // A normal artist match always goes first, but only when it
+            // actually opened what was asked for. A below-request settle-for
+            // must not stop the localised row from being tried: that row may
+            // be the lossless copy the request wanted, and hq-verify decides
+            // whether it is the same recording. See [offerRank] for the order
+            // the source race applies afterwards.
             val verifiedMatches = matches.filterNot { it in artistUnverified }
             val unverifiedMatches = matches.filter { it in artistUnverified }
-            var chosenMatches = verifiedMatches.ifEmpty { unverifiedMatches }
-            var stream = if (chosenMatches.isEmpty()) {
+            val verifiedOpened = if (verifiedMatches.isEmpty()) {
                 null
             } else {
-                streamBest(source, chosenMatches, target, request)
+                streamBest(source, verifiedMatches, target, request)
             }
-            if (stream == null && verifiedMatches.isNotEmpty() && unverifiedMatches.isNotEmpty()) {
-                val localised = streamBest(source, unverifiedMatches, target, request)
-                if (localised != null) {
-                    chosenMatches = unverifiedMatches
-                    stream = localised
+            val localisedOpened = if (unverifiedMatches.isEmpty()) {
+                null
+            } else {
+                // These are already ordered closest-runtime-first; do not let
+                // [preferred]'s quality tiers reorder them. The closest cut is
+                // the candidate hq-verify is asked about first.
+                streamBest(source, unverifiedMatches, target, request, preserveOrder = true)
+            }
+            var opened = verifiedOpened
+            var alternate: Pair<Song, SourceStream>? = null
+            var alternateVerdict: String? = null
+            when {
+                verifiedOpened != null && !verifiedOpened.second.belowRequest -> {
+                    opened = verifiedOpened
+                    if (localisedOpened != null) {
+                        alternate = localisedOpened
+                        alternateVerdict = "artist-unverified"
+                    }
+                }
+                localisedOpened != null &&
+                    (verifiedOpened == null ||
+                        !localisedOpened.second.belowRequest ||
+                        isBetter(localisedOpened.second.format, verifiedOpened.second.format)) -> {
+                    opened = localisedOpened
+                    if (verifiedOpened != null) {
+                        alternate = verifiedOpened
+                        alternateVerdict = "match"
+                    }
+                }
+                verifiedOpened != null -> {
+                    opened = verifiedOpened
                 }
             }
+            val stream = opened?.second
             // Every stream open can fail — a 500, a timeout, a host that went
             // away between the search and the open — and [attempt] counts each
             // one against the source. A search that looked healthy but could
@@ -1514,7 +1622,7 @@ object SourceResolver {
             if (SourceCooldown.failureMark(source.configId) != mark) {
                 conclusive = false
             }
-            val chosen = chosenMatches.firstOrNull()
+            val chosen = opened?.first
             last = SearchOutcome(
                 stream = stream,
                 results = candidates.size,
@@ -1525,6 +1633,9 @@ object SourceResolver {
                     else -> "match"
                 },
                 conclusive = conclusive,
+                alternate = alternate?.second,
+                alternateBest = alternate?.first,
+                alternateVerdict = alternateVerdict,
             )
             TrackLog.d(TAG, hqSearchLine(target, source, last))
             return last
@@ -1643,10 +1754,16 @@ object SourceResolver {
         matches: List<Song>,
         target: TrackMatcher.Target,
         request: StreamRequest,
-    ): SourceStream? {
+        /**
+         * Keep the caller's order instead of [preferred]'s quality order. The
+         * localised fallback is already sorted by runtime difference, which is
+         * the choice the sound comparison is meant to see first.
+         */
+        preserveOrder: Boolean = false,
+    ): Pair<Song, SourceStream>? {
         val wantsLossless = request is StreamRequest.Lossless
-        val ordered = preferred(matches, target, wantsLossless)
-        var settleFor: SourceStream? = null
+        val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless)
+        var settleFor: Pair<Song, SourceStream>? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
             val opened = attempt(source) { source.stream(trackId, request) } ?: continue
@@ -1669,7 +1786,7 @@ object SourceResolver {
                         "duration=${match.durationText ?: "?"} explicit=${match.isExplicit ?: "?"} " +
                         "→ ${served.summary}",
                 )
-                return stream
+                return match to stream
             }
             TrackLog.d(
                 TAG,
@@ -1683,7 +1800,10 @@ object SourceResolver {
             // and which one the listener ends up on if nothing better exists
             // should not come down to which catalogue happened to be asked
             // first.
-            settleFor = betterOf(settleFor, stream.copy(belowRequest = true))
+            val lower = match to stream.copy(belowRequest = true)
+            if (settleFor == null || isBetter(lower.second.format, settleFor.second.format)) {
+                settleFor = lower
+            }
         }
         return settleFor
     }
@@ -1820,6 +1940,11 @@ object SourceResolver {
      * rounding a runtime differently and nothing else.
      */
     private const val UPGRADE_DRIFT_SEC = 2
+
+    /** The source race's ordering of row kinds; see [offerRank]. */
+    private const val MATCH_RANK = 0
+    private const val ARTIST_UNVERIFIED_RANK = 1
+    private const val BELOW_REQUEST_RANK = 2
 
     /**
      * How close two runtimes have to be to be the same cut of a song.
