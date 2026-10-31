@@ -97,10 +97,8 @@ fun autoplayQueueNeedsRefresh(
     currentIndex: Int,
     itemCount: Int,
     loadInProgress: Boolean,
-    repeatOne: Boolean = false,
 ): Boolean = enabled &&
     !repeatAll &&
-    !repeatOne &&
     !loadInProgress &&
     currentIndex >= 0 &&
     currentIndex == itemCount - 1
@@ -115,9 +113,15 @@ fun needsYoutubeSeedLookup(song: Song): Boolean =
  * stays latched to that track. The reload that runs when repeat-one ends then
  * sees the same seed and returns without fetching, so the promised refill never
  * happens. Clearing the seed on the way out is the event that makes it happen.
+ *
+ * Leaving repeat-all has the same latch problem: its top-ups were skipped while
+ * the loop owned the queue, so the seed may name a track whose last request
+ * returned nothing. Restoring AutoPlay after the loop has to be able to ask
+ * again instead of stopping at "same-seed".
  */
-internal fun repeatOneSeedShouldClear(previousMode: Int, currentMode: Int): Boolean =
-    previousMode == Player.REPEAT_MODE_ONE && currentMode != Player.REPEAT_MODE_ONE
+internal fun repeatModeSeedShouldClear(previousMode: Int, currentMode: Int): Boolean =
+    (previousMode == Player.REPEAT_MODE_ONE || previousMode == Player.REPEAT_MODE_ALL) &&
+        currentMode != previousMode
 
 /**
  * Whether a refill needs to start a load of its own.

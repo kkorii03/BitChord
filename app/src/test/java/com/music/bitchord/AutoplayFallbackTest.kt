@@ -2,7 +2,7 @@ package com.music.bitchord
 
 import androidx.media3.common.Player
 import com.music.bitchord.playback.autoplayQueueNeedsRefresh
-import com.music.bitchord.playback.repeatOneSeedShouldClear
+import com.music.bitchord.playback.repeatModeSeedShouldClear
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,15 +35,14 @@ class AutoplayFallbackTest {
     }
 
     @Test
-    fun `repeat one does not refresh a queue it will not advance through`() {
-        assertFalse(
+    fun `repeat one still refreshes a queue because autoplay on means filled`() {
+        assertTrue(
             autoplayQueueNeedsRefresh(
                 enabled = true,
                 repeatAll = false,
                 currentIndex = 2,
                 itemCount = 3,
                 loadInProgress = false,
-                repeatOne = true,
             ),
         )
     }
@@ -52,10 +51,20 @@ class AutoplayFallbackTest {
     fun `leaving repeat one releases the seed so the queue can refill`() {
         // The seed stays latched while repeat-one loops the same track. Without
         // clearing it, the reload after repeat-one ends is skipped as same-seed.
-        assertTrue(repeatOneSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_OFF))
-        assertTrue(repeatOneSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ALL))
-        assertFalse(repeatOneSeedShouldClear(Player.REPEAT_MODE_OFF, Player.REPEAT_MODE_ONE))
-        assertFalse(repeatOneSeedShouldClear(Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_OFF))
-        assertFalse(repeatOneSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ONE))
+        assertTrue(repeatModeSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_OFF))
+        assertTrue(repeatModeSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ALL))
+        assertFalse(repeatModeSeedShouldClear(Player.REPEAT_MODE_OFF, Player.REPEAT_MODE_ONE))
+        assertFalse(repeatModeSeedShouldClear(Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ONE))
+    }
+
+    @Test
+    fun `leaving repeat all releases the seed so restored autoplay can refill`() {
+        // Repeat-all skips every top-up, so its seed can still name a track
+        // whose last request came back empty. Restoring AutoPlay must not stop
+        // at same-seed when the listener leaves the loop.
+        assertTrue(repeatModeSeedShouldClear(Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_OFF))
+        assertTrue(repeatModeSeedShouldClear(Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_ONE))
+        assertFalse(repeatModeSeedShouldClear(Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_ALL))
+        assertFalse(repeatModeSeedShouldClear(Player.REPEAT_MODE_OFF, Player.REPEAT_MODE_ALL))
     }
 }

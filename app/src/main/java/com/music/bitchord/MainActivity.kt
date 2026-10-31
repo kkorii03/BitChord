@@ -173,6 +173,7 @@ import com.music.bitchord.data.net.ProxyHealth
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.autoplayShownEnabled
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SettingsTransferInbox
@@ -2941,7 +2942,7 @@ private fun BitChordApp(
             hasNext = player.hasNext,
             repeatMode = player.repeatMode,
             shuffleEnabled = shuffleEnabled,
-            autoplayEnabled = autoplayEnabled,
+            autoplayEnabled = autoplayShownEnabled(autoplayEnabled, player.repeatMode),
             signedIn = signedIn,
             likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
             onToggleLike = { viewModel.toggleLike(song.videoId) },

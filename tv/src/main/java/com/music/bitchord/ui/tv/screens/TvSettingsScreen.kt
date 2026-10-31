@@ -28,10 +28,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.media3.session.MediaController
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.TvSettings
+import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.tv.TvAppMark
 import com.music.bitchord.ui.tv.audio.TvSpatialAudioEngine
@@ -64,6 +66,7 @@ fun TvSettingsScreen(
     viewModel: MainViewModel,
     onOpenAccount: () -> Unit,
     onRunSetupAgain: () -> Unit,
+    mediaController: MediaController? = null,
     modifier: Modifier = Modifier,
 ) {
     TvChromePinned()
@@ -171,7 +174,17 @@ fun TvSettingsScreen(
                     title = stringResource(R.string.tv_autoplay),
                     value = onOff(autoplay),
                     onFocused = { blurbRes = R.string.tv_autoplay_blurb },
-                    onClick = { AppSettings.setAutoplay(!autoplay) },
+                    onClick = {
+                        // The playback service owns AutoPlay and the repeat
+                        // mode together, so it releases repeat-all and fills
+                        // the queue as one operation. Settings alone could
+                        // leave the player still looping.
+                        if (mediaController != null) {
+                            mediaController.toggleAutoplay()
+                        } else {
+                            AppSettings.setAutoplay(!autoplay)
+                        }
+                    },
                 )
             }
             item {

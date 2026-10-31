@@ -110,8 +110,11 @@ import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.AUTOPLAY_MIN_QUEUED_AHEAD
+import com.music.bitchord.data.net.AutoplayQueueStatus
 import com.music.bitchord.data.net.autoplayTopUpNeeded
 import com.music.bitchord.data.net.autoplayTopUpSelection
+import com.music.bitchord.data.net.autoplayToggleResult
+import com.music.bitchord.data.net.repeatModeAutoplayResult
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.Innertube
@@ -1117,30 +1120,6 @@ class PlaybackService : MediaLibraryService() {
     private var persistedQueueStart = 0
 
     /**
-     * What AutoPlay had queued when repeat-all was switched on, held so
-     * switching it off again puts back the same tracks rather than a fresh
-     * mix.
-     *
-     * Repeat-all loops the queue as it stands, so AutoPlay's endless supply of
-     * new tracks comes out of it first — see [onRepeatModeChanged]. Fetching a
-     * replacement mix afterwards is the obvious thing to do and the wrong one:
-     * the track that was queued next has usually been analysed for the
-     * transition into it by then (see
-     * [com.music.bitchord.playback.smart.TrackAnalyzer]), and a different track
-     * in its place means that several-second decode is spent again, on a song
-     * that is now much closer than it was. Turning repeat on and back off
-     * should leave the queue where it found it.
-     */
-    private var repeatAllStash: List<MediaItem> = emptyList()
-
-    /**
-     * The track that was playing when [repeatAllStash] was taken. The stash
-     * describes what came after *that* track, so it is only put back if the
-     * queue has not moved on in the meantime.
-     */
-    private var repeatAllStashSeed: String? = null
-
-    /**
      * The last repeat mode seen, so [onRepeatModeChanged] can tell which
      * direction the change went in: the callback reports where the player has
      * arrived, and leaving repeat-all is the half that has to restore.
@@ -1474,6 +1453,7 @@ class PlaybackService : MediaLibraryService() {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            AutoplayQueueStatus.clear()
             loadAutoplayForCurrentTrack()
             // Lyrics are loaded by [onTrackBecameCurrent], which every way a
             // track becomes current goes through. Asking again here started a
@@ -1592,39 +1572,52 @@ class PlaybackService : MediaLibraryService() {
             player?.let { WearBridge.republish(this@PlaybackService, it) }
             // Repeat-one makes the "next" track this one again.
             player?.let { activeLoudness().nextMediaId = nextMediaIdOf(it) }
-            // Repeat-all loops the queue as it stands; AutoPlay's tracks are the
-            // opposite of that — an endless supply of new ones — so they come
-            // back out first, and native REPEAT_MODE_ALL then wraps a plain
-            // queue exactly as it should. [loadAutoplayForCurrentTrack] leaves
-            // it alone for as long as repeat-all stays on.
+            // Repeat-all and AutoPlay are mutually exclusive, as they are in
+            // Apple Music: repeat-all loops the queue as it stands, while
+            // AutoPlay keeps extending it. Choosing repeat-all therefore turns
+            // AutoPlay off and remembers whether it was on; releasing repeat-all
+            // puts that choice back. Tracks AutoPlay already queued stay where
+            // they are — a mode change must not discard the listener's queue.
             //
-            // Done here rather than in the UI that used to do it because this is
-            // the only place that sees the *previous* mode, and taking the
-            // tracks back is only half the job: they have to go in again when
-            // the loop ends, or a listener who cycles repeat on and straight
-            // back off is left with a queue that simply stops after the playing
-            // track.
-            when {
-                repeatMode == Player.REPEAT_MODE_ALL -> {
-                    stashAutoplayTracks()
-                    // A bounded context may retain physical history before its
-                    // final current item. Materialise the logical next cycle
-                    // before native repeat-all can wrap into that history.
-                    // The scheduler defers this append while crossfade owns
-                    // the players and applies it at settlement.
-                    if (boundedContextWindow != null) scheduleBoundedContextTopUp()
-                }
-                previous == Player.REPEAT_MODE_ALL -> restoreAutoplayTracks()
+            // Done here rather than in the UI that used to do it because this
+            // is the only place that sees the *previous* mode, including a
+            // change made by a car's own controls.
+            val party = ListenTogether.state.value
+            val autoplayBeforeRepeatModeChange = autoplayEnabled(party)
+            val repeatAutoplay = repeatModeAutoplayResult(
+                previousRepeatMode = previous,
+                repeatMode = repeatMode,
+                autoplay = autoplayBeforeRepeatModeChange,
+                heldAutoplay = AppSettings.autoplayBeforeRepeatAll.value,
+            )
+            AppSettings.applyAutoplayState(
+                value = repeatAutoplay.autoplay,
+                beforeRepeatAll = repeatAutoplay.heldAutoplay,
+            )
+            if (party.inParty && repeatAutoplay.autoplay != autoplayBeforeRepeatModeChange) {
+                // The party owns AutoPlay while connected; changing the local
+                // preference alone would draw one state and behave as another.
+                ListenTogether.setAutoplay(repeatAutoplay.autoplay)
+            }
+            if (repeatMode == Player.REPEAT_MODE_ALL && boundedContextWindow != null) {
+                // A bounded context may retain physical history before its
+                // final current item. Materialise the logical next cycle
+                // before native repeat-all can wrap into that history.
+                // The scheduler defers this append while crossfade owns
+                // the players and applies it at settlement.
+                scheduleBoundedContextTopUp()
             }
             // Turning repeat-all back off can leave the current item at the end
             // of the queue, which is the same trigger as a normal transition.
-            // Leaving repeat-one has to release the seed first: it is still
-            // latched to the track that was looping, and the reload below would
-            // otherwise be skipped as same-seed, leaving the queue empty.
-            if (repeatOneSeedShouldClear(previous, repeatMode)) {
+            // Leaving repeat-one or repeat-all has to release the seed first:
+            // it is still latched to the track that was looping, and the reload
+            // below would otherwise be skipped as same-seed, leaving the queue
+            // empty even though AutoPlay is on again.
+            if (repeatModeSeedShouldClear(previous, repeatMode)) {
                 autoplayLoadJob?.cancel()
                 autoplayLoadJob = null
                 autoplaySeed = null
+                AutoplayQueueStatus.clear()
             }
             loadAutoplayForCurrentTrack()
         }
@@ -2368,6 +2361,7 @@ class PlaybackService : MediaLibraryService() {
                         autoplayLoadJob?.cancel()
                         autoplayLoadJob = null
                         autoplaySeed = null
+                        AutoplayQueueStatus.clear()
                         loadAutoplayForCurrentTrack()
                     }
                 }
@@ -3687,31 +3681,42 @@ class PlaybackService : MediaLibraryService() {
 
     private fun toggleAutoplayFromNotification() {
         val party = ListenTogether.state.value
-        val enabled = if (party.inParty) !party.playback.autoplayEnabled else !AppSettings.autoplay.value
-        AppSettings.setAutoplay(enabled)
+        val current = autoplayEnabled(party)
+        val repeatMode = player?.repeatMode ?: AppSettings.repeatMode.value
+        val decision = autoplayToggleResult(
+            autoplay = current,
+            repeatMode = repeatMode,
+            heldAutoplay = AppSettings.autoplayBeforeRepeatAll.value,
+        )
+        if (decision.autoplay && decision.repeatMode != repeatMode) {
+            // Release repeat-all before writing AutoPlay on: the repeat callback
+            // may then restore the held value first, and the write below has
+            // the last word.
+            AppSettings.setRepeatMode(decision.repeatMode)
+            player?.repeatMode = decision.repeatMode
+        }
+        AppSettings.applyAutoplayState(
+            value = decision.autoplay,
+            beforeRepeatAll = decision.heldAutoplay,
+        )
         if (party.inParty) {
             // The party owns this setting while connected. The state frame
             // wakes whichever connected member currently won the supplier
             // election, including after the host has become unreachable.
-            ListenTogether.setAutoplay(enabled)
-            refreshCustomLayouts()
-            return
+            ListenTogether.setAutoplay(decision.autoplay)
         }
-        if (enabled) {
+        if (decision.autoplay) {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            AutoplayQueueStatus.clear()
             loadAutoplayForCurrentTrack()
-        } else {
+        } else if (!party.inParty) {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            AutoplayQueueStatus.clear()
             dropAutoplayTracksFromQueue()
-            // Switching AutoPlay off is the listener saying they don't want
-            // those tracks; leaving a stash behind would put them back the next
-            // time repeat-all ended.
-            repeatAllStash = emptyList()
-            repeatAllStashSeed = null
         }
         refreshCustomLayouts()
     }
@@ -3772,7 +3777,6 @@ class PlaybackService : MediaLibraryService() {
         if (!autoplayTopUpNeeded(
                 enabled = enabled,
                 repeatAll = repeatAll,
-                repeatOne = repeatOne,
                 queuedAhead = queuedAhead,
                 minAhead = if (!party.inParty && videoRadioEnabledFor(current)) {
                     VIDEO_RADIO_MIN_QUEUED_AHEAD
@@ -3841,7 +3845,6 @@ class PlaybackService : MediaLibraryService() {
                 val activeParty = ListenTogether.state.value
                 if (!autoplayEnabled(activeParty) ||
                     activePlayer.repeatMode == Player.REPEAT_MODE_ALL ||
-                    activePlayer.repeatMode == Player.REPEAT_MODE_ONE ||
                     activePlayer.currentMediaItem?.mediaId != current.videoId ||
                     (activeParty.inParty && autoplaySupplierId(activeParty) != activeParty.you?.memberId)
                 ) {
@@ -3874,11 +3877,18 @@ class PlaybackService : MediaLibraryService() {
                 val latestParty = ListenTogether.state.value
                 if (!autoplayEnabled(latestParty) ||
                     latestPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
-                    latestPlayer.repeatMode == Player.REPEAT_MODE_ONE ||
                     latestPlayer.currentMediaItem?.mediaId != current.videoId ||
                     (latestParty.inParty && autoplaySupplierId(latestParty) != latestParty.you?.memberId)
                 ) {
                     return@launch
+                }
+                // The row only reports a miss after a request really came back
+                // with nothing. A network failure is not a zero-song answer,
+                // and an earlier miss stops holding as soon as songs arrive.
+                if (result.isSuccess && resolved.isEmpty()) {
+                    AutoplayQueueStatus.markEmpty(current.videoId)
+                } else {
+                    AutoplayQueueStatus.clearEmpty(current.videoId)
                 }
                 if (resolved.isNotEmpty()) {
                     if (latestParty.inParty) {
@@ -4082,7 +4092,6 @@ class PlaybackService : MediaLibraryService() {
         if (!autoplayQueueNeedsRefresh(
                 enabled = autoplayEnabled(ListenTogether.state.value),
                 repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
-                repeatOne = exoPlayer.repeatMode == Player.REPEAT_MODE_ONE,
                 currentIndex = exoPlayer.currentMediaItemIndex,
                 itemCount = exoPlayer.mediaItemCount,
                 loadInProgress = autoplayLoadJob?.isActive == true,
@@ -4092,6 +4101,7 @@ class PlaybackService : MediaLibraryService() {
         }
         autoplayLoadJob = null
         autoplaySeed = null
+        AutoplayQueueStatus.clear()
         loadAutoplayForCurrentTrack()
     }
 
@@ -4130,52 +4140,6 @@ class PlaybackService : MediaLibraryService() {
             exoPlayer.removeMediaItem(index)
         }
         return dropped.reversed()
-    }
-
-    /** Clears the queue's AutoPlay tail for the duration of repeat-all, keeping it to put back. */
-    private fun stashAutoplayTracks() {
-        val exoPlayer = player ?: return
-        // Only ever taken once per stretch of repeat-all: cycling
-        // OFF -> ALL -> ONE -> OFF sets the mode three times, and the second
-        // and third of those must not overwrite a full stash with the empty
-        // queue tail the first one left behind.
-        if (repeatAllStash.isNotEmpty()) return
-        val dropped = dropAutoplayTracksFromQueue()
-        if (dropped.isEmpty()) return
-        repeatAllStash = dropped
-        repeatAllStashSeed = exoPlayer.currentMediaItem?.mediaId
-    }
-
-    /**
-     * Puts the stashed AutoPlay tracks back when repeat-all ends.
-     *
-     * Refused, rather than forced, in the cases where the stash no longer
-     * describes the queue: AutoPlay switched off while the loop ran, or the
-     * loop played on past the track the stash was taken behind. Both leave
-     * [loadAutoplayForCurrentTrack] to fill the queue the ordinary way.
-     */
-    private fun restoreAutoplayTracks() {
-        val exoPlayer = player ?: return
-        val stashed = repeatAllStash
-        val seed = repeatAllStashSeed
-        repeatAllStash = emptyList()
-        repeatAllStashSeed = null
-        // The seed is stale now either way, so the queue can be topped up again
-        // for this track — without this the guard in [loadAutoplayForCurrentTrack]
-        // reads a track it has already loaded for and returns, which is how a
-        // queue whose stash was refused ended up with nothing after it at all.
-        autoplayLoadJob?.cancel()
-        autoplayLoadJob = null
-        autoplaySeed = null
-        if (stashed.isEmpty() || !autoplayEnabled(ListenTogether.state.value)) return
-        if (exoPlayer.currentMediaItem?.mediaId != seed) return
-        // A track the listener queued by hand during the loop is not queued
-        // twice for having been in the mix before it.
-        val present = (0 until exoPlayer.mediaItemCount)
-            .mapTo(mutableSetOf()) { exoPlayer.getMediaItemAt(it).mediaId }
-        val restored = stashed.filter { it.mediaId !in present }
-        if (restored.isEmpty()) return
-        exoPlayer.addMediaItems(restored)
     }
 
     private fun toggleFavoriteFromNotification(videoId: String) {
@@ -9023,8 +8987,6 @@ class PlaybackService : MediaLibraryService() {
         autoplayLoadJob?.cancel()
         autoplayLoadJob = null
         autoplaySeed = null
-        repeatAllStash = emptyList()
-        repeatAllStashSeed = null
         sessionSongHistory.clear()
         autoplaySessionIds.clear()
         persistedQueueStart = 0

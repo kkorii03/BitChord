@@ -449,6 +449,17 @@ object AppSettings {
     val autoplay = MutableStateFlow(true)
 
     /**
+     * AutoPlay's value before repeat-all replaced it, or null when repeat-all
+     * is not holding AutoPlay off.
+     *
+     * Persisted so a restart with repeat-all still on can put the listener's
+     * original choice back when the loop is released. Null and false are
+     * different answers: null means there is nothing to restore, false means
+     * the listener already had AutoPlay off before choosing repeat-all.
+     */
+    val autoplayBeforeRepeatAll = MutableStateFlow<Boolean?>(null)
+
+    /**
      * Rank AutoPlay's radio with the listener's own taste — likes, skips and
      * recent listening — instead of taking YouTube's order as it comes.
      *
@@ -1241,6 +1252,7 @@ object AppSettings {
         repeatMode.value = PlaybackParametersMath.clampRepeatMode(
             prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF),
         )
+        reconcileAutoplayWithRepeatAll()
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
         lowPowerMode.value = runCatching {
@@ -1638,8 +1650,60 @@ object AppSettings {
     }
 
     fun setAutoplay(value: Boolean) {
+        // The switch and repeat-all are mutually exclusive on every surface,
+        // not only in the playback service. Turning AutoPlay on releases the
+        // loop and drops what it was holding; turning it off is a deliberate
+        // choice, so repeat-all must not restore it later either.
+        if (value && repeatMode.value == Player.REPEAT_MODE_ALL) {
+            setRepeatMode(Player.REPEAT_MODE_OFF)
+        }
+        applyAutoplayState(value, null)
+    }
+
+    /**
+     * Writes the AutoPlay switch and repeat-all's held value in one step.
+     *
+     * The switch and the memory behind it are two preferences; writing them
+     * separately let a crash leave a value that the next launch would read as
+     * "repeat-all owns this", restoring the wrong state when the loop ended.
+     */
+    fun applyAutoplayState(value: Boolean, beforeRepeatAll: Boolean?) {
         autoplay.value = value
-        prefs.edit().putBoolean(KEY_AUTOPLAY, value).apply()
+        autoplayBeforeRepeatAll.value = beforeRepeatAll
+        prefs.edit().apply {
+            putBoolean(KEY_AUTOPLAY, value)
+            if (beforeRepeatAll == null) {
+                remove(KEY_AUTOPLAY_BEFORE_REPEAT_ALL)
+            } else {
+                putBoolean(KEY_AUTOPLAY_BEFORE_REPEAT_ALL, beforeRepeatAll)
+            }
+        }.apply()
+    }
+
+    /**
+     * Keeps the persisted pair consistent after a restart or a backup import.
+     *
+     * Repeat-all and AutoPlay cannot both be on. A file written before that
+     * rule existed can still say they are, so AutoPlay is held the same way a
+     * runtime repeat-all choice holds it, and restored when repeat-all is not
+     * in force.
+     */
+    private fun reconcileAutoplayWithRepeatAll() {
+        val held = if (prefs.contains(KEY_AUTOPLAY_BEFORE_REPEAT_ALL)) {
+            prefs.getBoolean(KEY_AUTOPLAY_BEFORE_REPEAT_ALL, false)
+        } else {
+            null
+        }
+        when {
+            repeatMode.value == Player.REPEAT_MODE_ALL -> {
+                applyAutoplayState(
+                    value = false,
+                    beforeRepeatAll = held ?: autoplay.value,
+                )
+            }
+            held != null -> applyAutoplayState(value = held, beforeRepeatAll = null)
+            else -> autoplayBeforeRepeatAll.value = null
+        }
     }
 
     fun setPersonalisedAutoplay(value: Boolean) {
@@ -3001,6 +3065,7 @@ object AppSettings {
             KEY_EQ_ENABLED,
             KEY_EQ_FOCUSED,
             KEY_AUTOPLAY,
+            KEY_AUTOPLAY_BEFORE_REPEAT_ALL,
             KEY_PERSONALISED_AUTOPLAY,
             KEY_VIDEO_RADIO,
             KEY_SHUFFLE_ENABLED,
@@ -3695,6 +3760,7 @@ object AppSettings {
     private const val KEY_PITCH = "playback_pitch_semitones"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_AUTOPLAY_BEFORE_REPEAT_ALL = "autoplay_before_repeat_all"
     private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"
     private const val KEY_VIDEO_RADIO = "video_radio"
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"

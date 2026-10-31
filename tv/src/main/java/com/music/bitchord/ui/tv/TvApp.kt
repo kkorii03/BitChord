@@ -469,6 +469,7 @@ private fun TvMainShell(
                                 viewModel = viewModel,
                                 onOpenAccount = onOpenAccount,
                                 onRunSetupAgain = onRunSetupAgain,
+                                mediaController = mediaController,
                             )
                         }
                     }

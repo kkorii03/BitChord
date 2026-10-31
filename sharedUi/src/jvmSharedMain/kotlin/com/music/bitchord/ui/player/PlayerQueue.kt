@@ -83,6 +83,9 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.net.AutoplayQueueDescription
+import com.music.bitchord.data.net.AutoplayQueueStatus
+import com.music.bitchord.data.net.autoplayQueueDescription
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlin.math.roundToInt
 
@@ -252,9 +255,16 @@ internal fun InlineQueue(
     )
     val showHistory by PlayerSettings.showQueueHistory.collectAsStateWithLifecycle()
     val videoRadio by PlayerSettings.videoRadioEnabled.collectAsStateWithLifecycle()
+    val autoplayEmptySeedId by AutoplayQueueStatus.emptyRequestSeedId.collectAsStateWithLifecycle()
     val tracks = remember(queue, currentIndex, showHistory) { splitQueue(queue, currentIndex, showHistory) }
     val drag = rememberQueueDrag(listState, tracks, onMove, onDragActiveChange)
     val nowPlaying = tracks.nowPlaying
+    val autoplayDescription = autoplayQueueDescription(
+        hasTracks = tracks.autoplay.isNotEmpty(),
+        autoplayEnabled = autoplayEnabled,
+        currentSeedId = nowPlaying?.song?.videoId,
+        emptyRequestSeedId = autoplayEmptySeedId,
+    )
     val contextSong = tracks.context.firstOrNull()?.song
     val contextTitle = contextSong?.playbackSource?.takeIf { it.isNotBlank() }
         ?: contextSong?.albumName?.takeIf { it.isNotBlank() }
@@ -369,10 +379,13 @@ internal fun InlineQueue(
                     }
                     queueSection(tracks.context, QueueSection.CONTEXT, drag, controlsLocked, onJumpTo, onRemove)
                 }
-                if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
-                    item(key = "autoplay-heading") {
-                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
-                    }
+                item(key = "autoplay-heading") {
+                    AutoplayHeading(
+                        description = autoplayDescription,
+                        modifier = queueMotion(),
+                    )
+                }
+                if (autoplayEnabled) {
                     item(key = "autoplay-video-radio") {
                         VideoRadioRow(
                             checked = videoRadio,
@@ -381,6 +394,8 @@ internal fun InlineQueue(
                             modifier = queueMotion(),
                         )
                     }
+                }
+                if (tracks.autoplay.isNotEmpty()) {
                     queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove)
                 }
             }
@@ -471,7 +486,10 @@ private fun QueueClearButton(style: TextStyle, locked: Boolean, onClear: () -> U
 }
 
 @Composable
-private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
+private fun AutoplayHeading(
+    description: AutoplayQueueDescription,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -493,7 +511,12 @@ private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
             )
             Text(
                 text = stringResource(
-                    if (hasTracks) Res.string.autoplay_queue_description else Res.string.autoplay_empty_description,
+                    when (description) {
+                        AutoplayQueueDescription.QUEUED -> Res.string.autoplay_queue_description
+                        AutoplayQueueDescription.EMPTY -> Res.string.autoplay_empty_description
+                        AutoplayQueueDescription.DISABLED -> Res.string.autoplay_disabled_description
+                        AutoplayQueueDescription.WAITING -> Res.string.autoplay_waiting_description
+                    },
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.55f),
