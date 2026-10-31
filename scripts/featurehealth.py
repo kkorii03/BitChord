@@ -53,8 +53,14 @@ FEATURE_HEALTH_RE = re.compile(r"^(?i:feature[-_ ]?health)\b")
 NEXT_PREP_RE = re.compile(
     r"^next-prep:\s+(?P<title>.*?)\s+version=(?P<version>\S+)\s+"
     r"lyrics=(?P<lyrics>\S+)\s+hq=(?P<hq>\S+)\s+"
-    r"sync=(?P<sync>applied|skipped(?:\([^)]*\))?)\s+"
+    r"sync=(?P<sync>applied|skipped(?:\([^)]*\))?|failed:\S+)\s+"
     r"mix=(?P<mix>\S+)\s+in\s+(?P<ms>\d+)ms"
+)
+# The sync result as its own line, preferred over `sync=` on the row above:
+# answered / no-answer / failed:<reason> / skipped:<reason>.
+NEXT_PREP_SYNC_RE = re.compile(
+    r"^next-prep sync:\s+(?P<id>\S+)\s+result=(?P<result>\S+)\s+"
+    r"reason=(?P<reason>\S+)"
 )
 TRACK_SUMMARY_RE = re.compile(
     r"^track-summary:\s+(?P<id>\S+)\s+'(?P<title>.*)'\s+"
@@ -419,6 +425,7 @@ def analyze(log: Log) -> Report:
     app_counters = _parse_feature_health(log.feature_health)
 
     next_preps: list[dict[str, Any]] = []
+    next_prep_syncs: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
     plays: list[dict[str, Any]] = []
     hq_verifies: list[dict[str, Any]] = []
@@ -451,6 +458,18 @@ def analyze(log: Log) -> Report:
     for line in lines:
         text = line.text
         at = line.at
+
+        match = NEXT_PREP_SYNC_RE.match(text)
+        if match:
+            next_prep_syncs.append(
+                {
+                    "at": at,
+                    "id": match.group("id"),
+                    "result": match.group("result"),
+                    "reason": match.group("reason"),
+                }
+            )
+            continue
 
         match = NEXT_PREP_RE.match(text)
         if match:
@@ -782,13 +801,39 @@ def analyze(log: Log) -> Report:
     d1_hq = sum(1 for row in next_preps if row["hq"] != "none")
     d1_mix = sum(1 for row in next_preps if row["mix"] == "ready")
     d1_with_lyrics = [row for row in next_preps if row["lyrics"] != "none"]
-    d1_sync = sum(1 for row in d1_with_lyrics if row["sync"].startswith("applied"))
-    d1_sync_skips = [
-        row for row in next_preps if not row["sync"].startswith("applied")
-    ]
-    d1_sync_skip_reasons = Counter(_sync_skip_reason(row["sync"]) for row in d1_sync_skips)
+    # The dedicated sync line is the authority when present: it separates a
+    # healthy `no-answer` from `failed:<reason>`. Older exports have only the
+    # row's `sync=` field, which keeps its old meaning.
+    sync_result_by_id = {row["id"]: row for row in next_prep_syncs}
+
+    def row_sync_result(row: dict[str, Any]) -> str:
+        result = sync_result_by_id.get(row["version"])
+        if result is not None:
+            return result["result"]
+        if row["sync"].startswith("applied"):
+            return "answered"
+        return "skipped:" + _sync_skip_reason(row["sync"])
+
+    def sync_result_reason(result: str) -> str:
+        for prefix in ("skipped:", "failed:"):
+            if result.startswith(prefix):
+                return result[len(prefix):]
+        return result
+
+    d1_sync = sum(1 for row in d1_with_lyrics if row_sync_result(row) == "answered")
+    d1_sync_skips = [row for row in next_preps if row_sync_result(row) != "answered"]
+    d1_sync_skip_reasons = Counter(
+        sync_result_reason(row_sync_result(row)) for row in d1_sync_skips
+    )
+    d1_sync_failed = sum(
+        1 for row in d1_with_lyrics if row_sync_result(row).startswith("failed:")
+    )
     d1_sync_failures = [
-        _failure(row["at"], row["title"], f"sync={row['sync']}")
+        _failure(
+            row["at"],
+            row["title"],
+            f"sync={row['sync']} result={row_sync_result(row)}",
+        )
         for row in d1_sync_skips
     ]
     d1_ms = [row["ms"] for row in next_preps]
@@ -874,6 +919,7 @@ def analyze(log: Log) -> Report:
         "hq": d1_hq,
         "sync": d1_sync,
         "sync_skipped": len(d1_sync_skips),
+        "sync_failed": d1_sync_failed,
         "sync_skip_reasons": dict(d1_sync_skip_reasons),
         "with_lyrics": len(d1_with_lyrics),
         "mix": d1_mix,
