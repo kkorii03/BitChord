@@ -74,9 +74,39 @@ object SourceResolver {
             return false
         }
 
+        /**
+         * A monotonic mark for credential refusals, kept apart from the
+         * generic failure mark so a search can say *why* it produced nothing.
+         */
+        private val authMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
+        internal fun authMark(configId: String): Long =
+            authMarks[configId]?.get() ?: 0L
+
         fun failed(configId: String) {
+            recordFailure(configId, countForRest = true)
+        }
+
+        /**
+         * A transport fault. The mark is always raised so the empty answer is
+         * not memoised; it only counts toward the rest while the device is
+         * online, because an offline device fails every source at once.
+         */
+        internal fun networkFailed(configId: String, online: Boolean) {
+            recordFailure(configId, countForRest = online)
+        }
+
+        /** The addon answered 401/402/403: its credential is refused. */
+        internal fun authFailed(configId: String) {
+            authMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
+                .incrementAndGet()
+            recordFailure(configId, countForRest = true)
+        }
+
+        private fun recordFailure(configId: String, countForRest: Boolean) {
             failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
                 .incrementAndGet()
+            if (!countForRest) return
             val state = states.computeIfAbsent(configId) { State() }
             state.failures += 1
             if (state.failures >= FAILURES_BEFORE_REST) {
@@ -95,6 +125,7 @@ object SourceResolver {
         internal fun resetForTest() {
             states.clear()
             failureMarks.clear()
+            authMarks.clear()
         }
 
         private const val FAILURES_BEFORE_REST = 2
@@ -134,15 +165,23 @@ object SourceResolver {
      */
     class SearchReport {
         private val entries = mutableListOf<SearchOutcome>()
+        private val authSources = mutableListOf<String>()
 
         @Volatile
         var allConclusive: Boolean = true
             private set
 
-        fun record(outcome: SearchOutcome) {
-            synchronized(entries) { entries += outcome }
+        fun record(outcome: SearchOutcome, sourceName: String? = null) {
+            synchronized(entries) {
+                entries += outcome
+                if (outcome.verdict == "auth" && sourceName != null) authSources += sourceName
+            }
             if (!outcome.conclusive) allConclusive = false
         }
+
+        /** Sources whose credential was refused, for the listener-facing answer. */
+        val authSourceNames: List<String>
+            get() = synchronized(entries) { authSources.distinct() }
 
         /** Test seam: the per-source verdicts this walk collected. */
         internal fun outcomes(): List<SearchOutcome> = synchronized(entries) { entries.toList() }
@@ -160,11 +199,24 @@ object SourceResolver {
 
     /**
      * A source's own failure path, for sources that turn a transport fault into
-     * an empty answer instead of throwing.
+     * an empty answer instead of throwing. [network] marks a fault reaching the
+     * addon at all, which an offline device does not count toward the rest.
      */
-    internal fun reportSourceFailure(configId: String) {
-        SourceCooldown.failed(configId)
+    internal fun reportSourceFailure(configId: String, network: Boolean = false) {
+        if (network) SourceCooldown.networkFailed(configId, online = !offlineCheck())
+        else SourceCooldown.failed(configId)
     }
+
+    /** A source refused this app's credential (401/402/403). */
+    internal fun reportSourceAuthFailure(configId: String) {
+        SourceCooldown.authFailed(configId)
+    }
+
+    /** Whether the device itself has no usable connection; overridable for tests. */
+    internal var offlineCheck: () -> Boolean = { AudioCache.isOffline() }
+
+    /** Whether [failure] is the connection rather than the source's answer. */
+    internal fun isNetworkFault(failure: Throwable): Boolean = failure.isNetworkFailure()
 
     /** Keeps [stream] as the verified original for [target], for a later play. */
     fun rememberOriginal(target: TrackMatcher.Target, stream: SourceStream) {
@@ -1259,9 +1311,11 @@ object SourceResolver {
         report: SearchReport? = null,
         refine: suspend (MusicSource, SourceStream) -> SourceStream? = { _, stream -> stream },
         timeoutMs: Long? = null,
+        sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val until = timeoutMs?.let { System.nanoTime() + it * 1_000_000 }
+        val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
         val usable = sources.filterNot { source ->
             val resting = SourceCooldown.isResting(source.configId)
             if (resting && !manual) {
@@ -1290,9 +1344,9 @@ object SourceResolver {
                 async {
                     val remaining = until?.let { remainingMs(it) }
                     val budget = if (remaining == null) {
-                        SOURCE_LOOKUP_TIMEOUT_MS
+                        lookupTimeoutMs
                     } else {
-                        minOf(SOURCE_LOOKUP_TIMEOUT_MS, remaining)
+                        minOf(lookupTimeoutMs, remaining)
                     }
                     val answer = if (budget <= 0L) {
                         null
@@ -2026,6 +2080,14 @@ object SourceResolver {
      * of this track's answer, and the next track asks it again.
      */
     private const val SOURCE_LOOKUP_TIMEOUT_MS = 4_000L
+
+    /** A search the listener asked for by hand may wait longer per source. */
+    private const val MANUAL_SOURCE_LOOKUP_TIMEOUT_MS = 12_000L
+
+    internal fun sourceLookupTimeoutMs(
+        manual: Boolean,
+        configured: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+    ): Long = if (manual) MANUAL_SOURCE_LOOKUP_TIMEOUT_MS else configured
 
     /**
      * The same ceiling for a download, where nobody is waiting on a first note
