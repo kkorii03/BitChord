@@ -1,0 +1,13 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (1단계: com/music/bitchord/telegram/ 엔진·로그인 완료).
+텔레그램 음악 소스 이식 2단계 / 3단계: 검색·재생 소스. docs/telegram-source-plan.md 를 읽고 맨 위 'Opus 검토 보정' 4개를 반드시 따른다. 원본은 `git clone --depth 1 https://github.com/Hexclyde/bitchord-morphe-patches /tmp/tg` 로 받아 검색·스트리밍 부분(extensions/telegram)을 참고·이식(GPL-3.0 출처 표기).
+범위(품질 업그레이드 연결은 3단계, 이번엔 하지 않음):
+① SourceKind.TELEGRAM 추가: BUILT_IN_KINDS 에 넣고 기본 '꺼짐'(로그인 완료 시 사용자가 켬, 또는 로그인 성공 때 켜짐 — 원본 동작 참고해 하나로), 기본 순서·rank 는 YouTube 보다 위. 설정 → 소스 화면에 표시, 로그인 안 됐으면 상태에 이유.
+② 검색할 채널 선택: 텔레그램 설정 화면에 '검색할 채팅' 선택(가입한 채널·대화방 목록에서 체크). 선택 저장.
+③ TelegramSource(MusicSource 구현): 선택한 채팅에서 오디오 파일 검색(원본의 TDLib searchChatMessages/searchMessages 방식, 오디오·문서 필터), 결과를 기존 Song/소스 결과 형식으로(제목·가수·길이·형식 FLAC/WAV/ALAC 등 → lossless 표시). 원본의 가짜 무손실 판별이 있으면 가져오되 무거운 디코딩은 재생/업그레이드 때만.
+④ 재생: TDLib downloadFile 로 점진 다운로드하며 읽는 DataSource(원본 방식), seek 지원. 재생 중에는 1단계의 onTelegramPlayback(true) 로 클라이언트 유지, 끝나면 false.
+⑤ 검색 탭 → 애드온: 지금 filterIsInstance<AddonSource>() 라 안 보임 → 텔레그램 결과가 같은 탭에 보이게(일반화 또는 명시 경로).
+⑥ 배터리: 색인 루프·주기 동기화 없음. 검색 요청이 올 때만 클라이언트를 열고, 1단계 수명 정책 그대로.
+⑦ 로그: 'telegram: search q=<길이만> chats=N results=N ms=…', 'telegram: stream <file id 해시> open/seek/close'. 메시지 내용·채팅 이름·전화번호 로그 금지.
+테스트(고치기 전 실패): 검색 결과 → Song 변환(형식·무손실 판정·길이), 소스 순서가 YouTube 위, BUILT_IN_KINDS 포함·기본 꺼짐, 검색 탭 필터에 텔레그램 포함 — 단위 테스트. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, *.jks, 서명 수정 금지. 업스트림 파일 쪼개기·삭제 금지(연결부 최소 수정). 타이머·폴링 금지. 바꾼 함수의 모든 호출부·타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 수정·신규 파일 / 소스 등록·순서 / 검색 방식 / 재생 방식 / 테스트 / 미해결.
