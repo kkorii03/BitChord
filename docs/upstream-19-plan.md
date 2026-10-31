@@ -32,7 +32,14 @@
 | 한국어 문자열(애플뮤직 한국어 합니다체) | **유지(한국어)** | values-ko 우리 번역 우선; 1.9 새 키 중 영어로 남은 것은 번역 추가 |
 | 진단 로그·featurehealth 로그 줄 | **유지(한국어)** | 1.9 코드 경로에 같은 로그 줄을 hook 으로 다시 넣는다(featurehealth 측정이 끊기지 않게) |
 
-(세부 항목별 잃은 코드 목록: `docs/upstream-19-lost.md` — DeepSeek 조사 후 추가)
+세부 항목별 잃은 코드 목록: `docs/upstream-19-lost.md` (DeepSeek 조사, 321개 충돌 덩어리 → 57줄. 검증 전 자료). 다시 연결할 핵심:
+- 가사 싱크: AudioCache 의 `timingKeep`(싱크 측정 전에 원본 캐시 지우지 않기).
+- 버전 판정/MV: 재생 전 비디오→음원 자동 교체(`musicOnlyTried`), `alternateVersionCache`, 설정 setter `setPreferMusicOnly`/`setSkipNonMusicParts`/`setSkipSponsorParts` + PlaybackService 의 해당 설정 수집기.
+- 한국 차단: `recheckGateNow()`(프록시 설정 바뀐 직후 1회 재확인).
+- 비디오 라디오: `radioCache` LRU.
+- 진단 로그: `installCrashHandler`/`logProcessStart`/`onTrimMemory`, 릴리스 빌드 `TrackLog.echo`, DebugLog→TrackLog 연결, `crossfade: skipped` 줄, `by=consume-user-queue` 줄, 오디오 전환 거부 상세 로그.
+- 한국어 UI: 오디오 출력/파이프라인 한국어 라벨, 설정 검색 한국어 별칭, `SearchFilter.labelResource`, `withPhraseLineBreak`(단어 단위 줄바꿈).
+- 일반 수정: 큐 비면 플레이어 닫기, `TrackAnalyzer.awaitWindow`(폴링 대신 이벤트 대기).
 
 ## 3. 진행 순서
 1. **컴파일 초록** — shared 오류를 파일 묶음 3개로 나눠 클라우드 DeepSeek 병렬(innertube / repo / matcher). 잃은 우리 선언은 업스트림 파일이 아니라 `ko/` 새 파일에 복원. 그다음 app 모듈 오류를 같은 방식으로.
@@ -42,4 +49,8 @@
 5. 시험판 APK(다음 versionCode, 기존 서명 흐름) → 다운로드 페이지는 원래 세션이 게시.
 
 ## 4. Direct Source Stream 의 가수명 매칭
-(조사 중)
+v1.9 원본 확인(Opus 가 직접 `git show v1.9:` 로 읽음):
+- `SourceResolver.directStream` → `bestAcross(addons, target, requestForNow())`, `requireSharedArtist` 기본값 false.
+- `TrackMatcher.score`: 가수 점수가 없으면 `CREDITS_DISAGREE.takeIf { !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC=2) } ?: return null`.
+- 결론: **부분적으로만 해결.** Qobuz 가 `マイリー・サイラス` 처럼 다른 문자로 가수를 줘도 **곡 길이가 2초 이내로 같으면 채택**(점수는 낮게). 길이가 2초 넘게 다르거나 한쪽 길이가 없으면 여전히 탈락. 가수명 문자 변환(가나→로마자 등)은 1.9 에 없다.
+- 조치: `task/fix-1030` 의 fix-hq-artist-alias-1031(문자 체계 다른 가수 = artist-unverified 후보) 결과가 확정되면, 그 판단을 `ko/` 쪽 hook 으로 `TrackMatcher.score` 가수 단계에 한 줄 연결하는 것을 후속 작업으로 둔다(지금은 1.9 동작 그대로).
