@@ -1759,10 +1759,10 @@ object YtMusicRepository {
         if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
             val result = YouTubeFallback.playlistPage(browseId)
             return@call SongPage(
-                songs = result.songs,
+                songs = result.songs.map(StoredSongDisplay::clean),
                 continuation = result.continuation,
                 header = result.header,
-                hiddenSongs = result.hiddenSongs,
+                hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
             )
         }
         val response = Innertube.browse(browseId)
@@ -1793,10 +1793,10 @@ object YtMusicRepository {
             TrackLog.i(TAG, "playlist: $browseId rows via youtube.com (no music-video type on rows)")
             val result = YouTubeFallback.playlistPage(browseId)
             return@call SongPage(
-                songs = result.songs,
+                songs = result.songs.map(StoredSongDisplay::clean),
                 continuation = result.continuation,
                 header = result.header,
-                hiddenSongs = result.hiddenSongs,
+                hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
             )
         }
         val shown = if (browseId == LIKED_MUSIC) musicOnlyLikedPage(page) else page
@@ -1900,10 +1900,10 @@ object YtMusicRepository {
         if (YouTubeFallback.isContinuation(token)) {
             val result = YouTubeFallback.morePlaylist(token)
             return@call SongPage(
-                songs = result.songs,
+                songs = result.songs.map(StoredSongDisplay::clean),
                 continuation = result.continuation,
                 header = result.header,
-                hiddenSongs = result.hiddenSongs,
+                hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
             )
         }
         if (token in anonymousContinuations) {
@@ -1947,7 +1947,7 @@ object YtMusicRepository {
             return SongPage(
                 songs = shown,
                 continuation = shelf.continuation,
-                suggested = shelf.suggested,
+                suggested = shelf.suggested.map(StoredSongDisplay::clean),
                 library = library,
                 header = parsedHeader.withArtworkFallback(shown),
             )
@@ -2011,7 +2011,7 @@ object YtMusicRepository {
      */
     private suspend fun songsPaged(browseId: String): List<Song> {
         if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
-            return YouTubeFallback.allSongs(browseId)
+            return YouTubeFallback.allSongs(browseId).map(StoredSongDisplay::clean)
         }
         val out = LinkedHashMap<String, Song>()
         var response = Innertube.browse(browseId)

@@ -457,12 +457,26 @@ object StoredSongDisplay {
         append(song.videoId).append('\u0000')
         append(song.title).append('\u0000')
         append(song.artist).append('\u0000')
+        append(song.artistId).append('\u0000')
         append(song.albumId).append('\u0000')
         append(song.albumName).append('\u0000')
         append(song.originalTitle).append('\u0000')
         append(song.originalArtist).append('\u0000')
         append(song.coverSinger).append('\u0000')
         append(song.coverOriginalArtist).append('\u0000')
-        append(song.isVideo)
+        append(song.isVideo).append('\u0000')
+        // Cover reads depend on facts that can load or change after the first
+        // read. Without them here the first, possibly stale, display would be
+        // cached forever: a designated channel or a newly known singer could
+        // never correct it. The original is cheap (a preferences lookup) and
+        // the singer set is bounded, so its size/hash is enough to key it.
+        val designated = song.artistId?.let { id ->
+            runCatching { id.isNotBlank() && id in CoverTitles.designatedChannels() }.getOrDefault(false)
+        } ?: false
+        append(designated).append('\u0000')
+        val singers = runCatching { CoverTitles.knownSingers() }.getOrDefault(emptySet())
+        append(singers.size).append('\u0000').append(singers.hashCode()).append('\u0000')
+        val original = runCatching { CoverTitles.knownOriginal(song.videoId) }.getOrNull()
+        append(original?.first).append('\u0000').append(original?.second)
     }
 }
